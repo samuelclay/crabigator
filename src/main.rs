@@ -1,25 +1,23 @@
-mod app;
 mod app_v2;
 mod events;
 mod git;
 mod hooks;
 mod parsers;
 mod pty;
-mod ui;
 
 use anyhow::Result;
 use crossterm::{
-    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
+    cursor::Show,
+    event::{DisableBracketedPaste, EnableBracketedPaste},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
+    terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io::{self, stdout};
+use std::io::{stdout, Write};
 use std::panic;
 
 use crate::app_v2::AppV2;
 
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
+fn setup_terminal() -> Result<(u16, u16)> {
     enable_raw_mode()?;
     let mut stdout = stdout();
     // Primary screen buffer (no alternate screen) - allows native scrollback
@@ -28,23 +26,23 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     execute!(
         stdout,
         Clear(ClearType::All),
-        // No mouse capture - let terminal handle selection
         EnableBracketedPaste
     )?;
-    let backend = CrosstermBackend::new(stdout);
-    let terminal = Terminal::new(backend)?;
-    Ok(terminal)
+    let size = terminal::size()?;
+    Ok(size)
 }
 
-fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+fn restore_terminal() -> Result<()> {
     disable_raw_mode()?;
+    let mut stdout = stdout();
     // Reset scroll region to full screen
-    print!("\x1b[r");
+    write!(stdout, "\x1b[r")?;
     execute!(
-        terminal.backend_mut(),
-        DisableBracketedPaste
+        stdout,
+        DisableBracketedPaste,
+        Show
     )?;
-    terminal.show_cursor()?;
+    stdout.flush()?;
     Ok(())
 }
 
@@ -66,16 +64,15 @@ fn setup_panic_handler() {
 async fn main() -> Result<()> {
     setup_panic_handler();
 
-    let mut terminal = setup_terminal()?;
-    let size = terminal.size()?;
-    let mut app = AppV2::new(size.width, size.height).await?;
+    let (cols, rows) = setup_terminal()?;
+    let mut app = AppV2::new(cols, rows).await?;
 
     let result = app.run().await;
 
     // Capture stats before restoring terminal
     let stats = app.claude_stats.clone();
 
-    restore_terminal(&mut terminal)?;
+    restore_terminal()?;
 
     // Print session stats after exit
     println!("\n--- Crabigator Session Stats ---");

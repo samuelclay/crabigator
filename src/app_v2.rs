@@ -3,25 +3,12 @@
 //! Architecture:
 //! - Set terminal scroll region to top N rows for Claude Code
 //! - Claude Code renders within that region (thinks it's the full terminal)
-//! - We render our status widgets below the scroll region using ratatui
+//! - We render our status widgets below the scroll region using raw ANSI escape sequences
 //! - PTY output passes through untouched
 
 use anyhow::Result;
-use crossterm::{
-    cursor::{MoveTo, SavePosition, RestorePosition},
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent},
-    execute,
-};
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    symbols,
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Gauge},
-    Terminal,
-};
-use std::io::{Write, stdout, Stdout};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
+use std::io::{Write, stdout};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
@@ -164,207 +151,142 @@ impl AppV2 {
 
     /// Write PTY output directly to stdout - transparent passthrough
     fn write_pty_output(&mut self, data: &[u8]) -> Result<()> {
+        // Update our internal parser (for stats/analysis)
+        self.claude_pty.process_output(data);
+
         let mut stdout = stdout();
         stdout.write_all(data)?;
         stdout.flush()?;
-
-        // Update our internal parser too (for any stats/analysis)
-        self.claude_pty.process_output(data);
-
         Ok(())
     }
 
-    /// Draw status bar in the reserved bottom area using ratatui
+    /// Draw status bar in the reserved bottom area using raw ANSI escape sequences
     fn draw_status_bar(&mut self) -> Result<()> {
         let mut stdout = stdout();
 
-        // Save cursor position (we'll restore it after drawing)
-        execute!(stdout, SavePosition)?;
+        // Save cursor position (cursor is already hidden globally)
+        write!(stdout, "\x1b[s")?;
 
-        // Move to the status area
-        execute!(stdout, MoveTo(0, self.pty_rows))?;
+        // Move to status area (below the scroll region)
+        write!(stdout, "\x1b[{};1H", self.pty_rows + 1)?;
 
-        // Create a temporary backend and terminal for the status area
-        let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::with_options(
-            backend,
-            ratatui::TerminalOptions {
-                viewport: ratatui::Viewport::Fixed(Rect {
-                    x: 0,
-                    y: self.pty_rows,
-                    width: self.total_cols,
-                    height: self.status_rows,
-                }),
-            },
-        )?;
+        // Draw separator line with background
+        write!(stdout, "\x1b[48;5;237m")?; // Dark gray background
+        let title = "─── CRABIGATOR ───";
+        let padding = (self.total_cols as usize).saturating_sub(title.len()) / 2;
+        write!(stdout, "\x1b[90m{:padding$}\x1b[96;1m{}\x1b[0;90m\x1b[48;5;237m{:padding$}\x1b[0m",
+            "", title, "", padding = padding)?;
 
-        terminal.draw(|f| {
-            let area = f.area();
+        // Clear to end of line
+        write!(stdout, "\x1b[K")?;
 
-            // Create layout: separator line + three widget columns
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1),  // Separator
-                    Constraint::Min(0),     // Widgets
-                ])
-                .split(area);
+        // Draw the three widget columns
+        let col_width = self.total_cols / 3;
 
-            // Draw separator line
-            let separator = Block::default()
-                .style(Style::default().bg(Color::DarkGray));
-            f.render_widget(separator, chunks[0]);
+        for row in 1..self.status_rows {
+            write!(stdout, "\x1b[{};1H", self.pty_rows + 1 + row)?;
 
-            // Draw separator text centered
-            let sep_text = Paragraph::new(Line::from(vec![
-                Span::styled(" ─── ", Style::default().fg(Color::Gray)),
-                Span::styled("CRABIGATOR", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                Span::styled(" ─── ", Style::default().fg(Color::Gray)),
-            ]))
-            .style(Style::default().bg(Color::DarkGray))
-            .alignment(ratatui::layout::Alignment::Center);
-            f.render_widget(sep_text, chunks[0]);
+            // Git column
+            self.draw_status_cell(&mut stdout, 0, row, col_width, "Git")?;
 
-            // Split widget area into 3 columns
-            let widget_chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(33),
-                    Constraint::Percentage(34),
-                    Constraint::Percentage(33),
-                ])
-                .split(chunks[1]);
+            // Changes column
+            self.draw_status_cell(&mut stdout, col_width, row, col_width, "Changes")?;
 
-            // Git Status Widget
-            self.render_git_widget(f, widget_chunks[0]);
+            // Stats column
+            self.draw_status_cell(&mut stdout, col_width * 2, row, self.total_cols - col_width * 2, "Stats")?;
+        }
 
-            // Diff Summary Widget
-            self.render_diff_widget(f, widget_chunks[1]);
-
-            // Claude Stats Widget
-            self.render_stats_widget(f, widget_chunks[2]);
-        })?;
-
-        // Get stdout back and restore cursor
-        let mut stdout = terminal.backend_mut().by_ref();
-        execute!(stdout, RestorePosition)?;
+        // Restore cursor position (keep cursor hidden)
+        write!(stdout, "\x1b[u")?;
+        stdout.flush()?;
 
         Ok(())
     }
 
-    fn render_git_widget(&self, f: &mut ratatui::Frame, area: Rect) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray))
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .title(Span::styled(" Git ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)));
+    fn draw_status_cell(&self, stdout: &mut std::io::Stdout, col: u16, row: u16, width: u16, section: &str) -> Result<()> {
+        write!(stdout, "\x1b[{};{}H", self.pty_rows + 1 + row, col + 1)?;
 
-        let inner = block.inner(area);
-
-        let file_count = self.git_state.files.len();
-        let status_text = if file_count == 0 {
-            vec![Line::from(Span::styled("✓ Clean", Style::default().fg(Color::Green)))]
-        } else {
-            let mut lines = vec![
-                Line::from(Span::styled(
-                    format!("{} file(s)", file_count),
-                    Style::default().fg(Color::Yellow),
-                )),
-            ];
-            // Show first few files
-            for file in self.git_state.files.iter().take(inner.height.saturating_sub(1) as usize) {
-                let (icon, color) = match file.status.as_str() {
-                    "M" => ("●", Color::Yellow),
-                    "A" => ("+", Color::Green),
-                    "D" => ("−", Color::Red),
-                    "?" => ("?", Color::Gray),
-                    _ => ("•", Color::White),
-                };
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{} ", icon), Style::default().fg(color)),
-                    Span::raw(truncate_path(&file.path, inner.width.saturating_sub(3) as usize)),
-                ]));
+        if row == 1 {
+            // Header row
+            let (color, title) = match section {
+                "Git" => ("32", " Git "),      // Green
+                "Changes" => ("33", " Changes "), // Yellow
+                "Stats" => ("35", " Stats "),   // Magenta
+                _ => ("37", section),
+            };
+            write!(stdout, "\x1b[90m╭─\x1b[{};1m{}\x1b[0;90m─", color, title)?;
+            let remaining = width.saturating_sub(title.len() as u16 + 4);
+            for _ in 0..remaining {
+                write!(stdout, "─")?;
             }
-            lines
-        };
-
-        let paragraph = Paragraph::new(status_text).block(block);
-        f.render_widget(paragraph, area);
-    }
-
-    fn render_diff_widget(&self, f: &mut ratatui::Frame, area: Rect) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray))
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .title(Span::styled(" Changes ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
-
-        let inner = block.inner(area);
-
-        let mut lines: Vec<Line> = Vec::new();
-
-        if self.diff_summary.files.is_empty() {
-            lines.push(Line::from(Span::styled("No changes", Style::default().fg(Color::DarkGray))));
-        } else {
-            for file in self.diff_summary.files.iter().take(inner.height as usize) {
-                let change_count = file.changes.len();
-                let icon = if change_count > 0 { "◆" } else { "◇" };
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{} ", icon), Style::default().fg(Color::Cyan)),
-                    Span::raw(truncate_path(&file.path, inner.width.saturating_sub(5) as usize)),
-                    Span::styled(format!(" ({})", change_count), Style::default().fg(Color::DarkGray)),
-                ]));
+            write!(stdout, "╮\x1b[0m")?;
+        } else if row == self.status_rows - 1 {
+            // Bottom border
+            write!(stdout, "\x1b[90m╰")?;
+            for _ in 0..(width.saturating_sub(2)) {
+                write!(stdout, "─")?;
             }
+            write!(stdout, "╯\x1b[0m")?;
+        } else {
+            // Content rows
+            write!(stdout, "\x1b[90m│\x1b[0m")?;
+            let content = self.get_status_content(section, row - 2);
+            write!(stdout, "{}", content)?;
+            // Pad to width
+            let content_len = strip_ansi_len(&content);
+            let pad = (width as usize).saturating_sub(content_len + 2);
+            write!(stdout, "{:pad$}\x1b[90m│\x1b[0m", "", pad = pad)?;
         }
-
-        let paragraph = Paragraph::new(lines).block(block);
-        f.render_widget(paragraph, area);
+        Ok(())
     }
 
-    fn render_stats_widget(&self, f: &mut ratatui::Frame, area: Rect) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray))
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .title(Span::styled(" Stats ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
-
-        let lines = vec![
-            Line::from(vec![
-                Span::styled("⏱ ", Style::default().fg(Color::Blue)),
-                Span::raw("Idle: "),
-                Span::styled(
-                    format_duration(self.claude_stats.idle_seconds),
-                    Style::default().fg(if self.claude_stats.idle_seconds > 60 { Color::Yellow } else { Color::Green }),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("⚡", Style::default().fg(Color::Yellow)),
-                Span::raw(" Work: "),
-                Span::styled(
-                    format_duration(self.claude_stats.work_seconds),
-                    Style::default().fg(Color::Cyan),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("◈ ", Style::default().fg(Color::Magenta)),
-                Span::raw("Tokens: "),
-                Span::styled(
-                    format_number(self.claude_stats.tokens_used),
-                    Style::default().fg(Color::Magenta),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("✉ ", Style::default().fg(Color::Blue)),
-                Span::raw("Msgs: "),
-                Span::styled(
-                    self.claude_stats.messages_count.to_string(),
-                    Style::default().fg(Color::Blue),
-                ),
-            ]),
-        ];
-
-        let paragraph = Paragraph::new(lines).block(block);
-        f.render_widget(paragraph, area);
+    fn get_status_content(&self, section: &str, line: u16) -> String {
+        match section {
+            "Git" => {
+                let files = &self.git_state.files;
+                if files.is_empty() {
+                    if line == 0 { "\x1b[32m✓ Clean\x1b[0m".to_string() } else { String::new() }
+                } else if line == 0 {
+                    format!("\x1b[33m{} file(s)\x1b[0m", files.len())
+                } else if let Some(file) = files.get((line - 1) as usize) {
+                    let (icon, color) = match file.status.as_str() {
+                        "M" => ("●", "33"),
+                        "A" => ("+", "32"),
+                        "D" => ("−", "31"),
+                        "?" => ("?", "90"),
+                        _ => ("•", "37"),
+                    };
+                    format!("\x1b[{}m{}\x1b[0m {}", color, icon, truncate_path(&file.path, 20))
+                } else {
+                    String::new()
+                }
+            }
+            "Changes" => {
+                if self.diff_summary.files.is_empty() {
+                    if line == 0 { "\x1b[90mNo changes\x1b[0m".to_string() } else { String::new() }
+                } else if let Some(file) = self.diff_summary.files.get(line as usize) {
+                    format!("\x1b[36m◆\x1b[0m {} \x1b[90m({})\x1b[0m",
+                        truncate_path(&file.path, 15), file.changes.len())
+                } else {
+                    String::new()
+                }
+            }
+            "Stats" => {
+                match line {
+                    0 => format!("\x1b[34m⏱\x1b[0m Idle: \x1b[{}m{}\x1b[0m",
+                        if self.claude_stats.idle_seconds > 60 { "33" } else { "32" },
+                        format_duration(self.claude_stats.idle_seconds)),
+                    1 => format!("\x1b[33m⚡\x1b[0m Work: \x1b[36m{}\x1b[0m",
+                        format_duration(self.claude_stats.work_seconds)),
+                    2 => format!("\x1b[35m◈\x1b[0m Tokens: \x1b[35m{}\x1b[0m",
+                        format_number(self.claude_stats.tokens_used)),
+                    3 => format!("\x1b[34m✉\x1b[0m Msgs: \x1b[34m{}\x1b[0m",
+                        self.claude_stats.messages_count),
+                    _ => String::new(),
+                }
+            }
+            _ => String::new(),
+        }
     }
 
     async fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {
@@ -394,10 +316,22 @@ impl AppV2 {
     }
 
     fn forward_key_to_pty(&mut self, key: KeyEvent) -> Result<()> {
+        let has_alt = key.modifiers.contains(KeyModifiers::ALT);
+        let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
         let bytes = match key.code {
             KeyCode::Char(c) => {
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                if has_ctrl {
+                    // Ctrl+char: send control character
                     vec![(c as u8) & 0x1f]
+                } else if has_alt {
+                    // Alt/Option+char: send ESC prefix (meta key encoding)
+                    // This enables Option+Delete (word delete), Option+Left/Right (word nav), etc.
+                    let mut buf = [0u8; 4];
+                    let s = c.encode_utf8(&mut buf);
+                    let mut bytes = vec![0x1b]; // ESC prefix
+                    bytes.extend_from_slice(s.as_bytes());
+                    bytes
                 } else {
                     let mut buf = [0u8; 4];
                     let s = c.encode_utf8(&mut buf);
@@ -405,18 +339,59 @@ impl AppV2 {
                 }
             }
             KeyCode::Enter => vec![b'\r'],
-            KeyCode::Backspace => vec![0x7f],
+            KeyCode::Backspace => {
+                if has_alt {
+                    // Option+Backspace: delete word backwards (ESC + DEL)
+                    vec![0x1b, 0x7f]
+                } else {
+                    vec![0x7f]
+                }
+            }
             KeyCode::Tab => vec![b'\t'],
             KeyCode::Esc => vec![0x1b],
-            KeyCode::Up => vec![0x1b, b'[', b'A'],
-            KeyCode::Down => vec![0x1b, b'[', b'B'],
-            KeyCode::Right => vec![0x1b, b'[', b'C'],
-            KeyCode::Left => vec![0x1b, b'[', b'D'],
+            KeyCode::Up => {
+                if has_alt {
+                    // Option+Up: often used for scroll or history
+                    vec![0x1b, 0x1b, b'[', b'A']
+                } else {
+                    vec![0x1b, b'[', b'A']
+                }
+            }
+            KeyCode::Down => {
+                if has_alt {
+                    vec![0x1b, 0x1b, b'[', b'B']
+                } else {
+                    vec![0x1b, b'[', b'B']
+                }
+            }
+            KeyCode::Right => {
+                if has_alt {
+                    // Option+Right: move word forward (ESC + f or ESC + [1;3C)
+                    vec![0x1b, b'[', b'1', b';', b'3', b'C']
+                } else {
+                    vec![0x1b, b'[', b'C']
+                }
+            }
+            KeyCode::Left => {
+                if has_alt {
+                    // Option+Left: move word backward (ESC + b or ESC + [1;3D)
+                    vec![0x1b, b'[', b'1', b';', b'3', b'D']
+                } else {
+                    vec![0x1b, b'[', b'D']
+                }
+            }
             KeyCode::Home => vec![0x1b, b'[', b'H'],
             KeyCode::End => vec![0x1b, b'[', b'F'],
             KeyCode::PageUp => vec![0x1b, b'[', b'5', b'~'],
             KeyCode::PageDown => vec![0x1b, b'[', b'6', b'~'],
-            KeyCode::Delete => vec![0x1b, b'[', b'3', b'~'],
+            KeyCode::Delete => {
+                if has_alt {
+                    // Option+Delete: delete word forward (ESC + d)
+                    vec![0x1b, b'd']
+                } else {
+                    vec![0x1b, b'[', b'3', b'~']
+                }
+            }
             KeyCode::Insert => vec![0x1b, b'[', b'2', b'~'],
             _ => return Ok(()),
         };
@@ -486,3 +461,22 @@ fn format_number(n: u64) -> String {
         n.to_string()
     }
 }
+
+/// Calculate string length excluding ANSI escape sequences
+fn strip_ansi_len(s: &str) -> usize {
+    let mut len = 0;
+    let mut in_escape = false;
+    for c in s.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else {
+            len += 1;
+        }
+    }
+    len
+}
+

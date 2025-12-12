@@ -36,6 +36,7 @@ pub enum ChangeType {
 pub struct ChangeNode {
     pub kind: NodeKind,
     pub name: String,
+    #[allow(dead_code)]
     pub change_type: ChangeType,
     pub children: Vec<ChangeNode>,
 }

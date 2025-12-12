@@ -10,7 +10,8 @@ pub struct ClaudePty {
     parser: vt100::Parser,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
-    pub scroll_offset: usize,
+    #[allow(dead_code)]
+    scroll_offset: usize,
 }
 
 impl ClaudePty {
@@ -75,15 +76,18 @@ impl ClaudePty {
         }
     }
 
+    #[allow(dead_code)]
     pub fn scroll_up(&mut self, lines: usize) {
         let max_scroll = self.parser.screen().scrollback();
         self.scroll_offset = (self.scroll_offset + lines).min(max_scroll);
     }
 
+    #[allow(dead_code)]
     pub fn scroll_down(&mut self, lines: usize) {
         self.scroll_offset = self.scroll_offset.saturating_sub(lines);
     }
 
+    #[allow(dead_code)]
     pub fn reset_scroll(&mut self) {
         self.scroll_offset = 0;
     }
@@ -131,6 +135,7 @@ impl ClaudePty {
         &self.parser
     }
 
+    #[allow(dead_code)]
     pub fn screen(&self) -> &vt100::Screen {
         self.parser.screen()
     }
