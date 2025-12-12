@@ -1,4 +1,4 @@
-mod app_v2;
+mod app;
 mod events;
 mod git;
 mod hooks;
@@ -15,7 +15,7 @@ use crossterm::{
 use std::io::{stdout, Write};
 use std::panic;
 
-use crate::app_v2::AppV2;
+use crate::app::App;
 
 fn setup_terminal() -> Result<(u16, u16)> {
     enable_raw_mode()?;
@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
     setup_panic_handler();
 
     let (cols, rows) = setup_terminal()?;
-    let mut app = AppV2::new(cols, rows).await?;
+    let mut app = App::new(cols, rows).await?;
 
     let result = app.run().await;
 
@@ -76,9 +76,8 @@ async fn main() -> Result<()> {
 
     // Print session stats after exit
     println!("\n--- Crabigator Session Stats ---");
-    println!("Idle time: {}s", stats.idle_seconds);
-    println!("Work time: {}s", stats.work_seconds);
-    println!("Tokens used: {}", stats.tokens_used);
+    println!("Session: {}", stats.format_work());
+    println!("Tokens: {}", stats.tokens_used);
     println!("Messages: {}", stats.messages_count);
     println!("--------------------------------\n");
 

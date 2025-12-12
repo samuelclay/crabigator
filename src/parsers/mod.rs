@@ -43,6 +43,7 @@ pub struct ChangeNode {
 
 #[derive(Clone, Debug)]
 pub struct FileChanges {
+    #[allow(dead_code)]
     pub path: String,
     pub changes: Vec<ChangeNode>,
 }

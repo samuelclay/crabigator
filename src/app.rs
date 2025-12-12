@@ -1,4 +1,4 @@
-//! V2 App - Scroll region approach
+//! Crabigator App - Scroll region approach
 //!
 //! Architecture:
 //! - Set terminal scroll region to top N rows for Claude Code
@@ -17,7 +17,7 @@ use crate::hooks::ClaudeStats;
 use crate::parsers::DiffSummary;
 use crate::pty::ClaudePty;
 
-pub struct AppV2 {
+pub struct App {
     pub running: bool,
     pub claude_pty: ClaudePty,
     pub git_state: GitState,
@@ -35,7 +35,7 @@ pub struct AppV2 {
     pty_rx: mpsc::Receiver<Vec<u8>>,
 }
 
-impl AppV2 {
+impl App {
     pub async fn new(cols: u16, rows: u16) -> Result<Self> {
         let (pty_tx, pty_rx) = mpsc::channel(256);
 
@@ -162,131 +162,228 @@ impl AppV2 {
 
     /// Draw status bar in the reserved bottom area using raw ANSI escape sequences
     fn draw_status_bar(&mut self) -> Result<()> {
+        // Update stats each draw
+        self.claude_stats.tick();
+
         let mut stdout = stdout();
 
-        // Save cursor position (cursor is already hidden globally)
+        // Save cursor position
         write!(stdout, "\x1b[s")?;
 
         // Move to status area (below the scroll region)
         write!(stdout, "\x1b[{};1H", self.pty_rows + 1)?;
 
-        // Draw separator line with background
-        write!(stdout, "\x1b[48;5;237m")?; // Dark gray background
-        let title = "─── CRABIGATOR ───";
-        let padding = (self.total_cols as usize).saturating_sub(title.len()) / 2;
-        write!(stdout, "\x1b[90m{:padding$}\x1b[96;1m{}\x1b[0;90m\x1b[48;5;237m{:padding$}\x1b[0m",
-            "", title, "", padding = padding)?;
+        // Draw thin separator line
+        write!(stdout, "\x1b[48;5;236m\x1b[38;5;240m")?;
+        for _ in 0..self.total_cols {
+            write!(stdout, "─")?;
+        }
+        write!(stdout, "\x1b[0m")?;
 
-        // Clear to end of line
-        write!(stdout, "\x1b[K")?;
+        // Calculate column widths: Stats has min width, Git and Changes share the rest
+        let stats_width = 22u16; // Fixed width for stats
+        let remaining = self.total_cols.saturating_sub(stats_width + 2); // 2 for separators
+        let git_width = remaining / 2;
+        let changes_width = remaining - git_width;
 
-        // Draw the three widget columns
-        let col_width = self.total_cols / 3;
-
+        // Draw content rows
         for row in 1..self.status_rows {
             write!(stdout, "\x1b[{};1H", self.pty_rows + 1 + row)?;
 
+            // Stats column (leftmost, fixed width)
+            self.draw_stats_widget(&mut stdout, 0, row, stats_width)?;
+
+            // Separator
+            write!(stdout, "\x1b[38;5;240m│\x1b[0m")?;
+
             // Git column
-            self.draw_status_cell(&mut stdout, 0, row, col_width, "Git")?;
+            self.draw_git_widget(&mut stdout, stats_width + 1, row, git_width)?;
 
-            // Changes column
-            self.draw_status_cell(&mut stdout, col_width, row, col_width, "Changes")?;
+            // Separator
+            write!(stdout, "\x1b[38;5;240m│\x1b[0m")?;
 
-            // Stats column
-            self.draw_status_cell(&mut stdout, col_width * 2, row, self.total_cols - col_width * 2, "Stats")?;
+            // Changes column (rightmost)
+            self.draw_changes_widget(&mut stdout, stats_width + git_width + 2, row, changes_width)?;
         }
 
-        // Restore cursor position (keep cursor hidden)
+        // Restore cursor position
         write!(stdout, "\x1b[u")?;
         stdout.flush()?;
 
         Ok(())
     }
 
-    fn draw_status_cell(&self, stdout: &mut std::io::Stdout, col: u16, row: u16, width: u16, section: &str) -> Result<()> {
+    fn draw_stats_widget(&self, stdout: &mut std::io::Stdout, col: u16, row: u16, width: u16) -> Result<()> {
         write!(stdout, "\x1b[{};{}H", self.pty_rows + 1 + row, col + 1)?;
 
-        if row == 1 {
-            // Header row
-            let (color, title) = match section {
-                "Git" => ("32", " Git "),      // Green
-                "Changes" => ("33", " Changes "), // Yellow
-                "Stats" => ("35", " Stats "),   // Magenta
-                _ => ("37", section),
-            };
-            write!(stdout, "\x1b[90m╭─\x1b[{};1m{}\x1b[0;90m─", color, title)?;
-            let remaining = width.saturating_sub(title.len() as u16 + 4);
-            for _ in 0..remaining {
-                write!(stdout, "─")?;
+        let content = match row {
+            1 => {
+                // Header
+                format!("\x1b[38;5;141m Stats\x1b[0m")
             }
-            write!(stdout, "╮\x1b[0m")?;
-        } else if row == self.status_rows - 1 {
-            // Bottom border
-            write!(stdout, "\x1b[90m╰")?;
-            for _ in 0..(width.saturating_sub(2)) {
-                write!(stdout, "─")?;
+            2 => {
+                // Idle time with color based on duration
+                let idle_color = if self.claude_stats.idle_seconds < 5 {
+                    "38;5;83" // Bright green
+                } else if self.claude_stats.idle_seconds < 60 {
+                    "38;5;228" // Yellow
+                } else {
+                    "38;5;203" // Red
+                };
+                format!("\x1b[38;5;245m⏱ Idle\x1b[0m \x1b[{}m{}\x1b[0m", idle_color, self.claude_stats.format_idle())
             }
-            write!(stdout, "╯\x1b[0m")?;
-        } else {
-            // Content rows
-            write!(stdout, "\x1b[90m│\x1b[0m")?;
-            let content = self.get_status_content(section, row - 2);
-            write!(stdout, "{}", content)?;
-            // Pad to width
-            let content_len = strip_ansi_len(&content);
-            let pad = (width as usize).saturating_sub(content_len + 2);
-            write!(stdout, "{:pad$}\x1b[90m│\x1b[0m", "", pad = pad)?;
-        }
+            3 => {
+                // Session/work time
+                format!("\x1b[38;5;245m⚡ Session\x1b[0m \x1b[38;5;39m{}\x1b[0m", self.claude_stats.format_work())
+            }
+            4 => {
+                // Tokens
+                format!("\x1b[38;5;245m◈ Tokens\x1b[0m \x1b[38;5;213m{}\x1b[0m", format_number(self.claude_stats.tokens_used))
+            }
+            5 => {
+                // Messages
+                format!("\x1b[38;5;245m✉ Msgs\x1b[0m \x1b[38;5;75m{}\x1b[0m", self.claude_stats.messages_count)
+            }
+            _ => String::new(),
+        };
+
+        write!(stdout, "{}", content)?;
+        let content_len = strip_ansi_len(&content);
+        let pad = (width as usize).saturating_sub(content_len);
+        write!(stdout, "{:pad$}", "", pad = pad)?;
+
         Ok(())
     }
 
-    fn get_status_content(&self, section: &str, line: u16) -> String {
-        match section {
-            "Git" => {
-                let files = &self.git_state.files;
-                if files.is_empty() {
-                    if line == 0 { "\x1b[32m✓ Clean\x1b[0m".to_string() } else { String::new() }
-                } else if line == 0 {
-                    format!("\x1b[33m{} file(s)\x1b[0m", files.len())
-                } else if let Some(file) = files.get((line - 1) as usize) {
-                    let (icon, color) = match file.status.as_str() {
-                        "M" => ("●", "33"),
-                        "A" => ("+", "32"),
-                        "D" => ("−", "31"),
-                        "?" => ("?", "90"),
-                        _ => ("•", "37"),
-                    };
-                    format!("\x1b[{}m{}\x1b[0m {}", color, icon, truncate_path(&file.path, 20))
-                } else {
-                    String::new()
-                }
-            }
-            "Changes" => {
-                if self.diff_summary.files.is_empty() {
-                    if line == 0 { "\x1b[90mNo changes\x1b[0m".to_string() } else { String::new() }
-                } else if let Some(file) = self.diff_summary.files.get(line as usize) {
-                    format!("\x1b[36m◆\x1b[0m {} \x1b[90m({})\x1b[0m",
-                        truncate_path(&file.path, 15), file.changes.len())
-                } else {
-                    String::new()
-                }
-            }
-            "Stats" => {
-                match line {
-                    0 => format!("\x1b[34m⏱\x1b[0m Idle: \x1b[{}m{}\x1b[0m",
-                        if self.claude_stats.idle_seconds > 60 { "33" } else { "32" },
-                        format_duration(self.claude_stats.idle_seconds)),
-                    1 => format!("\x1b[33m⚡\x1b[0m Work: \x1b[36m{}\x1b[0m",
-                        format_duration(self.claude_stats.work_seconds)),
-                    2 => format!("\x1b[35m◈\x1b[0m Tokens: \x1b[35m{}\x1b[0m",
-                        format_number(self.claude_stats.tokens_used)),
-                    3 => format!("\x1b[34m✉\x1b[0m Msgs: \x1b[34m{}\x1b[0m",
-                        self.claude_stats.messages_count),
-                    _ => String::new(),
-                }
-            }
-            _ => String::new(),
+    fn draw_git_widget(&self, stdout: &mut std::io::Stdout, col: u16, row: u16, width: u16) -> Result<()> {
+        write!(stdout, "\x1b[{};{}H", self.pty_rows + 1 + row, col + 1)?;
+
+        let files = &self.git_state.files;
+
+        if row == 1 {
+            // Header with branch name
+            let branch = if self.git_state.branch.is_empty() {
+                "Git"
+            } else {
+                &self.git_state.branch
+            };
+            let header = format!("\x1b[38;5;114m {}\x1b[0m", truncate_path(branch, 15));
+            write!(stdout, "{}", header)?;
+            let content_len = strip_ansi_len(&header);
+            let pad = (width as usize).saturating_sub(content_len);
+            write!(stdout, "{:pad$}", "", pad = pad)?;
+            return Ok(());
         }
+
+        if files.is_empty() {
+            if row == 2 {
+                let content = "\x1b[38;5;83m✓ Clean\x1b[0m";
+                write!(stdout, "{}", content)?;
+                let pad = (width as usize).saturating_sub(strip_ansi_len(content));
+                write!(stdout, "{:pad$}", "", pad = pad)?;
+            } else {
+                write!(stdout, "{:width$}", "", width = width as usize)?;
+            }
+            return Ok(());
+        }
+
+        // Calculate max changes for scaling the bar graph
+        let max_changes = files.iter().map(|f| f.total_changes()).max().unwrap_or(1).max(1);
+
+        // Get file for this row (row 2 = index 0, etc.)
+        let file_idx = (row - 2) as usize;
+        if let Some(file) = files.get(file_idx) {
+            // File name (truncated)
+            let name = get_filename(&file.path);
+            let name_width = (width as usize).saturating_sub(12); // Leave room for bar
+            let truncated_name = truncate_path(name, name_width);
+
+            // Status icon
+            let (icon, icon_color) = match file.status.as_str() {
+                "M" => ("●", "38;5;220"), // Yellow
+                "A" => ("+", "38;5;83"),  // Green
+                "D" => ("−", "38;5;203"), // Red
+                "?" => ("?", "38;5;245"), // Gray
+                _ => ("•", "38;5;250"),
+            };
+
+            // Create scaled bar (max 8 chars)
+            let bar = create_diff_bar(file.additions, file.deletions, max_changes, 8);
+
+            let content = format!(
+                "\x1b[{}m{}\x1b[0m {} {}",
+                icon_color, icon, truncated_name, bar
+            );
+
+            write!(stdout, "{}", content)?;
+            let content_len = strip_ansi_len(&content);
+            let pad = (width as usize).saturating_sub(content_len);
+            write!(stdout, "{:pad$}", "", pad = pad)?;
+        } else {
+            write!(stdout, "{:width$}", "", width = width as usize)?;
+        }
+
+        Ok(())
+    }
+
+    fn draw_changes_widget(&self, stdout: &mut std::io::Stdout, col: u16, row: u16, width: u16) -> Result<()> {
+        write!(stdout, "\x1b[{};{}H", self.pty_rows + 1 + row, col + 1)?;
+
+        if row == 1 {
+            // Header
+            let header = format!("\x1b[38;5;179m Changes\x1b[0m");
+            write!(stdout, "{}", header)?;
+            let pad = (width as usize).saturating_sub(strip_ansi_len(&header));
+            write!(stdout, "{:pad$}", "", pad = pad)?;
+            return Ok(());
+        }
+
+        // Collect all semantic changes across files
+        let all_changes: Vec<_> = self.diff_summary.files.iter()
+            .flat_map(|f| f.changes.iter().map(move |c| (f, c)))
+            .collect();
+
+        if all_changes.is_empty() {
+            if row == 2 {
+                let content = "\x1b[38;5;245mNo semantic changes\x1b[0m";
+                write!(stdout, "{}", content)?;
+                let pad = (width as usize).saturating_sub(strip_ansi_len(content));
+                write!(stdout, "{:pad$}", "", pad = pad)?;
+            } else {
+                write!(stdout, "{:width$}", "", width = width as usize)?;
+            }
+            return Ok(());
+        }
+
+        // Multi-column layout: calculate how many items per column
+        let item_width = 20usize; // Each item takes ~20 chars
+        let num_cols = (width as usize / item_width).max(1);
+        let items_per_row = num_cols;
+
+        // Row 2 onwards shows changes
+        let row_idx = (row - 2) as usize;
+        let start_idx = row_idx * items_per_row;
+
+        let mut output = String::new();
+        for col_idx in 0..items_per_row {
+            let idx = start_idx + col_idx;
+            if idx >= all_changes.len() {
+                break;
+            }
+
+            let (_file, change) = &all_changes[idx];
+            let (icon, color) = get_change_icon_color(&change.kind);
+            let name = truncate_path(&change.name, item_width - 3);
+
+            output.push_str(&format!("\x1b[{}m{}\x1b[0m{} ", color, icon, name));
+        }
+
+        write!(stdout, "{}", output)?;
+        let content_len = strip_ansi_len(&output);
+        let pad = (width as usize).saturating_sub(content_len);
+        write!(stdout, "{:pad$}", "", pad = pad)?;
+
+        Ok(())
     }
 
     async fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {
@@ -535,6 +632,8 @@ impl AppV2 {
     }
 }
 
+use crate::parsers::NodeKind;
+
 // Helper functions
 fn truncate_path(path: &str, max_len: usize) -> String {
     if path.len() <= max_len {
@@ -543,18 +642,13 @@ fn truncate_path(path: &str, max_len: usize) -> String {
         "...".to_string()
     } else {
         // Show end of path (more useful)
-        format!("...{}", &path[path.len() - (max_len - 3)..])
+        format!("…{}", &path[path.len() - (max_len - 1)..])
     }
 }
 
-fn format_duration(seconds: u64) -> String {
-    let mins = seconds / 60;
-    let secs = seconds % 60;
-    if mins > 0 {
-        format!("{}m {}s", mins, secs)
-    } else {
-        format!("{}s", secs)
-    }
+/// Extract just the filename from a path
+fn get_filename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
 }
 
 fn format_number(n: u64) -> String {
@@ -564,6 +658,53 @@ fn format_number(n: u64) -> String {
         format!("{:.1}K", n as f64 / 1_000.0)
     } else {
         n.to_string()
+    }
+}
+
+/// Create a scaled diff bar showing additions (green) and deletions (red)
+/// Max width is `max_width` characters, scaled proportionally to `max_changes`
+fn create_diff_bar(additions: usize, deletions: usize, max_changes: usize, max_width: usize) -> String {
+    let total = additions + deletions;
+    if total == 0 {
+        return format!("\x1b[38;5;240m{}\x1b[0m", "·".repeat(max_width.min(2)));
+    }
+
+    // Scale to max_width based on max_changes
+    let scaled_total = ((total as f64 / max_changes as f64) * max_width as f64).ceil() as usize;
+    let bar_width = scaled_total.min(max_width).max(1);
+
+    // Distribute bar width between additions and deletions
+    let add_chars = if total > 0 {
+        ((additions as f64 / total as f64) * bar_width as f64).round() as usize
+    } else {
+        0
+    };
+    let del_chars = bar_width.saturating_sub(add_chars);
+
+    let mut bar = String::new();
+    if add_chars > 0 {
+        bar.push_str(&format!("\x1b[38;5;83m{}\x1b[0m", "+".repeat(add_chars)));
+    }
+    if del_chars > 0 {
+        bar.push_str(&format!("\x1b[38;5;203m{}\x1b[0m", "-".repeat(del_chars)));
+    }
+
+    bar
+}
+
+/// Get icon and color for a semantic change type
+fn get_change_icon_color(kind: &NodeKind) -> (&'static str, &'static str) {
+    match kind {
+        NodeKind::Class => ("◆", "38;5;141"),    // Purple - class
+        NodeKind::Function => ("ƒ", "38;5;39"),  // Blue - function
+        NodeKind::Method => ("·", "38;5;75"),    // Light blue - method
+        NodeKind::Struct => ("▣", "38;5;179"),   // Orange - struct
+        NodeKind::Enum => ("◇", "38;5;220"),     // Yellow - enum
+        NodeKind::Trait => ("◈", "38;5;213"),    // Pink - trait
+        NodeKind::Impl => ("▸", "38;5;114"),     // Green - impl
+        NodeKind::Module => ("▢", "38;5;245"),   // Gray - module
+        NodeKind::Const => ("●", "38;5;208"),    // Orange - const
+        NodeKind::Other => ("•", "38;5;245"),    // Gray - other
     }
 }
 

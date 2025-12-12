@@ -5,6 +5,15 @@ use tokio::process::Command;
 pub struct FileStatus {
     pub status: String,
     pub path: String,
+    pub additions: usize,
+    pub deletions: usize,
+}
+
+impl FileStatus {
+    /// Total lines changed (additions + deletions)
+    pub fn total_changes(&self) -> usize {
+        self.additions + self.deletions
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -60,12 +69,61 @@ impl GitState {
                     if line.len() >= 3 {
                         let status = line[0..2].trim().to_string();
                         let path = line[3..].to_string();
-                        state.files.push(FileStatus { status, path });
+                        state.files.push(FileStatus {
+                            status,
+                            path,
+                            additions: 0,
+                            deletions: 0,
+                        });
                     }
                 }
             }
         }
 
+        // Get diff --numstat for line counts
+        if let Ok(output) = Command::new("git")
+            .args(["diff", "--numstat"])
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                Self::parse_numstat(&stdout, &mut state.files);
+            }
+        }
+
+        // Also get staged diff stats
+        if let Ok(output) = Command::new("git")
+            .args(["diff", "--cached", "--numstat"])
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                Self::parse_numstat(&stdout, &mut state.files);
+            }
+        }
+
+        // Sort files by total changes (descending)
+        state.files.sort_by(|a, b| b.total_changes().cmp(&a.total_changes()));
+
         Ok(state)
+    }
+
+    fn parse_numstat(numstat: &str, files: &mut [FileStatus]) {
+        for line in numstat.lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 3 {
+                let additions = parts[0].parse::<usize>().unwrap_or(0);
+                let deletions = parts[1].parse::<usize>().unwrap_or(0);
+                let path = parts[2];
+
+                // Find matching file and update stats
+                if let Some(file) = files.iter_mut().find(|f| f.path == path) {
+                    file.additions += additions;
+                    file.deletions += deletions;
+                }
+            }
+        }
     }
 }
