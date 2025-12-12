@@ -2,8 +2,11 @@ mod app;
 mod events;
 mod git;
 mod hooks;
+mod input;
 mod parsers;
 mod pty;
+mod utils;
+mod widgets;
 
 use anyhow::Result;
 use crossterm::{

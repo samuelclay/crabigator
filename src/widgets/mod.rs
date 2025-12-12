@@ -1,0 +1,95 @@
+//! Widget modules for status bar rendering
+//!
+//! Each widget is responsible for rendering its own section of the status bar.
+//! Widgets use raw ANSI escape sequences for terminal output.
+
+mod changes;
+mod git;
+mod stats;
+
+pub use changes::draw_changes_widget;
+pub use git::draw_git_widget;
+pub use stats::draw_stats_widget;
+
+use std::io::{Stdout, Write};
+
+use anyhow::Result;
+
+use crate::git::GitState;
+use crate::hooks::ClaudeStats;
+use crate::parsers::DiffSummary;
+
+/// Layout information needed for rendering widgets
+pub struct Layout {
+    pub pty_rows: u16,
+    pub total_cols: u16,
+    pub status_rows: u16,
+}
+
+/// Draw the entire status bar area with all widgets
+pub fn draw_status_bar(
+    stdout: &mut Stdout,
+    layout: &Layout,
+    claude_stats: &ClaudeStats,
+    git_state: &GitState,
+    diff_summary: &DiffSummary,
+) -> Result<()> {
+    // Save cursor position
+    write!(stdout, "\x1b[s")?;
+
+    // Move to status area (below the scroll region)
+    write!(stdout, "\x1b[{};1H", layout.pty_rows + 1)?;
+
+    // Draw thin separator line
+    write!(stdout, "\x1b[48;5;236m\x1b[38;5;240m")?;
+    for _ in 0..layout.total_cols {
+        write!(stdout, "─")?;
+    }
+    write!(stdout, "\x1b[0m")?;
+
+    // Calculate column widths: Stats has min width, Git and Changes share the rest
+    let stats_width = 22u16; // Fixed width for stats
+    let remaining = layout.total_cols.saturating_sub(stats_width + 2); // 2 for separators
+    let git_width = remaining / 2;
+    let changes_width = remaining - git_width;
+
+    // Draw content rows
+    for row in 1..layout.status_rows {
+        write!(stdout, "\x1b[{};1H", layout.pty_rows + 1 + row)?;
+
+        // Stats column (leftmost, fixed width)
+        draw_stats_widget(stdout, layout.pty_rows, 0, row, stats_width, claude_stats)?;
+
+        // Separator
+        write!(stdout, "\x1b[38;5;240m│\x1b[0m")?;
+
+        // Git column
+        draw_git_widget(
+            stdout,
+            layout.pty_rows,
+            stats_width + 1,
+            row,
+            git_width,
+            git_state,
+        )?;
+
+        // Separator
+        write!(stdout, "\x1b[38;5;240m│\x1b[0m")?;
+
+        // Changes column (rightmost)
+        draw_changes_widget(
+            stdout,
+            layout.pty_rows,
+            stats_width + git_width + 2,
+            row,
+            changes_width,
+            diff_summary,
+        )?;
+    }
+
+    // Restore cursor position
+    write!(stdout, "\x1b[u")?;
+    stdout.flush()?;
+
+    Ok(())
+}
