@@ -316,21 +316,35 @@ impl AppV2 {
     }
 
     fn forward_key_to_pty(&mut self, key: KeyEvent) -> Result<()> {
+        let has_shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let has_alt = key.modifiers.contains(KeyModifiers::ALT);
         let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
+        // Calculate xterm modifier code: 1 + (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0)
+        // Only used when we have modifiers on special keys
+        let modifier_code = 1
+            + (if has_shift { 1 } else { 0 })
+            + (if has_alt { 2 } else { 0 })
+            + (if has_ctrl { 4 } else { 0 });
+        let has_modifiers = modifier_code > 1;
+
         let bytes = match key.code {
             KeyCode::Char(c) => {
-                if has_ctrl {
+                if has_ctrl && !has_alt && !has_shift {
                     // Ctrl+char: send control character
-                    vec![(c as u8) & 0x1f]
-                } else if has_alt {
+                    vec![(c.to_ascii_lowercase() as u8) & 0x1f]
+                } else if has_alt && !has_ctrl {
                     // Alt/Option+char: send ESC prefix (meta key encoding)
-                    // This enables Option+Delete (word delete), Option+Left/Right (word nav), etc.
                     let mut buf = [0u8; 4];
-                    let s = c.encode_utf8(&mut buf);
+                    let actual_char = if has_shift { c } else { c };
+                    let s = actual_char.encode_utf8(&mut buf);
                     let mut bytes = vec![0x1b]; // ESC prefix
                     bytes.extend_from_slice(s.as_bytes());
+                    bytes
+                } else if has_ctrl && has_alt {
+                    // Ctrl+Alt+char: ESC prefix + control character
+                    let mut bytes = vec![0x1b];
+                    bytes.push((c.to_ascii_lowercase() as u8) & 0x1f);
                     bytes
                 } else {
                     let mut buf = [0u8; 4];
@@ -343,56 +357,147 @@ impl AppV2 {
                 if has_alt {
                     // Option+Backspace: delete word backwards (ESC + DEL)
                     vec![0x1b, 0x7f]
+                } else if has_ctrl {
+                    // Ctrl+Backspace: often used for delete word
+                    vec![0x1b, 0x7f]
                 } else {
                     vec![0x7f]
                 }
             }
-            KeyCode::Tab => vec![b'\t'],
+            KeyCode::Tab => {
+                if has_shift {
+                    // Shift+Tab: back tab (CSI Z)
+                    vec![0x1b, b'[', b'Z']
+                } else if has_ctrl {
+                    // Ctrl+Tab: some terminals send this as CSI 9 ; modifier ~
+                    format!("\x1b[9;{}~", modifier_code).into_bytes()
+                } else {
+                    vec![b'\t']
+                }
+            }
+            KeyCode::BackTab => {
+                // BackTab is already Shift+Tab on some platforms
+                vec![0x1b, b'[', b'Z']
+            }
             KeyCode::Esc => vec![0x1b],
             KeyCode::Up => {
-                if has_alt {
-                    // Option+Up: often used for scroll or history
-                    vec![0x1b, 0x1b, b'[', b'A']
+                if has_modifiers {
+                    format!("\x1b[1;{}A", modifier_code).into_bytes()
                 } else {
                     vec![0x1b, b'[', b'A']
                 }
             }
             KeyCode::Down => {
-                if has_alt {
-                    vec![0x1b, 0x1b, b'[', b'B']
+                if has_modifiers {
+                    format!("\x1b[1;{}B", modifier_code).into_bytes()
                 } else {
                     vec![0x1b, b'[', b'B']
                 }
             }
             KeyCode::Right => {
-                if has_alt {
-                    // Option+Right: move word forward (ESC + f or ESC + [1;3C)
-                    vec![0x1b, b'[', b'1', b';', b'3', b'C']
+                if has_modifiers {
+                    format!("\x1b[1;{}C", modifier_code).into_bytes()
                 } else {
                     vec![0x1b, b'[', b'C']
                 }
             }
             KeyCode::Left => {
-                if has_alt {
-                    // Option+Left: move word backward (ESC + b or ESC + [1;3D)
-                    vec![0x1b, b'[', b'1', b';', b'3', b'D']
+                if has_modifiers {
+                    format!("\x1b[1;{}D", modifier_code).into_bytes()
                 } else {
                     vec![0x1b, b'[', b'D']
                 }
             }
-            KeyCode::Home => vec![0x1b, b'[', b'H'],
-            KeyCode::End => vec![0x1b, b'[', b'F'],
-            KeyCode::PageUp => vec![0x1b, b'[', b'5', b'~'],
-            KeyCode::PageDown => vec![0x1b, b'[', b'6', b'~'],
+            KeyCode::Home => {
+                if has_modifiers {
+                    format!("\x1b[1;{}H", modifier_code).into_bytes()
+                } else {
+                    vec![0x1b, b'[', b'H']
+                }
+            }
+            KeyCode::End => {
+                if has_modifiers {
+                    format!("\x1b[1;{}F", modifier_code).into_bytes()
+                } else {
+                    vec![0x1b, b'[', b'F']
+                }
+            }
+            KeyCode::PageUp => {
+                if has_modifiers {
+                    format!("\x1b[5;{}~", modifier_code).into_bytes()
+                } else {
+                    vec![0x1b, b'[', b'5', b'~']
+                }
+            }
+            KeyCode::PageDown => {
+                if has_modifiers {
+                    format!("\x1b[6;{}~", modifier_code).into_bytes()
+                } else {
+                    vec![0x1b, b'[', b'6', b'~']
+                }
+            }
             KeyCode::Delete => {
-                if has_alt {
+                if has_alt && !has_ctrl && !has_shift {
                     // Option+Delete: delete word forward (ESC + d)
                     vec![0x1b, b'd']
+                } else if has_modifiers {
+                    format!("\x1b[3;{}~", modifier_code).into_bytes()
                 } else {
                     vec![0x1b, b'[', b'3', b'~']
                 }
             }
-            KeyCode::Insert => vec![0x1b, b'[', b'2', b'~'],
+            KeyCode::Insert => {
+                if has_modifiers {
+                    format!("\x1b[2;{}~", modifier_code).into_bytes()
+                } else {
+                    vec![0x1b, b'[', b'2', b'~']
+                }
+            }
+            // Function keys F1-F12
+            KeyCode::F(n) => {
+                // Function key encoding varies, using xterm-style
+                let base_code = match n {
+                    1 => "P",
+                    2 => "Q",
+                    3 => "R",
+                    4 => "S",
+                    5 => "15~",
+                    6 => "17~",
+                    7 => "18~",
+                    8 => "19~",
+                    9 => "20~",
+                    10 => "21~",
+                    11 => "23~",
+                    12 => "24~",
+                    _ => return Ok(()),
+                };
+                if has_modifiers && n >= 5 {
+                    // F5-F12 use tilde format with modifiers
+                    let num = match n {
+                        5 => 15,
+                        6 => 17,
+                        7 => 18,
+                        8 => 19,
+                        9 => 20,
+                        10 => 21,
+                        11 => 23,
+                        12 => 24,
+                        _ => return Ok(()),
+                    };
+                    format!("\x1b[{};{}~", num, modifier_code).into_bytes()
+                } else if has_modifiers && n <= 4 {
+                    // F1-F4 use SS3 format, with modifiers use CSI 1 ; mod P/Q/R/S
+                    format!("\x1b[1;{}{}", modifier_code, base_code).into_bytes()
+                } else if n <= 4 {
+                    // F1-F4 without modifiers: SS3 P/Q/R/S
+                    format!("\x1bO{}", base_code).into_bytes()
+                } else {
+                    // F5-F12 without modifiers
+                    format!("\x1b[{}", base_code).into_bytes()
+                }
+            }
+            // Null character (Ctrl+Space or Ctrl+@)
+            KeyCode::Null => vec![0x00],
             _ => return Ok(()),
         };
 
