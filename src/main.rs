@@ -13,7 +13,7 @@ use crossterm::{
     cursor::Show,
     event::{DisableBracketedPaste, EnableBracketedPaste},
     execute,
-    terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
+    terminal::{self, disable_raw_mode, enable_raw_mode},
 };
 use std::env;
 use std::io::{stdout, Write};
@@ -49,18 +49,28 @@ fn parse_args() -> Args {
 }
 
 fn setup_terminal() -> Result<(u16, u16)> {
-    enable_raw_mode()?;
     let mut stdout = stdout();
+    let (cols, rows) = terminal::size()?;
+
+    // Push existing content up into scrollback by printing newlines
+    // This preserves the command that launched us in the scrollback buffer
+    for _ in 0..rows {
+        writeln!(stdout)?;
+    }
+    stdout.flush()?;
+
+    enable_raw_mode()?;
+
+    // Move cursor to top of screen and enable bracketed paste
     // Primary screen buffer (no alternate screen) - allows native scrollback
     // Disable mouse capture to allow native text selection
-    // Enable bracketed paste for efficient paste handling
+    write!(stdout, "\x1b[H")?; // Move cursor to top-left
     execute!(
         stdout,
-        Clear(ClearType::All),
         EnableBracketedPaste
     )?;
-    let size = terminal::size()?;
-    Ok(size)
+
+    Ok((cols, rows))
 }
 
 fn restore_terminal(total_rows: u16) -> Result<()> {
