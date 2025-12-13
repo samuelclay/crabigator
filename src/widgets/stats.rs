@@ -26,24 +26,29 @@ pub fn draw_stats_widget(
             "\x1b[38;5;141m Stats\x1b[0m".to_string()
         }
         2 => {
-            // Idle time with color based on duration
-            let idle_color = if stats.idle_seconds < 5 {
-                "38;5;83" // Bright green
-            } else if stats.idle_seconds < 60 {
-                "38;5;228" // Yellow
+            // Active/Idle status - "Active" when < 60s, "Idle" when >= 60s
+            if stats.idle_seconds < 60 {
+                format!(
+                    "\x1b[38;5;245m◇ Active\x1b[0m \x1b[38;5;83m{}\x1b[0m",
+                    stats.format_idle()
+                )
             } else {
-                "38;5;203" // Red
-            };
-            format!(
-                "\x1b[38;5;245m⏱ Idle\x1b[0m \x1b[{}m{}\x1b[0m",
-                idle_color,
-                stats.format_idle()
-            )
+                let idle_color = if stats.idle_seconds < 300 {
+                    "38;5;228" // Yellow (1-5 min)
+                } else {
+                    "38;5;203" // Red (5+ min)
+                };
+                format!(
+                    "\x1b[38;5;245m◇ Idle\x1b[0m \x1b[{}m{}\x1b[0m",
+                    idle_color,
+                    stats.format_idle()
+                )
+            }
         }
         3 => {
             // Session/work time
             format!(
-                "\x1b[38;5;245m⚡ Session\x1b[0m \x1b[38;5;39m{}\x1b[0m",
+                "\x1b[38;5;245m◆ Session\x1b[0m \x1b[38;5;39m{}\x1b[0m",
                 stats.format_work()
             )
         }

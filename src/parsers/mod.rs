@@ -51,6 +51,7 @@ pub struct FileChanges {
 #[derive(Clone, Debug, Default)]
 pub struct DiffSummary {
     pub files: Vec<FileChanges>,
+    pub loading: bool,
 }
 
 pub trait DiffParser: Send + Sync {
@@ -60,7 +61,10 @@ pub trait DiffParser: Send + Sync {
 
 impl DiffSummary {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            loading: true,
+            ..Self::default()
+        }
     }
 
     pub async fn refresh(&self) -> Result<Self> {

@@ -15,7 +15,7 @@ pub struct ClaudePty {
 }
 
 impl ClaudePty {
-    pub async fn new(output_tx: mpsc::Sender<Vec<u8>>, cols: u16, rows: u16) -> Result<Self> {
+    pub async fn new(output_tx: mpsc::Sender<Vec<u8>>, cols: u16, rows: u16, extra_args: Vec<String>) -> Result<Self> {
         let pty_system = native_pty_system();
 
         let pair = pty_system.openpty(PtySize {
@@ -26,6 +26,11 @@ impl ClaudePty {
         })?;
 
         let mut cmd = CommandBuilder::new("claude");
+
+        // Add any extra arguments (e.g., --resume, --continue)
+        for arg in extra_args {
+            cmd.arg(arg);
+        }
 
         // Inherit current working directory
         if let Ok(cwd) = env::current_dir() {
@@ -108,7 +113,13 @@ impl ClaudePty {
     }
 
     pub fn process_output(&mut self, data: &[u8]) {
-        self.parser.process(data);
+        // Wrap in catch_unwind to prevent vt100 parser panics from crashing the app
+        // The parser can panic on certain edge cases (e.g., cursor position out of bounds)
+        let parser_ptr = &mut self.parser as *mut vt100::Parser;
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // SAFETY: We're only accessing the parser within this closure
+            unsafe { (*parser_ptr).process(data) };
+        }));
     }
 
     pub fn write(&mut self, data: &[u8]) -> Result<()> {

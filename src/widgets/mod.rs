@@ -70,6 +70,7 @@ pub fn draw_status_bar(
             stats_width + 1,
             row,
             git_width,
+            layout.status_rows,
             git_state,
         )?;
 
@@ -83,6 +84,7 @@ pub fn draw_status_bar(
             stats_width + git_width + 2,
             row,
             changes_width,
+            layout.status_rows,
             diff_summary,
         )?;
     }

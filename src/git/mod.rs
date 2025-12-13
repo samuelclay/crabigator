@@ -1,3 +1,3 @@
 mod status;
 
-pub use status::GitState;
+pub use status::{FileStatus, GitState};

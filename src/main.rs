@@ -15,10 +15,38 @@ use crossterm::{
     execute,
     terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
+use std::env;
 use std::io::{stdout, Write};
 use std::panic;
 
 use crate::app::App;
+
+#[derive(Default)]
+struct Args {
+    claude_args: Vec<String>,
+}
+
+fn parse_args() -> Args {
+    let mut args = Args::default();
+    let mut iter = env::args().skip(1); // Skip the binary name
+
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "-r" | "--resume" => {
+                args.claude_args.push("--resume".to_string());
+            }
+            "-c" | "--continue" => {
+                args.claude_args.push("--continue".to_string());
+            }
+            _ => {
+                // Pass through any other arguments to claude
+                args.claude_args.push(arg);
+            }
+        }
+    }
+
+    args
+}
 
 fn setup_terminal() -> Result<(u16, u16)> {
     enable_raw_mode()?;
@@ -65,10 +93,12 @@ fn setup_panic_handler() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = parse_args();
+
     setup_panic_handler();
 
     let (cols, rows) = setup_terminal()?;
-    let mut app = App::new(cols, rows).await?;
+    let mut app = App::new(cols, rows, args.claude_args).await?;
 
     let result = app.run().await;
 

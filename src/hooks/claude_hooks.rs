@@ -45,39 +45,50 @@ impl ClaudeStats {
         self.messages_count += 1;
     }
 
-    /// Format idle time as compact string: "just now", "1m", "2m", etc.
+    /// Format idle time as compact string: "just now" or "Xm", "Xh Ym", "Xd Yh Zm"
+    /// Returns "just now" for < 60 seconds (caller displays as "Active")
+    /// Returns time format for >= 60 seconds (caller displays as "Idle")
     pub fn format_idle(&self) -> String {
-        if self.idle_seconds < 5 {
+        if self.idle_seconds < 60 {
             "just now".to_string()
-        } else if self.idle_seconds < 60 {
-            format!("{}s", self.idle_seconds)
-        } else if self.idle_seconds < 3600 {
-            format!("{}m", self.idle_seconds / 60)
         } else {
-            format!("{}h", self.idle_seconds / 3600)
+            Self::format_duration(self.idle_seconds)
         }
     }
 
-    /// Format work/session time as compact string
-    pub fn format_work(&self) -> String {
-        if self.work_seconds < 60 {
-            format!("{}s", self.work_seconds)
-        } else if self.work_seconds < 3600 {
-            let mins = self.work_seconds / 60;
-            let secs = self.work_seconds % 60;
-            if secs == 0 {
-                format!("{}m", mins)
+    /// Format a duration in seconds as compact string: "Xm", "Xh Ym", "Xd Yh Zm"
+    fn format_duration(seconds: u64) -> String {
+        let days = seconds / 86400;
+        let hours = (seconds % 86400) / 3600;
+        let mins = (seconds % 3600) / 60;
+
+        if days > 0 {
+            if hours > 0 && mins > 0 {
+                format!("{}d {}h {}m", days, hours, mins)
+            } else if hours > 0 {
+                format!("{}d {}h", days, hours)
+            } else if mins > 0 {
+                format!("{}d {}m", days, mins)
             } else {
-                format!("{}m{}s", mins, secs)
+                format!("{}d", days)
+            }
+        } else if hours > 0 {
+            if mins > 0 {
+                format!("{}h {}m", hours, mins)
+            } else {
+                format!("{}h", hours)
             }
         } else {
-            let hours = self.work_seconds / 3600;
-            let mins = (self.work_seconds % 3600) / 60;
-            if mins == 0 {
-                format!("{}h", hours)
-            } else {
-                format!("{}h{}m", hours, mins)
-            }
+            format!("{}m", mins)
+        }
+    }
+
+    /// Format work/session time as compact string: "just now", "Xm", "Xh Ym", "Xd Yh Zm"
+    pub fn format_work(&self) -> String {
+        if self.work_seconds < 60 {
+            "just now".to_string()
+        } else {
+            Self::format_duration(self.work_seconds)
         }
     }
 }

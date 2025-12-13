@@ -38,7 +38,7 @@ pub struct App {
 }
 
 impl App {
-    pub async fn new(cols: u16, rows: u16) -> Result<Self> {
+    pub async fn new(cols: u16, rows: u16, claude_args: Vec<String>) -> Result<Self> {
         let (pty_tx, pty_rx) = mpsc::channel(256);
 
         // Reserve bottom 20% for our status widgets (minimum 3 rows)
@@ -46,7 +46,7 @@ impl App {
         let pty_rows = rows.saturating_sub(status_rows);
 
         // Give Claude Code only the top portion
-        let claude_pty = ClaudePty::new(pty_tx, cols, pty_rows).await?;
+        let claude_pty = ClaudePty::new(pty_tx, cols, pty_rows, claude_args).await?;
         let git_state = GitState::new();
         let diff_summary = DiffSummary::new();
         let claude_stats = ClaudeStats::new();
@@ -97,6 +97,10 @@ impl App {
         self.setup_scroll_region()?;
 
         // Initial status bar draw
+        self.draw_status_bar()?;
+
+        // Trigger initial git refresh immediately
+        self.refresh_git_state().await;
         self.draw_status_bar()?;
 
         while self.running {
@@ -221,10 +225,16 @@ impl App {
     }
 
     async fn refresh_git_state(&mut self) {
-        if let Ok(status) = self.git_state.refresh().await {
+        // Run git status and diff parsing in parallel
+        let (git_result, diff_result) = tokio::join!(
+            self.git_state.refresh(),
+            self.diff_summary.refresh()
+        );
+
+        if let Ok(status) = git_result {
             self.git_state = status;
         }
-        if let Ok(diff) = self.diff_summary.refresh().await {
+        if let Ok(diff) = diff_result {
             self.diff_summary = diff;
         }
     }

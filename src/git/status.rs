@@ -7,6 +7,8 @@ pub struct FileStatus {
     pub path: String,
     pub additions: usize,
     pub deletions: usize,
+    pub is_folder: bool,
+    pub file_count: usize,
 }
 
 impl FileStatus {
@@ -21,11 +23,15 @@ pub struct GitState {
     pub files: Vec<FileStatus>,
     pub branch: String,
     pub is_repo: bool,
+    pub loading: bool,
 }
 
 impl GitState {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            loading: true,
+            ..Self::default()
+        }
     }
 
     pub async fn refresh(&self) -> Result<Self> {
@@ -69,14 +75,27 @@ impl GitState {
                     if line.len() >= 3 {
                         let status = line[0..2].trim().to_string();
                         let path = line[3..].to_string();
+
+                        // Detect if this is an untracked folder
+                        let is_folder = status == "??" && path.ends_with('/');
+
                         state.files.push(FileStatus {
                             status,
                             path,
                             additions: 0,
                             deletions: 0,
+                            is_folder,
+                            file_count: 0,
                         });
                     }
                 }
+            }
+        }
+
+        // Count files in untracked folders
+        for file in &mut state.files {
+            if file.is_folder {
+                file.file_count = Self::count_files_in_folder(&file.path).await;
             }
         }
 
@@ -125,5 +144,20 @@ impl GitState {
                 }
             }
         }
+    }
+
+    /// Count files inside an untracked folder using find
+    async fn count_files_in_folder(path: &str) -> usize {
+        if let Ok(output) = Command::new("find")
+            .args([path.trim_end_matches('/'), "-type", "f"])
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                return stdout.lines().count();
+            }
+        }
+        0
     }
 }
