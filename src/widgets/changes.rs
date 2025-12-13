@@ -53,14 +53,7 @@ pub fn draw_changes_widget(
     }
 
     if all_changes.is_empty() {
-        if row == 2 && !diff_summary.loading {
-            let content = "\x1b[38;5;245mNo semantic changes\x1b[0m";
-            write!(stdout, "{}", content)?;
-            let pad = (width as usize).saturating_sub(strip_ansi_len(content));
-            write!(stdout, "{:pad$}", "", pad = pad)?;
-        } else {
-            write!(stdout, "{:width$}", "", width = width as usize)?;
-        }
+        write!(stdout, "{:width$}", "", width = width as usize)?;
         return Ok(());
     }
 
@@ -78,7 +71,7 @@ pub fn draw_changes_widget(
             let change = all_changes[row_idx];
             let (icon, color) = get_change_icon_color(&change.kind);
             let name = truncate_path(&change.name, (width as usize).saturating_sub(2));
-            let item = format!("\x1b[{}m{}\x1b[0m{}", color, icon, name);
+            let item = format!("\x1b[{}m{}\x1b[0m {}", color, icon, name);
             write!(stdout, "{}", item)?;
             let content_len = strip_ansi_len(&item);
             let pad = (width as usize).saturating_sub(content_len);
@@ -118,7 +111,7 @@ pub fn draw_changes_widget(
                     let (icon, color) = get_change_icon_color(&change.kind);
                     let max_name_len = col_widths[col_idx].saturating_sub(2);
                     let name = truncate_path(&change.name, max_name_len);
-                    let item = format!("\x1b[{}m{}\x1b[0m{}", color, icon, name);
+                    let item = format!("\x1b[{}m{}\x1b[0m {}", color, icon, name);
                     let item_len = strip_ansi_len(&item);
                     output.push_str(&item);
                     // Pad to column width
@@ -193,5 +186,5 @@ pub fn draw_changes_widget(
 fn format_change_compact(change: &ChangeNode) -> String {
     let (icon, color) = get_change_icon_color(&change.kind);
     let name = truncate_middle(&change.name, 30);
-    format!("\x1b[{}m{}\x1b[0m{}", color, icon, name)
+    format!("\x1b[{}m{}\x1b[0m {}", color, icon, name)
 }

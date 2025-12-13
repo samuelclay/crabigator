@@ -20,10 +20,51 @@ impl DiffParser for RustParser {
         let trait_re = Regex::new(r"^\s*(pub\s+)?trait\s+(\w+)").unwrap();
         let mod_re = Regex::new(r"^\s*(pub\s+)?mod\s+(\w+)").unwrap();
         let const_re = Regex::new(r"^\s*(pub\s+)?const\s+(\w+)").unwrap();
+        // Pattern for hunk headers with function context: @@ -line,count +line,count @@ context
+        let hunk_re = Regex::new(r"^@@[^@]+@@\s*(.*)$").unwrap();
 
         let mut current_impl: Option<ChangeNode> = None;
 
         for line in diff.lines() {
+            // Check for hunk headers with function context
+            if let Some(caps) = hunk_re.captures(line) {
+                if let Some(context) = caps.get(1) {
+                    let context_str = context.as_str();
+                    // Try to extract function name from context
+                    if let Some(fn_caps) = fn_re.captures(context_str) {
+                        let fn_name = fn_caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
+                        // Add function if not already present
+                        if !changes.iter().any(|c: &ChangeNode| c.name == fn_name && c.kind == NodeKind::Function) {
+                            changes.push(ChangeNode {
+                                kind: NodeKind::Function,
+                                name: fn_name.to_string(),
+                                change_type: ChangeType::Modified,
+                                children: Vec::new(),
+                            });
+                        }
+                    }
+                    // Check for impl block in context
+                    else if let Some(impl_caps) = impl_re.captures(context_str) {
+                        let type_name = impl_caps.get(2).map(|m| m.as_str()).unwrap_or("Unknown");
+                        let trait_name = impl_caps.get(1).map(|m| m.as_str());
+                        let name = if let Some(trait_n) = trait_name {
+                            format!("{} for {}", trait_n, type_name)
+                        } else {
+                            type_name.to_string()
+                        };
+                        if !changes.iter().any(|c: &ChangeNode| c.name == name && c.kind == NodeKind::Impl) {
+                            changes.push(ChangeNode {
+                                kind: NodeKind::Impl,
+                                name,
+                                change_type: ChangeType::Modified,
+                                children: Vec::new(),
+                            });
+                        }
+                    }
+                }
+                continue;
+            }
+
             let is_added = line.starts_with('+') && !line.starts_with("+++");
             let is_removed = line.starts_with('-') && !line.starts_with("---");
 
