@@ -63,11 +63,16 @@ fn setup_terminal() -> Result<(u16, u16)> {
     Ok(size)
 }
 
-fn restore_terminal() -> Result<()> {
-    disable_raw_mode()?;
+fn restore_terminal(total_rows: u16) -> Result<()> {
     let mut stdout = stdout();
     // Reset scroll region to full screen
     write!(stdout, "\x1b[r")?;
+    // Move cursor to the bottom of the screen, then down one more line
+    // This ensures we're below all content (Claude output + status widgets)
+    write!(stdout, "\x1b[{};1H", total_rows)?;
+    stdout.flush()?;
+
+    disable_raw_mode()?;
     execute!(
         stdout,
         DisableBracketedPaste,
@@ -102,17 +107,15 @@ async fn main() -> Result<()> {
 
     let result = app.run().await;
 
-    // Capture stats before restoring terminal
+    // Capture stats and layout before restoring terminal
     let stats = app.claude_stats.clone();
+    let total_rows = app.total_rows;
 
-    restore_terminal()?;
+    restore_terminal(total_rows)?;
 
-    // Print session stats after exit
-    println!("\n--- Crabigator Session Stats ---");
-    println!("Session: {}", stats.format_work());
+    // Print token count after exit (status bar already shows full stats)
+    println!();
     println!("Tokens: {}", stats.tokens_used);
-    println!("Messages: {}", stats.messages_count);
-    println!("--------------------------------\n");
 
     result
 }
