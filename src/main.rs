@@ -1,4 +1,5 @@
 mod app;
+mod escape;
 mod events;
 mod git;
 mod hooks;
@@ -64,7 +65,7 @@ fn setup_terminal() -> Result<(u16, u16)> {
     // Move cursor to top of screen and enable bracketed paste
     // Primary screen buffer (no alternate screen) - allows native scrollback
     // Disable mouse capture to allow native text selection
-    write!(stdout, "\x1b[H")?; // Move cursor to top-left
+    write!(stdout, "{}", escape::CURSOR_HOME)?;
     execute!(
         stdout,
         EnableBracketedPaste
@@ -76,10 +77,10 @@ fn setup_terminal() -> Result<(u16, u16)> {
 fn restore_terminal(total_rows: u16) -> Result<()> {
     let mut stdout = stdout();
     // Reset scroll region to full screen
-    write!(stdout, "\x1b[r")?;
+    write!(stdout, "{}", escape::SCROLL_REGION_RESET)?;
     // Move cursor to the bottom of the screen, then down one more line
     // This ensures we're below all content (Claude output + status widgets)
-    write!(stdout, "\x1b[{};1H", total_rows)?;
+    write!(stdout, "{}", escape::cursor_to(total_rows, 1))?;
     stdout.flush()?;
 
     disable_raw_mode()?;
@@ -97,7 +98,7 @@ fn setup_panic_handler() {
     panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();
         // Reset scroll region
-        print!("\x1b[r");
+        print!("{}", escape::SCROLL_REGION_RESET);
         let _ = execute!(
             stdout(),
             DisableBracketedPaste

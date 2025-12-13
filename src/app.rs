@@ -12,6 +12,7 @@ use std::io::{stdout, Write};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+use crate::escape;
 use crate::git::GitState;
 use crate::hooks::ClaudeStats;
 use crate::input::{forward_key_to_pty, handle_app_command, KeyAction};
@@ -72,9 +73,9 @@ impl App {
         let mut stdout = stdout();
         // DECSTBM: Set Top and Bottom Margins (1-indexed)
         // This constrains scrolling to rows 1 through pty_rows
-        write!(stdout, "\x1b[1;{}r", self.pty_rows)?;
+        write!(stdout, "{}", escape::scroll_region(1, self.pty_rows))?;
         // Move cursor to top of scroll region
-        write!(stdout, "\x1b[H")?;
+        write!(stdout, "{}", escape::CURSOR_HOME)?;
         stdout.flush()?;
         Ok(())
     }
@@ -82,7 +83,7 @@ impl App {
     /// Reset scroll region to full screen
     fn reset_scroll_region(&self) -> Result<()> {
         let mut stdout = stdout();
-        write!(stdout, "\x1b[r")?;
+        write!(stdout, "{}", escape::SCROLL_REGION_RESET)?;
         stdout.flush()?;
         Ok(())
     }

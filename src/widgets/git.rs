@@ -7,6 +7,7 @@ use std::io::{Stdout, Write};
 
 use anyhow::Result;
 
+use crate::escape::{self, color, fg, RESET};
 use crate::git::{FileStatus, GitState};
 use crate::utils::{compute_unique_display_names, create_diff_bar, create_folder_bar, get_filename, strip_ansi_len, truncate_path};
 
@@ -20,7 +21,7 @@ pub fn draw_git_widget(
     height: u16,
     git_state: &GitState,
 ) -> Result<()> {
-    write!(stdout, "\x1b[{};{}H", pty_rows + 1 + row, col + 1)?;
+    write!(stdout, "{}", escape::cursor_to(pty_rows + 1 + row, col + 1))?;
 
     let files = &git_state.files;
 
@@ -31,18 +32,18 @@ pub fn draw_git_widget(
         } else {
             &git_state.branch
         };
-        let left = format!("\x1b[38;5;114m {}\x1b[0m", truncate_path(branch, 15));
+        let left = format!("{} {}{}", fg(color::LIGHT_GREEN), truncate_path(branch, 15), RESET);
         let left_len = strip_ansi_len(&left);
 
         // Right side: loading, "✓ Clean", or file count
         let right = if git_state.loading {
-            "\x1b[38;5;245m...\x1b[0m".to_string()
+            format!("{}...{}", fg(color::GRAY), RESET)
         } else if files.is_empty() {
-            "\x1b[38;5;83m✓ Clean\x1b[0m".to_string()
+            format!("{}✓ Clean{}", fg(color::GREEN), RESET)
         } else {
             let count = files.len();
             let label = if count == 1 { "file" } else { "files" };
-            format!("\x1b[38;5;220m{} {}\x1b[0m", count, label)
+            format!("{}{} {}{}", fg(color::YELLOW), count, label, RESET)
         };
         let right_len = strip_ansi_len(&right);
 
@@ -220,51 +221,50 @@ pub fn draw_git_widget(
 
 /// Format a file entry compactly (icon + name + short bar) for wrapped mode
 fn format_file_compact(file: &FileStatus, display_name: &str, max_changes: usize) -> String {
-    let (icon, icon_color) = match file.status.as_str() {
-        "M" => ("●", "38;5;220"),
-        "A" => ("+", "38;5;83"),
-        "D" => ("−", "38;5;203"),
-        "??" | "?" => ("?", "38;5;45"),
-        _ => ("•", "38;5;250"),
-    };
+    let (icon, icon_color) = get_status_icon_color(&file.status);
 
     if file.is_folder {
         let folder_name = get_filename(file.path.trim_end_matches('/'));
         let bar = create_folder_bar(file.file_count, max_changes, 4);
-        format!("\x1b[{}m{}\x1b[0m{}/ {}", icon_color, icon, folder_name, bar)
+        format!("{}{}{}{}/ {}", fg(icon_color), icon, RESET, folder_name, bar)
     } else {
         let bar = create_diff_bar(file.additions, file.deletions, max_changes, 4);
-        format!("\x1b[{}m{}\x1b[0m{} {}", icon_color, icon, display_name, bar)
+        format!("{}{}{}{} {}", fg(icon_color), icon, RESET, display_name, bar)
+    }
+}
+
+/// Get icon and color for a git status code
+fn get_status_icon_color(status: &str) -> (&'static str, u8) {
+    match status {
+        "M" => ("●", color::YELLOW),
+        "A" => ("+", color::GREEN),
+        "D" => ("−", color::RED),
+        "??" | "?" => ("?", color::CYAN),
+        _ => ("•", color::FAINT),
     }
 }
 
 /// Format a file entry at its natural width (no truncation) to measure actual size
 fn format_file_entry_natural(file: &FileStatus, display_name: &str, max_changes: usize) -> String {
-    let (icon, icon_color) = match file.status.as_str() {
-        "M" => ("●", "38;5;220"),
-        "A" => ("+", "38;5;83"),
-        "D" => ("−", "38;5;203"),
-        "??" | "?" => ("?", "38;5;45"),
-        _ => ("•", "38;5;250"),
-    };
+    let (icon, icon_color) = get_status_icon_color(&file.status);
 
     if file.is_folder {
         let folder_name = get_filename(file.path.trim_end_matches('/'));
         let count_display = if file.file_count == 0 {
-            format!("\x1b[38;5;240m0 files\x1b[0m")
+            format!("{}0 files{}", fg(color::DARK_GRAY), RESET)
         } else {
-            format!("\x1b[38;5;245m{} files\x1b[0m", file.file_count)
+            format!("{}{} files{}", fg(color::GRAY), file.file_count, RESET)
         };
         let bar = create_folder_bar(file.file_count, max_changes, 8);
         format!(
-            "\x1b[{}m{}\x1b[0m {}/ {} {}",
-            icon_color, icon, folder_name, count_display, bar
+            "{}{}{} {}/ {} {}",
+            fg(icon_color), icon, RESET, folder_name, count_display, bar
         )
     } else {
         let bar = create_diff_bar(file.additions, file.deletions, max_changes, 8);
         format!(
-            "\x1b[{}m{}\x1b[0m {} {}",
-            icon_color, icon, display_name, bar
+            "{}{}{} {} {}",
+            fg(icon_color), icon, RESET, display_name, bar
         )
     }
 }
@@ -272,13 +272,7 @@ fn format_file_entry_natural(file: &FileStatus, display_name: &str, max_changes:
 /// Format a single file entry for display
 fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, max_changes: usize) -> String {
     // Status icon
-    let (icon, icon_color) = match file.status.as_str() {
-        "M" => ("●", "38;5;220"),  // Yellow
-        "A" => ("+", "38;5;83"),   // Green
-        "D" => ("−", "38;5;203"),  // Red
-        "??" | "?" => ("?", "38;5;45"), // Cyan for untracked
-        _ => ("•", "38;5;250"),
-    };
+    let (icon, icon_color) = get_status_icon_color(&file.status);
 
     if file.is_folder {
         // Folder display: "? folder_name/ N files +++++"
@@ -287,9 +281,9 @@ fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, ma
 
         // File count in gray, or dim if 0
         let count_display = if file.file_count == 0 {
-            format!("\x1b[38;5;240m0 files\x1b[0m")
+            format!("{}0 files{}", fg(color::DARK_GRAY), RESET)
         } else {
-            format!("\x1b[38;5;245m{} files\x1b[0m", file.file_count)
+            format!("{}{} files{}", fg(color::GRAY), file.file_count, RESET)
         };
 
         // Create folder bar (cyan) scaled relative to max
@@ -301,8 +295,8 @@ fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, ma
         let truncated_folder = truncate_path(&folder_display, name_width);
 
         format!(
-            "\x1b[{}m{}\x1b[0m {} {} {}",
-            icon_color, icon, truncated_folder, count_display, bar
+            "{}{}{} {} {} {}",
+            fg(icon_color), icon, RESET, truncated_folder, count_display, bar
         )
     } else {
         // Regular file display - use the pre-computed unique display name
@@ -314,8 +308,8 @@ fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, ma
         let bar = create_diff_bar(file.additions, file.deletions, max_changes, 8);
 
         format!(
-            "\x1b[{}m{}\x1b[0m {} {}",
-            icon_color, icon, truncated_name, bar
+            "{}{}{} {} {}",
+            fg(icon_color), icon, RESET, truncated_name, bar
         )
     }
 }

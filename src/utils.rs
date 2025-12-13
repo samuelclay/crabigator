@@ -5,6 +5,7 @@
 
 use unicode_width::UnicodeWidthChar;
 
+use crate::escape::{color, fg, RESET};
 use crate::parsers::NodeKind;
 
 /// Truncate a path string, showing the end with ellipsis if too long
@@ -125,7 +126,7 @@ pub fn create_diff_bar(
 ) -> String {
     let total = additions + deletions;
     if total == 0 {
-        return format!("\x1b[38;5;240m{}\x1b[0m", "·".repeat(max_width.min(2)));
+        return format!("{}{}{}", fg(color::DARK_GRAY), "·".repeat(max_width.min(2)), RESET);
     }
 
     // Scale to max_width based on max_changes
@@ -142,10 +143,10 @@ pub fn create_diff_bar(
 
     let mut bar = String::new();
     if add_chars > 0 {
-        bar.push_str(&format!("\x1b[38;5;83m{}\x1b[0m", "+".repeat(add_chars)));
+        bar.push_str(&format!("{}{}{}", fg(color::GREEN), "+".repeat(add_chars), RESET));
     }
     if del_chars > 0 {
-        bar.push_str(&format!("\x1b[38;5;203m{}\x1b[0m", "-".repeat(del_chars)));
+        bar.push_str(&format!("{}{}{}", fg(color::RED), "-".repeat(del_chars), RESET));
     }
 
     bar
@@ -155,30 +156,30 @@ pub fn create_diff_bar(
 /// Scaled relative to max_count (which could be file changes or file counts)
 pub fn create_folder_bar(file_count: usize, max_count: usize, max_width: usize) -> String {
     if file_count == 0 {
-        return format!("\x1b[38;5;240m{}\x1b[0m", "·".repeat(max_width.min(2)));
+        return format!("{}{}{}", fg(color::DARK_GRAY), "·".repeat(max_width.min(2)), RESET);
     }
 
     let max_count = max_count.max(1);
     let scaled = ((file_count as f64 / max_count as f64) * max_width as f64).ceil() as usize;
     let bar_width = scaled.min(max_width).max(1);
 
-    format!("\x1b[38;5;45m{}\x1b[0m", "+".repeat(bar_width))
+    format!("{}{}{}", fg(color::CYAN), "+".repeat(bar_width), RESET)
 }
 
 /// Get icon and color for a semantic change type.
 /// Icons with ambiguous unicode width include a trailing space to prevent overlap.
-pub fn get_change_icon_color(kind: &NodeKind) -> (&'static str, &'static str) {
+pub fn get_change_icon_color(kind: &NodeKind) -> (&'static str, u8) {
     match kind {
-        NodeKind::Class => ("◆", "38;5;141"),     // Purple - class
-        NodeKind::Function => ("ƒ", "38;5;39"),   // Blue - function
-        NodeKind::Method => ("·", "38;5;75"),     // Light blue - method
-        NodeKind::Struct => ("▣ ", "38;5;179"),   // Orange - struct (space for ambiguous width)
-        NodeKind::Enum => ("◇", "38;5;220"),      // Yellow - enum
-        NodeKind::Trait => ("◈", "38;5;213"),     // Pink - trait
-        NodeKind::Impl => ("▸", "38;5;114"),      // Green - impl
-        NodeKind::Module => ("▢ ", "38;5;245"),   // Gray - module (space for ambiguous width)
-        NodeKind::Const => ("●", "38;5;208"),     // Orange - const
-        NodeKind::Other => ("•", "38;5;245"),     // Gray - other
+        NodeKind::Class => ("◆", color::PURPLE),        // Purple - class
+        NodeKind::Function => ("ƒ", color::BLUE),       // Blue - function
+        NodeKind::Method => ("·", color::LIGHT_BLUE),   // Light blue - method
+        NodeKind::Struct => ("▣ ", color::ORANGE),      // Orange - struct (space for ambiguous width)
+        NodeKind::Enum => ("◇", color::YELLOW),         // Yellow - enum
+        NodeKind::Trait => ("◈", color::PINK),          // Pink - trait
+        NodeKind::Impl => ("▸", color::LIGHT_GREEN),    // Green - impl
+        NodeKind::Module => ("▢ ", color::GRAY),        // Gray - module (space for ambiguous width)
+        NodeKind::Const => ("●", color::DARK_ORANGE),   // Orange - const
+        NodeKind::Other => ("•", color::GRAY),          // Gray - other
     }
 }
 

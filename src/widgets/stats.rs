@@ -6,6 +6,7 @@ use std::io::{Stdout, Write};
 
 use anyhow::Result;
 
+use crate::escape::{self, color, fg, RESET};
 use crate::hooks::ClaudeStats;
 use crate::utils::{format_number, strip_ansi_len};
 
@@ -18,52 +19,56 @@ pub fn draw_stats_widget(
     width: u16,
     stats: &ClaudeStats,
 ) -> Result<()> {
-    write!(stdout, "\x1b[{};{}H", pty_rows + 1 + row, col + 1)?;
+    write!(stdout, "{}", escape::cursor_to(pty_rows + 1 + row, col + 1))?;
 
     let content = match row {
         1 => {
             // Header
-            "\x1b[38;5;141m Stats\x1b[0m".to_string()
+            format!("{} Stats{}", fg(color::PURPLE), RESET)
         }
         2 => {
             // Active/Idle status - "Active" when < 60s, "Idle" when >= 60s
             if stats.idle_seconds < 60 {
                 format!(
-                    "\x1b[38;5;245m◇ Active\x1b[0m \x1b[38;5;83m{}\x1b[0m",
-                    stats.format_idle()
+                    "{}◇ Active{} {}{}{}",
+                    fg(color::GRAY), RESET,
+                    fg(color::GREEN), stats.format_idle(), RESET
                 )
             } else {
                 let idle_color = if stats.idle_seconds < 300 {
-                    "38;5;228" // Yellow (1-5 min)
+                    color::LIGHT_YELLOW // Yellow (1-5 min)
                 } else {
-                    "38;5;203" // Red (5+ min)
+                    color::RED // Red (5+ min)
                 };
                 format!(
-                    "\x1b[38;5;245m◇ Idle\x1b[0m \x1b[{}m{}\x1b[0m",
-                    idle_color,
-                    stats.format_idle()
+                    "{}◇ Idle{} {}{}{}",
+                    fg(color::GRAY), RESET,
+                    fg(idle_color), stats.format_idle(), RESET
                 )
             }
         }
         3 => {
             // Session/work time
             format!(
-                "\x1b[38;5;245m◆ Session\x1b[0m \x1b[38;5;39m{}\x1b[0m",
-                stats.format_work()
+                "{}◆ Session{} {}{}{}",
+                fg(color::GRAY), RESET,
+                fg(color::BLUE), stats.format_work(), RESET
             )
         }
         4 => {
             // Tokens
             format!(
-                "\x1b[38;5;245m◈ Tokens\x1b[0m \x1b[38;5;213m{}\x1b[0m",
-                format_number(stats.tokens_used)
+                "{}◈ Tokens{} {}{}{}",
+                fg(color::GRAY), RESET,
+                fg(color::PINK), format_number(stats.tokens_used), RESET
             )
         }
         5 => {
             // Messages
             format!(
-                "\x1b[38;5;245m✉ Msgs\x1b[0m \x1b[38;5;75m{}\x1b[0m",
-                stats.messages_count
+                "{}✉ Msgs{} {}{}{}",
+                fg(color::GRAY), RESET,
+                fg(color::LIGHT_BLUE), stats.messages_count, RESET
             )
         }
         _ => String::new(),

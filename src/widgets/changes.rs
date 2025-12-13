@@ -9,6 +9,7 @@ use anyhow::Result;
 
 use unicode_width::UnicodeWidthStr;
 
+use crate::escape::{self, color, fg, RESET};
 use crate::parsers::{ChangeNode, DiffSummary};
 use crate::utils::{get_change_icon_color, strip_ansi_len, truncate_middle, truncate_path};
 
@@ -22,7 +23,7 @@ pub fn draw_changes_widget(
     height: u16,
     diff_summary: &DiffSummary,
 ) -> Result<()> {
-    write!(stdout, "\x1b[{};{}H", pty_rows + 1 + row, col + 1)?;
+    write!(stdout, "{}", escape::cursor_to(pty_rows + 1 + row, col + 1))?;
 
     // Collect all semantic changes across files
     let all_changes: Vec<_> = diff_summary
@@ -33,17 +34,17 @@ pub fn draw_changes_widget(
 
     if row == 1 {
         // Header with loading indicator or count on right
-        let left = "\x1b[38;5;179m Changes\x1b[0m";
-        let left_len = strip_ansi_len(left);
+        let left = format!("{} Changes{}", fg(color::ORANGE), RESET);
+        let left_len = strip_ansi_len(&left);
 
         let right = if diff_summary.loading {
-            "\x1b[38;5;245m...\x1b[0m".to_string()
+            format!("{}...{}", fg(color::GRAY), RESET)
         } else if all_changes.is_empty() {
             "".to_string()
         } else {
             let count = all_changes.len();
             let label = if count == 1 { "change" } else { "changes" };
-            format!("\x1b[38;5;179m{} {}\x1b[0m", count, label)
+            format!("{}{} {}{}", fg(color::ORANGE), count, label, RESET)
         };
         let right_len = strip_ansi_len(&right);
 
@@ -69,9 +70,9 @@ pub fn draw_changes_widget(
         // Single column - all items fit vertically
         if row_idx < num_changes {
             let change = all_changes[row_idx];
-            let (icon, color) = get_change_icon_color(&change.kind);
+            let (icon, icon_color) = get_change_icon_color(&change.kind);
             let name = truncate_path(&change.name, (width as usize).saturating_sub(2));
-            let item = format!("\x1b[{}m{}\x1b[0m {}", color, icon, name);
+            let item = format!("{}{}{} {}", fg(icon_color), icon, RESET, name);
             write!(stdout, "{}", item)?;
             let content_len = strip_ansi_len(&item);
             let pad = (width as usize).saturating_sub(content_len);
@@ -108,10 +109,10 @@ pub fn draw_changes_widget(
                 let idx = col_idx * available_rows + row_idx;
                 if idx < num_changes {
                     let change = all_changes[idx];
-                    let (icon, color) = get_change_icon_color(&change.kind);
+                    let (icon, icon_color) = get_change_icon_color(&change.kind);
                     let max_name_len = col_widths[col_idx].saturating_sub(2);
                     let name = truncate_path(&change.name, max_name_len);
-                    let item = format!("\x1b[{}m{}\x1b[0m {}", color, icon, name);
+                    let item = format!("{}{}{} {}", fg(icon_color), icon, RESET, name);
                     let item_len = strip_ansi_len(&item);
                     output.push_str(&item);
                     // Pad to column width
@@ -184,7 +185,7 @@ pub fn draw_changes_widget(
 
 /// Format a semantic change compactly (icon + name) for wrapped mode
 fn format_change_compact(change: &ChangeNode) -> String {
-    let (icon, color) = get_change_icon_color(&change.kind);
+    let (icon, icon_color) = get_change_icon_color(&change.kind);
     let name = truncate_middle(&change.name, 30);
-    format!("\x1b[{}m{}\x1b[0m {}", color, icon, name)
+    format!("{}{}{} {}", fg(icon_color), icon, RESET, name)
 }
