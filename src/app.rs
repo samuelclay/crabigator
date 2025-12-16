@@ -124,9 +124,16 @@ impl App {
                 last_git_refresh = Instant::now();
             }
 
-            // Refresh platform stats more frequently
+            // Refresh platform stats more frequently and redraw if state changed
             if last_hook_refresh.elapsed() >= hook_refresh_interval {
+                let old_state = self.claude_stats.platform_stats.state;
                 self.claude_stats.refresh_platform_stats(&self.cwd);
+                let new_state = self.claude_stats.platform_stats.state;
+                // Redraw immediately if state changed (e.g., Thinking -> Complete)
+                if old_state != new_state {
+                    self.draw_status_bar()?;
+                    last_status_draw = Instant::now();
+                }
                 last_hook_refresh = Instant::now();
             }
 
