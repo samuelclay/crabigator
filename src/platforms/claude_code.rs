@@ -25,6 +25,7 @@ Crabigator stats hook for Claude Code
 Handles: PostToolUse, Stop, SubagentStop, PreCompact, UserPromptSubmit
 
 State machine:
+  - ready: Initial state (nothing happened yet)
   - thinking: Claude is actively processing
   - question: Claude asked a question (AskUserQuestion tool)
   - complete: Claude finished responding
@@ -39,7 +40,11 @@ import time
 from pathlib import Path
 
 def get_stats_file(cwd: str) -> Path:
-    """Get stats file path based on working directory hash."""
+    """Get stats file path based on session ID (from env) or working directory hash."""
+    session_id = os.environ.get("CRABIGATOR_SESSION_ID")
+    if session_id:
+        return Path(f"/tmp/crabigator-stats-{session_id}.json")
+    # Fallback to cwd hash if no session ID
     cwd_hash = hashlib.md5(cwd.encode()).hexdigest()[:12]
     return Path(f"/tmp/crabigator-stats-{cwd_hash}.json")
 
@@ -56,7 +61,7 @@ def load_stats(stats_file: Path) -> dict:
         "subagent_messages": 0,
         "compressions": 0,
         "tools": {},
-        "state": "complete",
+        "state": "ready",
         "pending_question": False,
         "last_updated": None,
     }
@@ -66,10 +71,18 @@ def save_stats(stats_file: Path, stats: dict):
     stats["last_updated"] = time.time()
 
     # Write to temp file then rename for atomicity
-    temp_file = stats_file.with_suffix('.tmp')
-    with open(temp_file, 'w') as f:
-        json.dump(stats, f)
-    temp_file.rename(stats_file)
+    # Use unique temp file name to avoid race conditions between concurrent hooks
+    temp_file = stats_file.with_suffix(f'.{os.getpid()}.tmp')
+    try:
+        with open(temp_file, 'w') as f:
+            json.dump(stats, f)
+        temp_file.rename(stats_file)
+    except OSError:
+        # If rename fails, try to clean up temp file
+        try:
+            temp_file.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 def main():
     try:
@@ -485,10 +498,15 @@ impl ClaudeCodePlatform {
         hex_string[..len.min(hex_string.len())].to_string()
     }
 
-    /// Get stats file path for given working directory
+    /// Get stats file path - uses session ID from env var if available, otherwise cwd hash
     fn stats_file_path(cwd: &str) -> PathBuf {
-        let hash = Self::md5_hash_prefix(cwd, 12);
-        PathBuf::from(format!("/tmp/crabigator-stats-{}.json", hash))
+        if let Ok(session_id) = std::env::var("CRABIGATOR_SESSION_ID") {
+            PathBuf::from(format!("/tmp/crabigator-stats-{}.json", session_id))
+        } else {
+            // Fallback to cwd hash if no session ID
+            let hash = Self::md5_hash_prefix(cwd, 12);
+            PathBuf::from(format!("/tmp/crabigator-stats-{}.json", hash))
+        }
     }
 }
 

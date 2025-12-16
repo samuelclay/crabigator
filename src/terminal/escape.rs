@@ -103,9 +103,11 @@ pub mod color {
     pub const BG_DARK: u8 = 236;
 
     /// Black (16) - For text on colored backgrounds
+    #[allow(dead_code)]
     pub const BLACK: u8 = 16;
 
     /// White (231) - For text on dark backgrounds
+    #[allow(dead_code)]
     pub const WHITE: u8 = 231;
 }
 

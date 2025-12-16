@@ -10,16 +10,18 @@ use std::collections::HashMap;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-/// Session state - the 3 possible states Claude can be in
+/// Session state - the 4 possible states Claude can be in
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionState {
+    /// Initial state - nothing has happened yet (default on startup)
+    #[default]
+    Ready,
     /// Claude is actively processing/generating
     Thinking,
     /// Claude asked a question and is waiting for response
     Question,
-    /// Claude finished and is waiting for next prompt (default on startup)
-    #[default]
+    /// Claude finished responding
     Complete,
 }
 
