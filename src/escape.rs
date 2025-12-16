@@ -120,9 +120,6 @@ pub mod key {
     /// Null byte
     pub const NUL: u8 = 0x00;
 
-    /// Ctrl+A byte (0x01)
-    pub const CTRL_A: u8 = 0x01;
-
     // === CSI Sequences for Special Keys ===
 
     /// Shift+Tab / Back Tab (CSI Z)

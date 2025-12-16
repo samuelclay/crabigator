@@ -34,10 +34,9 @@ The application uses a **scroll region approach** to layer UI:
 
 ### Input Handling
 
-- All keyboard input forwards to the PTY except for the Ctrl+A prefix:
-  - `Ctrl+A q` - Quit crabigator
-  - `Ctrl+A a` - Send literal Ctrl+A to PTY
+- All keyboard input forwards directly to the PTY
 - Option/Alt key combinations are properly encoded for word navigation (Option+Left/Right) and word deletion (Option+Backspace/Delete)
+- When Claude Code exits, Crabigator exits automatically
 
 ### Terminal Considerations
 

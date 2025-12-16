@@ -9,49 +9,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::escape::key;
 use crate::pty::ClaudePty;
 
-/// Result of handling a key event
-pub enum KeyAction {
-    /// Key was handled internally, no further action needed
-    Handled,
-    /// Request to quit the application
-    Quit,
-}
-
-/// Handle application-level key commands (Ctrl+A prefix)
-///
-/// Returns `Some(KeyAction)` if the key was handled, `None` if it should be forwarded to PTY
-pub fn handle_app_command(
-    key: KeyEvent,
-    ctrl_a_pressed: &mut bool,
-    pty: &mut ClaudePty,
-) -> Result<Option<KeyAction>> {
-    // Check for Ctrl+A prefix for app commands
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('a') {
-        *ctrl_a_pressed = true;
-        return Ok(Some(KeyAction::Handled));
-    }
-
-    if *ctrl_a_pressed {
-        *ctrl_a_pressed = false;
-        match key.code {
-            KeyCode::Char('q') | KeyCode::Char('Q') => {
-                return Ok(Some(KeyAction::Quit));
-            }
-            KeyCode::Char('a') => {
-                // Send literal Ctrl+A
-                pty.write(&[key::CTRL_A])?;
-                return Ok(Some(KeyAction::Handled));
-            }
-            _ => {
-                // Unknown command, ignore
-                return Ok(Some(KeyAction::Handled));
-            }
-        }
-    }
-
-    Ok(None)
-}
-
 /// Forward a key event to the PTY with proper encoding
 pub fn forward_key_to_pty(key: KeyEvent, pty: &mut ClaudePty) -> Result<()> {
     let bytes = encode_key(key);

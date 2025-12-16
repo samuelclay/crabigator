@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use crate::escape;
 use crate::git::GitState;
 use crate::hooks::ClaudeStats;
-use crate::input::{forward_key_to_pty, handle_app_command, KeyAction};
+use crate::input::forward_key_to_pty;
 use crate::parsers::DiffSummary;
 use crate::pty::ClaudePty;
 use crate::widgets::{draw_status_bar, Layout};
@@ -26,7 +26,6 @@ pub struct App {
     pub git_state: GitState,
     pub diff_summary: DiffSummary,
     pub claude_stats: ClaudeStats,
-    pub ctrl_a_pressed: bool,
     pub last_mouse_event: Option<MouseEvent>,
 
     // Layout
@@ -58,7 +57,6 @@ impl App {
             git_state,
             diff_summary,
             claude_stats,
-            ctrl_a_pressed: false,
             last_mouse_event: None,
             total_rows: rows,
             total_cols: cols,
@@ -189,18 +187,6 @@ impl App {
     }
 
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
-        // Check for app commands first
-        if let Some(action) =
-            handle_app_command(key, &mut self.ctrl_a_pressed, &mut self.claude_pty)?
-        {
-            match action {
-                KeyAction::Quit => self.running = false,
-                KeyAction::Handled => {}
-            }
-            return Ok(());
-        }
-
-        // Forward to PTY
         forward_key_to_pty(key, &mut self.claude_pty)?;
         Ok(())
     }

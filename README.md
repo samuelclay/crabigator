@@ -47,13 +47,9 @@ Crabigator spawns Claude Code in a pseudo-terminal (PTY) and constrains its outp
 
 ## Keyboard Shortcuts
 
-| Shortcut       | Action                         |
-| -------------- | ------------------------------ |
-| `Ctrl+A q`     | Quit Crabigator                |
-| `Ctrl+A a`     | Send literal Ctrl+A to Claude  |
-| All other keys | Passed directly to Claude Code |
+All keyboard input is passed directly to Claude Code. Option/Alt key combinations work as expected for word navigation and deletion.
 
-Option/Alt key combinations work as expected for word navigation and deletion.
+When Claude Code exits (via `/exit` or Ctrl+C), Crabigator exits automatically.
 
 ## Future Features
 
