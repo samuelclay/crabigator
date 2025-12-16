@@ -7,9 +7,9 @@ use std::io::{Stdout, Write};
 
 use anyhow::Result;
 
-use crate::escape::{self, color, fg, RESET};
+use crate::terminal::escape::{self, color, fg, RESET};
 use crate::git::{FileStatus, GitState};
-use crate::utils::{compute_unique_display_names, create_diff_bar, create_folder_bar, get_filename, strip_ansi_len, truncate_path};
+use super::utils::{compute_unique_display_names, create_diff_bar, create_folder_bar, get_filename, strip_ansi_len, truncate_path};
 
 /// Draw the git widget at the given position
 pub fn draw_git_widget(

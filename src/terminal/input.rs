@@ -6,8 +6,8 @@
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::escape::key;
-use crate::pty::ClaudePty;
+use super::escape::key;
+use super::pty::ClaudePty;
 
 /// Forward a key event to the PTY with proper encoding
 pub fn forward_key_to_pty(key: KeyEvent, pty: &mut ClaudePty) -> Result<()> {

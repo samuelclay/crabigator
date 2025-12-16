@@ -1,62 +1,21 @@
-mod generic;
-mod python;
-mod rust;
-mod typescript;
+//! Diff summary and parser trait
 
 use anyhow::Result;
 use tokio::process::Command;
 
-pub use generic::GenericParser;
-pub use python::PythonParser;
-pub use rust::RustParser;
-pub use typescript::TypeScriptParser;
+use super::types::{ChangeNode, FileChanges};
+use super::{GenericParser, PythonParser, RustParser, TypeScriptParser};
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum NodeKind {
-    Class,
-    Function,
-    Method,
-    Struct,
-    Enum,
-    Trait,
-    Impl,
-    Module,
-    Const,
-    Other,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum ChangeType {
-    Added,
-    Modified,
-    Deleted,
-}
-
-#[derive(Clone, Debug)]
-pub struct ChangeNode {
-    pub kind: NodeKind,
-    pub name: String,
-    #[allow(dead_code)]
-    pub change_type: ChangeType,
-    pub children: Vec<ChangeNode>,
-}
-
-#[derive(Clone, Debug)]
-pub struct FileChanges {
-    #[allow(dead_code)]
-    pub path: String,
-    pub changes: Vec<ChangeNode>,
+/// Trait for language-specific diff parsers
+pub trait DiffParser: Send + Sync {
+    fn supports(&self, filename: &str) -> bool;
+    fn parse(&self, diff: &str, filename: &str) -> Vec<ChangeNode>;
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct DiffSummary {
     pub files: Vec<FileChanges>,
     pub loading: bool,
-}
-
-pub trait DiffParser: Send + Sync {
-    fn supports(&self, filename: &str) -> bool;
-    fn parse(&self, diff: &str, filename: &str) -> Vec<ChangeNode>;
 }
 
 impl DiffSummary {

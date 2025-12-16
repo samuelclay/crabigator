@@ -1,20 +1,16 @@
 mod app;
-mod escape;
-mod events;
 mod git;
 mod hooks;
-mod input;
 mod parsers;
-mod pty;
-mod utils;
-mod widgets;
+mod terminal;
+mod ui;
 
 use anyhow::Result;
 use crossterm::{
     cursor::Show,
     event::{DisableBracketedPaste, EnableBracketedPaste},
     execute,
-    terminal::{self, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, size as terminal_size},
 };
 use std::env;
 use std::io::{stdout, Write};
@@ -51,7 +47,7 @@ fn parse_args() -> Args {
 
 fn setup_terminal() -> Result<(u16, u16)> {
     let mut stdout = stdout();
-    let (cols, rows) = terminal::size()?;
+    let (cols, rows) = terminal_size()?;
 
     // Push existing content up into scrollback by printing newlines
     // This preserves the command that launched us in the scrollback buffer
@@ -65,7 +61,7 @@ fn setup_terminal() -> Result<(u16, u16)> {
     // Move cursor to top of screen and enable bracketed paste
     // Primary screen buffer (no alternate screen) - allows native scrollback
     // Disable mouse capture to allow native text selection
-    write!(stdout, "{}", escape::CURSOR_HOME)?;
+    write!(stdout, "{}", terminal::escape::CURSOR_HOME)?;
     execute!(
         stdout,
         EnableBracketedPaste
@@ -77,10 +73,10 @@ fn setup_terminal() -> Result<(u16, u16)> {
 fn restore_terminal(total_rows: u16) -> Result<()> {
     let mut stdout = stdout();
     // Reset scroll region to full screen
-    write!(stdout, "{}", escape::SCROLL_REGION_RESET)?;
+    write!(stdout, "{}", terminal::escape::SCROLL_REGION_RESET)?;
     // Move cursor to the bottom of the screen, then down one more line
     // This ensures we're below all content (Claude output + status widgets)
-    write!(stdout, "{}", escape::cursor_to(total_rows, 1))?;
+    write!(stdout, "{}", terminal::escape::cursor_to(total_rows, 1))?;
     stdout.flush()?;
 
     disable_raw_mode()?;
@@ -98,7 +94,7 @@ fn setup_panic_handler() {
     panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();
         // Reset scroll region
-        print!("{}", escape::SCROLL_REGION_RESET);
+        print!("{}", terminal::escape::SCROLL_REGION_RESET);
         let _ = execute!(
             stdout(),
             DisableBracketedPaste

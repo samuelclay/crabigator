@@ -1,24 +1,17 @@
-//! Widget modules for status bar rendering
+//! Status bar rendering
 //!
-//! Each widget is responsible for rendering its own section of the status bar.
-//! Widgets use raw ANSI escape sequences for terminal output.
-
-mod changes;
-mod git;
-mod stats;
-
-pub use changes::draw_changes_widget;
-pub use git::draw_git_widget;
-pub use stats::draw_stats_widget;
+//! Coordinates the layout and rendering of all status bar widgets.
 
 use std::io::{Stdout, Write};
 
 use anyhow::Result;
 
-use crate::escape::{self, color, RESET};
 use crate::git::GitState;
 use crate::hooks::ClaudeStats;
 use crate::parsers::DiffSummary;
+use crate::terminal::escape::{self, color, RESET};
+
+use super::{draw_changes_widget, draw_git_widget, draw_stats_widget};
 
 /// Layout information needed for rendering widgets
 pub struct Layout {

@@ -9,9 +9,9 @@ use anyhow::Result;
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::escape::{self, color, fg, RESET};
+use crate::terminal::escape::{self, color, fg, RESET};
 use crate::parsers::{ChangeNode, DiffSummary};
-use crate::utils::{get_change_icon_color, strip_ansi_len, truncate_middle, truncate_path};
+use super::utils::{get_change_icon_color, strip_ansi_len, truncate_middle, truncate_path};
 
 /// Draw the changes widget at the given position
 pub fn draw_changes_widget(

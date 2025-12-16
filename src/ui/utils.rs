@@ -5,7 +5,7 @@
 
 use unicode_width::UnicodeWidthChar;
 
-use crate::escape::{color, fg, RESET};
+use crate::terminal::escape::{color, fg, RESET};
 use crate::parsers::NodeKind;
 
 /// Truncate a path string, showing the end with ellipsis if too long

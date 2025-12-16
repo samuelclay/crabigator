@@ -6,9 +6,9 @@ use std::io::{Stdout, Write};
 
 use anyhow::Result;
 
-use crate::escape::{self, color, fg, RESET};
+use crate::terminal::escape::{self, color, fg, RESET};
 use crate::hooks::ClaudeStats;
-use crate::utils::{format_number, strip_ansi_len};
+use super::utils::{format_number, strip_ansi_len};
 
 /// Draw the stats widget at the given position
 pub fn draw_stats_widget(

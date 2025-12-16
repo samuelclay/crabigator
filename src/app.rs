@@ -12,13 +12,11 @@ use std::io::{stdout, Write};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use crate::escape;
 use crate::git::GitState;
 use crate::hooks::ClaudeStats;
-use crate::input::forward_key_to_pty;
 use crate::parsers::DiffSummary;
-use crate::pty::ClaudePty;
-use crate::widgets::{draw_status_bar, Layout};
+use crate::terminal::{escape, forward_key_to_pty, ClaudePty};
+use crate::ui::{draw_status_bar, Layout};
 
 pub struct App {
     pub running: bool,
