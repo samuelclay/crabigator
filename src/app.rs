@@ -73,13 +73,23 @@ impl App {
     }
 
     /// Set scroll region to constrain PTY output to top area
-    fn setup_scroll_region(&self) -> Result<()> {
+    fn setup_scroll_region(&self, initial: bool) -> Result<()> {
         let mut stdout = stdout();
+
+        // On initial setup, scroll existing terminal content up to make room
+        // for our status bar. This preserves the user's last commands.
+        if initial {
+            // Move to bottom of terminal and emit newlines to push content up
+            write!(stdout, "{}", escape::cursor_to(self.total_rows, 1))?;
+            write!(stdout, "{}", escape::scroll_up(self.status_rows))?;
+        }
+
         // DECSTBM: Set Top and Bottom Margins (1-indexed)
         // This constrains scrolling to rows 1 through pty_rows
         write!(stdout, "{}", escape::scroll_region(1, self.pty_rows))?;
-        // Move cursor to top of scroll region
-        write!(stdout, "{}", escape::CURSOR_HOME)?;
+        // Move cursor to bottom of scroll region so Claude Code starts there
+        // and naturally scrolls up as it produces output (like a normal shell)
+        write!(stdout, "{}", escape::cursor_to(self.pty_rows, 1))?;
         stdout.flush()?;
         Ok(())
     }
@@ -101,7 +111,8 @@ impl App {
         let status_debounce = Duration::from_millis(100);
 
         // Set up scroll region to constrain Claude Code to top area
-        self.setup_scroll_region()?;
+        // Pass true to scroll existing content up and make room for status bar
+        self.setup_scroll_region(true)?;
 
         // Initial status bar draw
         self.draw_status_bar()?;
@@ -220,8 +231,8 @@ impl App {
         self.status_rows = ((height as f32 * 0.2) as u16).max(3);
         self.pty_rows = height.saturating_sub(self.status_rows);
 
-        // Re-setup scroll region for new size
-        self.setup_scroll_region()?;
+        // Re-setup scroll region for new size (not initial, don't scroll content)
+        self.setup_scroll_region(false)?;
 
         // Resize PTY to new dimensions (only the top portion)
         self.claude_pty.resize(width, self.pty_rows)?;
