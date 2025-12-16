@@ -1,58 +1,42 @@
 use std::time::Instant;
 
+use crate::platforms::{self, Platform, PlatformStats};
+
 #[derive(Clone, Debug)]
 pub struct ClaudeStats {
-    pub idle_seconds: u64,
     pub work_seconds: u64,
-    pub tokens_used: u64,
-    pub messages_count: u32,
-    last_activity: Instant,
+    /// Stats from the platform's hook system
+    pub platform_stats: PlatformStats,
+    /// Timestamp of last platform stats check
+    last_stats_check: f64,
     session_start: Instant,
 }
 
 impl ClaudeStats {
     pub fn new() -> Self {
-        let now = Instant::now();
         Self {
-            idle_seconds: 0,
             work_seconds: 0,
-            tokens_used: 0,
-            messages_count: 0,
-            last_activity: now,
-            session_start: now,
+            platform_stats: PlatformStats::default(),
+            last_stats_check: 0.0,
+            session_start: Instant::now(),
         }
     }
 
-    /// Called each tick to update idle time based on last activity
+    /// Called each tick to update session time
     pub fn tick(&mut self) {
-        self.idle_seconds = self.last_activity.elapsed().as_secs();
         self.work_seconds = self.session_start.elapsed().as_secs();
     }
 
-    #[allow(dead_code)]
-    pub fn record_activity(&mut self) {
-        self.last_activity = Instant::now();
-        self.idle_seconds = 0;
-    }
-
-    #[allow(dead_code)]
-    pub fn add_tokens(&mut self, count: u64) {
-        self.tokens_used += count;
-    }
-
-    #[allow(dead_code)]
-    pub fn increment_messages(&mut self) {
-        self.messages_count += 1;
-    }
-
-    /// Format idle time as compact string: "just now" or "Xm", "Xh Ym", "Xd Yh Zm"
-    /// Returns "just now" for < 60 seconds (caller displays as "Active")
-    /// Returns time format for >= 60 seconds (caller displays as "Idle")
-    pub fn format_idle(&self) -> String {
-        if self.idle_seconds < 60 {
-            "just now".to_string()
-        } else {
-            Self::format_duration(self.idle_seconds)
+    /// Refresh platform stats from file
+    pub fn refresh_platform_stats(&mut self, cwd: &str) {
+        let platform = platforms::current_platform();
+        if let Ok(stats) = platform.load_stats(cwd) {
+            // Only update if stats have changed
+            let last_updated = stats.last_updated.unwrap_or(0.0);
+            if last_updated > self.last_stats_check {
+                self.last_stats_check = last_updated;
+                self.platform_stats = stats;
+            }
         }
     }
 

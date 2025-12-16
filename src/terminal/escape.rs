@@ -62,7 +62,8 @@ pub mod color {
     /// Yellow (220) - File counts, modified status, enum
     pub const YELLOW: u8 = 220;
 
-    /// Light yellow (228) - Idle 1-5 minutes
+    /// Light yellow (228)
+    #[allow(dead_code)]
     pub const LIGHT_YELLOW: u8 = 228;
 
     /// Orange (179) - Changes header, struct
@@ -100,6 +101,12 @@ pub mod color {
 
     /// Dark background (236)
     pub const BG_DARK: u8 = 236;
+
+    /// Black (16) - For text on colored backgrounds
+    pub const BLACK: u8 = 16;
+
+    /// White (231) - For text on dark backgrounds
+    pub const WHITE: u8 = 231;
 }
 
 // === Key Encoding Bytes ===

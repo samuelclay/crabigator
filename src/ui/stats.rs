@@ -1,13 +1,14 @@
 //! Stats widget - displays session statistics
 //!
-//! Shows idle time, session duration, token usage, and message count.
+//! Shows session state, duration, messages, tool calls, and compressions.
 
 use std::io::{Stdout, Write};
 
 use anyhow::Result;
 
-use crate::terminal::escape::{self, color, fg, RESET};
+use crate::terminal::escape::{self, color, bg, fg, RESET};
 use crate::hooks::ClaudeStats;
+use crate::platforms::SessionState;
 use super::utils::{format_number, strip_ansi_len};
 
 /// Draw the stats widget at the given position
@@ -27,24 +28,26 @@ pub fn draw_stats_widget(
             format!("{} Stats{}", fg(color::PURPLE), RESET)
         }
         2 => {
-            // Active/Idle status - "Active" when < 60s, "Idle" when >= 60s
-            if stats.idle_seconds < 60 {
-                format!(
-                    "{}◇ Active{} {}{}{}",
-                    fg(color::GRAY), RESET,
-                    fg(color::GREEN), stats.format_idle(), RESET
-                )
-            } else {
-                let idle_color = if stats.idle_seconds < 300 {
-                    color::LIGHT_YELLOW // Yellow (1-5 min)
-                } else {
-                    color::RED // Red (5+ min)
-                };
-                format!(
-                    "{}◇ Idle{} {}{}{}",
-                    fg(color::GRAY), RESET,
-                    fg(idle_color), stats.format_idle(), RESET
-                )
+            // Session state indicator
+            match stats.platform_stats.state {
+                SessionState::Thinking => {
+                    format!(
+                        "{}{}  Thinking  {}",
+                        bg(color::GREEN), fg(color::BLACK), RESET
+                    )
+                }
+                SessionState::Question => {
+                    format!(
+                        "{}{}  Question  {}",
+                        bg(color::CYAN), fg(color::BLACK), RESET
+                    )
+                }
+                SessionState::Complete => {
+                    format!(
+                        "{}{}  Complete  {}",
+                        bg(color::PURPLE), fg(color::WHITE), RESET
+                    )
+                }
             }
         }
         3 => {
@@ -56,20 +59,33 @@ pub fn draw_stats_widget(
             )
         }
         4 => {
-            // Tokens
+            // Messages from platform stats
             format!(
-                "{}◈ Tokens{} {}{}{}",
+                "{}✉ Messages{} {}{}{}",
                 fg(color::GRAY), RESET,
-                fg(color::PINK), format_number(stats.tokens_used), RESET
+                fg(color::LIGHT_BLUE), stats.platform_stats.messages, RESET
             )
         }
         5 => {
-            // Messages
+            // Tool calls
             format!(
-                "{}✉ Msgs{} {}{}{}",
+                "{}⚙ Tools{} {}{}{}",
                 fg(color::GRAY), RESET,
-                fg(color::LIGHT_BLUE), stats.messages_count, RESET
+                fg(color::ORANGE), format_number(stats.platform_stats.total_tool_calls() as u64), RESET
             )
+        }
+        6 => {
+            // Compressions (only show if > 0)
+            let compressions = stats.platform_stats.compressions;
+            if compressions > 0 {
+                format!(
+                    "{}⊜ Compact{} {}{}{}",
+                    fg(color::GRAY), RESET,
+                    fg(color::PINK), compressions, RESET
+                )
+            } else {
+                String::new()
+            }
         }
         _ => String::new(),
     };

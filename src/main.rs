@@ -2,6 +2,7 @@ mod app;
 mod git;
 mod hooks;
 mod parsers;
+mod platforms;
 mod terminal;
 mod ui;
 
@@ -107,6 +108,13 @@ fn setup_panic_handler() {
 async fn main() -> Result<()> {
     let args = parse_args();
 
+    // Install/update Claude Code hooks before anything else
+    // This ensures our stats hooks are in place when Claude Code starts
+    let platform = platforms::current_platform();
+    if let Err(e) = platforms::Platform::ensure_hooks_installed(&platform) {
+        eprintln!("Warning: Failed to install hooks: {}", e);
+    }
+
     setup_panic_handler();
 
     let (cols, rows) = setup_terminal()?;
@@ -120,9 +128,13 @@ async fn main() -> Result<()> {
 
     restore_terminal(total_rows)?;
 
-    // Print token count after exit (status bar already shows full stats)
+    // Print session summary after exit
     println!();
-    println!("Tokens: {}", stats.tokens_used);
+    println!(
+        "Session: {} messages, {} tool calls",
+        stats.platform_stats.messages,
+        stats.platform_stats.total_tool_calls()
+    );
 
     result
 }

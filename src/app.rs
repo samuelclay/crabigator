@@ -32,6 +32,8 @@ pub struct App {
     pub pty_rows: u16,
     pub status_rows: u16,
 
+    /// Current working directory for platform stats
+    cwd: String,
     pty_rx: mpsc::Receiver<Vec<u8>>,
 }
 
@@ -49,6 +51,11 @@ impl App {
         let diff_summary = DiffSummary::new();
         let claude_stats = ClaudeStats::new();
 
+        // Get current working directory for platform stats
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
         Ok(Self {
             running: true,
             claude_pty,
@@ -60,6 +67,7 @@ impl App {
             total_cols: cols,
             pty_rows,
             status_rows,
+            cwd,
             pty_rx,
         })
     }
@@ -86,8 +94,10 @@ impl App {
 
     pub async fn run(&mut self) -> Result<()> {
         let mut last_git_refresh = Instant::now();
+        let mut last_hook_refresh = Instant::now();
         let mut last_status_draw = Instant::now();
         let git_refresh_interval = Duration::from_secs(3);
+        let hook_refresh_interval = Duration::from_millis(500);
         let status_debounce = Duration::from_millis(100);
 
         // Set up scroll region to constrain Claude Code to top area
@@ -112,6 +122,12 @@ impl App {
             if last_git_refresh.elapsed() >= git_refresh_interval {
                 self.refresh_git_state().await;
                 last_git_refresh = Instant::now();
+            }
+
+            // Refresh platform stats more frequently
+            if last_hook_refresh.elapsed() >= hook_refresh_interval {
+                self.claude_stats.refresh_platform_stats(&self.cwd);
+                last_hook_refresh = Instant::now();
             }
 
             // Redraw status bar after PTY output settles (debounced)
