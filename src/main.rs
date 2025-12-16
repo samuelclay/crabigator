@@ -129,19 +129,15 @@ fn setup_terminal() -> Result<(u16, u16)> {
     let mut stdout = stdout();
     let (cols, rows) = terminal_size()?;
 
-    // Push existing content up into scrollback by printing newlines
-    // This preserves the command that launched us in the scrollback buffer
-    for _ in 0..rows {
-        writeln!(stdout)?;
-    }
-    stdout.flush()?;
+    // Don't clear the screen - let Claude Code start at the bottom
+    // and scroll up naturally, preserving existing terminal content above.
+    // The scroll region setup will position cursor at the bottom.
 
     enable_raw_mode()?;
 
-    // Move cursor to top of screen and enable bracketed paste
+    // Enable bracketed paste
     // Primary screen buffer (no alternate screen) - allows native scrollback
     // Disable mouse capture to allow native text selection
-    write!(stdout, "{}", terminal::escape::CURSOR_HOME)?;
     execute!(
         stdout,
         EnableBracketedPaste

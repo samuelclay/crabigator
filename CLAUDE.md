@@ -26,11 +26,13 @@ The application uses a **scroll region approach** to layer UI:
 
 ### Key Modules
 
-- **app_v2.rs**: Main application loop and layout management. Handles scroll region setup, event polling, status bar drawing, and PTY passthrough.
-- **pty/claude.rs**: PTY management using `portable-pty`. Spawns the `claude` CLI, handles input/output channels, and terminal resizing.
+- **app.rs**: Main application loop and layout management. Handles scroll region setup, event polling, status bar drawing, and PTY passthrough.
+- **terminal/**: Terminal handling - `pty.rs` manages PTY via `portable-pty` (spawns `claude` CLI, handles I/O), `input.rs` handles keyboard input forwarding, `escape.rs` provides ANSI escape sequence utilities.
 - **git/**: Git state tracking via `git status --porcelain` and `git diff`.
 - **parsers/**: Language-specific diff parsers (Rust, TypeScript, Python, generic) that extract semantic information (functions, classes, etc.) from git diffs.
-- **hooks/**: Session statistics tracking (idle time, work time, tokens, message count).
+- **hooks/**: `ClaudeStats` for session time tracking and platform stats integration.
+- **platforms/**: Platform-specific integrations (e.g., `claude_code.rs` for reading Claude Code's hook-generated stats files).
+- **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout, with `git.rs`, `changes.rs`, `stats.rs` for individual widgets.
 
 ### Input Handling
 
