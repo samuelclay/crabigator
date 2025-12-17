@@ -1,6 +1,8 @@
 mod app;
 mod git;
 mod hooks;
+mod inspect;
+mod mirror;
 mod parsers;
 mod platforms;
 mod terminal;
@@ -22,15 +24,62 @@ use std::time::{Duration, Instant};
 
 use crate::app::App;
 
+#[derive(Clone)]
+enum Command {
+    /// Run the main crabigator application
+    Run,
+    /// Inspect other running instances
+    Inspect {
+        dir_filter: Option<String>,
+        watch: bool,
+        raw: bool,
+    },
+}
+
+impl Default for Command {
+    fn default() -> Self {
+        Command::Run
+    }
+}
+
 #[derive(Clone, Default)]
 struct Args {
     claude_args: Vec<String>,
     profile: bool,
+    command: Command,
 }
 
 fn parse_args() -> Args {
     let mut args = Args::default();
-    let mut iter = env::args().skip(1); // Skip the binary name
+    let mut iter = env::args().skip(1).peekable(); // Skip the binary name
+
+    // Check for subcommand first
+    if let Some(first) = iter.peek() {
+        if first == "inspect" {
+            iter.next(); // consume "inspect"
+            let mut dir_filter = None;
+            let mut watch = false;
+            let mut raw = false;
+
+            for arg in iter {
+                match arg.as_str() {
+                    "--watch" | "-w" => watch = true,
+                    "--raw" | "-r" => raw = true,
+                    _ if !arg.starts_with('-') && dir_filter.is_none() => {
+                        dir_filter = Some(arg);
+                    }
+                    _ => {}
+                }
+            }
+
+            args.command = Command::Inspect {
+                dir_filter,
+                watch,
+                raw,
+            };
+            return args;
+        }
+    }
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -192,12 +241,25 @@ fn generate_session_id() -> String {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = parse_args();
+
+    // Handle subcommands that don't need the full app setup
+    match args.command {
+        Command::Inspect {
+            dir_filter,
+            watch,
+            raw,
+        } => {
+            return inspect::run_inspect(dir_filter, watch, raw);
+        }
+        Command::Run => {}
+    }
+
     // Generate and set session ID before anything else
     // This ensures Claude Code and our stats loading use the same ID
     let session_id = generate_session_id();
     env::set_var("CRABIGATOR_SESSION_ID", &session_id);
 
-    let args = parse_args();
     let timer = DebugTimer::new(args.profile);
 
     timer.log("args parsed");

@@ -5,8 +5,26 @@ use super::{ChangeNode, ChangeType, DiffParser, NodeKind};
 pub struct PythonParser;
 
 impl DiffParser for PythonParser {
+    fn language(&self) -> &'static str {
+        "Python"
+    }
+
     fn supports(&self, filename: &str) -> bool {
         filename.ends_with(".py")
+    }
+
+    fn extract_function_from_context(&self, context: &str) -> Option<String> {
+        // Python hunk context: "def function_name(" or "async def function_name(" or "class ClassName"
+        let def_re = Regex::new(r"(?:async\s+)?def\s+(\w+)").unwrap();
+        let class_re = Regex::new(r"class\s+(\w+)").unwrap();
+
+        if let Some(caps) = def_re.captures(context) {
+            return caps.get(1).map(|m| m.as_str().to_string());
+        }
+        if let Some(caps) = class_re.captures(context) {
+            return caps.get(1).map(|m| m.as_str().to_string());
+        }
+        None
     }
 
     fn parse(&self, diff: &str, _filename: &str) -> Vec<ChangeNode> {

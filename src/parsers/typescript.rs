@@ -5,11 +5,69 @@ use super::{ChangeNode, ChangeType, DiffParser, NodeKind};
 pub struct TypeScriptParser;
 
 impl DiffParser for TypeScriptParser {
+    fn language(&self) -> &'static str {
+        "JavaScript"
+    }
+
     fn supports(&self, filename: &str) -> bool {
         filename.ends_with(".ts")
             || filename.ends_with(".tsx")
             || filename.ends_with(".js")
             || filename.ends_with(".jsx")
+    }
+
+    fn extract_function_from_context(&self, context: &str) -> Option<String> {
+        // JS/TS hunk context patterns (in priority order):
+        // 1. Named function: "function name(" or "async function name("
+        // 2. Class: "class Name"
+        // 3. Object method: "name: function(" or "name(" at start of line
+        // 4. Method binding: ".bind('name'," - extract event name
+        // 5. Arrow function assigned: "const name = (" or "const name = async ("
+        // 6. Prototype method: "Foo.prototype.name = function"
+        let function_re = Regex::new(r"(?:async\s+)?function\s+(\w+)").unwrap();
+        let class_re = Regex::new(r"class\s+(\w+)").unwrap();
+        let object_method_re = Regex::new(r"^\s*(\w+)\s*:\s*(?:async\s+)?function").unwrap();
+        let method_call_re = Regex::new(r"^\s*(\w+)\s*\(").unwrap();
+        let bind_re = Regex::new(r#"\.bind\s*\(\s*['"](\w+)['"]"#).unwrap();
+        let arrow_fn_re = Regex::new(r"(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(").unwrap();
+        let prototype_re = Regex::new(r"(\w+)\.prototype\.(\w+)\s*=").unwrap();
+
+        // Named function - highest priority
+        if let Some(caps) = function_re.captures(context) {
+            return caps.get(1).map(|m| m.as_str().to_string());
+        }
+        // Class definition
+        if let Some(caps) = class_re.captures(context) {
+            return caps.get(1).map(|m| m.as_str().to_string());
+        }
+        // Object method: "name: function"
+        if let Some(caps) = object_method_re.captures(context) {
+            return caps.get(1).map(|m| m.as_str().to_string());
+        }
+        // Prototype method: "Foo.prototype.bar = function"
+        if let Some(caps) = prototype_re.captures(context) {
+            let method = caps.get(2).map(|m| m.as_str())?;
+            return Some(method.to_string());
+        }
+        // Event binding: ".bind('eventName',"
+        if let Some(caps) = bind_re.captures(context) {
+            let event = caps.get(1).map(|m| m.as_str())?;
+            return Some(format!("on:{}", event));
+        }
+        // Arrow function: "const name = ("
+        if let Some(caps) = arrow_fn_re.captures(context) {
+            return caps.get(1).map(|m| m.as_str().to_string());
+        }
+        // Method call at line start: "name("
+        if let Some(caps) = method_call_re.captures(context) {
+            let name = caps.get(1).map(|m| m.as_str())?;
+            // Skip common keywords and short names that are likely variables
+            if !["if", "for", "while", "switch", "catch", "return", "var", "let", "const"].contains(&name)
+                && name.len() > 2 {
+                return Some(name.to_string());
+            }
+        }
+        None
     }
 
     fn parse(&self, diff: &str, _filename: &str) -> Vec<ChangeNode> {

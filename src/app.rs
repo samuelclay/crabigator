@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::git::GitState;
 use crate::hooks::ClaudeStats;
+use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
 use crate::terminal::{escape, forward_key_to_pty, ClaudePty};
 use crate::ui::{draw_status_bar, Layout};
@@ -35,6 +36,8 @@ pub struct App {
     /// Current working directory for platform stats
     cwd: String,
     pty_rx: mpsc::Receiver<Vec<u8>>,
+    /// Mirror publisher for external inspection
+    mirror_publisher: MirrorPublisher,
 }
 
 impl App {
@@ -56,6 +59,10 @@ impl App {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
+        // Create mirror publisher (always enabled for inspection by other instances)
+        let session_id = std::env::var("CRABIGATOR_SESSION_ID").unwrap_or_default();
+        let mirror_publisher = MirrorPublisher::new(true, session_id, cwd.clone());
+
         Ok(Self {
             running: true,
             claude_pty,
@@ -69,6 +76,7 @@ impl App {
             status_rows,
             cwd,
             pty_rx,
+            mirror_publisher,
         })
     }
 
@@ -180,6 +188,9 @@ impl App {
             }
         }
 
+        // Clean up mirror file before exit
+        self.mirror_publisher.cleanup();
+
         // Reset scroll region before exit
         self.reset_scroll_region()?;
 
@@ -215,7 +226,16 @@ impl App {
             &self.claude_stats,
             &self.git_state,
             &self.diff_summary,
-        )
+        )?;
+
+        // Publish mirror state (throttled, only when --profile)
+        let _ = self.mirror_publisher.maybe_publish(
+            &self.claude_stats,
+            &self.git_state,
+            &self.diff_summary,
+        );
+
+        Ok(())
     }
 
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {

@@ -5,8 +5,34 @@ use super::{ChangeNode, ChangeType, DiffParser, NodeKind};
 pub struct RustParser;
 
 impl DiffParser for RustParser {
+    fn language(&self) -> &'static str {
+        "Rust"
+    }
+
     fn supports(&self, filename: &str) -> bool {
         filename.ends_with(".rs")
+    }
+
+    fn extract_function_from_context(&self, context: &str) -> Option<String> {
+        // Rust hunk context patterns:
+        // "fn name(" or "pub fn name(" or "async fn name("
+        // "impl Type" or "impl Trait for Type"
+        let fn_re = Regex::new(r"(?:pub\s+)?(?:async\s+)?fn\s+(\w+)").unwrap();
+        let impl_re = Regex::new(r"impl(?:<[^>]*>)?\s+(?:(\w+)\s+for\s+)?(\w+)").unwrap();
+
+        if let Some(caps) = fn_re.captures(context) {
+            return caps.get(1).map(|m| m.as_str().to_string());
+        }
+        if let Some(caps) = impl_re.captures(context) {
+            let type_name = caps.get(2).map(|m| m.as_str()).unwrap_or("Unknown");
+            let trait_name = caps.get(1).map(|m| m.as_str());
+            return Some(if let Some(trait_n) = trait_name {
+                format!("{} for {}", trait_n, type_name)
+            } else {
+                type_name.to_string()
+            });
+        }
+        None
     }
 
     fn parse(&self, diff: &str, _filename: &str) -> Vec<ChangeNode> {

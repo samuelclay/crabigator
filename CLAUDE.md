@@ -33,6 +33,8 @@ The application uses a **scroll region approach** to layer UI:
 - **hooks/**: `ClaudeStats` for session time tracking and platform stats integration.
 - **platforms/**: Platform-specific integrations (e.g., `claude_code.rs` for reading Claude Code's hook-generated stats files).
 - **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout, with `git.rs`, `changes.rs`, `stats.rs` for individual widgets.
+- **mirror.rs**: Widget state mirroring for external inspection. Publishes throttled JSON snapshots of all widget state.
+- **inspect.rs**: Inspect command implementation for viewing other running crabigator instances.
 
 ### Input Handling
 
@@ -46,3 +48,17 @@ The application uses a **scroll region approach** to layer UI:
 - Mouse capture is disabled to allow native text selection
 - Bracketed paste is enabled for efficient paste handling
 - Panic handler restores terminal state to prevent corruption
+
+### Instance Inspection
+
+Every running crabigator instance writes widget state to `/tmp/crabigator-mirror-{session_id}.json`:
+- Throttled to max once per second
+- Only writes when widget content has changed (hash-based detection)
+- Contains both raw data and pre-rendered text for each widget
+- File is cleaned up on exit
+
+Use `crabigator inspect` to view other running instances:
+- `crabigator inspect` - list all instances
+- `crabigator inspect /path` - filter by working directory
+- `crabigator inspect --watch` - continuous monitoring
+- `crabigator inspect --raw` - output raw JSON

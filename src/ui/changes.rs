@@ -1,17 +1,16 @@
-//! Changes widget - displays semantic code changes
+//! Changes widget - displays semantic code changes grouped by language
 //!
-//! Shows parsed semantic changes (functions, classes, etc.) from git diffs.
-//! Automatically uses columns when items fit, falls back to single line.
+//! Shows parsed semantic changes (functions, classes, etc.) from git diffs,
+//! organized by programming language.
 
 use std::io::{Stdout, Write};
 
 use anyhow::Result;
 
-use unicode_width::UnicodeWidthStr;
-
+use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges};
 use crate::terminal::escape::{self, color, fg, RESET};
-use crate::parsers::{ChangeNode, DiffSummary};
-use super::utils::{get_change_icon_color, strip_ansi_len, truncate_middle, truncate_path};
+
+use super::utils::{get_change_icon_color, strip_ansi_len, truncate_middle};
 
 /// Draw the changes widget at the given position
 pub fn draw_changes_widget(
@@ -25,157 +24,46 @@ pub fn draw_changes_widget(
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(pty_rows + 1 + row, col + 1))?;
 
-    // Collect all semantic changes across files
-    let all_changes: Vec<_> = diff_summary
-        .files
-        .iter()
-        .flat_map(|f| f.changes.iter())
-        .collect();
+    // Get changes grouped by language
+    let by_language = diff_summary.by_language();
 
+    // For row == 1, we need to show either loading or the first language header
     if row == 1 {
-        // Header with loading indicator or count on right
-        let left = format!("{} Changes{}", fg(color::ORANGE), RESET);
-        let left_len = strip_ansi_len(&left);
+        if diff_summary.loading {
+            let left = format!("{}Changes{}", fg(color::ORANGE), RESET);
+            let left_len = strip_ansi_len(&left);
+            let right = format!("{}...{}", fg(color::GRAY), RESET);
+            let right_len = strip_ansi_len(&right);
+            let pad = (width as usize).saturating_sub(left_len + right_len);
+            write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
+            return Ok(());
+        }
 
-        let right = if diff_summary.loading {
-            format!("{}...{}", fg(color::GRAY), RESET)
-        } else if all_changes.is_empty() {
-            "".to_string()
-        } else {
-            let count = all_changes.len();
-            let label = if count == 1 { "change" } else { "changes" };
-            format!("{}{} {}{}", fg(color::ORANGE), count, label, RESET)
-        };
-        let right_len = strip_ansi_len(&right);
-
-        let pad = (width as usize).saturating_sub(left_len + right_len);
-        write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
-        return Ok(());
+        if by_language.is_empty() {
+            // No changes at all - show empty
+            write!(stdout, "{:width$}", "", width = width as usize)?;
+            return Ok(());
+        }
     }
 
-    if all_changes.is_empty() {
+    if by_language.is_empty() {
         write!(stdout, "{:width$}", "", width = width as usize)?;
         return Ok(());
     }
 
-    // Available data rows (subtract 2: one for separator row 0, one for header row 1)
-    let available_rows = height.saturating_sub(2) as usize;
-    let num_changes = all_changes.len();
+    // Build a flat list of rows to render:
+    // Each language has a header row, then item rows
+    let rows_data = build_rows_for_display(&by_language, width, height);
 
-    // Row index (0-based, row 2 = index 0)
-    let row_idx = (row - 2) as usize;
+    // Row index (0-based from row 1)
+    let row_idx = (row - 1) as usize;
 
-    // Decide layout: single column, multi-column, or single-line
-    if available_rows > 0 && num_changes <= available_rows {
-        // Single column - all items fit vertically
-        if row_idx < num_changes {
-            let change = all_changes[row_idx];
-            let (icon, icon_color) = get_change_icon_color(&change.kind);
-            let name = truncate_path(&change.name, (width as usize).saturating_sub(2));
-            let item = format!("{}{}{} {}", fg(icon_color), icon, RESET, name);
-            write!(stdout, "{}", item)?;
-            let content_len = strip_ansi_len(&item);
-            let pad = (width as usize).saturating_sub(content_len);
-            write!(stdout, "{:pad$}", "", pad = pad)?;
-        } else {
-            write!(stdout, "{:width$}", "", width = width as usize)?;
-        }
-    } else if available_rows > 0 {
-        // Multi-column layout needed
-        let num_cols = (num_changes + available_rows - 1) / available_rows;
-
-        // Calculate column widths based on content
-        let mut col_widths: Vec<usize> = vec![0; num_cols];
-        for col_idx in 0..num_cols {
-            let start = col_idx * available_rows;
-            let end = (start + available_rows).min(num_changes);
-            for idx in start..end {
-                // Width: icon + name + space(1)
-                let (icon, _) = get_change_icon_color(&all_changes[idx].kind);
-                let icon_width = icon.width();
-                let name_width = all_changes[idx].name.width();
-                let entry_width = icon_width + name_width + 1;
-                col_widths[col_idx] = col_widths[col_idx].max(entry_width);
-            }
-            col_widths[col_idx] += 1; // Add margin
-        }
-
-        let total_width_needed: usize = col_widths.iter().sum();
-
-        if total_width_needed <= width as usize {
-            // Columns fit - render with proper alignment
-            let mut output = String::new();
-            for col_idx in 0..num_cols {
-                let idx = col_idx * available_rows + row_idx;
-                if idx < num_changes {
-                    let change = all_changes[idx];
-                    let (icon, icon_color) = get_change_icon_color(&change.kind);
-                    let max_name_len = col_widths[col_idx].saturating_sub(2);
-                    let name = truncate_path(&change.name, max_name_len);
-                    let item = format!("{}{}{} {}", fg(icon_color), icon, RESET, name);
-                    let item_len = strip_ansi_len(&item);
-                    output.push_str(&item);
-                    // Pad to column width
-                    let pad = col_widths[col_idx].saturating_sub(item_len);
-                    output.push_str(&" ".repeat(pad));
-                }
-            }
-            write!(stdout, "{}", output)?;
-            let content_len = strip_ansi_len(&output);
-            let pad = (width as usize).saturating_sub(content_len);
-            write!(stdout, "{:pad$}", "", pad = pad)?;
-        } else {
-            // Columns don't fit - wrap items across rows
-            let items: Vec<String> = all_changes
-                .iter()
-                .map(|change| format_change_compact(change))
-                .collect();
-            let item_widths: Vec<usize> = items.iter().map(|s| strip_ansi_len(s)).collect();
-
-            // Figure out which items go on which row by wrapping
-            let mut rows: Vec<Vec<usize>> = Vec::new();
-            let mut current_row: Vec<usize> = Vec::new();
-            let mut current_width = 0usize;
-
-            for (i, &item_width) in item_widths.iter().enumerate() {
-                let needed = if current_row.is_empty() {
-                    item_width
-                } else {
-                    item_width + 1 // +1 for space separator
-                };
-
-                if current_width + needed <= width as usize {
-                    current_row.push(i);
-                    current_width += needed;
-                } else {
-                    if !current_row.is_empty() {
-                        rows.push(current_row);
-                    }
-                    current_row = vec![i];
-                    current_width = item_width;
-                }
-            }
-            if !current_row.is_empty() {
-                rows.push(current_row);
-            }
-
-            // Render the row for this row_idx
-            if row_idx < rows.len() {
-                let mut output = String::new();
-                for (j, &item_idx) in rows[row_idx].iter().enumerate() {
-                    if j > 0 {
-                        output.push(' ');
-                    }
-                    output.push_str(&items[item_idx]);
-                }
-                write!(stdout, "{}", output)?;
-                let content_len = strip_ansi_len(&output);
-                let pad = (width as usize).saturating_sub(content_len);
-                write!(stdout, "{:pad$}", "", pad = pad)?;
-            } else {
-                write!(stdout, "{:width$}", "", width = width as usize)?;
-            }
-        }
+    if row_idx < rows_data.len() {
+        let content = &rows_data[row_idx];
+        write!(stdout, "{}", content)?;
+        let content_len = strip_ansi_len(content);
+        let pad = (width as usize).saturating_sub(content_len);
+        write!(stdout, "{:pad$}", "", pad = pad)?;
     } else {
         write!(stdout, "{:width$}", "", width = width as usize)?;
     }
@@ -183,9 +71,126 @@ pub fn draw_changes_widget(
     Ok(())
 }
 
-/// Format a semantic change compactly (icon + name) for wrapped mode
-fn format_change_compact(change: &ChangeNode) -> String {
+struct FormattedItem {
+    text: String,
+    width: usize,
+}
+
+/// Build rows for display, respecting available height
+fn build_rows_for_display(
+    by_language: &[LanguageChanges],
+    width: u16,
+    height: u16,
+) -> Vec<String> {
+    let mut rows = Vec::new();
+    let available_rows = height.saturating_sub(2) as usize; // -2 for separator and first row
+
+    for lang_changes in by_language {
+        if rows.len() >= available_rows {
+            break;
+        }
+
+        // Add language header
+        let count = lang_changes.changes.len();
+        let label = if count == 1 { "change" } else { "changes" };
+        let header = format_header(&lang_changes.language, count, label, width as usize);
+        rows.push(header);
+
+        if rows.len() >= available_rows {
+            break;
+        }
+
+        // Format items for this language
+        let items: Vec<FormattedItem> = lang_changes
+            .changes
+            .iter()
+            .map(|c| format_change_item(c))
+            .collect();
+
+        // Pack items into rows that fit within width
+        let item_rows = pack_items_into_rows(&items, width as usize);
+
+        for item_row in item_rows {
+            if rows.len() >= available_rows {
+                break;
+            }
+            rows.push(item_row);
+        }
+    }
+
+    rows
+}
+
+/// Format a language header row
+fn format_header(language: &str, count: usize, label: &str, width: usize) -> String {
+    let left = format!("{}{}{}", fg(color::ORANGE), language, RESET);
+    let left_len = strip_ansi_len(&left);
+
+    let right = format!("{}{} {}{}", fg(color::ORANGE), count, label, RESET);
+    let right_len = strip_ansi_len(&right);
+
+    let pad = width.saturating_sub(left_len + right_len);
+    format!("{}{:pad$}{}", left, "", right, pad = pad)
+}
+
+/// Format a single change item with icon and modifier indicator
+fn format_change_item(change: &ChangeNode) -> FormattedItem {
     let (icon, icon_color) = get_change_icon_color(&change.kind);
-    let name = truncate_middle(&change.name, 30);
-    format!("{}{}{} {}", fg(icon_color), icon, RESET, name)
+
+    // Add modifier for change type: + for added, ~ for modified
+    let modifier = match change.change_type {
+        ChangeType::Added => format!("{}+{}", fg(color::GREEN), RESET),
+        ChangeType::Modified => format!("{}~{}", fg(color::YELLOW), RESET),
+        ChangeType::Deleted => format!("{}-{}", fg(color::RED), RESET),
+    };
+
+    let name = truncate_middle(&change.name, 25);
+    let text = format!(
+        "{}{}{}{} {}",
+        modifier,
+        fg(icon_color),
+        icon,
+        RESET,
+        name
+    );
+
+    // Calculate display width (modifier is 1 char, icon varies, space, name)
+    let width = 1 + strip_ansi_len(&format!("{}{}{}", fg(icon_color), icon, RESET)) + 1 + name.chars().count();
+
+    FormattedItem { text, width }
+}
+
+/// Pack items into rows that fit within the given width
+fn pack_items_into_rows(items: &[FormattedItem], max_width: usize) -> Vec<String> {
+    let mut rows = Vec::new();
+    let mut current_row = String::new();
+    let mut current_width = 0usize;
+
+    for item in items {
+        let needed = if current_row.is_empty() {
+            item.width
+        } else {
+            item.width + 1 // +1 for space separator
+        };
+
+        if current_width + needed <= max_width {
+            if !current_row.is_empty() {
+                current_row.push(' ');
+            }
+            current_row.push_str(&item.text);
+            current_width += needed;
+        } else {
+            if !current_row.is_empty() {
+                rows.push(current_row);
+            }
+            current_row = item.text.clone();
+            current_width = item.width;
+        }
+    }
+
+    if !current_row.is_empty() {
+        rows.push(current_row);
+    }
+
+    rows
 }

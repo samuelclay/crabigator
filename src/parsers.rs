@@ -13,5 +13,5 @@ pub use generic::GenericParser;
 pub use python::PythonParser;
 pub use rust::RustParser;
 pub use summary::{DiffParser, DiffSummary};
-pub use types::{ChangeNode, ChangeType, NodeKind};
+pub use types::{ChangeNode, ChangeType, LanguageChanges, NodeKind};
 pub use typescript::TypeScriptParser;

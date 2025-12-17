@@ -16,8 +16,11 @@ pub enum NodeKind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChangeType {
+    /// A new definition was added
     Added,
+    /// Code was modified inside an existing definition
     Modified,
+    /// A definition was deleted
     Deleted,
 }
 
@@ -25,7 +28,6 @@ pub enum ChangeType {
 pub struct ChangeNode {
     pub kind: NodeKind,
     pub name: String,
-    #[allow(dead_code)]
     pub change_type: ChangeType,
     pub children: Vec<ChangeNode>,
 }
@@ -34,5 +36,13 @@ pub struct ChangeNode {
 pub struct FileChanges {
     #[allow(dead_code)]
     pub path: String,
+    pub language: String,
+    pub changes: Vec<ChangeNode>,
+}
+
+/// Changes grouped by language for display
+#[derive(Clone, Debug, Default)]
+pub struct LanguageChanges {
+    pub language: String,
     pub changes: Vec<ChangeNode>,
 }
