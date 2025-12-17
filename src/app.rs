@@ -19,6 +19,12 @@ use crate::parsers::DiffSummary;
 use crate::terminal::{escape, forward_key_to_pty, ClaudePty};
 use crate::ui::{draw_status_bar, Layout};
 
+/// Result from background git refresh
+struct GitRefreshResult {
+    git_state: GitState,
+    diff_summary: DiffSummary,
+}
+
 pub struct App {
     pub running: bool,
     pub claude_pty: ClaudePty,
@@ -129,6 +135,10 @@ impl App {
         self.refresh_git_state().await;
         self.draw_status_bar()?;
 
+        // Channel for receiving background git refresh results
+        let (git_tx, mut git_rx) = mpsc::channel::<GitRefreshResult>(1);
+        let mut git_refresh_pending = false;
+
         while self.running {
             // Receive PTY output and write directly to stdout
             let mut got_output = false;
@@ -137,10 +147,32 @@ impl App {
                 got_output = true;
             }
 
-            // Refresh git status periodically
-            if last_git_refresh.elapsed() >= git_refresh_interval {
-                self.refresh_git_state().await;
+            // Check for completed background git refresh (non-blocking)
+            if let Ok(result) = git_rx.try_recv() {
+                self.git_state = result.git_state;
+                self.diff_summary = result.diff_summary;
+                git_refresh_pending = false;
+                // Redraw with new data
+                self.draw_status_bar()?;
+                last_status_draw = Instant::now();
+            }
+
+            // Spawn background git refresh periodically (if not already pending)
+            if !git_refresh_pending && last_git_refresh.elapsed() >= git_refresh_interval {
+                git_refresh_pending = true;
                 last_git_refresh = Instant::now();
+                let tx = git_tx.clone();
+                tokio::spawn(async move {
+                    let git_state_tmp = GitState::new();
+                    let diff_summary_tmp = DiffSummary::new();
+                    let (git_result, diff_result) = tokio::join!(
+                        git_state_tmp.refresh(),
+                        diff_summary_tmp.refresh()
+                    );
+                    let git_state = git_result.unwrap_or_default();
+                    let diff_summary = diff_result.unwrap_or_default();
+                    let _ = tx.send(GitRefreshResult { git_state, diff_summary }).await;
+                });
             }
 
             // Refresh platform stats more frequently and redraw if state changed

@@ -259,6 +259,9 @@ async fn main() -> Result<()> {
     // This ensures Claude Code and our stats loading use the same ID
     let session_id = generate_session_id();
     env::set_var("CRABIGATOR_SESSION_ID", &session_id);
+    if args.profile {
+        env::set_var("CRABIGATOR_PROFILE", "1");
+    }
 
     let timer = DebugTimer::new(args.profile);
 

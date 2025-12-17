@@ -35,6 +35,8 @@ impl GitState {
     }
 
     pub async fn refresh(&self) -> Result<Self> {
+        let profile = std::env::var("CRABIGATOR_PROFILE").is_ok();
+        let start = std::time::Instant::now();
         let mut state = GitState::default();
 
         // Check if we're in a git repo
@@ -93,9 +95,17 @@ impl GitState {
         }
 
         // Count files in untracked folders
+        // Note: This can be slow on large directories (node_modules, venv, etc.)
+        let folder_start = std::time::Instant::now();
         for file in &mut state.files {
             if file.is_folder {
                 file.file_count = Self::count_files_in_folder(&file.path).await;
+            }
+        }
+        if std::env::var("CRABIGATOR_PROFILE").is_ok() && folder_start.elapsed().as_millis() > 100 {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/crabigator-profile.log") {
+                use std::io::Write;
+                let _ = writeln!(f, "[profile] count_files_in_folder took {:?}", folder_start.elapsed());
             }
         }
 
@@ -126,6 +136,13 @@ impl GitState {
         // Sort files by total changes (descending)
         state.files.sort_by(|a, b| b.total_changes().cmp(&a.total_changes()));
 
+        if profile && start.elapsed().as_millis() > 100 {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/crabigator-profile.log") {
+                use std::io::Write;
+                let _ = writeln!(f, "[profile] GitState::refresh took {:?}", start.elapsed());
+            }
+        }
+
         Ok(state)
     }
 
@@ -148,16 +165,28 @@ impl GitState {
 
     /// Count files inside an untracked folder using find
     async fn count_files_in_folder(path: &str) -> usize {
-        if let Ok(output) = Command::new("find")
-            .args([path.trim_end_matches('/'), "-type", "f"])
-            .output()
-            .await
-        {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                return stdout.lines().count();
-            }
+        // Skip known slow directories
+        let slow_dirs = ["node_modules", "venv", ".venv", "__pycache__", "target", ".git", "vendor"];
+        if slow_dirs.iter().any(|d| path.contains(d)) {
+            return 0;
         }
-        0
+
+        // Use timeout to prevent blocking on large directories
+        let folder_path = path.trim_end_matches('/').to_string();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            Command::new("find")
+                .args([&folder_path, "-type", "f", "-maxdepth", "3"])
+                .output(),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(output)) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.lines().count()
+            }
+            _ => 0,
+        }
     }
 }

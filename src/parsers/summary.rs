@@ -62,6 +62,8 @@ impl DiffSummary {
     }
 
     pub async fn refresh(&self) -> Result<Self> {
+        let profile = std::env::var("CRABIGATOR_PROFILE").is_ok();
+        let start = std::time::Instant::now();
         let mut summary = DiffSummary::default();
 
         // Get the diff output
@@ -124,6 +126,13 @@ impl DiffSummary {
                     language,
                     changes,
                 });
+            }
+        }
+
+        if profile && start.elapsed().as_millis() > 100 {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/crabigator-profile.log") {
+                use std::io::Write;
+                let _ = writeln!(f, "[profile] DiffSummary::refresh took {:?}", start.elapsed());
             }
         }
 
