@@ -201,11 +201,13 @@ impl CaptureManager {
     }
 
     /// Get the capture directory path.
+    #[allow(dead_code)]
     pub fn capture_dir(&self) -> &PathBuf {
         &self.capture_dir
     }
 
     /// Check if capture is enabled.
+    #[allow(dead_code)]
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }
