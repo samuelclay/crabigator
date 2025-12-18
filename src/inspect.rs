@@ -2,13 +2,46 @@
 //!
 //! Discovers and displays state from other running crabigator instances.
 
-use std::fs;
+use std::fs::{self, metadata};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
 use serde_json::Value;
+
+// ANSI colors
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const DIM: &str = "\x1b[2m";
+const RESET: &str = "\x1b[0m";
+
+/// Get file status with size info
+fn get_file_status(path: &str) -> String {
+    match metadata(path) {
+        Ok(meta) => {
+            let size = meta.len();
+            if size == 0 {
+                format!("{YELLOW}(empty){RESET}")
+            } else {
+                let size_str = format_size(size);
+                format!("{GREEN}({size_str}){RESET}")
+            }
+        }
+        Err(_) => format!("{DIM}(not found){RESET}"),
+    }
+}
+
+/// Format file size human-readable
+fn format_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
 
 /// Run the inspect command
 pub fn run_inspect(dir_filter: Option<String>, watch: bool, raw: bool) -> Result<()> {
@@ -75,7 +108,28 @@ fn print_pretty(instances: &[(PathBuf, Value)]) -> Result<()> {
 
         println!("\n=== Session {} ===", session_id);
         println!("Directory: {}", cwd);
-        println!("File: {}", path.display());
+        println!("Mirror: {}", path.display());
+
+        // Show capture info
+        if let Some(capture) = data.get("capture") {
+            let enabled = capture.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+
+            if enabled {
+                println!("\n[Capture]");
+
+                if let Some(scrollback) = capture.get("scrollback_path").and_then(|v| v.as_str()) {
+                    let status = get_file_status(scrollback);
+                    println!("  Scrollback: {} {}", scrollback, status);
+                }
+
+                if let Some(screen) = capture.get("screen_path").and_then(|v| v.as_str()) {
+                    let status = get_file_status(screen);
+                    println!("  Screen:     {} {}", screen, status);
+                }
+            } else {
+                println!("\n[Capture] {DIM}disabled{RESET}");
+            }
+        }
 
         if let Some(widgets) = data.get("widgets") {
             // Stats

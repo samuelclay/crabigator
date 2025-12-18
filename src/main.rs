@@ -1,4 +1,5 @@
 mod app;
+mod capture;
 mod git;
 mod hooks;
 mod inspect;
@@ -24,6 +25,71 @@ use std::time::{Duration, Instant};
 
 use crate::app::App;
 
+// ANSI color codes
+const CYAN: &str = "\x1b[36m";
+const DIM: &str = "\x1b[2m";
+const BOLD: &str = "\x1b[1m";
+const RESET: &str = "\x1b[0m";
+
+/// Print session info banner with file paths
+fn print_session_banner(session_id: &str, capture_enabled: bool, cols: u16) {
+    let width = (cols as usize).min(80);
+    let bar = "─".repeat(width.saturating_sub(2));
+
+    println!();
+    println!("{DIM}┌{bar}┐{RESET}");
+
+    // Title line
+    let title = format!("{BOLD}{CYAN}CRABIGATOR{RESET}");
+    let session_label = format!("{DIM}session {session_id}{RESET}");
+    // Account for ANSI codes in width calculation
+    let title_plain_len = 10; // "CRABIGATOR"
+    let session_plain_len = 8 + session_id.len(); // "session " + id
+    let padding = width.saturating_sub(4 + title_plain_len + session_plain_len);
+    println!("{DIM}│{RESET} {title}{}{session_label} {DIM}│{RESET}", " ".repeat(padding));
+
+    println!("{DIM}├{bar}┤{RESET}");
+
+    // Capture files
+    if capture_enabled {
+        let capture_dir = format!("/tmp/crabigator-capture-{}", session_id);
+
+        let scrollback_path = format!("{}/scrollback.log", capture_dir);
+        let screen_path = format!("{}/screen.txt", capture_dir);
+
+        print_path_line("Log", &scrollback_path, width);
+        print_path_line("Screen", &screen_path, width);
+    } else {
+        let disabled = format!("{DIM}(capture disabled){RESET}");
+        let pad = width.saturating_sub(4 + 18);
+        println!("{DIM}│{RESET} {disabled}{} {DIM}│{RESET}", " ".repeat(pad));
+    }
+
+    // Mirror file
+    let mirror_path = format!("/tmp/crabigator-mirror-{}.json", session_id);
+    print_path_line("Mirror", &mirror_path, width);
+
+    println!("{DIM}└{bar}┘{RESET}");
+    println!();
+}
+
+fn print_path_line(label: &str, path: &str, width: usize) {
+    // Format: "│ Label:  /path/to/file │"
+    let label_width: usize = 7; // Align all labels
+    let formatted_label = format!("{DIM}{}:{RESET}", label);
+    let label_padding = label_width.saturating_sub(label.len() + 1);
+    let path_formatted = format!("{BOLD}{}{RESET}", path);
+    let path_plain_len = path.len();
+    let total_content = label_width + 1 + path_plain_len;
+    let end_padding = width.saturating_sub(4 + total_content);
+
+    println!(
+        "{DIM}│{RESET} {formatted_label}{} {path_formatted}{} {DIM}│{RESET}",
+        " ".repeat(label_padding),
+        " ".repeat(end_padding)
+    );
+}
+
 #[derive(Clone)]
 enum Command {
     /// Run the main crabigator application
@@ -42,11 +108,24 @@ impl Default for Command {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct Args {
     claude_args: Vec<String>,
     profile: bool,
     command: Command,
+    /// Whether to capture output (default: true)
+    capture: bool,
+}
+
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            claude_args: Vec::new(),
+            profile: false,
+            command: Command::default(),
+            capture: true, // On by default
+        }
+    }
 }
 
 fn parse_args() -> Args {
@@ -94,6 +173,9 @@ fn parse_args() -> Args {
             }
             "-c" | "--continue" => {
                 args.claude_args.push("--continue".to_string());
+            }
+            "--no-capture" => {
+                args.capture = false;
             }
             _ => {
                 // Pass through any other arguments to claude
@@ -306,12 +388,16 @@ async fn main() -> Result<()> {
     setup_panic_handler();
     timer.duration("setup panic handler", begin.elapsed());
 
+    // Get terminal size and print session banner BEFORE raw mode
+    let (cols, _) = terminal_size()?;
+    print_session_banner(&session_id, args.capture, cols);
+
     let begin = Instant::now();
     let (cols, rows) = setup_terminal()?;
     timer.duration("setup terminal", begin.elapsed());
 
     let begin = Instant::now();
-    let mut app = App::new(cols, rows, args.claude_args).await?;
+    let mut app = App::new(cols, rows, args.claude_args, args.capture).await?;
     timer.duration("App::new", begin.elapsed());
 
     timer.log("Starting main loop");

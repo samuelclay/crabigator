@@ -35,6 +35,7 @@ The application uses a **scroll region approach** to layer UI:
 - **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout, with `git.rs`, `changes.rs`, `stats.rs` for individual widgets.
 - **mirror.rs**: Widget state mirroring for external inspection. Publishes throttled JSON snapshots of all widget state.
 - **inspect.rs**: Inspect command implementation for viewing other running crabigator instances.
+- **capture.rs**: Output capture for streaming. Writes raw PTY bytes to stream.log and periodic screen snapshots to screen.txt.
 
 ### Input Handling
 
@@ -48,6 +49,16 @@ The application uses a **scroll region approach** to layer UI:
 - Mouse capture is disabled to allow native text selection
 - Bracketed paste is enabled for efficient paste handling
 - Panic handler restores terminal state to prevent corruption
+
+### Output Capture
+
+Crabigator captures Claude Code output for streaming and inspection. At startup, a banner shows file paths.
+
+Files created in `/tmp/crabigator-capture-{session_id}/`:
+- **scrollback.log**: Clean text transcript (append-only). Only complete lines are written - animations/spinners using carriage return are filtered out. ANSI escape sequences are stripped.
+- **screen.txt**: Current screen snapshot from vt100 parser. Updated every ~100ms. Atomic writes prevent partial reads.
+
+Use `--no-capture` to disable capture.
 
 ### Instance Inspection
 

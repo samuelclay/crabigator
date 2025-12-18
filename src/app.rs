@@ -12,6 +12,7 @@ use std::io::{stdout, Write};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+use crate::capture::{CaptureConfig, CaptureManager};
 use crate::git::GitState;
 use crate::hooks::ClaudeStats;
 use crate::mirror::MirrorPublisher;
@@ -44,10 +45,12 @@ pub struct App {
     pty_rx: mpsc::Receiver<Vec<u8>>,
     /// Mirror publisher for external inspection
     mirror_publisher: MirrorPublisher,
+    /// Output capture manager for streaming
+    capture_manager: CaptureManager,
 }
 
 impl App {
-    pub async fn new(cols: u16, rows: u16, claude_args: Vec<String>) -> Result<Self> {
+    pub async fn new(cols: u16, rows: u16, claude_args: Vec<String>, capture_enabled: bool) -> Result<Self> {
         let (pty_tx, pty_rx) = mpsc::channel(256);
 
         // Reserve bottom 20% for our status widgets (minimum 3 rows)
@@ -67,7 +70,14 @@ impl App {
 
         // Create mirror publisher (always enabled for inspection by other instances)
         let session_id = std::env::var("CRABIGATOR_SESSION_ID").unwrap_or_default();
-        let mirror_publisher = MirrorPublisher::new(true, session_id, cwd.clone());
+        let mirror_publisher = MirrorPublisher::new(true, session_id.clone(), cwd.clone(), capture_enabled);
+
+        // Create capture manager for output streaming
+        let capture_config = CaptureConfig {
+            enabled: capture_enabled,
+            session_id,
+        };
+        let capture_manager = CaptureManager::new(capture_config)?;
 
         Ok(Self {
             running: true,
@@ -83,6 +93,7 @@ impl App {
             cwd,
             pty_rx,
             mirror_publisher,
+            capture_manager,
         })
     }
 
@@ -194,6 +205,11 @@ impl App {
                 last_status_draw = Instant::now();
             }
 
+            // Update screen capture (throttled internally)
+            if got_output {
+                let _ = self.capture_manager.maybe_update_screen(self.claude_pty.screen());
+            }
+
             // Check if Claude Code has exited
             if !self.claude_pty.is_running() {
                 self.running = false;
@@ -220,6 +236,9 @@ impl App {
             }
         }
 
+        // Clean up capture directory before exit
+        self.capture_manager.cleanup();
+
         // Clean up mirror file before exit
         self.mirror_publisher.cleanup();
 
@@ -231,8 +250,14 @@ impl App {
 
     /// Write PTY output directly to stdout - transparent passthrough
     fn write_pty_output(&mut self, data: &[u8]) -> Result<()> {
-        // Update our internal parser (for stats/analysis)
+        // Update our internal parser first (so screen state is current)
         self.claude_pty.process_output(data);
+
+        // Capture scrollback by diffing screen state
+        if let Err(e) = self.capture_manager.capture_scrollback(self.claude_pty.screen()) {
+            // Log error but don't fail - capture is non-critical
+            eprintln!("Capture error: {}", e);
+        }
 
         let mut stdout = stdout();
         stdout.write_all(data)?;

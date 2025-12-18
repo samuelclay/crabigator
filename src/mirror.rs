@@ -32,7 +32,17 @@ pub struct MirrorState {
     pub session_id: String,
     pub cwd: String,
     pub last_updated: f64,
+    pub capture: CaptureMirror,
     pub widgets: MirrorWidgets,
+}
+
+/// Capture file info
+#[derive(Serialize, Clone)]
+pub struct CaptureMirror {
+    pub enabled: bool,
+    pub directory: String,
+    pub scrollback_path: String,
+    pub screen_path: String,
 }
 
 #[derive(Serialize)]
@@ -93,16 +103,26 @@ pub struct MirrorPublisher {
     enabled: bool,
     session_id: String,
     cwd: String,
+    capture: CaptureMirror,
     last_publish: Instant,
     last_hash: u64,
 }
 
 impl MirrorPublisher {
-    pub fn new(enabled: bool, session_id: String, cwd: String) -> Self {
+    pub fn new(enabled: bool, session_id: String, cwd: String, capture_enabled: bool) -> Self {
+        let capture_dir = format!("/tmp/crabigator-capture-{}", session_id);
+        let capture = CaptureMirror {
+            enabled: capture_enabled,
+            directory: capture_dir.clone(),
+            scrollback_path: format!("{}/scrollback.log", capture_dir),
+            screen_path: format!("{}/screen.txt", capture_dir),
+        };
+
         Self {
             enabled,
             session_id,
             cwd,
+            capture,
             // Allow immediate first publish
             last_publish: Instant::now() - Duration::from_secs(10),
             last_hash: 0,
@@ -199,6 +219,7 @@ impl MirrorPublisher {
             session_id: self.session_id.clone(),
             cwd: self.cwd.clone(),
             last_updated: timestamp,
+            capture: self.capture.clone(),
             widgets: MirrorWidgets {
                 stats: WidgetMirror {
                     data: StatsMirrorData {
