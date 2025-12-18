@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::path::Path;
 use tokio::process::Command;
 
 #[derive(Clone, Debug)]
@@ -35,6 +36,11 @@ impl GitState {
     }
 
     pub async fn refresh(&self) -> Result<Self> {
+        let cwd = std::env::current_dir()?;
+        self.refresh_in_dir(&cwd).await
+    }
+
+    pub async fn refresh_in_dir(&self, dir: &Path) -> Result<Self> {
         let profile = std::env::var("CRABIGATOR_PROFILE").is_ok();
         let start = std::time::Instant::now();
         let mut state = GitState::default();
@@ -42,6 +48,7 @@ impl GitState {
         // Check if we're in a git repo
         let status_output = Command::new("git")
             .args(["rev-parse", "--is-inside-work-tree"])
+            .current_dir(dir)
             .output()
             .await;
 
@@ -57,6 +64,7 @@ impl GitState {
         // Get current branch
         if let Ok(output) = Command::new("git")
             .args(["branch", "--show-current"])
+            .current_dir(dir)
             .output()
             .await
         {
@@ -68,6 +76,7 @@ impl GitState {
         // Get file statuses using porcelain format
         if let Ok(output) = Command::new("git")
             .args(["status", "--porcelain"])
+            .current_dir(dir)
             .output()
             .await
         {
@@ -99,7 +108,7 @@ impl GitState {
         let folder_start = std::time::Instant::now();
         for file in &mut state.files {
             if file.is_folder {
-                file.file_count = Self::count_files_in_folder(&file.path).await;
+                file.file_count = Self::count_files_in_folder(dir, &file.path).await;
             }
         }
         if std::env::var("CRABIGATOR_PROFILE").is_ok() && folder_start.elapsed().as_millis() > 100 {
@@ -112,6 +121,7 @@ impl GitState {
         // Get diff --numstat for line counts
         if let Ok(output) = Command::new("git")
             .args(["diff", "--numstat"])
+            .current_dir(dir)
             .output()
             .await
         {
@@ -124,6 +134,7 @@ impl GitState {
         // Also get staged diff stats
         if let Ok(output) = Command::new("git")
             .args(["diff", "--cached", "--numstat"])
+            .current_dir(dir)
             .output()
             .await
         {
@@ -164,7 +175,7 @@ impl GitState {
     }
 
     /// Count files inside an untracked folder using find
-    async fn count_files_in_folder(path: &str) -> usize {
+    async fn count_files_in_folder(base_dir: &Path, path: &str) -> usize {
         // Skip known slow directories
         let slow_dirs = ["node_modules", "venv", ".venv", "__pycache__", "target", ".git", "vendor"];
         if slow_dirs.iter().any(|d| path.contains(d)) {
@@ -177,6 +188,7 @@ impl GitState {
             std::time::Duration::from_millis(200),
             Command::new("find")
                 .args([&folder_path, "-type", "f", "-maxdepth", "3"])
+                .current_dir(base_dir)
                 .output(),
         )
         .await;

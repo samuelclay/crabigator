@@ -10,7 +10,24 @@ cargo build --release # Release build
 cargo run            # Run the application
 cargo check          # Quick type checking
 cargo test           # Run tests
+cargo clippy         # Lint
+make test-update     # Update fixture snapshots
 ```
+
+## Testing
+
+Fixture-based snapshots live under `tests/fixtures/` and are driven by `src/fixtures_tests.rs`.
+
+```bash
+make test            # Run all tests
+make test-update     # Update fixture snapshots (CRABIGATOR_UPDATE_FIXTURES=1)
+```
+
+Fixture layout:
+- `tests/fixtures/<name>/base` - baseline repo state
+- `tests/fixtures/<name>/worktree` - working tree changes
+- `tests/fixtures/<name>/fixture.json` - staged paths and stats
+- `tests/fixtures/<name>/expected.json` - expected mirror JSON
 
 ## What This Project Is
 

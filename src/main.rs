@@ -9,6 +9,9 @@ mod platforms;
 mod terminal;
 mod ui;
 
+#[cfg(test)]
+mod fixtures_tests;
+
 use anyhow::Result;
 use crossterm::{
     cursor::Show,

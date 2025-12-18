@@ -1,0 +1,15 @@
+{
+  "stats": {
+    "state": "planning",
+    "messages": 2,
+    "tools": {
+      "Read": 2,
+      "Write": 1
+    },
+    "compressions": 1,
+    "work_seconds": 125
+  },
+  "staged_paths": [
+    "src/new.rs"
+  ]
+}

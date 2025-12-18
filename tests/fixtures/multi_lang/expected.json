@@ -1,0 +1,111 @@
+{
+  "capture": {
+    "directory": "/tmp/crabigator-capture-fixture-multi_lang",
+    "enabled": false,
+    "screen_path": "/tmp/crabigator-capture-fixture-multi_lang/screen.txt",
+    "scrollback_path": "/tmp/crabigator-capture-fixture-multi_lang/scrollback.log"
+  },
+  "cwd": "multi_lang",
+  "last_updated": 0.0,
+  "session_id": "fixture-multi_lang",
+  "widgets": {
+    "changes": {
+      "data": {
+        "by_language": [
+          {
+            "changes": [
+              {
+                "change_type": "added",
+                "kind": "function",
+                "name": "plan"
+              },
+              {
+                "change_type": "modified",
+                "kind": "function",
+                "name": "greet"
+              },
+              {
+                "change_type": "added",
+                "kind": "function",
+                "name": "sum"
+              }
+            ],
+            "language": "JavaScript"
+          },
+          {
+            "changes": [
+              {
+                "change_type": "added",
+                "kind": "function",
+                "name": "plan"
+              },
+              {
+                "change_type": "modified",
+                "kind": "function",
+                "name": "greet"
+              }
+            ],
+            "language": "Python"
+          }
+        ],
+        "total": 5
+      },
+      "rendered": [
+        "JavaScript - 3 changes",
+        "  +Function plan",
+        "  ~Function greet",
+        "  +Function sum",
+        "Python - 2 changes",
+        "  +Function plan",
+        "  ~Function greet"
+      ]
+    },
+    "git": {
+      "data": {
+        "branch": "main",
+        "files": [
+          {
+            "additions": 5,
+            "deletions": 1,
+            "path": "src/app.ts",
+            "status": "M"
+          },
+          {
+            "additions": 4,
+            "deletions": 1,
+            "path": "scripts/main.py",
+            "status": "M"
+          },
+          {
+            "additions": 3,
+            "deletions": 0,
+            "path": "src/utils.ts",
+            "status": "A"
+          }
+        ],
+        "is_repo": true
+      },
+      "rendered": [
+        "main - 3 files",
+        "  M src/app.ts +5-1",
+        "  M scripts/main.py +4-1",
+        "  A src/utils.ts +3-0"
+      ]
+    },
+    "stats": {
+      "data": {
+        "compressions": 0,
+        "messages": 1,
+        "state": "complete",
+        "tools": 0,
+        "work_seconds": 30
+      },
+      "rendered": [
+        "Stats - Complete",
+        "Session: just now",
+        "Messages: 1",
+        "Tools: 0"
+      ]
+    }
+  }
+}

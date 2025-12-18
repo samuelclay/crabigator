@@ -1,4 +1,4 @@
-.PHONY: run build check test clean resume continue
+.PHONY: run build check test test-update clean resume continue lint update
 
 run:
 	RUST_BACKTRACE=1 cargo run
@@ -20,6 +20,15 @@ check:
 
 test:
 	cargo test
+
+test-update:
+	CRABIGATOR_UPDATE_FIXTURES=1 cargo test
+
+update: test-update
+	@true
+
+lint:
+	cargo clippy
 
 clean:
 	cargo clean

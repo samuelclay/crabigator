@@ -1,0 +1,94 @@
+{
+  "capture": {
+    "directory": "/tmp/crabigator-capture-fixture-rust_planning",
+    "enabled": false,
+    "screen_path": "/tmp/crabigator-capture-fixture-rust_planning/screen.txt",
+    "scrollback_path": "/tmp/crabigator-capture-fixture-rust_planning/scrollback.log"
+  },
+  "cwd": "rust_planning",
+  "last_updated": 0.0,
+  "session_id": "fixture-rust_planning",
+  "widgets": {
+    "changes": {
+      "data": {
+        "by_language": [
+          {
+            "changes": [
+              {
+                "change_type": "added",
+                "kind": "function",
+                "name": "plan"
+              },
+              {
+                "change_type": "modified",
+                "kind": "function",
+                "name": "greet"
+              },
+              {
+                "change_type": "added",
+                "kind": "function",
+                "name": "new_feature"
+              }
+            ],
+            "language": "Rust"
+          }
+        ],
+        "total": 3
+      },
+      "rendered": [
+        "Rust - 3 changes",
+        "  +Function plan",
+        "  ~Function greet",
+        "  +Function new_feature"
+      ]
+    },
+    "git": {
+      "data": {
+        "branch": "main",
+        "files": [
+          {
+            "additions": 5,
+            "deletions": 1,
+            "path": "src/lib.rs",
+            "status": "M"
+          },
+          {
+            "additions": 3,
+            "deletions": 0,
+            "path": "src/new.rs",
+            "status": "A"
+          },
+          {
+            "additions": 0,
+            "deletions": 0,
+            "path": "notes.txt",
+            "status": "??"
+          }
+        ],
+        "is_repo": true
+      },
+      "rendered": [
+        "main - 3 files",
+        "  M src/lib.rs +5-1",
+        "  A src/new.rs +3-0",
+        "  ?? notes.txt +0-0"
+      ]
+    },
+    "stats": {
+      "data": {
+        "compressions": 1,
+        "messages": 2,
+        "state": "thinking",
+        "tools": 3,
+        "work_seconds": 125
+      },
+      "rendered": [
+        "Stats - Thinking",
+        "Session: 2m",
+        "Messages: 2",
+        "Tools: 3",
+        "Compressions: 1"
+      ]
+    }
+  }
+}

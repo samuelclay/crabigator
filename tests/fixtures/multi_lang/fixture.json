@@ -1,0 +1,12 @@
+{
+  "stats": {
+    "state": "complete",
+    "messages": 1,
+    "tools": {},
+    "compressions": 0,
+    "work_seconds": 30
+  },
+  "staged_paths": [
+    "src/utils.ts"
+  ]
+}

@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use regex::Regex;
+use std::path::Path;
 use tokio::process::Command;
 
 use super::types::{ChangeNode, ChangeType, FileChanges, LanguageChanges, NodeKind};
@@ -62,6 +63,11 @@ impl DiffSummary {
     }
 
     pub async fn refresh(&self) -> Result<Self> {
+        let cwd = std::env::current_dir()?;
+        self.refresh_in_dir(&cwd).await
+    }
+
+    pub async fn refresh_in_dir(&self, dir: &Path) -> Result<Self> {
         let profile = std::env::var("CRABIGATOR_PROFILE").is_ok();
         let start = std::time::Instant::now();
         let mut summary = DiffSummary::default();
@@ -69,6 +75,7 @@ impl DiffSummary {
         // Get the diff output
         let output = Command::new("git")
             .args(["diff", "--no-color"])
+            .current_dir(dir)
             .output()
             .await?;
 
@@ -81,6 +88,7 @@ impl DiffSummary {
         // Also get staged changes
         let staged_output = Command::new("git")
             .args(["diff", "--cached", "--no-color"])
+            .current_dir(dir)
             .output()
             .await?;
 
