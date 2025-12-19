@@ -1,13 +1,13 @@
 //! Output capture for streaming-ready session recording.
 //!
-//! Captures assistant CLI PTY output to two files:
-//! - `scrollback.log`: Lines that have scrolled off the visible screen
-//! - `screen.txt`: Current screen snapshot from vt100 (overwritten periodically)
+//! Captures assistant CLI PTY output to files:
+//! - `scrollback.log`: Clean text transcript without ANSI codes (append-only)
+//! - `screen.txt`: Current screen snapshot with ANSI codes (rendered by vt100)
 //!
-//! Uses vt100 screen diffing to detect when lines scroll off.
+//! Uses a separate vt100 parser with a huge virtual screen to capture
+//! all output without losing anything to scrollback.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -19,15 +19,17 @@ pub struct CaptureConfig {
     pub session_id: String,
 }
 
-/// Manages output capture to scrollback.log and screen.txt files.
+/// Manages output capture to scrollback and screen files.
 pub struct CaptureManager {
     config: CaptureConfig,
     /// Base directory: /tmp/crabigator-capture-{session_id}/
     capture_dir: PathBuf,
-    /// Buffered writer for scrollback.log
-    scrollback_writer: Option<BufWriter<File>>,
-    /// Previous screen content (for diffing)
-    last_screen_lines: Vec<String>,
+    /// Our own vt100 parser with huge screen to capture all output
+    capture_parser: vt100::Parser,
+    /// Last scrollback.log update time (for throttling)
+    last_scrollback_update: Instant,
+    /// Scrollback update interval
+    scrollback_update_interval: Duration,
     /// Last screen.txt update time (for throttling)
     last_screen_update: Instant,
     /// Screen update interval
@@ -37,12 +39,17 @@ pub struct CaptureManager {
 impl CaptureManager {
     /// Create a new CaptureManager.
     pub fn new(config: CaptureConfig) -> std::io::Result<Self> {
+        // Use a very tall virtual screen (10000 rows) so content never scrolls off
+        // Width of 300 should handle most terminal widths
+        let capture_parser = vt100::Parser::new(10000, 300, 0);
+
         if !config.enabled {
             return Ok(Self {
                 config,
                 capture_dir: PathBuf::new(),
-                scrollback_writer: None,
-                last_screen_lines: Vec::new(),
+                capture_parser,
+                last_scrollback_update: Instant::now(),
+                scrollback_update_interval: Duration::from_millis(100),
                 last_screen_update: Instant::now(),
                 screen_update_interval: Duration::from_millis(100),
             });
@@ -56,114 +63,73 @@ impl CaptureManager {
         // Create directory
         fs::create_dir_all(&capture_dir)?;
 
-        // Open scrollback.log for append
-        let scrollback_path = capture_dir.join("scrollback.log");
-        let scrollback_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&scrollback_path)?;
-        let scrollback_writer = Some(BufWriter::new(scrollback_file));
-
         Ok(Self {
             config,
             capture_dir,
-            scrollback_writer,
-            last_screen_lines: Vec::new(),
+            capture_parser,
+            last_scrollback_update: Instant::now() - Duration::from_secs(10),
+            scrollback_update_interval: Duration::from_millis(100),
             last_screen_update: Instant::now() - Duration::from_secs(10),
             screen_update_interval: Duration::from_millis(100),
         })
     }
 
-    /// Capture scrollback by diffing screen contents.
+    /// Process PTY output bytes through our capture parser.
     ///
-    /// Compares current screen to previous screen. When lines scroll off
-    /// the top (shift up), they're written to scrollback.log.
-    pub fn capture_scrollback(&mut self, screen: &vt100::Screen) -> std::io::Result<()> {
+    /// This feeds the bytes to our internal vt100 parser which has a huge
+    /// virtual screen, so all content accumulates without scrolling off.
+    pub fn capture_output(&mut self, data: &[u8]) -> std::io::Result<()> {
+        if !self.config.enabled || data.is_empty() {
+            return Ok(());
+        }
+
+        // Process through our capture parser
+        self.capture_parser.process(data);
+
+        // Periodically rewrite scrollback.log with full content
+        self.maybe_update_scrollback()
+    }
+
+    /// Update scrollback.log if the throttle interval has elapsed.
+    pub fn maybe_update_scrollback(&mut self) -> std::io::Result<()> {
         if !self.config.enabled {
             return Ok(());
         }
 
-        let current_content = screen.contents();
-        let current_lines: Vec<String> = current_content.lines().map(|s| s.to_string()).collect();
-
-        // If this is the first capture, just save the state
-        if self.last_screen_lines.is_empty() {
-            self.last_screen_lines = current_lines;
+        if self.last_scrollback_update.elapsed() < self.scrollback_update_interval {
             return Ok(());
         }
 
-        // Detect scroll: check if the old screen's lines have shifted up
-        // by looking for where the old top line appears in the new screen
-        let scrolled_lines = self.detect_scrolled_lines(&current_lines);
-
-        if !scrolled_lines.is_empty() {
-            if let Some(ref mut writer) = self.scrollback_writer {
-                for line in &scrolled_lines {
-                    // Only write non-empty lines
-                    let trimmed = line.trim_end();
-                    if !trimmed.is_empty() {
-                        writeln!(writer, "{}", trimmed)?;
-                    }
-                }
-                writer.flush()?;
-            }
-        }
-
-        self.last_screen_lines = current_lines;
-        Ok(())
+        self.update_scrollback()
     }
 
-    /// Detect lines that have scrolled off the top.
-    fn detect_scrolled_lines(&self, current_lines: &[String]) -> Vec<String> {
-        if self.last_screen_lines.is_empty() || current_lines.is_empty() {
-            return Vec::new();
+    /// Rewrite scrollback.log with full content from the capture parser.
+    pub fn update_scrollback(&mut self) -> std::io::Result<()> {
+        if !self.config.enabled {
+            return Ok(());
         }
 
-        // Find where the first line of the old screen appears in the new screen
-        // If it moved down (or disappeared), lines scrolled off
-        let old_first = &self.last_screen_lines[0];
+        let screen = self.capture_parser.screen();
+        let (_, cols) = screen.size();
+        let (cursor_row, _) = screen.cursor_position();
 
-        // Look for old_first in current screen
-        for (i, line) in current_lines.iter().enumerate() {
-            if line == old_first && i > 0 {
-                // The old first line is now at position i
-                // That means i lines scrolled off the top
-                // But we need to be careful - the match might be coincidental
-                // Verify by checking if subsequent lines also match
-                let mut matches = 0;
-                for j in 0..self.last_screen_lines.len().min(current_lines.len() - i) {
-                    if self.last_screen_lines[j] == current_lines[i + j] {
-                        matches += 1;
-                    }
-                }
-
-                // If at least half the lines match, this is likely a scroll
-                if matches >= self.last_screen_lines.len() / 2 {
-                    // Return the lines that scrolled off
-                    return self.last_screen_lines[..i.min(self.last_screen_lines.len())].to_vec();
-                }
-            }
+        // Build full content including current line (with ANSI formatting preserved)
+        let mut content: Vec<u8> = Vec::new();
+        for row_bytes in screen.rows_formatted(0, cols).take(cursor_row as usize + 1) {
+            // Trim trailing whitespace (but preserve ANSI sequences)
+            let trimmed = row_bytes.trim_ascii_end();
+            content.extend_from_slice(trimmed);
+            content.push(b'\n');
         }
 
-        // Also check: if current screen is completely different,
-        // the entire old screen may have scrolled off
-        // This handles cases like screen clears followed by new content
-        let common_lines = current_lines
-            .iter()
-            .filter(|line| self.last_screen_lines.contains(line))
-            .count();
+        // Atomic write via tmp file
+        let scrollback_path = self.capture_dir.join("scrollback.log");
+        let tmp_path = self.capture_dir.join("scrollback.log.tmp");
+        fs::write(&tmp_path, &content)?;
+        fs::rename(&tmp_path, &scrollback_path)?;
 
-        // If very few lines in common and screen is full, old content scrolled
-        if common_lines < 3 && !current_lines.is_empty() {
-            // Return all old non-empty lines as scrollback
-            return self.last_screen_lines
-                .iter()
-                .filter(|line| !line.trim().is_empty())
-                .cloned()
-                .collect();
-        }
-
-        Vec::new()
+        self.last_scrollback_update = Instant::now();
+        Ok(())
     }
 
     /// Update screen.txt if the throttle interval has elapsed.
@@ -186,14 +152,11 @@ impl CaptureManager {
             return Ok(());
         }
 
+        // Write ANSI screen (rendered by vt100)
         let screen_path = self.capture_dir.join("screen.txt");
         let tmp_path = self.capture_dir.join("screen.txt.tmp");
-
-        // Get screen contents (plain text)
-        let contents = screen.contents();
-
-        // Atomic write: temp file + rename
-        fs::write(&tmp_path, &contents)?;
+        let contents_formatted = screen.contents_formatted();
+        fs::write(&tmp_path, &contents_formatted)?;
         fs::rename(&tmp_path, &screen_path)?;
 
         self.last_screen_update = Instant::now();

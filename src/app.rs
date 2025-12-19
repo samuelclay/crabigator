@@ -165,6 +165,11 @@ impl App {
         self.refresh_git_state().await;
         self.draw_status_bar()?;
 
+        // Initial screen capture (write immediately so file isn't blank on startup)
+        let _ = self
+            .capture_manager
+            .update_screen(self.platform_pty.screen());
+
         // Channel for receiving background git refresh results
         let (git_tx, mut git_rx) = mpsc::channel::<GitRefreshResult>(1);
         let mut git_refresh_pending = false;
@@ -225,9 +230,10 @@ impl App {
                 last_status_draw = Instant::now();
             }
 
-            // Update screen capture (throttled internally)
+            // Update captures (throttled internally)
             if got_output {
                 let _ = self.capture_manager.maybe_update_screen(self.platform_pty.screen());
+                let _ = self.capture_manager.maybe_update_scrollback();
             }
 
             // Check if the platform CLI has exited
@@ -281,6 +287,10 @@ impl App {
                         continue;
                     }
                     wrote_output = true;
+                    // Capture through our internal vt100 parser
+                    if let Err(e) = self.capture_manager.capture_output(&bytes) {
+                        eprintln!("Capture error: {}", e);
+                    }
                     self.platform_pty.process_output(&bytes);
                     stdout.write_all(&bytes)?;
                 }
@@ -297,11 +307,6 @@ impl App {
         }
 
         if wrote_output {
-            // Capture scrollback by diffing screen state
-            if let Err(e) = self.capture_manager.capture_scrollback(self.platform_pty.screen()) {
-                // Log error but don't fail - capture is non-critical
-                eprintln!("Capture error: {}", e);
-            }
             stdout.flush()?;
         }
 
