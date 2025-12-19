@@ -56,6 +56,8 @@ pub enum SessionState {
     Ready,
     /// The assistant is actively processing/generating
     Thinking,
+    /// The assistant is waiting for permission approval
+    Permission,
     /// The assistant asked a question and is waiting for response
     Question,
     /// The assistant finished responding
@@ -77,6 +79,9 @@ pub struct PlatformStats {
     /// Current session state
     #[serde(default)]
     pub state: SessionState,
+    /// Unix timestamp when idle state began (complete/question)
+    #[serde(default)]
+    pub idle_since: Option<f64>,
     /// Unix timestamp of last update
     pub last_updated: Option<f64>,
 }
@@ -111,6 +116,9 @@ pub trait Platform {
 
     /// Load current stats from the platform's data source
     fn load_stats(&self, cwd: &str) -> Result<PlatformStats>;
+
+    /// Clean up stats file on exit (default: no-op)
+    fn cleanup_stats(&self, _cwd: &str) {}
 }
 
 pub fn platform_for(kind: PlatformKind) -> Box<dyn Platform> {

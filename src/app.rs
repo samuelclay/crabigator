@@ -268,6 +268,9 @@ impl App {
         // Clean up mirror file before exit
         self.mirror_publisher.cleanup();
 
+        // Clean up stats file before exit
+        self.platform.cleanup_stats(&self.cwd);
+
         // Reset scroll region before exit
         self.reset_scroll_region()?;
 

@@ -22,11 +22,12 @@ const HOOK_VERSION: &str = env!("CARGO_PKG_VERSION");
 const HOOK_SCRIPT: &str = r#"#!/usr/bin/env python3
 """
 Crabigator stats hook for Claude Code
-Handles: PostToolUse, Stop, SubagentStop, PreCompact, UserPromptSubmit
+Handles: PermissionRequest, PostToolUse, Stop, SubagentStop, PreCompact, UserPromptSubmit
 
 State machine:
   - ready: Initial state (nothing happened yet)
   - thinking: Claude is actively processing
+  - permission: Claude is waiting for permission approval
   - question: Claude asked a question (AskUserQuestion tool)
   - complete: Claude finished responding
 """
@@ -63,6 +64,7 @@ def load_stats(stats_file: Path) -> dict:
         "tools": {},
         "state": "ready",
         "pending_question": False,
+        "idle_since": None,
         "last_updated": None,
     }
 
@@ -96,12 +98,18 @@ def main():
     stats_file = get_stats_file(cwd)
     stats = load_stats(stats_file)
 
-    if event == "PostToolUse":
+    if event == "PermissionRequest":
+        # Permission dialog is being shown to user
+        stats["state"] = "permission"
+
+    elif event == "PostToolUse":
         tool_name = data.get("tool_name", "unknown")
         stats["tools"][tool_name] = stats["tools"].get(tool_name, 0) + 1
         # Mark if this was a question tool
         if tool_name == "AskUserQuestion":
             stats["pending_question"] = True
+        # Tool completed - back to thinking (more tools may follow)
+        stats["state"] = "thinking"
 
     elif event == "Stop":
         stats["messages"] += 1
@@ -111,6 +119,8 @@ def main():
             stats["pending_question"] = False
         else:
             stats["state"] = "complete"
+        # Start idle timer
+        stats["idle_since"] = time.time()
 
     elif event == "SubagentStop":
         stats["subagent_messages"] += 1
@@ -122,6 +132,7 @@ def main():
         # User submitted input, Claude starts thinking
         stats["state"] = "thinking"
         stats["pending_question"] = False
+        stats["idle_since"] = None
 
     save_stats(stats_file, stats)
     sys.exit(0)
@@ -226,7 +237,9 @@ impl ClaudeCodePlatform {
             })
         };
 
-        if event == "PostToolUse" {
+        // Events that require matcher="*" to catch all tool types
+        let events_with_matcher = ["PermissionRequest", "PostToolUse"];
+        if events_with_matcher.contains(&event) {
             event_arr.iter().any(|entry| {
                 entry.get("matcher")
                     .and_then(|m| m.as_str())
@@ -254,7 +267,7 @@ impl ClaudeCodePlatform {
         })?;
 
         let script_path_str = self.script_path().to_string_lossy().to_string();
-        let hook_events = ["PostToolUse", "Stop", "SubagentStop", "PreCompact", "UserPromptSubmit"];
+        let hook_events = ["PermissionRequest", "PostToolUse", "Stop", "SubagentStop", "PreCompact", "UserPromptSubmit"];
 
         Ok(hook_events
             .iter()
@@ -335,7 +348,9 @@ impl ClaudeCodePlatform {
         }
 
         // Hook events we need to register
-        let hook_events = ["PostToolUse", "Stop", "SubagentStop", "PreCompact", "UserPromptSubmit"];
+        let hook_events = ["PermissionRequest", "PostToolUse", "Stop", "SubagentStop", "PreCompact", "UserPromptSubmit"];
+        // Events that require matcher="*" to catch all tool types
+        let events_with_matcher = ["PermissionRequest", "PostToolUse"];
 
         // Our hook configuration
         let our_hook = json!({
@@ -362,8 +377,8 @@ impl ClaudeCodePlatform {
             };
 
             // Determine preferred placement and ensure our hook exists there.
-            if event == "PostToolUse" {
-                // For PostToolUse, we need matcher="*" so we count all tools.
+            if events_with_matcher.contains(&event) {
+                // For tool-related events, we need matcher="*" to catch all tool types.
                 let mut star_idx = arr.iter().position(|entry| {
                     entry.get("matcher")
                         .and_then(|m| m.as_str())
@@ -551,6 +566,11 @@ impl Platform for ClaudeCodePlatform {
             .unwrap_or_default();
 
         Ok(stats)
+    }
+
+    fn cleanup_stats(&self, cwd: &str) {
+        let stats_path = Self::stats_file_path(cwd);
+        let _ = fs::remove_file(stats_path);
     }
 }
 

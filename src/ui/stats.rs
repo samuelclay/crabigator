@@ -25,6 +25,33 @@ fn throbber_frame() -> char {
     THROBBER[frame]
 }
 
+/// Calculate idle seconds from idle_since timestamp
+fn idle_seconds(idle_since: Option<f64>) -> Option<u64> {
+    let since = idle_since?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    let secs = (now - since) as u64;
+    if secs >= 60 {
+        Some(secs)
+    } else {
+        None
+    }
+}
+
+/// Format idle duration
+fn format_idle(secs: u64) -> String {
+    if secs >= 3600 {
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        format!("{}h{}m", h, m)
+    } else {
+        let m = secs / 60;
+        format!("{}m", m)
+    }
+}
+
 /// Format the state indicator for the header row
 fn format_state_indicator(state: SessionState) -> String {
     match state {
@@ -33,6 +60,9 @@ fn format_state_indicator(state: SessionState) -> String {
         }
         SessionState::Thinking => {
             format!("{}{}{}", fg(color::GREEN), throbber_frame(), RESET)
+        }
+        SessionState::Permission => {
+            format!("{}{} ?{}", fg(color::YELLOW), throbber_frame(), RESET)
         }
         SessionState::Question => {
             format!("{}? Question{}", fg(color::CYAN), RESET)
@@ -97,6 +127,26 @@ pub fn draw_stats_widget(
                     fg(color::GRAY), RESET,
                     fg(color::PINK), compressions, RESET
                 )
+            } else {
+                String::new()
+            }
+        }
+        6 => {
+            // Idle time (only show when complete/question state and idle > 60s)
+            let is_idle_state = matches!(
+                stats.platform_stats.state,
+                SessionState::Complete | SessionState::Question
+            );
+            if is_idle_state {
+                if let Some(secs) = idle_seconds(stats.platform_stats.idle_since) {
+                    format!(
+                        "{}◇ Idle{} {}{}{}",
+                        fg(color::GRAY), RESET,
+                        fg(color::GRAY), format_idle(secs), RESET
+                    )
+                } else {
+                    String::new()
+                }
             } else {
                 String::new()
             }

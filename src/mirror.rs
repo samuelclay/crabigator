@@ -294,6 +294,22 @@ fn render_stats_preview(stats: &SessionStats) -> Vec<String> {
     if stats.platform_stats.compressions > 0 {
         lines.push(format!("Compressions: {}", stats.platform_stats.compressions));
     }
+    // Show idle time if >= 60 seconds
+    if let Some(idle_since) = stats.platform_stats.idle_since {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        let idle_secs = (now - idle_since) as u64;
+        if idle_secs >= 60 {
+            let idle_str = if idle_secs >= 3600 {
+                format!("{}h{}m", idle_secs / 3600, (idle_secs % 3600) / 60)
+            } else {
+                format!("{}m", idle_secs / 60)
+            };
+            lines.push(format!("Idle: {}", idle_str));
+        }
+    }
     lines
 }
 
