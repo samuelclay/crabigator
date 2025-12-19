@@ -1,6 +1,7 @@
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::platforms::{Platform, PlatformStats};
+use crate::ui::sparkline::bin_timestamps;
 
 #[derive(Clone, Debug)]
 pub struct SessionStats {
@@ -10,15 +11,22 @@ pub struct SessionStats {
     /// Timestamp of last platform stats check
     last_stats_check: f64,
     session_start: Instant,
+    /// Unix timestamp when session started (for sparkline binning)
+    session_start_unix: f64,
 }
 
 impl SessionStats {
     pub fn new() -> Self {
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
         Self {
             work_seconds: 0,
             platform_stats: PlatformStats::default(),
             last_stats_check: 0.0,
             session_start: Instant::now(),
+            session_start_unix: now_unix,
         }
     }
 
@@ -73,6 +81,20 @@ impl SessionStats {
         } else {
             Self::format_duration(self.work_seconds)
         }
+    }
+
+    /// Get binned tool usage for sparkline rendering
+    pub fn tool_usage_bins(&self, num_bins: usize) -> Vec<u32> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        bin_timestamps(
+            &self.platform_stats.tool_timestamps,
+            self.session_start_unix,
+            now,
+            num_bins,
+        )
     }
 }
 

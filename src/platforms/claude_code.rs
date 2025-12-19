@@ -62,6 +62,7 @@ def load_stats(stats_file: Path) -> dict:
         "subagent_messages": 0,
         "compressions": 0,
         "tools": {},
+        "tool_timestamps": [],
         "state": "ready",
         "pending_question": False,
         "idle_since": None,
@@ -105,6 +106,7 @@ def main():
     elif event == "PostToolUse":
         tool_name = data.get("tool_name", "unknown")
         stats["tools"][tool_name] = stats["tools"].get(tool_name, 0) + 1
+        stats["tool_timestamps"].append(time.time())
         # Mark if this was a question tool
         if tool_name == "AskUserQuestion":
             stats["pending_question"] = True
@@ -145,6 +147,9 @@ if __name__ == "__main__":
 #[derive(Debug, Serialize, Deserialize)]
 struct HooksMeta {
     installed_version: String,
+    /// MD5 hash of the hook script content for change detection
+    #[serde(default)]
+    script_hash: String,
     installed_at: String,
     script_path: String,
 }
@@ -197,6 +202,12 @@ impl ClaudeCodePlatform {
         Ok(())
     }
 
+    /// Compute hash of the hook script content for change detection
+    fn script_content_hash() -> String {
+        let script_content = HOOK_SCRIPT.replace("{VERSION}", HOOK_VERSION);
+        Self::md5_hash_prefix(&script_content, 32)
+    }
+
     /// Check if hooks are installed and current version
     fn is_current_version(&self) -> bool {
         let meta_path = self.meta_path();
@@ -211,7 +222,11 @@ impl ClaudeCodePlatform {
         match fs::read_to_string(&meta_path) {
             Ok(content) => {
                 match serde_json::from_str::<HooksMeta>(&content) {
-                    Ok(meta) => meta.installed_version == HOOK_VERSION,
+                    Ok(meta) => {
+                        // Check both version and script hash
+                        meta.installed_version == HOOK_VERSION
+                            && meta.script_hash == Self::script_content_hash()
+                    }
                     Err(_) => false,
                 }
             }
@@ -301,6 +316,7 @@ impl ClaudeCodePlatform {
         // Write metadata
         let meta = HooksMeta {
             installed_version: HOOK_VERSION.to_string(),
+            script_hash: Self::script_content_hash(),
             installed_at: Utc::now().to_rfc3339(),
             script_path: script_path.to_string_lossy().to_string(),
         };

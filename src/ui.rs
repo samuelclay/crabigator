@@ -5,6 +5,7 @@
 
 mod changes;
 mod git;
+pub mod sparkline;
 mod stats;
 mod status_bar;
 pub mod utils;

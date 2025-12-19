@@ -76,6 +76,9 @@ pub struct PlatformStats {
     /// Tool usage counts by tool name
     #[serde(default)]
     pub tools: HashMap<String, u32>,
+    /// Unix timestamps of tool calls (for sparkline visualization)
+    #[serde(default)]
+    pub tool_timestamps: Vec<f64>,
     /// Current session state
     #[serde(default)]
     pub state: SessionState,

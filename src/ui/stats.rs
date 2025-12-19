@@ -10,7 +10,8 @@ use anyhow::Result;
 use crate::terminal::escape::{self, color, fg, RESET};
 use crate::hooks::SessionStats;
 use crate::platforms::SessionState;
-use super::utils::{format_number, strip_ansi_len};
+use super::sparkline::render_sparkline;
+use super::utils::strip_ansi_len;
 
 /// Braille spinner frames for the thinking animation
 const THROBBER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -111,11 +112,14 @@ pub fn draw_stats_widget(
             )
         }
         4 => {
-            // Tool calls
+            // Tool usage sparkline (half width for the sparkline part)
+            let sparkline_width = (width as usize) / 2;
+            let bins = stats.tool_usage_bins(sparkline_width);
+            let sparkline = render_sparkline(&bins, sparkline_width);
             format!(
-                "{}⚙ Tools{} {}{}{}",
+                "{}⚙ Tools{} {}",
                 fg(color::GRAY), RESET,
-                fg(color::ORANGE), format_number(stats.platform_stats.total_tool_calls() as u64), RESET
+                sparkline
             )
         }
         5 => {
