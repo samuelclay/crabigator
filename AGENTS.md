@@ -14,6 +14,16 @@ cargo clippy         # Lint
 make test-update     # Update fixture snapshots
 ```
 
+## Running
+
+```bash
+make run             # Run with provider from .crabigator-provider (default: claude)
+make claude          # Set provider to Claude Code and run
+make codex           # Set provider to Codex CLI and run
+make resume          # Resume last session
+make continue        # Continue last conversation
+```
+
 ## Testing
 
 Fixture-based snapshots live under `tests/fixtures/` and are driven by `src/fixtures_tests.rs`.
@@ -31,24 +41,43 @@ Fixture layout:
 
 ## What This Project Is
 
-Crabigator is a Rust TUI wrapper around the Claude Code CLI. It spawns Claude Code in a PTY (pseudo-terminal) and adds status widgets below the Claude Code interface showing git status, file changes, and session statistics.
+Crabigator is a Rust TUI wrapper around the Claude Code and Codex CLIs. It spawns the assistant CLI in a PTY (pseudo-terminal) and adds status widgets below the interface showing git status, file changes, and session statistics.
+
+### Platform Selection
+
+Crabigator supports multiple assistant CLIs:
+- **Claude Code** (Anthropic)
+- **Codex CLI** (OpenAI)
+
+Platform selection:
+```bash
+crabigator                 # Uses default platform (config/env/claude)
+crabigator codex           # Use Codex CLI
+crabigator claude          # Use Claude Code
+crabigator --platform codex # Explicit flag
+```
+
+Platform preference is saved in `~/.crabigator/config.toml`.
 
 ## Architecture
 
 The application uses a **scroll region approach** to layer UI:
-- Sets terminal scroll region (DECSTBM escape sequence) to confine Claude Code output to the top ~80% of the terminal
-- Claude Code runs in a PTY and its output passes through untouched within that scroll region
+- Sets terminal scroll region (DECSTBM escape sequence) to confine assistant CLI output to the top ~80% of the terminal
+- The assistant CLI runs in a PTY and its output passes through untouched within that scroll region
 - Status widgets are rendered below the scroll region using raw ANSI escape sequences
 - No intermediate rendering library (ratatui was removed) - all drawing is done with direct escape codes
 
 ### Key Modules
 
 - **app.rs**: Main application loop and layout management. Handles scroll region setup, event polling, status bar drawing, and PTY passthrough.
-- **terminal/**: Terminal handling - `pty.rs` manages PTY via `portable-pty` (spawns `claude` CLI, handles I/O), `input.rs` handles keyboard input forwarding, `escape.rs` provides ANSI escape sequence utilities.
+- **config.rs**: Configuration loading/saving for `~/.crabigator/config.toml` (platform preferences).
+- **terminal/**: Terminal handling - `pty.rs` manages PTY via `portable-pty` (spawns the platform CLI, handles I/O), `input.rs` handles keyboard input forwarding, `escape.rs` provides ANSI escape sequence utilities.
 - **git/**: Git state tracking via `git status --porcelain` and `git diff`.
 - **parsers/**: Language-specific diff parsers (Rust, TypeScript, Python, generic) that extract semantic information (functions, classes, etc.) from git diffs.
-- **hooks/**: `ClaudeStats` for session time tracking and platform stats integration.
-- **platforms/**: Platform-specific integrations (e.g., `claude_code.rs` for reading Claude Code's hook-generated stats files).
+- **hooks/**: `SessionStats` for session time tracking and platform stats integration.
+- **platforms/**: Platform abstraction layer with `Platform` implementations:
+  - `claude_code.rs`: Claude Code hooks and stats (writes to `~/.claude/crabigator/`)
+  - `codex_cli.rs`: Codex CLI session log parsing (reads `~/.codex/sessions`)
 - **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout, with `git.rs`, `changes.rs`, `stats.rs` for individual widgets.
 - **mirror.rs**: Widget state mirroring for external inspection. Publishes throttled JSON snapshots of all widget state.
 - **inspect.rs**: Inspect command implementation for viewing other running crabigator instances.
@@ -58,7 +87,7 @@ The application uses a **scroll region approach** to layer UI:
 
 - All keyboard input forwards directly to the PTY
 - Option/Alt key combinations are properly encoded for word navigation (Option+Left/Right) and word deletion (Option+Backspace/Delete)
-- When Claude Code exits, Crabigator exits automatically
+- When the assistant CLI exits, Crabigator exits automatically
 
 ### Terminal Considerations
 
@@ -69,7 +98,7 @@ The application uses a **scroll region approach** to layer UI:
 
 ### Output Capture
 
-Crabigator captures Claude Code output for streaming and inspection. At startup, a banner shows file paths.
+Crabigator captures assistant CLI output for streaming and inspection. At startup, a banner shows file paths.
 
 Files created in `/tmp/crabigator-capture-{session_id}/`:
 - **scrollback.log**: Clean text transcript (append-only). Only complete lines are written - animations/spinners using carriage return are filtered out. ANSI escape sequences are stripped.

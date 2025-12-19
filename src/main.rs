@@ -1,5 +1,6 @@
 mod app;
 mod capture;
+mod config;
 mod git;
 mod hooks;
 mod inspect;
@@ -27,6 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::app::App;
+use crate::config::Config;
 use crate::platforms::PlatformKind;
 
 // ANSI color codes
@@ -36,18 +38,19 @@ const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
 /// Print session info banner with file paths
-fn print_session_banner(session_id: &str, capture_enabled: bool, cols: u16) {
+fn print_session_banner(session_id: &str, platform: PlatformKind, capture_enabled: bool, cols: u16) {
     let width = (cols as usize).min(80);
     let bar = "─".repeat(width.saturating_sub(2));
 
     println!();
     println!("{DIM}┌{bar}┐{RESET}");
 
-    // Title line
-    let title = format!("{BOLD}{CYAN}CRABIGATOR{RESET}");
+    // Title line with platform indicator
+    let platform_name = platform.display_name();
+    let title = format!("{BOLD}{CYAN}CRABIGATOR{RESET} {DIM}({platform_name}){RESET}");
     let session_label = format!("{DIM}session {session_id}{RESET}");
     // Account for ANSI codes in width calculation
-    let title_plain_len = 10; // "CRABIGATOR"
+    let title_plain_len = 10 + 3 + platform_name.len(); // "CRABIGATOR" + " (" + platform + ")"
     let session_plain_len = 8 + session_id.len(); // "session " + id
     let padding = width.saturating_sub(4 + title_plain_len + session_plain_len);
     println!("{DIM}│{RESET} {title}{}{session_label} {DIM}│{RESET}", " ".repeat(padding));
@@ -114,7 +117,7 @@ impl Default for Command {
 
 #[derive(Clone)]
 struct Args {
-    platform: PlatformKind,
+    platform: Option<PlatformKind>,
     platform_args: Vec<String>,
     profile: bool,
     command: Command,
@@ -125,7 +128,7 @@ struct Args {
 impl Default for Args {
     fn default() -> Self {
         Self {
-            platform: PlatformKind::Claude,
+            platform: None,
             platform_args: Vec::new(),
             profile: false,
             command: Command::default(),
@@ -175,6 +178,17 @@ fn parse_args() -> Args {
             "--profile" => {
                 args.profile = true;
             }
+            "--platform" | "-p" => {
+                if let Some(value) = iter.next() {
+                    if let Some(platform) = PlatformKind::parse(&value) {
+                        args.platform = Some(platform);
+                        platform_selected = true;
+                    } else {
+                        eprintln!("Unknown platform: {}. Use 'claude' or 'codex'.", value);
+                        std::process::exit(1);
+                    }
+                }
+            }
             "-r" | "--resume" => {
                 args.platform_args.push("--resume".to_string());
             }
@@ -187,7 +201,7 @@ fn parse_args() -> Args {
             _ => {
                 if !platform_selected && !arg.starts_with('-') {
                     if let Some(platform) = PlatformKind::parse(&arg) {
-                        args.platform = platform;
+                        args.platform = Some(platform);
                         platform_selected = true;
                         continue;
                     }
@@ -199,6 +213,35 @@ fn parse_args() -> Args {
     }
 
     args
+}
+
+/// Resolve platform from explicit arg, env var, config file, or default
+/// If explicitly selected, saves preference to config for future use.
+fn resolve_platform(explicit: Option<PlatformKind>) -> PlatformKind {
+    if let Some(kind) = explicit {
+        let _ = save_platform_preference(kind);
+        return kind;
+    }
+
+    if let Ok(env_platform) = env::var("CRABIGATOR_PLATFORM") {
+        if let Some(kind) = PlatformKind::parse(&env_platform) {
+            return kind;
+        }
+    }
+
+    if let Ok(config) = Config::load() {
+        if let Some(kind) = PlatformKind::parse(&config.default_platform) {
+            return kind;
+        }
+    }
+
+    PlatformKind::Claude
+}
+
+/// Save platform preference to config file
+fn save_platform_preference(platform: PlatformKind) -> anyhow::Result<()> {
+    let mut config = Config::load().unwrap_or_default();
+    config.set_default_platform(platform.as_str())
 }
 
 /// Startup trace for measuring performance.
@@ -313,13 +356,19 @@ fn restore_terminal(total_rows: u16) -> Result<()> {
 fn setup_panic_handler() {
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
+        // First disable raw mode to ensure newlines work
         let _ = disable_raw_mode();
-        // Reset scroll region
-        print!("{}", terminal::escape::SCROLL_REGION_RESET);
+        // Reset scroll region and flush
+        let mut stdout = stdout();
+        let _ = write!(stdout, "{}", terminal::escape::SCROLL_REGION_RESET);
+        let _ = stdout.flush();
         let _ = execute!(
-            stdout(),
-            DisableBracketedPaste
+            stdout,
+            DisableBracketedPaste,
+            Show
         );
+        // Ensure we're on a fresh line
+        println!();
         original_hook(panic_info);
     }));
 }
@@ -338,7 +387,6 @@ fn generate_session_id() -> String {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = parse_args();
-    let platform_kind = args.platform;
 
     // Handle subcommands that don't need the full app setup
     match args.command {
@@ -352,10 +400,14 @@ async fn main() -> Result<()> {
         Command::Run => {}
     }
 
+    // Resolve platform from args, env, or config
+    let platform_kind = resolve_platform(args.platform);
+
     // Generate and set session ID before anything else
     // This ensures the CLI and our stats loading use the same ID
     let session_id = generate_session_id();
     env::set_var("CRABIGATOR_SESSION_ID", &session_id);
+    env::set_var("CRABIGATOR_PLATFORM", platform_kind.as_str());
     if args.profile {
         env::set_var("CRABIGATOR_PROFILE", "1");
     }
@@ -364,6 +416,7 @@ async fn main() -> Result<()> {
 
     timer.log("args parsed");
     timer.log(&format!("session_id={}", session_id));
+    timer.log(&format!("platform={}", platform_kind.display_name()));
 
     // Install/update platform hooks in background thread (fire and forget)
     // Don't block startup - hooks will be ready by the time the CLI needs them
@@ -406,30 +459,53 @@ async fn main() -> Result<()> {
 
     // Get terminal size and print session banner BEFORE raw mode
     let (cols, _) = terminal_size()?;
-    print_session_banner(&session_id, args.capture, cols);
+    print_session_banner(&session_id, platform_kind, args.capture, cols);
 
     let begin = Instant::now();
-    let (cols, rows) = setup_terminal()?;
+    let (cols, rows) = match setup_terminal() {
+        Ok(size) => size,
+        Err(e) => {
+            let _ = disable_raw_mode();
+            let _ = execute!(stdout(), DisableBracketedPaste, Show);
+            return Err(e);
+        }
+    };
     timer.duration("setup terminal", begin.elapsed());
 
+    let (result, stats, final_rows) = {
+        let begin = Instant::now();
+        let platform = platforms::platform_for(platform_kind);
+        let app_result = App::new(cols, rows, platform, args.platform_args, args.capture).await;
+        timer.duration("App::new", begin.elapsed());
+
+        match app_result {
+            Ok(mut app) => {
+                timer.log("Starting main loop");
+
+                let begin = Instant::now();
+                let run_result = app.run().await;
+                timer.duration("app.run", begin.elapsed());
+                let stats = app.session_stats.clone();
+                let total_rows = app.total_rows;
+                (run_result, Some(stats), total_rows)
+            }
+            Err(e) => {
+                let _ = restore_terminal(rows);
+                return Err(e);
+            }
+        }
+    };
+
     let begin = Instant::now();
-    let platform = platforms::platform_for(platform_kind);
-    let mut app = App::new(cols, rows, platform, args.platform_args, args.capture).await?;
-    timer.duration("App::new", begin.elapsed());
-
-    timer.log("Starting main loop");
-
-    let begin = Instant::now();
-    let result = app.run().await;
-    timer.duration("app.run", begin.elapsed());
-
-    // Capture stats and layout before restoring terminal
-    let stats = app.session_stats.clone();
-    let total_rows = app.total_rows;
-
-    let begin = Instant::now();
-    restore_terminal(total_rows)?;
+    let _ = disable_raw_mode();
+    let restore_result = restore_terminal(final_rows);
     timer.duration("restore terminal", begin.elapsed());
+
+    if restore_result.is_err() {
+        let _ = execute!(stdout(), DisableBracketedPaste, Show);
+    }
+
+    println!();
 
     // Dump startup trace after terminal restore (to stdout, visible in scrollback)
     timer.dump();
@@ -451,12 +527,14 @@ async fn main() -> Result<()> {
     }
 
     // Print session summary after exit
-    println!();
-    println!(
-        "Session: {} messages, {} tool calls",
-        stats.platform_stats.messages,
-        stats.platform_stats.total_tool_calls()
-    );
+    if let Some(stats) = stats {
+        println!();
+        println!(
+            "Session: {} messages, {} tool calls",
+            stats.platform_stats.messages,
+            stats.platform_stats.total_tool_calls()
+        );
+    }
 
     result
 }

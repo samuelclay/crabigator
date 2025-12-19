@@ -23,15 +23,26 @@ impl PlatformKind {
     pub fn parse(value: &str) -> Option<Self> {
         match value.to_ascii_lowercase().as_str() {
             "claude" | "claude-code" | "claude_code" => Some(Self::Claude),
-            "codex" | "codecs" => Some(Self::Codex),
+            "codex" | "codecs" | "openai" => Some(Self::Codex),
             _ => None,
         }
     }
 
-    pub fn command(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+        }
+    }
+
+    pub fn command(self) -> &'static str {
+        self.as_str()
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+            Self::Codex => "Codex",
         }
     }
 }
