@@ -1,6 +1,6 @@
 //! Output capture for streaming-ready session recording.
 //!
-//! Captures Claude Code PTY output to two files:
+//! Captures assistant CLI PTY output to two files:
 //! - `scrollback.log`: Lines that have scrolled off the visible screen
 //! - `screen.txt`: Current screen snapshot from vt100 (overwritten periodically)
 //!

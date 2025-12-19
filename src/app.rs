@@ -1,8 +1,8 @@
 //! Crabigator App - Scroll region approach
 //!
 //! Architecture:
-//! - Set terminal scroll region to top N rows for Claude Code
-//! - Claude Code renders within that region (thinks it's the full terminal)
+//! - Set terminal scroll region to top N rows for the assistant CLI
+//! - The assistant CLI renders within that region (thinks it's the full terminal)
 //! - We render our status widgets below the scroll region
 //! - PTY output passes through untouched
 
@@ -14,10 +14,11 @@ use tokio::sync::mpsc;
 
 use crate::capture::{CaptureConfig, CaptureManager};
 use crate::git::GitState;
-use crate::hooks::ClaudeStats;
+use crate::hooks::SessionStats;
+use crate::platforms::Platform;
 use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
-use crate::terminal::{escape, forward_key_to_pty, ClaudePty};
+use crate::terminal::{escape, forward_key_to_pty, PlatformPty};
 use crate::ui::{draw_status_bar, Layout};
 
 /// Result from background git refresh
@@ -28,10 +29,11 @@ struct GitRefreshResult {
 
 pub struct App {
     pub running: bool,
-    pub claude_pty: ClaudePty,
+    pub platform: Box<dyn Platform>,
+    pub platform_pty: PlatformPty,
     pub git_state: GitState,
     pub diff_summary: DiffSummary,
-    pub claude_stats: ClaudeStats,
+    pub session_stats: SessionStats,
     pub last_mouse_event: Option<MouseEvent>,
 
     // Layout
@@ -47,21 +49,36 @@ pub struct App {
     mirror_publisher: MirrorPublisher,
     /// Output capture manager for streaming
     capture_manager: CaptureManager,
+    /// Handles terminal DSR responses for CLIs that request cursor position
+    dsr_handler: DsrHandler,
 }
 
 impl App {
-    pub async fn new(cols: u16, rows: u16, claude_args: Vec<String>, capture_enabled: bool) -> Result<Self> {
+    pub async fn new(
+        cols: u16,
+        rows: u16,
+        platform: Box<dyn Platform>,
+        platform_args: Vec<String>,
+        capture_enabled: bool,
+    ) -> Result<Self> {
         let (pty_tx, pty_rx) = mpsc::channel(256);
 
         // Reserve bottom 20% for our status widgets (minimum 3 rows)
         let status_rows = ((rows as f32 * 0.2) as u16).max(3);
         let pty_rows = rows.saturating_sub(status_rows);
 
-        // Give Claude Code only the top portion
-        let claude_pty = ClaudePty::new(pty_tx, cols, pty_rows, claude_args).await?;
+        // Give the assistant CLI only the top portion
+        let platform_pty = PlatformPty::new(
+            pty_tx,
+            cols,
+            pty_rows,
+            platform.command(),
+            platform_args,
+        )
+        .await?;
         let git_state = GitState::new();
         let diff_summary = DiffSummary::new();
-        let claude_stats = ClaudeStats::new();
+        let session_stats = SessionStats::new();
 
         // Get current working directory for platform stats
         let cwd = std::env::current_dir()
@@ -81,10 +98,11 @@ impl App {
 
         Ok(Self {
             running: true,
-            claude_pty,
+            platform,
+            platform_pty,
             git_state,
             diff_summary,
-            claude_stats,
+            session_stats,
             last_mouse_event: None,
             total_rows: rows,
             total_cols: cols,
@@ -94,6 +112,7 @@ impl App {
             pty_rx,
             mirror_publisher,
             capture_manager,
+            dsr_handler: DsrHandler::new(),
         })
     }
 
@@ -112,7 +131,7 @@ impl App {
         // DECSTBM: Set Top and Bottom Margins (1-indexed)
         // This constrains scrolling to rows 1 through pty_rows
         write!(stdout, "{}", escape::scroll_region(1, self.pty_rows))?;
-        // Move cursor to bottom of scroll region so Claude Code starts there
+        // Move cursor to bottom of scroll region so the CLI starts there
         // and naturally scrolls up as it produces output (like a normal shell)
         write!(stdout, "{}", escape::cursor_to(self.pty_rows, 1))?;
         stdout.flush()?;
@@ -135,7 +154,7 @@ impl App {
         let hook_refresh_interval = Duration::from_millis(500);
         let status_debounce = Duration::from_millis(100);
 
-        // Set up scroll region to constrain Claude Code to top area
+        // Set up scroll region to constrain the CLI to the top area
         // Pass true to scroll existing content up and make room for status bar
         self.setup_scroll_region(true)?;
 
@@ -188,9 +207,10 @@ impl App {
 
             // Refresh platform stats more frequently and redraw if state changed
             if last_hook_refresh.elapsed() >= hook_refresh_interval {
-                let old_state = self.claude_stats.platform_stats.state;
-                self.claude_stats.refresh_platform_stats(&self.cwd);
-                let new_state = self.claude_stats.platform_stats.state;
+                let old_state = self.session_stats.platform_stats.state;
+                self.session_stats
+                    .refresh_platform_stats(self.platform.as_ref(), &self.cwd);
+                let new_state = self.session_stats.platform_stats.state;
                 // Redraw immediately if state changed (e.g., Thinking -> Complete)
                 if old_state != new_state {
                     self.draw_status_bar()?;
@@ -207,11 +227,11 @@ impl App {
 
             // Update screen capture (throttled internally)
             if got_output {
-                let _ = self.capture_manager.maybe_update_screen(self.claude_pty.screen());
+                let _ = self.capture_manager.maybe_update_screen(self.platform_pty.screen());
             }
 
-            // Check if Claude Code has exited
-            if !self.claude_pty.is_running() {
+            // Check if the platform CLI has exited
+            if !self.platform_pty.is_running() {
                 self.running = false;
                 break;
             }
@@ -226,7 +246,7 @@ impl App {
                         self.handle_resize(width, height)?;
                     }
                     Event::Paste(text) => {
-                        self.claude_pty.write(text.as_bytes())?;
+                        self.platform_pty.write(text.as_bytes())?;
                     }
                     Event::Mouse(mouse) => {
                         self.last_mouse_event = Some(mouse);
@@ -250,25 +270,48 @@ impl App {
 
     /// Write PTY output directly to stdout - transparent passthrough
     fn write_pty_output(&mut self, data: &[u8]) -> Result<()> {
-        // Update our internal parser first (so screen state is current)
-        self.claude_pty.process_output(data);
+        let mut stdout = stdout();
+        let mut wrote_output = false;
 
-        // Capture scrollback by diffing screen state
-        if let Err(e) = self.capture_manager.capture_scrollback(self.claude_pty.screen()) {
-            // Log error but don't fail - capture is non-critical
-            eprintln!("Capture error: {}", e);
+        let chunks = self.dsr_handler.scan(data);
+        for chunk in chunks {
+            match chunk {
+                DsrChunk::Output(bytes) => {
+                    if bytes.is_empty() {
+                        continue;
+                    }
+                    wrote_output = true;
+                    self.platform_pty.process_output(&bytes);
+                    stdout.write_all(&bytes)?;
+                }
+                DsrChunk::Request => {
+                    let (row, col) = self.platform_pty.screen().cursor_position();
+                    let response = format!(
+                        "\x1b[{};{}R",
+                        row.saturating_add(1),
+                        col.saturating_add(1)
+                    );
+                    self.platform_pty.write(response.as_bytes())?;
+                }
+            }
         }
 
-        let mut stdout = stdout();
-        stdout.write_all(data)?;
-        stdout.flush()?;
+        if wrote_output {
+            // Capture scrollback by diffing screen state
+            if let Err(e) = self.capture_manager.capture_scrollback(self.platform_pty.screen()) {
+                // Log error but don't fail - capture is non-critical
+                eprintln!("Capture error: {}", e);
+            }
+            stdout.flush()?;
+        }
+
         Ok(())
     }
 
     /// Draw status bar using the widget system
     fn draw_status_bar(&mut self) -> Result<()> {
         // Update stats each draw
-        self.claude_stats.tick();
+        self.session_stats.tick();
 
         let layout = Layout {
             pty_rows: self.pty_rows,
@@ -280,14 +323,14 @@ impl App {
         draw_status_bar(
             &mut stdout,
             &layout,
-            &self.claude_stats,
+            &self.session_stats,
             &self.git_state,
             &self.diff_summary,
         )?;
 
         // Publish mirror state (throttled, only when --profile)
         let _ = self.mirror_publisher.maybe_publish(
-            &self.claude_stats,
+            &self.session_stats,
             &self.git_state,
             &self.diff_summary,
         );
@@ -296,7 +339,10 @@ impl App {
     }
 
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
-        forward_key_to_pty(key, &mut self.claude_pty)?;
+        if key.kind != crossterm::event::KeyEventKind::Press {
+            return Ok(());
+        }
+        forward_key_to_pty(key, &mut self.platform_pty)?;
         Ok(())
     }
 
@@ -312,7 +358,7 @@ impl App {
         self.setup_scroll_region(false)?;
 
         // Resize PTY to new dimensions (only the top portion)
-        self.claude_pty.resize(width, self.pty_rows)?;
+        self.platform_pty.resize(width, self.pty_rows)?;
 
         // Redraw status bar in new position
         self.draw_status_bar()?;
@@ -334,4 +380,150 @@ impl App {
             self.diff_summary = diff;
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DsrParseState {
+    Idle,
+    Esc,
+    EscBracket,
+    EscBracketQuestion,
+    EscBracket6,
+    EscBracketQuestion6,
+}
+
+struct DsrHandler {
+    state: DsrParseState,
+    pending: Vec<u8>,
+}
+
+impl DsrHandler {
+    fn new() -> Self {
+        Self {
+            state: DsrParseState::Idle,
+            pending: Vec::new(),
+        }
+    }
+
+    fn scan(&mut self, data: &[u8]) -> Vec<DsrChunk> {
+        let mut chunks = Vec::new();
+        let mut current = Vec::new();
+        for &byte in data {
+            match self.state {
+                DsrParseState::Idle => {
+                    if byte == 0x1b {
+                        self.pending.clear();
+                        self.pending.push(byte);
+                        self.state = DsrParseState::Esc;
+                    } else {
+                        current.push(byte);
+                    }
+                }
+                DsrParseState::Esc => {
+                    if byte == b'[' {
+                        self.pending.push(byte);
+                        self.state = DsrParseState::EscBracket;
+                    } else {
+                        current.extend_from_slice(&self.pending);
+                        self.pending.clear();
+                        self.state = DsrParseState::Idle;
+                        if byte == 0x1b {
+                            self.pending.push(byte);
+                            self.state = DsrParseState::Esc;
+                        } else {
+                            current.push(byte);
+                        }
+                    }
+                }
+                DsrParseState::EscBracket => {
+                    if byte == b'6' {
+                        self.pending.push(byte);
+                        self.state = DsrParseState::EscBracket6;
+                    } else if byte == b'?' {
+                        self.pending.push(byte);
+                        self.state = DsrParseState::EscBracketQuestion;
+                    } else {
+                        current.extend_from_slice(&self.pending);
+                        self.pending.clear();
+                        self.state = DsrParseState::Idle;
+                        if byte == 0x1b {
+                            self.pending.push(byte);
+                            self.state = DsrParseState::Esc;
+                        } else {
+                            current.push(byte);
+                        }
+                    }
+                }
+                DsrParseState::EscBracketQuestion => {
+                    if byte == b'6' {
+                        self.pending.push(byte);
+                        self.state = DsrParseState::EscBracketQuestion6;
+                    } else {
+                        current.extend_from_slice(&self.pending);
+                        self.pending.clear();
+                        self.state = DsrParseState::Idle;
+                        if byte == 0x1b {
+                            self.pending.push(byte);
+                            self.state = DsrParseState::Esc;
+                        } else {
+                            current.push(byte);
+                        }
+                    }
+                }
+                DsrParseState::EscBracket6 => {
+                    if byte == b'n' {
+                        self.pending.clear();
+                        self.state = DsrParseState::Idle;
+                        if !current.is_empty() {
+                            chunks.push(DsrChunk::Output(current));
+                            current = Vec::new();
+                        }
+                        chunks.push(DsrChunk::Request);
+                    } else {
+                        current.extend_from_slice(&self.pending);
+                        self.pending.clear();
+                        self.state = DsrParseState::Idle;
+                        if byte == 0x1b {
+                            self.pending.push(byte);
+                            self.state = DsrParseState::Esc;
+                        } else {
+                            current.push(byte);
+                        }
+                    }
+                }
+                DsrParseState::EscBracketQuestion6 => {
+                    if byte == b'n' {
+                        self.pending.clear();
+                        self.state = DsrParseState::Idle;
+                        if !current.is_empty() {
+                            chunks.push(DsrChunk::Output(current));
+                            current = Vec::new();
+                        }
+                        chunks.push(DsrChunk::Request);
+                    } else {
+                        current.extend_from_slice(&self.pending);
+                        self.pending.clear();
+                        self.state = DsrParseState::Idle;
+                        if byte == 0x1b {
+                            self.pending.push(byte);
+                            self.state = DsrParseState::Esc;
+                        } else {
+                            current.push(byte);
+                        }
+                    }
+                }
+            }
+        }
+
+        if !current.is_empty() {
+            chunks.push(DsrChunk::Output(current));
+        }
+
+        chunks
+    }
+}
+
+enum DsrChunk {
+    Output(Vec<u8>),
+    Request,
 }

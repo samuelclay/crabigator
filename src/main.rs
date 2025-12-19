@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::app::App;
+use crate::platforms::PlatformKind;
 
 // ANSI color codes
 const CYAN: &str = "\x1b[36m";
@@ -113,7 +114,8 @@ impl Default for Command {
 
 #[derive(Clone)]
 struct Args {
-    claude_args: Vec<String>,
+    platform: PlatformKind,
+    platform_args: Vec<String>,
     profile: bool,
     command: Command,
     /// Whether to capture output (default: true)
@@ -123,7 +125,8 @@ struct Args {
 impl Default for Args {
     fn default() -> Self {
         Self {
-            claude_args: Vec::new(),
+            platform: PlatformKind::Claude,
+            platform_args: Vec::new(),
             profile: false,
             command: Command::default(),
             capture: true, // On by default
@@ -134,6 +137,7 @@ impl Default for Args {
 fn parse_args() -> Args {
     let mut args = Args::default();
     let mut iter = env::args().skip(1).peekable(); // Skip the binary name
+    let mut platform_selected = false;
 
     // Check for subcommand first
     if let Some(first) = iter.peek() {
@@ -172,17 +176,24 @@ fn parse_args() -> Args {
                 args.profile = true;
             }
             "-r" | "--resume" => {
-                args.claude_args.push("--resume".to_string());
+                args.platform_args.push("--resume".to_string());
             }
             "-c" | "--continue" => {
-                args.claude_args.push("--continue".to_string());
+                args.platform_args.push("--continue".to_string());
             }
             "--no-capture" => {
                 args.capture = false;
             }
             _ => {
-                // Pass through any other arguments to claude
-                args.claude_args.push(arg);
+                if !platform_selected && !arg.starts_with('-') {
+                    if let Some(platform) = PlatformKind::parse(&arg) {
+                        args.platform = platform;
+                        platform_selected = true;
+                        continue;
+                    }
+                }
+                // Pass through any other arguments to the platform CLI
+                args.platform_args.push(arg);
             }
         }
     }
@@ -263,7 +274,7 @@ fn setup_terminal() -> Result<(u16, u16)> {
     let mut stdout = stdout();
     let (cols, rows) = terminal_size()?;
 
-    // Don't clear the screen - let Claude Code start at the bottom
+    // Don't clear the screen - let the CLI start at the bottom
     // and scroll up naturally, preserving existing terminal content above.
     // The scroll region setup will position cursor at the bottom.
 
@@ -285,7 +296,7 @@ fn restore_terminal(total_rows: u16) -> Result<()> {
     // Reset scroll region to full screen
     write!(stdout, "{}", terminal::escape::SCROLL_REGION_RESET)?;
     // Move cursor to the bottom of the screen, then down one more line
-    // This ensures we're below all content (Claude output + status widgets)
+    // This ensures we're below all content (CLI output + status widgets)
     write!(stdout, "{}", terminal::escape::cursor_to(total_rows, 1))?;
     stdout.flush()?;
 
@@ -327,6 +338,7 @@ fn generate_session_id() -> String {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = parse_args();
+    let platform_kind = args.platform;
 
     // Handle subcommands that don't need the full app setup
     match args.command {
@@ -341,7 +353,7 @@ async fn main() -> Result<()> {
     }
 
     // Generate and set session ID before anything else
-    // This ensures Claude Code and our stats loading use the same ID
+    // This ensures the CLI and our stats loading use the same ID
     let session_id = generate_session_id();
     env::set_var("CRABIGATOR_SESSION_ID", &session_id);
     if args.profile {
@@ -353,18 +365,19 @@ async fn main() -> Result<()> {
     timer.log("args parsed");
     timer.log(&format!("session_id={}", session_id));
 
-    // Install/update Claude Code hooks in background thread (fire and forget)
-    // Don't block startup - hooks will be ready by the time Claude needs them
+    // Install/update platform hooks in background thread (fire and forget)
+    // Don't block startup - hooks will be ready by the time the CLI needs them
     {
         let timer = timer.clone();
+        let platform_kind = platform_kind;
         std::thread::spawn(move || {
             timer.hook_state.store(1, Ordering::SeqCst);
             let begin = Instant::now();
             timer.log("hook install started");
 
             let result = std::panic::catch_unwind(|| {
-                let platform = platforms::current_platform();
-                platforms::Platform::ensure_hooks_installed(&platform)
+                let platform = platforms::platform_for(platform_kind);
+                platform.ensure_hooks_installed()
             });
 
             match result {
@@ -400,7 +413,8 @@ async fn main() -> Result<()> {
     timer.duration("setup terminal", begin.elapsed());
 
     let begin = Instant::now();
-    let mut app = App::new(cols, rows, args.claude_args, args.capture).await?;
+    let platform = platforms::platform_for(platform_kind);
+    let mut app = App::new(cols, rows, platform, args.platform_args, args.capture).await?;
     timer.duration("App::new", begin.elapsed());
 
     timer.log("Starting main loop");
@@ -410,7 +424,7 @@ async fn main() -> Result<()> {
     timer.duration("app.run", begin.elapsed());
 
     // Capture stats and layout before restoring terminal
-    let stats = app.claude_stats.clone();
+    let stats = app.session_stats.clone();
     let total_rows = app.total_rows;
 
     let begin = Instant::now();

@@ -10,4 +10,4 @@ pub mod input;
 pub mod pty;
 
 pub use input::forward_key_to_pty;
-pub use pty::ClaudePty;
+pub use pty::PlatformPty;

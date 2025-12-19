@@ -1,3 +1,3 @@
-mod claude_hooks;
+mod session_stats;
 
-pub use claude_hooks::ClaudeStats;
+pub use session_stats::SessionStats;

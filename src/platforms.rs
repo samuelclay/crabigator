@@ -1,27 +1,53 @@
 //! Platform abstraction layer
 //!
 //! Defines a common interface for different AI assistant platforms.
-//! Currently supports Claude Code, with extensibility for future platforms.
+//! Currently supports Claude Code and Codex CLI, with extensibility for future platforms.
 
 pub mod claude_code;
+pub mod codex_cli;
 
 use std::collections::HashMap;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-/// Session state - the 4 possible states Claude can be in
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlatformKind {
+    #[default]
+    Claude,
+    Codex,
+}
+
+impl PlatformKind {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "claude" | "claude-code" | "claude_code" => Some(Self::Claude),
+            "codex" | "codecs" => Some(Self::Codex),
+            _ => None,
+        }
+    }
+
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+}
+
+/// Session state - common states across supported assistants
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionState {
     /// Initial state - nothing has happened yet (default on startup)
     #[default]
     Ready,
-    /// Claude is actively processing/generating
+    /// The assistant is actively processing/generating
     Thinking,
-    /// Claude asked a question and is waiting for response
+    /// The assistant asked a question and is waiting for response
     Question,
-    /// Claude finished responding
+    /// The assistant finished responding
     Complete,
 }
 
@@ -62,6 +88,13 @@ impl PlatformStats {
 
 /// Trait for platform-specific implementations
 pub trait Platform {
+    /// Platform identifier
+    #[allow(dead_code)]
+    fn kind(&self) -> PlatformKind;
+
+    /// Command to launch the platform CLI
+    fn command(&self) -> &'static str;
+
     /// Ensure hooks are installed and up-to-date
     fn ensure_hooks_installed(&self) -> Result<()>;
 
@@ -69,8 +102,9 @@ pub trait Platform {
     fn load_stats(&self, cwd: &str) -> Result<PlatformStats>;
 }
 
-/// Get the current platform implementation
-/// Currently only supports Claude Code
-pub fn current_platform() -> impl Platform {
-    claude_code::ClaudeCodePlatform::new()
+pub fn platform_for(kind: PlatformKind) -> Box<dyn Platform> {
+    match kind {
+        PlatformKind::Claude => Box::new(claude_code::ClaudeCodePlatform::new()),
+        PlatformKind::Codex => Box::new(codex_cli::CodexPlatform::new()),
+    }
 }

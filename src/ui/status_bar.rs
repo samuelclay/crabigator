@@ -7,7 +7,7 @@ use std::io::{Stdout, Write};
 use anyhow::Result;
 
 use crate::git::GitState;
-use crate::hooks::ClaudeStats;
+use crate::hooks::SessionStats;
 use crate::parsers::DiffSummary;
 use crate::terminal::escape::{self, color, RESET};
 
@@ -24,7 +24,7 @@ pub struct Layout {
 pub fn draw_status_bar(
     stdout: &mut Stdout,
     layout: &Layout,
-    claude_stats: &ClaudeStats,
+    session_stats: &SessionStats,
     git_state: &GitState,
     diff_summary: &DiffSummary,
 ) -> Result<()> {
@@ -52,7 +52,7 @@ pub fn draw_status_bar(
         write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + row, 1))?;
 
         // Stats column (leftmost, fixed width)
-        draw_stats_widget(stdout, layout.pty_rows, 0, row, stats_width, claude_stats)?;
+        draw_stats_widget(stdout, layout.pty_rows, 0, row, stats_width, session_stats)?;
 
         // Separator
         write!(stdout, "{}│{}", escape::fg(color::DARK_GRAY), RESET)?;

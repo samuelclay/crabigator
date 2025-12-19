@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 
 use crate::terminal::escape::{self, color, fg, RESET};
-use crate::hooks::ClaudeStats;
+use crate::hooks::SessionStats;
 use crate::platforms::SessionState;
 use super::utils::{format_number, strip_ansi_len};
 
@@ -50,7 +50,7 @@ pub fn draw_stats_widget(
     col: u16,
     row: u16,
     width: u16,
-    stats: &ClaudeStats,
+    stats: &SessionStats,
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(pty_rows + 1 + row, col + 1))?;
 

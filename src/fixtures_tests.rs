@@ -12,7 +12,7 @@ mod fixtures {
     use tokio::process::Command;
 
     use crate::git::GitState;
-    use crate::hooks::ClaudeStats;
+    use crate::hooks::SessionStats;
     use crate::mirror::MirrorPublisher;
     use crate::parsers::DiffSummary;
     use crate::platforms::{PlatformStats, SessionState};
@@ -142,8 +142,8 @@ mod fixtures {
         Ok(())
     }
 
-    fn build_stats(stats: &FixtureStats) -> ClaudeStats {
-        let mut result = ClaudeStats::new();
+    fn build_stats(stats: &FixtureStats) -> SessionStats {
+        let mut result = SessionStats::new();
         result.work_seconds = stats.work_seconds;
         result.platform_stats = PlatformStats {
             messages: stats.messages,

@@ -13,7 +13,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::git::GitState;
-use crate::hooks::ClaudeStats;
+use crate::hooks::SessionStats;
 use crate::parsers::{ChangeType, DiffSummary};
 
 /// Minimum interval between publishes (1 second)
@@ -138,7 +138,7 @@ impl MirrorPublisher {
     /// Returns true if publish occurred
     pub fn maybe_publish(
         &mut self,
-        stats: &ClaudeStats,
+        stats: &SessionStats,
         git: &GitState,
         diff: &DiffSummary,
     ) -> Result<bool> {
@@ -172,7 +172,7 @@ impl MirrorPublisher {
         Ok(true)
     }
 
-    fn compute_hash(&self, stats: &ClaudeStats, git: &GitState, diff: &DiffSummary) -> u64 {
+    fn compute_hash(&self, stats: &SessionStats, git: &GitState, diff: &DiffSummary) -> u64 {
         let mut hasher = DefaultHasher::new();
 
         // Hash key fields from stats
@@ -206,7 +206,7 @@ impl MirrorPublisher {
 
     fn build_state(
         &self,
-        stats: &ClaudeStats,
+        stats: &SessionStats,
         git: &GitState,
         diff: &DiffSummary,
     ) -> MirrorState {
@@ -284,7 +284,7 @@ impl MirrorPublisher {
 
 // Preview rendering functions (ANSI-stripped text)
 
-fn render_stats_preview(stats: &ClaudeStats) -> Vec<String> {
+fn render_stats_preview(stats: &SessionStats) -> Vec<String> {
     let mut lines = vec![
         format!("Stats - {:?}", stats.platform_stats.state),
         format!("Session: {}", stats.format_work()),

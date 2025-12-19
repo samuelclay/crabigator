@@ -1,9 +1,9 @@
 use std::time::Instant;
 
-use crate::platforms::{self, Platform, PlatformStats};
+use crate::platforms::{Platform, PlatformStats};
 
 #[derive(Clone, Debug)]
-pub struct ClaudeStats {
+pub struct SessionStats {
     pub work_seconds: u64,
     /// Stats from the platform's hook system
     pub platform_stats: PlatformStats,
@@ -12,7 +12,7 @@ pub struct ClaudeStats {
     session_start: Instant,
 }
 
-impl ClaudeStats {
+impl SessionStats {
     pub fn new() -> Self {
         Self {
             work_seconds: 0,
@@ -27,9 +27,8 @@ impl ClaudeStats {
         self.work_seconds = self.session_start.elapsed().as_secs();
     }
 
-    /// Refresh platform stats from file
-    pub fn refresh_platform_stats(&mut self, cwd: &str) {
-        let platform = platforms::current_platform();
+    /// Refresh platform stats from the platform's data source
+    pub fn refresh_platform_stats(&mut self, platform: &dyn Platform, cwd: &str) {
         if let Ok(stats) = platform.load_stats(cwd) {
             // Only update if stats have changed
             let last_updated = stats.last_updated.unwrap_or(0.0);
@@ -77,7 +76,7 @@ impl ClaudeStats {
     }
 }
 
-impl Default for ClaudeStats {
+impl Default for SessionStats {
     fn default() -> Self {
         Self::new()
     }

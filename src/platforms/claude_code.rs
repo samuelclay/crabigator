@@ -13,7 +13,7 @@ use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{Platform, PlatformStats};
+use super::{Platform, PlatformKind, PlatformStats};
 
 /// Current hook version - should match Cargo.toml version
 const HOOK_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -517,6 +517,14 @@ impl Default for ClaudeCodePlatform {
 }
 
 impl Platform for ClaudeCodePlatform {
+    fn kind(&self) -> PlatformKind {
+        PlatformKind::Claude
+    }
+
+    fn command(&self) -> &'static str {
+        PlatformKind::Claude.command()
+    }
+
     fn ensure_hooks_installed(&self) -> Result<()> {
         if self.is_current_version() {
             match self.hooks_registered() {
