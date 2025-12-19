@@ -1,5 +1,6 @@
 mod app;
 mod capture;
+mod config;
 mod git;
 mod hooks;
 mod inspect;
@@ -27,6 +28,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::app::App;
+use crate::config::Config;
+use crate::platforms::PlatformType;
 
 // ANSI color codes
 const CYAN: &str = "\x1b[36m";
@@ -35,18 +38,19 @@ const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
 /// Print session info banner with file paths
-fn print_session_banner(session_id: &str, capture_enabled: bool, cols: u16) {
+fn print_session_banner(session_id: &str, platform: PlatformType, capture_enabled: bool, cols: u16) {
     let width = (cols as usize).min(80);
     let bar = "─".repeat(width.saturating_sub(2));
 
     println!();
     println!("{DIM}┌{bar}┐{RESET}");
 
-    // Title line
-    let title = format!("{BOLD}{CYAN}CRABIGATOR{RESET}");
+    // Title line with platform indicator
+    let platform_name = platform.display_name();
+    let title = format!("{BOLD}{CYAN}CRABIGATOR{RESET} {DIM}({platform_name}){RESET}");
     let session_label = format!("{DIM}session {session_id}{RESET}");
     // Account for ANSI codes in width calculation
-    let title_plain_len = 10; // "CRABIGATOR"
+    let title_plain_len = 10 + 3 + platform_name.len(); // "CRABIGATOR" + " (" + platform + ")"
     let session_plain_len = 8 + session_id.len(); // "session " + id
     let padding = width.saturating_sub(4 + title_plain_len + session_plain_len);
     println!("{DIM}│{RESET} {title}{}{session_label} {DIM}│{RESET}", " ".repeat(padding));
@@ -113,20 +117,24 @@ impl Default for Command {
 
 #[derive(Clone)]
 struct Args {
-    claude_args: Vec<String>,
+    /// Arguments to pass to the CLI (claude or codex)
+    cli_args: Vec<String>,
     profile: bool,
     command: Command,
     /// Whether to capture output (default: true)
     capture: bool,
+    /// Explicitly selected platform (if any)
+    platform: Option<PlatformType>,
 }
 
 impl Default for Args {
     fn default() -> Self {
         Self {
-            claude_args: Vec::new(),
+            cli_args: Vec::new(),
             profile: false,
             command: Command::default(),
             capture: true, // On by default
+            platform: None,
         }
     }
 }
@@ -135,8 +143,10 @@ fn parse_args() -> Args {
     let mut args = Args::default();
     let mut iter = env::args().skip(1).peekable(); // Skip the binary name
 
-    // Check for subcommand first
+    // Check for platform as first positional arg (e.g., `crabigator codex`)
+    // or subcommand (e.g., `crabigator inspect`)
     if let Some(first) = iter.peek() {
+        // Check for subcommand first
         if first == "inspect" {
             iter.next(); // consume "inspect"
             let mut dir_filter = None;
@@ -161,6 +171,12 @@ fn parse_args() -> Args {
             };
             return args;
         }
+
+        // Check for platform name as first positional arg
+        if let Some(platform) = PlatformType::from_str(first) {
+            args.platform = Some(platform);
+            iter.next(); // consume platform arg
+        }
     }
 
     while let Some(arg) = iter.next() {
@@ -171,23 +187,68 @@ fn parse_args() -> Args {
             "--profile" => {
                 args.profile = true;
             }
+            "--platform" | "-p" => {
+                // Platform flag takes precedence over positional
+                if let Some(p) = iter.next() {
+                    if let Some(platform) = PlatformType::from_str(&p) {
+                        args.platform = Some(platform);
+                    } else {
+                        eprintln!("Unknown platform: {}. Use 'claude' or 'codex'.", p);
+                        std::process::exit(1);
+                    }
+                }
+            }
             "-r" | "--resume" => {
-                args.claude_args.push("--resume".to_string());
+                args.cli_args.push("--resume".to_string());
             }
             "-c" | "--continue" => {
-                args.claude_args.push("--continue".to_string());
+                args.cli_args.push("--continue".to_string());
             }
             "--no-capture" => {
                 args.capture = false;
             }
             _ => {
-                // Pass through any other arguments to claude
-                args.claude_args.push(arg);
+                // Pass through any other arguments to the CLI
+                args.cli_args.push(arg);
             }
         }
     }
 
     args
+}
+
+/// Resolve platform from explicit arg, env var, config file, or default
+/// If explicitly selected, saves preference to config for future use.
+fn resolve_platform(explicit: Option<PlatformType>) -> PlatformType {
+    // 1. Explicit CLI argument takes precedence and saves preference
+    if let Some(p) = explicit {
+        // Save preference for future runs (fire and forget)
+        let _ = save_platform_preference(p);
+        return p;
+    }
+
+    // 2. Check environment variable
+    if let Ok(env_platform) = env::var("CRABIGATOR_PLATFORM") {
+        if let Some(p) = PlatformType::from_str(&env_platform) {
+            return p;
+        }
+    }
+
+    // 3. Load from config file
+    if let Ok(config) = Config::load() {
+        if let Some(p) = PlatformType::from_str(&config.default_platform) {
+            return p;
+        }
+    }
+
+    // 4. Default to Claude Code
+    PlatformType::ClaudeCode
+}
+
+/// Save platform preference to config file
+fn save_platform_preference(platform: PlatformType) -> anyhow::Result<()> {
+    let mut config = Config::load().unwrap_or_default();
+    config.set_default_platform(platform.cli_name())
 }
 
 /// Startup trace for measuring performance.
@@ -302,13 +363,19 @@ fn restore_terminal(total_rows: u16) -> Result<()> {
 fn setup_panic_handler() {
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
+        // First disable raw mode to ensure newlines work
         let _ = disable_raw_mode();
-        // Reset scroll region
-        print!("{}", terminal::escape::SCROLL_REGION_RESET);
+        // Reset scroll region and flush
+        let mut stdout = stdout();
+        let _ = write!(stdout, "{}", terminal::escape::SCROLL_REGION_RESET);
+        let _ = stdout.flush();
         let _ = execute!(
-            stdout(),
-            DisableBracketedPaste
+            stdout,
+            DisableBracketedPaste,
+            Show
         );
+        // Ensure we're on a fresh line
+        println!();
         original_hook(panic_info);
     }));
 }
@@ -340,10 +407,14 @@ async fn main() -> Result<()> {
         Command::Run => {}
     }
 
+    // Resolve platform from args, env, or config
+    let platform_type = resolve_platform(args.platform);
+
     // Generate and set session ID before anything else
-    // This ensures Claude Code and our stats loading use the same ID
+    // This ensures the CLI and our stats loading use the same ID
     let session_id = generate_session_id();
     env::set_var("CRABIGATOR_SESSION_ID", &session_id);
+    env::set_var("CRABIGATOR_PLATFORM", platform_type.cli_name());
     if args.profile {
         env::set_var("CRABIGATOR_PROFILE", "1");
     }
@@ -352,9 +423,10 @@ async fn main() -> Result<()> {
 
     timer.log("args parsed");
     timer.log(&format!("session_id={}", session_id));
+    timer.log(&format!("platform={}", platform_type.display_name()));
 
-    // Install/update Claude Code hooks in background thread (fire and forget)
-    // Don't block startup - hooks will be ready by the time Claude needs them
+    // Install/update hooks in background thread (fire and forget)
+    // Don't block startup - hooks will be ready by the time the CLI needs them
     {
         let timer = timer.clone();
         std::thread::spawn(move || {
@@ -363,8 +435,8 @@ async fn main() -> Result<()> {
             timer.log("hook install started");
 
             let result = std::panic::catch_unwind(|| {
-                let platform = platforms::current_platform();
-                platforms::Platform::ensure_hooks_installed(&platform)
+                let platform = platforms::get_platform(platform_type);
+                platform.ensure_hooks_installed()
             });
 
             match result {
@@ -393,29 +465,65 @@ async fn main() -> Result<()> {
 
     // Get terminal size and print session banner BEFORE raw mode
     let (cols, _) = terminal_size()?;
-    print_session_banner(&session_id, args.capture, cols);
+    print_session_banner(&session_id, platform_type, args.capture, cols);
 
     let begin = Instant::now();
-    let (cols, rows) = setup_terminal()?;
+    let (cols, rows) = match setup_terminal() {
+        Ok(size) => size,
+        Err(e) => {
+            // setup_terminal may have partially succeeded (raw mode enabled)
+            // Try to restore terminal state before propagating error
+            let _ = disable_raw_mode();
+            let _ = execute!(stdout(), DisableBracketedPaste, Show);
+            return Err(e);
+        }
+    };
     timer.duration("setup terminal", begin.elapsed());
 
+    // Run app with guaranteed terminal restoration on error
+    // Use a closure that captures the final rows value for restoration
+    let (result, stats, final_rows) = {
+        let begin = Instant::now();
+        let app_result = App::new(cols, rows, platform_type, args.cli_args, args.capture).await;
+        timer.duration("App::new", begin.elapsed());
+
+        match app_result {
+            Ok(mut app) => {
+                timer.log("Starting main loop");
+                let begin = Instant::now();
+                let run_result = app.run().await;
+                timer.duration("app.run", begin.elapsed());
+                let stats = app.session_stats.clone();
+                let total_rows = app.total_rows;
+                (run_result, Some(stats), total_rows)
+            }
+            Err(e) => {
+                // App failed to start - restore terminal before propagating error
+                let _ = restore_terminal(rows);
+                return Err(e);
+            }
+        }
+    };
+
+    // CRITICAL: Always restore terminal, even if it fails
+    // This is defensive - we try multiple approaches to ensure terminal is usable
     let begin = Instant::now();
-    let mut app = App::new(cols, rows, args.claude_args, args.capture).await?;
-    timer.duration("App::new", begin.elapsed());
 
-    timer.log("Starting main loop");
+    // First, force disable raw mode - this is most critical for readable output
+    let _ = disable_raw_mode();
 
-    let begin = Instant::now();
-    let result = app.run().await;
-    timer.duration("app.run", begin.elapsed());
-
-    // Capture stats and layout before restoring terminal
-    let stats = app.claude_stats.clone();
-    let total_rows = app.total_rows;
-
-    let begin = Instant::now();
-    restore_terminal(total_rows)?;
+    // Then do the full restoration
+    let restore_result = restore_terminal(final_rows);
     timer.duration("restore terminal", begin.elapsed());
+
+    // If restore failed, try a more aggressive reset
+    if restore_result.is_err() {
+        // Force additional terminal state reset
+        let _ = execute!(stdout(), DisableBracketedPaste, Show);
+    }
+
+    // Always ensure we're on a fresh line for any output that follows
+    println!();
 
     // Dump startup trace after terminal restore (to stdout, visible in scrollback)
     timer.dump();
@@ -437,12 +545,14 @@ async fn main() -> Result<()> {
     }
 
     // Print session summary after exit
-    println!();
-    println!(
-        "Session: {} messages, {} tool calls",
-        stats.platform_stats.messages,
-        stats.platform_stats.total_tool_calls()
-    );
+    if let Some(stats) = stats {
+        println!();
+        println!(
+            "Session: {} messages, {} tool calls",
+            stats.platform_stats.messages,
+            stats.platform_stats.total_tool_calls()
+        );
+    }
 
     result
 }

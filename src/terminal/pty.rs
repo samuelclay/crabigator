@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-pub struct ClaudePty {
+pub struct CliPty {
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     parser: vt100::Parser,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -14,8 +14,14 @@ pub struct ClaudePty {
     scroll_offset: usize,
 }
 
-impl ClaudePty {
-    pub async fn new(output_tx: mpsc::Sender<Vec<u8>>, cols: u16, rows: u16, extra_args: Vec<String>) -> Result<Self> {
+impl CliPty {
+    pub async fn new(
+        output_tx: mpsc::Sender<Vec<u8>>,
+        cols: u16,
+        rows: u16,
+        cli_name: &str,
+        extra_args: Vec<String>,
+    ) -> Result<Self> {
         let pty_system = native_pty_system();
 
         let pair = pty_system.openpty(PtySize {
@@ -25,7 +31,7 @@ impl ClaudePty {
             pixel_height: 0,
         })?;
 
-        let mut cmd = CommandBuilder::new("claude");
+        let mut cmd = CommandBuilder::new(cli_name);
 
         // Add any extra arguments (e.g., --resume, --continue)
         for arg in extra_args {

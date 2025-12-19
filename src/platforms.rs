@@ -1,9 +1,10 @@
 //! Platform abstraction layer
 //!
 //! Defines a common interface for different AI assistant platforms.
-//! Currently supports Claude Code, with extensibility for future platforms.
+//! Supports Claude Code and Codex.
 
 pub mod claude_code;
+pub mod codex;
 
 use std::collections::HashMap;
 
@@ -69,8 +70,52 @@ pub trait Platform {
     fn load_stats(&self, cwd: &str) -> Result<PlatformStats>;
 }
 
-/// Get the current platform implementation
-/// Currently only supports Claude Code
-pub fn current_platform() -> impl Platform {
-    claude_code::ClaudeCodePlatform::new()
+/// Supported platform types
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlatformType {
+    /// Claude Code (Anthropic)
+    ClaudeCode,
+    /// Codex (OpenAI)
+    Codex,
+}
+
+impl PlatformType {
+    /// Get the CLI command name for this platform
+    pub fn cli_name(&self) -> &'static str {
+        match self {
+            PlatformType::ClaudeCode => "claude",
+            PlatformType::Codex => "codex",
+        }
+    }
+
+    /// Get display name for UI
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            PlatformType::ClaudeCode => "Claude",
+            PlatformType::Codex => "Codex",
+        }
+    }
+
+    /// Parse platform type from string (case-insensitive)
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "claude" | "claude-code" | "claude_code" => Some(PlatformType::ClaudeCode),
+            "codex" | "openai" => Some(PlatformType::Codex),
+            _ => None,
+        }
+    }
+}
+
+impl Default for PlatformType {
+    fn default() -> Self {
+        PlatformType::ClaudeCode
+    }
+}
+
+/// Get a platform implementation by type
+pub fn get_platform(platform_type: PlatformType) -> Box<dyn Platform + Send + Sync> {
+    match platform_type {
+        PlatformType::ClaudeCode => Box::new(claude_code::ClaudeCodePlatform::new()),
+        PlatformType::Codex => Box::new(codex::CodexPlatform::new()),
+    }
 }

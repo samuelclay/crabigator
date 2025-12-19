@@ -1,24 +1,28 @@
 use std::time::Instant;
 
-use crate::platforms::{self, Platform, PlatformStats};
+use crate::platforms::{self, PlatformStats, PlatformType};
 
+/// Session statistics that wraps platform-specific stats with session timing
 #[derive(Clone, Debug)]
-pub struct ClaudeStats {
+pub struct SessionStats {
     pub work_seconds: u64,
     /// Stats from the platform's hook system
     pub platform_stats: PlatformStats,
     /// Timestamp of last platform stats check
     last_stats_check: f64,
     session_start: Instant,
+    /// Platform type for loading stats
+    platform_type: PlatformType,
 }
 
-impl ClaudeStats {
-    pub fn new() -> Self {
+impl SessionStats {
+    pub fn new(platform_type: PlatformType) -> Self {
         Self {
             work_seconds: 0,
             platform_stats: PlatformStats::default(),
             last_stats_check: 0.0,
             session_start: Instant::now(),
+            platform_type,
         }
     }
 
@@ -29,7 +33,7 @@ impl ClaudeStats {
 
     /// Refresh platform stats from file
     pub fn refresh_platform_stats(&mut self, cwd: &str) {
-        let platform = platforms::current_platform();
+        let platform = platforms::get_platform(self.platform_type);
         if let Ok(stats) = platform.load_stats(cwd) {
             // Only update if stats have changed
             let last_updated = stats.last_updated.unwrap_or(0.0);
@@ -77,8 +81,4 @@ impl ClaudeStats {
     }
 }
 
-impl Default for ClaudeStats {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Note: SessionStats requires a platform_type parameter, so no Default impl
