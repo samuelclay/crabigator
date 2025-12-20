@@ -160,15 +160,13 @@ pub fn draw_stats_widget(
             format!("{}{:gap$}{}", label, "", timer, gap = gap)
         }
         5 => {
-            // Tool usage sparkline (half width for the sparkline part)
-            let sparkline_width = (width as usize) / 2;
+            // Tool usage sparkline (spans from after label to right edge)
+            let label = format!("{}⚙ Tools{} ", fg(color::GRAY), RESET);
+            let label_len = strip_ansi_len(&label);
+            let sparkline_width = (width as usize).saturating_sub(label_len);
             let bins = stats.tool_usage_bins(sparkline_width);
             let sparkline = render_sparkline(&bins, sparkline_width);
-            format!(
-                "{}⚙ Tools{} {}",
-                fg(color::GRAY), RESET,
-                sparkline
-            )
+            format!("{}{}", label, sparkline)
         }
         6 => {
             // Compressions (only show if > 0)
