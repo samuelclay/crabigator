@@ -13,6 +13,14 @@ pub struct SessionStats {
     session_start: Instant,
     /// Unix timestamp when session started (for sparkline binning)
     session_start_unix: f64,
+    /// Previous prompts count (for change detection)
+    last_prompts: u32,
+    /// Unix timestamp when prompts last changed
+    pub prompts_changed_at: Option<f64>,
+    /// Previous completions count (for change detection)
+    last_completions: u32,
+    /// Unix timestamp when completions last changed
+    pub completions_changed_at: Option<f64>,
 }
 
 impl SessionStats {
@@ -27,6 +35,10 @@ impl SessionStats {
             last_stats_check: 0.0,
             session_start: Instant::now(),
             session_start_unix: now_unix,
+            last_prompts: 0,
+            prompts_changed_at: None,
+            last_completions: 0,
+            completions_changed_at: None,
         }
     }
 
@@ -42,6 +54,23 @@ impl SessionStats {
             let last_updated = stats.last_updated.unwrap_or(0.0);
             if last_updated > self.last_stats_check {
                 self.last_stats_check = last_updated;
+
+                // Track when prompts/completions change
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64();
+
+                if stats.prompts != self.last_prompts {
+                    self.last_prompts = stats.prompts;
+                    self.prompts_changed_at = Some(now);
+                }
+
+                if stats.completions != self.last_completions {
+                    self.last_completions = stats.completions;
+                    self.completions_changed_at = Some(now);
+                }
+
                 self.platform_stats = stats;
             }
         }

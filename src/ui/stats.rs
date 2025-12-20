@@ -41,15 +41,42 @@ fn idle_seconds(idle_since: Option<f64>) -> Option<u64> {
     }
 }
 
-/// Format idle duration
-fn format_idle(secs: u64) -> String {
+/// Format duration as compact string (e.g., "1m", "2h3m")
+fn format_duration_compact(secs: u64) -> String {
     if secs >= 3600 {
         let h = secs / 3600;
         let m = (secs % 3600) / 60;
-        format!("{}h{}m", h, m)
+        if m > 0 {
+            format!("{}h{}m", h, m)
+        } else {
+            format!("{}h", h)
+        }
     } else {
         let m = secs / 60;
         format!("{}m", m)
+    }
+}
+
+/// Calculate elapsed seconds since a timestamp
+fn elapsed_since(timestamp: Option<f64>) -> Option<u64> {
+    let since = timestamp?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    Some((now - since) as u64)
+}
+
+/// Format elapsed time since a timestamp
+fn format_elapsed(timestamp: Option<f64>) -> String {
+    if let Some(secs) = elapsed_since(timestamp) {
+        if secs >= 60 {
+            format!(" {}", format_duration_compact(secs))
+        } else {
+            " just now".to_string()
+        }
+    } else {
+        String::new()
     }
 }
 
@@ -96,28 +123,41 @@ pub fn draw_stats_widget(
             format!("{}{:gap$}{}", header, "", state, gap = gap)
         }
         2 => {
-            // Session/work time
-            format!(
-                "{}◆ Session{} {}{}{}",
-                fg(color::GRAY), RESET,
-                fg(color::BLUE), stats.format_work(), RESET
-            )
+            // Session/work time (right-aligned)
+            let label = format!("{}◆ Session{}", fg(color::GRAY), RESET);
+            let value = format!("{}{}{}", fg(color::BLUE), stats.format_work(), RESET);
+            let label_len = strip_ansi_len(&label);
+            let value_len = strip_ansi_len(&value);
+            let gap = (width as usize).saturating_sub(label_len + value_len);
+            format!("{}{:gap$}{}", label, "", value, gap = gap)
         }
         3 => {
-            // Prompts from platform stats
-            format!(
+            // Prompts: count left-aligned after label, timer right-aligned
+            let label = format!(
                 "{}▸ Prompts{} {}{}{}",
                 fg(color::GRAY), RESET,
                 fg(color::LIGHT_BLUE), stats.platform_stats.prompts, RESET
-            )
+            );
+            let elapsed = format_elapsed(stats.prompts_changed_at);
+            let timer = format!("{}{}{}", fg(color::GRAY), elapsed, RESET);
+            let label_len = strip_ansi_len(&label);
+            let timer_len = strip_ansi_len(&timer);
+            let gap = (width as usize).saturating_sub(label_len + timer_len);
+            format!("{}{:gap$}{}", label, "", timer, gap = gap)
         }
         4 => {
-            // Completions from platform stats
-            format!(
+            // Completions: count left-aligned after label, timer right-aligned
+            let label = format!(
                 "{}◂ Completions{} {}{}{}",
                 fg(color::GRAY), RESET,
                 fg(color::LIGHT_BLUE), stats.platform_stats.completions, RESET
-            )
+            );
+            let elapsed = format_elapsed(stats.completions_changed_at);
+            let timer = format!("{}{}{}", fg(color::GRAY), elapsed, RESET);
+            let label_len = strip_ansi_len(&label);
+            let timer_len = strip_ansi_len(&timer);
+            let gap = (width as usize).saturating_sub(label_len + timer_len);
+            format!("{}{:gap$}{}", label, "", timer, gap = gap)
         }
         5 => {
             // Tool usage sparkline (half width for the sparkline part)
@@ -154,7 +194,7 @@ pub fn draw_stats_widget(
                     format!(
                         "{}◇ Idle{} {}{}{}",
                         fg(color::GRAY), RESET,
-                        fg(color::GRAY), format_idle(secs), RESET
+                        fg(color::GRAY), format_duration_compact(secs), RESET
                     )
                 } else {
                     String::new()

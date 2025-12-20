@@ -41,8 +41,8 @@ pub fn draw_status_bar(
     }
     write!(stdout, "{}", RESET)?;
 
-    // Calculate column widths: Stats has min width, Git and Changes share the rest
-    let stats_width = 22u16; // Fixed width for stats
+    // Calculate column widths: Stats gets ~15% of width, Git and Changes share the rest
+    let stats_width = ((layout.total_cols as f32) * 0.15).max(22.0) as u16;
     let remaining = layout.total_cols.saturating_sub(stats_width + 2); // 2 for separators
     let git_width = remaining / 2;
     let changes_width = remaining - git_width;
