@@ -413,6 +413,20 @@ impl DsrHandler {
         }
     }
 
+    fn reset_with_byte(&mut self, current: &mut Vec<u8>, byte: u8) {
+        if !self.pending.is_empty() {
+            current.extend_from_slice(&self.pending);
+            self.pending.clear();
+        }
+        self.state = DsrParseState::Idle;
+        if byte == 0x1b {
+            self.pending.push(byte);
+            self.state = DsrParseState::Esc;
+        } else {
+            current.push(byte);
+        }
+    }
+
     fn scan(&mut self, data: &[u8]) -> Vec<DsrChunk> {
         let mut chunks = Vec::new();
         let mut current = Vec::new();
@@ -432,15 +446,7 @@ impl DsrHandler {
                         self.pending.push(byte);
                         self.state = DsrParseState::EscBracket;
                     } else {
-                        current.extend_from_slice(&self.pending);
-                        self.pending.clear();
-                        self.state = DsrParseState::Idle;
-                        if byte == 0x1b {
-                            self.pending.push(byte);
-                            self.state = DsrParseState::Esc;
-                        } else {
-                            current.push(byte);
-                        }
+                        self.reset_with_byte(&mut current, byte);
                     }
                 }
                 DsrParseState::EscBracket => {
@@ -451,15 +457,7 @@ impl DsrHandler {
                         self.pending.push(byte);
                         self.state = DsrParseState::EscBracketQuestion;
                     } else {
-                        current.extend_from_slice(&self.pending);
-                        self.pending.clear();
-                        self.state = DsrParseState::Idle;
-                        if byte == 0x1b {
-                            self.pending.push(byte);
-                            self.state = DsrParseState::Esc;
-                        } else {
-                            current.push(byte);
-                        }
+                        self.reset_with_byte(&mut current, byte);
                     }
                 }
                 DsrParseState::EscBracketQuestion => {
@@ -467,15 +465,7 @@ impl DsrHandler {
                         self.pending.push(byte);
                         self.state = DsrParseState::EscBracketQuestion6;
                     } else {
-                        current.extend_from_slice(&self.pending);
-                        self.pending.clear();
-                        self.state = DsrParseState::Idle;
-                        if byte == 0x1b {
-                            self.pending.push(byte);
-                            self.state = DsrParseState::Esc;
-                        } else {
-                            current.push(byte);
-                        }
+                        self.reset_with_byte(&mut current, byte);
                     }
                 }
                 DsrParseState::EscBracket6 => {
@@ -488,15 +478,7 @@ impl DsrHandler {
                         }
                         chunks.push(DsrChunk::Request);
                     } else {
-                        current.extend_from_slice(&self.pending);
-                        self.pending.clear();
-                        self.state = DsrParseState::Idle;
-                        if byte == 0x1b {
-                            self.pending.push(byte);
-                            self.state = DsrParseState::Esc;
-                        } else {
-                            current.push(byte);
-                        }
+                        self.reset_with_byte(&mut current, byte);
                     }
                 }
                 DsrParseState::EscBracketQuestion6 => {
@@ -509,15 +491,7 @@ impl DsrHandler {
                         }
                         chunks.push(DsrChunk::Request);
                     } else {
-                        current.extend_from_slice(&self.pending);
-                        self.pending.clear();
-                        self.state = DsrParseState::Idle;
-                        if byte == 0x1b {
-                            self.pending.push(byte);
-                            self.state = DsrParseState::Esc;
-                        } else {
-                            current.push(byte);
-                        }
+                        self.reset_with_byte(&mut current, byte);
                     }
                 }
             }
