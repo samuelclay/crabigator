@@ -7,6 +7,9 @@ use crate::terminal::escape::{color, fg, RESET};
 /// Unicode block characters for sparkline levels (8 levels)
 const BLOCKS: &[char] = &[' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
+/// Fixed maximum for absolute scaling (10 tools = full height)
+const SPARKLINE_MAX: u32 = 10;
+
 /// Render a sparkline from binned counts
 ///
 /// # Arguments
@@ -20,9 +23,9 @@ pub fn render_sparkline(bins: &[u32], width: usize) -> String {
         return String::new();
     }
 
-    // Find the max value for scaling
-    let max_val = *bins.iter().max().unwrap_or(&0);
-    if max_val == 0 {
+    // Check if there's any activity
+    let has_activity = bins.iter().any(|&c| c > 0);
+    if !has_activity {
         // No activity - show empty sparkline
         return format!("{}{}{}", fg(color::GRAY), " ".repeat(width.min(bins.len())), RESET);
     }
@@ -35,8 +38,8 @@ pub fn render_sparkline(bins: &[u32], width: usize) -> String {
         let level = if count == 0 {
             0
         } else {
-            // Scale to 1-8 range (reserving 0 for empty)
-            let scaled = (count as f64 / max_val as f64 * 8.0).ceil() as usize;
+            // Scale to 1-8 range using fixed max (absolute scale)
+            let scaled = (count as f64 / SPARKLINE_MAX as f64 * 8.0).ceil() as usize;
             scaled.clamp(1, 8)
         };
         result.push(BLOCKS[level]);
@@ -96,8 +99,16 @@ mod tests {
     fn test_render_single_peak() {
         let bins = vec![0, 0, 5, 0, 0];
         let result = render_sparkline(&bins, 5);
-        // Should have the peak in the middle
-        assert!(result.contains('█') || result.contains('▇'));
+        // 5 tools = half of max (10), so should be mid-height block
+        assert!(result.contains('▄') || result.contains('▅'));
+    }
+
+    #[test]
+    fn test_render_full_height() {
+        let bins = vec![0, 0, 10, 0, 0];
+        let result = render_sparkline(&bins, 5);
+        // 10 tools = full height
+        assert!(result.contains('█'));
     }
 
     #[test]
