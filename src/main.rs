@@ -530,8 +530,9 @@ async fn main() -> Result<()> {
     if let Some(stats) = stats {
         println!();
         println!(
-            "Session: {} messages, {} tool calls",
-            stats.platform_stats.messages,
+            "Session: {} prompts, {} completions, {} tool calls",
+            stats.platform_stats.prompts,
+            stats.platform_stats.completions,
             stats.platform_stats.total_tool_calls()
         );
     }

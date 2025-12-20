@@ -94,8 +94,9 @@
     },
     "stats": {
       "data": {
+        "completions": 1,
         "compressions": 0,
-        "messages": 1,
+        "prompts": 0,
         "state": "complete",
         "tools": 0,
         "work_seconds": 30
@@ -103,7 +104,8 @@
       "rendered": [
         "Stats - Complete",
         "Session: just now",
-        "Messages: 1",
+        "Prompts: 0",
+        "Completions: 1",
         "Tools: 0"
       ]
     }

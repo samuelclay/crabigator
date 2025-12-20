@@ -76,8 +76,9 @@
     },
     "stats": {
       "data": {
+        "completions": 2,
         "compressions": 1,
-        "messages": 2,
+        "prompts": 0,
         "state": "thinking",
         "tools": 3,
         "work_seconds": 125
@@ -85,7 +86,8 @@
       "rendered": [
         "Stats - Thinking",
         "Session: 2m",
-        "Messages: 2",
+        "Prompts: 0",
+        "Completions: 2",
         "Tools: 3",
         "Compressions: 1"
       ]

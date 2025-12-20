@@ -204,11 +204,12 @@ impl CodexPlatform {
                 match role {
                     Some("assistant") => {
                         if Self::should_count_response_item_assistant(state) {
-                            state.stats.messages = state.stats.messages.saturating_add(1);
+                            state.stats.completions = state.stats.completions.saturating_add(1);
                         }
                         state.stats.state = SessionState::Complete;
                     }
                     Some("user") => {
+                        state.stats.prompts = state.stats.prompts.saturating_add(1);
                         state.stats.state = SessionState::Thinking;
                     }
                     _ => {}
@@ -234,11 +235,12 @@ impl CodexPlatform {
         };
         match payload.get("type").and_then(|v| v.as_str()) {
             Some("user_message") => {
+                state.stats.prompts = state.stats.prompts.saturating_add(1);
                 state.stats.state = SessionState::Thinking;
             }
             Some("agent_message") => {
                 if Self::should_count_agent_message_assistant(state) {
-                    state.stats.messages = state.stats.messages.saturating_add(1);
+                    state.stats.completions = state.stats.completions.saturating_add(1);
                 }
                 state.stats.state = SessionState::Complete;
             }

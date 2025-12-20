@@ -67,8 +67,12 @@ pub enum SessionState {
 /// Statistics collected from a platform's hook system
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PlatformStats {
-    /// Number of assistant messages/responses
-    pub messages: u32,
+    /// Number of user prompts submitted
+    #[serde(default)]
+    pub prompts: u32,
+    /// Number of assistant responses completed
+    #[serde(alias = "messages")]
+    pub completions: u32,
     /// Number of subagent task completions
     pub subagent_messages: u32,
     /// Number of context compressions

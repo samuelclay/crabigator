@@ -31,7 +31,8 @@ mod fixtures {
     #[derive(Debug, Deserialize)]
     struct FixtureStats {
         state: String,
-        messages: u32,
+        #[serde(alias = "messages")]
+        completions: u32,
         #[serde(default)]
         tools: HashMap<String, u32>,
         compressions: u32,
@@ -146,7 +147,7 @@ mod fixtures {
         let mut result = SessionStats::new();
         result.work_seconds = stats.work_seconds;
         result.platform_stats = PlatformStats {
-            messages: stats.messages,
+            completions: stats.completions,
             tools: stats.tools.clone(),
             compressions: stats.compressions,
             state: parse_state(&stats.state),

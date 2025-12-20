@@ -104,14 +104,22 @@ pub fn draw_stats_widget(
             )
         }
         3 => {
-            // Messages from platform stats
+            // Prompts from platform stats
             format!(
-                "{}✉ Messages{} {}{}{}",
+                "{}▸ Prompts{} {}{}{}",
                 fg(color::GRAY), RESET,
-                fg(color::LIGHT_BLUE), stats.platform_stats.messages, RESET
+                fg(color::LIGHT_BLUE), stats.platform_stats.prompts, RESET
             )
         }
         4 => {
+            // Completions from platform stats
+            format!(
+                "{}◂ Completions{} {}{}{}",
+                fg(color::GRAY), RESET,
+                fg(color::LIGHT_BLUE), stats.platform_stats.completions, RESET
+            )
+        }
+        5 => {
             // Tool usage sparkline (half width for the sparkline part)
             let sparkline_width = (width as usize) / 2;
             let bins = stats.tool_usage_bins(sparkline_width);
@@ -122,7 +130,7 @@ pub fn draw_stats_widget(
                 sparkline
             )
         }
-        5 => {
+        6 => {
             // Compressions (only show if > 0)
             let compressions = stats.platform_stats.compressions;
             if compressions > 0 {
@@ -135,7 +143,7 @@ pub fn draw_stats_widget(
                 String::new()
             }
         }
-        6 => {
+        7 => {
             // Idle time (only show when complete/question state and idle > 60s)
             let is_idle_state = matches!(
                 stats.platform_stats.state,

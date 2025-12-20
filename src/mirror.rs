@@ -57,7 +57,8 @@ pub struct MirrorWidgets {
 pub struct StatsMirrorData {
     pub work_seconds: u64,
     pub state: String,
-    pub messages: u32,
+    pub prompts: u32,
+    pub completions: u32,
     pub tools: u32,
     pub compressions: u32,
 }
@@ -177,7 +178,8 @@ impl MirrorPublisher {
 
         // Hash key fields from stats
         stats.work_seconds.hash(&mut hasher);
-        stats.platform_stats.messages.hash(&mut hasher);
+        stats.platform_stats.prompts.hash(&mut hasher);
+        stats.platform_stats.completions.hash(&mut hasher);
         stats.platform_stats.total_tool_calls().hash(&mut hasher);
         stats.platform_stats.compressions.hash(&mut hasher);
         format!("{:?}", stats.platform_stats.state).hash(&mut hasher);
@@ -225,7 +227,8 @@ impl MirrorPublisher {
                     data: StatsMirrorData {
                         work_seconds: stats.work_seconds,
                         state: format!("{:?}", stats.platform_stats.state).to_lowercase(),
-                        messages: stats.platform_stats.messages,
+                        prompts: stats.platform_stats.prompts,
+                        completions: stats.platform_stats.completions,
                         tools: stats.platform_stats.total_tool_calls(),
                         compressions: stats.platform_stats.compressions,
                     },
@@ -288,7 +291,8 @@ fn render_stats_preview(stats: &SessionStats) -> Vec<String> {
     let mut lines = vec![
         format!("Stats - {:?}", stats.platform_stats.state),
         format!("Session: {}", stats.format_work()),
-        format!("Messages: {}", stats.platform_stats.messages),
+        format!("Prompts: {}", stats.platform_stats.prompts),
+        format!("Completions: {}", stats.platform_stats.completions),
         format!("Tools: {}", stats.platform_stats.total_tool_calls()),
     ];
     if stats.platform_stats.compressions > 0 {

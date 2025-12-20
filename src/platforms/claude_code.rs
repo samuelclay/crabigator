@@ -58,7 +58,8 @@ def load_stats(stats_file: Path) -> dict:
         except (json.JSONDecodeError, IOError):
             pass
     return {
-        "messages": 0,
+        "prompts": 0,
+        "completions": 0,
         "subagent_messages": 0,
         "compressions": 0,
         "tools": {},
@@ -106,6 +107,8 @@ def main():
     elif event == "PostToolUse":
         tool_name = data.get("tool_name", "unknown")
         stats["tools"][tool_name] = stats["tools"].get(tool_name, 0) + 1
+        if "tool_timestamps" not in stats:
+            stats["tool_timestamps"] = []
         stats["tool_timestamps"].append(time.time())
         # Mark if this was a question tool
         if tool_name == "AskUserQuestion":
@@ -114,7 +117,7 @@ def main():
         stats["state"] = "thinking"
 
     elif event == "Stop":
-        stats["messages"] += 1
+        stats["completions"] = stats.get("completions", 0) + 1
         # Transition to question or complete based on pending flag
         if stats.get("pending_question"):
             stats["state"] = "question"
@@ -132,6 +135,7 @@ def main():
 
     elif event == "UserPromptSubmit":
         # User submitted input, Claude starts thinking
+        stats["prompts"] = stats.get("prompts", 0) + 1
         stats["state"] = "thinking"
         stats["pending_question"] = False
         stats["idle_since"] = None

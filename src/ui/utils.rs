@@ -105,17 +105,6 @@ fn get_path_suffix(path: &str, n: usize) -> String {
     parts.into_iter().rev().collect::<Vec<_>>().join("/")
 }
 
-/// Format a number with K/M suffix for large values
-pub fn format_number(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
-}
-
 /// Create a scaled diff bar showing additions (green) and deletions (red)
 /// Max width is `max_width` characters, scaled proportionally to `max_changes`
 pub fn create_diff_bar(
@@ -242,13 +231,6 @@ mod tests {
         assert_eq!(get_filename("src/app.rs"), "app.rs");
         assert_eq!(get_filename("app.rs"), "app.rs");
         assert_eq!(get_filename("a/b/c/d.txt"), "d.txt");
-    }
-
-    #[test]
-    fn test_format_number() {
-        assert_eq!(format_number(500), "500");
-        assert_eq!(format_number(1500), "1.5K");
-        assert_eq!(format_number(1500000), "1.5M");
     }
 
     #[test]
