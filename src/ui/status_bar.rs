@@ -52,7 +52,7 @@ pub fn draw_status_bar(
         write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + row, 1))?;
 
         // Stats column (leftmost, fixed width)
-        draw_stats_widget(stdout, layout.pty_rows, 0, row, stats_width, session_stats)?;
+        draw_stats_widget(stdout, layout.pty_rows, 0, row, stats_width, layout.status_rows, session_stats)?;
 
         // Separator
         write!(stdout, "{}│{}", escape::fg(color::DARK_GRAY), RESET)?;

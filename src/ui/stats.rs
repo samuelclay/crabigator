@@ -108,11 +108,102 @@ pub fn draw_stats_widget(
     col: u16,
     row: u16,
     width: u16,
+    height: u16,
     stats: &SessionStats,
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(pty_rows + 1 + row, col + 1))?;
 
-    let content = match row {
+    // Use compact mode when we have 4 or fewer content rows (status_rows <= 5)
+    // Compact mode: header + 2 rows with abbreviated two-column layout
+    let compact = height <= 5;
+
+    let content = if compact {
+        draw_compact_row(row, width, stats)
+    } else {
+        draw_normal_row(row, width, stats)
+    };
+
+    write!(stdout, "{}", content)?;
+    let content_len = strip_ansi_len(&content);
+    let pad = (width as usize).saturating_sub(content_len);
+    write!(stdout, "{:pad$}", "", pad = pad)?;
+
+    Ok(())
+}
+
+/// Draw a row in compact mode (abbreviated labels, two columns)
+fn draw_compact_row(row: u16, width: u16, stats: &SessionStats) -> String {
+    match row {
+        1 => {
+            // Header with state indicator (same as normal)
+            let header = format!("{} Stats{}", fg(color::PURPLE), RESET);
+            let state = format_state_indicator(stats.platform_stats.state);
+            let header_len = strip_ansi_len(&header);
+            let state_len = strip_ansi_len(&state);
+            let gap = (width as usize).saturating_sub(header_len + state_len);
+            format!("{}{:gap$}{}", header, "", state, gap = gap)
+        }
+        2 => {
+            // Row 2: Sess <time>  Think <time>  Prm N  Cmp N
+            let sess = format!(
+                "{}Sess{} {}{}{}",
+                fg(color::GRAY), RESET,
+                fg(color::BLUE), stats.format_work(), RESET
+            );
+            let thinking_val = stats.format_thinking().unwrap_or_else(|| "—".to_string());
+            let think = format!(
+                "{}Thnk{} {}{}{}",
+                fg(color::GRAY), RESET,
+                fg(color::GREEN), thinking_val, RESET
+            );
+            let prm = format!(
+                "{}Prm{} {}{}{}",
+                fg(color::GRAY), RESET,
+                fg(color::LIGHT_BLUE), stats.platform_stats.prompts, RESET
+            );
+            let cmp = format!(
+                "{}Cmp{} {}{}{}",
+                fg(color::GRAY), RESET,
+                fg(color::LIGHT_BLUE), stats.platform_stats.completions, RESET
+            );
+
+            // Calculate widths for even distribution
+            let sess_len = strip_ansi_len(&sess);
+            let think_len = strip_ansi_len(&think);
+            let prm_len = strip_ansi_len(&prm);
+            let cmp_len = strip_ansi_len(&cmp);
+            let total_len = sess_len + think_len + prm_len + cmp_len;
+            let gaps = (width as usize).saturating_sub(total_len) / 3;
+
+            format!(
+                "{}{:gap$}{}{:gap$}{}{:gap$}{}",
+                sess, "", think, "", prm, "", cmp, gap = gaps.max(1)
+            )
+        }
+        3 => {
+            // Row 3: Tools sparkline (full width, with compressions if any)
+            let compressions = stats.platform_stats.compressions;
+            let suffix = if compressions > 0 {
+                format!(" {}Cmp{} {}{}{}", fg(color::GRAY), RESET, fg(color::PINK), compressions, RESET)
+            } else {
+                String::new()
+            };
+            let suffix_len = strip_ansi_len(&suffix);
+
+            let label = format!("{}⚙{} ", fg(color::GRAY), RESET);
+            let label_len = strip_ansi_len(&label);
+            let sparkline_width = (width as usize).saturating_sub(label_len + suffix_len);
+            let bins = stats.tool_usage_bins(sparkline_width);
+            let sparkline = render_sparkline(&bins, sparkline_width);
+            format!("{}{}{}", label, sparkline, suffix)
+        }
+        _ => String::new(),
+    }
+}
+
+/// Draw a row in normal mode (full labels, single column)
+fn draw_normal_row(row: u16, width: u16, stats: &SessionStats) -> String {
+    match row {
         1 => {
             // Header with state indicator on the right
             let header = format!("{} Stats{}", fg(color::PURPLE), RESET);
@@ -132,17 +223,14 @@ pub fn draw_stats_widget(
             format!("{}{:gap$}{}", label, "", value, gap = gap)
         }
         3 => {
-            // Thinking time (only show if thinking has occurred)
-            if let Some(thinking) = stats.format_thinking() {
-                let label = format!("{}◇ Thinking{}", fg(color::GRAY), RESET);
-                let value = format!("{}{}{}", fg(color::GREEN), thinking, RESET);
-                let label_len = strip_ansi_len(&label);
-                let value_len = strip_ansi_len(&value);
-                let gap = (width as usize).saturating_sub(label_len + value_len);
-                format!("{}{:gap$}{}", label, "", value, gap = gap)
-            } else {
-                String::new()
-            }
+            // Thinking time (always show, with dash when no thinking yet)
+            let label = format!("{}◇ Thinking{}", fg(color::GRAY), RESET);
+            let thinking_value = stats.format_thinking().unwrap_or_else(|| "—".to_string());
+            let value = format!("{}{}{}", fg(color::GREEN), thinking_value, RESET);
+            let label_len = strip_ansi_len(&label);
+            let value_len = strip_ansi_len(&value);
+            let gap = (width as usize).saturating_sub(label_len + value_len);
+            format!("{}{:gap$}{}", label, "", value, gap = gap)
         }
         4 => {
             // Prompts: count left-aligned after label, timer right-aligned
@@ -215,12 +303,5 @@ pub fn draw_stats_widget(
             }
         }
         _ => String::new(),
-    };
-
-    write!(stdout, "{}", content)?;
-    let content_len = strip_ansi_len(&content);
-    let pad = (width as usize).saturating_sub(content_len);
-    write!(stdout, "{:pad$}", "", pad = pad)?;
-
-    Ok(())
+    }
 }

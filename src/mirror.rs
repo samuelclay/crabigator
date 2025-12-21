@@ -295,9 +295,8 @@ fn render_stats_preview(stats: &SessionStats) -> Vec<String> {
         format!("Stats - {:?}", stats.platform_stats.state),
         format!("Session: {}", stats.format_work()),
     ];
-    if let Some(thinking) = stats.format_thinking() {
-        lines.push(format!("Thinking: {}", thinking));
-    }
+    let thinking = stats.format_thinking().unwrap_or_else(|| "—".to_string());
+    lines.push(format!("Thinking: {}", thinking));
     lines.extend([
         format!("Prompts: {}", stats.platform_stats.prompts),
         format!("Completions: {}", stats.platform_stats.completions),

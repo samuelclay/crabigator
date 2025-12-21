@@ -63,9 +63,10 @@ impl App {
     ) -> Result<Self> {
         let (pty_tx, pty_rx) = mpsc::channel(256);
 
-        // Reserve bottom 20% for our status widgets (minimum 3 rows)
-        let status_rows = ((rows as f32 * 0.2) as u16).max(3);
-        let pty_rows = rows.saturating_sub(status_rows);
+        // Reserve bottom 20% for our status widgets (minimum 2 rows: separator + header)
+        // Also ensure pty_rows is at least 1 to avoid PTY errors
+        let status_rows = ((rows as f32 * 0.2) as u16).clamp(2, rows.saturating_sub(1));
+        let pty_rows = rows.saturating_sub(status_rows).max(1);
 
         // Give the assistant CLI only the top portion
         let platform_pty = PlatformPty::new(
@@ -358,9 +359,9 @@ impl App {
         self.total_cols = width;
         self.total_rows = height;
 
-        // Recalculate layout
-        self.status_rows = ((height as f32 * 0.2) as u16).max(3);
-        self.pty_rows = height.saturating_sub(self.status_rows);
+        // Recalculate layout with same guards as App::new
+        self.status_rows = ((height as f32 * 0.2) as u16).clamp(2, height.saturating_sub(1));
+        self.pty_rows = height.saturating_sub(self.status_rows).max(1);
 
         // Re-setup scroll region for new size (not initial, don't scroll content)
         self.setup_scroll_region(false)?;
