@@ -56,6 +56,7 @@ pub struct MirrorWidgets {
 #[derive(Serialize)]
 pub struct StatsMirrorData {
     pub work_seconds: u64,
+    pub thinking_seconds: u64,
     pub state: String,
     pub prompts: u32,
     pub completions: u32,
@@ -178,6 +179,7 @@ impl MirrorPublisher {
 
         // Hash key fields from stats
         stats.work_seconds.hash(&mut hasher);
+        stats.thinking_seconds().hash(&mut hasher);
         stats.platform_stats.prompts.hash(&mut hasher);
         stats.platform_stats.completions.hash(&mut hasher);
         stats.platform_stats.total_tool_calls().hash(&mut hasher);
@@ -226,6 +228,7 @@ impl MirrorPublisher {
                 stats: WidgetMirror {
                     data: StatsMirrorData {
                         work_seconds: stats.work_seconds,
+                        thinking_seconds: stats.thinking_seconds(),
                         state: format!("{:?}", stats.platform_stats.state).to_lowercase(),
                         prompts: stats.platform_stats.prompts,
                         completions: stats.platform_stats.completions,
@@ -291,10 +294,15 @@ fn render_stats_preview(stats: &SessionStats) -> Vec<String> {
     let mut lines = vec![
         format!("Stats - {:?}", stats.platform_stats.state),
         format!("Session: {}", stats.format_work()),
+    ];
+    if let Some(thinking) = stats.format_thinking() {
+        lines.push(format!("Thinking: {}", thinking));
+    }
+    lines.extend([
         format!("Prompts: {}", stats.platform_stats.prompts),
         format!("Completions: {}", stats.platform_stats.completions),
         format!("Tools: {}", stats.platform_stats.total_tool_calls()),
-    ];
+    ]);
     if stats.platform_stats.compressions > 0 {
         lines.push(format!("Compressions: {}", stats.platform_stats.compressions));
     }

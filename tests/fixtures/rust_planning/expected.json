@@ -80,6 +80,7 @@
         "compressions": 1,
         "prompts": 0,
         "state": "thinking",
+        "thinking_seconds": 0,
         "tools": 3,
         "work_seconds": 125
       },

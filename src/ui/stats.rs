@@ -132,6 +132,19 @@ pub fn draw_stats_widget(
             format!("{}{:gap$}{}", label, "", value, gap = gap)
         }
         3 => {
+            // Thinking time (only show if thinking has occurred)
+            if let Some(thinking) = stats.format_thinking() {
+                let label = format!("{}◇ Thinking{}", fg(color::GRAY), RESET);
+                let value = format!("{}{}{}", fg(color::GREEN), thinking, RESET);
+                let label_len = strip_ansi_len(&label);
+                let value_len = strip_ansi_len(&value);
+                let gap = (width as usize).saturating_sub(label_len + value_len);
+                format!("{}{:gap$}{}", label, "", value, gap = gap)
+            } else {
+                String::new()
+            }
+        }
+        4 => {
             // Prompts: count left-aligned after label, timer right-aligned
             let label = format!(
                 "{}▸ Prompts{} {}{}{}",
@@ -145,7 +158,7 @@ pub fn draw_stats_widget(
             let gap = (width as usize).saturating_sub(label_len + timer_len);
             format!("{}{:gap$}{}", label, "", timer, gap = gap)
         }
-        4 => {
+        5 => {
             // Completions: count left-aligned after label, timer right-aligned
             let label = format!(
                 "{}◂ Completions{} {}{}{}",
@@ -159,7 +172,7 @@ pub fn draw_stats_widget(
             let gap = (width as usize).saturating_sub(label_len + timer_len);
             format!("{}{:gap$}{}", label, "", timer, gap = gap)
         }
-        5 => {
+        6 => {
             // Tool usage sparkline (spans from after label to right edge)
             let label = format!("{}⚙ Tools{} ", fg(color::GRAY), RESET);
             let label_len = strip_ansi_len(&label);
@@ -168,7 +181,7 @@ pub fn draw_stats_widget(
             let sparkline = render_sparkline(&bins, sparkline_width);
             format!("{}{}", label, sparkline)
         }
-        6 => {
+        7 => {
             // Compressions (only show if > 0)
             let compressions = stats.platform_stats.compressions;
             if compressions > 0 {
@@ -181,7 +194,7 @@ pub fn draw_stats_widget(
                 String::new()
             }
         }
-        7 => {
+        8 => {
             // Idle time (only show when complete/question state and idle > 60s)
             let is_idle_state = matches!(
                 stats.platform_stats.state,

@@ -98,6 +98,7 @@
         "compressions": 0,
         "prompts": 0,
         "state": "complete",
+        "thinking_seconds": 0,
         "tools": 0,
         "work_seconds": 30
       },
