@@ -38,6 +38,7 @@ const DIM: &str = "\x1b[2m";
 
 // Colors matching terminal/escape.rs palette
 const FG_CYAN: &str = "\x1b[38;5;45m";
+const FG_BLUE: &str = "\x1b[38;5;33m";
 const FG_PURPLE: &str = "\x1b[38;5;141m";
 const FG_ORANGE: &str = "\x1b[38;5;179m";
 const FG_GRAY: &str = "\x1b[38;5;245m";
@@ -46,24 +47,40 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Print session info banner with file paths
 fn print_session_banner(session_id: &str, platform: PlatformKind, cols: u16) {
-    let width = cols as usize;
+    use chrono::Local;
 
     println!();
 
-    // Header line: 🦀 Crabigator v0.1.0 ⛵ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Platform
+    // Format date: "Saturday, December 21st, 2025 5:58 PM"
+    let now = Local::now();
+    let day = now.format("%A").to_string();
+    let month = now.format("%B").to_string();
+    let date_num = now.format("%e").to_string().trim().to_string();
+    let suffix = match date_num.as_str() {
+        "1" | "21" | "31" => "st",
+        "2" | "22" => "nd",
+        "3" | "23" => "rd",
+        _ => "th",
+    };
+    let year = now.format("%Y").to_string();
+    let time = now.format("%l:%M %p").to_string().trim().to_string();
+    let date_str = format!("{}, {} {}{}, {} {}", day, month, date_num, suffix, year, time);
+
+    // Header line: 🦀 Crabigator v0.1.0 ⛵ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Platform · Date
     let platform_name = platform.display_name();
     let version_str = format!("{FG_GRAY}v{VERSION}{RESET}");
     let title = format!(
         "{FG_ORANGE}🦀{RESET} {BOLD}{FG_CYAN}Crabigator{RESET} {version_str} {FG_ORANGE}⛵{RESET}"
     );
-    let platform_label = format!("{FG_PURPLE}{platform_name}{RESET}");
-    // Plain lengths: "🦀" (2 cells) + " " (1) + "Crabigator" (10) + " " (1) + version + " " (1) + "⛵" (2 cells)
+    let right_side = format!("{FG_PURPLE}{platform_name}{RESET} {FG_BLUE}·{RESET} {FG_BLUE}{date_str}{RESET}");
+
+    // Plain lengths
     let version_plain_len = 1 + VERSION.len(); // "v" + version
     let title_plain_len = 2 + 1 + 10 + 1 + version_plain_len + 1 + 2;
-    let platform_plain_len = platform_name.len();
-    let rule_len = width.saturating_sub(title_plain_len + platform_plain_len + 2);
-    let rule = format!("{FG_GRAY}{}{RESET}", "━".repeat(rule_len));
-    println!("{title} {rule} {platform_label}");
+    let right_plain_len = platform_name.len() + 3 + date_str.len(); // "Platform · Date"
+    let rule_len = (cols as usize).saturating_sub(title_plain_len + right_plain_len + 2);
+    let rule = format!("{FG_BLUE}{}{RESET}", "━".repeat(rule_len));
+    println!("{title} {rule} {right_side}");
 
     // Only show session directory in debug builds
     #[cfg(debug_assertions)]
@@ -72,9 +89,50 @@ fn print_session_banner(session_id: &str, platform: PlatformKind, cols: u16) {
         println!("   {FG_PURPLE}Session{RESET}  {DIM}{session_dir}{RESET}");
     }
 
-    // Footer rule
-    println!("{FG_GRAY}{}{RESET}", "━".repeat(width));
     println!();
+}
+
+/// Print session end line matching banner style with date
+fn print_session_end_line(platform: PlatformKind, cols: u16) {
+    use chrono::Local;
+
+    let width = cols as usize;
+
+    // Format date: "Saturday, December 21st, 2025 5:58 PM"
+    let now = Local::now();
+    let day = now.format("%A").to_string(); // Saturday
+    let month = now.format("%B").to_string(); // December
+    let date_num = now.format("%e").to_string().trim().to_string(); // 21
+    let suffix = match date_num.as_str() {
+        "1" | "21" | "31" => "st",
+        "2" | "22" => "nd",
+        "3" | "23" => "rd",
+        _ => "th",
+    };
+    let year = now.format("%Y").to_string(); // 2025
+    let time = now.format("%l:%M %p").to_string().trim().to_string(); // 5:58 PM
+
+    let date_str = format!("{}, {} {}{}, {} {}", day, month, date_num, suffix, year, time);
+
+    // Left side: 🦀 Crabigator v0.1.0 ⛵
+    let version_str = format!("{FG_GRAY}v{VERSION}{RESET}");
+    let title = format!(
+        "{FG_ORANGE}🦀{RESET} {BOLD}{FG_CYAN}Crabigator{RESET} {version_str} {FG_ORANGE}⛵{RESET}"
+    );
+
+    // Right side: Platform · Date
+    let platform_name = platform.display_name();
+    let right_side = format!("{FG_PURPLE}{platform_name}{RESET} {FG_BLUE}·{RESET} {FG_BLUE}{date_str}{RESET}");
+
+    // Calculate plain lengths
+    let version_plain_len = 1 + VERSION.len(); // "v" + version
+    let title_plain_len = 2 + 1 + 10 + 1 + version_plain_len + 1 + 2; // 🦀 Crabigator vX.X.X ⛵
+    let right_plain_len = platform_name.len() + 3 + date_str.len(); // "Platform · Date"
+
+    let rule_len = width.saturating_sub(title_plain_len + right_plain_len + 2);
+    let rule = format!("{FG_BLUE}{}{RESET}", "━".repeat(rule_len));
+
+    println!("{title} {rule} {right_side}");
 }
 
 #[derive(Clone)]
@@ -452,7 +510,7 @@ async fn main() -> Result<()> {
     };
     timer.duration("setup terminal", begin.elapsed());
 
-    let (result, stats, final_rows) = {
+    let (result, final_rows) = {
         let begin = Instant::now();
         let platform = platforms::platform_for(platform_kind);
         let app_result = App::new(cols, rows, platform, args.platform_args, args.capture).await;
@@ -465,9 +523,8 @@ async fn main() -> Result<()> {
                 let begin = Instant::now();
                 let run_result = app.run().await;
                 timer.duration("app.run", begin.elapsed());
-                let stats = app.session_stats.clone();
                 let total_rows = app.total_rows;
-                (run_result, Some(stats), total_rows)
+                (run_result, total_rows)
             }
             Err(e) => {
                 let _ = restore_terminal(rows);
@@ -506,16 +563,8 @@ async fn main() -> Result<()> {
         _ => {}
     }
 
-    // Print session summary after exit
-    if let Some(stats) = stats {
-        println!();
-        println!(
-            "Session: {} prompts, {} completions, {} tool calls",
-            stats.platform_stats.prompts,
-            stats.platform_stats.completions,
-            stats.platform_stats.total_tool_calls()
-        );
-    }
+    // Print session end line with platform and date
+    print_session_end_line(platform_kind, cols);
 
     result
 }
