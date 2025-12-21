@@ -96,23 +96,18 @@ The application uses a **scroll region approach** to layer UI:
 - Bracketed paste is enabled for efficient paste handling
 - Panic handler restores terminal state to prevent corruption
 
-### Output Capture
+### Session Directory
 
-Crabigator captures assistant CLI output for streaming and inspection. At startup, a banner shows file paths.
+Each crabigator session creates `/tmp/crabigator-{session_id}/` containing:
+- **scrollback.log**: Clean text transcript (ANSI stripped, complete lines only)
+- **screen.txt**: Current screen snapshot from vt100 parser (updated ~100ms)
+- **mirror.json**: Widget state for external inspection (updated ~1s when changed)
 
-Files created in `/tmp/crabigator-capture-{session_id}/`:
-- **scrollback.log**: Clean text transcript (append-only). Only complete lines are written - animations/spinners using carriage return are filtered out. ANSI escape sequences are stripped.
-- **screen.txt**: Current screen snapshot from vt100 parser. Updated every ~100ms. Atomic writes prevent partial reads.
+The session directory path is shown in the startup banner in debug builds (`cargo build`), but hidden in release builds (`cargo build --release`).
 
-Use `--no-capture` to disable capture.
+Use `--no-capture` to disable output capture (scrollback.log and screen.txt).
 
 ### Instance Inspection
-
-Every running crabigator instance writes widget state to `/tmp/crabigator-mirror-{session_id}.json`:
-- Throttled to max once per second
-- Only writes when widget content has changed (hash-based detection)
-- Contains both raw data and pre-rendered text for each widget
-- File is cleaned up on exit
 
 Use `crabigator inspect` to view other running instances:
 - `crabigator inspect` - list all instances

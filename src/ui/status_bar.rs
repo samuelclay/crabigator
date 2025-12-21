@@ -34,15 +34,23 @@ pub fn draw_status_bar(
     // Move to status area (below the scroll region)
     write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1, 1))?;
 
-    // Draw thin separator line
+    // Draw thick separator line (matching banner style)
     write!(stdout, "{}{}", escape::bg(color::BG_DARK), escape::fg(color::DARK_GRAY))?;
     for _ in 0..layout.total_cols {
-        write!(stdout, "─")?;
+        write!(stdout, "━")?;
     }
     write!(stdout, "{}", RESET)?;
 
-    // Calculate column widths: Stats gets ~15% of width, Git and Changes share the rest
-    let stats_width = ((layout.total_cols as f32) * 0.15).max(22.0) as u16;
+    // Calculate column widths based on available height
+    // In compact mode (short terminal), stats gets more width for two-column layout
+    let compact = layout.status_rows <= 5;
+    let stats_width = if compact {
+        // Wider stats for two-column layout: ~28% of width, min 34 chars
+        ((layout.total_cols as f32) * 0.28).max(34.0) as u16
+    } else {
+        // Normal: ~15% of width, min 22 chars
+        ((layout.total_cols as f32) * 0.15).max(22.0) as u16
+    };
     let remaining = layout.total_cols.saturating_sub(stats_width + 2); // 2 for separators
     let git_width = remaining / 2;
     let changes_width = remaining - git_width;

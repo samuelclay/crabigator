@@ -105,40 +105,101 @@ fn get_path_suffix(path: &str, n: usize) -> String {
     parts.into_iter().rev().collect::<Vec<_>>().join("/")
 }
 
-/// Create a scaled diff bar showing additions (green) and deletions (red)
-/// Max width is `max_width` characters, scaled proportionally to `max_changes`
-pub fn create_diff_bar(
+/// Format diff statistics with colored numbers and logarithmic-scaled bars
+/// Returns formatted string like "−12 +42 ▓▓████" with appropriate colors
+/// Deletions shown first (left), additions second (right)
+/// Bar width scales logarithmically: 1-9=1, 10-99=2, 100-999=3, etc.
+pub fn format_diff_stats(
     additions: usize,
     deletions: usize,
-    max_changes: usize,
-    max_width: usize,
+    _max_changes: usize,
+    show_bar: usize,
 ) -> String {
     let total = additions + deletions;
     if total == 0 {
-        return format!("{}{}{}", fg(color::DARK_GRAY), "·".repeat(max_width.min(2)), RESET);
+        return format!("{}·{}", fg(color::DARK_GRAY), RESET);
     }
 
-    // Scale to max_width based on max_changes
-    let scaled_total = ((total as f64 / max_changes as f64) * max_width as f64).ceil() as usize;
-    let bar_width = scaled_total.min(max_width).max(1);
+    let mut result = String::new();
 
-    // Distribute bar width between additions and deletions
-    let add_chars = if total > 0 {
-        ((additions as f64 / total as f64) * bar_width as f64).round() as usize
+    // Format numbers: deletions first, then additions
+    if deletions > 0 {
+        result.push_str(&format!("{}−{}{}", fg(color::RED), deletions, RESET));
+    }
+    if additions > 0 {
+        if deletions > 0 {
+            result.push(' ');
+        }
+        result.push_str(&format!("{}+{}{}", fg(color::GREEN), additions, RESET));
+    }
+
+    // Add logarithmic-scaled bar if requested
+    // Scale: 1-9 = 1 char, 10-99 = 2 chars, 100-999 = 3 chars, etc.
+    if show_bar > 0 {
+        result.push(' ');
+
+        // Calculate bar widths using log scale (order of magnitude + 1)
+        let del_chars = if deletions > 0 {
+            (deletions as f64).log10().floor() as usize + 1
+        } else {
+            0
+        };
+        let add_chars = if additions > 0 {
+            (additions as f64).log10().floor() as usize + 1
+        } else {
+            0
+        };
+
+        // Deletions on left (red), additions on right (green)
+        if del_chars > 0 {
+            result.push_str(&format!("{}{}{}", fg(color::RED), "▓".repeat(del_chars), RESET));
+        }
+        if add_chars > 0 {
+            result.push_str(&format!("{}{}{}", fg(color::GREEN), "█".repeat(add_chars), RESET));
+        }
+    }
+
+    result
+}
+
+/// Get the display width of diff stats (for layout calculations)
+/// Matches format_diff_stats: "−N +M ▓▓████"
+pub fn diff_stats_width(additions: usize, deletions: usize, show_bar: usize) -> usize {
+    let total = additions + deletions;
+    if total == 0 {
+        return 1; // just the dot
+    }
+
+    let mut width = 0;
+
+    // −N takes: 1 (minus) + digit count
+    if deletions > 0 {
+        width += 1 + digit_count(deletions);
+    }
+    // space + +N takes: 1 (space) + 1 (plus) + digit count
+    if additions > 0 {
+        if deletions > 0 {
+            width += 1; // space between
+        }
+        width += 1 + digit_count(additions);
+    }
+    // space + log-scaled bar
+    if show_bar > 0 {
+        let del_bar = if deletions > 0 { digit_count(deletions) } else { 0 };
+        let add_bar = if additions > 0 { digit_count(additions) } else { 0 };
+        width += 1 + del_bar + add_bar;
+    }
+
+    width
+}
+
+/// Count digits in a number
+fn digit_count(n: usize) -> usize {
+    if n == 0 {
+        1
     } else {
-        0
-    };
-    let del_chars = bar_width.saturating_sub(add_chars);
-
-    let mut bar = String::new();
-    if add_chars > 0 {
-        bar.push_str(&format!("{}{}{}", fg(color::GREEN), "+".repeat(add_chars), RESET));
+        (n as f64).log10().floor() as usize + 1
     }
-    if del_chars > 0 {
-        bar.push_str(&format!("{}{}{}", fg(color::RED), "-".repeat(del_chars), RESET));
-    }
-
-    bar
 }
 
 /// Create a bar showing folder size (cyan colored for untracked folders)

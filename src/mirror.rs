@@ -112,12 +112,12 @@ pub struct MirrorPublisher {
 
 impl MirrorPublisher {
     pub fn new(enabled: bool, session_id: String, cwd: String, capture_enabled: bool) -> Self {
-        let capture_dir = format!("/tmp/crabigator-capture-{}", session_id);
+        let session_dir = format!("/tmp/crabigator-{}", session_id);
         let capture = CaptureMirror {
             enabled: capture_enabled,
-            directory: capture_dir.clone(),
-            scrollback_path: format!("{}/scrollback.log", capture_dir),
-            screen_path: format!("{}/screen.txt", capture_dir),
+            directory: session_dir.clone(),
+            scrollback_path: format!("{}/scrollback.log", session_dir),
+            screen_path: format!("{}/screen.txt", session_dir),
         };
 
         Self {
@@ -131,9 +131,14 @@ impl MirrorPublisher {
         }
     }
 
-    /// Get the mirror file path
+    /// Get the session directory path
+    pub fn session_dir(&self) -> PathBuf {
+        PathBuf::from(format!("/tmp/crabigator-{}", self.session_id))
+    }
+
+    /// Get the mirror file path (inside session directory)
     pub fn mirror_path(&self) -> PathBuf {
-        PathBuf::from(format!("/tmp/crabigator-mirror-{}.json", self.session_id))
+        self.session_dir().join("mirror.json")
     }
 
     /// Attempt to publish if conditions are met (enabled, changed, throttle elapsed)

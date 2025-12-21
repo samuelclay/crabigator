@@ -38,56 +38,43 @@ const DIM: &str = "\x1b[2m";
 
 // Colors matching terminal/escape.rs palette
 const FG_CYAN: &str = "\x1b[38;5;45m";
-const FG_BLUE: &str = "\x1b[38;5;39m";
 const FG_PURPLE: &str = "\x1b[38;5;141m";
 const FG_ORANGE: &str = "\x1b[38;5;179m";
 const FG_GRAY: &str = "\x1b[38;5;240m";
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Print session info banner with file paths
-fn print_session_banner(session_id: &str, platform: PlatformKind, capture_enabled: bool, cols: u16) {
+fn print_session_banner(session_id: &str, platform: PlatformKind, cols: u16) {
     let width = cols as usize;
 
     println!();
 
-    // Header line: 🦀 CRABIGATOR ⛵ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Platform
+    // Header line: 🦀 Crabigator v0.1.0 ⛵ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Platform
     let platform_name = platform.display_name();
-    let title = format!("{FG_ORANGE}🦀{RESET} {BOLD}{FG_CYAN}CRABIGATOR{RESET} {FG_ORANGE}⛵{RESET}");
+    let version_str = format!("{FG_GRAY}v{VERSION}{RESET}");
+    let title = format!(
+        "{FG_ORANGE}🦀{RESET} {BOLD}{FG_CYAN}Crabigator{RESET} {version_str} {FG_ORANGE}⛵{RESET}"
+    );
     let platform_label = format!("{FG_PURPLE}{platform_name}{RESET}");
-    // Plain lengths: "🦀" (2 cells) + " " (1) + "CRABIGATOR" (10) + " " (1) + "⛵" (2 cells)
-    let title_plain_len = 2 + 1 + 10 + 1 + 2;
+    // Plain lengths: "🦀" (2 cells) + " " (1) + "Crabigator" (10) + " " (1) + version + " " (1) + "⛵" (2 cells)
+    let version_plain_len = 1 + VERSION.len(); // "v" + version
+    let title_plain_len = 2 + 1 + 10 + 1 + version_plain_len + 1 + 2;
     let platform_plain_len = platform_name.len();
     let rule_len = width.saturating_sub(title_plain_len + platform_plain_len + 2);
     let rule = format!("{FG_GRAY}{}{RESET}", "━".repeat(rule_len));
     println!("{title} {rule} {platform_label}");
 
-    // File paths
-    if capture_enabled {
-        let capture_dir = format!("/tmp/crabigator-capture-{}", session_id);
-        let scrollback_path = format!("{}/scrollback.log", capture_dir);
-        let screen_path = format!("{}/screen.txt", capture_dir);
-
-        print_path_line("Log", &scrollback_path, FG_CYAN);
-        print_path_line("Screen", &screen_path, FG_BLUE);
-    } else {
-        println!("   {DIM}(capture disabled){RESET}");
+    // Only show session directory in debug builds
+    #[cfg(debug_assertions)]
+    {
+        let session_dir = format!("/tmp/crabigator-{}/", session_id);
+        println!("   {FG_PURPLE}Session{RESET}  {DIM}{session_dir}{RESET}");
     }
-
-    let mirror_path = format!("/tmp/crabigator-mirror-{}.json", session_id);
-    print_path_line("Mirror", &mirror_path, FG_PURPLE);
 
     // Footer rule
     println!("{FG_GRAY}{}{RESET}", "━".repeat(width));
     println!();
-}
-
-fn print_path_line(label: &str, path: &str, label_color: &str) {
-    // Format: "   Label   /path/to/file"
-    let label_width: usize = 8;
-    let label_padding = label_width.saturating_sub(label.len());
-    println!(
-        "   {label_color}{label}{RESET}{}{DIM}{path}{RESET}",
-        " ".repeat(label_padding)
-    );
 }
 
 #[derive(Clone)]
@@ -452,7 +439,7 @@ async fn main() -> Result<()> {
 
     // Get terminal size and print session banner BEFORE raw mode
     let (cols, _) = terminal_size()?;
-    print_session_banner(&session_id, platform_kind, args.capture, cols);
+    print_session_banner(&session_id, platform_kind, cols);
 
     let begin = Instant::now();
     let (cols, rows) = match setup_terminal() {

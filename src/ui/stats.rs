@@ -131,8 +131,11 @@ pub fn draw_stats_widget(
     Ok(())
 }
 
-/// Draw a row in compact mode (abbreviated labels, two columns)
+/// Draw a row in compact mode (two-column layout with separator)
 fn draw_compact_row(row: u16, width: u16, stats: &SessionStats) -> String {
+    // Split width into two columns with a separator
+    let half = (width as usize) / 2;
+
     match row {
         1 => {
             // Header with state indicator (same as normal)
@@ -144,58 +147,84 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats) -> String {
             format!("{}{:gap$}{}", header, "", state, gap = gap)
         }
         2 => {
-            // Row 2: Sess <time>  Think <time>  Prm N  Cmp N
+            // Row 2: Left column = Session + Thinking, Right column = Prompts + Completions
             let sess = format!(
-                "{}Sess{} {}{}{}",
+                "{}◆ Sess{} {}{}{}",
                 fg(color::GRAY), RESET,
                 fg(color::BLUE), stats.format_work(), RESET
             );
             let thinking_val = stats.format_thinking().unwrap_or_else(|| "—".to_string());
             let think = format!(
-                "{}Thnk{} {}{}{}",
+                "{}◇ Thnk{} {}{}{}",
                 fg(color::GRAY), RESET,
                 fg(color::GREEN), thinking_val, RESET
             );
+
             let prm = format!(
-                "{}Prm{} {}{}{}",
+                "{}▸ Pmt{} {}{}{}",
                 fg(color::GRAY), RESET,
                 fg(color::LIGHT_BLUE), stats.platform_stats.prompts, RESET
             );
             let cmp = format!(
-                "{}Cmp{} {}{}{}",
+                "{}◂ Fin{} {}{}{}",
                 fg(color::GRAY), RESET,
                 fg(color::LIGHT_BLUE), stats.platform_stats.completions, RESET
             );
 
-            // Calculate widths for even distribution
+            // Left side: Session and Thinking with gap between
             let sess_len = strip_ansi_len(&sess);
             let think_len = strip_ansi_len(&think);
+            let left_gap = half.saturating_sub(sess_len + think_len + 1); // -1 for separator
+            let left = format!("{}{:gap$}{}", sess, "", think, gap = left_gap.max(1));
+
+            // Right side: Prompts and Completions with gap between
             let prm_len = strip_ansi_len(&prm);
             let cmp_len = strip_ansi_len(&cmp);
-            let total_len = sess_len + think_len + prm_len + cmp_len;
-            let gaps = (width as usize).saturating_sub(total_len) / 3;
+            let right_gap = half.saturating_sub(prm_len + cmp_len);
+            let right = format!("{}{:gap$}{}", prm, "", cmp, gap = right_gap.max(1));
 
+            // Combine with separator
             format!(
-                "{}{:gap$}{}{:gap$}{}{:gap$}{}",
-                sess, "", think, "", prm, "", cmp, gap = gaps.max(1)
+                "{}{}│{}{}",
+                left,
+                fg(color::DARK_GRAY),
+                RESET,
+                right
             )
         }
         3 => {
-            // Row 3: Tools sparkline (full width, with compressions if any)
+            // Row 3: Tools sparkline on left, compressions on right if any
             let compressions = stats.platform_stats.compressions;
-            let suffix = if compressions > 0 {
-                format!(" {}Cmp{} {}{}{}", fg(color::GRAY), RESET, fg(color::PINK), compressions, RESET)
-            } else {
-                String::new()
-            };
-            let suffix_len = strip_ansi_len(&suffix);
 
             let label = format!("{}⚙{} ", fg(color::GRAY), RESET);
             let label_len = strip_ansi_len(&label);
-            let sparkline_width = (width as usize).saturating_sub(label_len + suffix_len);
-            let bins = stats.tool_usage_bins(sparkline_width);
-            let sparkline = render_sparkline(&bins, sparkline_width);
-            format!("{}{}{}", label, sparkline, suffix)
+
+            if compressions > 0 {
+                // Sparkline takes left half, compressions on right
+                let sparkline_width = half.saturating_sub(label_len + 1); // -1 for separator
+                let bins = stats.tool_usage_bins(sparkline_width);
+                let sparkline = render_sparkline(&bins, sparkline_width);
+
+                let comp_label = format!(
+                    "{}⊜ Cmp{} {}{}{}",
+                    fg(color::GRAY), RESET,
+                    fg(color::PINK), compressions, RESET
+                );
+
+                format!(
+                    "{}{}{}│{}{}",
+                    label, sparkline,
+                    fg(color::DARK_GRAY),
+                    RESET,
+                    comp_label
+                )
+            } else {
+                // No compressions - sparkline spans full width
+                let sparkline_width = (width as usize).saturating_sub(label_len);
+                let bins = stats.tool_usage_bins(sparkline_width);
+                let sparkline = render_sparkline(&bins, sparkline_width);
+                format!("{}{}", label, sparkline)
+            }
         }
         _ => String::new(),
     }

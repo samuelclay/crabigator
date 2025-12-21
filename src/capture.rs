@@ -22,7 +22,7 @@ pub struct CaptureConfig {
 /// Manages output capture to scrollback and screen files.
 pub struct CaptureManager {
     config: CaptureConfig,
-    /// Base directory: /tmp/crabigator-capture-{session_id}/
+    /// Base directory: /tmp/crabigator-{session_id}/
     capture_dir: PathBuf,
     /// Our own vt100 parser with huge screen to capture all output
     capture_parser: vt100::Parser,
@@ -56,7 +56,7 @@ impl CaptureManager {
         }
 
         let capture_dir = PathBuf::from(format!(
-            "/tmp/crabigator-capture-{}",
+            "/tmp/crabigator-{}",
             config.session_id
         ));
 

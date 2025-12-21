@@ -1,9 +1,9 @@
 {
   "capture": {
-    "directory": "/tmp/crabigator-capture-fixture-multi_lang",
+    "directory": "/tmp/crabigator-fixture-multi_lang",
     "enabled": false,
-    "screen_path": "/tmp/crabigator-capture-fixture-multi_lang/screen.txt",
-    "scrollback_path": "/tmp/crabigator-capture-fixture-multi_lang/scrollback.log"
+    "screen_path": "/tmp/crabigator-fixture-multi_lang/screen.txt",
+    "scrollback_path": "/tmp/crabigator-fixture-multi_lang/scrollback.log"
   },
   "cwd": "multi_lang",
   "last_updated": 0.0,

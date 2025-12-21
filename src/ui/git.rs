@@ -9,7 +9,7 @@ use anyhow::Result;
 
 use crate::terminal::escape::{self, color, fg, RESET};
 use crate::git::{FileStatus, GitState};
-use super::utils::{compute_unique_display_names, create_diff_bar, create_folder_bar, get_filename, strip_ansi_len, truncate_path};
+use super::utils::{compute_unique_display_names, create_folder_bar, diff_stats_width, format_diff_stats, get_filename, strip_ansi_len, truncate_path};
 
 /// Draw the git widget at the given position
 pub fn draw_git_widget(
@@ -219,7 +219,7 @@ pub fn draw_git_widget(
     Ok(())
 }
 
-/// Format a file entry compactly (icon + name + short bar) for wrapped mode
+/// Format a file entry compactly (icon + name + stats) for wrapped mode
 fn format_file_compact(file: &FileStatus, display_name: &str, max_changes: usize) -> String {
     let (icon, icon_color) = get_status_icon_color(&file.status);
 
@@ -228,8 +228,9 @@ fn format_file_compact(file: &FileStatus, display_name: &str, max_changes: usize
         let bar = create_folder_bar(file.file_count, max_changes, 4);
         format!("{}{}{}{}/ {}", fg(icon_color), icon, RESET, folder_name, bar)
     } else {
-        let bar = create_diff_bar(file.additions, file.deletions, max_changes, 4);
-        format!("{}{}{}{} {}", fg(icon_color), icon, RESET, display_name, bar)
+        // Compact: just numbers, no bar
+        let stats = format_diff_stats(file.additions, file.deletions, max_changes, 0);
+        format!("{}{}{}{} {}", fg(icon_color), icon, RESET, display_name, stats)
     }
 }
 
@@ -261,10 +262,11 @@ fn format_file_entry_natural(file: &FileStatus, display_name: &str, max_changes:
             fg(icon_color), icon, RESET, folder_name, count_display, bar
         )
     } else {
-        let bar = create_diff_bar(file.additions, file.deletions, max_changes, 8);
+        // Natural width: numbers + 4-char bar
+        let stats = format_diff_stats(file.additions, file.deletions, max_changes, 4);
         format!(
             "{}{}{} {} {}",
-            fg(icon_color), icon, RESET, display_name, bar
+            fg(icon_color), icon, RESET, display_name, stats
         )
     }
 }
@@ -299,17 +301,22 @@ fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, ma
             fg(icon_color), icon, RESET, truncated_folder, count_display, bar
         )
     } else {
-        // Regular file display - use the pre-computed unique display name
-        // Overhead: icon(1) + space(1) + space(1) + bar(8 max) = 11
-        let name_width = col_width.saturating_sub(11);
+        // Regular file display with colored +N −M stats and proportional bar
+        // Stats format: "+N −M ████" where bar width is 4
+        let bar_width = 4;
+        let stats_width = diff_stats_width(file.additions, file.deletions, bar_width);
+
+        // Overhead: icon(1) + space(1) + space(1) + stats
+        let overhead = 3 + stats_width;
+        let name_width = col_width.saturating_sub(overhead);
         let truncated_name = truncate_path(display_name, name_width);
 
-        // Create scaled bar (max 8 chars)
-        let bar = create_diff_bar(file.additions, file.deletions, max_changes, 8);
+        // Format stats with numbers and mini bar
+        let stats = format_diff_stats(file.additions, file.deletions, max_changes, bar_width);
 
         format!(
             "{}{}{} {} {}",
-            fg(icon_color), icon, RESET, truncated_name, bar
+            fg(icon_color), icon, RESET, truncated_name, stats
         )
     }
 }

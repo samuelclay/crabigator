@@ -1,9 +1,9 @@
 {
   "capture": {
-    "directory": "/tmp/crabigator-capture-fixture-rust_planning",
+    "directory": "/tmp/crabigator-fixture-rust_planning",
     "enabled": false,
-    "screen_path": "/tmp/crabigator-capture-fixture-rust_planning/screen.txt",
-    "scrollback_path": "/tmp/crabigator-capture-fixture-rust_planning/scrollback.log"
+    "screen_path": "/tmp/crabigator-fixture-rust_planning/screen.txt",
+    "scrollback_path": "/tmp/crabigator-fixture-rust_planning/scrollback.log"
   },
   "cwd": "rust_planning",
   "last_updated": 0.0,
