@@ -106,8 +106,8 @@ fn get_path_suffix(path: &str, n: usize) -> String {
 }
 
 /// Format diff statistics with colored numbers and logarithmic-scaled bars
-/// Returns formatted string like "−12 +42 ▓▓████" with appropriate colors
-/// Deletions shown first (left), additions second (right)
+/// Returns formatted string like "−12 ▓▓████ +42" with appropriate colors
+/// Layout: deletions | bar | additions (for visual balance)
 /// Bar width scales logarithmically: 1-9=1, 10-99=2, 100-999=3, etc.
 pub fn format_diff_stats(
     additions: usize,
@@ -122,75 +122,131 @@ pub fn format_diff_stats(
 
     let mut result = String::new();
 
-    // Format numbers: deletions first, then additions
+    // Calculate bar widths using log scale (order of magnitude + 1)
+    let del_bar = if deletions > 0 {
+        (deletions as f64).log10().floor() as usize + 1
+    } else {
+        0
+    };
+    let add_bar = if additions > 0 {
+        (additions as f64).log10().floor() as usize + 1
+    } else {
+        0
+    };
+
+    // Format: −N ▓▓████ +M
+    // Deletions on left
     if deletions > 0 {
         result.push_str(&format!("{}−{}{}", fg(color::RED), deletions, RESET));
     }
-    if additions > 0 {
+
+    // Bar in middle (if requested)
+    if show_bar > 0 {
         if deletions > 0 {
             result.push(' ');
         }
-        result.push_str(&format!("{}+{}{}", fg(color::GREEN), additions, RESET));
+        if del_bar > 0 {
+            result.push_str(&format!("{}{}{}", fg(color::RED), "▓".repeat(del_bar), RESET));
+        }
+        if add_bar > 0 {
+            result.push_str(&format!("{}{}{}", fg(color::GREEN), "█".repeat(add_bar), RESET));
+        }
+        if additions > 0 {
+            result.push(' ');
+        }
+    } else if deletions > 0 && additions > 0 {
+        result.push(' ');
     }
 
-    // Add logarithmic-scaled bar if requested
-    // Scale: 1-9 = 1 char, 10-99 = 2 chars, 100-999 = 3 chars, etc.
-    if show_bar > 0 {
-        result.push(' ');
-
-        // Calculate bar widths using log scale (order of magnitude + 1)
-        let del_chars = if deletions > 0 {
-            (deletions as f64).log10().floor() as usize + 1
-        } else {
-            0
-        };
-        let add_chars = if additions > 0 {
-            (additions as f64).log10().floor() as usize + 1
-        } else {
-            0
-        };
-
-        // Deletions on left (red), additions on right (green)
-        if del_chars > 0 {
-            result.push_str(&format!("{}{}{}", fg(color::RED), "▓".repeat(del_chars), RESET));
-        }
-        if add_chars > 0 {
-            result.push_str(&format!("{}{}{}", fg(color::GREEN), "█".repeat(add_chars), RESET));
-        }
+    // Additions on right
+    if additions > 0 {
+        result.push_str(&format!("{}+{}{}", fg(color::GREEN), additions, RESET));
     }
 
     result
 }
 
-/// Get the display width of diff stats (for layout calculations)
-/// Matches format_diff_stats: "−N +M ▓▓████"
-pub fn diff_stats_width(additions: usize, deletions: usize, show_bar: usize) -> usize {
+/// Format diff statistics with column alignment
+/// Columns: [del_num] [del_bar|add_bar] [add_num]
+/// Each column is padded to specified widths for alignment across rows
+/// Bar columns have separate widths: del_bar extends LEFT, add_bar extends RIGHT
+pub fn format_diff_stats_aligned(
+    additions: usize,
+    deletions: usize,
+    show_bar: bool,
+    del_num_width: usize,   // width for deletion number column (including −)
+    del_bar_width: usize,   // width for left bar column (deletions)
+    add_bar_width: usize,   // width for right bar column (additions)
+    add_num_width: usize,   // width for addition number column (including +)
+) -> String {
     let total = additions + deletions;
     if total == 0 {
-        return 1; // just the dot
+        // Center a dot in the total width
+        let total_width = del_num_width + 1 + del_bar_width + add_bar_width + 1 + add_num_width;
+        let pad = total_width / 2;
+        return format!("{:>pad$}{}·{}{:pad$}", "", fg(color::DARK_GRAY), RESET, "", pad = pad);
     }
 
-    let mut width = 0;
+    let mut result = String::new();
 
-    // −N takes: 1 (minus) + digit count
+    // Calculate actual bar sizes for this file
+    let del_bar = if deletions > 0 {
+        (deletions as f64).log10().floor() as usize + 1
+    } else {
+        0
+    };
+    let add_bar = if additions > 0 {
+        (additions as f64).log10().floor() as usize + 1
+    } else {
+        0
+    };
+
+    // Deletion number column (right-aligned)
     if deletions > 0 {
-        width += 1 + digit_count(deletions);
-    }
-    // space + +N takes: 1 (space) + 1 (plus) + digit count
-    if additions > 0 {
-        if deletions > 0 {
-            width += 1; // space between
-        }
-        width += 1 + digit_count(additions);
-    }
-    // space + log-scaled bar
-    if show_bar > 0 {
-        let del_bar = if deletions > 0 { digit_count(deletions) } else { 0 };
-        let add_bar = if additions > 0 { digit_count(additions) } else { 0 };
-        width += 1 + del_bar + add_bar;
+        let del_str = format!("{}−{}{}", fg(color::RED), deletions, RESET);
+        let actual_width = 1 + digit_count(deletions);
+        let pad = del_num_width.saturating_sub(actual_width);
+        result.push_str(&format!("{:pad$}{}", "", del_str, pad = pad));
+    } else {
+        result.push_str(&format!("{:del_num_width$}", "", del_num_width = del_num_width));
     }
 
-    width
+    result.push(' ');
+
+    // Bar columns: red extends LEFT from center, green extends RIGHT from center
+    if show_bar {
+        // Left bar: red right-aligned (grows leftward from center)
+        let left_pad = del_bar_width.saturating_sub(del_bar);
+        result.push_str(&format!("{:left_pad$}", "", left_pad = left_pad));
+        if del_bar > 0 {
+            result.push_str(&format!("{}{}{}", fg(color::RED), "▓".repeat(del_bar.min(del_bar_width)), RESET));
+        }
+
+        // Right bar: green left-aligned (grows rightward from center)
+        if add_bar > 0 {
+            result.push_str(&format!("{}{}{}", fg(color::GREEN), "█".repeat(add_bar.min(add_bar_width)), RESET));
+        }
+        let right_pad = add_bar_width.saturating_sub(add_bar);
+        result.push_str(&format!("{:right_pad$}", "", right_pad = right_pad));
+    } else {
+        let bar_width = del_bar_width + add_bar_width;
+        result.push_str(&format!("{:bar_width$}", "", bar_width = bar_width));
+    }
+
+    result.push(' ');
+
+    // Addition number column (left-aligned)
+    if additions > 0 {
+        let add_str = format!("{}+{}{}", fg(color::GREEN), additions, RESET);
+        result.push_str(&add_str);
+        let actual_width = 1 + digit_count(additions);
+        let pad = add_num_width.saturating_sub(actual_width);
+        result.push_str(&format!("{:pad$}", "", pad = pad));
+    } else {
+        result.push_str(&format!("{:add_num_width$}", "", add_num_width = add_num_width));
+    }
+
+    result
 }
 
 /// Count digits in a number

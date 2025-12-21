@@ -52,8 +52,21 @@ pub fn draw_status_bar(
         ((layout.total_cols as f32) * 0.15).max(22.0) as u16
     };
     let remaining = layout.total_cols.saturating_sub(stats_width + 2); // 2 for separators
-    let git_width = remaining / 2;
-    let changes_width = remaining - git_width;
+
+    // Check if git needs multiple columns (files > available rows)
+    let git_available_rows = layout.status_rows.saturating_sub(2) as usize; // -2 for separator + header
+    let git_needs_multi_column = git_state.files.len() > git_available_rows;
+
+    // Flex ratio: git gets 4/8 if multi-column, 3/8 if single-column
+    let (git_width, changes_width) = if git_needs_multi_column {
+        // 4:4 split (50/50)
+        let git_w = remaining / 2;
+        (git_w, remaining - git_w)
+    } else {
+        // 3:5 split - git gets less, changes gets more
+        let git_w = (remaining * 3) / 8;
+        (git_w, remaining - git_w)
+    };
 
     // Draw content rows
     for row in 1..layout.status_rows {

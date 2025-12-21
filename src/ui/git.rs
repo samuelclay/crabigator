@@ -9,7 +9,72 @@ use anyhow::Result;
 
 use crate::terminal::escape::{self, color, fg, RESET};
 use crate::git::{FileStatus, GitState};
-use super::utils::{compute_unique_display_names, create_folder_bar, diff_stats_width, format_diff_stats, get_filename, strip_ansi_len, truncate_path};
+use super::utils::{compute_unique_display_names, create_folder_bar, format_diff_stats, format_diff_stats_aligned, get_filename, strip_ansi_len, truncate_path};
+
+/// Dynamic column widths computed from actual file data
+#[derive(Clone, Copy)]
+struct StatsColumnWidths {
+    del_num: usize,   // width for "−N" column
+    del_bar: usize,   // width for deletion bar (left half)
+    add_bar: usize,   // width for addition bar (right half)
+    add_num: usize,   // width for "+N" column
+}
+
+impl StatsColumnWidths {
+    /// Compute column widths from a list of files
+    fn from_files(files: &[FileStatus]) -> Self {
+        let mut max_del = 0usize;
+        let mut max_add = 0usize;
+
+        for file in files {
+            if !file.is_folder {
+                max_del = max_del.max(file.deletions);
+                max_add = max_add.max(file.additions);
+            }
+        }
+
+        // Number column widths: sign + digits (minimum 1 space if none)
+        let del_num = if max_del > 0 {
+            1 + digit_count(max_del)
+        } else {
+            1  // just a space placeholder
+        };
+        let add_num = if max_add > 0 {
+            1 + digit_count(max_add)
+        } else {
+            1  // just a space placeholder
+        };
+
+        // Bar widths: based on magnitude (log10), minimum 1 if there are any
+        let del_bar = if max_del > 0 {
+            digit_count(max_del)
+        } else {
+            1  // minimum space
+        };
+        let add_bar = if max_add > 0 {
+            digit_count(max_add)
+        } else {
+            1  // minimum space
+        };
+
+        Self { del_num, del_bar, add_bar, add_num }
+    }
+
+    /// Total width including spaces between columns
+    fn total_width(&self) -> usize {
+        // del_num + space + del_bar + add_bar + space + add_num
+        self.del_num + 1 + self.del_bar + self.add_bar + 1 + self.add_num
+    }
+}
+
+/// Count digits in a number (for width calculation)
+fn digit_count(n: usize) -> usize {
+    if n == 0 {
+        1
+    } else {
+        (n as f64).log10().floor() as usize + 1
+    }
+}
 
 /// Draw the git widget at the given position
 pub fn draw_git_widget(
@@ -70,6 +135,9 @@ pub fn draw_git_widget(
         .unwrap_or(1)
         .max(1);
 
+    // Compute dynamic stats column widths based on actual data
+    let stats_widths = StatsColumnWidths::from_files(files);
+
     // Available data rows (subtract 2: one for separator row 0, one for header row 1)
     let available_rows = height.saturating_sub(2) as usize;
     let num_files = files.len();
@@ -83,7 +151,7 @@ pub fn draw_git_widget(
         if row_idx < num_files {
             let file = &files[row_idx];
             let display_name = &display_names[row_idx];
-            let item = format_file_entry(file, display_name, width as usize, max_changes);
+            let item = format_file_entry(file, display_name, width as usize, max_changes, &stats_widths);
             write!(stdout, "{}", item)?;
             let content_len = strip_ansi_len(&item);
             let pad = (width as usize).saturating_sub(content_len);
@@ -100,7 +168,7 @@ pub fn draw_git_widget(
             .iter()
             .enumerate()
             .map(|(i, file)| {
-                let entry = format_file_entry_natural(file, &display_names[i], max_changes);
+                let entry = format_file_entry_natural(file, &display_names[i], max_changes, &stats_widths);
                 strip_ansi_len(&entry)
             })
             .collect();
@@ -146,7 +214,7 @@ pub fn draw_git_widget(
                 if file_idx < num_files {
                     let file = &files[file_idx];
                     let display_name = &display_names[file_idx];
-                    let item = format_file_entry(file, display_name, col_widths[col_idx], max_changes);
+                    let item = format_file_entry(file, display_name, col_widths[col_idx], max_changes, &stats_widths);
                     let item_len = strip_ansi_len(&item);
                     output.push_str(&item);
                     // Pad to column width
@@ -246,7 +314,8 @@ fn get_status_icon_color(status: &str) -> (&'static str, u8) {
 }
 
 /// Format a file entry at its natural width (no truncation) to measure actual size
-fn format_file_entry_natural(file: &FileStatus, display_name: &str, max_changes: usize) -> String {
+#[allow(unused_variables)]
+fn format_file_entry_natural(file: &FileStatus, display_name: &str, max_changes: usize, stats_widths: &StatsColumnWidths) -> String {
     let (icon, icon_color) = get_status_icon_color(&file.status);
 
     if file.is_folder {
@@ -262,8 +331,16 @@ fn format_file_entry_natural(file: &FileStatus, display_name: &str, max_changes:
             fg(icon_color), icon, RESET, folder_name, count_display, bar
         )
     } else {
-        // Natural width: numbers + 4-char bar
-        let stats = format_diff_stats(file.additions, file.deletions, max_changes, 4);
+        // Natural width with aligned stats columns
+        let stats = format_diff_stats_aligned(
+            file.additions,
+            file.deletions,
+            true,
+            stats_widths.del_num,
+            stats_widths.del_bar,
+            stats_widths.add_bar,
+            stats_widths.add_num,
+        );
         format!(
             "{}{}{} {} {}",
             fg(icon_color), icon, RESET, display_name, stats
@@ -272,7 +349,8 @@ fn format_file_entry_natural(file: &FileStatus, display_name: &str, max_changes:
 }
 
 /// Format a single file entry for display
-fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, max_changes: usize) -> String {
+#[allow(unused_variables)]
+fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, max_changes: usize, stats_widths: &StatsColumnWidths) -> String {
     // Status icon
     let (icon, icon_color) = get_status_icon_color(&file.status);
 
@@ -301,22 +379,31 @@ fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, ma
             fg(icon_color), icon, RESET, truncated_folder, count_display, bar
         )
     } else {
-        // Regular file display with colored +N −M stats and proportional bar
-        // Stats format: "+N −M ████" where bar width is 4
-        let bar_width = 4;
-        let stats_width = diff_stats_width(file.additions, file.deletions, bar_width);
-
-        // Overhead: icon(1) + space(1) + space(1) + stats
-        let overhead = 3 + stats_width;
+        // Regular file display with aligned stats columns
+        // Format: "icon name[padded]  −N ▓▓ ████ +M"
+        // Overhead: icon(1) + space(1) + space(1) + stats(dynamic)
+        let overhead = 3 + stats_widths.total_width();
         let name_width = col_width.saturating_sub(overhead);
         let truncated_name = truncate_path(display_name, name_width);
 
-        // Format stats with numbers and mini bar
-        let stats = format_diff_stats(file.additions, file.deletions, max_changes, bar_width);
+        // Pad filename to fixed width so stats columns align
+        let name_char_count = truncated_name.chars().count();
+        let name_padding = name_width.saturating_sub(name_char_count);
+
+        // Format stats with aligned columns
+        let stats = format_diff_stats_aligned(
+            file.additions,
+            file.deletions,
+            true,  // show bar
+            stats_widths.del_num,
+            stats_widths.del_bar,
+            stats_widths.add_bar,
+            stats_widths.add_num,
+        );
 
         format!(
-            "{}{}{} {} {}",
-            fg(icon_color), icon, RESET, truncated_name, stats
+            "{}{}{} {}{:pad$} {}",
+            fg(icon_color), icon, RESET, truncated_name, "", stats, pad = name_padding
         )
     }
 }

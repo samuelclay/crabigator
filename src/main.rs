@@ -40,7 +40,7 @@ const DIM: &str = "\x1b[2m";
 const FG_CYAN: &str = "\x1b[38;5;45m";
 const FG_PURPLE: &str = "\x1b[38;5;141m";
 const FG_ORANGE: &str = "\x1b[38;5;179m";
-const FG_GRAY: &str = "\x1b[38;5;240m";
+const FG_GRAY: &str = "\x1b[38;5;245m";
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
