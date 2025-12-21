@@ -45,7 +45,7 @@ const FG_GRAY: &str = "\x1b[38;5;240m";
 
 /// Print session info banner with file paths
 fn print_session_banner(session_id: &str, platform: PlatformKind, capture_enabled: bool, cols: u16) {
-    let width = (cols as usize).min(80);
+    let width = cols as usize;
 
     println!();
 
