@@ -31,69 +31,62 @@ use crate::app::App;
 use crate::config::Config;
 use crate::platforms::PlatformKind;
 
-// ANSI color codes
-const CYAN: &str = "\x1b[36m";
-const DIM: &str = "\x1b[2m";
-const BOLD: &str = "\x1b[1m";
+// ANSI color codes (256-color palette)
 const RESET: &str = "\x1b[0m";
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
+
+// Colors matching terminal/escape.rs palette
+const FG_CYAN: &str = "\x1b[38;5;45m";
+const FG_BLUE: &str = "\x1b[38;5;39m";
+const FG_PURPLE: &str = "\x1b[38;5;141m";
+const FG_ORANGE: &str = "\x1b[38;5;179m";
+const FG_GRAY: &str = "\x1b[38;5;240m";
 
 /// Print session info banner with file paths
 fn print_session_banner(session_id: &str, platform: PlatformKind, capture_enabled: bool, cols: u16) {
     let width = (cols as usize).min(80);
-    let bar = "─".repeat(width.saturating_sub(2));
 
     println!();
-    println!("{DIM}┌{bar}┐{RESET}");
 
-    // Title line with platform indicator
+    // Header line: 🦀 CRABIGATOR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Platform
     let platform_name = platform.display_name();
-    let title = format!("{BOLD}{CYAN}CRABIGATOR{RESET} {DIM}({platform_name}){RESET}");
-    let session_label = format!("{DIM}session {session_id}{RESET}");
-    // Account for ANSI codes in width calculation
-    let title_plain_len = 10 + 3 + platform_name.len(); // "CRABIGATOR" + " (" + platform + ")"
-    let session_plain_len = 8 + session_id.len(); // "session " + id
-    let padding = width.saturating_sub(4 + title_plain_len + session_plain_len);
-    println!("{DIM}│{RESET} {title}{}{session_label} {DIM}│{RESET}", " ".repeat(padding));
+    let title = format!("{FG_ORANGE}🦀{RESET} {BOLD}{FG_CYAN}CRABIGATOR{RESET}");
+    let platform_label = format!("{FG_PURPLE}{platform_name}{RESET}");
+    // Plain lengths: "🦀 " (2) + "CRABIGATOR" (10) + platform
+    let title_plain_len = 2 + 10;
+    let platform_plain_len = platform_name.len();
+    let rule_len = width.saturating_sub(title_plain_len + platform_plain_len + 2);
+    let rule = format!("{FG_GRAY}{}{RESET}", "━".repeat(rule_len));
+    println!("{title} {rule} {platform_label}");
 
-    println!("{DIM}├{bar}┤{RESET}");
-
-    // Capture files
+    // File paths
     if capture_enabled {
         let capture_dir = format!("/tmp/crabigator-capture-{}", session_id);
-
         let scrollback_path = format!("{}/scrollback.log", capture_dir);
         let screen_path = format!("{}/screen.txt", capture_dir);
 
-        print_path_line("Log", &scrollback_path, width);
-        print_path_line("Screen", &screen_path, width);
+        print_path_line("Log", &scrollback_path, FG_CYAN);
+        print_path_line("Screen", &screen_path, FG_BLUE);
     } else {
-        let disabled = format!("{DIM}(capture disabled){RESET}");
-        let pad = width.saturating_sub(4 + 18);
-        println!("{DIM}│{RESET} {disabled}{} {DIM}│{RESET}", " ".repeat(pad));
+        println!("   {DIM}(capture disabled){RESET}");
     }
 
-    // Mirror file
     let mirror_path = format!("/tmp/crabigator-mirror-{}.json", session_id);
-    print_path_line("Mirror", &mirror_path, width);
+    print_path_line("Mirror", &mirror_path, FG_PURPLE);
 
-    println!("{DIM}└{bar}┘{RESET}");
+    // Footer rule
+    println!("{FG_GRAY}{}{RESET}", "━".repeat(width));
     println!();
 }
 
-fn print_path_line(label: &str, path: &str, width: usize) {
-    // Format: "│ Label:  /path/to/file │"
-    let label_width: usize = 7; // Align all labels
-    let formatted_label = format!("{DIM}{}:{RESET}", label);
-    let label_padding = label_width.saturating_sub(label.len() + 1);
-    let path_formatted = format!("{BOLD}{}{RESET}", path);
-    let path_plain_len = path.len();
-    let total_content = label_width + 1 + path_plain_len;
-    let end_padding = width.saturating_sub(4 + total_content);
-
+fn print_path_line(label: &str, path: &str, label_color: &str) {
+    // Format: "   Label   /path/to/file"
+    let label_width: usize = 8;
+    let label_padding = label_width.saturating_sub(label.len());
     println!(
-        "{DIM}│{RESET} {formatted_label}{} {path_formatted}{} {DIM}│{RESET}",
-        " ".repeat(label_padding),
-        " ".repeat(end_padding)
+        "   {label_color}{label}{RESET}{}{DIM}{path}{RESET}",
+        " ".repeat(label_padding)
     );
 }
 
