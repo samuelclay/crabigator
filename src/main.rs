@@ -49,12 +49,12 @@ fn print_session_banner(session_id: &str, platform: PlatformKind, capture_enable
 
     println!();
 
-    // Header line: 🦀 CRABIGATOR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Platform
+    // Header line: 🦀 CRABIGATOR ⛵ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Platform
     let platform_name = platform.display_name();
-    let title = format!("{FG_ORANGE}🦀{RESET} {BOLD}{FG_CYAN}CRABIGATOR{RESET}");
+    let title = format!("{FG_ORANGE}🦀{RESET} {BOLD}{FG_CYAN}CRABIGATOR{RESET} {FG_ORANGE}⛵{RESET}");
     let platform_label = format!("{FG_PURPLE}{platform_name}{RESET}");
-    // Plain lengths: "🦀" (2 cells) + " " (1) + "CRABIGATOR" (10)
-    let title_plain_len = 2 + 1 + 10;
+    // Plain lengths: "🦀" (2 cells) + " " (1) + "CRABIGATOR" (10) + " " (1) + "⛵" (2 cells)
+    let title_plain_len = 2 + 1 + 10 + 1 + 2;
     let platform_plain_len = platform_name.len();
     let rule_len = width.saturating_sub(title_plain_len + platform_plain_len + 2);
     let rule = format!("{FG_GRAY}{}{RESET}", "━".repeat(rule_len));
