@@ -45,11 +45,11 @@ pub fn draw_status_bar(
     // In compact mode (short terminal), stats gets more width for two-column layout
     let compact = layout.status_rows <= 5;
     let stats_width = if compact {
-        // Wider stats for two-column layout: ~28% of width, min 34 chars
-        ((layout.total_cols as f32) * 0.28).max(34.0) as u16
+        // Wider stats for two-column layout: ~30% of width, min 36 chars
+        ((layout.total_cols as f32) * 0.30).max(36.0) as u16
     } else {
-        // Normal: ~15% of width, min 22 chars
-        ((layout.total_cols as f32) * 0.15).max(22.0) as u16
+        // Normal: ~17% of width, min 24 chars
+        ((layout.total_cols as f32) * 0.17).max(24.0) as u16
     };
     let remaining = layout.total_cols.saturating_sub(stats_width + 2); // 2 for separators
 
