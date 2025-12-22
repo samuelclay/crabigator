@@ -193,8 +193,7 @@ fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser) -> Vec<ChangeNo
         // If we're in a hunk and haven't found a function yet, check context lines
         if in_hunk && current_hunk_func.is_none() {
             // Context lines start with space (unchanged lines around the change)
-            if line.starts_with(' ') {
-                let context_str = &line[1..];
+            if let Some(context_str) = line.strip_prefix(' ') {
                 if let Some(func_name) = parser.extract_function_from_context(context_str) {
                     current_hunk_func = Some(func_name);
                 }

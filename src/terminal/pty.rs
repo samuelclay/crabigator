@@ -103,17 +103,32 @@ impl PlatformPty {
         self.scroll_offset = 0;
     }
 
-    async fn read_loop(mut reader: Box<dyn Read + Send>, tx: mpsc::Sender<Vec<u8>>) {
-        let mut buf = [0u8; 4096];
+    async fn read_loop(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Vec<u8>>) {
+        // Wrap reader in Arc<Mutex> so it can be shared with spawn_blocking
+        let reader = Arc::new(Mutex::new(reader));
+
         loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if tx.send(buf[..n].to_vec()).await.is_err() {
+            let reader_clone = Arc::clone(&reader);
+
+            // Use spawn_blocking for the blocking read to avoid blocking tokio runtime
+            let read_result = tokio::task::spawn_blocking(move || {
+                let mut buf = [0u8; 4096];
+                let mut reader = reader_clone.lock().unwrap();
+                match reader.read(&mut buf) {
+                    Ok(0) => None,
+                    Ok(n) => Some(buf[..n].to_vec()),
+                    Err(_) => None,
+                }
+            })
+            .await;
+
+            match read_result {
+                Ok(Some(data)) => {
+                    if tx.send(data).await.is_err() {
                         break;
                     }
                 }
-                Err(_) => break,
+                _ => break,
             }
         }
     }

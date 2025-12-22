@@ -161,7 +161,7 @@ pub fn draw_git_widget(
         }
     } else if available_rows > 0 {
         // Multi-column layout
-        let num_cols = (num_files + available_rows - 1) / available_rows;
+        let num_cols = num_files.div_ceil(available_rows);
 
         // Pre-compute natural widths for all entries (without truncation)
         let natural_widths: Vec<usize> = files
@@ -175,13 +175,13 @@ pub fn draw_git_widget(
 
         // Calculate column widths based on actual content
         let mut col_widths: Vec<usize> = vec![0; num_cols];
-        for col_idx in 0..num_cols {
+        for (col_idx, col_width) in col_widths.iter_mut().enumerate() {
             let start = col_idx * available_rows;
             let end = (start + available_rows).min(num_files);
-            for file_idx in start..end {
-                col_widths[col_idx] = col_widths[col_idx].max(natural_widths[file_idx]);
+            for nw in natural_widths.iter().take(end).skip(start) {
+                *col_width = (*col_width).max(*nw);
             }
-            col_widths[col_idx] += 1; // Add margin
+            *col_width += 1; // Add margin
         }
 
         let total_width_needed: usize = col_widths.iter().sum();
@@ -192,33 +192,33 @@ pub fn draw_git_widget(
             let extra_per_col = extra_space / num_cols;
 
             // Apply extra space to column widths (cap name portion at 30 chars)
-            for col_idx in 0..num_cols {
+            for (col_idx, col_width) in col_widths.iter_mut().enumerate() {
                 let max_name_in_col = (col_idx * available_rows..((col_idx + 1) * available_rows).min(num_files))
                     .map(|i| display_names[i].chars().count())
                     .max()
                     .unwrap_or(0);
                 // Name width = col_width - 11 (icon + spaces + max bar)
                 // So to allow up to 30 char names: col_width = 30 + 11 = 41 max
-                let current_name_width = col_widths[col_idx].saturating_sub(11);
+                let current_name_width = col_width.saturating_sub(11);
                 let desired_name_width = max_name_in_col.min(30);
                 if desired_name_width > current_name_width {
                     let needed = desired_name_width - current_name_width;
-                    col_widths[col_idx] += needed.min(extra_per_col);
+                    *col_width += needed.min(extra_per_col);
                 }
             }
 
             // Render with proper alignment
             let mut output = String::new();
-            for col_idx in 0..num_cols {
+            for (col_idx, col_width) in col_widths.iter().enumerate() {
                 let file_idx = col_idx * available_rows + row_idx;
                 if file_idx < num_files {
                     let file = &files[file_idx];
                     let display_name = &display_names[file_idx];
-                    let item = format_file_entry(file, display_name, col_widths[col_idx], max_changes, &stats_widths);
+                    let item = format_file_entry(file, display_name, *col_width, max_changes, &stats_widths);
                     let item_len = strip_ansi_len(&item);
                     output.push_str(&item);
                     // Pad to column width
-                    let pad = col_widths[col_idx].saturating_sub(item_len);
+                    let pad = col_width.saturating_sub(item_len);
                     output.push_str(&" ".repeat(pad));
                 }
             }

@@ -145,7 +145,7 @@ impl GitState {
         }
 
         // Sort files by total changes (descending)
-        state.files.sort_by(|a, b| b.total_changes().cmp(&a.total_changes()));
+        state.files.sort_by_key(|f| std::cmp::Reverse(f.total_changes()));
 
         if profile && start.elapsed().as_millis() > 100 {
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/crabigator-profile.log") {

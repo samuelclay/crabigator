@@ -126,9 +126,10 @@ fn print_session_end_line(platform: PlatformKind, cols: u16) {
     println!("{title} {rule} {right_side}");
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 enum Command {
     /// Run the main crabigator application
+    #[default]
     Run,
     /// Inspect other running instances
     Inspect {
@@ -136,12 +137,6 @@ enum Command {
         watch: bool,
         raw: bool,
     },
-}
-
-impl Default for Command {
-    fn default() -> Self {
-        Command::Run
-    }
 }
 
 #[derive(Clone)]
@@ -451,7 +446,6 @@ async fn main() -> Result<()> {
     // Don't block startup - hooks will be ready by the time the CLI needs them
     {
         let timer = timer.clone();
-        let platform_kind = platform_kind;
         std::thread::spawn(move || {
             timer.hook_state.store(1, Ordering::SeqCst);
             let begin = Instant::now();
