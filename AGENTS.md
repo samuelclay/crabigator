@@ -11,7 +11,6 @@ cargo run            # Run the application
 cargo check          # Quick type checking
 cargo test           # Run tests
 cargo clippy         # Lint
-make test-update     # Update fixture snapshots
 ```
 
 ## Running
@@ -81,7 +80,15 @@ The application uses a **scroll region approach** to layer UI:
 - **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout, with `git.rs`, `changes.rs`, `stats.rs` for individual widgets.
 - **mirror.rs**: Widget state mirroring for external inspection. Publishes throttled JSON snapshots of all widget state.
 - **inspect.rs**: Inspect command implementation for viewing other running crabigator instances.
-- **capture.rs**: Output capture for streaming. Writes raw PTY bytes to stream.log and periodic screen snapshots to screen.txt.
+- **capture.rs**: Output capture for streaming. Writes raw PTY bytes to scrollback.log and periodic screen snapshots to screen.txt.
+
+### Module Organization
+
+This codebase uses `folder.rs` files instead of `folder/mod.rs` for module roots (Rust 2018+ style). For example:
+- `src/ui.rs` is the module root for `src/ui/` (not `src/ui/mod.rs`)
+- `src/terminal.rs` is the module root for `src/terminal/`
+
+This keeps module declarations visible at the top level rather than buried in subdirectories.
 
 ### Input Handling
 

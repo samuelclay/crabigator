@@ -31,12 +31,15 @@ use crate::app::App;
 use crate::config::Config;
 use crate::platforms::PlatformKind;
 use crate::terminal::escape::{
-    BOLD, DIM, FG_BLUE, FG_CYAN, FG_GRAY, FG_ORANGE, FG_PURPLE, RESET,
+    BOLD, FG_BLUE, FG_CYAN, FG_GRAY, FG_ORANGE, FG_PURPLE, RESET,
 };
+#[cfg(debug_assertions)]
+use crate::terminal::escape::DIM;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Print session info banner with file paths
+#[allow(unused_variables)]
 fn print_session_banner(session_id: &str, platform: PlatformKind, cols: u16) {
     use chrono::Local;
 
@@ -69,15 +72,16 @@ fn print_session_banner(session_id: &str, platform: PlatformKind, cols: u16) {
     let version_plain_len = 1 + VERSION.len(); // "v" + version
     let title_plain_len = 2 + 1 + 10 + 1 + version_plain_len + 1 + 2;
     let right_plain_len = platform_name.len() + 3 + date_str.len(); // "Platform · Date"
-    let rule_len = (cols as usize).saturating_sub(title_plain_len + right_plain_len + 2);
+    // +4 accounts for: leading space, 2 spaces around rule, trailing space
+    let rule_len = (cols as usize).saturating_sub(title_plain_len + right_plain_len + 4);
     let rule = format!("{FG_BLUE}{}{RESET}", "━".repeat(rule_len));
-    println!("{title} {rule} {right_side}");
+    println!(" {title} {rule} {right_side} ");
 
     // Only show session directory in debug builds
     #[cfg(debug_assertions)]
     {
         let session_dir = format!("/tmp/crabigator-{}/", session_id);
-        println!("   {FG_PURPLE}Session{RESET}  {DIM}{session_dir}{RESET}");
+        println!("    {FG_PURPLE}Session{RESET}  {DIM}{session_dir}{RESET}");
     }
 
     println!();
@@ -120,10 +124,11 @@ fn print_session_end_line(platform: PlatformKind, cols: u16) {
     let title_plain_len = 2 + 1 + 10 + 1 + version_plain_len + 1 + 2; // 🦀 Crabigator vX.X.X ⛵
     let right_plain_len = platform_name.len() + 3 + date_str.len(); // "Platform · Date"
 
-    let rule_len = width.saturating_sub(title_plain_len + right_plain_len + 2);
+    // +4 accounts for: leading space, 2 spaces around rule, trailing space
+    let rule_len = width.saturating_sub(title_plain_len + right_plain_len + 4);
     let rule = format!("{FG_BLUE}{}{RESET}", "━".repeat(rule_len));
 
-    println!("{title} {rule} {right_side}");
+    println!(" {title} {rule} {right_side} ");
 }
 
 #[derive(Clone, Default)]

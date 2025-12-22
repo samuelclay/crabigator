@@ -71,7 +71,7 @@ fn elapsed_since(timestamp: Option<f64>) -> Option<u64> {
 fn format_elapsed(timestamp: Option<f64>) -> String {
     if let Some(secs) = elapsed_since(timestamp) {
         if secs >= 60 {
-            format!(" {}", format_duration_compact(secs))
+            format!(" {} ago", format_duration_compact(secs))
         } else {
             " just now".to_string()
         }

@@ -11,6 +11,7 @@ use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges, NodeK
 use crate::terminal::escape::{self, color, fg, RESET};
 
 use super::utils::{strip_ansi_len, truncate_middle};
+use super::WidgetArea;
 
 /// Priority order for node kinds (lower = higher priority, appears first)
 fn kind_priority(kind: &NodeKind) -> u8 {
@@ -95,56 +96,69 @@ fn digit_count(n: usize) -> usize {
 /// Draw the changes widget at the given position
 pub fn draw_changes_widget(
     stdout: &mut Stdout,
-    pty_rows: u16,
-    col: u16,
-    row: u16,
-    width: u16,
-    height: u16,
+    area: WidgetArea,
     diff_summary: &DiffSummary,
+    terminal_title: Option<&str>,
 ) -> Result<()> {
-    write!(stdout, "{}", escape::cursor_to(pty_rows + 1 + row, col + 1))?;
+    write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
 
     // Get changes grouped by language
     let by_language = diff_summary.by_language();
 
-    // For row == 1, we need to show either loading or the first language header
-    if row == 1 {
-        if diff_summary.loading {
-            let left = format!("{}Changes{}", fg(color::ORANGE), RESET);
-            let left_len = strip_ansi_len(&left);
-            let right = format!("{}...{}", fg(color::GRAY), RESET);
-            let right_len = strip_ansi_len(&right);
-            let pad = (width as usize).saturating_sub(left_len + right_len);
-            write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
-            return Ok(());
-        }
+    // For row == 1, show header: "Language, N changes" on left, terminal title on right
+    if area.row == 1 {
+        // Build left side: language + count or loading indicator
+        let left = if diff_summary.loading {
+            format!("{}Changes{} {}...{}", fg(color::ORANGE), RESET, fg(color::GRAY), RESET)
+        } else if let Some(first_lang) = by_language.first() {
+            let total: usize = by_language.iter().map(|l| l.changes.len()).sum();
+            let change_word = if total == 1 { "change" } else { "changes" };
+            format!(
+                "{}{}{} {}{} {}{}",
+                fg(color::ORANGE),
+                first_lang.language,
+                RESET,
+                fg(color::GRAY),
+                total,
+                change_word,
+                RESET
+            )
+        } else {
+            // No changes
+            String::new()
+        };
+        let left_len = strip_ansi_len(&left);
 
-        if by_language.is_empty() {
-            // No changes at all - show empty
-            write!(stdout, "{:width$}", "", width = width as usize)?;
-            return Ok(());
-        }
+        // Build right side: terminal title if available (light blue for subtle distinction)
+        let right = terminal_title
+            .map(|t| format!("{}{}{}", fg(color::LIGHT_BLUE), t, RESET))
+            .unwrap_or_default();
+        let right_len = strip_ansi_len(&right);
+
+        let pad = (area.width as usize).saturating_sub(left_len + right_len);
+        write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
+        return Ok(());
     }
 
     if by_language.is_empty() {
-        write!(stdout, "{:width$}", "", width = width as usize)?;
+        write!(stdout, "{:width$}", "", width = area.width as usize)?;
         return Ok(());
     }
 
     // Build rows to display
-    let rows_data = build_rows_for_display(&by_language, width, height);
+    let rows_data = build_rows_for_display(&by_language, area.width, area.height);
 
     // Row index (0-based from row 1)
-    let row_idx = (row - 1) as usize;
+    let row_idx = (area.row - 1) as usize;
 
     if row_idx < rows_data.len() {
         let content = &rows_data[row_idx];
         write!(stdout, "{}", content)?;
         let content_len = strip_ansi_len(content);
-        let pad = (width as usize).saturating_sub(content_len);
+        let pad = (area.width as usize).saturating_sub(content_len);
         write!(stdout, "{:pad$}", "", pad = pad)?;
     } else {
-        write!(stdout, "{:width$}", "", width = width as usize)?;
+        write!(stdout, "{:width$}", "", width = area.width as usize)?;
     }
 
     Ok(())

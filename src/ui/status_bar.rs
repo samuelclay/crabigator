@@ -11,7 +11,7 @@ use crate::hooks::SessionStats;
 use crate::parsers::DiffSummary;
 use crate::terminal::escape::{self, color, RESET};
 
-use super::{draw_changes_widget, draw_git_widget, draw_stats_widget};
+use super::{draw_changes_widget, draw_git_widget, draw_stats_widget, WidgetArea};
 
 /// Layout information needed for rendering widgets
 pub struct Layout {
@@ -27,6 +27,7 @@ pub fn draw_status_bar(
     session_stats: &SessionStats,
     git_state: &GitState,
     diff_summary: &DiffSummary,
+    terminal_title: Option<&str>,
 ) -> Result<()> {
     // Save cursor position
     write!(stdout, "{}", escape::CURSOR_SAVE)?;
@@ -95,12 +96,15 @@ pub fn draw_status_bar(
         // Changes column (rightmost)
         draw_changes_widget(
             stdout,
-            layout.pty_rows,
-            stats_width + git_width + 2,
-            row,
-            changes_width,
-            layout.status_rows,
+            WidgetArea {
+                pty_rows: layout.pty_rows,
+                col: stats_width + git_width + 2,
+                row,
+                width: changes_width,
+                height: layout.status_rows,
+            },
             diff_summary,
+            terminal_title,
         )?;
     }
 

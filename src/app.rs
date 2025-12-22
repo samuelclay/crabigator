@@ -51,6 +51,10 @@ pub struct App {
     capture_manager: CaptureManager,
     /// Handles terminal DSR responses for CLIs that request cursor position
     dsr_handler: DsrHandler,
+    /// Scans for OSC title sequences from the CLI
+    osc_scanner: OscScanner,
+    /// Terminal title extracted from OSC sequences (e.g., "Claude Code Ghostty Integration")
+    terminal_title: Option<String>,
 }
 
 impl App {
@@ -115,6 +119,8 @@ impl App {
             mirror_publisher,
             capture_manager,
             dsr_handler: DsrHandler::new(),
+            osc_scanner: OscScanner::new(),
+            terminal_title: None,
         })
     }
 
@@ -291,13 +297,23 @@ impl App {
                     if bytes.is_empty() {
                         continue;
                     }
+
+                    // Scan for OSC title sequences
+                    let (passthrough, title) = self.osc_scanner.scan(&bytes);
+                    if let Some(t) = title {
+                        self.terminal_title = Some(t);
+                    }
+
+                    if passthrough.is_empty() {
+                        continue;
+                    }
                     wrote_output = true;
                     // Capture through our internal vt100 parser
-                    if let Err(e) = self.capture_manager.capture_output(&bytes) {
+                    if let Err(e) = self.capture_manager.capture_output(&passthrough) {
                         eprintln!("Capture error: {}", e);
                     }
-                    self.platform_pty.process_output(&bytes);
-                    stdout.write_all(&bytes)?;
+                    self.platform_pty.process_output(&passthrough);
+                    stdout.write_all(&passthrough)?;
                 }
                 DsrChunk::Request => {
                     let (row, col) = self.platform_pty.screen().cursor_position();
@@ -335,6 +351,7 @@ impl App {
             &self.session_stats,
             &self.git_state,
             &self.diff_summary,
+            self.terminal_title.as_deref(),
         )?;
 
         // Publish mirror state (throttled, only when --profile)
@@ -342,6 +359,7 @@ impl App {
             &self.session_stats,
             &self.git_state,
             &self.diff_summary,
+            self.terminal_title.as_deref(),
         );
 
         Ok(())
@@ -510,4 +528,161 @@ impl DsrHandler {
 enum DsrChunk {
     Output(Vec<u8>),
     Request,
+}
+
+/// State machine for parsing OSC title sequences
+#[derive(Clone, Copy, Debug)]
+enum OscParseState {
+    Idle,
+    Esc,        // Saw ESC
+    OscStart,   // Saw ESC ]
+    TitleType,  // Saw ESC ] 0 or ESC ] 2
+    Collecting, // Saw ESC ] N ; - collecting title bytes
+    MaybeST,    // Saw ESC while collecting (might be ST)
+}
+
+/// Scans PTY output for OSC title sequences (ESC ] 0 ; title BEL or ESC ] 2 ; title BEL)
+/// Extracts the title while passing through all bytes unchanged.
+struct OscScanner {
+    state: OscParseState,
+    pending: Vec<u8>,
+    title_buf: Vec<u8>,
+}
+
+impl OscScanner {
+    fn new() -> Self {
+        Self {
+            state: OscParseState::Idle,
+            pending: Vec::with_capacity(64),
+            title_buf: Vec::with_capacity(128),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.state = OscParseState::Idle;
+        self.pending.clear();
+        self.title_buf.clear();
+    }
+
+    /// Scan data for OSC title sequences.
+    /// Returns (passthrough_bytes, Option<extracted_title>).
+    /// All input bytes are included in passthrough (no suppression).
+    fn scan(&mut self, data: &[u8]) -> (Vec<u8>, Option<String>) {
+        let mut output = Vec::with_capacity(data.len() + self.pending.len());
+        let mut extracted_title: Option<String> = None;
+
+        for &byte in data {
+            match self.state {
+                OscParseState::Idle => {
+                    if byte == 0x1b {
+                        // Flush any pending bytes first
+                        output.extend_from_slice(&self.pending);
+                        self.pending.clear();
+                        self.pending.push(byte);
+                        self.state = OscParseState::Esc;
+                    } else {
+                        output.push(byte);
+                    }
+                }
+                OscParseState::Esc => {
+                    self.pending.push(byte);
+                    if byte == b']' {
+                        self.state = OscParseState::OscStart;
+                    } else {
+                        // Not an OSC sequence, flush pending
+                        output.extend_from_slice(&self.pending);
+                        self.reset();
+                    }
+                }
+                OscParseState::OscStart => {
+                    self.pending.push(byte);
+                    if byte == b'0' || byte == b'2' {
+                        self.state = OscParseState::TitleType;
+                    } else {
+                        // Not a title sequence
+                        output.extend_from_slice(&self.pending);
+                        self.reset();
+                    }
+                }
+                OscParseState::TitleType => {
+                    self.pending.push(byte);
+                    if byte == b';' {
+                        self.state = OscParseState::Collecting;
+                        self.title_buf.clear();
+                    } else {
+                        // Invalid sequence
+                        output.extend_from_slice(&self.pending);
+                        self.reset();
+                    }
+                }
+                OscParseState::Collecting => {
+                    self.pending.push(byte);
+                    if byte == 0x07 {
+                        // BEL terminator - extract title
+                        let title = String::from_utf8_lossy(&self.title_buf).to_string();
+                        extracted_title = Some(title);
+                        output.extend_from_slice(&self.pending);
+                        self.reset();
+                    } else if byte == 0x1b {
+                        // Might be ST terminator
+                        self.state = OscParseState::MaybeST;
+                    } else if self.title_buf.len() < 256 {
+                        // Accumulate title (with limit)
+                        self.title_buf.push(byte);
+                    }
+                    // If title_buf is full, keep collecting but don't add more
+                }
+                OscParseState::MaybeST => {
+                    self.pending.push(byte);
+                    if byte == b'\\' {
+                        // ST terminator (ESC \) - extract title
+                        let title = String::from_utf8_lossy(&self.title_buf).to_string();
+                        extracted_title = Some(title);
+                        output.extend_from_slice(&self.pending);
+                        self.reset();
+                    } else {
+                        // Not ST, the ESC might start a new sequence
+                        // Flush all pending up to the ESC, then restart
+                        let esc_pos = self.pending.len() - 2; // Position of ESC
+                        output.extend_from_slice(&self.pending[..esc_pos]);
+                        self.pending.drain(..esc_pos);
+                        // Now pending has [ESC, byte]
+                        if byte == b']' {
+                            self.state = OscParseState::OscStart;
+                        } else {
+                            output.extend_from_slice(&self.pending);
+                            self.reset();
+                        }
+                    }
+                }
+            }
+        }
+
+        (output, extracted_title)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_osc_title_parsing() {
+        let mut scanner = OscScanner::new();
+        // Exact bytes from Claude Code: ESC ] 0 ; ✳ CLAUDE.md Refactoring BEL
+        let input: &[u8] = b"\x1b]0;\xe2\x9c\xb3 CLAUDE.md Refactoring\x07";
+        let (passthrough, title) = scanner.scan(input);
+        assert_eq!(title, Some("✳ CLAUDE.md Refactoring".to_string()));
+        assert_eq!(passthrough, input.to_vec());
+    }
+
+    #[test]
+    fn test_osc_title_in_stream() {
+        let mut scanner = OscScanner::new();
+        // OSC sequence embedded in other output
+        let input: &[u8] = b"some text\x1b]0;My Title\x07more text";
+        let (passthrough, title) = scanner.scan(input);
+        assert_eq!(title, Some("My Title".to_string()));
+        assert_eq!(passthrough, input.to_vec());
+    }
 }

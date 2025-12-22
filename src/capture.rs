@@ -7,7 +7,8 @@
 //! Uses a separate vt100 parser with a huge virtual screen to capture
 //! all output without losing anything to scrollback.
 
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -34,6 +35,8 @@ pub struct CaptureManager {
     last_screen_update: Instant,
     /// Screen update interval
     screen_update_interval: Duration,
+    /// Raw PTY output log file (for debugging escape sequences)
+    raw_log: Option<File>,
 }
 
 impl CaptureManager {
@@ -52,6 +55,7 @@ impl CaptureManager {
                 scrollback_update_interval: Duration::from_millis(100),
                 last_screen_update: Instant::now(),
                 screen_update_interval: Duration::from_millis(100),
+                raw_log: None,
             });
         }
 
@@ -63,6 +67,12 @@ impl CaptureManager {
         // Create directory
         fs::create_dir_all(&capture_dir)?;
 
+        // Open raw log file for appending
+        let raw_log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(capture_dir.join("pty_raw.log"))?;
+
         Ok(Self {
             config,
             capture_dir,
@@ -71,6 +81,7 @@ impl CaptureManager {
             scrollback_update_interval: Duration::from_millis(100),
             last_screen_update: Instant::now() - Duration::from_secs(10),
             screen_update_interval: Duration::from_millis(100),
+            raw_log: Some(raw_log),
         })
     }
 
@@ -81,6 +92,11 @@ impl CaptureManager {
     pub fn capture_output(&mut self, data: &[u8]) -> std::io::Result<()> {
         if !self.config.enabled || data.is_empty() {
             return Ok(());
+        }
+
+        // Write raw bytes to log for debugging escape sequences
+        if let Some(ref mut log) = self.raw_log {
+            let _ = log.write_all(data);
         }
 
         // Process through our capture parser

@@ -31,6 +31,7 @@ pub struct WidgetMirror<T: Serialize> {
 pub struct MirrorState {
     pub session_id: String,
     pub cwd: String,
+    pub terminal_title: Option<String>,
     pub last_updated: f64,
     pub capture: CaptureMirror,
     pub widgets: MirrorWidgets,
@@ -140,7 +141,7 @@ impl MirrorPublisher {
 
     /// Get the mirror file path (inside session directory)
     pub fn mirror_path(&self) -> PathBuf {
-        self.session_dir().join("mirror.json")
+        self.session_dir().join("inspect.json")
     }
 
     /// Attempt to publish if conditions are met (enabled, changed, throttle elapsed)
@@ -150,6 +151,7 @@ impl MirrorPublisher {
         stats: &SessionStats,
         git: &GitState,
         diff: &DiffSummary,
+        terminal_title: Option<&str>,
     ) -> Result<bool> {
         if !self.enabled {
             return Ok(false);
@@ -161,13 +163,13 @@ impl MirrorPublisher {
         }
 
         // Compute hash for change detection
-        let hash = self.compute_hash(stats, git, diff);
+        let hash = self.compute_hash(stats, git, diff, terminal_title);
         if hash == self.last_hash {
             return Ok(false);
         }
 
         // Publish
-        let state = self.build_state(stats, git, diff);
+        let state = self.build_state(stats, git, diff, terminal_title);
         let json = serde_json::to_string_pretty(&state)?;
 
         // Ensure session directory exists
@@ -185,8 +187,11 @@ impl MirrorPublisher {
         Ok(true)
     }
 
-    fn compute_hash(&self, stats: &SessionStats, git: &GitState, diff: &DiffSummary) -> u64 {
+    fn compute_hash(&self, stats: &SessionStats, git: &GitState, diff: &DiffSummary, terminal_title: Option<&str>) -> u64 {
         let mut hasher = DefaultHasher::new();
+
+        // Hash terminal title
+        terminal_title.hash(&mut hasher);
 
         // Hash key fields from stats
         stats.work_seconds.hash(&mut hasher);
@@ -226,6 +231,7 @@ impl MirrorPublisher {
         stats: &SessionStats,
         git: &GitState,
         diff: &DiffSummary,
+        terminal_title: Option<&str>,
     ) -> MirrorState {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -235,6 +241,7 @@ impl MirrorPublisher {
         MirrorState {
             session_id: self.session_id.clone(),
             cwd: self.cwd.clone(),
+            terminal_title: terminal_title.map(String::from),
             last_updated: timestamp,
             capture: self.capture.clone(),
             widgets: MirrorWidgets {
