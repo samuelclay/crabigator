@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::collections::HashMap;
 
 use super::{ChangeNode, ChangeType, DiffParser, NodeKind};
 
@@ -36,7 +37,9 @@ impl DiffParser for RustParser {
     }
 
     fn parse(&self, diff: &str, _filename: &str) -> Vec<ChangeNode> {
-        let mut changes = Vec::new();
+        // Track changes with their line counts
+        // Key: (kind, name), Value: (change_type, additions, deletions)
+        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> = HashMap::new();
 
         // Regex patterns for Rust constructs
         let fn_re = Regex::new(r"^\s*(pub\s+)?(async\s+)?fn\s+(\w+)").unwrap();
@@ -49,7 +52,8 @@ impl DiffParser for RustParser {
         // Pattern for hunk headers with function context: @@ -line,count +line,count @@ context
         let hunk_re = Regex::new(r"^@@[^@]+@@\s*(.*)$").unwrap();
 
-        let mut current_impl: Option<ChangeNode> = None;
+        // Current context: which function/impl we're inside
+        let mut current_context: Option<(NodeKind, String)> = None;
 
         for line in diff.lines() {
             // Check for hunk headers with function context
@@ -59,15 +63,10 @@ impl DiffParser for RustParser {
                     // Try to extract function name from context
                     if let Some(fn_caps) = fn_re.captures(context_str) {
                         let fn_name = fn_caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
-                        // Add function if not already present
-                        if !changes.iter().any(|c: &ChangeNode| c.name == fn_name && c.kind == NodeKind::Function) {
-                            changes.push(ChangeNode {
-                                kind: NodeKind::Function,
-                                name: fn_name.to_string(),
-                                change_type: ChangeType::Modified,
-                                children: Vec::new(),
-                            });
-                        }
+                        current_context = Some((NodeKind::Function, fn_name.to_string()));
+                        // Pre-register as modified (will be updated with line counts)
+                        let key = (NodeKind::Function, fn_name.to_string());
+                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0));
                     }
                     // Check for impl block in context
                     else if let Some(impl_caps) = impl_re.captures(context_str) {
@@ -78,15 +77,15 @@ impl DiffParser for RustParser {
                         } else {
                             type_name.to_string()
                         };
-                        if !changes.iter().any(|c: &ChangeNode| c.name == name && c.kind == NodeKind::Impl) {
-                            changes.push(ChangeNode {
-                                kind: NodeKind::Impl,
-                                name,
-                                change_type: ChangeType::Modified,
-                                children: Vec::new(),
-                            });
-                        }
+                        current_context = Some((NodeKind::Impl, name.clone()));
+                        let key = (NodeKind::Impl, name);
+                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0));
+                    } else {
+                        // No function context in hunk header
+                        current_context = None;
                     }
+                } else {
+                    current_context = None;
                 }
                 continue;
             }
@@ -98,147 +97,147 @@ impl DiffParser for RustParser {
                 continue;
             }
 
-            let change_type = if is_added {
-                ChangeType::Added
-            } else {
-                ChangeType::Deleted
-            };
-
             let content = &line[1..]; // Strip the +/- prefix
+
+            // Check if this line defines a new construct
+            let mut found_definition = false;
 
             // Check for impl blocks
             if let Some(caps) = impl_re.captures(content) {
-                // Save previous impl if any
-                if let Some(impl_node) = current_impl.take() {
-                    if !impl_node.children.is_empty() {
-                        changes.push(impl_node);
-                    }
-                }
-
                 let type_name = caps.get(2).map(|m| m.as_str()).unwrap_or("Unknown");
                 let trait_name = caps.get(1).map(|m| m.as_str());
-
                 let name = if let Some(trait_n) = trait_name {
                     format!("{} for {}", trait_n, type_name)
                 } else {
                     type_name.to_string()
                 };
-
-                current_impl = Some(ChangeNode {
-                    kind: NodeKind::Impl,
-                    name,
-                    change_type: ChangeType::Modified,
-                    children: Vec::new(),
-                });
-                continue;
+                let key = (NodeKind::Impl, name);
+                let entry = change_map.entry(key.clone()).or_insert((
+                    if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                    0,
+                    0,
+                ));
+                if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                current_context = Some(key);
+                found_definition = true;
             }
 
-            // Check for functions (methods if inside impl)
-            if let Some(caps) = fn_re.captures(content) {
-                let fn_name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
-
-                let node = ChangeNode {
-                    kind: if current_impl.is_some() {
-                        NodeKind::Method
-                    } else {
-                        NodeKind::Function
-                    },
-                    name: fn_name.to_string(),
-                    change_type: change_type.clone(),
-                    children: Vec::new(),
-                };
-
-                if let Some(ref mut impl_node) = current_impl {
-                    // Check if method already exists in children
-                    if !impl_node.children.iter().any(|c| c.name == fn_name) {
-                        impl_node.children.push(node);
-                    }
-                } else {
-                    // Check if function already exists in changes
-                    if !changes.iter().any(|c| c.name == fn_name && c.kind == NodeKind::Function) {
-                        changes.push(node);
-                    }
+            // Check for functions
+            if !found_definition {
+                if let Some(caps) = fn_re.captures(content) {
+                    let fn_name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
+                    let key = (NodeKind::Function, fn_name.to_string());
+                    let entry = change_map.entry(key.clone()).or_insert((
+                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        0,
+                        0,
+                    ));
+                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    current_context = Some(key);
+                    found_definition = true;
                 }
-                continue;
             }
 
             // Check for structs
-            if let Some(caps) = struct_re.captures(content) {
-                let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                if !changes.iter().any(|c| c.name == name && c.kind == NodeKind::Struct) {
-                    changes.push(ChangeNode {
-                        kind: NodeKind::Struct,
-                        name: name.to_string(),
-                        change_type: change_type.clone(),
-                        children: Vec::new(),
-                    });
+            if !found_definition {
+                if let Some(caps) = struct_re.captures(content) {
+                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+                    let key = (NodeKind::Struct, name.to_string());
+                    let entry = change_map.entry(key.clone()).or_insert((
+                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        0,
+                        0,
+                    ));
+                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    current_context = Some(key);
+                    found_definition = true;
                 }
-                continue;
             }
 
             // Check for enums
-            if let Some(caps) = enum_re.captures(content) {
-                let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                if !changes.iter().any(|c| c.name == name && c.kind == NodeKind::Enum) {
-                    changes.push(ChangeNode {
-                        kind: NodeKind::Enum,
-                        name: name.to_string(),
-                        change_type: change_type.clone(),
-                        children: Vec::new(),
-                    });
+            if !found_definition {
+                if let Some(caps) = enum_re.captures(content) {
+                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+                    let key = (NodeKind::Enum, name.to_string());
+                    let entry = change_map.entry(key.clone()).or_insert((
+                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        0,
+                        0,
+                    ));
+                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    current_context = Some(key);
+                    found_definition = true;
                 }
-                continue;
             }
 
             // Check for traits
-            if let Some(caps) = trait_re.captures(content) {
-                let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                if !changes.iter().any(|c| c.name == name && c.kind == NodeKind::Trait) {
-                    changes.push(ChangeNode {
-                        kind: NodeKind::Trait,
-                        name: name.to_string(),
-                        change_type: change_type.clone(),
-                        children: Vec::new(),
-                    });
+            if !found_definition {
+                if let Some(caps) = trait_re.captures(content) {
+                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+                    let key = (NodeKind::Trait, name.to_string());
+                    let entry = change_map.entry(key.clone()).or_insert((
+                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        0,
+                        0,
+                    ));
+                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    current_context = Some(key);
+                    found_definition = true;
                 }
-                continue;
             }
 
             // Check for modules
-            if let Some(caps) = mod_re.captures(content) {
-                let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                if !changes.iter().any(|c| c.name == name && c.kind == NodeKind::Module) {
-                    changes.push(ChangeNode {
-                        kind: NodeKind::Module,
-                        name: name.to_string(),
-                        change_type: change_type.clone(),
-                        children: Vec::new(),
-                    });
+            if !found_definition {
+                if let Some(caps) = mod_re.captures(content) {
+                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+                    let key = (NodeKind::Module, name.to_string());
+                    let entry = change_map.entry(key.clone()).or_insert((
+                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        0,
+                        0,
+                    ));
+                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    current_context = Some(key);
+                    found_definition = true;
                 }
-                continue;
             }
 
             // Check for consts
-            if let Some(caps) = const_re.captures(content) {
-                let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                if !changes.iter().any(|c| c.name == name && c.kind == NodeKind::Const) {
-                    changes.push(ChangeNode {
-                        kind: NodeKind::Const,
-                        name: name.to_string(),
-                        change_type: change_type.clone(),
-                        children: Vec::new(),
-                    });
+            if !found_definition {
+                if let Some(caps) = const_re.captures(content) {
+                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+                    let key = (NodeKind::Const, name.to_string());
+                    let entry = change_map.entry(key.clone()).or_insert((
+                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        0,
+                        0,
+                    ));
+                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    found_definition = true;
+                }
+            }
+
+            // If not a definition line, add to current context
+            if !found_definition {
+                if let Some(ref key) = current_context {
+                    if let Some(entry) = change_map.get_mut(key) {
+                        if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    }
                 }
             }
         }
 
-        // Don't forget the last impl block
-        if let Some(impl_node) = current_impl {
-            if !impl_node.children.is_empty() {
-                changes.push(impl_node);
-            }
-        }
-
-        changes
+        // Convert map to vec of ChangeNodes
+        change_map
+            .into_iter()
+            .map(|((kind, name), (change_type, additions, deletions))| ChangeNode {
+                kind,
+                name,
+                change_type,
+                additions,
+                deletions,
+                children: Vec::new(),
+            })
+            .collect()
     }
 }

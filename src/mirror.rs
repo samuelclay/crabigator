@@ -98,6 +98,8 @@ pub struct ChangeMirror {
     pub kind: String,
     pub name: String,
     pub change_type: String, // "added", "modified", "deleted"
+    pub additions: usize,
+    pub deletions: usize,
 }
 
 /// Publisher that handles throttled state mirroring
@@ -168,6 +170,10 @@ impl MirrorPublisher {
         let state = self.build_state(stats, git, diff);
         let json = serde_json::to_string_pretty(&state)?;
 
+        // Ensure session directory exists
+        let session_dir = self.session_dir();
+        fs::create_dir_all(&session_dir)?;
+
         // Atomic write via temp file + rename
         let path = self.mirror_path();
         let tmp_path = path.with_extension("tmp");
@@ -207,6 +213,8 @@ impl MirrorPublisher {
             f.changes.len().hash(&mut hasher);
             for c in &f.changes {
                 c.name.hash(&mut hasher);
+                c.additions.hash(&mut hasher);
+                c.deletions.hash(&mut hasher);
             }
         }
 
@@ -273,6 +281,8 @@ impl MirrorPublisher {
                                         kind: format!("{:?}", c.kind).to_lowercase(),
                                         name: c.name.clone(),
                                         change_type: format!("{:?}", c.change_type).to_lowercase(),
+                                        additions: c.additions,
+                                        deletions: c.deletions,
                                     })
                                     .collect(),
                             })
@@ -363,7 +373,12 @@ fn render_changes_preview(diff: &DiffSummary) -> Vec<String> {
                 ChangeType::Modified => "~",
                 ChangeType::Deleted => "-",
             };
-            lines.push(format!("  {}{:?} {}", modifier, c.kind, c.name));
+            let stats = if c.additions > 0 || c.deletions > 0 {
+                format!(" +{}-{}", c.additions, c.deletions)
+            } else {
+                String::new()
+            };
+            lines.push(format!("  {}{:?} {}{}", modifier, c.kind, c.name, stats));
         }
         if lc.changes.len() > 3 {
             lines.push(format!("  ... and {} more", lc.changes.len() - 3));

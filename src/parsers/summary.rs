@@ -31,16 +31,31 @@ impl DiffSummary {
     pub fn by_language(&self) -> Vec<LanguageChanges> {
         use std::collections::HashMap;
 
-        let mut by_lang: HashMap<String, Vec<ChangeNode>> = HashMap::new();
+        // Merge changes by (language, kind, name) to combine stats
+        let mut by_lang: HashMap<String, HashMap<(NodeKind, String), ChangeNode>> = HashMap::new();
 
         for file in &self.files {
-            let entry = by_lang.entry(file.language.clone()).or_default();
-            entry.extend(file.changes.iter().cloned());
+            let lang_entry = by_lang.entry(file.language.clone()).or_default();
+            for change in &file.changes {
+                let key = (change.kind.clone(), change.name.clone());
+                lang_entry
+                    .entry(key)
+                    .and_modify(|existing| {
+                        existing.additions += change.additions;
+                        existing.deletions += change.deletions;
+                    })
+                    .or_insert_with(|| change.clone());
+            }
         }
 
         let mut result: Vec<_> = by_lang
             .into_iter()
-            .map(|(language, changes)| LanguageChanges { language, changes })
+            .map(|(language, changes_map)| {
+                let mut changes: Vec<ChangeNode> = changes_map.into_values().collect();
+                // Sort changes by name for consistent ordering
+                changes.sort_by(|a, b| a.name.cmp(&b.name));
+                LanguageChanges { language, changes }
+            })
             .collect();
 
         // Sort by language name for consistent display
@@ -150,7 +165,10 @@ impl DiffSummary {
 
 /// Parse hunk headers and context lines to detect modifications inside existing functions
 fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser) -> Vec<ChangeNode> {
-    let mut changes = Vec::new();
+    use std::collections::HashMap;
+
+    // Track changes with their line counts
+    let mut change_map: HashMap<String, (usize, usize)> = HashMap::new();
     let hunk_re = Regex::new(r"^@@[^@]+@@\s*(.*)$").unwrap();
 
     let mut in_hunk = false;
@@ -184,17 +202,14 @@ fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser) -> Vec<ChangeNo
         }
 
         // When we hit an added/removed line, record the function if found
-        if in_hunk && (line.starts_with('+') || line.starts_with('-'))
-            && !line.starts_with("+++") && !line.starts_with("---")
-        {
-            if let Some(ref func_name) = current_hunk_func {
-                if !changes.iter().any(|c: &ChangeNode| c.name == *func_name) {
-                    changes.push(ChangeNode {
-                        kind: NodeKind::Function,
-                        name: func_name.clone(),
-                        change_type: ChangeType::Modified,
-                        children: Vec::new(),
-                    });
+        if in_hunk && !line.starts_with("+++") && !line.starts_with("---") {
+            let is_added = line.starts_with('+');
+            let is_removed = line.starts_with('-');
+
+            if is_added || is_removed {
+                if let Some(ref func_name) = current_hunk_func {
+                    let entry = change_map.entry(func_name.clone()).or_insert((0, 0));
+                    if is_added { entry.0 += 1; } else { entry.1 += 1; }
                 }
             }
         }
@@ -206,7 +221,17 @@ fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser) -> Vec<ChangeNo
         }
     }
 
-    changes
+    change_map
+        .into_iter()
+        .map(|(name, (additions, deletions))| ChangeNode {
+            kind: NodeKind::Function,
+            name,
+            change_type: ChangeType::Modified,
+            additions,
+            deletions,
+            children: Vec::new(),
+        })
+        .collect()
 }
 
 fn parse_diff_into_files(diff: &str) -> Vec<(String, String)> {

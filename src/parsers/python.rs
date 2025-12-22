@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::collections::HashMap;
 
 use super::{ChangeNode, ChangeType, DiffParser, NodeKind};
 
@@ -28,17 +29,36 @@ impl DiffParser for PythonParser {
     }
 
     fn parse(&self, diff: &str, _filename: &str) -> Vec<ChangeNode> {
-        let mut changes = Vec::new();
+        // Track changes with their line counts
+        // Key: (kind, name), Value: (change_type, additions, deletions)
+        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> = HashMap::new();
 
         // Regex patterns for Python constructs
         let class_re = Regex::new(r"^class\s+(\w+)").unwrap();
-        let def_re = Regex::new(r"^(\s*)def\s+(\w+)").unwrap();
-        let async_def_re = Regex::new(r"^(\s*)async\s+def\s+(\w+)").unwrap();
+        let def_re = Regex::new(r"^(\s*)(?:async\s+)?def\s+(\w+)").unwrap();
+        let hunk_re = Regex::new(r"^@@[^@]+@@\s*(.*)$").unwrap();
 
-        let mut current_class: Option<ChangeNode> = None;
-        let mut class_indent: usize = 0;
+        // Current context: which function/class we're inside
+        let mut current_context: Option<(NodeKind, String)> = None;
 
         for line in diff.lines() {
+            // Check for hunk headers with function context
+            if let Some(caps) = hunk_re.captures(line) {
+                if let Some(context) = caps.get(1) {
+                    let context_str = context.as_str();
+                    if let Some(fn_name) = self.extract_function_from_context(context_str) {
+                        let key = (NodeKind::Function, fn_name.clone());
+                        change_map.entry(key.clone()).or_insert((ChangeType::Modified, 0, 0));
+                        current_context = Some(key);
+                    } else {
+                        current_context = None;
+                    }
+                } else {
+                    current_context = None;
+                }
+                continue;
+            }
+
             let is_added = line.starts_with('+') && !line.starts_with("+++");
             let is_removed = line.starts_with('-') && !line.starts_with("---");
 
@@ -46,91 +66,66 @@ impl DiffParser for PythonParser {
                 continue;
             }
 
-            let change_type = if is_added {
-                ChangeType::Added
-            } else {
-                ChangeType::Deleted
-            };
-
             let content = &line[1..];
+            let mut found_definition = false;
 
             // Check for class definitions
             if let Some(caps) = class_re.captures(content) {
-                // Save previous class if any
-                if let Some(class_node) = current_class.take() {
-                    if !class_node.children.is_empty() {
-                        changes.push(class_node);
-                    }
-                }
-
                 let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
-                class_indent = content.len() - content.trim_start().len();
-
-                current_class = Some(ChangeNode {
-                    kind: NodeKind::Class,
-                    name: name.to_string(),
-                    change_type: ChangeType::Modified,
-                    children: Vec::new(),
-                });
-                continue;
+                let key = (NodeKind::Class, name.to_string());
+                let entry = change_map.entry(key.clone()).or_insert((
+                    if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                    0,
+                    0,
+                ));
+                if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                current_context = Some(key);
+                found_definition = true;
             }
 
             // Check for function/method definitions
-            let def_match = def_re.captures(content).or_else(|| async_def_re.captures(content));
+            if !found_definition {
+                if let Some(caps) = def_re.captures(content) {
+                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
 
-            if let Some(caps) = def_match {
-                let indent_str = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-                let indent = indent_str.len();
-                let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-
-                // Skip dunder methods except __init__
-                if name.starts_with("__") && name.ends_with("__") && name != "__init__" {
-                    continue;
-                }
-
-                // If we're inside a class and this is indented, it's a method
-                if let Some(ref mut class_node) = current_class {
-                    if indent > class_indent {
-                        if !class_node.children.iter().any(|c| c.name == name) {
-                            class_node.children.push(ChangeNode {
-                                kind: NodeKind::Method,
-                                name: name.to_string(),
-                                change_type: change_type.clone(),
-                                children: Vec::new(),
-                            });
-                        }
+                    // Skip dunder methods except __init__
+                    if name.starts_with("__") && name.ends_with("__") && name != "__init__" {
                         continue;
-                    } else {
-                        // We've exited the class
-                        let class_node = current_class.take().unwrap();
-                        if !class_node.children.is_empty() {
-                            changes.push(class_node);
-                        }
+                    }
+
+                    let key = (NodeKind::Function, name.to_string());
+                    let entry = change_map.entry(key.clone()).or_insert((
+                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        0,
+                        0,
+                    ));
+                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    current_context = Some(key);
+                    found_definition = true;
+                }
+            }
+
+            // If not a definition line, add to current context
+            if !found_definition {
+                if let Some(ref key) = current_context {
+                    if let Some(entry) = change_map.get_mut(key) {
+                        if is_added { entry.1 += 1; } else { entry.2 += 1; }
                     }
                 }
-
-                // Top-level function
-                if !changes
-                    .iter()
-                    .any(|c| c.name == name && c.kind == NodeKind::Function)
-                {
-                    changes.push(ChangeNode {
-                        kind: NodeKind::Function,
-                        name: name.to_string(),
-                        change_type: change_type.clone(),
-                        children: Vec::new(),
-                    });
-                }
             }
         }
 
-        // Don't forget the last class
-        if let Some(class_node) = current_class {
-            if !class_node.children.is_empty() {
-                changes.push(class_node);
-            }
-        }
-
-        changes
+        // Convert map to vec of ChangeNodes
+        change_map
+            .into_iter()
+            .map(|((kind, name), (change_type, additions, deletions))| ChangeNode {
+                kind,
+                name,
+                change_type,
+                additions,
+                deletions,
+                children: Vec::new(),
+            })
+            .collect()
     }
 }

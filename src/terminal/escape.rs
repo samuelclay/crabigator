@@ -78,6 +78,7 @@ pub mod color {
     pub const ORANGE: u8 = 179;
 
     /// Dark orange (208) - Const
+    #[allow(dead_code)]
     pub const DARK_ORANGE: u8 = 208;
 
     /// Red (203) - Deletions, errors, idle 5+ minutes

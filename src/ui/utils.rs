@@ -6,7 +6,6 @@
 use unicode_width::UnicodeWidthChar;
 
 use crate::terminal::escape::{color, fg, RESET};
-use crate::parsers::NodeKind;
 
 /// Truncate a path string, showing the end with ellipsis if too long
 pub fn truncate_path(path: &str, max_len: usize) -> String {
@@ -270,23 +269,6 @@ pub fn create_folder_bar(file_count: usize, max_count: usize, max_width: usize) 
     let bar_width = scaled.min(max_width).max(1);
 
     format!("{}{}{}", fg(color::CYAN), "+".repeat(bar_width), RESET)
-}
-
-/// Get icon and color for a semantic change type.
-/// Icons with ambiguous unicode width include a trailing space to prevent overlap.
-pub fn get_change_icon_color(kind: &NodeKind) -> (&'static str, u8) {
-    match kind {
-        NodeKind::Class => ("◆", color::PURPLE),        // Purple - class
-        NodeKind::Function => ("ƒ", color::BLUE),       // Blue - function
-        NodeKind::Method => ("·", color::LIGHT_BLUE),   // Light blue - method
-        NodeKind::Struct => ("▣ ", color::ORANGE),      // Orange - struct (space for ambiguous width)
-        NodeKind::Enum => ("◇", color::YELLOW),         // Yellow - enum
-        NodeKind::Trait => ("◈", color::PINK),          // Pink - trait
-        NodeKind::Impl => ("▸", color::LIGHT_GREEN),    // Green - impl
-        NodeKind::Module => ("▢ ", color::GRAY),        // Gray - module (space for ambiguous width)
-        NodeKind::Const => ("●", color::DARK_ORANGE),   // Orange - const
-        NodeKind::Other => ("•", color::GRAY),          // Gray - other
-    }
 }
 
 /// Calculate display width excluding ANSI escape sequences

@@ -15,19 +15,25 @@
           {
             "changes": [
               {
-                "change_type": "added",
-                "kind": "function",
-                "name": "plan"
-              },
-              {
+                "additions": 5,
                 "change_type": "modified",
+                "deletions": 1,
                 "kind": "function",
                 "name": "greet"
               },
               {
+                "additions": 3,
                 "change_type": "added",
+                "deletions": 0,
                 "kind": "function",
                 "name": "new_feature"
+              },
+              {
+                "additions": 2,
+                "change_type": "added",
+                "deletions": 0,
+                "kind": "function",
+                "name": "plan"
               }
             ],
             "language": "Rust"
@@ -37,9 +43,9 @@
       },
       "rendered": [
         "Rust - 3 changes",
-        "  +Function plan",
-        "  ~Function greet",
-        "  +Function new_feature"
+        "  ~Function greet +5-1",
+        "  +Function new_feature +3-0",
+        "  +Function plan +2-0"
       ]
     },
     "git": {

@@ -15,17 +15,23 @@
           {
             "changes": [
               {
-                "change_type": "added",
-                "kind": "function",
-                "name": "plan"
-              },
-              {
+                "additions": 5,
                 "change_type": "modified",
+                "deletions": 1,
                 "kind": "function",
                 "name": "greet"
               },
               {
+                "additions": 2,
                 "change_type": "added",
+                "deletions": 0,
+                "kind": "function",
+                "name": "plan"
+              },
+              {
+                "additions": 3,
+                "change_type": "added",
+                "deletions": 0,
                 "kind": "function",
                 "name": "sum"
               }
@@ -35,14 +41,18 @@
           {
             "changes": [
               {
-                "change_type": "added",
-                "kind": "function",
-                "name": "plan"
-              },
-              {
+                "additions": 4,
                 "change_type": "modified",
+                "deletions": 1,
                 "kind": "function",
                 "name": "greet"
+              },
+              {
+                "additions": 2,
+                "change_type": "added",
+                "deletions": 0,
+                "kind": "function",
+                "name": "plan"
               }
             ],
             "language": "Python"
@@ -52,12 +62,12 @@
       },
       "rendered": [
         "JavaScript - 3 changes",
-        "  +Function plan",
-        "  ~Function greet",
-        "  +Function sum",
+        "  ~Function greet +5-1",
+        "  +Function plan +2-0",
+        "  +Function sum +3-0",
         "Python - 2 changes",
-        "  +Function plan",
-        "  ~Function greet"
+        "  ~Function greet +4-1",
+        "  +Function plan +2-0"
       ]
     },
     "git": {

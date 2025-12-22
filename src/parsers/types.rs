@@ -1,6 +1,6 @@
 //! Shared types for diff parsing
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum NodeKind {
     Class,
     Function,
@@ -29,6 +29,9 @@ pub struct ChangeNode {
     pub kind: NodeKind,
     pub name: String,
     pub change_type: ChangeType,
+    pub additions: usize,
+    pub deletions: usize,
+    #[allow(dead_code)]
     pub children: Vec<ChangeNode>,
 }
 
