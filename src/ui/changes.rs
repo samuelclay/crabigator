@@ -218,11 +218,11 @@ fn build_rows_for_display(
             // Pack items into rows with 2-space margin
             let packed_rows = pack_items_into_rows(&items, width as usize);
 
+            let mut items_shown = 0usize;
             for packed_row in packed_rows {
                 if rows.len() >= available_rows {
                     // Show "and N more" for remaining items
-                    let shown = rows.len() - 1; // -1 for header
-                    let remaining = num_changes.saturating_sub(shown);
+                    let remaining = num_changes.saturating_sub(items_shown);
                     if remaining > 0 {
                         rows.push(format!(
                             "{}  ... and {} more{}",
@@ -233,7 +233,8 @@ fn build_rows_for_display(
                     }
                     break;
                 }
-                rows.push(packed_row);
+                items_shown += packed_row.item_count;
+                rows.push(packed_row.text);
             }
         }
     }
@@ -350,24 +351,25 @@ fn format_change_stats(
         return format!("{:width$}", "", width = 1 + del_width + 1 + add_width);
     }
 
-    let del_str = if deletions > 0 {
-        format!("{}−{}{}", fg(color::RED), deletions, RESET)
-    } else {
-        format!("{:width$}", "", width = del_width)
-    };
-
-    let add_str = if additions > 0 {
-        format!("{}+{}{}", fg(color::GREEN), additions, RESET)
-    } else {
-        format!("{:width$}", "", width = add_width)
-    };
-
-    // Calculate padding for alignment
+    // For right-aligned columns: padding goes on the left, number on the right
+    // When a value is 0, we just use padding (no number string)
     let del_num_width = if deletions > 0 { 1 + digit_count(deletions) } else { 0 };
     let del_padding = del_width.saturating_sub(del_num_width);
 
     let add_num_width = if additions > 0 { 1 + digit_count(additions) } else { 0 };
     let add_padding = add_width.saturating_sub(add_num_width);
+
+    let del_str = if deletions > 0 {
+        format!("{}−{}{}", fg(color::RED), deletions, RESET)
+    } else {
+        String::new()
+    };
+
+    let add_str = if additions > 0 {
+        format!("{}+{}{}", fg(color::GREEN), additions, RESET)
+    } else {
+        String::new()
+    };
 
     format!(
         " {:del_pad$}{} {:add_pad$}{}",
@@ -376,11 +378,18 @@ fn format_change_stats(
     )
 }
 
+/// A packed row with its text and how many items it contains
+struct PackedRow {
+    text: String,
+    item_count: usize,
+}
+
 /// Pack items into rows with 2-space margin between items
-fn pack_items_into_rows(items: &[FormattedItem], max_width: usize) -> Vec<String> {
+fn pack_items_into_rows(items: &[FormattedItem], max_width: usize) -> Vec<PackedRow> {
     let mut rows = Vec::new();
     let mut current_row = String::new();
     let mut current_width = 0usize;
+    let mut current_count = 0usize;
     const MARGIN: usize = 2;
 
     for item in items {
@@ -396,17 +405,25 @@ fn pack_items_into_rows(items: &[FormattedItem], max_width: usize) -> Vec<String
             }
             current_row.push_str(&item.text);
             current_width += needed;
+            current_count += 1;
         } else {
             if !current_row.is_empty() {
-                rows.push(current_row);
+                rows.push(PackedRow {
+                    text: current_row,
+                    item_count: current_count,
+                });
             }
             current_row = item.text.clone();
             current_width = item.width;
+            current_count = 1;
         }
     }
 
     if !current_row.is_empty() {
-        rows.push(current_row);
+        rows.push(PackedRow {
+            text: current_row,
+            item_count: current_count,
+        });
     }
 
     rows
