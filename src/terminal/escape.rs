@@ -39,7 +39,13 @@ pub fn scroll_up(n: u16) -> String {
     "\n".repeat(n as usize)
 }
 
-// === Style Reset ===
+// === Text Styles ===
+
+/// Bold text
+pub const BOLD: &str = "\x1b[1m";
+
+/// Dim/faint text
+pub const DIM: &str = "\x1b[2m";
 
 /// Reset all text attributes
 pub const RESET: &str = "\x1b[0m";
@@ -57,6 +63,23 @@ pub fn fg(color: u8) -> String {
 pub fn bg(color: u8) -> String {
     format!("\x1b[48;5;{}m", color)
 }
+
+// === Precomputed Foreground Colors (256-color palette) ===
+
+/// Cyan foreground (45)
+pub const FG_CYAN: &str = "\x1b[38;5;45m";
+
+/// Blue foreground (33)
+pub const FG_BLUE: &str = "\x1b[38;5;33m";
+
+/// Purple foreground (141)
+pub const FG_PURPLE: &str = "\x1b[38;5;141m";
+
+/// Orange foreground (179)
+pub const FG_ORANGE: &str = "\x1b[38;5;179m";
+
+/// Gray foreground (245)
+pub const FG_GRAY: &str = "\x1b[38;5;245m";
 
 // === Named Colors (256-color palette) ===
 
@@ -118,6 +141,33 @@ pub mod color {
     /// White (231) - For text on dark backgrounds
     #[allow(dead_code)]
     pub const WHITE: u8 = 231;
+}
+
+// === Standard ANSI Colors (16-color) ===
+
+/// Basic ANSI foreground colors for simple output
+pub mod ansi {
+    /// Green foreground (32)
+    pub const GREEN: &str = "\x1b[32m";
+
+    /// Yellow foreground (33)
+    pub const YELLOW: &str = "\x1b[33m";
+}
+
+// === Screen Control ===
+
+/// Clear entire screen
+#[allow(dead_code)]
+pub const CLEAR_SCREEN: &str = "\x1b[2J";
+
+/// Clear entire screen and move cursor to home position
+pub const CLEAR_SCREEN_HOME: &str = "\x1b[2J\x1b[H";
+
+/// Format cursor position report response (CPR)
+/// This is the terminal's response to a cursor position query
+#[inline]
+pub fn cursor_position_report(row: u16, col: u16) -> String {
+    format!("\x1b[{};{}R", row, col)
 }
 
 // === Key Encoding Bytes ===

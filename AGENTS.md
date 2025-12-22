@@ -71,7 +71,7 @@ The application uses a **scroll region approach** to layer UI:
 
 - **app.rs**: Main application loop and layout management. Handles scroll region setup, event polling, status bar drawing, and PTY passthrough.
 - **config.rs**: Configuration loading/saving for `~/.crabigator/config.toml` (platform preferences).
-- **terminal/**: Terminal handling - `pty.rs` manages PTY via `portable-pty` (spawns the platform CLI, handles I/O), `input.rs` handles keyboard input forwarding, `escape.rs` provides ANSI escape sequence utilities.
+- **terminal/**: Terminal handling - `pty.rs` manages PTY via `portable-pty` (spawns the platform CLI, handles I/O), `input.rs` handles keyboard input forwarding, `escape.rs` centralizes all ANSI escape sequences (colors, styles, cursor control, screen clearing) - add new sequences here rather than inline.
 - **git/**: Git state tracking via `git status --porcelain` and `git diff`.
 - **parsers/**: Language-specific diff parsers (Rust, TypeScript, Python, generic) that extract semantic information (functions, classes, etc.) from git diffs.
 - **hooks/**: `SessionStats` for session time tracking and platform stats integration.

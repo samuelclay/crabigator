@@ -301,10 +301,9 @@ impl App {
                 }
                 DsrChunk::Request => {
                     let (row, col) = self.platform_pty.screen().cursor_position();
-                    let response = format!(
-                        "\x1b[{};{}R",
+                    let response = escape::cursor_position_report(
                         row.saturating_add(1),
-                        col.saturating_add(1)
+                        col.saturating_add(1),
                     );
                     self.platform_pty.write(response.as_bytes())?;
                 }

@@ -30,18 +30,9 @@ use std::time::{Duration, Instant};
 use crate::app::App;
 use crate::config::Config;
 use crate::platforms::PlatformKind;
-
-// ANSI color codes (256-color palette)
-const RESET: &str = "\x1b[0m";
-const BOLD: &str = "\x1b[1m";
-const DIM: &str = "\x1b[2m";
-
-// Colors matching terminal/escape.rs palette
-const FG_CYAN: &str = "\x1b[38;5;45m";
-const FG_BLUE: &str = "\x1b[38;5;33m";
-const FG_PURPLE: &str = "\x1b[38;5;141m";
-const FG_ORANGE: &str = "\x1b[38;5;179m";
-const FG_GRAY: &str = "\x1b[38;5;245m";
+use crate::terminal::escape::{
+    BOLD, DIM, FG_BLUE, FG_CYAN, FG_GRAY, FG_ORANGE, FG_PURPLE, RESET,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 

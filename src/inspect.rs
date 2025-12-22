@@ -10,11 +10,7 @@ use std::time::Duration;
 use anyhow::Result;
 use serde_json::Value;
 
-// ANSI colors
-const GREEN: &str = "\x1b[32m";
-const YELLOW: &str = "\x1b[33m";
-const DIM: &str = "\x1b[2m";
-const RESET: &str = "\x1b[0m";
+use crate::terminal::escape::{ansi, CLEAR_SCREEN_HOME, DIM, RESET};
 
 /// Get file status with size info
 fn get_file_status(path: &str) -> String {
@@ -22,10 +18,10 @@ fn get_file_status(path: &str) -> String {
         Ok(meta) => {
             let size = meta.len();
             if size == 0 {
-                format!("{YELLOW}(empty){RESET}")
+                format!("{}(empty){}", ansi::YELLOW, RESET)
             } else {
                 let size_str = format_size(size);
-                format!("{GREEN}({size_str}){RESET}")
+                format!("{}({size_str}){}", ansi::GREEN, RESET)
             }
         }
         Err(_) => format!("{DIM}(not found){RESET}"),
@@ -62,7 +58,7 @@ pub fn run_inspect(dir_filter: Option<String>, watch: bool, raw: bool) -> Result
         }
 
         // Clear screen and wait before next update
-        print!("\x1b[2J\x1b[H"); // Clear screen, move cursor home
+        print!("{CLEAR_SCREEN_HOME}");
         thread::sleep(Duration::from_millis(500));
     }
 
