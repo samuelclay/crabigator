@@ -553,8 +553,9 @@ async fn main() -> Result<()> {
         _ => {}
     }
 
-    // Print session end line with platform and date
-    print_session_end_line(platform_kind, cols);
+    // Print session end line with platform and date (get fresh terminal width)
+    let end_cols = terminal_size().map(|(c, _)| c).unwrap_or(cols);
+    print_session_end_line(platform_kind, end_cols);
 
     result
 }
