@@ -248,8 +248,8 @@ pub fn format_diff_stats_aligned(
     result
 }
 
-/// Count digits in a number
-fn digit_count(n: usize) -> usize {
+/// Count digits in a number (for width calculation)
+pub fn digit_count(n: usize) -> usize {
     if n == 0 {
         1
     } else {

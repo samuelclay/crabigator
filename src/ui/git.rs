@@ -9,7 +9,7 @@ use anyhow::Result;
 
 use crate::terminal::escape::{self, color, fg, RESET};
 use crate::git::{FileStatus, GitState};
-use super::utils::{compute_unique_display_names, create_folder_bar, format_diff_stats, format_diff_stats_aligned, get_filename, strip_ansi_len, truncate_path};
+use super::utils::{compute_unique_display_names, create_folder_bar, digit_count, format_diff_stats, format_diff_stats_aligned, get_filename, strip_ansi_len, truncate_path};
 
 /// Dynamic column widths computed from actual file data
 #[derive(Clone, Copy)]
@@ -67,14 +67,6 @@ impl StatsColumnWidths {
     }
 }
 
-/// Count digits in a number (for width calculation)
-fn digit_count(n: usize) -> usize {
-    if n == 0 {
-        1
-    } else {
-        (n as f64).log10().floor() as usize + 1
-    }
-}
 
 /// Draw the git widget at the given position
 pub fn draw_git_widget(

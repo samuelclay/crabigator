@@ -10,7 +10,7 @@ use anyhow::Result;
 use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges, NodeKind};
 use crate::terminal::escape::{self, color, fg, RESET};
 
-use super::utils::{strip_ansi_len, truncate_middle};
+use super::utils::{digit_count, strip_ansi_len, truncate_middle};
 use super::WidgetArea;
 
 /// Priority order for node kinds (lower = higher priority, appears first)
@@ -84,14 +84,6 @@ impl StatsColumnWidths {
     }
 }
 
-/// Count digits in a number
-fn digit_count(n: usize) -> usize {
-    if n == 0 {
-        1
-    } else {
-        (n as f64).log10().floor() as usize + 1
-    }
-}
 
 /// Draw the changes widget at the given position
 pub fn draw_changes_widget(
