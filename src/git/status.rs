@@ -85,7 +85,7 @@ impl GitState {
                 for line in stdout.lines() {
                     if line.len() >= 3 {
                         let status = line[0..2].trim().to_string();
-                        let path = line[3..].to_string();
+                        let path = unquote_git_path(&line[3..]);
 
                         // Detect if this is an untracked folder
                         let is_folder = status == "??" && path.ends_with('/');
@@ -144,6 +144,18 @@ impl GitState {
             }
         }
 
+        // Count lines for untracked files and newly added files without diff stats
+        for file in &mut state.files {
+            // Skip folders and files that already have stats
+            if file.is_folder || file.additions > 0 || file.deletions > 0 {
+                continue;
+            }
+            // Count lines for untracked (??) or newly added (A) files
+            if file.status == "??" || file.status == "A" {
+                file.additions = Self::count_lines_in_file(dir, &file.path).await;
+            }
+        }
+
         // Sort files by total changes (descending)
         state.files.sort_by_key(|f| std::cmp::Reverse(f.total_changes()));
 
@@ -174,6 +186,29 @@ impl GitState {
         }
     }
 
+    /// Count lines in a file using wc -l
+    async fn count_lines_in_file(base_dir: &Path, path: &str) -> usize {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            Command::new("wc")
+                .args(["-l", path])
+                .current_dir(base_dir)
+                .output(),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(output)) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                // wc -l output format: "   123 filename"
+                stdout.split_whitespace().next()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+
     /// Count files inside an untracked folder using find
     async fn count_files_in_folder(base_dir: &Path, path: &str) -> usize {
         // Skip known slow directories
@@ -200,5 +235,38 @@ impl GitState {
             }
             _ => 0,
         }
+    }
+}
+
+/// Unquote a git-quoted path (paths with spaces are quoted by git status --porcelain)
+/// Git uses C-style quoting: "path with \"quotes\" and spaces"
+fn unquote_git_path(path: &str) -> String {
+    let path = path.trim();
+    if path.starts_with('"') && path.ends_with('"') && path.len() >= 2 {
+        let inner = &path[1..path.len() - 1];
+        // Unescape C-style escape sequences
+        let mut result = String::with_capacity(inner.len());
+        let mut chars = inner.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('\\') => result.push('\\'),
+                    Some('"') => result.push('"'),
+                    Some('n') => result.push('\n'),
+                    Some('t') => result.push('\t'),
+                    Some('r') => result.push('\r'),
+                    Some(other) => {
+                        result.push('\\');
+                        result.push(other);
+                    }
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    } else {
+        path.to_string()
     }
 }

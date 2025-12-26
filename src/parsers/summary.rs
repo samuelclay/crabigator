@@ -6,7 +6,7 @@ use std::path::Path;
 use tokio::process::Command;
 
 use super::types::{ChangeNode, ChangeType, FileChanges, LanguageChanges, NodeKind};
-use super::{GenericParser, PythonParser, RustParser, TypeScriptParser};
+use super::{GenericParser, ObjCParser, PythonParser, RustParser, SwiftParser, TypeScriptParser};
 
 /// Trait for language-specific diff parsers
 pub trait DiffParser: Send + Sync {
@@ -118,6 +118,8 @@ impl DiffSummary {
             Box::new(RustParser),
             Box::new(TypeScriptParser),
             Box::new(PythonParser),
+            Box::new(SwiftParser),
+            Box::new(ObjCParser),
             Box::new(GenericParser),
         ];
 
