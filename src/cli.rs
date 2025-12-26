@@ -56,29 +56,40 @@ pub fn parse_args() -> Args {
 
     // Check for subcommand first
     if let Some(first) = iter.peek() {
-        if first == "inspect" {
-            iter.next(); // consume "inspect"
-            let mut dir_filter = None;
-            let mut watch = false;
-            let mut raw = false;
+        match first.as_str() {
+            "inspect" => {
+                iter.next(); // consume "inspect"
+                let mut dir_filter = None;
+                let mut watch = false;
+                let mut raw = false;
 
-            for arg in iter {
-                match arg.as_str() {
-                    "--watch" | "-w" => watch = true,
-                    "--raw" | "-r" => raw = true,
-                    _ if !arg.starts_with('-') && dir_filter.is_none() => {
-                        dir_filter = Some(arg);
+                for arg in iter {
+                    match arg.as_str() {
+                        "--watch" | "-w" => watch = true,
+                        "--raw" | "-r" => raw = true,
+                        _ if !arg.starts_with('-') && dir_filter.is_none() => {
+                            dir_filter = Some(arg);
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
 
-            args.command = Command::Inspect {
-                dir_filter,
-                watch,
-                raw,
-            };
-            return args;
+                args.command = Command::Inspect {
+                    dir_filter,
+                    watch,
+                    raw,
+                };
+                return args;
+            }
+            "continue" | "c" => {
+                iter.next(); // consume the subcommand
+                args.platform_args.push("--continue".to_string());
+            }
+            "resume" | "r" => {
+                iter.next(); // consume the subcommand
+                args.platform_args.push("--resume".to_string());
+            }
+            _ => {}
         }
     }
 
