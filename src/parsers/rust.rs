@@ -92,6 +92,44 @@ impl DiffParser for RustParser {
 
             let is_added = line.starts_with('+') && !line.starts_with("+++");
             let is_removed = line.starts_with('-') && !line.starts_with("---");
+            let is_context = line.starts_with(' ');
+
+            // Check context lines for function/struct/impl definitions to track current scope
+            if is_context {
+                let content = &line[1..];
+                // Check for impl blocks in context
+                if let Some(caps) = impl_re.captures(content) {
+                    let type_name = caps.get(2).map(|m| m.as_str()).unwrap_or("Unknown");
+                    let trait_name = caps.get(1).map(|m| m.as_str());
+                    let name = if let Some(trait_n) = trait_name {
+                        format!("{} for {}", trait_n, type_name)
+                    } else {
+                        type_name.to_string()
+                    };
+                    current_context = Some((NodeKind::Impl, name));
+                }
+                // Check for functions in context
+                else if let Some(caps) = fn_re.captures(content) {
+                    let fn_name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Function, fn_name.to_string()));
+                }
+                // Check for structs in context
+                else if let Some(caps) = struct_re.captures(content) {
+                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Struct, name.to_string()));
+                }
+                // Check for enums in context
+                else if let Some(caps) = enum_re.captures(content) {
+                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Enum, name.to_string()));
+                }
+                // Check for traits in context
+                else if let Some(caps) = trait_re.captures(content) {
+                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Trait, name.to_string()));
+                }
+                continue;
+            }
 
             if !is_added && !is_removed {
                 continue;
@@ -220,8 +258,13 @@ impl DiffParser for RustParser {
             // If not a definition line, add to current context
             if !found_definition {
                 if let Some(ref key) = current_context {
-                    if let Some(entry) = change_map.get_mut(key) {
-                        if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    let entry = change_map
+                        .entry(key.clone())
+                        .or_insert((ChangeType::Modified, 0, 0));
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
                     }
                 }
             }

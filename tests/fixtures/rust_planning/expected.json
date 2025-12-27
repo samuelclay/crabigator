@@ -16,7 +16,7 @@
           {
             "changes": [
               {
-                "additions": 5,
+                "additions": 3,
                 "change_type": "modified",
                 "deletions": 1,
                 "kind": "function",
@@ -44,7 +44,7 @@
       },
       "rendered": [
         "Rust - 3 changes",
-        "  ~Function greet +5-1",
+        "  ~Function greet +3-1",
         "  +Function new_feature +3-0",
         "  +Function plan +2-0"
       ]

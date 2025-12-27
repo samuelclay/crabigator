@@ -16,7 +16,7 @@
           {
             "changes": [
               {
-                "additions": 5,
+                "additions": 3,
                 "change_type": "modified",
                 "deletions": 1,
                 "kind": "function",
@@ -42,7 +42,7 @@
           {
             "changes": [
               {
-                "additions": 4,
+                "additions": 2,
                 "change_type": "modified",
                 "deletions": 1,
                 "kind": "function",
@@ -63,11 +63,11 @@
       },
       "rendered": [
         "JavaScript - 3 changes",
-        "  ~Function greet +5-1",
+        "  ~Function greet +3-1",
         "  +Function plan +2-0",
         "  +Function sum +3-0",
         "Python - 2 changes",
-        "  ~Function greet +4-1",
+        "  ~Function greet +2-1",
         "  +Function plan +2-0"
       ]
     },

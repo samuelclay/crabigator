@@ -87,6 +87,32 @@ impl DiffParser for SwiftParser {
 
             let is_added = line.starts_with('+') && !line.starts_with("+++");
             let is_removed = line.starts_with('-') && !line.starts_with("---");
+            let is_context = line.starts_with(' ');
+
+            // Check context lines for function/class definitions to track current scope
+            if is_context {
+                let content = &line[1..];
+                if let Some(caps) = fn_re.captures(content) {
+                    let fn_name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Function, fn_name.to_string()));
+                } else if let Some(caps) = class_re.captures(content) {
+                    let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Class, name.to_string()));
+                } else if let Some(caps) = struct_re.captures(content) {
+                    let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Struct, name.to_string()));
+                } else if let Some(caps) = enum_re.captures(content) {
+                    let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Enum, name.to_string()));
+                } else if let Some(caps) = extension_re.captures(content) {
+                    let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Impl, name.to_string()));
+                } else if let Some(caps) = protocol_re.captures(content) {
+                    let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Trait, name.to_string()));
+                }
+                continue;
+            }
 
             if !is_added && !is_removed {
                 continue;
@@ -186,8 +212,13 @@ impl DiffParser for SwiftParser {
             // If not a definition line, add to current context
             if !found_definition {
                 if let Some(ref key) = current_context {
-                    if let Some(entry) = change_map.get_mut(key) {
-                        if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    let entry = change_map
+                        .entry(key.clone())
+                        .or_insert((ChangeType::Modified, 0, 0));
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
                     }
                 }
             }

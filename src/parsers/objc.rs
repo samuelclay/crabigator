@@ -84,6 +84,26 @@ impl DiffParser for ObjCParser {
 
             let is_added = line.starts_with('+') && !line.starts_with("+++");
             let is_removed = line.starts_with('-') && !line.starts_with("---");
+            let is_context = line.starts_with(' ');
+
+            // Check context lines for method/class definitions to track current scope
+            if is_context {
+                let content = &line[1..];
+                if let Some(caps) = method_re.captures(content) {
+                    let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Method, name.to_string()));
+                } else if let Some(caps) = impl_re.captures(content) {
+                    let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Impl, name.to_string()));
+                } else if let Some(caps) = interface_re.captures(content) {
+                    let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Class, name.to_string()));
+                } else if let Some(caps) = protocol_re.captures(content) {
+                    let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+                    current_context = Some((NodeKind::Trait, name.to_string()));
+                }
+                continue;
+            }
 
             if !is_added && !is_removed {
                 continue;
@@ -153,8 +173,13 @@ impl DiffParser for ObjCParser {
             // If not a definition line, add to current context
             if !found_definition {
                 if let Some(ref key) = current_context {
-                    if let Some(entry) = change_map.get_mut(key) {
-                        if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    let entry = change_map
+                        .entry(key.clone())
+                        .or_insert((ChangeType::Modified, 0, 0));
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
                     }
                 }
             }
