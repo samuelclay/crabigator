@@ -110,7 +110,7 @@ mod fixtures {
             false,
         );
 
-        let published = publisher.maybe_publish(&stats, &git_state, &diff_summary, None)?;
+        let published = publisher.maybe_publish(&stats, &git_state, &diff_summary, None, Some(42), Some(10))?;
         if !published {
             bail!("mirror publish throttled or unchanged");
         }

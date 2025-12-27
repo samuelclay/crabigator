@@ -25,6 +25,10 @@ use crate::ui::{draw_status_bar, Layout};
 struct GitRefreshResult {
     git_state: GitState,
     diff_summary: DiffSummary,
+    /// Time taken for git status refresh (ms)
+    git_time_ms: u64,
+    /// Time taken for diff summary parsing (ms)
+    diff_time_ms: u64,
 }
 
 pub struct App {
@@ -55,6 +59,10 @@ pub struct App {
     osc_scanner: OscScanner,
     /// Terminal title extracted from OSC sequences (e.g., "Claude Code Ghostty Integration")
     terminal_title: Option<String>,
+    /// Time taken for initial git refresh (set once on first load)
+    initial_git_time_ms: Option<u64>,
+    /// Time taken for initial diff parsing (set once on first load)
+    initial_diff_time_ms: Option<u64>,
 }
 
 impl App {
@@ -121,6 +129,8 @@ impl App {
             dsr_handler: DsrHandler::new(),
             osc_scanner: OscScanner::new(),
             terminal_title: None,
+            initial_git_time_ms: None,
+            initial_diff_time_ms: None,
         })
     }
 
@@ -166,21 +176,45 @@ impl App {
         // Pass true to scroll existing content up and make room for status bar
         self.setup_scroll_region(true)?;
 
-        // Initial status bar draw
+        // Initial status bar draw (shows "loading" state for git widgets)
         self.draw_status_bar()?;
 
-        // Trigger initial git refresh immediately
-        self.refresh_git_state().await;
-        self.draw_status_bar()?;
+        // Channel for receiving background git refresh results
+        let (git_tx, mut git_rx) = mpsc::channel::<GitRefreshResult>(1);
+        let mut git_refresh_pending = true; // Start with refresh pending
+
+        // Spawn initial git refresh in background (non-blocking)
+        // This allows the PTY to be visible immediately while git loads
+        {
+            let tx = git_tx.clone();
+            tokio::spawn(async move {
+                let git_state_tmp = GitState::new();
+                let diff_summary_tmp = DiffSummary::new();
+
+                // Time each refresh separately
+                let git_start = Instant::now();
+                let git_result = git_state_tmp.refresh().await;
+                let git_time_ms = git_start.elapsed().as_millis() as u64;
+
+                let diff_start = Instant::now();
+                let diff_result = diff_summary_tmp.refresh().await;
+                let diff_time_ms = diff_start.elapsed().as_millis() as u64;
+
+                let git_state = git_result.unwrap_or_default();
+                let diff_summary = diff_result.unwrap_or_default();
+                let _ = tx.send(GitRefreshResult {
+                    git_state,
+                    diff_summary,
+                    git_time_ms,
+                    diff_time_ms,
+                }).await;
+            });
+        }
 
         // Initial screen capture (write immediately so file isn't blank on startup)
         let _ = self
             .capture_manager
             .update_screen(self.platform_pty.screen());
-
-        // Channel for receiving background git refresh results
-        let (git_tx, mut git_rx) = mpsc::channel::<GitRefreshResult>(1);
-        let mut git_refresh_pending = false;
 
         while self.running {
             // Receive PTY output and write directly to stdout
@@ -195,6 +229,13 @@ impl App {
                 self.git_state = result.git_state;
                 self.diff_summary = result.diff_summary;
                 git_refresh_pending = false;
+
+                // Capture initial timing (only set once, on first load)
+                if self.initial_git_time_ms.is_none() {
+                    self.initial_git_time_ms = Some(result.git_time_ms);
+                    self.initial_diff_time_ms = Some(result.diff_time_ms);
+                }
+
                 // Redraw with new data
                 self.draw_status_bar()?;
                 last_status_draw = Instant::now();
@@ -214,7 +255,13 @@ impl App {
                     );
                     let git_state = git_result.unwrap_or_default();
                     let diff_summary = diff_result.unwrap_or_default();
-                    let _ = tx.send(GitRefreshResult { git_state, diff_summary }).await;
+                    // Timing not tracked for periodic refreshes (only initial)
+                    let _ = tx.send(GitRefreshResult {
+                        git_state,
+                        diff_summary,
+                        git_time_ms: 0,
+                        diff_time_ms: 0,
+                    }).await;
                 });
             }
 
@@ -360,6 +407,8 @@ impl App {
             &self.git_state,
             &self.diff_summary,
             self.terminal_title.as_deref(),
+            self.initial_git_time_ms,
+            self.initial_diff_time_ms,
         );
 
         Ok(())
@@ -394,18 +443,4 @@ impl App {
         Ok(())
     }
 
-    async fn refresh_git_state(&mut self) {
-        // Run git status and diff parsing in parallel
-        let (git_result, diff_result) = tokio::join!(
-            self.git_state.refresh(),
-            self.diff_summary.refresh()
-        );
-
-        if let Ok(status) = git_result {
-            self.git_state = status;
-        }
-        if let Ok(diff) = diff_result {
-            self.diff_summary = diff;
-        }
-    }
 }

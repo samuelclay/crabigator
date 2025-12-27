@@ -7,6 +7,11 @@
   },
   "cwd": "multi_lang",
   "last_updated": 0.0,
+  "launch_timing": {
+    "diff_time_ms": 10,
+    "git_time_ms": 42,
+    "uptime_secs": 0
+  },
   "session_id": "fixture-multi_lang",
   "terminal_title": null,
   "widgets": {

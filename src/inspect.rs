@@ -211,6 +211,28 @@ fn print_pretty(instances: &[(PathBuf, Value)]) -> Result<()> {
         println!("Directory: {}", cwd);
         println!("Mirror: {}", path.display());
 
+        // Show launch timing
+        if let Some(timing) = data.get("launch_timing") {
+            let uptime = timing.get("uptime_secs").and_then(|v| v.as_u64()).unwrap_or(0);
+            let git_ms = timing.get("git_time_ms").and_then(|v| v.as_u64());
+            let diff_ms = timing.get("diff_time_ms").and_then(|v| v.as_u64());
+
+            print!("Uptime: {}s", uptime);
+
+            match (git_ms, diff_ms) {
+                (Some(g), Some(d)) => {
+                    let total = g + d;
+                    let color = if total > 1000 {
+                        ansi::YELLOW
+                    } else {
+                        ansi::GREEN
+                    };
+                    println!(" | Initial load: {color}{}ms{RESET} (git: {}ms, diff: {}ms)", total, g, d);
+                }
+                _ => println!(" | Initial load: {DIM}pending...{RESET}"),
+            }
+        }
+
         // Show capture info
         if let Some(capture) = data.get("capture") {
             let enabled = capture.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);

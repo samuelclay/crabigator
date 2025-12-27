@@ -34,7 +34,19 @@ pub struct MirrorState {
     pub terminal_title: Option<String>,
     pub last_updated: f64,
     pub capture: CaptureMirror,
+    pub launch_timing: LaunchTimingMirror,
     pub widgets: MirrorWidgets,
+}
+
+/// Launch timing information
+#[derive(Serialize, Clone, Default)]
+pub struct LaunchTimingMirror {
+    /// Time since app started (seconds)
+    pub uptime_secs: u64,
+    /// Time for initial git status refresh (ms), None if still loading
+    pub git_time_ms: Option<u64>,
+    /// Time for initial diff parsing (ms), None if still loading
+    pub diff_time_ms: Option<u64>,
 }
 
 /// Capture file info
@@ -111,6 +123,7 @@ pub struct MirrorPublisher {
     capture: CaptureMirror,
     last_publish: Instant,
     last_hash: u64,
+    app_start: Instant,
 }
 
 impl MirrorPublisher {
@@ -131,6 +144,7 @@ impl MirrorPublisher {
             // Allow immediate first publish
             last_publish: Instant::now() - Duration::from_secs(10),
             last_hash: 0,
+            app_start: Instant::now(),
         }
     }
 
@@ -152,6 +166,8 @@ impl MirrorPublisher {
         git: &GitState,
         diff: &DiffSummary,
         terminal_title: Option<&str>,
+        initial_git_time_ms: Option<u64>,
+        initial_diff_time_ms: Option<u64>,
     ) -> Result<bool> {
         if !self.enabled {
             return Ok(false);
@@ -169,7 +185,12 @@ impl MirrorPublisher {
         }
 
         // Publish
-        let state = self.build_state(stats, git, diff, terminal_title);
+        let launch_timing = LaunchTimingMirror {
+            uptime_secs: self.app_start.elapsed().as_secs(),
+            git_time_ms: initial_git_time_ms,
+            diff_time_ms: initial_diff_time_ms,
+        };
+        let state = self.build_state(stats, git, diff, terminal_title, launch_timing);
         let json = serde_json::to_string_pretty(&state)?;
 
         // Ensure session directory exists
@@ -232,6 +253,7 @@ impl MirrorPublisher {
         git: &GitState,
         diff: &DiffSummary,
         terminal_title: Option<&str>,
+        launch_timing: LaunchTimingMirror,
     ) -> MirrorState {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -244,6 +266,7 @@ impl MirrorPublisher {
             terminal_title: terminal_title.map(String::from),
             last_updated: timestamp,
             capture: self.capture.clone(),
+            launch_timing,
             widgets: MirrorWidgets {
                 stats: WidgetMirror {
                     data: StatsMirrorData {
