@@ -64,6 +64,21 @@ pub enum SessionState {
     Complete,
 }
 
+/// A single hook event entry for debugging
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct HookEvent {
+    /// Unix timestamp when event occurred
+    pub ts: f64,
+    /// Event name (e.g., "PermissionRequest", "PostToolUse")
+    pub event: String,
+    /// State before the event was processed
+    #[serde(default)]
+    pub state_before: String,
+    /// Additional event-specific details
+    #[serde(default)]
+    pub details: Option<HashMap<String, serde_json::Value>>,
+}
+
 /// Statistics collected from a platform's hook system
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PlatformStats {
@@ -91,6 +106,9 @@ pub struct PlatformStats {
     pub idle_since: Option<f64>,
     /// Unix timestamp of last update
     pub last_updated: Option<f64>,
+    /// Rolling log of hook events for debugging
+    #[serde(default)]
+    pub event_history: Vec<HookEvent>,
 }
 
 impl PlatformStats {

@@ -113,8 +113,9 @@ async fn main() -> Result<()> {
             dir_filter,
             watch,
             raw,
+            history,
         } => {
-            return inspect::run_inspect(dir_filter, watch, raw);
+            return inspect::run_inspect(dir_filter, watch, raw, history);
         }
         Command::Run => {}
     }

@@ -8,8 +8,10 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
+use chrono::{Local, TimeZone};
 use serde_json::Value;
 
+use crate::platforms::PlatformStats;
 use crate::terminal::escape::{ansi, CLEAR_SCREEN_HOME, DIM, RESET};
 
 /// Get file status with size info
@@ -40,7 +42,7 @@ fn format_size(bytes: u64) -> String {
 }
 
 /// Run the inspect command
-pub fn run_inspect(dir_filter: Option<String>, watch: bool, raw: bool) -> Result<()> {
+pub fn run_inspect(dir_filter: Option<String>, watch: bool, raw: bool, history: bool) -> Result<()> {
     loop {
         let instances = discover_instances(&dir_filter)?;
 
@@ -49,6 +51,8 @@ pub fn run_inspect(dir_filter: Option<String>, watch: bool, raw: bool) -> Result
                 println!("--- {} ---", path.display());
                 println!("{}", serde_json::to_string_pretty(data)?);
             }
+        } else if history {
+            print_history(&instances)?;
         } else {
             print_pretty(&instances)?;
         }
@@ -60,6 +64,107 @@ pub fn run_inspect(dir_filter: Option<String>, watch: bool, raw: bool) -> Result
         // Clear screen and wait before next update
         print!("{CLEAR_SCREEN_HOME}");
         thread::sleep(Duration::from_millis(500));
+    }
+
+    Ok(())
+}
+
+/// Load stats file for a session to get event history
+fn load_stats_for_session(session_id: &str) -> Option<PlatformStats> {
+    let stats_path = format!("/tmp/crabigator-stats-{}.json", session_id);
+    if let Ok(content) = fs::read_to_string(&stats_path) {
+        serde_json::from_str(&content).ok()
+    } else {
+        None
+    }
+}
+
+/// Format Unix timestamp as local time string
+fn format_timestamp(ts: f64) -> String {
+    let secs = ts as i64;
+    let nanos = ((ts - secs as f64) * 1_000_000_000.0) as u32;
+    if let Some(dt) = Local.timestamp_opt(secs, nanos).single() {
+        dt.format("%H:%M:%S%.3f").to_string()
+    } else {
+        format!("{:.3}", ts)
+    }
+}
+
+/// Print event history for debugging
+fn print_history(instances: &[(PathBuf, Value)]) -> Result<()> {
+    if instances.is_empty() {
+        println!("No active crabigator instances found.");
+        return Ok(());
+    }
+
+    for (_path, data) in instances {
+        let session_id = data
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let cwd = data.get("cwd").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+        println!("\n=== Session {} ===", session_id);
+        println!("Directory: {}", cwd);
+
+        // Load stats file to get event history
+        if let Some(stats) = load_stats_for_session(session_id) {
+            let current_state = format!("{:?}", stats.state);
+            println!("Current state: {}", current_state);
+
+            if stats.event_history.is_empty() {
+                println!("\n[Event History] {DIM}(empty - hooks may need reinstalling){RESET}");
+            } else {
+                println!("\n[Event History] ({} events)", stats.event_history.len());
+                println!(
+                    "  {:<15} {:<20} {:<12} {}",
+                    "Time", "Event", "State Before", "Details"
+                );
+                println!("  {}", "-".repeat(70));
+
+                for event in &stats.event_history {
+                    let time_str = format_timestamp(event.ts);
+                    let details_str = event
+                        .details
+                        .as_ref()
+                        .map(|d| {
+                            d.iter()
+                                .map(|(k, v)| format!("{}={}", k, v))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+
+                    println!(
+                        "  {:<15} {:<20} {:<12} {}",
+                        time_str,
+                        event.event,
+                        event.state_before,
+                        details_str
+                    );
+                }
+            }
+        } else {
+            println!("\n[Event History] {DIM}(stats file not found){RESET}");
+        }
+
+        // Show hooks log if it exists
+        let hooks_log = format!("/tmp/crabigator-{}/hooks.log", session_id);
+        if let Ok(content) = fs::read_to_string(&hooks_log) {
+            let lines: Vec<&str> = content.lines().collect();
+            let recent = if lines.len() > 20 {
+                &lines[lines.len() - 20..]
+            } else {
+                &lines[..]
+            };
+
+            println!("\n[Hooks Log] (last {} of {} lines)", recent.len(), lines.len());
+            for line in recent {
+                println!("  {}", line);
+            }
+        }
+
+        println!();
     }
 
     Ok(())

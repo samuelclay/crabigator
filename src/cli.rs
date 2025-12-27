@@ -22,6 +22,8 @@ pub enum Command {
         dir_filter: Option<String>,
         watch: bool,
         raw: bool,
+        /// Show hook event history for debugging
+        history: bool,
     },
 }
 
@@ -62,11 +64,13 @@ pub fn parse_args() -> Args {
                 let mut dir_filter = None;
                 let mut watch = false;
                 let mut raw = false;
+                let mut history = false;
 
                 for arg in iter {
                     match arg.as_str() {
                         "--watch" | "-w" => watch = true,
                         "--raw" | "-r" => raw = true,
+                        "--history" | "-H" => history = true,
                         _ if !arg.starts_with('-') && dir_filter.is_none() => {
                             dir_filter = Some(arg);
                         }
@@ -78,6 +82,7 @@ pub fn parse_args() -> Args {
                     dir_filter,
                     watch,
                     raw,
+                    history,
                 };
                 return args;
             }

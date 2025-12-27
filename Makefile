@@ -1,4 +1,4 @@
-.PHONY: run build check test test-update clean resume continue lint update release codex claude
+.PHONY: run build check test test-update clean resume continue lint update release codex claude reinstall-hooks
 
 PROVIDER_FILE := .crabigator-provider
 DEFAULT_PROVIDER := claude
@@ -52,3 +52,19 @@ lint:
 
 clean:
 	cargo clean
+
+reinstall-hooks:
+	@if [ ! -f ~/.claude/crabigator/hooks-meta.json ]; then \
+		echo "Hooks not installed yet. Will install on next crabigator session."; \
+	else \
+		version=$$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/'); \
+		current_hash=$$(sed "s/{VERSION}/$$version/" src/platforms/claude_code/stats_hook.py | md5 -q 2>/dev/null || sed "s/{VERSION}/$$version/" src/platforms/claude_code/stats_hook.py | md5sum | cut -d' ' -f1); \
+		installed_hash=$$(grep '"script_hash"' ~/.claude/crabigator/hooks-meta.json 2>/dev/null | sed 's/.*: *"\([^"]*\)".*/\1/'); \
+		if [ "$$current_hash" = "$$installed_hash" ]; then \
+			echo "Hooks are already up to date (hash: $$current_hash)."; \
+		else \
+			echo "Hook script changed (installed: $$installed_hash, current: $$current_hash)"; \
+			rm -f ~/.claude/crabigator/hooks-meta.json; \
+			echo "Cleared hooks metadata. Will reinstall on next crabigator session."; \
+		fi \
+	fi

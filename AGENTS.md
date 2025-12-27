@@ -121,3 +121,38 @@ Use `crabigator inspect` to view other running instances:
 - `crabigator inspect /path` - filter by working directory
 - `crabigator inspect --watch` - continuous monitoring
 - `crabigator inspect --raw` - output raw JSON
+- `crabigator inspect --history` - show hook event history for debugging
+
+### Claude Code Hooks
+
+Crabigator installs Python hooks into Claude Code's `~/.claude/settings.json` to track session state (thinking, permission, complete, etc.) and statistics.
+
+**Hook files:**
+- `~/.claude/crabigator/stats-hook.py` - The Python hook script
+- `~/.claude/crabigator/hooks-meta.json` - Version metadata for change detection
+- `/tmp/crabigator-stats-{session_id}.json` - Per-session stats written by hooks
+- `/tmp/crabigator-{session_id}/hooks.log` - Debug log of hook invocations
+
+**Hook versioning:**
+- Hooks are versioned by both `HOOK_VERSION` (from Cargo.toml) and an MD5 hash of the script content
+- On startup, crabigator checks if installed hooks match the current version/hash
+- If mismatched or missing, hooks are automatically reinstalled
+- To force reinstall after modifying the hook script: `make reinstall-hooks`
+
+**Updating hooks:**
+1. Edit `src/platforms/claude_code/stats_hook.py` (the Python script)
+2. Run `make reinstall-hooks` to clear the version metadata
+3. Start a new crabigator session - hooks will be reinstalled automatically
+
+**Debugging hooks:**
+```bash
+crabigator inspect --history ~/projects  # View event history and hooks.log
+cat /tmp/crabigator-{session}/hooks.log  # Raw hook invocation log
+```
+
+**Hook events handled:**
+- `UserPromptSubmit` → state = thinking
+- `PermissionRequest` → state = permission
+- `PostToolUse` → state = thinking (tracks tool counts)
+- `Stop` → state = complete (or question if AskUserQuestion was used)
+- `SubagentStop`, `PreCompact` → increment counters
