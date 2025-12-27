@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use crate::capture::{CaptureConfig, CaptureManager};
 use crate::git::GitState;
 use crate::hooks::SessionStats;
-use crate::platforms::Platform;
+use crate::platforms::{Platform, SessionState};
 use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
 use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty};
@@ -168,9 +168,11 @@ impl App {
         let mut last_git_refresh = Instant::now();
         let mut last_hook_refresh = Instant::now();
         let mut last_status_draw = Instant::now();
+        let mut last_throbber_draw = Instant::now();
         let git_refresh_interval = Duration::from_secs(3);
         let hook_refresh_interval = Duration::from_millis(500);
         let status_debounce = Duration::from_millis(100);
+        let throbber_interval = Duration::from_millis(100);
 
         // Set up scroll region to constrain the CLI to the top area
         // Pass true to scroll existing content up and make room for status bar
@@ -283,6 +285,17 @@ impl App {
             if got_output && last_status_draw.elapsed() >= status_debounce {
                 self.draw_status_bar()?;
                 last_status_draw = Instant::now();
+                last_throbber_draw = Instant::now();
+            }
+
+            // Animate throbber independently when in active states (Thinking/Permission)
+            let needs_throbber = matches!(
+                self.session_stats.platform_stats.state,
+                SessionState::Thinking | SessionState::Permission
+            );
+            if needs_throbber && last_throbber_draw.elapsed() >= throbber_interval {
+                self.draw_status_bar()?;
+                last_throbber_draw = Instant::now();
             }
 
             // Update captures (throttled internally)

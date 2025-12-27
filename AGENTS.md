@@ -141,8 +141,10 @@ Crabigator installs Python hooks into Claude Code's `~/.claude/settings.json` to
 
 **Updating hooks:**
 1. Edit `src/platforms/claude_code/stats_hook.py` (the Python script)
-2. Run `make reinstall-hooks` to clear the version metadata
+2. Run `make reinstall-hooks` to clear the version metadata (REQUIRED after any edit!)
 3. Start a new crabigator session - hooks will be reinstalled automatically
+
+**IMPORTANT:** Always run `make reinstall-hooks` after editing the hook script!
 
 **Debugging hooks:**
 ```bash
@@ -152,7 +154,7 @@ cat /tmp/crabigator-{session}/hooks.log  # Raw hook invocation log
 
 **Hook events handled:**
 - `UserPromptSubmit` → state = thinking
-- `PermissionRequest` → state = permission
+- `PermissionRequest` → state = permission (or question if AskUserQuestion)
 - `PostToolUse` → state = thinking (tracks tool counts)
 - `Stop` → state = complete (or question if AskUserQuestion was used)
 - `SubagentStop`, `PreCompact` → increment counters

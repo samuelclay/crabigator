@@ -93,7 +93,7 @@ fn format_state_indicator(state: SessionState) -> String {
             format!("{}{} ?{}", fg(color::YELLOW), throbber_frame(), RESET)
         }
         SessionState::Question => {
-            format!("{}? Question{}", fg(color::CYAN), RESET)
+            format!("{}» ? «{}", fg(color::ORANGE), RESET)
         }
         SessionState::Complete => {
             format!("{}✓ Complete{}", fg(color::PURPLE), RESET)
