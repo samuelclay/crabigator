@@ -273,15 +273,45 @@ pub fn create_folder_bar(file_count: usize, max_count: usize, max_width: usize) 
 
 /// Calculate display width excluding ANSI escape sequences
 /// Uses Unicode width to properly handle wide characters (e.g., ▣ = 2 columns)
+/// Handles both CSI sequences (\x1b[...m) and OSC sequences (\x1b]...\x07)
 pub fn strip_ansi_len(s: &str) -> usize {
     let mut len = 0;
-    let mut in_escape = false;
-    for c in s.chars() {
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
         if c == '\x1b' {
-            in_escape = true;
-        } else if in_escape {
-            if c == 'm' {
-                in_escape = false;
+            // Check next char to determine escape type
+            match chars.peek() {
+                Some('[') => {
+                    // CSI sequence: \x1b[...m
+                    chars.next(); // consume '['
+                    while let Some(&nc) = chars.peek() {
+                        chars.next();
+                        if nc == 'm' {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    // OSC sequence: \x1b]...(\x07 or \x1b\\)
+                    chars.next(); // consume ']'
+                    while let Some(&nc) = chars.peek() {
+                        if nc == '\x07' {
+                            chars.next();
+                            break;
+                        } else if nc == '\x1b' {
+                            chars.next();
+                            if chars.peek() == Some(&'\\') {
+                                chars.next();
+                            }
+                            break;
+                        }
+                        chars.next();
+                    }
+                }
+                _ => {
+                    // Unknown escape, skip just the escape char
+                }
             }
         } else {
             len += c.width().unwrap_or(0);
@@ -337,6 +367,10 @@ mod tests {
         assert_eq!(strip_ansi_len("hello"), 5);
         assert_eq!(strip_ansi_len("\x1b[31mhello\x1b[0m"), 5);
         assert_eq!(strip_ansi_len("\x1b[38;5;141mtest\x1b[0m"), 4);
+        // OSC 8 hyperlinks
+        assert_eq!(strip_ansi_len("\x1b]8;;http://example.com\x07link\x1b]8;;\x07"), 4);
+        // Mixed CSI and OSC
+        assert_eq!(strip_ansi_len("\x1b[32m\x1b]8;;url\x07text\x1b]8;;\x07\x1b[0m"), 4);
     }
 
     #[test]
