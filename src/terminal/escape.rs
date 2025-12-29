@@ -154,6 +154,17 @@ pub mod ansi {
     pub const YELLOW: &str = "\x1b[33m";
 }
 
+// === OSC 8 Hyperlinks ===
+
+/// Wrap text in an OSC 8 hyperlink (clickable in supporting terminals)
+///
+/// Modern terminals (iTerm2, Kitty, WezTerm, Windows Terminal) support
+/// clickable hyperlinks. Terminals without support show plain text.
+#[inline]
+pub fn hyperlink(url: &str, text: &str) -> String {
+    format!("\x1b]8;;{}\x07{}\x1b]8;;\x07", url, text)
+}
+
 // === Screen Control ===
 
 /// Clear entire screen

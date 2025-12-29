@@ -4,10 +4,12 @@
 //! Automatically uses multiple columns when there are more files than rows.
 
 use std::io::{Stdout, Write};
+use std::path::Path;
 
 use anyhow::Result;
 
-use crate::terminal::escape::{self, color, fg, RESET};
+use crate::ide::IdeKind;
+use crate::terminal::escape::{self, color, fg, hyperlink, RESET};
 use crate::git::{FileStatus, GitState};
 use super::utils::{compute_unique_display_names, create_folder_bar, digit_count, format_diff_stats, format_diff_stats_aligned, get_filename, strip_ansi_len, truncate_path};
 
@@ -69,6 +71,7 @@ impl StatsColumnWidths {
 
 
 /// Draw the git widget at the given position
+#[allow(clippy::too_many_arguments)]
 pub fn draw_git_widget(
     stdout: &mut Stdout,
     pty_rows: u16,
@@ -77,6 +80,8 @@ pub fn draw_git_widget(
     width: u16,
     height: u16,
     git_state: &GitState,
+    ide: IdeKind,
+    cwd: &Path,
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(pty_rows + 1 + row, col + 1))?;
 
@@ -143,7 +148,7 @@ pub fn draw_git_widget(
         if row_idx < num_files {
             let file = &files[row_idx];
             let display_name = &display_names[row_idx];
-            let item = format_file_entry(file, display_name, width as usize, max_changes, &stats_widths);
+            let item = format_file_entry(file, display_name, width as usize, max_changes, &stats_widths, ide, cwd);
             write!(stdout, "{}", item)?;
             let content_len = strip_ansi_len(&item);
             let pad = (width as usize).saturating_sub(content_len);
@@ -206,7 +211,7 @@ pub fn draw_git_widget(
                 if file_idx < num_files {
                     let file = &files[file_idx];
                     let display_name = &display_names[file_idx];
-                    let item = format_file_entry(file, display_name, *col_width, max_changes, &stats_widths);
+                    let item = format_file_entry(file, display_name, *col_width, max_changes, &stats_widths, ide, cwd);
                     let item_len = strip_ansi_len(&item);
                     output.push_str(&item);
                     // Pad to column width
@@ -224,7 +229,7 @@ pub fn draw_git_widget(
             let items: Vec<String> = files
                 .iter()
                 .enumerate()
-                .map(|(i, file)| format_file_compact(file, &display_names[i], max_changes))
+                .map(|(i, file)| format_file_compact(file, &display_names[i], max_changes, ide, cwd))
                 .collect();
             let item_widths: Vec<usize> = items.iter().map(|s| strip_ansi_len(s)).collect();
 
@@ -280,7 +285,7 @@ pub fn draw_git_widget(
 }
 
 /// Format a file entry compactly (icon + name + stats) for wrapped mode
-fn format_file_compact(file: &FileStatus, display_name: &str, max_changes: usize) -> String {
+fn format_file_compact(file: &FileStatus, display_name: &str, max_changes: usize, ide: IdeKind, cwd: &Path) -> String {
     let (icon, icon_color) = get_status_icon_color(&file.status);
 
     if file.is_folder {
@@ -290,7 +295,11 @@ fn format_file_compact(file: &FileStatus, display_name: &str, max_changes: usize
     } else {
         // Compact: just numbers, no bar
         let stats = format_diff_stats(file.additions, file.deletions, max_changes, 0);
-        format!("{}{}{}{} {}", fg(icon_color), icon, RESET, display_name, stats)
+        // Make file name a clickable hyperlink
+        let abs_path = cwd.join(&file.path).to_string_lossy().to_string();
+        let url = ide.file_url(&abs_path, None);
+        let linked_name = hyperlink(&url, display_name);
+        format!("{}{}{}{} {}", fg(icon_color), icon, RESET, linked_name, stats)
     }
 }
 
@@ -342,7 +351,7 @@ fn format_file_entry_natural(file: &FileStatus, display_name: &str, max_changes:
 
 /// Format a single file entry for display
 #[allow(unused_variables)]
-fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, max_changes: usize, stats_widths: &StatsColumnWidths) -> String {
+fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, max_changes: usize, stats_widths: &StatsColumnWidths, ide: IdeKind, cwd: &Path) -> String {
     // Status icon
     let (icon, icon_color) = get_status_icon_color(&file.status);
 
@@ -382,6 +391,11 @@ fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, ma
         let name_char_count = truncated_name.chars().count();
         let name_padding = name_width.saturating_sub(name_char_count);
 
+        // Make file name a clickable hyperlink
+        let abs_path = cwd.join(&file.path).to_string_lossy().to_string();
+        let url = ide.file_url(&abs_path, None);
+        let linked_name = hyperlink(&url, &truncated_name);
+
         // Format stats with aligned columns
         let stats = format_diff_stats_aligned(
             file.additions,
@@ -395,7 +409,7 @@ fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, ma
 
         format!(
             "{}{}{} {}{:pad$} {}",
-            fg(icon_color), icon, RESET, truncated_name, "", stats, pad = name_padding
+            fg(icon_color), icon, RESET, linked_name, "", stats, pad = name_padding
         )
     }
 }

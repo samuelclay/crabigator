@@ -3,11 +3,13 @@
 //! Coordinates the layout and rendering of all status bar widgets.
 
 use std::io::{Stdout, Write};
+use std::path::Path;
 
 use anyhow::Result;
 
 use crate::git::GitState;
 use crate::hooks::SessionStats;
+use crate::ide::IdeKind;
 use crate::parsers::DiffSummary;
 use crate::terminal::escape::{self, color, RESET};
 
@@ -21,6 +23,7 @@ pub struct Layout {
 }
 
 /// Draw the entire status bar area with all widgets
+#[allow(clippy::too_many_arguments)]
 pub fn draw_status_bar(
     stdout: &mut Stdout,
     layout: &Layout,
@@ -28,6 +31,8 @@ pub fn draw_status_bar(
     git_state: &GitState,
     diff_summary: &DiffSummary,
     terminal_title: Option<&str>,
+    ide: IdeKind,
+    cwd: &Path,
 ) -> Result<()> {
     // Save cursor position
     write!(stdout, "{}", escape::CURSOR_SAVE)?;
@@ -88,6 +93,8 @@ pub fn draw_status_bar(
             git_width,
             layout.status_rows,
             git_state,
+            ide,
+            cwd,
         )?;
 
         // Separator
@@ -105,6 +112,8 @@ pub fn draw_status_bar(
             },
             diff_summary,
             terminal_title,
+            ide,
+            cwd,
         )?;
     }
 

@@ -5,6 +5,7 @@ mod cli;
 mod config;
 mod git;
 mod hooks;
+mod ide;
 mod inspect;
 mod mirror;
 mod parsers;

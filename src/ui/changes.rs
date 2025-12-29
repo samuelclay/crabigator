@@ -4,9 +4,11 @@
 //! organized by programming language with per-change line stats.
 
 use std::io::{Stdout, Write};
+use std::path::Path;
 
 use anyhow::Result;
 
+use crate::ide::IdeKind;
 use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges, NodeKind};
 use crate::terminal::escape::{self, color, fg, RESET};
 
@@ -91,6 +93,8 @@ pub fn draw_changes_widget(
     area: WidgetArea,
     diff_summary: &DiffSummary,
     terminal_title: Option<&str>,
+    ide: IdeKind,
+    cwd: &Path,
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
 
@@ -138,7 +142,7 @@ pub fn draw_changes_widget(
     }
 
     // Build rows to display
-    let rows_data = build_rows_for_display(&by_language, area.width, area.height);
+    let rows_data = build_rows_for_display(&by_language, area.width, area.height, ide, cwd);
 
     // Row index (0-based from row 1)
     let row_idx = (area.row - 1) as usize;
@@ -167,7 +171,12 @@ fn build_rows_for_display(
     by_language: &[LanguageChanges],
     width: u16,
     height: u16,
+    _ide: IdeKind,
+    _cwd: &Path,
 ) -> Vec<String> {
+    // Note: ide and cwd are currently unused because LanguageChanges aggregates
+    // symbols across files, losing individual file paths. To add hyperlinks,
+    // we'd need to preserve file/line info in ChangeNode.
     let mut rows = Vec::new();
     let available_rows = height.saturating_sub(2) as usize; // -2 for separator and first row
 

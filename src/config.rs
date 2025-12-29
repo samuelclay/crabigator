@@ -14,6 +14,11 @@ pub struct Config {
     /// Default platform: "claude" or "codex"
     #[serde(default = "default_platform")]
     pub default_platform: String,
+
+    /// IDE for clickable hyperlinks: "vscode", "cursor", "idea", "zed", "sublime", or "none"
+    /// If not set, auto-detects from environment
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ide: Option<String>,
 }
 
 fn default_platform() -> String {
@@ -24,6 +29,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             default_platform: default_platform(),
+            ide: None,
         }
     }
 }

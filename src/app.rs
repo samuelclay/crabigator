@@ -13,8 +13,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use crate::capture::{CaptureConfig, CaptureManager};
+use crate::config::Config;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
+use crate::ide::{self, IdeKind};
 use crate::platforms::{Platform, SessionState};
 use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
@@ -47,7 +49,9 @@ pub struct App {
     pub status_rows: u16,
 
     /// Current working directory for platform stats
-    cwd: String,
+    cwd: std::path::PathBuf,
+    /// Detected IDE for clickable hyperlinks
+    ide: IdeKind,
     pty_rx: mpsc::Receiver<Vec<u8>>,
     /// Mirror publisher for external inspection
     mirror_publisher: MirrorPublisher,
@@ -95,13 +99,19 @@ impl App {
         let session_stats = SessionStats::new();
 
         // Get current working directory for platform stats
-        let cwd = std::env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let cwd_str = cwd.to_string_lossy().to_string();
+
+        // Detect IDE from config or environment
+        let ide = Config::load()
+            .ok()
+            .and_then(|c| c.ide)
+            .and_then(|s| IdeKind::from_config(&s))
+            .unwrap_or_else(ide::detect_ide);
 
         // Create mirror publisher (always enabled for inspection by other instances)
         let session_id = std::env::var("CRABIGATOR_SESSION_ID").unwrap_or_default();
-        let mirror_publisher = MirrorPublisher::new(true, session_id.clone(), cwd.clone(), capture_enabled);
+        let mirror_publisher = MirrorPublisher::new(true, session_id.clone(), cwd_str.clone(), capture_enabled);
 
         // Create capture manager for output streaming
         let capture_config = CaptureConfig {
@@ -123,6 +133,7 @@ impl App {
             pty_rows,
             status_rows,
             cwd,
+            ide,
             pty_rx,
             mirror_publisher,
             capture_manager,
@@ -271,7 +282,7 @@ impl App {
             if last_hook_refresh.elapsed() >= hook_refresh_interval {
                 let old_state = self.session_stats.platform_stats.state;
                 self.session_stats
-                    .refresh_platform_stats(self.platform.as_ref(), &self.cwd);
+                    .refresh_platform_stats(self.platform.as_ref(), &self.cwd.to_string_lossy());
                 let new_state = self.session_stats.platform_stats.state;
                 // Redraw immediately if state changed (e.g., Thinking -> Complete)
                 if old_state != new_state {
@@ -337,7 +348,7 @@ impl App {
         self.mirror_publisher.cleanup();
 
         // Clean up stats file before exit
-        self.platform.cleanup_stats(&self.cwd);
+        self.platform.cleanup_stats(&self.cwd.to_string_lossy());
 
         // Reset scroll region before exit
         self.reset_scroll_region()?;
@@ -412,6 +423,8 @@ impl App {
             &self.git_state,
             &self.diff_summary,
             self.terminal_title.as_deref(),
+            self.ide,
+            &self.cwd,
         )?;
 
         // Publish mirror state (throttled, only when --profile)
