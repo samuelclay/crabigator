@@ -123,8 +123,8 @@ def main():
         # Permission dialog is being shown to user
         tool_name = data.get("tool_name", "unknown")
         add_event(stats, event, {"tool": tool_name})
-        # AskUserQuestion shows a question, not a permission request
-        if tool_name == "AskUserQuestion":
+        # Question-like tools that ask the user something
+        if tool_name in ("AskUserQuestion", "ExitPlanMode"):
             stats["state"] = "question"
             stats["pending_question"] = True
         else:
