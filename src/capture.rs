@@ -7,10 +7,17 @@
 //! Uses a separate vt100 parser with a huge virtual screen to capture
 //! all output without losing anything to scrollback.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs;
+#[cfg(debug_assertions)]
+use std::fs::{File, OpenOptions};
+#[cfg(debug_assertions)]
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+/// Maximum size for raw PTY log before rotation (50MB)
+#[cfg(debug_assertions)]
+const RAW_LOG_MAX_SIZE: u64 = 50 * 1024 * 1024;
 
 /// Configuration for output capture.
 pub struct CaptureConfig {
@@ -35,8 +42,12 @@ pub struct CaptureManager {
     last_screen_update: Instant,
     /// Screen update interval
     screen_update_interval: Duration,
-    /// Raw PTY output log file (for debugging escape sequences)
+    /// Raw PTY output log file (debug builds only)
+    #[cfg(debug_assertions)]
     raw_log: Option<File>,
+    /// Current raw log size for rotation checks
+    #[cfg(debug_assertions)]
+    raw_log_size: u64,
 }
 
 impl CaptureManager {
@@ -55,7 +66,10 @@ impl CaptureManager {
                 scrollback_update_interval: Duration::from_millis(100),
                 last_screen_update: Instant::now(),
                 screen_update_interval: Duration::from_millis(100),
+                #[cfg(debug_assertions)]
                 raw_log: None,
+                #[cfg(debug_assertions)]
+                raw_log_size: 0,
             });
         }
 
@@ -67,11 +81,17 @@ impl CaptureManager {
         // Create directory
         fs::create_dir_all(&capture_dir)?;
 
-        // Open raw log file for appending
-        let raw_log = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(capture_dir.join("pty_raw.log"))?;
+        // Open raw log file for appending (debug builds only)
+        #[cfg(debug_assertions)]
+        let (raw_log, raw_log_size) = {
+            let path = capture_dir.join("pty_raw.log");
+            let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)?;
+            (Some(file), size)
+        };
 
         Ok(Self {
             config,
@@ -81,7 +101,10 @@ impl CaptureManager {
             scrollback_update_interval: Duration::from_millis(100),
             last_screen_update: Instant::now() - Duration::from_secs(10),
             screen_update_interval: Duration::from_millis(100),
-            raw_log: Some(raw_log),
+            #[cfg(debug_assertions)]
+            raw_log,
+            #[cfg(debug_assertions)]
+            raw_log_size,
         })
     }
 
@@ -94,9 +117,18 @@ impl CaptureManager {
             return Ok(());
         }
 
-        // Write raw bytes to log for debugging escape sequences
-        if let Some(ref mut log) = self.raw_log {
-            let _ = log.write_all(data);
+        // Write raw bytes to log for debugging escape sequences (debug builds only)
+        #[cfg(debug_assertions)]
+        {
+            // Rotate if exceeding max size
+            if self.raw_log_size > RAW_LOG_MAX_SIZE {
+                self.rotate_raw_log()?;
+            }
+            if let Some(ref mut log) = self.raw_log {
+                if log.write_all(data).is_ok() {
+                    self.raw_log_size += data.len() as u64;
+                }
+            }
         }
 
         // Process through our capture parser
@@ -104,6 +136,21 @@ impl CaptureManager {
 
         // Periodically rewrite scrollback.log with full content
         self.maybe_update_scrollback()
+    }
+
+    /// Rotate the raw PTY log by truncating it (debug builds only).
+    #[cfg(debug_assertions)]
+    fn rotate_raw_log(&mut self) -> std::io::Result<()> {
+        let path = self.capture_dir.join("pty_raw.log");
+        // Just truncate - we don't need to keep old data for debugging
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)?;
+        self.raw_log = Some(file);
+        self.raw_log_size = 0;
+        Ok(())
     }
 
     /// Update scrollback.log if the throttle interval has elapsed.
