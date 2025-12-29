@@ -181,12 +181,14 @@ fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser, filename: &str)
 
     let file_path = Some(filename.to_string());
 
-    // Track changes with their line counts
-    let mut change_map: HashMap<String, (usize, usize)> = HashMap::new();
-    let hunk_re = Regex::new(r"^@@[^@]+@@\s*(.*)$").unwrap();
+    // Track changes with their line counts and line number: (additions, deletions, line_number)
+    let mut change_map: HashMap<String, (usize, usize, Option<usize>)> = HashMap::new();
+    // Pattern captures: 1=new_line_start, 2=context
+    let hunk_re = Regex::new(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@\s*(.*)$").unwrap();
 
     let mut in_hunk = false;
     let mut current_hunk_func: Option<String> = None;
+    let mut current_hunk_line: Option<usize> = None;
 
     for line in diff.lines() {
         // Check for hunk header
@@ -194,8 +196,11 @@ fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser, filename: &str)
             in_hunk = true;
             current_hunk_func = None;
 
+            // Extract line number from capture group 1
+            current_hunk_line = caps.get(1).and_then(|m| m.as_str().parse().ok());
+
             // Try to extract function from hunk header context (if present)
-            if let Some(context) = caps.get(1) {
+            if let Some(context) = caps.get(2) {
                 let context_str = context.as_str().trim();
                 if !context_str.is_empty() {
                     current_hunk_func = parser.extract_function_from_context(context_str);
@@ -221,7 +226,7 @@ fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser, filename: &str)
 
             if is_added || is_removed {
                 if let Some(ref func_name) = current_hunk_func {
-                    let entry = change_map.entry(func_name.clone()).or_insert((0, 0));
+                    let entry = change_map.entry(func_name.clone()).or_insert((0, 0, current_hunk_line));
                     if is_added { entry.0 += 1; } else { entry.1 += 1; }
                 }
             }
@@ -231,19 +236,20 @@ fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser, filename: &str)
         if line.starts_with("diff --git") {
             in_hunk = false;
             current_hunk_func = None;
+            current_hunk_line = None;
         }
     }
 
     change_map
         .into_iter()
-        .map(|(name, (additions, deletions))| ChangeNode {
+        .map(|(name, (additions, deletions, line_number))| ChangeNode {
             kind: NodeKind::Function,
             name,
             change_type: ChangeType::Modified,
             additions,
             deletions,
             file_path: file_path.clone(),
-            line_number: None,
+            line_number,
             children: Vec::new(),
         })
         .collect()
