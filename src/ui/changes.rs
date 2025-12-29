@@ -10,7 +10,7 @@ use anyhow::Result;
 
 use crate::ide::IdeKind;
 use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges, NodeKind};
-use crate::terminal::escape::{self, color, fg, RESET};
+use crate::terminal::escape::{self, color, fg, hyperlink, RESET};
 
 use super::utils::{digit_count, strip_ansi_len, truncate_middle};
 use super::WidgetArea;
@@ -171,12 +171,9 @@ fn build_rows_for_display(
     by_language: &[LanguageChanges],
     width: u16,
     height: u16,
-    _ide: IdeKind,
-    _cwd: &Path,
+    ide: IdeKind,
+    cwd: &Path,
 ) -> Vec<String> {
-    // Note: ide and cwd are currently unused because LanguageChanges aggregates
-    // symbols across files, losing individual file paths. To add hyperlinks,
-    // we'd need to preserve file/line info in ChangeNode.
     let mut rows = Vec::new();
     let available_rows = height.saturating_sub(2) as usize; // -2 for separator and first row
 
@@ -185,7 +182,8 @@ fn build_rows_for_display(
             break;
         }
 
-        // Sort changes by kind priority, then by total changes (descending)
+        // Sort changes by kind priority, then by total changes (descending),
+        // then by name and file_path for deterministic ordering
         let mut sorted_changes: Vec<&ChangeNode> = lang_changes.changes.iter().collect();
         sorted_changes.sort_by(|a, b| {
             kind_priority(&a.kind).cmp(&kind_priority(&b.kind))
@@ -194,6 +192,8 @@ fn build_rows_for_display(
                     let b_total = b.additions + b.deletions;
                     b_total.cmp(&a_total) // descending
                 })
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.file_path.cmp(&b.file_path))
         });
 
         // Add language header
@@ -220,14 +220,14 @@ fn build_rows_for_display(
                 if rows.len() >= available_rows {
                     break;
                 }
-                let item = format_change_entry(change, name_width, &stats_widths);
+                let item = format_change_entry(change, name_width, &stats_widths, ide, cwd);
                 rows.push(item);
             }
         } else {
             // Too many changes - use ragged/wrapped display
             let items: Vec<FormattedItem> = sorted_changes
                 .iter()
-                .map(|c| format_change_compact(c))
+                .map(|c| format_change_compact(c, ide, cwd))
                 .collect();
 
             // Pack items into rows with 2-space margin
@@ -274,6 +274,8 @@ fn format_change_entry(
     change: &ChangeNode,
     name_width: usize,
     stats_widths: &StatsColumnWidths,
+    ide: IdeKind,
+    cwd: &Path,
 ) -> String {
     let (icon, icon_color) = get_kind_icon(&change.kind);
 
@@ -288,6 +290,15 @@ fn format_change_entry(
     let name_char_count = name.chars().count();
     let name_padding = name_width.saturating_sub(name_char_count);
 
+    // Wrap name in hyperlink if we have file path info
+    let linked_name = if let Some(ref path) = change.file_path {
+        let abs_path = cwd.join(path).to_string_lossy().to_string();
+        let url = ide.file_url(&abs_path, change.line_number);
+        hyperlink(&url, &name)
+    } else {
+        name.to_string()
+    };
+
     // Format stats with aligned columns
     let stats = format_change_stats(
         change.additions,
@@ -300,13 +311,13 @@ fn format_change_entry(
         "{}{}{}{}{}{} {}{:pad$}{}",
         fg(modifier_color), modifier, RESET,
         fg(icon_color), icon, RESET,
-        name, "", stats,
+        linked_name, "", stats,
         pad = name_padding
     )
 }
 
 /// Format a compact change entry (for ragged/wrapped display)
-fn format_change_compact(change: &ChangeNode) -> FormattedItem {
+fn format_change_compact(change: &ChangeNode, ide: IdeKind, cwd: &Path) -> FormattedItem {
     let (icon, icon_color) = get_kind_icon(&change.kind);
 
     let (modifier, modifier_color) = match change.change_type {
@@ -317,6 +328,15 @@ fn format_change_compact(change: &ChangeNode) -> FormattedItem {
 
     // Truncate name for compact display
     let name = truncate_middle(&change.name, 20);
+
+    // Wrap name in hyperlink if we have file path info
+    let linked_name = if let Some(ref path) = change.file_path {
+        let abs_path = cwd.join(path).to_string_lossy().to_string();
+        let url = ide.file_url(&abs_path, change.line_number);
+        hyperlink(&url, &name)
+    } else {
+        name.to_string()
+    };
 
     // Compact stats (no alignment)
     let stats = if change.additions > 0 || change.deletions > 0 {
@@ -339,10 +359,10 @@ fn format_change_compact(change: &ChangeNode) -> FormattedItem {
         "{}{}{}{}{}{}{}{}",
         fg(modifier_color), modifier, RESET,
         fg(icon_color), icon, RESET,
-        name, stats
+        linked_name, stats
     );
 
-    // Calculate display width
+    // Calculate display width (hyperlink escape sequences don't contribute to visual width)
     let stats_width = if change.additions > 0 || change.deletions > 0 {
         1 + (if change.deletions > 0 { 1 + digit_count(change.deletions) } else { 0 })
           + (if change.additions > 0 { 1 + digit_count(change.additions) } else { 0 })

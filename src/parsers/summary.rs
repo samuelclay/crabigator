@@ -31,13 +31,19 @@ impl DiffSummary {
     pub fn by_language(&self) -> Vec<LanguageChanges> {
         use std::collections::HashMap;
 
-        // Merge changes by (language, kind, name) to combine stats
-        let mut by_lang: HashMap<String, HashMap<(NodeKind, String), ChangeNode>> = HashMap::new();
+        // Merge changes by (language, kind, name, file_path) to combine stats
+        // Including file_path prevents merging same-named symbols from different files
+        let mut by_lang: HashMap<String, HashMap<(NodeKind, String, Option<String>), ChangeNode>> =
+            HashMap::new();
 
         for file in &self.files {
             let lang_entry = by_lang.entry(file.language.clone()).or_default();
             for change in &file.changes {
-                let key = (change.kind.clone(), change.name.clone());
+                let key = (
+                    change.kind.clone(),
+                    change.name.clone(),
+                    change.file_path.clone(),
+                );
                 lang_entry
                     .entry(key)
                     .and_modify(|existing| {
@@ -52,8 +58,11 @@ impl DiffSummary {
             .into_iter()
             .map(|(language, changes_map)| {
                 let mut changes: Vec<ChangeNode> = changes_map.into_values().collect();
-                // Sort changes by name for consistent ordering
-                changes.sort_by(|a, b| a.name.cmp(&b.name));
+                // Sort changes by name, then file_path for consistent ordering
+                changes.sort_by(|a, b| {
+                    a.name.cmp(&b.name)
+                        .then_with(|| a.file_path.cmp(&b.file_path))
+                });
                 LanguageChanges { language, changes }
             })
             .collect();
@@ -136,7 +145,7 @@ impl DiffSummary {
             let mut changes = parser.parse(&file_diff, &filename);
 
             // Also parse hunk headers for modifications to existing functions
-            let modified = parse_hunk_modifications(&file_diff, parser.as_ref());
+            let modified = parse_hunk_modifications(&file_diff, parser.as_ref(), &filename);
 
             // Add modified functions that aren't already in changes
             for mod_change in modified {
@@ -166,8 +175,10 @@ impl DiffSummary {
 }
 
 /// Parse hunk headers and context lines to detect modifications inside existing functions
-fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser) -> Vec<ChangeNode> {
+fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser, filename: &str) -> Vec<ChangeNode> {
     use std::collections::HashMap;
+
+    let file_path = Some(filename.to_string());
 
     // Track changes with their line counts
     let mut change_map: HashMap<String, (usize, usize)> = HashMap::new();
@@ -230,6 +241,8 @@ fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser) -> Vec<ChangeNo
             change_type: ChangeType::Modified,
             additions,
             deletions,
+            file_path: file_path.clone(),
+            line_number: None,
             children: Vec::new(),
         })
         .collect()

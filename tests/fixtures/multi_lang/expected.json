@@ -24,6 +24,7 @@
                 "additions": 3,
                 "change_type": "modified",
                 "deletions": 1,
+                "file_path": "src/app.ts",
                 "kind": "function",
                 "name": "greet"
               },
@@ -31,6 +32,7 @@
                 "additions": 2,
                 "change_type": "added",
                 "deletions": 0,
+                "file_path": "src/app.ts",
                 "kind": "function",
                 "name": "plan"
               },
@@ -38,6 +40,7 @@
                 "additions": 3,
                 "change_type": "added",
                 "deletions": 0,
+                "file_path": "src/utils.ts",
                 "kind": "function",
                 "name": "sum"
               }
@@ -50,6 +53,7 @@
                 "additions": 2,
                 "change_type": "modified",
                 "deletions": 1,
+                "file_path": "scripts/main.py",
                 "kind": "function",
                 "name": "greet"
               },
@@ -57,6 +61,7 @@
                 "additions": 2,
                 "change_type": "added",
                 "deletions": 0,
+                "file_path": "scripts/main.py",
                 "kind": "function",
                 "name": "plan"
               }

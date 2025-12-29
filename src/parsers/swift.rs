@@ -42,7 +42,8 @@ impl DiffParser for SwiftParser {
         None
     }
 
-    fn parse(&self, diff: &str, _filename: &str) -> Vec<ChangeNode> {
+    fn parse(&self, diff: &str, filename: &str) -> Vec<ChangeNode> {
+        let file_path = Some(filename.to_string());
         let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> = HashMap::new();
 
         // Regex patterns for Swift constructs
@@ -232,6 +233,8 @@ impl DiffParser for SwiftParser {
                 change_type,
                 additions,
                 deletions,
+                file_path: file_path.clone(),
+                line_number: None, // TODO: extract from hunk headers
                 children: Vec::new(),
             })
             .collect()

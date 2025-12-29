@@ -24,6 +24,7 @@
                 "additions": 3,
                 "change_type": "modified",
                 "deletions": 1,
+                "file_path": "src/lib.rs",
                 "kind": "function",
                 "name": "greet"
               },
@@ -31,14 +32,18 @@
                 "additions": 3,
                 "change_type": "added",
                 "deletions": 0,
+                "file_path": "src/new.rs",
                 "kind": "function",
+                "line_number": 2,
                 "name": "new_feature"
               },
               {
                 "additions": 2,
                 "change_type": "added",
                 "deletions": 0,
+                "file_path": "src/lib.rs",
                 "kind": "function",
+                "line_number": 6,
                 "name": "plan"
               }
             ],

@@ -36,10 +36,10 @@ impl DiffParser for RustParser {
         None
     }
 
-    fn parse(&self, diff: &str, _filename: &str) -> Vec<ChangeNode> {
+    fn parse(&self, diff: &str, filename: &str) -> Vec<ChangeNode> {
         // Track changes with their line counts
-        // Key: (kind, name), Value: (change_type, additions, deletions)
-        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> = HashMap::new();
+        // Key: (kind, name), Value: (change_type, additions, deletions, line_number)
+        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize, Option<usize>)> = HashMap::new();
 
         // Regex patterns for Rust constructs
         let fn_re = Regex::new(r"^\s*(pub\s+)?(async\s+)?fn\s+(\w+)").unwrap();
@@ -49,16 +49,24 @@ impl DiffParser for RustParser {
         let trait_re = Regex::new(r"^\s*(pub\s+)?trait\s+(\w+)").unwrap();
         let mod_re = Regex::new(r"^\s*(pub\s+)?mod\s+(\w+)").unwrap();
         let const_re = Regex::new(r"^\s*(pub\s+)?const\s+(\w+)").unwrap();
-        // Pattern for hunk headers with function context: @@ -line,count +line,count @@ context
-        let hunk_re = Regex::new(r"^@@[^@]+@@\s*(.*)$").unwrap();
+        // Pattern for hunk headers: @@ -old,count +new,count @@ context
+        // Captures: 1=new_line_start, 2=context
+        let hunk_re = Regex::new(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@\s*(.*)$").unwrap();
 
         // Current context: which function/impl we're inside
         let mut current_context: Option<(NodeKind, String)> = None;
+        // Track current line number in the new file
+        let mut current_line: usize = 0;
+        let file_path = Some(filename.to_string());
 
         for line in diff.lines() {
             // Check for hunk headers with function context
             if let Some(caps) = hunk_re.captures(line) {
-                if let Some(context) = caps.get(1) {
+                // Extract new file line number from hunk header
+                if let Some(line_num) = caps.get(1) {
+                    current_line = line_num.as_str().parse().unwrap_or(1);
+                }
+                if let Some(context) = caps.get(2) {
                     let context_str = context.as_str();
                     // Try to extract function name from context
                     if let Some(fn_caps) = fn_re.captures(context_str) {
@@ -66,7 +74,7 @@ impl DiffParser for RustParser {
                         current_context = Some((NodeKind::Function, fn_name.to_string()));
                         // Pre-register as modified (will be updated with line counts)
                         let key = (NodeKind::Function, fn_name.to_string());
-                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0));
+                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0, Some(current_line)));
                     }
                     // Check for impl block in context
                     else if let Some(impl_caps) = impl_re.captures(context_str) {
@@ -79,7 +87,7 @@ impl DiffParser for RustParser {
                         };
                         current_context = Some((NodeKind::Impl, name.clone()));
                         let key = (NodeKind::Impl, name);
-                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0));
+                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0, Some(current_line)));
                     } else {
                         // No function context in hunk header
                         current_context = None;
@@ -96,6 +104,7 @@ impl DiffParser for RustParser {
 
             // Check context lines for function/struct/impl definitions to track current scope
             if is_context {
+                current_line += 1; // Context lines appear in new file
                 let content = &line[1..];
                 // Check for impl blocks in context
                 if let Some(caps) = impl_re.captures(content) {
@@ -135,6 +144,11 @@ impl DiffParser for RustParser {
                 continue;
             }
 
+            // Increment line number for added lines (they appear in new file)
+            if is_added {
+                current_line += 1;
+            }
+
             let content = &line[1..]; // Strip the +/- prefix
 
             // Check if this line defines a new construct
@@ -154,6 +168,7 @@ impl DiffParser for RustParser {
                     if is_added { ChangeType::Added } else { ChangeType::Deleted },
                     0,
                     0,
+                    if is_added { Some(current_line) } else { None },
                 ));
                 if is_added { entry.1 += 1; } else { entry.2 += 1; }
                 current_context = Some(key);
@@ -169,6 +184,7 @@ impl DiffParser for RustParser {
                         if is_added { ChangeType::Added } else { ChangeType::Deleted },
                         0,
                         0,
+                        if is_added { Some(current_line) } else { None },
                     ));
                     if is_added { entry.1 += 1; } else { entry.2 += 1; }
                     current_context = Some(key);
@@ -185,6 +201,7 @@ impl DiffParser for RustParser {
                         if is_added { ChangeType::Added } else { ChangeType::Deleted },
                         0,
                         0,
+                        if is_added { Some(current_line) } else { None },
                     ));
                     if is_added { entry.1 += 1; } else { entry.2 += 1; }
                     current_context = Some(key);
@@ -201,6 +218,7 @@ impl DiffParser for RustParser {
                         if is_added { ChangeType::Added } else { ChangeType::Deleted },
                         0,
                         0,
+                        if is_added { Some(current_line) } else { None },
                     ));
                     if is_added { entry.1 += 1; } else { entry.2 += 1; }
                     current_context = Some(key);
@@ -217,6 +235,7 @@ impl DiffParser for RustParser {
                         if is_added { ChangeType::Added } else { ChangeType::Deleted },
                         0,
                         0,
+                        if is_added { Some(current_line) } else { None },
                     ));
                     if is_added { entry.1 += 1; } else { entry.2 += 1; }
                     current_context = Some(key);
@@ -233,6 +252,7 @@ impl DiffParser for RustParser {
                         if is_added { ChangeType::Added } else { ChangeType::Deleted },
                         0,
                         0,
+                        if is_added { Some(current_line) } else { None },
                     ));
                     if is_added { entry.1 += 1; } else { entry.2 += 1; }
                     current_context = Some(key);
@@ -249,6 +269,7 @@ impl DiffParser for RustParser {
                         if is_added { ChangeType::Added } else { ChangeType::Deleted },
                         0,
                         0,
+                        if is_added { Some(current_line) } else { None },
                     ));
                     if is_added { entry.1 += 1; } else { entry.2 += 1; }
                     found_definition = true;
@@ -260,7 +281,7 @@ impl DiffParser for RustParser {
                 if let Some(ref key) = current_context {
                     let entry = change_map
                         .entry(key.clone())
-                        .or_insert((ChangeType::Modified, 0, 0));
+                        .or_insert((ChangeType::Modified, 0, 0, None));
                     if is_added {
                         entry.1 += 1;
                     } else {
@@ -273,12 +294,14 @@ impl DiffParser for RustParser {
         // Convert map to vec of ChangeNodes
         change_map
             .into_iter()
-            .map(|((kind, name), (change_type, additions, deletions))| ChangeNode {
+            .map(|((kind, name), (change_type, additions, deletions, line_number))| ChangeNode {
                 kind,
                 name,
                 change_type,
                 additions,
                 deletions,
+                file_path: file_path.clone(),
+                line_number,
                 children: Vec::new(),
             })
             .collect()

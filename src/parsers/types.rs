@@ -31,6 +31,10 @@ pub struct ChangeNode {
     pub change_type: ChangeType,
     pub additions: usize,
     pub deletions: usize,
+    /// File path (relative to repo root) for hyperlink generation
+    pub file_path: Option<String>,
+    /// Line number where the symbol is defined (1-indexed)
+    pub line_number: Option<usize>,
     #[allow(dead_code)]
     pub children: Vec<ChangeNode>,
 }

@@ -28,7 +28,8 @@ impl DiffParser for PythonParser {
         None
     }
 
-    fn parse(&self, diff: &str, _filename: &str) -> Vec<ChangeNode> {
+    fn parse(&self, diff: &str, filename: &str) -> Vec<ChangeNode> {
+        let file_path = Some(filename.to_string());
         // Track changes with their line counts
         // Key: (kind, name), Value: (change_type, additions, deletions)
         let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> = HashMap::new();
@@ -149,6 +150,8 @@ impl DiffParser for PythonParser {
                 change_type,
                 additions,
                 deletions,
+                file_path: file_path.clone(),
+                line_number: None, // TODO: extract from hunk headers
                 children: Vec::new(),
             })
             .collect()

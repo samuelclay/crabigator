@@ -85,14 +85,14 @@ impl IdeKind {
     }
 }
 
-/// Detect the IDE from environment variables
+/// Detect the IDE from environment variables (integrated terminal only)
 ///
-/// Priority:
-/// 1. TERM_PROGRAM - set by integrated terminals
-/// 2. IDE-specific environment variables
-/// 3. VISUAL/EDITOR as hints
+/// Only detects IDE when running inside an IDE's integrated terminal,
+/// where the detection is reliable. Otherwise defaults to file:// URLs.
+///
+/// To force a specific IDE, set `ide = "vscode"` (etc) in ~/.crabigator/config.toml
 pub fn detect_ide() -> IdeKind {
-    // Check TERM_PROGRAM first (integrated terminal detection)
+    // Check TERM_PROGRAM (integrated terminal detection)
     if let Ok(term_program) = env::var("TERM_PROGRAM") {
         match term_program.to_lowercase().as_str() {
             "vscode" => return IdeKind::VsCode,
@@ -124,31 +124,7 @@ pub fn detect_ide() -> IdeKind {
         return IdeKind::Zed;
     }
 
-    // Check VISUAL/EDITOR as fallback hints
-    for var in ["VISUAL", "EDITOR"] {
-        if let Ok(editor) = env::var(var) {
-            let editor_lower = editor.to_lowercase();
-            if editor_lower.contains("code") && !editor_lower.contains("cursor") {
-                return IdeKind::VsCode;
-            }
-            if editor_lower.contains("cursor") {
-                return IdeKind::Cursor;
-            }
-            if editor_lower.contains("idea")
-                || editor_lower.contains("webstorm")
-                || editor_lower.contains("pycharm")
-            {
-                return IdeKind::IntelliJ;
-            }
-            if editor_lower.contains("zed") {
-                return IdeKind::Zed;
-            }
-            if editor_lower.contains("subl") {
-                return IdeKind::Sublime;
-            }
-        }
-    }
-
+    // Default: use file:// URLs
     IdeKind::None
 }
 

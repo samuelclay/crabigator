@@ -113,6 +113,10 @@ pub struct ChangeMirror {
     pub change_type: String, // "added", "modified", "deleted"
     pub additions: usize,
     pub deletions: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_number: Option<usize>,
 }
 
 /// Publisher that handles throttled state mirroring
@@ -313,6 +317,8 @@ impl MirrorPublisher {
                                         change_type: format!("{:?}", c.change_type).to_lowercase(),
                                         additions: c.additions,
                                         deletions: c.deletions,
+                                        file_path: c.file_path.clone(),
+                                        line_number: c.line_number,
                                     })
                                     .collect(),
                             })
