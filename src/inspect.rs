@@ -117,8 +117,8 @@ fn print_history(instances: &[(PathBuf, Value)]) -> Result<()> {
             } else {
                 println!("\n[Event History] ({} events)", stats.event_history.len());
                 println!(
-                    "  {:<15} {:<20} {:<12} {}",
-                    "Time", "Event", "State Before", "Details"
+                    "  {:<15} {:<20} {:<12} Details",
+                    "Time", "Event", "State Before"
                 );
                 println!("  {}", "-".repeat(70));
 

@@ -39,7 +39,8 @@ impl DiffParser for RustParser {
     fn parse(&self, diff: &str, filename: &str) -> Vec<ChangeNode> {
         // Track changes with their line counts
         // Key: (kind, name), Value: (change_type, additions, deletions, line_number)
-        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize, Option<usize>)> = HashMap::new();
+        type ChangeMap = HashMap<(NodeKind, String), (ChangeType, usize, usize, Option<usize>)>;
+        let mut change_map: ChangeMap = HashMap::new();
 
         // Regex patterns for Rust constructs
         let fn_re = Regex::new(r"^\s*(pub\s+)?(async\s+)?fn\s+(\w+)").unwrap();

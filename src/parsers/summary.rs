@@ -33,8 +33,9 @@ impl DiffSummary {
 
         // Merge changes by (language, kind, name, file_path) to combine stats
         // Including file_path prevents merging same-named symbols from different files
-        let mut by_lang: HashMap<String, HashMap<(NodeKind, String, Option<String>), ChangeNode>> =
-            HashMap::new();
+        type ChangeKey = (NodeKind, String, Option<String>);
+        type LangChanges = HashMap<String, HashMap<ChangeKey, ChangeNode>>;
+        let mut by_lang: LangChanges = HashMap::new();
 
         for file in &self.files {
             let lang_entry = by_lang.entry(file.language.clone()).or_default();
