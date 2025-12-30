@@ -259,14 +259,20 @@ fn build_rows_for_display(
 
 /// Format a language header row
 fn format_header(language: &str, count: usize, label: &str, width: usize) -> String {
-    let left = format!("{}{}{}", fg(color::ORANGE), language, RESET);
-    let left_len = strip_ansi_len(&left);
-
-    let right = format!("{}{} {}{}", fg(color::ORANGE), count, label, RESET);
-    let right_len = strip_ansi_len(&right);
-
-    let pad = width.saturating_sub(left_len + right_len);
-    format!("{}{:pad$}{}", left, "", right, pad = pad)
+    // Match the first row format: "Language N changes" with count in gray
+    let content = format!(
+        "{}{}{} {}{} {}{}",
+        fg(color::ORANGE),
+        language,
+        RESET,
+        fg(color::GRAY),
+        count,
+        label,
+        RESET
+    );
+    let content_len = strip_ansi_len(&content);
+    let pad = width.saturating_sub(content_len);
+    format!("{}{:pad$}", content, "", pad = pad)
 }
 
 /// Format a single change entry with aligned columns (for one-per-row display)

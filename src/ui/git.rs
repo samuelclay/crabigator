@@ -178,7 +178,7 @@ pub fn draw_git_widget(
             for nw in natural_widths.iter().take(end).skip(start) {
                 *col_width = (*col_width).max(*nw);
             }
-            *col_width += 1; // Add margin
+            *col_width += 2; // Add margin between columns
         }
 
         let total_width_needed: usize = col_widths.iter().sum();
