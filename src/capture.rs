@@ -7,10 +7,9 @@
 //! Uses a separate vt100 parser with a huge virtual screen to capture
 //! all output without losing anything to scrollback.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
 #[cfg(debug_assertions)]
-use std::fs::{File, OpenOptions};
-#[cfg(debug_assertions)]
+use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -36,12 +35,14 @@ pub struct CaptureManager {
     capture_parser: vt100::Parser,
     /// Last scrollback.log update time (for throttling)
     last_scrollback_update: Instant,
-    /// Scrollback update interval
+    /// Scrollback update interval (scales with buffer size)
     scrollback_update_interval: Duration,
     /// Last screen.txt update time (for throttling)
     last_screen_update: Instant,
     /// Screen update interval
     screen_update_interval: Duration,
+    /// Last cursor row written to scrollback (for incremental updates)
+    last_scrollback_row: u16,
     /// Raw PTY output log file (debug builds only)
     #[cfg(debug_assertions)]
     raw_log: Option<File>,
@@ -66,6 +67,7 @@ impl CaptureManager {
                 scrollback_update_interval: Duration::from_millis(100),
                 last_screen_update: Instant::now(),
                 screen_update_interval: Duration::from_millis(100),
+                last_scrollback_row: 0,
                 #[cfg(debug_assertions)]
                 raw_log: None,
                 #[cfg(debug_assertions)]
@@ -101,6 +103,7 @@ impl CaptureManager {
             scrollback_update_interval: Duration::from_millis(100),
             last_screen_update: Instant::now() - Duration::from_secs(10),
             screen_update_interval: Duration::from_millis(100),
+            last_scrollback_row: 0,
             #[cfg(debug_assertions)]
             raw_log,
             #[cfg(debug_assertions)]
@@ -166,7 +169,10 @@ impl CaptureManager {
         self.update_scrollback()
     }
 
-    /// Rewrite scrollback.log with full content from the capture parser.
+    /// Append new rows to scrollback.log (incremental update).
+    ///
+    /// Only appends rows that haven't been written yet, making this O(new rows)
+    /// instead of O(total rows). Critical for performance in long sessions.
     pub fn update_scrollback(&mut self) -> std::io::Result<()> {
         if !self.config.enabled {
             return Ok(());
@@ -176,21 +182,37 @@ impl CaptureManager {
         let (_, cols) = screen.size();
         let (cursor_row, _) = screen.cursor_position();
 
-        // Build full content including current line (with ANSI formatting preserved)
+        // Skip if no new rows to write
+        if cursor_row <= self.last_scrollback_row && self.last_scrollback_row > 0 {
+            self.last_scrollback_update = Instant::now();
+            return Ok(());
+        }
+
+        let start_row = self.last_scrollback_row as usize;
+        let end_row = cursor_row as usize + 1;
+
+        // Build only the new content (plain text, no ANSI - much faster)
         let mut content: Vec<u8> = Vec::new();
-        for row_bytes in screen.rows_formatted(0, cols).take(cursor_row as usize + 1) {
-            // Trim trailing whitespace (but preserve ANSI sequences)
-            let trimmed = row_bytes.trim_ascii_end();
-            content.extend_from_slice(trimmed);
+        for row_str in screen.rows(0, cols).skip(start_row).take(end_row - start_row) {
+            let trimmed = row_str.trim_end();
+            content.extend_from_slice(trimmed.as_bytes());
             content.push(b'\n');
         }
 
-        // Atomic write via tmp file
-        let scrollback_path = self.capture_dir.join("scrollback.log");
-        let tmp_path = self.capture_dir.join("scrollback.log.tmp");
-        fs::write(&tmp_path, &content)?;
-        fs::rename(&tmp_path, &scrollback_path)?;
+        if content.is_empty() {
+            self.last_scrollback_update = Instant::now();
+            return Ok(());
+        }
 
+        // Append to scrollback file
+        let scrollback_path = self.capture_dir.join("scrollback.log");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&scrollback_path)?;
+        file.write_all(&content)?;
+
+        self.last_scrollback_row = cursor_row;
         self.last_scrollback_update = Instant::now();
         Ok(())
     }
