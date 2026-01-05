@@ -90,10 +90,10 @@ fn format_state_indicator(state: SessionState) -> String {
             format!("{}{}{}", fg(color::GREEN), throbber_frame(), RESET)
         }
         SessionState::Permission => {
-            format!("{}{} ?{}", fg(color::YELLOW), throbber_frame(), RESET)
+            format!("{}» ? «{} Perm", fg(color::YELLOW), RESET)
         }
         SessionState::Question => {
-            format!("{}» ? «{}", fg(color::ORANGE), RESET)
+            format!("{}» ? «{} Ask", fg(color::ORANGE), RESET)
         }
         SessionState::Complete => {
             format!("{}✓ Complete{}", fg(color::PURPLE), RESET)
