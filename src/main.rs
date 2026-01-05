@@ -2,6 +2,7 @@ mod app;
 mod banner;
 mod capture;
 mod cli;
+mod cloud;
 mod config;
 mod git;
 mod hooks;

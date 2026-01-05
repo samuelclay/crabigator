@@ -26,6 +26,14 @@ pub struct CaptureConfig {
     pub session_id: String,
 }
 
+/// Incremental scrollback update for streaming
+pub struct ScrollbackUpdate {
+    /// Newly appended lines (plain text, newline-delimited)
+    pub diff: String,
+    /// Total line count after applying this diff
+    pub total_lines: usize,
+}
+
 /// Manages output capture to scrollback and screen files.
 pub struct CaptureManager {
     config: CaptureConfig,
@@ -137,8 +145,7 @@ impl CaptureManager {
         // Process through our capture parser
         self.capture_parser.process(data);
 
-        // Periodically rewrite scrollback.log with full content
-        self.maybe_update_scrollback()
+        Ok(())
     }
 
     /// Rotate the raw PTY log by truncating it (debug builds only).
@@ -157,13 +164,13 @@ impl CaptureManager {
     }
 
     /// Update scrollback.log if the throttle interval has elapsed.
-    pub fn maybe_update_scrollback(&mut self) -> std::io::Result<()> {
+    pub fn maybe_update_scrollback(&mut self) -> std::io::Result<Option<ScrollbackUpdate>> {
         if !self.config.enabled {
-            return Ok(());
+            return Ok(None);
         }
 
         if self.last_scrollback_update.elapsed() < self.scrollback_update_interval {
-            return Ok(());
+            return Ok(None);
         }
 
         self.update_scrollback()
@@ -173,9 +180,9 @@ impl CaptureManager {
     ///
     /// Only appends rows that haven't been written yet, making this O(new rows)
     /// instead of O(total rows). Critical for performance in long sessions.
-    pub fn update_scrollback(&mut self) -> std::io::Result<()> {
+    pub fn update_scrollback(&mut self) -> std::io::Result<Option<ScrollbackUpdate>> {
         if !self.config.enabled {
-            return Ok(());
+            return Ok(None);
         }
 
         let screen = self.capture_parser.screen();
@@ -185,7 +192,7 @@ impl CaptureManager {
         // Skip if no new rows to write
         if cursor_row <= self.last_scrollback_row && self.last_scrollback_row > 0 {
             self.last_scrollback_update = Instant::now();
-            return Ok(());
+            return Ok(None);
         }
 
         let start_row = self.last_scrollback_row as usize;
@@ -201,7 +208,7 @@ impl CaptureManager {
 
         if content.is_empty() {
             self.last_scrollback_update = Instant::now();
-            return Ok(());
+            return Ok(None);
         }
 
         // Append to scrollback file
@@ -214,38 +221,43 @@ impl CaptureManager {
 
         self.last_scrollback_row = cursor_row;
         self.last_scrollback_update = Instant::now();
-        Ok(())
+        Ok(Some(ScrollbackUpdate {
+            diff: String::from_utf8_lossy(&content).to_string(),
+            total_lines: end_row,
+        }))
     }
 
     /// Update screen.txt if the throttle interval has elapsed.
-    pub fn maybe_update_screen(&mut self, screen: &vt100::Screen) -> std::io::Result<bool> {
+    pub fn maybe_update_screen(&mut self, screen: &vt100::Screen) -> std::io::Result<Option<String>> {
         if !self.config.enabled {
-            return Ok(false);
+            return Ok(None);
         }
 
         if self.last_screen_update.elapsed() < self.screen_update_interval {
-            return Ok(false);
+            return Ok(None);
         }
 
-        self.update_screen(screen)?;
-        Ok(true)
+        let contents = self.update_screen(screen)?;
+        Ok(Some(contents))
     }
 
     /// Force immediate screen.txt update.
-    pub fn update_screen(&mut self, screen: &vt100::Screen) -> std::io::Result<()> {
+    /// Uses the capture_parser's screen (which is fed PTY data) not the passed-in screen.
+    pub fn update_screen(&mut self, _screen: &vt100::Screen) -> std::io::Result<String> {
         if !self.config.enabled {
-            return Ok(());
+            return Ok(String::new());
         }
 
-        // Write ANSI screen (rendered by vt100)
+        // Use our capture_parser's screen (which has the actual content)
+        // The platform_pty.screen() passed in is unused because its parser isn't fed data
         let screen_path = self.capture_dir.join("screen.txt");
         let tmp_path = self.capture_dir.join("screen.txt.tmp");
-        let contents_formatted = screen.contents_formatted();
+        let contents_formatted = self.capture_parser.screen().contents_formatted();
         fs::write(&tmp_path, &contents_formatted)?;
         fs::rename(&tmp_path, &screen_path)?;
 
         self.last_screen_update = Instant::now();
-        Ok(())
+        Ok(String::from_utf8_lossy(&contents_formatted).to_string())
     }
 
     /// Get the capture directory path.

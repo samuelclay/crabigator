@@ -1,0 +1,17 @@
+{
+  "name": "crabigator-api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 execute crabigator --local --file=migrations/0001_initial.sql",
+    "db:migrate:prod": "wrangler d1 execute crabigator --file=migrations/0001_initial.sql",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.54.0"
+  }
+}

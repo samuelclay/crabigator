@@ -12,7 +12,8 @@ use std::io::{stdout, Write};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use crate::capture::{CaptureConfig, CaptureManager};
+use crate::capture::{CaptureConfig, CaptureManager, ScrollbackUpdate};
+use crate::cloud::{CloudClient, SessionEventBuilder};
 use crate::config::Config;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
@@ -67,6 +68,14 @@ pub struct App {
     initial_git_time_ms: Option<u64>,
     /// Time taken for initial diff parsing (set once on first load)
     initial_diff_time_ms: Option<u64>,
+    /// Cloud client for streaming to drinkcrabigator.com (optional)
+    cloud_client: Option<CloudClient>,
+    /// Last state sent to cloud (to avoid duplicate events)
+    last_cloud_state: Option<SessionState>,
+    /// Last scrollback line count sent to cloud (for diffs)
+    last_cloud_scrollback_lines: usize,
+    /// Whether we've sent an initial stats payload to cloud
+    cloud_stats_sent: bool,
 }
 
 impl App {
@@ -116,9 +125,12 @@ impl App {
         // Create capture manager for output streaming
         let capture_config = CaptureConfig {
             enabled: capture_enabled,
-            session_id,
+            session_id: session_id.clone(),
         };
         let capture_manager = CaptureManager::new(capture_config)?;
+
+        // Initialize cloud client (optional - don't fail if cloud is unreachable)
+        let cloud_client = Self::init_cloud_client(&session_id, &cwd_str, platform.as_ref()).await;
 
         Ok(Self {
             running: true,
@@ -142,7 +154,51 @@ impl App {
             terminal_title: None,
             initial_git_time_ms: None,
             initial_diff_time_ms: None,
+            cloud_client,
+            last_cloud_state: None,
+            last_cloud_scrollback_lines: 0,
+            cloud_stats_sent: false,
         })
+    }
+
+    /// Initialize cloud client - returns None if cloud is unreachable
+    async fn init_cloud_client(
+        session_id: &str,
+        cwd: &str,
+        platform: &dyn Platform,
+    ) -> Option<CloudClient> {
+        // Try to create cloud client
+        let mut client = match CloudClient::new() {
+            Ok(c) => c,
+            Err(e) => {
+                // Style: dim gray label, red X, dim error
+                eprintln!(
+                    "\x1b[38;5;245m     Cloud\x1b[0m  \x1b[38;5;203m✗\x1b[0m \x1b[2m{}\x1b[0m",
+                    e
+                );
+                return None;
+            }
+        };
+
+        // Try to register session with cloud
+        match client.register_session(session_id, cwd, platform.kind().as_str()).await {
+            Ok(cloud_session_id) => {
+                // Style: dim gray label, green checkmark, dim session ID
+                eprintln!(
+                    "\x1b[38;5;245m     Cloud\x1b[0m  \x1b[38;5;114m✓\x1b[0m \x1b[2m{}\x1b[0m",
+                    cloud_session_id
+                );
+                Some(client)
+            }
+            Err(e) => {
+                // Style: dim gray label, red X, dim error
+                eprintln!(
+                    "\x1b[38;5;245m     Cloud\x1b[0m  \x1b[38;5;203m✗\x1b[0m \x1b[2m{}\x1b[0m",
+                    e
+                );
+                None
+            }
+        }
     }
 
     /// Set scroll region to constrain PTY output to top area
@@ -224,10 +280,10 @@ impl App {
             });
         }
 
-        // Initial screen capture (write immediately so file isn't blank on startup)
-        let _ = self
-            .capture_manager
-            .update_screen(self.platform_pty.screen());
+        // Track whether we've sent an initial screen capture (after PTY has rendered)
+        let mut sent_initial_screen = false;
+        let session_start = std::time::Instant::now();
+        let mut last_initial_screen_attempt = session_start;
 
         while self.running {
             // Receive PTY output and write directly to stdout
@@ -242,6 +298,9 @@ impl App {
                 self.git_state = result.git_state;
                 self.diff_summary = result.diff_summary;
                 git_refresh_pending = false;
+
+                // Stream git + changes snapshot to cloud
+                self.send_cloud_git_changes_events();
 
                 // Capture initial timing (only set once, on first load)
                 if self.initial_git_time_ms.is_none() {
@@ -281,16 +340,36 @@ impl App {
             // Refresh platform stats more frequently and redraw if state changed
             if last_hook_refresh.elapsed() >= hook_refresh_interval {
                 let old_state = self.session_stats.platform_stats.state;
+                let old_last_updated = self.session_stats.platform_stats.last_updated;
                 self.session_stats
                     .refresh_platform_stats(self.platform.as_ref(), &self.cwd.to_string_lossy());
                 let new_state = self.session_stats.platform_stats.state;
+                let new_last_updated = self.session_stats.platform_stats.last_updated;
+
                 // Redraw immediately if state changed (e.g., Thinking -> Complete)
                 if old_state != new_state {
                     self.draw_status_bar()?;
                     last_status_draw = Instant::now();
                 }
+
+                // Send initial state once, then on changes
+                if self.last_cloud_state.is_none() || old_state != new_state {
+                    self.send_cloud_state_event(new_state);
+                }
+
+                // Stream stats when platform stats update (or first send)
+                if new_last_updated != old_last_updated || !self.cloud_stats_sent {
+                    self.cloud_stats_sent = true;
+                    self.session_stats.tick();
+                    self.send_cloud_stats_event();
+                    self.send_cloud_stats_update();
+                }
+
                 last_hook_refresh = Instant::now();
             }
+
+            // Check for answers from cloud (mobile → desktop)
+            self.check_cloud_answers()?;
 
             // Redraw status bar after PTY output settles (debounced)
             if got_output && last_status_draw.elapsed() >= status_debounce {
@@ -311,8 +390,31 @@ impl App {
 
             // Update captures (throttled internally)
             if got_output {
-                let _ = self.capture_manager.maybe_update_screen(self.platform_pty.screen());
-                let _ = self.capture_manager.maybe_update_scrollback();
+                if let Ok(Some(screen)) =
+                    self.capture_manager
+                        .maybe_update_screen(self.platform_pty.screen())
+                {
+                    self.send_cloud_screen_event(screen);
+                    sent_initial_screen = true;
+                }
+                if let Ok(Some(update)) = self.capture_manager.maybe_update_scrollback() {
+                    self.send_cloud_scrollback_event(update);
+                }
+            }
+
+            // Send initial screen after terminal has had time to render
+            // Try every 500ms until we get meaningful content (>50 bytes)
+            // or give up after 5 seconds and send whatever we have
+            if !sent_initial_screen && last_initial_screen_attempt.elapsed() > Duration::from_millis(500) {
+                last_initial_screen_attempt = Instant::now();
+                let elapsed = session_start.elapsed();
+                if let Ok(contents) = self.capture_manager.update_screen(self.platform_pty.screen()) {
+                    // Send if we have meaningful content or we've waited long enough
+                    if contents.len() > 50 || elapsed > Duration::from_secs(5) {
+                        self.send_cloud_screen_event(contents);
+                        sent_initial_screen = true;
+                    }
+                }
             }
 
             // Check if the platform CLI has exited
@@ -338,6 +440,23 @@ impl App {
                     }
                     _ => {}
                 }
+            }
+        }
+
+        // Flush final stats + mark session ended in cloud
+        if self.cloud_client.is_some() {
+            self.session_stats.tick();
+            self.send_cloud_stats_event();
+            let tool_calls = self.session_stats.platform_stats.total_tool_calls();
+            if let Some(ref client) = self.cloud_client {
+                let _ = client
+                    .end_session(
+                        self.session_stats.platform_stats.prompts,
+                        self.session_stats.platform_stats.completions,
+                        tool_calls,
+                        self.session_stats.thinking_seconds(),
+                    )
+                    .await;
             }
         }
 
@@ -469,4 +588,98 @@ impl App {
         Ok(())
     }
 
+    /// Send state change event to cloud
+    fn send_cloud_state_event(&mut self, state: SessionState) {
+        // Skip if state hasn't changed
+        if self.last_cloud_state == Some(state) {
+            return;
+        }
+        self.last_cloud_state = Some(state);
+
+        if let Some(ref mut client) = self.cloud_client {
+            let event = SessionEventBuilder::state(state);
+            client.send_event(event);
+            client.spawn_update_state(session_state_label(state));
+        }
+    }
+
+    /// Send scrollback diff event to cloud
+    fn send_cloud_scrollback_event(&mut self, update: ScrollbackUpdate) {
+        if update.total_lines <= self.last_cloud_scrollback_lines {
+            return;
+        }
+        self.last_cloud_scrollback_lines = update.total_lines;
+
+        if let Some(ref mut client) = self.cloud_client {
+            let event = SessionEventBuilder::scrollback(update.diff, update.total_lines);
+            client.send_event(event);
+        }
+    }
+
+    /// Send screen snapshot event to cloud
+    fn send_cloud_screen_event(&mut self, content: String) {
+        if let Some(ref mut client) = self.cloud_client {
+            let event = SessionEventBuilder::screen(content);
+            client.send_event(event);
+        }
+    }
+
+    /// Send stats event to cloud
+    fn send_cloud_stats_event(&mut self) {
+        if let Some(ref mut client) = self.cloud_client {
+            let event = SessionEventBuilder::stats(
+                &self.session_stats.platform_stats,
+                self.session_stats.work_seconds,
+                self.session_stats.thinking_seconds(),
+            );
+            client.send_event(event);
+        }
+    }
+
+    /// Update session stats in cloud DB
+    fn send_cloud_stats_update(&mut self) {
+        if let Some(ref client) = self.cloud_client {
+            let tool_calls = self.session_stats.platform_stats.total_tool_calls();
+            client.spawn_update_stats(
+                self.session_stats.platform_stats.prompts,
+                self.session_stats.platform_stats.completions,
+                tool_calls,
+                self.session_stats.thinking_seconds(),
+            );
+        }
+    }
+
+    /// Send git + changes snapshot to cloud
+    fn send_cloud_git_changes_events(&mut self) {
+        if let Some(ref mut client) = self.cloud_client {
+            client.send_event(SessionEventBuilder::git(&self.git_state));
+            client.send_event(SessionEventBuilder::changes(&self.diff_summary));
+        }
+    }
+
+    /// Check for answers from cloud and inject into PTY
+    fn check_cloud_answers(&mut self) -> Result<()> {
+        if let Some(ref mut client) = self.cloud_client {
+            while let Some(answer) = client.try_recv_answer() {
+                let text = answer.trim_end();
+                // Write text as a single block
+                self.platform_pty.write(text.as_bytes())?;
+                // Small delay to ensure text is processed before Enter
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                // Send Enter key (CR = 0x0D)
+                self.platform_pty.write(&[0x0D])?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn session_state_label(state: SessionState) -> &'static str {
+    match state {
+        SessionState::Ready => "ready",
+        SessionState::Thinking => "thinking",
+        SessionState::Permission => "permission",
+        SessionState::Question => "question",
+        SessionState::Complete => "complete",
+    }
 }

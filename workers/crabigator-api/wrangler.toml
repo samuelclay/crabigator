@@ -1,0 +1,39 @@
+name = "crabigator-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# D1 Database for persistent storage
+[[d1_databases]]
+binding = "DB"
+database_name = "crabigator"
+database_id = "884ae30b-0a93-4716-83f6-89f62a18156a"
+
+# KV for tokens and ephemeral data
+[[kv_namespaces]]
+binding = "TOKENS"
+id = "e35b69000ee445469639878d623139a5"
+
+# Durable Objects for session state
+[[durable_objects.bindings]]
+name = "SESSION"
+class_name = "SessionDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionDO"]
+
+# Production routes
+[[routes]]
+pattern = "drinkcrabigator.com/api/*"
+zone_name = "drinkcrabigator.com"
+
+[[routes]]
+pattern = "drinkcrabigator.com/dashboard"
+zone_name = "drinkcrabigator.com"
+
+[[routes]]
+pattern = "drinkcrabigator.com/"
+zone_name = "drinkcrabigator.com"
+
+[vars]
+API_VERSION = "v1"
