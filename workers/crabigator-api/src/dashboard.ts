@@ -318,10 +318,11 @@ export const dashboardHtml = `<!DOCTYPE html>
     <script>
         const API_BASE = '/api';
         const sessions = new Map(); // sessionId -> { eventSource, state, element, git, changes, stats }
-        let currentLayout = '1';
+        let currentLayout = localStorage.getItem('crabigator-layout') || '1';
 
         function setLayout(layout) {
             currentLayout = layout;
+            localStorage.setItem('crabigator-layout', layout);
             const container = document.getElementById('sessions');
             container.dataset.layout = layout;
 
@@ -1272,6 +1273,7 @@ export const dashboardHtml = `<!DOCTYPE html>
         }
 
         // Initial load and connect to SSE for real-time updates
+        setLayout(currentLayout);  // Apply saved layout preference
         loadSessions();
         connectSessionListStream();
     </script>

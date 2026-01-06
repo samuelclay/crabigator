@@ -1,4 +1,5 @@
 import type { SessionEvent, SessionState, CloudToDesktopMessage } from '../types/session';
+import type { Env } from '../types/env';
 
 interface SessionDOState {
     sessionId: string;
@@ -7,6 +8,14 @@ interface SessionDOState {
     lastScreen: string | null;
     lastTitle: string | null;
     eventSequence: number;
+}
+
+interface SessionInfo {
+    id: string;
+    cwd: string;
+    platform: string;
+    state: string;
+    started_at: number;
 }
 
 /**
@@ -20,13 +29,16 @@ interface SessionDOState {
  */
 export class SessionDO implements DurableObject {
     private state: DurableObjectState;
+    private env: Env;
     private desktopWs: WebSocket | null = null;
     private sseClients: Set<WritableStreamDefaultWriter<Uint8Array>> = new Set();
     private sessionState: SessionDOState;
+    private sessionInfo: SessionInfo | null = null;
     private encoder = new TextEncoder();
 
-    constructor(state: DurableObjectState) {
+    constructor(state: DurableObjectState, env: Env) {
         this.state = state;
+        this.env = env;
         this.sessionState = {
             sessionId: '',
             state: 'ready',
@@ -41,6 +53,10 @@ export class SessionDO implements DurableObject {
             const stored = await state.storage.get<SessionDOState>('sessionState');
             if (stored) {
                 this.sessionState = stored;
+            }
+            const storedInfo = await state.storage.get<SessionInfo>('sessionInfo');
+            if (storedInfo) {
+                this.sessionInfo = storedInfo;
             }
         });
     }
@@ -74,7 +90,7 @@ export class SessionDO implements DurableObject {
     /**
      * Handle WebSocket connection from desktop crabigator
      */
-    private handleDesktopWebSocket(request: Request): Response {
+    private async handleDesktopWebSocket(request: Request): Promise<Response> {
         // Check for WebSocket upgrade
         const upgradeHeader = request.headers.get('Upgrade');
         if (upgradeHeader !== 'websocket') {
@@ -88,6 +104,27 @@ export class SessionDO implements DurableObject {
             } catch {
                 // Ignore errors closing old connection
             }
+        }
+
+        // Get session info from query params
+        const url = new URL(request.url);
+        const cwd = url.searchParams.get('cwd') || '';
+        const platform = url.searchParams.get('platform') || 'claude';
+        const startedAt = parseInt(url.searchParams.get('started_at') || '0', 10);
+
+        // Store session info for disconnect notification
+        if (this.sessionState.sessionId) {
+            this.sessionInfo = {
+                id: this.sessionState.sessionId,
+                cwd,
+                platform,
+                state: this.sessionState.state,
+                started_at: startedAt || Math.floor(Date.now() / 1000),
+            };
+            await this.state.storage.put('sessionInfo', this.sessionInfo);
+
+            // Notify SessionListDO that desktop connected
+            await this.notifySessionList('connect', this.sessionInfo);
         }
 
         const pair = new WebSocketPair();
@@ -110,6 +147,10 @@ export class SessionDO implements DurableObject {
                 this.desktopWs = null;
                 // Notify SSE clients that desktop disconnected
                 this.broadcastDesktopStatus(false);
+                // Notify SessionListDO that desktop disconnected
+                if (this.sessionInfo) {
+                    this.notifySessionList('disconnect', { id: this.sessionInfo.id });
+                }
             }
         });
 
@@ -118,6 +159,10 @@ export class SessionDO implements DurableObject {
             if (this.desktopWs === server) {
                 this.desktopWs = null;
                 this.broadcastDesktopStatus(false);
+                // Notify SessionListDO that desktop disconnected
+                if (this.sessionInfo) {
+                    this.notifySessionList('disconnect', { id: this.sessionInfo.id });
+                }
             }
         });
 
@@ -125,6 +170,23 @@ export class SessionDO implements DurableObject {
             status: 101,
             webSocket: client,
         });
+    }
+
+    /**
+     * Notify SessionListDO about connect/disconnect
+     */
+    private async notifySessionList(action: 'connect' | 'disconnect', data: unknown): Promise<void> {
+        try {
+            const doId = this.env.SESSION_LIST.idFromName('global');
+            const stub = this.env.SESSION_LIST.get(doId);
+            await stub.fetch(new Request(`https://internal/${action}`, {
+                method: 'POST',
+                body: JSON.stringify(data),
+                headers: { 'Content-Type': 'application/json' },
+            }));
+        } catch (error) {
+            console.error('Error notifying SessionListDO:', error);
+        }
     }
 
     /**

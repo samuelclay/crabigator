@@ -43,44 +43,14 @@ router.post('/api/devices/heartbeat', deviceHeartbeat);
 router.post('/api/sessions', createSession);
 
 // List all active sessions (no auth for dashboard)
+// Queries SessionListDO for currently-connected sessions to avoid stale data
 router.get('/api/sessions', async (request, env) => {
-    const url = new URL(request.url);
-    const activeOnly = url.searchParams.get('active') !== 'false';
-    const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 100);
-    const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+    const doId = env.SESSION_LIST.idFromName('global');
+    const stub = env.SESSION_LIST.get(doId);
+    const response = await stub.fetch(new Request('https://internal/sessions'));
+    const data = await response.json() as { sessions: Array<{ id: string; cwd: string; platform: string; state: string; started_at: number }> };
 
-    let query = `
-        SELECT id, client_session_id, cwd, platform, state, started_at, ended_at, is_active,
-               prompts, completions, tool_calls, thinking_seconds
-        FROM sessions
-    `;
-
-    if (activeOnly) {
-        query += ' WHERE is_active = 1';
-    }
-
-    query += ' ORDER BY started_at DESC LIMIT ? OFFSET ?';
-
-    const results = await env.DB.prepare(query).bind(limit, offset).all();
-
-    const sessions = (results.results || []).map((row: Record<string, unknown>) => ({
-        id: row.id,
-        client_session_id: row.client_session_id,
-        cwd: row.cwd,
-        platform: row.platform,
-        state: row.state,
-        started_at: row.started_at,
-        ended_at: row.ended_at,
-        is_active: row.is_active === 1,
-        stats: {
-            prompts: row.prompts,
-            completions: row.completions,
-            tool_calls: row.tool_calls,
-            thinking_seconds: row.thinking_seconds,
-        },
-    }));
-
-    return jsonResponse({ sessions });
+    return jsonResponse({ sessions: data.sessions });
 });
 
 // SSE stream for real-time session list updates (no polling needed)
@@ -109,21 +79,24 @@ router.get('/api/sessions/:id/connect', async (request, env, params) => {
     const { device_id } = authResult.auth;
     const sessionId = params.id;
 
-    // Verify session belongs to device
+    // Verify session belongs to device and get session info
     const session = await env.DB.prepare(
-        'SELECT id FROM sessions WHERE id = ? AND device_id = ?'
-    ).bind(sessionId, device_id).first();
+        'SELECT id, cwd, platform, started_at FROM sessions WHERE id = ? AND device_id = ?'
+    ).bind(sessionId, device_id).first<{ id: string; cwd: string; platform: string; started_at: number }>();
 
     if (!session) {
         return router.errorResponse('Session not found', 'NOT_FOUND', 404);
     }
 
-    // Forward to Durable Object
+    // Forward to Durable Object with session info
     const doId = env.SESSION.idFromName(sessionId);
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);
     url.pathname = '/connect';
     url.searchParams.set('sessionId', sessionId);
+    url.searchParams.set('cwd', session.cwd);
+    url.searchParams.set('platform', session.platform);
+    url.searchParams.set('started_at', String(session.started_at));
     return stub.fetch(new Request(url.toString(), request));
 });
 

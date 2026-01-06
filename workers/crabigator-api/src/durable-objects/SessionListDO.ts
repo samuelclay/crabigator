@@ -1,16 +1,34 @@
+interface ActiveSession {
+    id: string;
+    cwd: string;
+    platform: string;
+    state: string;
+    started_at: number;
+}
+
 /**
  * Durable Object for broadcasting session list changes to dashboard viewers
  *
- * Provides real-time SSE updates when sessions are created, updated, or deleted
- * instead of requiring polling.
+ * Maintains the authoritative list of currently-connected sessions.
+ * Sessions are added when desktop connects, removed when desktop disconnects.
+ * This ensures /api/sessions only returns sessions with active desktop connections.
  */
 export class SessionListDO implements DurableObject {
     private state: DurableObjectState;
     private sseClients: Set<WritableStreamDefaultWriter<Uint8Array>> = new Set();
     private encoder = new TextEncoder();
+    private activeSessions: Map<string, ActiveSession> = new Map();
 
     constructor(state: DurableObjectState) {
         this.state = state;
+
+        // Restore active sessions from storage
+        state.blockConcurrencyWhile(async () => {
+            const stored = await state.storage.get<[string, ActiveSession][]>('activeSessions');
+            if (stored) {
+                this.activeSessions = new Map(stored);
+            }
+        });
     }
 
     async fetch(request: Request): Promise<Response> {
@@ -21,6 +39,12 @@ export class SessionListDO implements DurableObject {
                 return this.handleSubscribe();
             case '/notify':
                 return this.handleNotify(request);
+            case '/sessions':
+                return this.handleGetSessions();
+            case '/connect':
+                return this.handleConnect(request);
+            case '/disconnect':
+                return this.handleDisconnect(request);
             default:
                 return new Response('Not found', { status: 404 });
         }
@@ -103,6 +127,74 @@ export class SessionListDO implements DurableObject {
 
         for (const writer of deadClients) {
             this.sseClients.delete(writer);
+        }
+    }
+
+    /**
+     * Get list of currently connected sessions
+     */
+    private handleGetSessions(): Response {
+        const sessions = Array.from(this.activeSessions.values());
+        return new Response(JSON.stringify({ sessions }), {
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+
+    /**
+     * Register a session as connected (called when desktop WebSocket opens)
+     */
+    private async handleConnect(request: Request): Promise<Response> {
+        if (request.method !== 'POST') {
+            return new Response('Method not allowed', { status: 405 });
+        }
+
+        try {
+            const session = await request.json() as ActiveSession;
+            this.activeSessions.set(session.id, session);
+            await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
+
+            // Broadcast to dashboard viewers
+            await this.broadcast({ type: 'created', session });
+
+            return new Response(JSON.stringify({ ok: true }), {
+                headers: { 'Content-Type': 'application/json' },
+            });
+        } catch {
+            return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
+    }
+
+    /**
+     * Unregister a session as disconnected (called when desktop WebSocket closes)
+     */
+    private async handleDisconnect(request: Request): Promise<Response> {
+        if (request.method !== 'POST') {
+            return new Response('Method not allowed', { status: 405 });
+        }
+
+        try {
+            const { id } = await request.json() as { id: string };
+            const session = this.activeSessions.get(id);
+
+            if (session) {
+                this.activeSessions.delete(id);
+                await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
+
+                // Broadcast to dashboard viewers
+                await this.broadcast({ type: 'deleted', session: { id } });
+            }
+
+            return new Response(JSON.stringify({ ok: true }), {
+                headers: { 'Content-Type': 'application/json' },
+            });
+        } catch {
+            return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+            });
         }
     }
 }
