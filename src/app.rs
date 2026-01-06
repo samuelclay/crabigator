@@ -604,6 +604,13 @@ impl App {
             let event = SessionEventBuilder::state(state);
             client.send_event(event);
             client.spawn_update_state(session_state_label(state));
+
+            // Also send current screen so dashboard shows latest content
+            // This is important when state changes without new PTY output (e.g., Stop event)
+            if let Ok(screen_content) = self.capture_manager.update_screen(self.platform_pty.screen()) {
+                let screen_event = SessionEventBuilder::screen(screen_content);
+                client.send_event(screen_event);
+            }
         }
     }
 

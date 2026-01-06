@@ -123,6 +123,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             word-wrap: break-word;
             overflow-wrap: break-word;
         }
+        .terminal span { box-decoration-break: clone; -webkit-box-decoration-break: clone; }
         .terminal .ansi-bright { font-weight: bold; }
         .terminal .ansi-dim { opacity: 0.5; }
         .terminal .ansi-italic { font-style: italic; }
@@ -269,6 +270,10 @@ export const dashboardHtml = `<!DOCTYPE html>
         function ansiToHtml(text) {
             if (!text) return '';
 
+            // Trim trailing whitespace from each line to prevent background color bleeding
+            // Terminal buffers often pad lines with spaces
+            text = text.split('\\n').map(line => line.trimEnd()).join('\\n');
+
             const defaultFg = '#c9d1d9';
             const defaultBg = '#0d1117';
             const colors = {
@@ -352,17 +357,14 @@ export const dashboardHtml = `<!DOCTYPE html>
 
             function buildStyle() {
                 let fg = state.fg;
-                let bg = state.bg;
+                // For inverse, use bright white since we can't render backgrounds
                 if (state.inverse) {
-                    const invFg = bg || defaultBg;
-                    const invBg = fg || defaultFg;
-                    fg = invFg;
-                    bg = invBg;
+                    fg = '#ffffff';
                 }
 
                 const styles = [];
                 if (fg) styles.push('color:' + fg);
-                if (bg) styles.push('background:' + bg);
+                // Skip background colors - they bleed to container edge due to terminal padding
                 if (state.bold) styles.push('font-weight:bold');
                 if (state.dim) styles.push('opacity:0.5');
                 if (state.italic) styles.push('font-style:italic');
@@ -448,7 +450,15 @@ export const dashboardHtml = `<!DOCTYPE html>
                 // Track newlines in the content
                 if (text[i] === '\\n' || text[i] === '\\r') {
                     if (text[i] === '\\n') {
+                        // Close span before newline to prevent background color bleeding
+                        if (inSpan) {
+                            result += '</span>';
+                        }
                         result += '\\n';
+                        // Reopen span after newline if we had styling
+                        if (inSpan) {
+                            result += '<span style="' + currentStyle + '">';
+                        }
                         currentRow++;
                     }
                     // Skip carriage return - we only care about line feeds
