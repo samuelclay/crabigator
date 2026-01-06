@@ -71,6 +71,7 @@ pub struct StatsMirrorData {
     pub work_seconds: u64,
     pub thinking_seconds: u64,
     pub state: String,
+    pub mode: String,
     pub prompts: u32,
     pub completions: u32,
     pub tools: u32,
@@ -226,6 +227,7 @@ impl MirrorPublisher {
         stats.platform_stats.total_tool_calls().hash(&mut hasher);
         stats.platform_stats.compressions.hash(&mut hasher);
         format!("{:?}", stats.platform_stats.state).hash(&mut hasher);
+        stats.platform_stats.mode.as_str().hash(&mut hasher);
 
         // Hash key fields from git
         git.branch.hash(&mut hasher);
@@ -277,6 +279,7 @@ impl MirrorPublisher {
                         work_seconds: stats.work_seconds,
                         thinking_seconds: stats.thinking_seconds(),
                         state: format!("{:?}", stats.platform_stats.state).to_lowercase(),
+                        mode: stats.platform_stats.mode.as_str().to_string(),
                         prompts: stats.platform_stats.prompts,
                         completions: stats.platform_stats.completions,
                         tools: stats.platform_stats.total_tool_calls(),

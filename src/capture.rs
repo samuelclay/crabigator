@@ -242,38 +242,35 @@ impl CaptureManager {
     }
 
     /// Force immediate screen.txt update.
-    /// Uses the capture_parser's screen (which is fed PTY data) not the passed-in screen.
-    pub fn update_screen(&mut self, _screen: &vt100::Screen) -> std::io::Result<String> {
+    /// Uses the platform_pty's screen (actual terminal size with scroll region).
+    pub fn update_screen(&mut self, screen: &vt100::Screen) -> std::io::Result<String> {
         if !self.config.enabled {
             return Ok(String::new());
         }
 
-        // Use our capture_parser's screen (which has the actual content)
-        // The platform_pty.screen() passed in is unused because its parser isn't fed data
-        let screen = self.capture_parser.screen();
-        let (_, cols) = screen.size();
-        let (cursor_row, _) = screen.cursor_position();
+        // Use the passed-in screen (platform_pty.screen()) which has proper terminal dimensions
+        // This is much smaller than our 10,000 row capture_parser (typically 40-60 rows)
+        let (rows, cols) = screen.size();
 
-        // Collect all rows with their formatted content
-        let formatted_rows: Vec<Vec<u8>> = screen.rows_formatted(0, cols).collect();
+        // Collect all rows (small fixed size - typically 40-60 rows)
+        let formatted_rows: Vec<Vec<u8>> = screen
+            .rows_formatted(0, cols)
+            .take(rows as usize)
+            .collect();
 
-        // Find the last row we need to include (max of cursor position and last non-empty row)
-        let mut last_needed_row = cursor_row as usize;
-        for (row_idx, row) in formatted_rows.iter().enumerate() {
-            let row_str = String::from_utf8_lossy(row);
-            if !row_str.trim().is_empty() && row_idx > last_needed_row {
-                last_needed_row = row_idx;
-            }
-        }
+        // Find last non-empty row
+        let last_nonempty = formatted_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.iter().any(|&b| !b.is_ascii_whitespace()))
+            .map(|(idx, _)| idx)
+            .last()
+            .unwrap_or(0);
 
-        // Build content row-by-row with explicit newlines
+        // Build content up to last non-empty row
         let mut content = Vec::new();
-        for (row_idx, row) in formatted_rows.iter().enumerate() {
-            if row_idx > last_needed_row {
-                break;
-            }
-            content.extend_from_slice(row);
-            // Add newline after each row
+        for row_bytes in formatted_rows.into_iter().take(last_nonempty + 1) {
+            content.extend_from_slice(&row_bytes);
             content.push(b'\n');
         }
 

@@ -20,6 +20,8 @@ pub struct CloudWebSocket {
     event_tx: mpsc::Sender<CloudEvent>,
     /// Receiver for incoming answers
     answer_rx: mpsc::Receiver<String>,
+    /// Receiver for incoming key commands
+    key_rx: mpsc::Receiver<String>,
     /// Receiver that completes when the connection closes
     shutdown_rx: mpsc::Receiver<()>,
 }
@@ -59,6 +61,9 @@ impl CloudWebSocket {
 
         // Channel for incoming answers (cloud -> desktop)
         let (answer_tx, answer_rx) = mpsc::channel::<String>(16);
+
+        // Channel for incoming key commands (cloud -> desktop)
+        let (key_tx, key_rx) = mpsc::channel::<String>(16);
 
         // Channel to signal when connection closes (read task will signal this)
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
@@ -104,6 +109,9 @@ impl CloudWebSocket {
                         Ok(CloudToDesktopMessage::Answer { text }) => {
                             let _ = answer_tx.send(text).await;
                         }
+                        Ok(CloudToDesktopMessage::Key { key }) => {
+                            let _ = key_tx.send(key).await;
+                        }
                         Ok(CloudToDesktopMessage::Ping) => {
                             // Ignore pings
                         }
@@ -120,6 +128,7 @@ impl CloudWebSocket {
         Ok(Self {
             event_tx,
             answer_rx,
+            key_rx,
             shutdown_rx,
         })
     }
@@ -129,6 +138,7 @@ impl CloudWebSocket {
 pub struct WebSocketHandle {
     event_tx: mpsc::Sender<CloudEvent>,
     answer_rx: mpsc::Receiver<String>,
+    key_rx: mpsc::Receiver<String>,
 }
 
 impl CloudWebSocket {
@@ -137,6 +147,7 @@ impl CloudWebSocket {
         let handle = WebSocketHandle {
             event_tx: self.event_tx,
             answer_rx: self.answer_rx,
+            key_rx: self.key_rx,
         };
         (handle, self.shutdown_rx)
     }
@@ -149,8 +160,13 @@ impl WebSocketHandle {
     }
 
     /// Try to receive an answer (non-blocking)
-    pub fn try_recv(&mut self) -> Option<String> {
+    pub fn try_recv_answer(&mut self) -> Option<String> {
         self.answer_rx.try_recv().ok()
+    }
+
+    /// Try to receive a key command (non-blocking)
+    pub fn try_recv_key(&mut self) -> Option<String> {
+        self.key_rx.try_recv().ok()
     }
 
     /// Check if the connection is still alive

@@ -149,6 +149,17 @@ router.post('/api/sessions/:id/answer', async (request, env, params) => {
     return stub.fetch(new Request(url.toString(), request));
 });
 
+// Send key command from dashboard (no auth required)
+// Used for mode switching via Shift+Tab
+router.post('/api/sessions/:id/key', async (request, env, params) => {
+    const sessionId = params.id;
+    const doId = env.SESSION.idFromName(sessionId);
+    const stub = env.SESSION.get(doId);
+    const url = new URL(request.url);
+    url.pathname = '/key';
+    return stub.fetch(new Request(url.toString(), request));
+});
+
 // Get session state (for debugging, no auth for dashboard)
 // Note: Skips D1 lookup - DO handles non-existent sessions gracefully
 router.get('/api/sessions/:id/state', async (request, env, params) => {

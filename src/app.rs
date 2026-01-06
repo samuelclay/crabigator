@@ -371,8 +371,8 @@ impl App {
                 last_hook_refresh = Instant::now();
             }
 
-            // Check for answers from cloud (mobile → desktop)
-            self.check_cloud_answers()?;
+            // Check for commands from cloud (answers + key sequences)
+            self.check_cloud_commands()?;
 
             // Redraw status bar after PTY output settles (debounced)
             if got_output && last_status_draw.elapsed() >= status_debounce {
@@ -397,6 +397,13 @@ impl App {
                     self.capture_manager
                         .maybe_update_screen(self.platform_pty.screen())
                 {
+                    // Detect mode from screen content
+                    let new_mode = crate::mode::detect_mode(&screen);
+                    if new_mode != self.session_stats.platform_stats.mode {
+                        self.session_stats.platform_stats.mode = new_mode;
+                        // Send updated stats to cloud when mode changes
+                        self.send_cloud_stats_event();
+                    }
                     self.send_cloud_screen_event(screen);
                     sent_initial_screen = true;
                 }
@@ -686,9 +693,10 @@ impl App {
         }
     }
 
-    /// Check for answers from cloud and inject into PTY
-    fn check_cloud_answers(&mut self) -> Result<()> {
+    /// Check for answers and key commands from cloud and inject into PTY
+    fn check_cloud_commands(&mut self) -> Result<()> {
         if let Some(ref mut client) = self.cloud_client {
+            // Handle incoming text answers
             while let Some(answer) = client.try_recv_answer() {
                 let text = answer.trim_end();
                 // Write text as a single block
@@ -697,6 +705,19 @@ impl App {
                 std::thread::sleep(std::time::Duration::from_millis(10));
                 // Send Enter key (CR = 0x0D)
                 self.platform_pty.write(&[0x0D])?;
+            }
+
+            // Handle incoming key commands
+            while let Some(key) = client.try_recv_key() {
+                match key.as_str() {
+                    "shift_tab" => {
+                        // Shift+Tab: CSI Z (ESC [ Z) - cycles Claude Code modes
+                        self.platform_pty.write(&[0x1b, b'[', b'Z'])?;
+                    }
+                    _ => {
+                        // Unknown key command - ignore
+                    }
+                }
             }
         }
         Ok(())

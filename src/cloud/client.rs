@@ -441,7 +441,12 @@ impl CloudClient {
 
     /// Try to receive an answer from mobile (non-blocking)
     pub fn try_recv_answer(&mut self) -> Option<String> {
-        self.ws_handle.as_mut()?.try_recv()
+        self.ws_handle.as_mut()?.try_recv_answer()
+    }
+
+    /// Try to receive a key command from cloud (non-blocking)
+    pub fn try_recv_key(&mut self) -> Option<String> {
+        self.ws_handle.as_mut()?.try_recv_key()
     }
 
     /// Drain queued events after reconnection

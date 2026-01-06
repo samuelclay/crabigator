@@ -62,6 +62,8 @@ export class SessionDO implements DurableObject {
                 return this.handleSSE(request);
             case '/answer':
                 return this.handleAnswer(request);
+            case '/key':
+                return this.handleKey(request);
             case '/state':
                 return this.handleGetState();
             default:
@@ -321,6 +323,60 @@ export class SessionDO implements DurableObject {
             this.desktopWs.send(JSON.stringify(message));
         } catch (error) {
             console.error('Error sending to desktop:', error);
+            return new Response(
+                JSON.stringify({ error: 'Failed to send', code: 'SEND_FAILED' }),
+                { status: 500, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        return new Response(
+            JSON.stringify({ ok: true }),
+            { headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+
+    /**
+     * Handle key command from dashboard, forward to desktop
+     * Used for mode switching via Shift+Tab
+     */
+    private async handleKey(request: Request): Promise<Response> {
+        if (request.method !== 'POST') {
+            return new Response('Method not allowed', { status: 405 });
+        }
+
+        let body: { key: string };
+        try {
+            body = await request.json();
+        } catch {
+            return new Response(
+                JSON.stringify({ error: 'Invalid JSON', code: 'INVALID_JSON' }),
+                { status: 400, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        if (!body.key) {
+            return new Response(
+                JSON.stringify({ error: 'Missing key', code: 'MISSING_KEY' }),
+                { status: 400, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        if (!this.desktopWs) {
+            return new Response(
+                JSON.stringify({ error: 'Desktop not connected', code: 'DESKTOP_OFFLINE' }),
+                { status: 503, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        const message: CloudToDesktopMessage = {
+            type: 'key',
+            key: body.key,
+        };
+
+        try {
+            this.desktopWs.send(JSON.stringify(message));
+        } catch (error) {
+            console.error('Error sending key to desktop:', error);
             return new Response(
                 JSON.stringify({ error: 'Failed to send', code: 'SEND_FAILED' }),
                 { status: 500, headers: { 'Content-Type': 'application/json' } }

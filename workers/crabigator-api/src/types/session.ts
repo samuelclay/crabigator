@@ -70,6 +70,11 @@ export interface ChangesEvent {
 }
 
 /**
+ * Claude Code operating mode
+ */
+export type ClaudeMode = 'normal' | 'auto_accept' | 'plan';
+
+/**
  * Session statistics event
  */
 export interface StatsEvent {
@@ -79,6 +84,7 @@ export interface StatsEvent {
     tools: number;
     thinking_seconds: number;
     work_seconds: number;
+    mode?: ClaudeMode;
 }
 
 /**
@@ -131,7 +137,15 @@ export interface PingMessage {
     type: 'ping';
 }
 
-export type CloudToDesktopMessage = AnswerMessage | PingMessage;
+/**
+ * Key command to send to desktop (e.g., Shift+Tab for mode switching)
+ */
+export interface KeyMessage {
+    type: 'key';
+    key: string;            // Key identifier: "shift_tab", etc.
+}
+
+export type CloudToDesktopMessage = AnswerMessage | PingMessage | KeyMessage;
 
 /**
  * Session info for listing

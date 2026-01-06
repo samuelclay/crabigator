@@ -151,6 +151,9 @@ pub struct StatsEvent {
     pub tools: u32,
     pub thinking_seconds: u64,
     pub work_seconds: u64,
+    /// Current Claude Code mode (normal, auto_accept, plan)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 impl StatsEvent {
@@ -160,6 +163,7 @@ impl StatsEvent {
         tools: u32,
         thinking_seconds: u64,
         work_seconds: u64,
+        mode: Option<String>,
     ) -> Self {
         Self {
             event_type: "stats".to_string(),
@@ -168,6 +172,7 @@ impl StatsEvent {
             tools,
             thinking_seconds,
             work_seconds,
+            mode,
         }
     }
 }
@@ -229,6 +234,9 @@ pub enum CloudToDesktopMessage {
     Answer { text: String },
     #[serde(rename = "ping")]
     Ping,
+    /// Send a key sequence (e.g., Shift+Tab for mode switching)
+    #[serde(rename = "key")]
+    Key { key: String },
 }
 
 /// Helper for building events from crabigator's internal state
@@ -310,6 +318,7 @@ impl SessionEventBuilder {
             total_tools,
             thinking_seconds,
             work_seconds,
+            Some(stats.mode.as_str().to_string()),
         ))
     }
 }

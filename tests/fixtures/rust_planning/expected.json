@@ -95,6 +95,7 @@
       "data": {
         "completions": 2,
         "compressions": 1,
+        "mode": "normal",
         "prompts": 0,
         "state": "thinking",
         "thinking_seconds": 0,

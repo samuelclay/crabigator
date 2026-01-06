@@ -64,6 +64,29 @@ pub enum SessionState {
     Complete,
 }
 
+/// Claude Code operating mode (cycles via Shift+Tab)
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaudeMode {
+    /// Normal mode - no special indicators
+    #[default]
+    Normal,
+    /// Auto-accept mode - shows "accept edits" indicator
+    AutoAccept,
+    /// Plan mode - shows "plan mode" indicator
+    Plan,
+}
+
+impl ClaudeMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::AutoAccept => "auto_accept",
+            Self::Plan => "plan",
+        }
+    }
+}
+
 /// A single hook event entry for debugging
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct HookEvent {
@@ -109,6 +132,9 @@ pub struct PlatformStats {
     /// Rolling log of hook events for debugging
     #[serde(default)]
     pub event_history: Vec<HookEvent>,
+    /// Current Claude Code operating mode (detected from screen)
+    #[serde(default)]
+    pub mode: ClaudeMode,
 }
 
 impl PlatformStats {

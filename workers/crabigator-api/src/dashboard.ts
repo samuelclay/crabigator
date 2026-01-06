@@ -261,6 +261,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             font-size: 13px;
         }
         .refresh-btn:hover { background: #30363d; }
+        .mode-indicator:hover { background: #30363d; }
     </style>
 </head>
 <body>
@@ -514,7 +515,25 @@ export const dashboardHtml = `<!DOCTYPE html>
                     }
                     sessions.clear();
                     container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+
+                    // Exponential backoff polling when no sessions (e.g., after deploy)
+                    if (emptyPollTimeout) clearTimeout(emptyPollTimeout);
+                    console.log('No sessions, polling again in ' + (emptyPollDelay / 1000) + 's');
+                    document.getElementById('status').textContent =
+                        'No sessions (retry in ' + Math.round(emptyPollDelay / 1000) + 's)';
+                    emptyPollTimeout = setTimeout(() => {
+                        loadSessions();
+                        // Double the delay for next attempt, capped at max
+                        emptyPollDelay = Math.min(emptyPollDelay * 2, MAX_EMPTY_POLL_DELAY);
+                    }, emptyPollDelay);
                     return;
+                }
+
+                // Found sessions - reset exponential backoff
+                emptyPollDelay = MIN_EMPTY_POLL_DELAY;
+                if (emptyPollTimeout) {
+                    clearTimeout(emptyPollTimeout);
+                    emptyPollTimeout = null;
                 }
                 const emptyState = container.querySelector('.no-sessions');
                 if (emptyState) {
@@ -675,6 +694,33 @@ export const dashboardHtml = `<!DOCTYPE html>
             }
         }
 
+        function formatModeIndicator(mode, sessionId) {
+            const modeConfig = {
+                'plan': { icon: '⏸', label: 'Plan', color: '#a371f7' },
+                'auto_accept': { icon: '⏵⏵', label: 'Auto', color: '#3fb950' },
+                'normal': { icon: '●', label: 'Normal', color: '#8b949e' }
+            };
+            const cfg = modeConfig[mode] || modeConfig['normal'];
+            return '<span class="mode-indicator" onclick="switchMode(\\'' + sessionId + '\\')" style="cursor:pointer;padding:2px 6px;border-radius:4px;color:' + cfg.color + '" title="Click to switch mode (Shift+Tab)">' + cfg.icon + ' ' + cfg.label + '</span>';
+        }
+
+        async function switchMode(sessionId) {
+            try {
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: 'shift_tab' })
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    console.error('Mode switch failed:', err);
+                }
+            } catch (err) {
+                console.error('Failed to switch mode:', err);
+            }
+        }
+
         function updateStatsWidget(sessionId, stats) {
             const widget = document.getElementById('stats-' + sessionId);
             if (!widget) return;
@@ -682,12 +728,18 @@ export const dashboardHtml = `<!DOCTYPE html>
             const session = sessions.get(sessionId);
             const state = session?.state || 'ready';
             const stateIndicator = formatStateIndicator(state);
+            const modeIndicator = formatModeIndicator(stats.mode || 'normal', sessionId);
+
+            // Store mode in session data for tracking
+            if (session && stats.mode) {
+                session.mode = stats.mode;
+            }
 
             const promptsElapsed = stats.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
             const completionsElapsed = stats.completions_changed_at ? formatElapsed(stats.completions_changed_at) : '';
 
             widget.innerHTML = \`
-                <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right">\${stateIndicator}</span></div>
+                <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right">\${modeIndicator} \${stateIndicator}</span></div>
                 <div class="widget-row"><span class="widget-label">◆ Session</span><span class="widget-value" style="color:#58a6ff">\${formatDuration(stats.work_seconds || 0)}</span></div>
                 <div class="widget-row"><span class="widget-label">◇ Thinking</span><span class="widget-value" style="color:#3fb950">\${stats.thinking_seconds ? formatDuration(stats.thinking_seconds) : '—'}</span></div>
                 <div class="widget-row"><span class="widget-label">▸ Prompts \${stats.prompts || 0}</span><span class="widget-value" style="color:#8b949e">\${promptsElapsed}</span></div>
@@ -1017,7 +1069,11 @@ export const dashboardHtml = `<!DOCTYPE html>
         let sessionListSource = null;
         let sseRetryCount = 0;
         let pollingInterval = null;
+        let emptyPollDelay = 2000;  // Start at 2s when no sessions
+        let emptyPollTimeout = null;
         const MAX_SSE_RETRIES = 3;
+        const MIN_EMPTY_POLL_DELAY = 2000;   // 2 seconds
+        const MAX_EMPTY_POLL_DELAY = 30000;  // 30 seconds
 
         function connectSessionListStream() {
             if (sessionListSource) {
@@ -1035,6 +1091,12 @@ export const dashboardHtml = `<!DOCTYPE html>
                     clearInterval(pollingInterval);
                     pollingInterval = null;
                 }
+                // Stop empty session backoff polling
+                if (emptyPollTimeout) {
+                    clearTimeout(emptyPollTimeout);
+                    emptyPollTimeout = null;
+                }
+                emptyPollDelay = MIN_EMPTY_POLL_DELAY;
                 document.getElementById('status').textContent = 'Connected (real-time)';
             };
 

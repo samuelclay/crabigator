@@ -9,6 +9,7 @@ mod hooks;
 mod ide;
 mod inspect;
 mod mirror;
+mod mode;
 mod parsers;
 mod platforms;
 mod terminal;
