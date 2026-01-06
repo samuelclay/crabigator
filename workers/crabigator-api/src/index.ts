@@ -5,8 +5,9 @@ import { createSession, getSession, updateSession, deleteSession } from './handl
 import { requireDeviceAuth } from './auth/middleware';
 import { dashboardHtml } from './dashboard';
 
-// Re-export Durable Object
+// Re-export Durable Objects
 export { SessionDO } from './durable-objects/SessionDO';
+export { SessionListDO } from './durable-objects/SessionListDO';
 
 const router = new Router();
 
@@ -81,6 +82,16 @@ router.get('/api/sessions', async (request, env) => {
 
     return jsonResponse({ sessions });
 });
+
+// SSE stream for real-time session list updates (no polling needed)
+router.get('/api/sessions/stream', async (request, env) => {
+    const doId = env.SESSION_LIST.idFromName('global');
+    const stub = env.SESSION_LIST.get(doId);
+    const url = new URL(request.url);
+    url.pathname = '/subscribe';
+    return stub.fetch(new Request(url.toString(), request));
+});
+
 router.get('/api/sessions/:id', getSession);
 router.patch('/api/sessions/:id', updateSession);
 router.delete('/api/sessions/:id', deleteSession);
@@ -117,19 +128,9 @@ router.get('/api/sessions/:id/connect', async (request, env, params) => {
 });
 
 // SSE stream for mobile/web viewers (no auth required for dashboard)
+// Note: Skips D1 lookup - DO handles non-existent sessions gracefully
 router.get('/api/sessions/:id/events', async (request, env, params) => {
     const sessionId = params.id;
-
-    // Verify session exists
-    const session = await env.DB.prepare(
-        'SELECT id FROM sessions WHERE id = ?'
-    ).bind(sessionId).first();
-
-    if (!session) {
-        return router.errorResponse('Session not found', 'NOT_FOUND', 404);
-    }
-
-    // Forward to Durable Object
     const doId = env.SESSION.idFromName(sessionId);
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);
@@ -138,19 +139,9 @@ router.get('/api/sessions/:id/events', async (request, env, params) => {
 });
 
 // Send answer from dashboard/mobile (no auth required for dashboard)
+// Note: Skips D1 lookup - DO handles non-existent sessions gracefully
 router.post('/api/sessions/:id/answer', async (request, env, params) => {
     const sessionId = params.id;
-
-    // Verify session exists
-    const session = await env.DB.prepare(
-        'SELECT id FROM sessions WHERE id = ?'
-    ).bind(sessionId).first();
-
-    if (!session) {
-        return router.errorResponse('Session not found', 'NOT_FOUND', 404);
-    }
-
-    // Forward to Durable Object
     const doId = env.SESSION.idFromName(sessionId);
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);
@@ -159,19 +150,9 @@ router.post('/api/sessions/:id/answer', async (request, env, params) => {
 });
 
 // Get session state (for debugging, no auth for dashboard)
+// Note: Skips D1 lookup - DO handles non-existent sessions gracefully
 router.get('/api/sessions/:id/state', async (request, env, params) => {
     const sessionId = params.id;
-
-    // Verify session exists
-    const session = await env.DB.prepare(
-        'SELECT id FROM sessions WHERE id = ?'
-    ).bind(sessionId).first();
-
-    if (!session) {
-        return router.errorResponse('Session not found', 'NOT_FOUND', 404);
-    }
-
-    // Forward to Durable Object
     const doId = env.SESSION.idFromName(sessionId);
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);

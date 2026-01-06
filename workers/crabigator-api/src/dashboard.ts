@@ -77,6 +77,40 @@ export const dashboardHtml = `<!DOCTYPE html>
             margin-left: auto;
             font-family: monospace;
         }
+        .pin-btn {
+            background: #21262d;
+            border: 1px solid #30363d;
+            padding: 3px 8px;
+            margin-left: 8px;
+            cursor: pointer;
+            font-size: 11px;
+            border-radius: 4px;
+            transition: all 0.15s ease;
+            color: #8b949e;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .pin-btn:hover {
+            background: #30363d;
+            border-color: #484f58;
+        }
+        .pin-btn.pinned {
+            background: #1f6feb;
+            border-color: #58a6ff;
+            color: #fff;
+            box-shadow: 0 0 8px rgba(88, 166, 255, 0.4);
+        }
+        .pin-btn.unpinned {
+            background: #161b22;
+            border-color: #d29922;
+            color: #d29922;
+            border-style: dashed;
+        }
+        .pin-btn.unpinned:hover {
+            background: #2d2a1f;
+            border-color: #e3b341;
+        }
         .terminal {
             background: #0d1117;
             padding: 8px;
@@ -501,6 +535,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                     <span class="state \${session.state}">\${session.state}</span>
                     <span class="cwd">\${session.cwd}</span>
                     <span class="id">\${session.id.slice(0, 8)}</span>
+                    <button class="pin-btn pinned" id="pin-\${session.id}" onclick="togglePin('\${session.id}')" title="Auto-scroll to bottom">⇣ Pinned</button>
                 </div>
                 <div class="terminal" id="terminal-\${session.id}">Connecting...</div>
                 <div class="widgets-panel" id="widgets-\${session.id}">
@@ -529,7 +564,37 @@ export const dashboardHtml = `<!DOCTYPE html>
                 </div>
             \`;
             container.appendChild(card);
-            sessions.set(session.id, { element: card, state: session.state, git: null, changes: null, stats: null });
+            sessions.set(session.id, { element: card, state: session.state, git: null, changes: null, stats: null, pinned: true });
+
+            // Set up scroll tracking for pin/unpin behavior
+            const terminal = document.getElementById('terminal-' + session.id);
+            if (terminal) {
+                let scrollTimeout = null;
+                terminal.addEventListener('scroll', () => {
+                    const sessionData = sessions.get(session.id);
+                    if (!sessionData) return;
+
+                    // Check if scrolled to bottom (with 20px tolerance for overscroll)
+                    const atBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 20;
+
+                    if (atBottom && !sessionData.pinned) {
+                        // Re-pin when user scrolls to bottom
+                        sessionData.pinned = true;
+                        updatePinButton(session.id, true);
+                    } else if (!atBottom && sessionData.pinned) {
+                        // Unpin when user scrolls away from bottom
+                        // Use a small delay to avoid flickering during programmatic scrolls
+                        if (scrollTimeout) clearTimeout(scrollTimeout);
+                        scrollTimeout = setTimeout(() => {
+                            const stillNotAtBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight >= 20;
+                            if (stillNotAtBottom && sessionData.pinned) {
+                                sessionData.pinned = false;
+                                updatePinButton(session.id, false);
+                            }
+                        }, 50);
+                    }
+                });
+            }
         }
 
         function updateSessionHeader(session) {
@@ -539,6 +604,33 @@ export const dashboardHtml = `<!DOCTYPE html>
             stateEl.className = 'state ' + session.state;
             stateEl.textContent = session.state;
             sessions.get(session.id).state = session.state;
+        }
+
+        function updatePinButton(sessionId, pinned) {
+            const btn = document.getElementById('pin-' + sessionId);
+            if (!btn) return;
+            btn.className = 'pin-btn ' + (pinned ? 'pinned' : 'unpinned');
+            btn.textContent = pinned ? '⇣ Pinned' : '⇣ Pin';
+            btn.title = pinned ? 'Auto-scroll enabled - click to disable' : 'Click to pin to bottom';
+        }
+
+        function togglePin(sessionId) {
+            const sessionData = sessions.get(sessionId);
+            if (!sessionData) return;
+
+            const terminal = document.getElementById('terminal-' + sessionId);
+            if (!terminal) return;
+
+            if (sessionData.pinned) {
+                // Unpin
+                sessionData.pinned = false;
+                updatePinButton(sessionId, false);
+            } else {
+                // Pin and scroll to bottom
+                sessionData.pinned = true;
+                updatePinButton(sessionId, true);
+                terminal.scrollTop = terminal.scrollHeight;
+            }
         }
 
         function formatElapsed(timestamp) {
@@ -807,11 +899,15 @@ export const dashboardHtml = `<!DOCTYPE html>
             const card = document.getElementById('session-' + sessionId);
             if (!terminal || !card) return;
 
+            const sessionData = sessions.get(sessionId);
+
             switch (event.type) {
                 case 'screen':
                     // Full screen update
                     terminal.innerHTML = ansiToHtml(event.content);
-                    terminal.scrollTop = terminal.scrollHeight;
+                    if (sessionData?.pinned) {
+                        terminal.scrollTop = terminal.scrollHeight;
+                    }
                     break;
                 case 'state':
                     // Update state badge
@@ -820,12 +916,19 @@ export const dashboardHtml = `<!DOCTYPE html>
                         stateEl.className = 'state ' + event.state;
                         stateEl.textContent = event.state;
                     }
+                    // Update session state for stats widget
+                    if (sessionData) {
+                        sessionData.state = event.state;
+                        updateStatsWidget(sessionId, sessionData.stats || {});
+                    }
                     break;
                 case 'scrollback':
                     // Append scrollback diff
                     if (event.diff) {
                         terminal.innerHTML += ansiToHtml(event.diff);
-                        terminal.scrollTop = terminal.scrollHeight;
+                        if (sessionData?.pinned) {
+                            terminal.scrollTop = terminal.scrollHeight;
+                        }
                     }
                     break;
                 case 'git':
@@ -879,11 +982,128 @@ export const dashboardHtml = `<!DOCTYPE html>
             }
         }
 
-        // Initial load
-        loadSessions();
+        // SSE connection for real-time session list updates with polling fallback
+        let sessionListSource = null;
+        let sseRetryCount = 0;
+        let pollingInterval = null;
+        const MAX_SSE_RETRIES = 3;
 
-        // Refresh session list every 5 seconds
-        setInterval(loadSessions, 5000);
+        function connectSessionListStream() {
+            if (sessionListSource) {
+                sessionListSource.close();
+            }
+
+            console.log('Connecting to session list SSE...');
+            sessionListSource = new EventSource(API_BASE + '/sessions/stream');
+
+            sessionListSource.onopen = () => {
+                console.log('Session list SSE connected');
+                sseRetryCount = 0;
+                // Stop polling if it was active
+                if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                }
+                document.getElementById('status').textContent = 'Connected (real-time)';
+            };
+
+            sessionListSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleSessionListEvent(data);
+                } catch (err) {
+                    console.error('Failed to parse session list event:', err);
+                }
+            };
+
+            sessionListSource.onerror = (err) => {
+                console.error('Session list SSE error:', err);
+                sessionListSource.close();
+                sessionListSource = null;
+                sseRetryCount++;
+
+                if (sseRetryCount >= MAX_SSE_RETRIES) {
+                    // Fall back to polling after too many SSE failures
+                    console.log('SSE failed, falling back to polling');
+                    document.getElementById('status').textContent = sessions.size + ' session(s) (polling)';
+                    if (!pollingInterval) {
+                        pollingInterval = setInterval(loadSessions, 10000);
+                    }
+                } else {
+                    document.getElementById('status').textContent = 'Reconnecting...';
+                    // Retry SSE with exponential backoff
+                    setTimeout(connectSessionListStream, Math.min(1000 * Math.pow(2, sseRetryCount), 10000));
+                }
+            };
+        }
+
+        function handleSessionListEvent(event) {
+            const container = document.getElementById('sessions');
+
+            switch (event.type) {
+                case 'connected':
+                    // Initial connection established - load full session list once
+                    console.log('SSE connected, loading initial session list');
+                    loadSessions();
+                    break;
+
+                case 'created':
+                    // New session - add to view immediately
+                    console.log('New session created:', event.session?.id);
+                    if (event.session && !sessions.has(event.session.id)) {
+                        const emptyState = container.querySelector('.no-sessions');
+                        if (emptyState) emptyState.remove();
+                        createSessionCard(event.session);
+                        connectToSession(event.session.id);
+                        document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
+                    }
+                    break;
+
+                case 'updated':
+                    // Session updated - update header
+                    console.log('Session updated:', event.session?.id, event.session?.state);
+                    if (event.session && event.session.id) {
+                        updateSessionHeader(event.session);
+                        // If session became inactive, remove it from view
+                        if (event.session.is_active === false) {
+                            const session = sessions.get(event.session.id);
+                            if (session) {
+                                session.eventSource?.close();
+                                sessions.delete(event.session.id);
+                                const card = document.getElementById('session-' + event.session.id);
+                                if (card) card.remove();
+                                document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
+                                if (sessions.size === 0) {
+                                    container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                                }
+                            }
+                        }
+                    }
+                    break;
+
+                case 'deleted':
+                    // Session deleted - remove from view
+                    console.log('Session deleted:', event.session?.id);
+                    if (event.session && event.session.id) {
+                        const session = sessions.get(event.session.id);
+                        if (session) {
+                            session.eventSource?.close();
+                            sessions.delete(event.session.id);
+                        }
+                        const card = document.getElementById('session-' + event.session.id);
+                        if (card) card.remove();
+                        document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
+                        if (sessions.size === 0) {
+                            container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                        }
+                    }
+                    break;
+            }
+        }
+
+        // Initial load and connect to SSE for real-time updates
+        loadSessions();
+        connectSessionListStream();
     </script>
 </body>
 </html>`;

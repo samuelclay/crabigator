@@ -13,6 +13,26 @@ import { requireAuth, requireDeviceAuth } from '../auth/middleware';
 import { generateUUID } from '../auth/tokens';
 
 /**
+ * Notify the SessionListDO about session changes for real-time dashboard updates.
+ * Fire-and-forget - don't await, don't block the response.
+ */
+function notifySessionListChange(
+    env: Env,
+    event: { type: 'created' | 'updated' | 'deleted'; session: Partial<SessionInfo> }
+): void {
+    const doId = env.SESSION_LIST.idFromName('global');
+    const stub = env.SESSION_LIST.get(doId);
+    // Fire and forget - don't await
+    stub.fetch(new Request('https://internal/notify', {
+        method: 'POST',
+        body: JSON.stringify(event),
+        headers: { 'Content-Type': 'application/json' },
+    })).catch(() => {
+        // Ignore errors - dashboard updates are best-effort
+    });
+}
+
+/**
  * POST /api/sessions - Create a new session
  */
 export async function createSession(
@@ -77,6 +97,21 @@ export async function createSession(
         INSERT INTO sessions (id, device_id, client_session_id, cwd, platform, state, started_at, is_active)
         VALUES (?, ?, ?, ?, ?, 'ready', ?, 1)
     `).bind(sessionId, device_id, client_session_id, cwd, platform, now).run();
+
+    // Notify dashboard of new session (fire-and-forget)
+    notifySessionListChange(env, {
+        type: 'created',
+        session: {
+            id: sessionId,
+            client_session_id,
+            cwd,
+            platform,
+            state: 'ready',
+            started_at: now,
+            is_active: true,
+            stats: { prompts: 0, completions: 0, tool_calls: 0, thinking_seconds: 0 },
+        },
+    });
 
     const url = new URL(request.url);
     const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -326,6 +361,17 @@ export async function updateSession(
         await env.DB.prepare(
             `UPDATE sessions SET ${updates.join(', ')} WHERE id = ?`
         ).bind(...values).run();
+
+        // Notify dashboard of session update (fire-and-forget)
+        notifySessionListChange(env, {
+            type: 'updated',
+            session: {
+                id: sessionId,
+                state: body.state,
+                ended_at: body.ended_at,
+                is_active: body.ended_at ? false : undefined,
+            },
+        });
     }
 
     const response: UpdateSessionResponse = { ok: true };
@@ -358,6 +404,12 @@ export async function deleteSession(
             { status: 404, headers: { 'Content-Type': 'application/json' } }
         );
     }
+
+    // Notify dashboard of session deletion (fire-and-forget)
+    notifySessionListChange(env, {
+        type: 'deleted',
+        session: { id: sessionId },
+    });
 
     return jsonResponse({ ok: true });
 }
