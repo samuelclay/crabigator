@@ -82,14 +82,15 @@ export const dashboardHtml = `<!DOCTYPE html>
             padding: 8px;
             height: 350px;
             overflow: auto;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', 'DejaVu Sans Mono', monospace;
             font-size: 12px;
-            line-height: 1.15;
+            line-height: 1.4;
             white-space: pre-wrap;
             word-wrap: break-word;
+            overflow-wrap: break-word;
         }
         .terminal .ansi-bright { font-weight: bold; }
-        .terminal .ansi-dim { opacity: 0.7; }
+        .terminal .ansi-dim { opacity: 0.5; }
         .terminal .ansi-italic { font-style: italic; }
         .terminal .ansi-underline { text-decoration: underline; }
 
@@ -133,18 +134,13 @@ export const dashboardHtml = `<!DOCTYPE html>
         }
         .git-file {
             display: flex;
-            gap: 8px;
+            gap: 6px;
             padding: 1px 0;
+            align-items: center;
         }
-        .git-file .status {
-            color: #3fb950;
-            width: 20px;
-        }
-        .git-file .status.modified { color: #d29922; }
-        .git-file .status.deleted { color: #f85149; }
-        .git-file .status.untracked { color: #8b949e; }
         .git-file .path {
             color: #c9d1d9;
+            flex: 1;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -152,9 +148,10 @@ export const dashboardHtml = `<!DOCTYPE html>
         .git-file .diff {
             margin-left: auto;
             white-space: nowrap;
+            display: flex;
+            gap: 4px;
+            align-items: center;
         }
-        .git-file .additions { color: #3fb950; }
-        .git-file .deletions { color: #f85149; }
 
         /* Changes list */
         .changes-list {
@@ -163,28 +160,17 @@ export const dashboardHtml = `<!DOCTYPE html>
         }
         .change-item {
             display: flex;
-            gap: 8px;
+            gap: 4px;
             padding: 1px 0;
-        }
-        .change-item .kind {
-            color: #bc8cff;
-            width: 60px;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            align-items: center;
         }
         .change-item .name {
             color: #c9d1d9;
             flex: 1;
             overflow: hidden;
             text-overflow: ellipsis;
+            white-space: nowrap;
         }
-        .change-item .type {
-            color: #8b949e;
-            font-size: 10px;
-        }
-        .change-item .type.added { color: #3fb950; }
-        .change-item .type.modified { color: #d29922; }
-        .change-item .type.deleted { color: #f85149; }
 
         .input-area {
             padding: 12px;
@@ -246,7 +232,7 @@ export const dashboardHtml = `<!DOCTYPE html>
         const sessions = new Map(); // sessionId -> { eventSource, state, element, git, changes, stats }
         const deadSessions = new Set(); // Sessions that disconnected - don't recreate them
 
-        // ANSI to HTML converter - processes escape sequences
+        // ANSI to HTML converter - processes escape sequences including cursor positioning
         function ansiToHtml(text) {
             if (!text) return '';
 
@@ -261,26 +247,48 @@ export const dashboardHtml = `<!DOCTYPE html>
                 44: '#58a6ff', 45: '#bc8cff', 46: '#39c5cf', 47: '#c9d1d9'
             };
 
-            function parse256Color(codes, idx) {
-                if (codes[idx + 1] === 5 && codes[idx + 2] !== undefined) {
+            // Parse extended color: 38;2;R;G;B (24-bit) or 38;5;N (256-color)
+            // Returns { color, skip } where skip is additional codes to skip
+            function parseExtendedColor(codes, idx) {
+                const mode = codes[idx + 1];
+
+                // 24-bit RGB: 38;2;R;G;B
+                if (mode === 2 && codes[idx + 4] !== undefined) {
+                    const r = codes[idx + 2];
+                    const g = codes[idx + 3];
+                    const b = codes[idx + 4];
+                    return { color: 'rgb(' + r + ',' + g + ',' + b + ')', skip: 4 };
+                }
+
+                // 256-color palette: 38;5;N
+                if (mode === 5 && codes[idx + 2] !== undefined) {
                     const colorNum = codes[idx + 2];
+                    let color;
                     if (colorNum < 16) {
                         const basic = ['#0d1117','#cd3131','#0dbc79','#e5e510','#2472c8','#bc3fbc','#11a8cd','#e5e5e5',
                                       '#666666','#f14c4c','#23d18b','#f5f543','#3b8eea','#d670d6','#29b8db','#ffffff'];
-                        return basic[colorNum];
-                    }
-                    if (colorNum < 232) {
+                        color = basic[colorNum];
+                    } else if (colorNum < 232) {
                         const n = colorNum - 16;
-                        return 'rgb(' + Math.floor(n/36)*51 + ',' + Math.floor((n%36)/6)*51 + ',' + (n%6)*51 + ')';
+                        const ri = Math.floor(n/36);
+                        const gi = Math.floor((n%36)/6);
+                        const bi = n%6;
+                        const r = ri === 0 ? 0 : ri * 40 + 55;
+                        const g = gi === 0 ? 0 : gi * 40 + 55;
+                        const b = bi === 0 ? 0 : bi * 40 + 55;
+                        color = 'rgb(' + r + ',' + g + ',' + b + ')';
+                    } else {
+                        const gray = (colorNum - 232) * 10 + 8;
+                        color = 'rgb(' + gray + ',' + gray + ',' + gray + ')';
                     }
-                    const gray = (colorNum - 232) * 10 + 8;
-                    return 'rgb(' + gray + ',' + gray + ',' + gray + ')';
+                    return { color, skip: 2 };
                 }
                 return null;
             }
 
             let result = '';
             let inSpan = false;
+            let currentRow = 1;  // Track current row (1-indexed like VT100)
             let i = 0;
 
             while (i < text.length) {
@@ -310,16 +318,16 @@ export const dashboardHtml = `<!DOCTYPE html>
                             const code = codes[k];
                             if (code === 0) { styles = []; }
                             else if (code === 1) styles.push('font-weight:bold');
-                            else if (code === 2) styles.push('opacity:0.6');
+                            else if (code === 2) styles.push('opacity:0.5');
                             else if (code === 3) styles.push('font-style:italic');
                             else if (code === 4) styles.push('text-decoration:underline');
                             else if (code === 38) {
-                                const color = parse256Color(codes, k);
-                                if (color) { styles.push('color:' + color); k += 2; }
+                                const result = parseExtendedColor(codes, k);
+                                if (result) { styles.push('color:' + result.color); k += result.skip; }
                             }
                             else if (code === 48) {
-                                const color = parse256Color(codes, k);
-                                if (color) { styles.push('background:' + color); k += 2; }
+                                const result = parseExtendedColor(codes, k);
+                                if (result) { styles.push('background:' + result.color); k += result.skip; }
                             }
                             else if (colors[code]) styles.push('color:' + colors[code]);
                             else if (bgColors[code]) styles.push('background:' + bgColors[code]);
@@ -329,9 +337,32 @@ export const dashboardHtml = `<!DOCTYPE html>
                             result += '<span style="' + styles.join(';') + '">';
                             inSpan = true;
                         }
+                    } else if (command === 'H' || command === 'f') {
+                        // CUP - Cursor Position: ESC[row;colH or ESC[row;colf
+                        // Also handles ESC[H (home = 1;1)
+                        const parts = params ? params.split(';') : [];
+                        const newRow = parts[0] ? parseInt(parts[0], 10) : 1;
+
+                        // If moving to a later row, insert newlines for the gap
+                        if (newRow > currentRow) {
+                            const linesToAdd = newRow - currentRow;
+                            result += '\\n'.repeat(linesToAdd);
+                        }
+                        currentRow = newRow;
                     }
-                    // Skip the escape sequence
+                    // Skip other escape sequences (J, K, etc.) - they don't affect our line-based output
                     i = j;
+                    continue;
+                }
+
+                // Track newlines in the content
+                if (text[i] === '\\n' || text[i] === '\\r') {
+                    if (text[i] === '\\n') {
+                        result += '\\n';
+                        currentRow++;
+                    }
+                    // Skip carriage return - we only care about line feeds
+                    i++;
                     continue;
                 }
 
@@ -345,6 +376,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             }
 
             if (inSpan) result += '</span>';
+
             return result;
         }
 
@@ -413,19 +445,20 @@ export const dashboardHtml = `<!DOCTYPE html>
                 <div class="terminal" id="terminal-\${session.id}">Connecting...</div>
                 <div class="widgets-panel" id="widgets-\${session.id}">
                     <div class="widget" id="stats-\${session.id}">
-                        <div class="widget-title">Stats</div>
-                        <div class="widget-row"><span class="widget-label">Session</span><span class="widget-value">--</span></div>
-                        <div class="widget-row"><span class="widget-label">Prompts</span><span class="widget-value">--</span></div>
-                        <div class="widget-row"><span class="widget-label">Tools</span><span class="widget-value">--</span></div>
-                        <div class="widget-row"><span class="widget-label">Thinking</span><span class="widget-value">--</span></div>
+                        <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right;color:#8b949e">○ Ready</span></div>
+                        <div class="widget-row"><span class="widget-label">◆ Session</span><span class="widget-value">--</span></div>
+                        <div class="widget-row"><span class="widget-label">◇ Thinking</span><span class="widget-value">—</span></div>
+                        <div class="widget-row"><span class="widget-label">▸ Prompts 0</span><span class="widget-value"></span></div>
+                        <div class="widget-row"><span class="widget-label">◂ Completions 0</span><span class="widget-value"></span></div>
+                        <div class="widget-row"><span class="widget-label">⚙ Tools</span><span class="widget-value purple">0</span></div>
                     </div>
                     <div class="widget" id="git-\${session.id}">
-                        <div class="widget-title">Git</div>
-                        <div class="git-files">Waiting for data...</div>
+                        <div class="widget-title"><span style="color:#7ee787">...</span> <span style="float:right;color:#8b949e">...</span></div>
+                        <div class="git-files" style="color:#8b949e">Waiting for data...</div>
                     </div>
                     <div class="widget" id="changes-\${session.id}">
-                        <div class="widget-title">Changes</div>
-                        <div class="changes-list">Waiting for data...</div>
+                        <div class="widget-title"><span style="color:#db6d28">Changes</span></div>
+                        <div class="changes-list" style="color:#8b949e">Waiting for data...</div>
                     </div>
                 </div>
                 <div class="input-area">
@@ -448,17 +481,84 @@ export const dashboardHtml = `<!DOCTYPE html>
             sessions.get(session.id).state = session.state;
         }
 
+        function formatElapsed(timestamp) {
+            if (!timestamp) return '';
+            const now = Date.now() / 1000;
+            const secs = Math.floor(now - timestamp);
+            if (secs < 60) return 'just now';
+            const mins = Math.floor(secs / 60);
+            if (mins < 60) return mins + 'm ago';
+            const hours = Math.floor(mins / 60);
+            return hours + 'h ago';
+        }
+
+        function formatStateIndicator(state) {
+            switch (state) {
+                case 'ready': return '<span style="color:#8b949e">○ Ready</span>';
+                case 'thinking': return '<span style="color:#3fb950">⠋</span>';
+                case 'permission': return '<span style="color:#d29922">» ? « Perm</span>';
+                case 'question': return '<span style="color:#db6d28">» ? « Ask</span>';
+                case 'complete': return '<span style="color:#bc8cff">✓ Complete</span>';
+                default: return '<span style="color:#8b949e">○ ' + state + '</span>';
+            }
+        }
+
         function updateStatsWidget(sessionId, stats) {
             const widget = document.getElementById('stats-' + sessionId);
             if (!widget) return;
 
+            const session = sessions.get(sessionId);
+            const state = session?.state || 'ready';
+            const stateIndicator = formatStateIndicator(state);
+
+            const promptsElapsed = stats.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
+            const completionsElapsed = stats.completions_changed_at ? formatElapsed(stats.completions_changed_at) : '';
+
             widget.innerHTML = \`
-                <div class="widget-title">Stats</div>
-                <div class="widget-row"><span class="widget-label">Session</span><span class="widget-value">\${formatDuration(stats.work_seconds || 0)}</span></div>
-                <div class="widget-row"><span class="widget-label">Prompts</span><span class="widget-value cyan">\${stats.prompts || 0}</span></div>
-                <div class="widget-row"><span class="widget-label">Tools</span><span class="widget-value purple">\${stats.tools || 0}</span></div>
-                <div class="widget-row"><span class="widget-label">Thinking</span><span class="widget-value">\${formatDuration(stats.thinking_seconds || 0)}</span></div>
+                <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right">\${stateIndicator}</span></div>
+                <div class="widget-row"><span class="widget-label">◆ Session</span><span class="widget-value" style="color:#58a6ff">\${formatDuration(stats.work_seconds || 0)}</span></div>
+                <div class="widget-row"><span class="widget-label">◇ Thinking</span><span class="widget-value" style="color:#3fb950">\${stats.thinking_seconds ? formatDuration(stats.thinking_seconds) : '—'}</span></div>
+                <div class="widget-row"><span class="widget-label">▸ Prompts \${stats.prompts || 0}</span><span class="widget-value" style="color:#8b949e">\${promptsElapsed}</span></div>
+                <div class="widget-row"><span class="widget-label">◂ Completions \${stats.completions || 0}</span><span class="widget-value" style="color:#8b949e">\${completionsElapsed}</span></div>
+                <div class="widget-row"><span class="widget-label">⚙ Tools</span><span class="widget-value purple">\${stats.tools || 0}</span></div>
             \`;
+        }
+
+        // Create two-sided progress bar like CLI: ▓▓ (red/deletions) █████ (green/additions)
+        function createProgressBar(additions, deletions) {
+            if (additions === 0 && deletions === 0) {
+                return '<span style="color:#6e7681">·</span>';
+            }
+            // Log-scale bar widths (like CLI)
+            const delBar = deletions > 0 ? Math.floor(Math.log10(deletions)) + 1 : 0;
+            const addBar = additions > 0 ? Math.floor(Math.log10(additions)) + 1 : 0;
+
+            let result = '';
+            if (delBar > 0) {
+                result += '<span style="color:#f85149">' + '▓'.repeat(delBar) + '</span>';
+            }
+            if (addBar > 0) {
+                result += '<span style="color:#3fb950">' + '█'.repeat(addBar) + '</span>';
+            }
+            return result;
+        }
+
+        function getStatusIcon(status) {
+            // Map git status to CLI icons and colors
+            const s = (status || '').trim();
+            if (s === 'M' || status === 'M ' || status === ' M') {
+                return { icon: '●', color: '#d29922' };  // yellow for modified
+            }
+            if (s === 'A') {
+                return { icon: '+', color: '#3fb950' };  // green for added
+            }
+            if (s === 'D') {
+                return { icon: '−', color: '#f85149' };  // red for deleted
+            }
+            if (s === '??' || s === '?') {
+                return { icon: '?', color: '#39c5cf' };  // cyan for untracked
+            }
+            return { icon: '•', color: '#6e7681' };  // gray for other
         }
 
         function updateGitWidget(sessionId, git) {
@@ -467,60 +567,135 @@ export const dashboardHtml = `<!DOCTYPE html>
 
             const files = git.files || [];
             const totalFiles = files.length;
-            const totalAdditions = files.reduce((sum, f) => sum + (f.additions || 0), 0);
-            const totalDeletions = files.reduce((sum, f) => sum + (f.deletions || 0), 0);
+
+            // Header: branch on left, "N files" on right (like CLI)
+            const branch = git.branch || 'unknown';
+            const filesLabel = totalFiles === 1 ? 'file' : 'files';
+            const headerRight = totalFiles > 0
+                ? '<span style="color:#d29922">' + totalFiles + ' ' + filesLabel + '</span>'
+                : '<span style="color:#3fb950">✓ Clean</span>';
 
             let filesHtml = files.slice(0, 10).map(f => {
-                const statusClass = f.status === 'M ' || f.status === ' M' ? 'modified' :
-                                   f.status === 'D ' ? 'deleted' :
-                                   f.status === '??' ? 'untracked' : '';
-                const statusChar = f.status === '??' ? '?' : f.status.trim() || 'M';
+                const { icon, color } = getStatusIcon(f.status);
+                const bar = createProgressBar(f.additions || 0, f.deletions || 0);
+                const delNum = f.deletions > 0 ? '<span style="color:#f85149">−' + f.deletions + '</span>' : '';
+                const addNum = f.additions > 0 ? '<span style="color:#3fb950">+' + f.additions + '</span>' : '';
+
                 return \`<div class="git-file">
-                    <span class="status \${statusClass}">\${statusChar}</span>
+                    <span style="color:\${color}">\${icon}</span>
                     <span class="path">\${f.path}</span>
-                    <span class="diff"><span class="additions">+\${f.additions || 0}</span> <span class="deletions">-\${f.deletions || 0}</span></span>
+                    <span class="diff">\${delNum} \${bar} \${addNum}</span>
                 </div>\`;
             }).join('');
 
             if (files.length > 10) {
-                filesHtml += '<div style="color:#8b949e;padding-top:4px">... and ' + (files.length - 10) + ' more files</div>';
+                filesHtml += '<div style="color:#8b949e;padding-top:4px">... and ' + (files.length - 10) + ' more</div>';
             }
 
             widget.innerHTML = \`
-                <div class="widget-title">Git <span style="color:#8b949e;font-weight:normal">(\${git.branch || 'unknown'})</span></div>
-                <div style="margin-bottom:6px;color:#8b949e">\${totalFiles} files · <span class="widget-value green">+\${totalAdditions}</span> <span class="widget-value red">-\${totalDeletions}</span></div>
+                <div class="widget-title"><span style="color:#7ee787">\${branch}</span> <span style="float:right">\${headerRight}</span></div>
                 <div class="git-files">\${filesHtml || '<span style="color:#8b949e">No changes</span>'}</div>
             \`;
+        }
+
+        // Get icon and color for change type modifier (like CLI)
+        function getModifierStyle(changeType) {
+            switch (changeType) {
+                case 'added': return { modifier: '+', color: '#3fb950' };
+                case 'deleted': return { modifier: '-', color: '#f85149' };
+                default: return { modifier: '~', color: '#d29922' };  // modified
+            }
+        }
+
+        // Get icon and color for node kind (like CLI)
+        function getKindIcon(kind) {
+            switch (kind?.toLowerCase()) {
+                case 'function':
+                case 'method':
+                    return { icon: 'ƒ', color: '#58a6ff' };
+                case 'class':
+                    return { icon: '◆', color: '#bc8cff' };
+                case 'struct':
+                    return { icon: '◇', color: '#39c5cf' };
+                case 'enum':
+                    return { icon: '▣', color: '#d29922' };
+                case 'trait':
+                    return { icon: '◈', color: '#bc8cff' };
+                case 'impl':
+                    return { icon: '◊', color: '#39c5cf' };
+                case 'module':
+                    return { icon: '□', color: '#8b949e' };
+                case 'const':
+                    return { icon: '•', color: '#8b949e' };
+                default:
+                    return { icon: '·', color: '#6e7681' };
+            }
         }
 
         function updateChangesWidget(sessionId, changes) {
             const widget = document.getElementById('changes-' + sessionId);
             if (!widget) return;
 
-            const allChanges = [];
-            for (const lang of (changes.by_language || [])) {
-                for (const change of (lang.changes || [])) {
-                    allChanges.push({ ...change, language: lang.language });
+            const byLanguage = changes.by_language || [];
+
+            if (byLanguage.length === 0) {
+                widget.innerHTML = \`
+                    <div class="widget-title"><span style="color:#db6d28">Changes</span></div>
+                    <div class="changes-list"><span style="color:#8b949e">No changes detected</span></div>
+                \`;
+                return;
+            }
+
+            // Build header: "Language N changes" (like CLI)
+            const firstLang = byLanguage[0];
+            const totalChanges = byLanguage.reduce((sum, lang) => sum + (lang.changes?.length || 0), 0);
+            const changeWord = totalChanges === 1 ? 'change' : 'changes';
+
+            let changesHtml = '';
+            let shown = 0;
+            const maxShown = 10;
+
+            for (const lang of byLanguage) {
+                if (shown >= maxShown) break;
+
+                // Add language header if multiple languages
+                if (byLanguage.length > 1) {
+                    const langCount = lang.changes?.length || 0;
+                    const langWord = langCount === 1 ? 'change' : 'changes';
+                    changesHtml += \`<div style="color:#db6d28;margin-top:4px">\${lang.language} <span style="color:#8b949e">\${langCount} \${langWord}</span></div>\`;
+                }
+
+                for (const c of (lang.changes || [])) {
+                    if (shown >= maxShown) break;
+
+                    const { modifier, color: modColor } = getModifierStyle(c.change_type);
+                    const { icon, color: iconColor } = getKindIcon(c.kind);
+
+                    // Format stats like CLI: −N +M
+                    let stats = '';
+                    if (c.deletions > 0) {
+                        stats += '<span style="color:#f85149">−' + c.deletions + '</span>';
+                    }
+                    if (c.additions > 0) {
+                        stats += '<span style="color:#3fb950">+' + c.additions + '</span>';
+                    }
+
+                    changesHtml += \`<div class="change-item">
+                        <span style="color:\${modColor}">\${modifier}</span><span style="color:\${iconColor}">\${icon}</span>
+                        <span class="name">\${c.name}</span>
+                        <span style="margin-left:auto;white-space:nowrap">\${stats}</span>
+                    </div>\`;
+                    shown++;
                 }
             }
 
-            let changesHtml = allChanges.slice(0, 10).map(c => {
-                const typeClass = c.change_type === 'added' ? 'added' :
-                                 c.change_type === 'deleted' ? 'deleted' : 'modified';
-                return \`<div class="change-item">
-                    <span class="kind">\${c.kind}</span>
-                    <span class="name">\${c.name}</span>
-                    <span class="type \${typeClass}">\${c.change_type}</span>
-                </div>\`;
-            }).join('');
-
-            if (allChanges.length > 10) {
-                changesHtml += '<div style="color:#8b949e;padding-top:4px">... and ' + (allChanges.length - 10) + ' more</div>';
+            if (totalChanges > maxShown) {
+                changesHtml += '<div style="color:#8b949e;padding-top:4px">... and ' + (totalChanges - maxShown) + ' more</div>';
             }
 
             widget.innerHTML = \`
-                <div class="widget-title">Changes</div>
-                <div class="changes-list">\${changesHtml || '<span style="color:#8b949e">No changes detected</span>'}</div>
+                <div class="widget-title"><span style="color:#db6d28">\${firstLang.language}</span> <span style="color:#8b949e">\${totalChanges} \${changeWord}</span></div>
+                <div class="changes-list">\${changesHtml}</div>
             \`;
         }
 
@@ -548,9 +723,18 @@ export const dashboardHtml = `<!DOCTYPE html>
 
             eventSource.onerror = (err) => {
                 console.error('SSE error for session ' + sessionId, err);
-                const terminal = document.getElementById('terminal-' + sessionId);
-                if (terminal) {
-                    terminal.innerHTML = '<span style="color:#f85149">[Connection error - desktop may be offline]</span>';
+                // Clean up so the session can be recreated on next poll
+                const session = sessions.get(sessionId);
+                if (session) {
+                    session.eventSource?.close();
+                    sessions.delete(sessionId);
+                }
+                // Remove from deadSessions - we lost connection, desktop may have reconnected
+                deadSessions.delete(sessionId);
+                // Remove the card - it will be recreated if session is still active
+                const card = document.getElementById('session-' + sessionId);
+                if (card) {
+                    card.remove();
                 }
             };
 
@@ -642,8 +826,8 @@ export const dashboardHtml = `<!DOCTYPE html>
         // Initial load
         loadSessions();
 
-        // Refresh session list every 30 seconds
-        setInterval(loadSessions, 30000);
+        // Refresh session list every 5 seconds
+        setInterval(loadSessions, 5000);
     </script>
 </body>
 </html>`;

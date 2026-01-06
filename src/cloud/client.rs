@@ -49,6 +49,19 @@ struct UpdateSessionRequest {
     stats: Option<UpdateSessionStats>,
 }
 
+/// Cloud connection status for display in the UI
+#[derive(Clone, Debug)]
+pub struct CloudStatus {
+    /// Whether currently connected to cloud
+    pub connected: bool,
+    /// Number of reconnection attempts since last successful connection
+    pub reconnect_attempts: u32,
+    /// Current backoff in seconds before next retry
+    pub backoff_secs: u64,
+    /// Number of queued events waiting to be sent
+    pub queue_len: usize,
+}
+
 /// Cloud client for session streaming
 pub struct CloudClient {
     /// Device identity
@@ -71,6 +84,10 @@ pub struct CloudClient {
     last_reconnect_attempt: Option<std::time::Instant>,
     /// Reconnection backoff (starts at 1s, max 30s)
     reconnect_backoff_secs: u64,
+    /// Number of reconnection attempts since last successful connection
+    reconnect_attempts: u32,
+    /// Pending reconnection attempt (receiver for async connection result)
+    pending_reconnect: Option<std::sync::mpsc::Receiver<anyhow::Result<WebSocketHandle>>>,
 }
 
 impl CloudClient {
@@ -96,6 +113,8 @@ impl CloudClient {
             device_registered: false,
             last_reconnect_attempt: None,
             reconnect_backoff_secs: 1,
+            reconnect_attempts: 0,
+            pending_reconnect: None,
         })
     }
 
@@ -118,6 +137,16 @@ impl CloudClient {
     /// Check if connected to cloud
     pub fn is_connected(&self) -> bool {
         self.ws_handle.as_ref().map(|h| h.is_alive()).unwrap_or(false)
+    }
+
+    /// Get current cloud connection status for UI display
+    pub fn status(&self) -> CloudStatus {
+        CloudStatus {
+            connected: self.is_connected(),
+            reconnect_attempts: self.reconnect_attempts,
+            backoff_secs: self.reconnect_backoff_secs,
+            queue_len: self.queue.len(),
+        }
     }
 
     /// Register device with cloud (idempotent)
@@ -260,20 +289,57 @@ impl CloudClient {
         )
         .await?;
 
-        self.ws_handle = Some(WebSocketHandle::from_websocket(ws));
-        // Reset backoff on successful connection
+        // Split into handle and shutdown receiver
+        // For initial connection, we're in the main runtime so tasks stay alive
+        let (handle, _shutdown_rx) = ws.into_parts();
+        self.ws_handle = Some(handle);
+        // Reset backoff and attempts on successful connection
         self.reconnect_backoff_secs = 1;
+        self.reconnect_attempts = 0;
         self.last_reconnect_attempt = None;
         Ok(())
     }
 
     /// Try to reconnect WebSocket if disconnected
     ///
-    /// Returns true if connected (already or after reconnect), false if reconnection was skipped (backoff)
+    /// Returns true if connected (already or after reconnect), false if reconnection is pending or failed.
+    /// This function is non-blocking - it starts connection attempts asynchronously and checks
+    /// for completion on subsequent calls.
     pub fn try_reconnect(&mut self) -> bool {
         // Already connected?
         if self.is_connected() {
+            self.pending_reconnect = None;
             return true;
+        }
+
+        // Check if there's a pending reconnection attempt
+        if let Some(ref rx) = self.pending_reconnect {
+            match rx.try_recv() {
+                Ok(Ok(handle)) => {
+                    // Connection succeeded!
+                    self.ws_handle = Some(handle);
+                    self.reconnect_backoff_secs = 1;
+                    self.reconnect_attempts = 0;
+                    self.pending_reconnect = None;
+                    return true;
+                }
+                Ok(Err(e)) => {
+                    // Connection failed - log error, increase backoff and clear pending
+                    eprintln!("Cloud reconnection failed: {:?}", e);
+                    self.reconnect_backoff_secs = (self.reconnect_backoff_secs * 2).min(30);
+                    self.last_reconnect_attempt = Some(std::time::Instant::now());
+                    self.pending_reconnect = None;
+                    return false; // Wait for backoff before retrying
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Still connecting - don't start another attempt
+                    return false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Thread died unexpectedly - clear and retry
+                    self.pending_reconnect = None;
+                }
+            }
         }
 
         // No URL to reconnect to?
@@ -289,8 +355,9 @@ impl CloudClient {
             }
         }
 
-        // Attempt reconnection
+        // Start new reconnection attempt
         self.last_reconnect_attempt = Some(std::time::Instant::now());
+        self.reconnect_attempts += 1;
 
         let timestamp = chrono::Utc::now().timestamp_millis().to_string();
         let session_id = match &self.session_id {
@@ -304,6 +371,9 @@ impl CloudClient {
         };
 
         // Spawn async reconnection task
+        // IMPORTANT: The runtime must stay alive as long as the WebSocket tasks need to run.
+        // We split the WebSocket into a handle (sent to main thread) and shutdown receiver
+        // (kept in this thread to block until connection closes).
         let device_id = self.device.device_id.clone();
         let (tx, rx) = std::sync::mpsc::channel();
 
@@ -316,22 +386,29 @@ impl CloudClient {
             let result = rt.block_on(async {
                 CloudWebSocket::connect(&ws_url, &device_id, &signature, &timestamp).await
             });
-            let _ = tx.send(result);
+
+            match result {
+                Ok(ws) => {
+                    // Split into handle (for main thread) and shutdown receiver (for us)
+                    let (handle, mut shutdown_rx) = ws.into_parts();
+                    let _ = tx.send(Ok(handle));
+
+                    // Keep runtime alive until connection closes
+                    // The read task will signal shutdown when the WebSocket disconnects
+                    rt.block_on(async {
+                        let _ = shutdown_rx.recv().await;
+                    });
+                }
+                Err(e) => {
+                    // Connection failed - just send the error
+                    let _ = tx.send(Err(e));
+                }
+            }
         });
 
-        // Check if connection succeeded (with short timeout)
-        match rx.recv_timeout(std::time::Duration::from_millis(100)) {
-            Ok(Ok(ws)) => {
-                self.ws_handle = Some(WebSocketHandle::from_websocket(ws));
-                self.reconnect_backoff_secs = 1;
-                true
-            }
-            Ok(Err(_)) | Err(_) => {
-                // Increase backoff (max 30 seconds)
-                self.reconnect_backoff_secs = (self.reconnect_backoff_secs * 2).min(30);
-                false
-            }
-        }
+        // Store the receiver to check on next call
+        self.pending_reconnect = Some(rx);
+        false // Connection in progress, not yet connected
     }
 
     /// Send an event to the cloud

@@ -250,14 +250,40 @@ impl CaptureManager {
 
         // Use our capture_parser's screen (which has the actual content)
         // The platform_pty.screen() passed in is unused because its parser isn't fed data
+        let screen = self.capture_parser.screen();
+        let (_, cols) = screen.size();
+        let (cursor_row, _) = screen.cursor_position();
+
+        // Collect all rows with their formatted content
+        let formatted_rows: Vec<Vec<u8>> = screen.rows_formatted(0, cols).collect();
+
+        // Find the last row we need to include (max of cursor position and last non-empty row)
+        let mut last_needed_row = cursor_row as usize;
+        for (row_idx, row) in formatted_rows.iter().enumerate() {
+            let row_str = String::from_utf8_lossy(row);
+            if !row_str.trim().is_empty() && row_idx > last_needed_row {
+                last_needed_row = row_idx;
+            }
+        }
+
+        // Build content row-by-row with explicit newlines
+        let mut content = Vec::new();
+        for (row_idx, row) in formatted_rows.iter().enumerate() {
+            if row_idx > last_needed_row {
+                break;
+            }
+            content.extend_from_slice(row);
+            // Add newline after each row
+            content.push(b'\n');
+        }
+
         let screen_path = self.capture_dir.join("screen.txt");
         let tmp_path = self.capture_dir.join("screen.txt.tmp");
-        let contents_formatted = self.capture_parser.screen().contents_formatted();
-        fs::write(&tmp_path, &contents_formatted)?;
+        fs::write(&tmp_path, &content)?;
         fs::rename(&tmp_path, &screen_path)?;
 
         self.last_screen_update = Instant::now();
-        Ok(String::from_utf8_lossy(&contents_formatted).to_string())
+        Ok(String::from_utf8_lossy(&content).to_string())
     }
 
     /// Get the capture directory path.

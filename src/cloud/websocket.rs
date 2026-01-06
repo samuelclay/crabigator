@@ -17,8 +17,8 @@ pub struct CloudWebSocket {
     event_tx: mpsc::Sender<CloudEvent>,
     /// Receiver for incoming answers
     answer_rx: mpsc::Receiver<String>,
-    /// Connection state
-    connected: bool,
+    /// Receiver that completes when the connection closes
+    shutdown_rx: mpsc::Receiver<()>,
 }
 
 impl CloudWebSocket {
@@ -56,6 +56,9 @@ impl CloudWebSocket {
 
         // Channel for incoming answers (cloud -> desktop)
         let (answer_tx, answer_rx) = mpsc::channel::<String>(16);
+
+        // Channel to signal when connection closes (read task will signal this)
+        let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
         // Spawn task to handle outgoing events
         tokio::spawn(async move {
@@ -100,38 +103,15 @@ impl CloudWebSocket {
                     }
                 }
             }
+            // Signal that connection has closed
+            let _ = shutdown_tx.send(()).await;
         });
 
         Ok(Self {
             event_tx,
             answer_rx,
-            connected: true,
+            shutdown_rx,
         })
-    }
-
-    /// Send an event to the cloud
-    pub async fn send_event(&self, event: CloudEvent) -> Result<()> {
-        self.event_tx
-            .send(event)
-            .await
-            .map_err(|_| anyhow::anyhow!("WebSocket sender closed"))
-    }
-
-    /// Try to send an event (non-blocking)
-    pub fn try_send_event(&self, event: CloudEvent) -> Result<()> {
-        self.event_tx
-            .try_send(event)
-            .map_err(|_| anyhow::anyhow!("WebSocket channel full or closed"))
-    }
-
-    /// Try to receive an answer (non-blocking)
-    pub fn try_recv_answer(&mut self) -> Option<String> {
-        self.answer_rx.try_recv().ok()
-    }
-
-    /// Check if connected
-    pub fn is_connected(&self) -> bool {
-        self.connected && !self.event_tx.is_closed()
     }
 }
 
@@ -141,15 +121,18 @@ pub struct WebSocketHandle {
     answer_rx: mpsc::Receiver<String>,
 }
 
-impl WebSocketHandle {
-    /// Create from async WebSocket
-    pub fn from_websocket(ws: CloudWebSocket) -> Self {
-        Self {
-            event_tx: ws.event_tx,
-            answer_rx: ws.answer_rx,
-        }
+impl CloudWebSocket {
+    /// Split into a handle for the main thread and a shutdown receiver for the runtime thread
+    pub fn into_parts(self) -> (WebSocketHandle, mpsc::Receiver<()>) {
+        let handle = WebSocketHandle {
+            event_tx: self.event_tx,
+            answer_rx: self.answer_rx,
+        };
+        (handle, self.shutdown_rx)
     }
+}
 
+impl WebSocketHandle {
     /// Try to send an event (non-blocking)
     pub fn try_send(&self, event: CloudEvent) -> bool {
         self.event_tx.try_send(event).is_ok()
