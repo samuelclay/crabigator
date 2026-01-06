@@ -20,6 +20,9 @@ export const dashboardHtml = `<!DOCTYPE html>
             display: flex;
             align-items: center;
             gap: 16px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
         .header h1 {
             font-size: 20px;
@@ -35,7 +38,6 @@ export const dashboardHtml = `<!DOCTYPE html>
         }
         .container {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(800px, 1fr));
             gap: 16px;
             padding: 16px;
         }
@@ -262,19 +264,88 @@ export const dashboardHtml = `<!DOCTYPE html>
         }
         .refresh-btn:hover { background: #30363d; }
         .mode-indicator:hover { background: #30363d; }
+
+        /* Layout segmented control */
+        .layout-control {
+            display: flex;
+            gap: 0;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .layout-btn {
+            background: transparent;
+            border: none;
+            padding: 6px 12px;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 12px;
+            border-right: 1px solid #30363d;
+        }
+        .layout-btn:last-child { border-right: none; }
+        .layout-btn:hover { background: #30363d; }
+        .layout-btn.active {
+            background: #1f6feb;
+            color: #fff;
+        }
+
+        /* Layout-based container styles */
+        .container[data-layout="1"] { grid-template-columns: 1fr; }
+        .container[data-layout="2"] { grid-template-columns: repeat(2, 1fr); }
+        .container[data-layout="3"] { grid-template-columns: repeat(3, 1fr); }
+
+        /* Adjust terminal heights for compact layouts */
+        .container[data-layout="2"] .terminal { height: 250px; }
+        .container[data-layout="3"] .terminal { height: 200px; }
+        .container[data-layout="fit"] .terminal { height: 150px; }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>🦀 Crabigator Dashboard</h1>
         <button class="refresh-btn" onclick="loadSessions()">↻ Refresh</button>
+        <div class="layout-control">
+            <button class="layout-btn active" data-layout="1" onclick="setLayout('1')">1</button>
+            <button class="layout-btn" data-layout="2" onclick="setLayout('2')">2</button>
+            <button class="layout-btn" data-layout="3" onclick="setLayout('3')">3</button>
+            <button class="layout-btn" data-layout="fit" onclick="setLayout('fit')">Fit</button>
+        </div>
         <div class="status" id="status">Loading...</div>
     </div>
-    <div class="container" id="sessions"></div>
+    <div class="container" id="sessions" data-layout="1"></div>
 
     <script>
         const API_BASE = '/api';
         const sessions = new Map(); // sessionId -> { eventSource, state, element, git, changes, stats }
+        let currentLayout = '1';
+
+        function setLayout(layout) {
+            currentLayout = layout;
+            const container = document.getElementById('sessions');
+            container.dataset.layout = layout;
+
+            // Update button states
+            document.querySelectorAll('.layout-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.layout === layout);
+            });
+
+            // For 'fit' mode, calculate columns based on session count
+            if (layout === 'fit') {
+                const count = sessions.size || 1;
+                const cols = Math.ceil(Math.sqrt(count));
+                container.style.gridTemplateColumns = 'repeat(' + Math.max(cols, 1) + ', 1fr)';
+            } else {
+                container.style.gridTemplateColumns = '';
+            }
+        }
+
+        // Recalculate fit layout when session count changes
+        function updateFitLayout() {
+            if (currentLayout === 'fit') {
+                setLayout('fit');
+            }
+        }
 
         // ANSI to HTML converter - processes escape sequences including cursor positioning
         function ansiToHtml(text) {
@@ -547,6 +618,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                         sessions.delete(id);
                     }
                 }
+                updateFitLayout();
 
                 // Add/update sessions
                 for (const session of data.sessions) {
@@ -604,6 +676,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             \`;
             container.appendChild(card);
             sessions.set(session.id, { element: card, state: session.state, title: null, git: null, changes: null, stats: null, pinned: true });
+            updateFitLayout();
 
             // Set up scroll tracking for pin/unpin behavior
             const terminal = document.getElementById('terminal-' + session.id);
@@ -958,6 +1031,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                 if (card) {
                     card.remove();
                 }
+                updateFitLayout();
             };
 
             const session = sessions.get(sessionId);
@@ -1034,6 +1108,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                             sessions.delete(sessionId);
                         }
                         card.remove();
+                        updateFitLayout();
                         // Update status
                         document.getElementById('status').textContent = sessions.size + ' session(s)';
                     }
@@ -1165,6 +1240,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                                 sessions.delete(event.session.id);
                                 const card = document.getElementById('session-' + event.session.id);
                                 if (card) card.remove();
+                                updateFitLayout();
                                 document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
                                 if (sessions.size === 0) {
                                     container.innerHTML = '<div class="no-sessions">No active sessions</div>';
@@ -1185,6 +1261,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                         }
                         const card = document.getElementById('session-' + event.session.id);
                         if (card) card.remove();
+                        updateFitLayout();
                         document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
                         if (sessions.size === 0) {
                             container.innerHTML = '<div class="no-sessions">No active sessions</div>';
