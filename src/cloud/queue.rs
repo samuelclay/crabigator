@@ -2,17 +2,24 @@
 //!
 //! Events are queued in memory and persisted to disk, then drained
 //! when the cloud connection is restored.
+//!
+//! IMPORTANT: We don't queue screen events because they're large (~200KB each)
+//! and ephemeral. Queuing them causes O(n) serialization on every enqueue.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use super::events::CloudEvent;
 
 /// Maximum number of events to keep in the queue
-const MAX_QUEUE_SIZE: usize = 10_000;
+const MAX_QUEUE_SIZE: usize = 100;
+
+/// Minimum interval between persists (avoid O(n) serialization storm)
+const PERSIST_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Queued item with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +33,10 @@ pub struct OfflineQueue {
     queue: VecDeque<QueuedEvent>,
     queue_path: PathBuf,
     max_size: usize,
+    /// Last time we persisted to disk (throttled to avoid O(n) storms)
+    last_persist: Instant,
+    /// Whether queue has been modified since last persist
+    dirty: bool,
 }
 
 impl OfflineQueue {
@@ -44,6 +55,8 @@ impl OfflineQueue {
             queue,
             queue_path,
             max_size: MAX_QUEUE_SIZE,
+            last_persist: Instant::now(),
+            dirty: false,
         })
     }
 
@@ -54,7 +67,15 @@ impl OfflineQueue {
     }
 
     /// Add an event to the queue
+    ///
+    /// Note: Screen and scrollback events are skipped - they're large (~200KB) and
+    /// ephemeral. Queuing them causes O(n) serialization overhead.
     pub fn enqueue(&mut self, event: CloudEvent) {
+        // Skip large ephemeral events - they're not worth queuing
+        if matches!(event, CloudEvent::Screen { .. } | CloudEvent::Scrollback { .. }) {
+            return;
+        }
+
         // Drop oldest if at capacity
         while self.queue.len() >= self.max_size {
             self.queue.pop_front();
@@ -66,14 +87,30 @@ impl OfflineQueue {
         };
 
         self.queue.push_back(queued);
-        let _ = self.persist();
+        self.dirty = true;
+
+        // Throttle persistence to avoid O(n) serialization storm
+        if self.last_persist.elapsed() >= PERSIST_INTERVAL {
+            let _ = self.persist();
+            self.last_persist = Instant::now();
+            self.dirty = false;
+        }
     }
 
     /// Drain all events from the queue
     pub fn drain(&mut self) -> Vec<QueuedEvent> {
         let events: Vec<_> = self.queue.drain(..).collect();
+        self.dirty = false;
         let _ = self.persist();
         events
+    }
+
+    /// Persist if dirty (call on shutdown or connection restore)
+    pub fn flush(&mut self) {
+        if self.dirty {
+            let _ = self.persist();
+            self.dirty = false;
+        }
     }
 
     /// Check if queue is empty
@@ -110,6 +147,8 @@ impl Default for OfflineQueue {
             queue: VecDeque::new(),
             queue_path: PathBuf::from("/tmp/crabigator_offline_queue.json"),
             max_size: MAX_QUEUE_SIZE,
+            last_persist: Instant::now(),
+            dirty: false,
         })
     }
 }

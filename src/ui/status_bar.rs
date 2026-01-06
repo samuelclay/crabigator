@@ -7,6 +7,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::cloud::CloudStatus;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::ide::IdeKind;
@@ -33,6 +34,7 @@ pub fn draw_status_bar(
     terminal_title: Option<&str>,
     ide: IdeKind,
     cwd: &Path,
+    cloud_status: Option<&CloudStatus>,
 ) -> Result<()> {
     // Save cursor position
     write!(stdout, "{}", escape::CURSOR_SAVE)?;
@@ -79,7 +81,7 @@ pub fn draw_status_bar(
         write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + row, 1))?;
 
         // Stats column (leftmost, fixed width)
-        draw_stats_widget(stdout, layout.pty_rows, 0, row, stats_width, layout.status_rows, session_stats)?;
+        draw_stats_widget(stdout, layout.pty_rows, 0, row, stats_width, layout.status_rows, session_stats, cloud_status)?;
 
         // Separator
         write!(stdout, "{}│{}", escape::fg(color::DARK_GRAY), RESET)?;

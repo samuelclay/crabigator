@@ -534,6 +534,9 @@ impl App {
             status_rows: self.status_rows,
         };
 
+        // Get cloud status if connected
+        let cloud_status = self.cloud_client.as_ref().map(|c| c.status());
+
         let mut stdout = stdout();
         draw_status_bar(
             &mut stdout,
@@ -544,6 +547,7 @@ impl App {
             self.terminal_title.as_deref(),
             self.ide,
             &self.cwd,
+            cloud_status.as_ref(),
         )?;
 
         // Publish mirror state (throttled, only when --profile)

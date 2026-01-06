@@ -158,3 +158,35 @@ cat /tmp/crabigator-{session}/hooks.log  # Raw hook invocation log
 - `PostToolUse` → state = thinking (tracks tool counts)
 - `Stop` → state = complete (or question if AskUserQuestion was used)
 - `SubagentStop`, `PreCompact` → increment counters
+
+## Cloud Infrastructure
+
+Cloudflare Workers project for real-time session streaming to drinkcrabigator.com.
+
+### Structure
+
+```
+workers/crabigator-api/
+├── src/
+│   ├── index.ts            # Main worker entry, routes
+│   ├── dashboard.ts        # Dashboard HTML (inline)
+│   ├── session-do.ts       # Durable Object for session state
+│   └── auth/tokens.ts      # Device auth, HMAC signing
+└── wrangler.toml           # Worker config
+```
+
+### Commands
+
+```bash
+make deploy                                   # Deploy to Cloudflare
+cd workers/crabigator-api && npm run dev      # Local dev
+cd workers/crabigator-api && npm run typecheck
+```
+
+### Key Notes
+
+- **Dashboard**: Inline HTML in `dashboard.ts` with `ansiToHtml()` for terminal rendering
+- **256-color**: Uses xterm formula `value = idx === 0 ? 0 : idx * 40 + 55`
+- **Deploys break WebSockets**: Desktop auto-reconnects with exponential backoff (1s-30s)
+- **Session state**: Managed by Durable Objects (`SessionDO`)
+- **Auth**: Desktop device_id + HMAC-SHA256 signatures, no user accounts

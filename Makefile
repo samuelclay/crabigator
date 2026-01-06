@@ -1,4 +1,4 @@
-.PHONY: run build check test test-update clean resume continue lint update release codex claude reinstall-hooks
+.PHONY: run build check test test-update clean resume continue lint update release codex claude reinstall-hooks deploy
 
 PROVIDER_FILE := .crabigator-provider
 DEFAULT_PROVIDER := claude
@@ -68,3 +68,6 @@ reinstall-hooks:
 			echo "Cleared hooks metadata. Will reinstall on next crabigator session."; \
 		fi \
 	fi
+
+deploy:
+	cd workers/crabigator-api && npm run deploy
