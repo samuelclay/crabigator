@@ -25,6 +25,10 @@ pub struct SessionStats {
     last_completions: u32,
     /// Unix timestamp when completions last changed
     pub completions_changed_at: Option<f64>,
+    /// Previous compressions count (for change detection)
+    last_compressions: u32,
+    /// Unix timestamp when compressions last changed
+    pub compressions_changed_at: Option<f64>,
 }
 
 impl SessionStats {
@@ -45,6 +49,8 @@ impl SessionStats {
             prompts_changed_at: None,
             last_completions: 0,
             completions_changed_at: None,
+            last_compressions: 0,
+            compressions_changed_at: None,
         }
     }
 
@@ -96,6 +102,11 @@ impl SessionStats {
                 if stats.completions != self.last_completions {
                     self.last_completions = stats.completions;
                     self.completions_changed_at = Some(now);
+                }
+
+                if stats.compressions != self.last_compressions {
+                    self.last_compressions = stats.compressions;
+                    self.compressions_changed_at = Some(now);
                 }
 
                 self.platform_stats = stats;

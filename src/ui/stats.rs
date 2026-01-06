@@ -246,10 +246,12 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
                 let bins = stats.tool_usage_bins(sparkline_width);
                 let sparkline = render_sparkline(&bins, sparkline_width);
 
+                let elapsed = format_elapsed(stats.compressions_changed_at);
                 let comp_label = format!(
-                    "{}⊜ Cmp{} {}{}{}",
+                    "{}⊜ Cmp{} {}{}{}{}{}{}",
                     fg(color::GRAY), RESET,
-                    fg(color::PINK), compressions, RESET
+                    fg(color::PINK), compressions, RESET,
+                    fg(color::GRAY), elapsed, RESET
                 );
 
                 format!(
@@ -350,14 +352,20 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
             format!("{}{}", label, sparkline)
         }
         7 => {
-            // Compressions (only show if > 0)
+            // Compactions (only show if > 0)
             let compressions = stats.platform_stats.compressions;
             if compressions > 0 {
-                format!(
-                    "{}⊜ Compact{} {}{}{}",
+                let label = format!(
+                    "{}⊜ Compactions{} {}{}{}",
                     fg(color::GRAY), RESET,
                     fg(color::PINK), compressions, RESET
-                )
+                );
+                let elapsed = format_elapsed(stats.compressions_changed_at);
+                let timer = format!("{}{}{}", fg(color::GRAY), elapsed, RESET);
+                let label_len = strip_ansi_len(&label);
+                let timer_len = strip_ansi_len(&timer);
+                let gap = (width as usize).saturating_sub(label_len + timer_len);
+                format!("{}{:gap$}{}", label, "", timer, gap = gap)
             } else {
                 String::new()
             }
