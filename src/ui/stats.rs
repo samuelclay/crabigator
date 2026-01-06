@@ -13,6 +13,7 @@ use crate::hooks::SessionStats;
 use crate::platforms::SessionState;
 use super::sparkline::render_sparkline;
 use super::utils::strip_ansi_len;
+use super::WidgetArea;
 
 /// Braille spinner frames for the thinking animation
 const THROBBER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -105,29 +106,25 @@ fn format_state_indicator(state: SessionState) -> String {
 /// Draw the stats widget at the given position
 pub fn draw_stats_widget(
     stdout: &mut Stdout,
-    pty_rows: u16,
-    col: u16,
-    row: u16,
-    width: u16,
-    height: u16,
+    area: WidgetArea,
     stats: &SessionStats,
     cloud_status: Option<&CloudStatus>,
 ) -> Result<()> {
-    write!(stdout, "{}", escape::cursor_to(pty_rows + 1 + row, col + 1))?;
+    write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
 
     // Use compact mode when we have 4 or fewer content rows (status_rows <= 5)
     // Compact mode: header + 2 rows with abbreviated two-column layout
-    let compact = height <= 5;
+    let compact = area.height <= 5;
 
     let content = if compact {
-        draw_compact_row(row, width, stats, cloud_status)
+        draw_compact_row(area.row, area.width, stats, cloud_status)
     } else {
-        draw_normal_row(row, width, stats, cloud_status)
+        draw_normal_row(area.row, area.width, stats, cloud_status)
     };
 
     write!(stdout, "{}", content)?;
     let content_len = strip_ansi_len(&content);
-    let pad = (width as usize).saturating_sub(content_len);
+    let pad = (area.width as usize).saturating_sub(content_len);
     write!(stdout, "{:pad$}", "", pad = pad)?;
 
     Ok(())
@@ -140,16 +137,26 @@ fn format_cloud_indicator(cloud_status: Option<&CloudStatus>) -> String {
             format!("{}☁ ✓{}", fg(color::GREEN), RESET)
         }
         Some(status) if status.reconnect_attempts > 0 => {
-            // Show retry count and backoff
+            // Show retry count, backoff, and queued events
+            let queued = if status.queue_len > 0 {
+                format!(" {}q{}", status.queue_len, RESET)
+            } else {
+                String::new()
+            };
             format!(
-                "{}☁{} {}retry #{} ({}s){}",
+                "{}☁{} {}retry #{} ({}s){}{}",
                 fg(color::YELLOW), RESET,
-                fg(color::GRAY), status.reconnect_attempts, status.backoff_secs, RESET
+                fg(color::GRAY), status.reconnect_attempts, status.backoff_secs, queued, RESET
             )
         }
-        Some(_) => {
-            // Disconnected but no retries yet
-            format!("{}☁ ✗{}", fg(color::RED), RESET)
+        Some(status) => {
+            // Disconnected but no retries yet - show queue if any
+            let queued = if status.queue_len > 0 {
+                format!(" {}{}q{}", fg(color::GRAY), status.queue_len, RESET)
+            } else {
+                String::new()
+            };
+            format!("{}☁ ✗{}{}", fg(color::RED), RESET, queued)
         }
         None => String::new(),
     }

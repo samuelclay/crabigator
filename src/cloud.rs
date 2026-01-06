@@ -13,6 +13,4 @@ mod queue;
 mod websocket;
 
 pub use client::{CloudClient, CloudStatus};
-pub use device::DeviceIdentity;
-pub use events::{CloudEvent, SessionEventBuilder};
-pub use queue::OfflineQueue;
+pub use events::SessionEventBuilder;

@@ -81,7 +81,18 @@ pub fn draw_status_bar(
         write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + row, 1))?;
 
         // Stats column (leftmost, fixed width)
-        draw_stats_widget(stdout, layout.pty_rows, 0, row, stats_width, layout.status_rows, session_stats, cloud_status)?;
+        draw_stats_widget(
+            stdout,
+            WidgetArea {
+                pty_rows: layout.pty_rows,
+                col: 0,
+                row,
+                width: stats_width,
+                height: layout.status_rows,
+            },
+            session_stats,
+            cloud_status,
+        )?;
 
         // Separator
         write!(stdout, "{}│{}", escape::fg(color::DARK_GRAY), RESET)?;
@@ -89,11 +100,13 @@ pub fn draw_status_bar(
         // Git column
         draw_git_widget(
             stdout,
-            layout.pty_rows,
-            stats_width + 1,
-            row,
-            git_width,
-            layout.status_rows,
+            WidgetArea {
+                pty_rows: layout.pty_rows,
+                col: stats_width + 1,
+                row,
+                width: git_width,
+                height: layout.status_rows,
+            },
             git_state,
             ide,
             cwd,

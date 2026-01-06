@@ -7,7 +7,10 @@ use anyhow::Result;
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
-use tokio_tungstenite::{connect_async, tungstenite::http::Request, tungstenite::Message};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{error::ProtocolError, http::Request, Error as WsError, Message},
+};
 
 use super::events::{CloudEvent, CloudToDesktopMessage};
 
@@ -84,7 +87,14 @@ impl CloudWebSocket {
                 let msg = match msg_result {
                     Ok(m) => m,
                     Err(e) => {
-                        eprintln!("WebSocket read error: {}", e);
+                        if !matches!(
+                            e,
+                            WsError::ConnectionClosed
+                                | WsError::AlreadyClosed
+                                | WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake)
+                        ) {
+                            eprintln!("WebSocket read error: {}", e);
+                        }
                         break;
                     }
                 };

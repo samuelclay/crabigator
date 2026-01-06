@@ -18,11 +18,6 @@ use super::websocket::{CloudWebSocket, WebSocketHandle};
 /// Default API URL
 const DEFAULT_API_URL: &str = "https://drinkcrabigator.com/api";
 
-/// Response from POST /api/devices
-#[derive(Debug, Deserialize)]
-struct RegisterDeviceResponse {
-    ok: bool,
-}
 
 /// Response from POST /api/sessions
 #[derive(Debug, Deserialize)]
@@ -119,17 +114,20 @@ impl CloudClient {
     }
 
     /// Set custom API URL (for testing)
+    #[allow(dead_code)]
     pub fn with_api_url(mut self, url: &str) -> Self {
         self.api_url = url.to_string();
         self
     }
 
-    /// Get the device ID
+    /// Get the device ID (for future CLI commands)
+    #[allow(dead_code)]
     pub fn device_id(&self) -> &str {
         &self.device.device_id
     }
 
-    /// Get the cloud session ID (if registered)
+    /// Get the cloud session ID (for future CLI commands)
+    #[allow(dead_code)]
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
     }
@@ -183,7 +181,7 @@ impl CloudClient {
             anyhow::bail!("Device registration failed: {} - {}", status, body);
         }
 
-        let _: RegisterDeviceResponse = response.json().await?;
+        // Success - we don't need to parse the response body
         self.device_registered = true;
 
         Ok(())
@@ -238,7 +236,7 @@ impl CloudClient {
         self.connect_websocket(&data.ws_url).await?;
 
         // Drain any queued events
-        self.drain_queue().await;
+        self.drain_queue();
 
         Ok(data.id)
     }
@@ -321,6 +319,7 @@ impl CloudClient {
                     self.reconnect_backoff_secs = 1;
                     self.reconnect_attempts = 0;
                     self.pending_reconnect = None;
+                    self.drain_queue();
                     return true;
                 }
                 Ok(Err(e)) => {
@@ -446,7 +445,7 @@ impl CloudClient {
     }
 
     /// Drain queued events after reconnection
-    async fn drain_queue(&mut self) {
+    fn drain_queue(&mut self) {
         if self.queue.is_empty() {
             return;
         }
@@ -481,7 +480,8 @@ impl CloudClient {
         });
     }
 
-    /// Update session state in the cloud
+    /// Update session state in the cloud (blocking, for CLI commands)
+    #[allow(dead_code)]
     pub async fn update_session_state(&self, state: &str) -> Result<()> {
         self.send_session_update(UpdateSessionRequest {
             ended_at: None,
@@ -491,7 +491,8 @@ impl CloudClient {
         .await
     }
 
-    /// Update session stats in the cloud
+    /// Update session stats in the cloud (blocking, for CLI commands)
+    #[allow(dead_code)]
     pub async fn update_session_stats(
         &self,
         prompts: u32,
@@ -570,10 +571,5 @@ impl CloudClient {
         }
 
         Ok(())
-    }
-
-    /// Get queue length (for debugging)
-    pub fn queue_len(&self) -> usize {
-        self.queue.len()
     }
 }

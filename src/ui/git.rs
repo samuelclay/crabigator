@@ -12,6 +12,7 @@ use crate::ide::IdeKind;
 use crate::terminal::escape::{self, color, fg, hyperlink, RESET};
 use crate::git::{FileStatus, GitState};
 use super::utils::{compute_unique_display_names, create_folder_bar, digit_count, format_diff_stats, format_diff_stats_aligned, get_filename, strip_ansi_len, truncate_path};
+use super::WidgetArea;
 
 /// Dynamic column widths computed from actual file data
 #[derive(Clone, Copy)]
@@ -24,6 +25,7 @@ struct StatsColumnWidths {
 
 impl StatsColumnWidths {
     /// Compute column widths from a list of files
+    /// Makes both sides symmetric so the bar junction is truly centered
     fn from_files(files: &[FileStatus]) -> Self {
         let mut max_del = 0usize;
         let mut max_add = 0usize;
@@ -36,30 +38,39 @@ impl StatsColumnWidths {
         }
 
         // Number column widths: sign + digits (minimum 1 space if none)
-        let del_num = if max_del > 0 {
+        let del_num_raw = if max_del > 0 {
             1 + digit_count(max_del)
         } else {
             1  // just a space placeholder
         };
-        let add_num = if max_add > 0 {
+        let add_num_raw = if max_add > 0 {
             1 + digit_count(max_add)
         } else {
             1  // just a space placeholder
         };
 
         // Bar widths: based on magnitude (log10), minimum 1 if there are any
-        let del_bar = if max_del > 0 {
+        let del_bar_raw = if max_del > 0 {
             digit_count(max_del)
         } else {
             1  // minimum space
         };
-        let add_bar = if max_add > 0 {
+        let add_bar_raw = if max_add > 0 {
             digit_count(max_add)
         } else {
             1  // minimum space
         };
 
-        Self { del_num, del_bar, add_bar, add_num }
+        // Make symmetric: use max of each pair so left and right sides are equal width
+        let num_width = del_num_raw.max(add_num_raw);
+        let bar_width = del_bar_raw.max(add_bar_raw);
+
+        Self {
+            del_num: num_width,
+            del_bar: bar_width,
+            add_bar: bar_width,
+            add_num: num_width,
+        }
     }
 
     /// Total width including spaces between columns
@@ -71,23 +82,18 @@ impl StatsColumnWidths {
 
 
 /// Draw the git widget at the given position
-#[allow(clippy::too_many_arguments)]
 pub fn draw_git_widget(
     stdout: &mut Stdout,
-    pty_rows: u16,
-    col: u16,
-    row: u16,
-    width: u16,
-    height: u16,
+    area: WidgetArea,
     git_state: &GitState,
     ide: IdeKind,
     cwd: &Path,
 ) -> Result<()> {
-    write!(stdout, "{}", escape::cursor_to(pty_rows + 1 + row, col + 1))?;
+    write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
 
     let files = &git_state.files;
 
-    if row == 1 {
+    if area.row == 1 {
         // Header with branch name on left, status on right
         let branch = if git_state.branch.is_empty() {
             "Git"
@@ -109,14 +115,14 @@ pub fn draw_git_widget(
         };
         let right_len = strip_ansi_len(&right);
 
-        let pad = (width as usize).saturating_sub(left_len + right_len);
+        let pad = (area.width as usize).saturating_sub(left_len + right_len);
         write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
         return Ok(());
     }
 
     if files.is_empty() {
         // No files to display, just clear the row
-        write!(stdout, "{:width$}", "", width = width as usize)?;
+        write!(stdout, "{:width$}", "", width = area.width as usize)?;
         return Ok(());
     }
 
@@ -136,11 +142,11 @@ pub fn draw_git_widget(
     let stats_widths = StatsColumnWidths::from_files(files);
 
     // Available data rows (subtract 2: one for separator row 0, one for header row 1)
-    let available_rows = height.saturating_sub(2) as usize;
+    let available_rows = area.height.saturating_sub(2) as usize;
     let num_files = files.len();
 
     // Row index (0-based, row 2 = index 0)
-    let row_idx = (row - 2) as usize;
+    let row_idx = (area.row - 2) as usize;
 
     // Decide layout: columns or single-line
     if available_rows > 0 && num_files <= available_rows {
@@ -148,13 +154,13 @@ pub fn draw_git_widget(
         if row_idx < num_files {
             let file = &files[row_idx];
             let display_name = &display_names[row_idx];
-            let item = format_file_entry(file, display_name, width as usize, max_changes, &stats_widths, ide, cwd);
+            let item = format_file_entry(file, display_name, area.width as usize, max_changes, &stats_widths, ide, cwd);
             write!(stdout, "{}", item)?;
             let content_len = strip_ansi_len(&item);
-            let pad = (width as usize).saturating_sub(content_len);
+            let pad = (area.width as usize).saturating_sub(content_len);
             write!(stdout, "{:pad$}", "", pad = pad)?;
         } else {
-            write!(stdout, "{:width$}", "", width = width as usize)?;
+            write!(stdout, "{:width$}", "", width = area.width as usize)?;
         }
     } else if available_rows > 0 {
         // Multi-column layout
@@ -183,9 +189,9 @@ pub fn draw_git_widget(
 
         let total_width_needed: usize = col_widths.iter().sum();
 
-        if total_width_needed <= width as usize {
+        if total_width_needed <= area.width as usize {
             // Columns fit - distribute extra space proportionally to allow wider names
-            let extra_space = width as usize - total_width_needed;
+            let extra_space = area.width as usize - total_width_needed;
             let extra_per_col = extra_space / num_cols;
 
             // Apply extra space to column widths (cap name portion at 30 chars)
@@ -221,7 +227,7 @@ pub fn draw_git_widget(
             }
             write!(stdout, "{}", output)?;
             let content_len = strip_ansi_len(&output);
-            let pad = (width as usize).saturating_sub(content_len);
+            let pad = (area.width as usize).saturating_sub(content_len);
             write!(stdout, "{:pad$}", "", pad = pad)?;
         } else {
             // Columns don't fit - wrap items across rows
@@ -245,7 +251,7 @@ pub fn draw_git_widget(
                     item_width + 1 // +1 for space separator
                 };
 
-                if current_width + needed <= width as usize {
+                if current_width + needed <= area.width as usize {
                     current_row.push(i);
                     current_width += needed;
                 } else {
@@ -271,14 +277,14 @@ pub fn draw_git_widget(
                 }
                 write!(stdout, "{}", output)?;
                 let content_len = strip_ansi_len(&output);
-                let pad = (width as usize).saturating_sub(content_len);
+                let pad = (area.width as usize).saturating_sub(content_len);
                 write!(stdout, "{:pad$}", "", pad = pad)?;
             } else {
-                write!(stdout, "{:width$}", "", width = width as usize)?;
+                write!(stdout, "{:width$}", "", width = area.width as usize)?;
             }
         }
     } else {
-        write!(stdout, "{:width$}", "", width = width as usize)?;
+        write!(stdout, "{:width$}", "", width = area.width as usize)?;
     }
 
     Ok(())

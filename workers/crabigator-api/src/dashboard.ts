@@ -230,12 +230,13 @@ export const dashboardHtml = `<!DOCTYPE html>
     <script>
         const API_BASE = '/api';
         const sessions = new Map(); // sessionId -> { eventSource, state, element, git, changes, stats }
-        const deadSessions = new Set(); // Sessions that disconnected - don't recreate them
 
         // ANSI to HTML converter - processes escape sequences including cursor positioning
         function ansiToHtml(text) {
             if (!text) return '';
 
+            const defaultFg = '#c9d1d9';
+            const defaultBg = '#0d1117';
             const colors = {
                 30: '#0d1117', 31: '#f85149', 32: '#3fb950', 33: '#d29922',
                 34: '#58a6ff', 35: '#bc8cff', 36: '#39c5cf', 37: '#c9d1d9',
@@ -244,7 +245,9 @@ export const dashboardHtml = `<!DOCTYPE html>
             };
             const bgColors = {
                 40: '#0d1117', 41: '#f85149', 42: '#3fb950', 43: '#d29922',
-                44: '#58a6ff', 45: '#bc8cff', 46: '#39c5cf', 47: '#c9d1d9'
+                44: '#58a6ff', 45: '#bc8cff', 46: '#39c5cf', 47: '#c9d1d9',
+                100: '#6e7681', 101: '#ff7b72', 102: '#7ee787', 103: '#e3b341',
+                104: '#79c0ff', 105: '#d2a8ff', 106: '#56d4dd', 107: '#ffffff'
             };
 
             // Parse extended color: 38;2;R;G;B (24-bit) or 38;5;N (256-color)
@@ -290,6 +293,62 @@ export const dashboardHtml = `<!DOCTYPE html>
             let inSpan = false;
             let currentRow = 1;  // Track current row (1-indexed like VT100)
             let i = 0;
+            let currentStyle = '';
+            let state = {
+                fg: null,
+                bg: null,
+                bold: false,
+                dim: false,
+                italic: false,
+                underline: false,
+                inverse: false
+            };
+
+            function resetState() {
+                state = {
+                    fg: null,
+                    bg: null,
+                    bold: false,
+                    dim: false,
+                    italic: false,
+                    underline: false,
+                    inverse: false
+                };
+            }
+
+            function buildStyle() {
+                let fg = state.fg;
+                let bg = state.bg;
+                if (state.inverse) {
+                    const invFg = bg || defaultBg;
+                    const invBg = fg || defaultFg;
+                    fg = invFg;
+                    bg = invBg;
+                }
+
+                const styles = [];
+                if (fg) styles.push('color:' + fg);
+                if (bg) styles.push('background:' + bg);
+                if (state.bold) styles.push('font-weight:bold');
+                if (state.dim) styles.push('opacity:0.5');
+                if (state.italic) styles.push('font-style:italic');
+                if (state.underline) styles.push('text-decoration:underline');
+                return styles.join(';');
+            }
+
+            function applyStyle() {
+                const nextStyle = buildStyle();
+                if (nextStyle === currentStyle) return;
+                if (inSpan) {
+                    result += '</span>';
+                    inSpan = false;
+                }
+                if (nextStyle) {
+                    result += '<span style="' + nextStyle + '">';
+                    inSpan = true;
+                }
+                currentStyle = nextStyle;
+            }
 
             while (i < text.length) {
                 // Check for ESC character (char code 27)
@@ -307,36 +366,33 @@ export const dashboardHtml = `<!DOCTYPE html>
                     if (command === 'm') {
                         // SGR - Select Graphic Rendition
                         const codes = params ? params.split(';').map(Number) : [0];
-
-                        if (inSpan) {
-                            result += '</span>';
-                            inSpan = false;
-                        }
-
-                        let styles = [];
                         for (let k = 0; k < codes.length; k++) {
                             const code = codes[k];
-                            if (code === 0) { styles = []; }
-                            else if (code === 1) styles.push('font-weight:bold');
-                            else if (code === 2) styles.push('opacity:0.5');
-                            else if (code === 3) styles.push('font-style:italic');
-                            else if (code === 4) styles.push('text-decoration:underline');
+                            if (code === 0) { resetState(); }
+                            else if (code === 1) state.bold = true;
+                            else if (code === 2) state.dim = true;
+                            else if (code === 3) state.italic = true;
+                            else if (code === 4) state.underline = true;
+                            else if (code === 7) state.inverse = true;
+                            else if (code === 22) { state.bold = false; state.dim = false; }
+                            else if (code === 23) state.italic = false;
+                            else if (code === 24) state.underline = false;
+                            else if (code === 27) state.inverse = false;
+                            else if (code === 39) state.fg = null;
+                            else if (code === 49) state.bg = null;
                             else if (code === 38) {
                                 const result = parseExtendedColor(codes, k);
-                                if (result) { styles.push('color:' + result.color); k += result.skip; }
+                                if (result) { state.fg = result.color; k += result.skip; }
                             }
                             else if (code === 48) {
                                 const result = parseExtendedColor(codes, k);
-                                if (result) { styles.push('background:' + result.color); k += result.skip; }
+                                if (result) { state.bg = result.color; k += result.skip; }
                             }
-                            else if (colors[code]) styles.push('color:' + colors[code]);
-                            else if (bgColors[code]) styles.push('background:' + bgColors[code]);
+                            else if (colors[code]) state.fg = colors[code];
+                            else if (bgColors[code]) state.bg = bgColors[code];
                         }
 
-                        if (styles.length > 0) {
-                            result += '<span style="' + styles.join(';') + '">';
-                            inSpan = true;
-                        }
+                        applyStyle();
                     } else if (command === 'H' || command === 'f') {
                         // CUP - Cursor Position: ESC[row;colH or ESC[row;colf
                         // Also handles ESC[H (home = 1;1)
@@ -400,8 +456,16 @@ export const dashboardHtml = `<!DOCTYPE html>
                 const container = document.getElementById('sessions');
 
                 if (data.sessions.length === 0) {
+                    for (const [, session] of sessions) {
+                        session.eventSource?.close();
+                    }
+                    sessions.clear();
                     container.innerHTML = '<div class="no-sessions">No active sessions</div>';
                     return;
+                }
+                const emptyState = container.querySelector('.no-sessions');
+                if (emptyState) {
+                    emptyState.remove();
                 }
 
                 // Close event sources for removed sessions
@@ -412,12 +476,8 @@ export const dashboardHtml = `<!DOCTYPE html>
                     }
                 }
 
-                // Add/update sessions (skip dead ones)
+                // Add/update sessions
                 for (const session of data.sessions) {
-                    // Skip sessions we know are disconnected
-                    if (deadSessions.has(session.id)) {
-                        continue;
-                    }
                     if (!sessions.has(session.id)) {
                         createSessionCard(session);
                         connectToSession(session.id);
@@ -729,8 +789,6 @@ export const dashboardHtml = `<!DOCTYPE html>
                     session.eventSource?.close();
                     sessions.delete(sessionId);
                 }
-                // Remove from deadSessions - we lost connection, desktop may have reconnected
-                deadSessions.delete(sessionId);
                 // Remove the card - it will be recreated if session is still active
                 const card = document.getElementById('session-' + sessionId);
                 if (card) {
@@ -790,8 +848,6 @@ export const dashboardHtml = `<!DOCTYPE html>
                             sessions.delete(sessionId);
                         }
                         card.remove();
-                        // Track dead sessions so they don't reappear on refresh
-                        deadSessions.add(sessionId);
                         // Update status
                         document.getElementById('status').textContent = sessions.size + ' session(s)';
                     }

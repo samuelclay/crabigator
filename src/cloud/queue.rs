@@ -106,6 +106,7 @@ impl OfflineQueue {
     }
 
     /// Persist if dirty (call on shutdown or connection restore)
+    #[allow(dead_code)]
     pub fn flush(&mut self) {
         if self.dirty {
             let _ = self.persist();
@@ -134,7 +135,8 @@ impl OfflineQueue {
         Ok(())
     }
 
-    /// Clear the queue and remove the file
+    /// Clear the queue and remove the file (for testing)
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.queue.clear();
         let _ = fs::remove_file(&self.queue_path);
