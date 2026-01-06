@@ -90,6 +90,14 @@ export interface ScreenEvent {
 }
 
 /**
+ * Terminal title event (from OSC sequences)
+ */
+export interface TitleEvent {
+    type: 'title';
+    title: string;          // Terminal title extracted from OSC sequences
+}
+
+/**
  * Desktop connection status event (for dashboard)
  */
 export interface DesktopStatusEvent {
@@ -108,6 +116,7 @@ export type SessionEvent =
     | ChangesEvent
     | StatsEvent
     | ScreenEvent
+    | TitleEvent
     | DesktopStatusEvent;
 
 /**

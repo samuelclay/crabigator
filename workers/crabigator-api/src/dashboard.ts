@@ -64,6 +64,15 @@ export const dashboardHtml = `<!DOCTYPE html>
         .state.permission { background: #db6d28; color: #fff; }
         .state.question { background: #a371f7; color: #fff; }
         .state.complete { background: #8b949e; color: #fff; }
+        .session-header .title {
+            font-size: 13px;
+            font-weight: 500;
+            color: #58a6ff;
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
         .session-header .cwd {
             font-size: 12px;
             color: #8b949e;
@@ -543,6 +552,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             card.innerHTML = \`
                 <div class="session-header">
                     <span class="state \${session.state}">\${session.state}</span>
+                    <span class="title" id="title-\${session.id}"></span>
                     <span class="cwd">\${session.cwd}</span>
                     <span class="id">\${session.id.slice(0, 8)}</span>
                     <button class="pin-btn pinned" id="pin-\${session.id}" onclick="togglePin('\${session.id}')" title="Auto-scroll to bottom">⇣ Pinned</button>
@@ -574,7 +584,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                 </div>
             \`;
             container.appendChild(card);
-            sessions.set(session.id, { element: card, state: session.state, git: null, changes: null, stats: null, pinned: true });
+            sessions.set(session.id, { element: card, state: session.state, title: null, git: null, changes: null, stats: null, pinned: true });
 
             // Set up scroll tracking for pin/unpin behavior
             const terminal = document.getElementById('terminal-' + session.id);
@@ -949,6 +959,17 @@ export const dashboardHtml = `<!DOCTYPE html>
                     break;
                 case 'stats':
                     updateStatsWidget(sessionId, event);
+                    break;
+                case 'title':
+                    // Update title in header
+                    const titleEl = document.getElementById('title-' + sessionId);
+                    if (titleEl) {
+                        titleEl.textContent = event.title;
+                    }
+                    // Store in session data
+                    if (sessionData) {
+                        sessionData.title = event.title;
+                    }
                     break;
                 case 'desktop_status':
                     // Desktop connected/disconnected

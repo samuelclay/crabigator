@@ -74,6 +74,8 @@ pub struct App {
     last_cloud_state: Option<SessionState>,
     /// Last scrollback line count sent to cloud (for diffs)
     last_cloud_scrollback_lines: usize,
+    /// Last title sent to cloud (to avoid duplicate events)
+    last_cloud_title: Option<String>,
     /// Whether we've sent an initial stats payload to cloud
     cloud_stats_sent: bool,
 }
@@ -157,6 +159,7 @@ impl App {
             cloud_client,
             last_cloud_state: None,
             last_cloud_scrollback_lines: 0,
+            last_cloud_title: None,
             cloud_stats_sent: false,
         })
     }
@@ -491,7 +494,8 @@ impl App {
                     // Scan for OSC title sequences
                     let (passthrough, title) = self.osc_scanner.scan(&bytes);
                     if let Some(t) = title {
-                        self.terminal_title = Some(t);
+                        self.terminal_title = Some(t.clone());
+                        self.send_cloud_title_event(t);
                     }
 
                     if passthrough.is_empty() {
@@ -631,6 +635,20 @@ impl App {
     fn send_cloud_screen_event(&mut self, content: String) {
         if let Some(ref mut client) = self.cloud_client {
             let event = SessionEventBuilder::screen(content);
+            client.send_event(event);
+        }
+    }
+
+    /// Send title event to cloud
+    fn send_cloud_title_event(&mut self, title: String) {
+        // Skip if title hasn't changed
+        if self.last_cloud_title.as_ref() == Some(&title) {
+            return;
+        }
+        self.last_cloud_title = Some(title.clone());
+
+        if let Some(ref mut client) = self.cloud_client {
+            let event = SessionEventBuilder::title(title);
             client.send_event(event);
         }
     }

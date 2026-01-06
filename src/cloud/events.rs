@@ -190,6 +190,24 @@ impl ScreenEvent {
     }
 }
 
+/// Terminal title event (from OSC sequences)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TitleEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    /// Terminal title extracted from OSC sequences
+    pub title: String,
+}
+
+impl TitleEvent {
+    pub fn new(title: String) -> Self {
+        Self {
+            event_type: "title".to_string(),
+            title,
+        }
+    }
+}
+
 /// Union of all cloud event types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -200,6 +218,7 @@ pub enum CloudEvent {
     Changes(ChangesEvent),
     Stats(StatsEvent),
     Screen(ScreenEvent),
+    Title(TitleEvent),
 }
 
 /// Message from cloud to desktop (via WebSocket)
@@ -229,6 +248,11 @@ impl SessionEventBuilder {
     /// Build a screen event
     pub fn screen(content: String) -> CloudEvent {
         CloudEvent::Screen(ScreenEvent::new(content))
+    }
+
+    /// Build a title event
+    pub fn title(title: String) -> CloudEvent {
+        CloudEvent::Title(TitleEvent::new(title))
     }
 
     /// Build a git status event

@@ -5,6 +5,7 @@ interface SessionDOState {
     state: SessionState;
     lastScrollbackLine: number;
     lastScreen: string | null;
+    lastTitle: string | null;
     eventSequence: number;
 }
 
@@ -31,6 +32,7 @@ export class SessionDO implements DurableObject {
             state: 'ready',
             lastScrollbackLine: 0,
             lastScreen: null,
+            lastTitle: null,
             eventSequence: 0,
         };
 
@@ -138,6 +140,9 @@ export class SessionDO implements DurableObject {
             case 'screen':
                 this.sessionState.lastScreen = event.content;
                 break;
+            case 'title':
+                this.sessionState.lastTitle = event.title;
+                break;
         }
 
         // Increment sequence and persist state
@@ -213,6 +218,15 @@ export class SessionDO implements DurableObject {
             timestamp: Date.now(),
         };
         await this.sendSSE(writer, stateEvent);
+
+        // Send current title if available
+        if (this.sessionState.lastTitle) {
+            const titleEvent: SessionEvent = {
+                type: 'title',
+                title: this.sessionState.lastTitle,
+            };
+            await this.sendSSE(writer, titleEvent);
+        }
     }
 
     /**
@@ -328,6 +342,7 @@ export class SessionDO implements DurableObject {
                 state: this.sessionState.state,
                 scrollback_lines: this.sessionState.lastScrollbackLine,
                 has_screen: this.sessionState.lastScreen !== null,
+                title: this.sessionState.lastTitle,
                 event_sequence: this.sessionState.eventSequence,
                 desktop_connected: this.desktopWs !== null,
                 sse_clients: this.sseClients.size,
