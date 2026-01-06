@@ -190,3 +190,42 @@ cd workers/crabigator-api && npm run typecheck
 - **Deploys break WebSockets**: Desktop auto-reconnects with exponential backoff (1s-30s)
 - **Session state**: Managed by Durable Objects (`SessionDO`)
 - **Auth**: Desktop device_id + HMAC-SHA256 signatures, no user accounts
+
+## Browser Testing with PlayWriter MCP
+
+The PlayWriter MCP allows Claude Code to control Chrome for testing the dashboard and other web functionality.
+
+### Opening Chrome
+
+```bash
+open -a "Google Chrome" --new --args --new-window "https://drinkcrabigator.com/dashboard"
+```
+
+### Connecting PlayWriter
+
+After Chrome opens, the user must click the **PlayWriter extension icon** in Chrome's toolbar to enable control. Without this, you'll get "Extension not connected" errors.
+
+### Viewing the Dashboard
+
+```javascript
+// Navigate and get accessibility snapshot
+await page.goto('https://drinkcrabigator.com/dashboard');
+await page.waitForLoadState('load');
+console.log(await accessibilitySnapshot({ page }));
+```
+
+The accessibility snapshot shows the dashboard structure including:
+- Session list with state (thinking/permission/complete), path, and session ID
+- Screen preview showing the terminal output
+- Stats widget (session time, prompts, completions, tools)
+- Changes widget
+
+### Full Circle Test
+
+You can view your own running session on the dashboard - the screen preview will show the conversation you're currently having, creating a recursive view of yourself.
+
+### Troubleshooting
+
+- **"Extension not connected"**: User needs to click PlayWriter icon in Chrome
+- **Connection errors**: Use `mcp__playwriter__reset` to reconnect
+- **No pages**: Ask user to restart Chrome (known Chrome bug)
