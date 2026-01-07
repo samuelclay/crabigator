@@ -9,7 +9,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{error::ProtocolError, http::Request, Error as WsError, Message},
+    tungstenite::{http::Request, Message},
 };
 
 use super::events::{CloudEvent, CloudToDesktopMessage};
@@ -73,14 +73,10 @@ impl CloudWebSocket {
             while let Some(event) = event_rx.recv().await {
                 let json = match serde_json::to_string(&event) {
                     Ok(j) => j,
-                    Err(e) => {
-                        eprintln!("Failed to serialize event: {}", e);
-                        continue;
-                    }
+                    Err(_) => continue,
                 };
 
-                if let Err(e) = write.send(Message::Text(json)).await {
-                    eprintln!("Failed to send WebSocket message: {}", e);
+                if write.send(Message::Text(json)).await.is_err() {
                     break;
                 }
             }
@@ -91,17 +87,7 @@ impl CloudWebSocket {
             while let Some(msg_result) = read.next().await {
                 let msg = match msg_result {
                     Ok(m) => m,
-                    Err(e) => {
-                        if !matches!(
-                            e,
-                            WsError::ConnectionClosed
-                                | WsError::AlreadyClosed
-                                | WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake)
-                        ) {
-                            eprintln!("WebSocket read error: {}", e);
-                        }
-                        break;
-                    }
+                    Err(_) => break,
                 };
 
                 if let Message::Text(text) = msg {
@@ -112,12 +98,7 @@ impl CloudWebSocket {
                         Ok(CloudToDesktopMessage::Key { key }) => {
                             let _ = key_tx.send(key).await;
                         }
-                        Ok(CloudToDesktopMessage::Ping) => {
-                            // Ignore pings
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to parse WebSocket message: {}", e);
-                        }
+                        Ok(CloudToDesktopMessage::Ping) | Err(_) => {}
                     }
                 }
             }

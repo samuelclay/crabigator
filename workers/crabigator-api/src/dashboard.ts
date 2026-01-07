@@ -66,6 +66,7 @@ export const dashboardHtml = `<!DOCTYPE html>
         .state.permission { background: #db6d28; color: #fff; }
         .state.question { background: #a371f7; color: #fff; }
         .state.complete { background: #8b949e; color: #fff; }
+        .state.interrupted { background: #f85149; color: #fff; }
         .session-header .title {
             font-size: 13px;
             font-weight: 500;
@@ -764,6 +765,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                 case 'permission': return '<span style="color:#d29922">» ? « Perm</span>';
                 case 'question': return '<span style="color:#db6d28">» ? « Ask</span>';
                 case 'complete': return '<span style="color:#bc8cff">✓ Complete</span>';
+                case 'interrupted': return '<span style="color:#f85149">⊘ Interrupted</span>';
                 default: return '<span style="color:#8b949e">○ ' + state + '</span>';
             }
         }

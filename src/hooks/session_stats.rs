@@ -29,6 +29,9 @@ pub struct SessionStats {
     last_compressions: u32,
     /// Unix timestamp when compressions last changed
     pub compressions_changed_at: Option<f64>,
+    /// Whether the user interrupted during thinking (ESC/Ctrl+C)
+    /// Cleared when platform reports a new state
+    interrupted: bool,
 }
 
 impl SessionStats {
@@ -51,6 +54,21 @@ impl SessionStats {
             completions_changed_at: None,
             last_compressions: 0,
             compressions_changed_at: None,
+            interrupted: false,
+        }
+    }
+
+    /// Mark as interrupted (called when ESC/Ctrl+C during thinking)
+    pub fn set_interrupted(&mut self) {
+        self.interrupted = true;
+    }
+
+    /// Get the effective session state (considering interrupt override)
+    pub fn effective_state(&self) -> SessionState {
+        if self.interrupted {
+            SessionState::Interrupted
+        } else {
+            self.platform_stats.state
         }
     }
 
@@ -58,8 +76,8 @@ impl SessionStats {
     pub fn tick(&mut self) {
         self.work_seconds = self.session_start.elapsed().as_secs();
 
-        // Track thinking time only when actively thinking (not permission/question/etc)
-        let is_thinking = self.platform_stats.state == SessionState::Thinking;
+        // Track thinking time only when actively thinking (not permission/question/interrupted/etc)
+        let is_thinking = self.effective_state() == SessionState::Thinking;
         if is_thinking {
             if self.thinking_since.is_none() {
                 // Just started thinking - start the timer
@@ -87,6 +105,11 @@ impl SessionStats {
             let last_updated = stats.last_updated.unwrap_or(0.0);
             if last_updated > self.last_stats_check {
                 self.last_stats_check = last_updated;
+
+                // Clear interrupted flag when any hook event occurs
+                // (e.g., user submitted new prompt, Stop event, tool use, etc.)
+                // This handles the case where state stays "thinking" after interrupt + new prompt
+                self.interrupted = false;
 
                 // Track when prompts/completions change
                 let now = SystemTime::now()

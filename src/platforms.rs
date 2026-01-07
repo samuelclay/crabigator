@@ -62,6 +62,8 @@ pub enum SessionState {
     Question,
     /// The assistant finished responding
     Complete,
+    /// The user interrupted the assistant (ESC/Ctrl+C during thinking)
+    Interrupted,
 }
 
 /// Claude Code operating mode (cycles via Shift+Tab)

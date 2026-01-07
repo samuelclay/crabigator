@@ -264,7 +264,7 @@ impl CaptureManager {
             .enumerate()
             .filter(|(_, row)| row.iter().any(|&b| !b.is_ascii_whitespace()))
             .map(|(idx, _)| idx)
-            .last()
+            .next_back()
             .unwrap_or(0);
 
         // Build content up to last non-empty row

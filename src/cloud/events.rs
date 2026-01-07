@@ -16,6 +16,7 @@ pub enum CloudSessionState {
     Permission,
     Question,
     Complete,
+    Interrupted,
 }
 
 impl From<crate::platforms::SessionState> for CloudSessionState {
@@ -26,6 +27,7 @@ impl From<crate::platforms::SessionState> for CloudSessionState {
             crate::platforms::SessionState::Permission => CloudSessionState::Permission,
             crate::platforms::SessionState::Question => CloudSessionState::Question,
             crate::platforms::SessionState::Complete => CloudSessionState::Complete,
+            crate::platforms::SessionState::Interrupted => CloudSessionState::Interrupted,
         }
     }
 }

@@ -100,6 +100,9 @@ fn format_state_indicator(state: SessionState) -> String {
         SessionState::Complete => {
             format!("{}✓ Complete{}", fg(color::PURPLE), RESET)
         }
+        SessionState::Interrupted => {
+            format!("{}⊘ Interrupted{}", fg(color::RED), RESET)
+        }
     }
 }
 
@@ -130,35 +133,21 @@ pub fn draw_stats_widget(
     Ok(())
 }
 
-/// Format cloud status indicator
-fn format_cloud_indicator(cloud_status: Option<&CloudStatus>) -> String {
+/// Format cloud status as header text
+fn format_cloud_header(cloud_status: Option<&CloudStatus>) -> String {
     match cloud_status {
         Some(status) if status.connected => {
-            format!("{}☁ ✓{}", fg(color::GREEN), RESET)
+            format!("{} Live{}", fg(color::GREEN), RESET)
         }
         Some(status) if status.reconnect_attempts > 0 => {
-            // Show retry count, backoff, and queued events
-            let queued = if status.queue_len > 0 {
-                format!(" {}q{}", status.queue_len, RESET)
-            } else {
-                String::new()
-            };
-            format!(
-                "{}☁{} {}retry #{} ({}s){}{}",
-                fg(color::YELLOW), RESET,
-                fg(color::GRAY), status.reconnect_attempts, status.backoff_secs, queued, RESET
-            )
+            format!("{} Retry{}", fg(color::ORANGE), RESET)
         }
-        Some(status) => {
-            // Disconnected but no retries yet - show queue if any
-            let queued = if status.queue_len > 0 {
-                format!(" {}{}q{}", fg(color::GRAY), status.queue_len, RESET)
-            } else {
-                String::new()
-            };
-            format!("{}☁ ✗{}{}", fg(color::RED), RESET, queued)
+        Some(_) => {
+            format!("{} Offline{}", fg(color::RED), RESET)
         }
-        None => String::new(),
+        None => {
+            format!("{} Local{}", fg(color::GRAY), RESET)
+        }
     }
 }
 
@@ -169,23 +158,13 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
 
     match row {
         1 => {
-            // Header with cloud status and state indicator
-            let header = format!("{} Stats{}", fg(color::PURPLE), RESET);
-            let cloud = format_cloud_indicator(cloud_status);
-            let state = format_state_indicator(stats.platform_stats.state);
+            // Header: cloud status on left, state indicator on right
+            let header = format_cloud_header(cloud_status);
+            let state = format_state_indicator(stats.effective_state());
             let header_len = strip_ansi_len(&header);
-            let cloud_len = strip_ansi_len(&cloud);
             let state_len = strip_ansi_len(&state);
-
-            if cloud_len > 0 {
-                // Layout: "Stats  ☁ ✓  ○ Ready"
-                let gap1 = 2; // gap between header and cloud
-                let gap2 = (width as usize).saturating_sub(header_len + gap1 + cloud_len + state_len);
-                format!("{}{:gap1$}{}{:gap2$}{}", header, "", cloud, "", state, gap1 = gap1, gap2 = gap2)
-            } else {
-                let gap = (width as usize).saturating_sub(header_len + state_len);
-                format!("{}{:gap$}{}", header, "", state, gap = gap)
-            }
+            let gap = (width as usize).saturating_sub(header_len + state_len);
+            format!("{}{:gap$}{}", header, "", state, gap = gap)
         }
         2 => {
             // Row 2: Left column = Session + Thinking, Right column = Prompts + Completions
@@ -277,23 +256,13 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
 fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>) -> String {
     match row {
         1 => {
-            // Header with cloud status and state indicator
-            let header = format!("{} Stats{}", fg(color::PURPLE), RESET);
-            let cloud = format_cloud_indicator(cloud_status);
-            let state = format_state_indicator(stats.platform_stats.state);
+            // Header: cloud status on left, state indicator on right
+            let header = format_cloud_header(cloud_status);
+            let state = format_state_indicator(stats.effective_state());
             let header_len = strip_ansi_len(&header);
-            let cloud_len = strip_ansi_len(&cloud);
             let state_len = strip_ansi_len(&state);
-
-            if cloud_len > 0 {
-                // Layout: "Stats  ☁ ✓  ○ Ready"
-                let gap1 = 2;
-                let gap2 = (width as usize).saturating_sub(header_len + gap1 + cloud_len + state_len);
-                format!("{}{:gap1$}{}{:gap2$}{}", header, "", cloud, "", state, gap1 = gap1, gap2 = gap2)
-            } else {
-                let gap = (width as usize).saturating_sub(header_len + state_len);
-                format!("{}{:gap$}{}", header, "", state, gap = gap)
-            }
+            let gap = (width as usize).saturating_sub(header_len + state_len);
+            format!("{}{:gap$}{}", header, "", state, gap = gap)
         }
         2 => {
             // Session/work time (right-aligned)
@@ -371,10 +340,10 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
             }
         }
         8 => {
-            // Idle time (only show when complete/question state and idle > 60s)
+            // Idle time (only show when complete/question/interrupted state and idle > 60s)
             let is_idle_state = matches!(
-                stats.platform_stats.state,
-                SessionState::Complete | SessionState::Question
+                stats.effective_state(),
+                SessionState::Complete | SessionState::Question | SessionState::Interrupted
             );
             if is_idle_state {
                 if let Some(secs) = idle_seconds(stats.platform_stats.idle_since) {

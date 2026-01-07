@@ -342,22 +342,22 @@ impl App {
 
             // Refresh platform stats more frequently and redraw if state changed
             if last_hook_refresh.elapsed() >= hook_refresh_interval {
-                let old_state = self.session_stats.platform_stats.state;
+                let old_effective_state = self.session_stats.effective_state();
                 let old_last_updated = self.session_stats.platform_stats.last_updated;
                 self.session_stats
                     .refresh_platform_stats(self.platform.as_ref(), &self.cwd.to_string_lossy());
-                let new_state = self.session_stats.platform_stats.state;
+                let new_effective_state = self.session_stats.effective_state();
                 let new_last_updated = self.session_stats.platform_stats.last_updated;
 
-                // Redraw immediately if state changed (e.g., Thinking -> Complete)
-                if old_state != new_state {
+                // Redraw immediately if effective state changed (e.g., Thinking -> Complete, or Interrupted -> Thinking)
+                if old_effective_state != new_effective_state {
                     self.draw_status_bar()?;
                     last_status_draw = Instant::now();
                 }
 
                 // Send initial state once, then on changes
-                if self.last_cloud_state.is_none() || old_state != new_state {
-                    self.send_cloud_state_event(new_state);
+                if self.last_cloud_state.is_none() || old_effective_state != new_effective_state {
+                    self.send_cloud_state_event(new_effective_state);
                 }
 
                 // Stream stats when platform stats update (or first send)
@@ -383,7 +383,7 @@ impl App {
 
             // Animate throbber independently when in active states (Thinking/Permission)
             let needs_throbber = matches!(
-                self.session_stats.platform_stats.state,
+                self.session_stats.effective_state(),
                 SessionState::Thinking | SessionState::Permission
             );
             if needs_throbber && last_throbber_draw.elapsed() >= throbber_interval {
@@ -575,9 +575,24 @@ impl App {
     }
 
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
         if key.kind != crossterm::event::KeyEventKind::Press {
             return Ok(());
         }
+
+        // Detect interrupt keys (ESC or Ctrl+C) while thinking
+        let is_interrupt = key.code == KeyCode::Esc
+            || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL));
+
+        if is_interrupt && self.session_stats.effective_state() == SessionState::Thinking {
+            self.session_stats.set_interrupted();
+            // Immediately send state update to cloud
+            self.send_cloud_state_event(SessionState::Interrupted);
+            // Redraw to show interrupted state
+            self.draw_status_bar()?;
+        }
+
         forward_key_to_pty(key, &mut self.platform_pty)?;
         Ok(())
     }
@@ -731,5 +746,6 @@ fn session_state_label(state: SessionState) -> &'static str {
         SessionState::Permission => "permission",
         SessionState::Question => "question",
         SessionState::Complete => "complete",
+        SessionState::Interrupted => "interrupted",
     }
 }

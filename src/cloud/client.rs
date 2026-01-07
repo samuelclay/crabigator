@@ -52,9 +52,9 @@ pub struct CloudStatus {
     /// Number of reconnection attempts since last successful connection
     pub reconnect_attempts: u32,
     /// Current backoff in seconds before next retry
-    pub backoff_secs: u64,
+    pub _backoff_secs: u64,
     /// Number of queued events waiting to be sent
-    pub queue_len: usize,
+    pub _queue_len: usize,
 }
 
 /// Cloud client for session streaming
@@ -142,8 +142,8 @@ impl CloudClient {
         CloudStatus {
             connected: self.is_connected(),
             reconnect_attempts: self.reconnect_attempts,
-            backoff_secs: self.reconnect_backoff_secs,
-            queue_len: self.queue.len(),
+            _backoff_secs: self.reconnect_backoff_secs,
+            _queue_len: self.queue.len(),
         }
     }
 
@@ -322,9 +322,8 @@ impl CloudClient {
                     self.drain_queue();
                     return true;
                 }
-                Ok(Err(e)) => {
-                    // Connection failed - log error, increase backoff and clear pending
-                    eprintln!("Cloud reconnection failed: {:?}", e);
+                Ok(Err(_)) => {
+                    // Connection failed - increase backoff and clear pending
                     self.reconnect_backoff_secs = (self.reconnect_backoff_secs * 2).min(30);
                     self.last_reconnect_attempt = Some(std::time::Instant::now());
                     self.pending_reconnect = None;
@@ -471,17 +470,7 @@ impl CloudClient {
         let api_url = self.api_url.clone();
 
         tokio::spawn(async move {
-            if let Err(err) = Self::send_session_update_with(
-                device,
-                http,
-                api_url,
-                session_id,
-                update,
-            )
-            .await
-            {
-                eprintln!("Session update failed: {}", err);
-            }
+            let _ = Self::send_session_update_with(device, http, api_url, session_id, update).await;
         });
     }
 
