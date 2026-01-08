@@ -12,6 +12,7 @@ mod mirror;
 mod mode;
 mod parsers;
 mod platforms;
+mod screen_parser;
 mod terminal;
 mod ui;
 

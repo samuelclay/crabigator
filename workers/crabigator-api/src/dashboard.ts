@@ -805,6 +805,12 @@ export const dashboardHtml = `<!DOCTYPE html>
         const sessions = new Map(); // sessionId -> { eventSource, state, element, git, changes, stats }
         let currentLayout = localStorage.getItem('crabigator-layout') || '1';
 
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         // Font size scaling
         const FONT_SCALES = [0.75, 0.85, 0.9, 1.0, 1.1, 1.25, 1.5];
         let currentFontScaleIndex = 3; // default 1.0
@@ -1558,12 +1564,22 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <div class="changes-list" style="color:#8b949e">Waiting for data...</div>
                     </div>
                 </div>
+                <div class="prompt-panel" id="prompt-\${session.id}">
+                    <div class="prompt-header" id="prompt-header-\${session.id}"></div>
+                    <div class="prompt-question" id="prompt-question-\${session.id}"></div>
+                    <div class="prompt-options" id="prompt-options-\${session.id}"></div>
+                    <div class="prompt-other" id="prompt-other-\${session.id}" style="display:none">
+                        <input type="text" id="prompt-input-\${session.id}" placeholder="Type your response..."
+                               onkeydown="if(event.key==='Enter'){event.preventDefault();sendOtherAnswer('\${session.id}');}">
+                        <button type="button" onclick="sendOtherAnswer('\${session.id}')">Send</button>
+                    </div>
+                </div>
                 <div class="input-area">
                     <input type="text" id="input-\${session.id}"
                            placeholder="Type a command or answer..."
                            oninput="handleInputChange('\${session.id}', this.value)"
                            onkeydown="if(event.key==='Enter')sendAnswer('\${session.id}')">
-                    <button onclick="sendAnswer('\${session.id}')">Send</button>
+                    <button type="button" onclick="sendAnswer('\${session.id}')">Send</button>
                 </div>
             \`;
             container.appendChild(card);
@@ -2426,6 +2442,147 @@ export const dashboardHtml = `<!DOCTYPE html>
                 case 'title_history':
                     updateTitlesWidget(sessionId, event.history);
                     break;
+                case 'prompt':
+                    // Interactive prompt (question or permission)
+                    updatePromptPanel(sessionId, event.prompt);
+                    break;
+            }
+        }
+
+        function updatePromptPanel(sessionId, prompt) {
+            const panel = document.getElementById('prompt-' + sessionId);
+            const headerEl = document.getElementById('prompt-header-' + sessionId);
+            const questionEl = document.getElementById('prompt-question-' + sessionId);
+            const optionsEl = document.getElementById('prompt-options-' + sessionId);
+            const otherEl = document.getElementById('prompt-other-' + sessionId);
+
+            if (!panel) return;
+
+            if (!prompt) {
+                // Clear/hide prompt panel
+                panel.classList.remove('visible');
+                return;
+            }
+
+            panel.classList.add('visible');
+
+            if (prompt.prompt_type === 'question') {
+                // AskUserQuestion prompt
+                const q = prompt.questions[0];
+                headerEl.textContent = q.header || 'Question';
+                questionEl.textContent = q.question;
+
+                // Render option buttons
+                optionsEl.innerHTML = q.options.map((opt, i) => {
+                    const cls = i === 0 ? 'prompt-btn primary' : 'prompt-btn';
+                    const desc = opt.description ? '<span class="desc">' + escapeHtml(opt.description) + '</span>' : '';
+                    return '<button type="button" class="' + cls + '" onclick="sendPromptAnswer(\\'' + sessionId + '\\', \\'' + opt.value + '\\')">' +
+                           escapeHtml(opt.label) + desc + '</button>';
+                }).join('');
+
+                // Show "Other" input if allowed
+                if (q.allows_other !== false) {
+                    otherEl.style.display = 'flex';
+                } else {
+                    otherEl.style.display = 'none';
+                }
+
+            } else if (prompt.prompt_type === 'permission') {
+                // Permission prompt
+                headerEl.textContent = 'Permission: ' + prompt.tool_name;
+
+                // Show tool info
+                let desc = 'Allow this action?';
+                if (prompt.tool_input?.command) desc = 'Command: ' + prompt.tool_input.command;
+                else if (prompt.tool_input?.file_path) desc = 'File: ' + prompt.tool_input.file_path;
+                else if (prompt.tool_input?.description) desc = prompt.tool_input.description;
+                questionEl.textContent = desc;
+
+                // Render option buttons
+                optionsEl.innerHTML = prompt.options.map((opt, i) => {
+                    let cls = 'prompt-btn';
+                    if (opt.value === '1' || opt.value === '2') cls += ' primary';
+                    if (opt.label.toLowerCase().includes('no') || opt.label.toLowerCase().includes('deny')) cls += ' danger';
+                    const desc = opt.description ? '<span class="desc">' + escapeHtml(opt.description) + '</span>' : '';
+                    return '<button type="button" class="' + cls + '" onclick="sendPromptAnswer(\\'' + sessionId + '\\', \\'' + opt.value + '\\')">' +
+                           escapeHtml(opt.label) + desc + '</button>';
+                }).join('');
+
+                // Show "Other" input - Permission prompts typically have "Type here..." option
+                otherEl.style.display = 'flex';
+
+            } else if (prompt.prompt_type === 'exit_plan') {
+                // ExitPlanMode prompt - options parsed from screen
+                headerEl.textContent = 'Exit Plan Mode';
+                questionEl.textContent = 'Choose how to proceed:';
+
+                // Render option buttons
+                optionsEl.innerHTML = prompt.options.map((opt, i) => {
+                    const cls = i === 0 ? 'prompt-btn primary' : 'prompt-btn';
+                    const desc = opt.description ? '<span class="desc">' + escapeHtml(opt.description) + '</span>' : '';
+                    return '<button type="button" class="' + cls + '" onclick="sendPromptAnswer(\\'' + sessionId + '\\', \\'' + opt.value + '\\')">' +
+                           escapeHtml(opt.label) + desc + '</button>';
+                }).join('');
+
+                // Show "Other" input - ExitPlanMode typically has "Type here..." option
+                otherEl.style.display = 'flex';
+            }
+        }
+
+        async function sendPromptAnswer(sessionId, value) {
+            console.log('[sendPromptAnswer] called for session:', sessionId, 'value:', value);
+            try {
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: value })
+                });
+
+                if (resp.ok) {
+                    console.log('[sendPromptAnswer] success');
+                    // Hide prompt panel immediately for responsive feel
+                    const panel = document.getElementById('prompt-' + sessionId);
+                    if (panel) panel.classList.remove('visible');
+                } else {
+                    const err = await resp.json();
+                    console.error('Failed to send prompt answer:', err);
+                }
+            } catch (err) {
+                console.error('Failed to send prompt answer:', err);
+            }
+        }
+
+        async function sendOtherAnswer(sessionId) {
+            console.log('[sendOtherAnswer] called for session:', sessionId);
+            const input = document.getElementById('prompt-input-' + sessionId);
+            console.log('[sendOtherAnswer] input element:', input);
+            const text = input?.value?.trim();
+            console.log('[sendOtherAnswer] text value:', text);
+            if (!text) {
+                console.log('[sendOtherAnswer] empty text, returning');
+                return;
+            }
+
+            try {
+                console.log('[sendOtherAnswer] sending:', text);
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+
+                if (resp.ok) {
+                    console.log('[sendOtherAnswer] success');
+                    input.value = '';
+                    // Hide prompt panel
+                    const panel = document.getElementById('prompt-' + sessionId);
+                    if (panel) panel.classList.remove('visible');
+                } else {
+                    const err = await resp.json();
+                    console.error('Failed to send other answer:', err);
+                }
+            } catch (err) {
+                console.error('Failed to send other answer:', err);
             }
         }
 

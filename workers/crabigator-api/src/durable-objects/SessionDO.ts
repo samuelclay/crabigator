@@ -1,4 +1,4 @@
-import type { SessionEvent, SessionState, CloudToDesktopMessage } from '../types/session';
+import type { SessionEvent, SessionState, CloudToDesktopMessage, CloudPromptData } from '../types/session';
 import type { Env } from '../types/env';
 
 interface SessionDOState {
@@ -9,6 +9,7 @@ interface SessionDOState {
     lastTitle: string | null;
     lastTitleHistory: string[] | null;
     eventSequence: number;
+    currentPrompt: CloudPromptData | null;
 }
 
 interface SessionInfo {
@@ -48,6 +49,7 @@ export class SessionDO implements DurableObject {
             lastTitle: null,
             lastTitleHistory: null,
             eventSequence: 0,
+            currentPrompt: null,
         };
 
         // Restore state from storage
@@ -238,6 +240,9 @@ export class SessionDO implements DurableObject {
             case 'title_history':
                 this.sessionState.lastTitleHistory = event.history;
                 break;
+            case 'prompt':
+                this.sessionState.currentPrompt = event.prompt;
+                break;
         }
 
         // Increment sequence and persist state
@@ -330,6 +335,15 @@ export class SessionDO implements DurableObject {
                 history: this.sessionState.lastTitleHistory,
             };
             await this.sendSSE(writer, titleHistoryEvent);
+        }
+
+        // Send current prompt if any (for interactive dashboard)
+        if (this.sessionState.currentPrompt) {
+            const promptEvent: SessionEvent = {
+                type: 'prompt',
+                prompt: this.sessionState.currentPrompt,
+            };
+            await this.sendSSE(writer, promptEvent);
         }
     }
 

@@ -22,6 +22,7 @@ from pathlib import Path
 # Maximum number of events to keep in history
 MAX_EVENT_HISTORY = 100
 
+
 def debug_log(session_id: str, message: str):
     """Write debug message to hook log file."""
     if not session_id:
@@ -29,10 +30,11 @@ def debug_log(session_id: str, message: str):
     try:
         log_path = Path(f"/tmp/crabigator-{session_id}/hooks.log")
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, 'a') as f:
+        with open(log_path, "a") as f:
             f.write(f"{time.time():.3f} {message}\n")
     except Exception:
         pass  # Silently ignore logging errors
+
 
 def get_stats_file(cwd: str) -> Path:
     """Get stats file path based on session ID (from env) or working directory hash."""
@@ -42,6 +44,7 @@ def get_stats_file(cwd: str) -> Path:
     # Fallback to cwd hash if no session ID
     cwd_hash = hashlib.md5(cwd.encode()).hexdigest()[:12]
     return Path(f"/tmp/crabigator-stats-{cwd_hash}.json")
+
 
 def add_event(stats: dict, event: str, details: dict = None):
     """Add an event to the history log with timestamp."""
@@ -61,6 +64,7 @@ def add_event(stats: dict, event: str, details: dict = None):
     # Keep only the last N events
     if len(stats["event_history"]) > MAX_EVENT_HISTORY:
         stats["event_history"] = stats["event_history"][-MAX_EVENT_HISTORY:]
+
 
 def load_stats(stats_file: Path) -> dict:
     """Load existing stats or return defaults."""
@@ -119,9 +123,9 @@ def save_stats(stats_file: Path, stats: dict):
 
     # Write to temp file then rename for atomicity
     # Use unique temp file name to avoid race conditions between concurrent hooks
-    temp_file = stats_file.with_suffix(f'.{os.getpid()}.tmp')
+    temp_file = stats_file.with_suffix(f".{os.getpid()}.tmp")
     try:
-        with open(temp_file, 'w') as f:
+        with open(temp_file, "w") as f:
             json.dump(stats, f)
         temp_file.rename(stats_file)
     except OSError:
@@ -130,6 +134,7 @@ def save_stats(stats_file: Path, stats: dict):
             temp_file.unlink(missing_ok=True)
         except Exception:
             pass
+
 
 def main():
     session_id = os.environ.get("CRABIGATOR_SESSION_ID", "")
@@ -166,11 +171,24 @@ def main():
 
         add_event(stats, event, {"tool": tool_name})
 
-        # Question-like tools that ask the user something
-        if tool_name in ("AskUserQuestion", "ExitPlanMode"):
+        # Build active_prompt based on tool type
+        if tool_name == "AskUserQuestion":
+            stats["active_prompt"] = {
+                "type": "question",
+                "questions": tool_input.get("questions", []),
+            }
+            stats["state"] = "question"
+            stats["pending_question"] = True
+        elif tool_name == "ExitPlanMode":
+            stats["active_prompt"] = {"type": "exit_plan"}
             stats["state"] = "question"
             stats["pending_question"] = True
         else:
+            stats["active_prompt"] = {
+                "type": "permission",
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+            }
             stats["state"] = "permission"
             # Store permission details for dashboard
             stats["permission"] = {
@@ -186,11 +204,13 @@ def main():
         if "tool_timestamps" not in stats:
             stats["tool_timestamps"] = []
         stats["tool_timestamps"].append(time.time())
-        # Mark if this was a question tool, clear if it wasn't
-        if tool_name == "AskUserQuestion":
+        # Mark if this was a question tool so Stop transitions to "question" state
+        if tool_name in ("AskUserQuestion", "ExitPlanMode"):
             stats["pending_question"] = True
         else:
             stats["pending_question"] = False
+        # Clear active_prompt since tool completed (user responded to permission/question)
+        stats["active_prompt"] = None
         # Tool completed - back to thinking (more tools may follow)
         stats["state"] = "thinking"
         # Clear permission data since we're no longer waiting
@@ -205,6 +225,8 @@ def main():
             stats["pending_question"] = False
         else:
             stats["state"] = "complete"
+            # Clear active_prompt when completing (not when transitioning to question)
+            stats["active_prompt"] = None
         # Start idle timer
         stats["idle_since"] = time.time()
         # Clear permission data
@@ -224,6 +246,7 @@ def main():
         stats["prompts"] = stats.get("prompts", 0) + 1
         stats["state"] = "thinking"
         stats["pending_question"] = False
+        stats["active_prompt"] = None  # Clear any pending prompt
         stats["idle_since"] = None
         # Clear permission data
         stats.pop("permission", None)
@@ -236,6 +259,7 @@ def main():
     save_stats(stats_file, stats)
     debug_log(session_id, f"  saved to {stats_file}")
     sys.exit(0)
+
 
 if __name__ == "__main__":
     main()

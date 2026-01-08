@@ -13,4 +13,4 @@ mod queue;
 mod websocket;
 
 pub use client::{CloudClient, CloudStatus};
-pub use events::SessionEventBuilder;
+pub use events::{PromptOption, SessionEventBuilder};

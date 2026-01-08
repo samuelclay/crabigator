@@ -80,6 +80,8 @@ pub struct App {
     last_cloud_title: Option<String>,
     /// Whether we've sent an initial stats payload to cloud
     cloud_stats_sent: bool,
+    /// Whether we've sent a prompt event (to track clearing)
+    last_cloud_prompt_sent: bool,
 }
 
 impl App {
@@ -164,6 +166,7 @@ impl App {
             last_cloud_scrollback_lines: 0,
             last_cloud_title: None,
             cloud_stats_sent: false,
+            last_cloud_prompt_sent: false,
         })
     }
 
@@ -361,6 +364,20 @@ impl App {
                 // Send initial state once, then on changes
                 if self.last_cloud_state.is_none() || old_effective_state != new_effective_state {
                     self.send_cloud_state_event(new_effective_state);
+
+                    // Send prompt event when entering/leaving interactive states
+                    let is_interactive = matches!(
+                        new_effective_state,
+                        SessionState::Question | SessionState::Permission
+                    );
+                    let was_interactive = matches!(
+                        old_effective_state,
+                        SessionState::Question | SessionState::Permission
+                    );
+
+                    if is_interactive || (was_interactive && self.last_cloud_prompt_sent) {
+                        self.send_cloud_prompt_event();
+                    }
                 }
 
                 // Stream stats when platform stats update (or first send)
@@ -748,6 +765,45 @@ impl App {
             client.send_event(SessionEventBuilder::git(&self.git_state));
             client.send_event(SessionEventBuilder::changes(&self.diff_summary));
         }
+    }
+
+    /// Send prompt event to cloud (for interactive dashboard)
+    fn send_cloud_prompt_event(&mut self) {
+        if self.cloud_client.is_none() {
+            return;
+        }
+
+        let active_prompt = self.session_stats.platform_stats.active_prompt.as_ref();
+
+        // Parse options from screen for permission and exit_plan prompts
+        let permission_options = match active_prompt {
+            Some(crate::platforms::ActivePrompt::Permission { .. })
+            | Some(crate::platforms::ActivePrompt::ExitPlan) => {
+                // Get current screen content for parsing
+                if let Ok(screen_content) =
+                    self.capture_manager.update_screen(self.platform_pty.screen())
+                {
+                    let options = crate::screen_parser::parse_permission_options(&screen_content);
+                    if options.is_empty() {
+                        None // Use fallback options in builder
+                    } else {
+                        Some(options)
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        // Build and send the event
+        let event = SessionEventBuilder::prompt(active_prompt, permission_options);
+        if let Some(ref mut client) = self.cloud_client {
+            client.send_event(event);
+        }
+
+        // Track whether we sent a prompt (for clearing later)
+        self.last_cloud_prompt_sent = active_prompt.is_some();
     }
 
     /// Check for answers and key commands from cloud and inject into PTY

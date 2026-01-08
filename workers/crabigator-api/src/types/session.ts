@@ -157,6 +157,65 @@ export interface DesktopStatusEvent {
 }
 
 /**
+ * A selectable option in a prompt
+ */
+export interface PromptOption {
+    label: string;
+    value: string;           // What to send back when selected (e.g., "1", "y", "n")
+    description?: string;
+}
+
+/**
+ * A question in an AskUserQuestion prompt
+ */
+export interface QuestionData {
+    question: string;
+    header?: string;
+    options: PromptOption[];
+    multi_select?: boolean;
+    allows_other?: boolean;  // Whether free-text "Other" input is allowed
+}
+
+/**
+ * Question prompt data (AskUserQuestion)
+ */
+export interface QuestionPrompt {
+    prompt_type: 'question';
+    questions: QuestionData[];
+}
+
+/**
+ * Permission prompt data
+ */
+export interface PermissionPrompt {
+    prompt_type: 'permission';
+    tool_name: string;
+    tool_input?: unknown;
+    options: PromptOption[];
+}
+
+/**
+ * ExitPlanMode prompt data
+ */
+export interface ExitPlanPrompt {
+    prompt_type: 'exit_plan';
+    options: PromptOption[];
+}
+
+/**
+ * Union of prompt data types
+ */
+export type CloudPromptData = QuestionPrompt | PermissionPrompt | ExitPlanPrompt;
+
+/**
+ * Prompt event - sent when entering/leaving interactive states
+ */
+export interface PromptEvent {
+    type: 'prompt';
+    prompt: CloudPromptData | null;  // null to clear
+}
+
+/**
  * Union of all session event types
  */
 export type SessionEvent =
@@ -168,7 +227,8 @@ export type SessionEvent =
     | ScreenEvent
     | TitleEvent
     | TitleHistoryEvent
-    | DesktopStatusEvent;
+    | DesktopStatusEvent
+    | PromptEvent;
 
 /**
  * Message from cloud to desktop (via WebSocket)

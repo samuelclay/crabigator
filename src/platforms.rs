@@ -89,6 +89,50 @@ impl ClaudeMode {
     }
 }
 
+/// An option in an AskUserQuestion prompt
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct QuestionOption {
+    /// Display label for the option
+    pub label: String,
+    /// Optional description of what this option does
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// A single question in an AskUserQuestion prompt
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Question {
+    /// The question text
+    pub question: String,
+    /// Short header/label for the question
+    #[serde(default)]
+    pub header: Option<String>,
+    /// Available options to choose from
+    #[serde(default)]
+    pub options: Vec<QuestionOption>,
+    /// Whether multiple options can be selected
+    #[serde(default, rename = "multiSelect")]
+    pub multi_select: bool,
+}
+
+/// Active prompt awaiting user response
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ActivePrompt {
+    /// AskUserQuestion prompt with structured options
+    Question {
+        questions: Vec<Question>,
+    },
+    /// Permission request for a tool
+    Permission {
+        tool_name: String,
+        #[serde(default)]
+        tool_input: Option<serde_json::Value>,
+    },
+    /// ExitPlanMode prompt (plan approval)
+    ExitPlan,
+}
+
 /// A single hook event entry for debugging
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct HookEvent {
@@ -168,6 +212,9 @@ pub struct PlatformStats {
     /// Model name (e.g., "claude-opus-4-5-20251101")
     #[serde(default)]
     pub model: Option<String>,
+    /// Currently active prompt awaiting user response
+    #[serde(default)]
+    pub active_prompt: Option<ActivePrompt>,
 }
 
 impl PlatformStats {

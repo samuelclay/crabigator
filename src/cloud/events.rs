@@ -281,6 +281,75 @@ impl TitleHistoryEvent {
     }
 }
 
+/// A selectable option in a prompt
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptOption {
+    /// Display label for the option
+    pub label: String,
+    /// Value to send back when selected (e.g., "1", "y", "n")
+    pub value: String,
+    /// Optional description
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// A question with options for the dashboard
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudQuestion {
+    /// The question text
+    pub question: String,
+    /// Short header/label
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// Available options
+    pub options: Vec<PromptOption>,
+    /// Whether multiple selections are allowed
+    #[serde(default)]
+    pub multi_select: bool,
+    /// Whether free-text "Other" input is allowed
+    #[serde(default)]
+    pub allows_other: bool,
+}
+
+/// Prompt data for the dashboard
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "prompt_type", rename_all = "snake_case")]
+pub enum CloudPromptData {
+    /// AskUserQuestion prompt
+    Question {
+        questions: Vec<CloudQuestion>,
+    },
+    /// Permission request for a tool
+    Permission {
+        tool_name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_input: Option<serde_json::Value>,
+        options: Vec<PromptOption>,
+    },
+    /// ExitPlanMode (plan approval)
+    ExitPlan {
+        options: Vec<PromptOption>,
+    },
+}
+
+/// Prompt event - sent when entering/leaving interactive states
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    /// The active prompt, or None to clear
+    pub prompt: Option<CloudPromptData>,
+}
+
+impl PromptEvent {
+    pub fn new(prompt: Option<CloudPromptData>) -> Self {
+        Self {
+            event_type: "prompt".to_string(),
+            prompt,
+        }
+    }
+}
+
 /// Union of all cloud event types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -293,6 +362,7 @@ pub enum CloudEvent {
     Screen(ScreenEvent),
     Title(TitleEvent),
     TitleHistory(TitleHistoryEvent),
+    Prompt(PromptEvent),
 }
 
 /// Message from cloud to desktop (via WebSocket)
@@ -446,6 +516,87 @@ impl SessionEventBuilder {
             permission,
             stats.model.clone(),
         ))
+    }
+
+    /// Build a prompt event from active prompt
+    /// `permission_options` should be parsed from the screen when prompt is Permission
+    pub fn prompt(
+        active_prompt: Option<&crate::platforms::ActivePrompt>,
+        permission_options: Option<Vec<PromptOption>>,
+    ) -> CloudEvent {
+        use crate::platforms::ActivePrompt;
+
+        let prompt_data = active_prompt.map(|ap| match ap {
+            ActivePrompt::Question { questions } => {
+                let cloud_questions = questions
+                    .iter()
+                    .map(|q| CloudQuestion {
+                        question: q.question.clone(),
+                        header: q.header.clone(),
+                        options: q
+                            .options
+                            .iter()
+                            .enumerate()
+                            .map(|(i, opt)| PromptOption {
+                                label: opt.label.clone(),
+                                value: (i + 1).to_string(), // 1-indexed
+                                description: opt.description.clone(),
+                            })
+                            .collect(),
+                        multi_select: q.multi_select,
+                        allows_other: true, // AskUserQuestion always allows "Other"
+                    })
+                    .collect();
+                CloudPromptData::Question {
+                    questions: cloud_questions,
+                }
+            }
+            ActivePrompt::Permission {
+                tool_name,
+                tool_input,
+            } => {
+                // Use parsed options if available, otherwise fallback
+                let options = permission_options.unwrap_or_else(|| {
+                    vec![
+                        PromptOption {
+                            label: "Yes".to_string(),
+                            value: "y".to_string(),
+                            description: Some("Allow once".to_string()),
+                        },
+                        PromptOption {
+                            label: "No".to_string(),
+                            value: "n".to_string(),
+                            description: Some("Deny".to_string()),
+                        },
+                    ]
+                });
+                CloudPromptData::Permission {
+                    tool_name: tool_name.clone(),
+                    tool_input: tool_input.clone(),
+                    options,
+                }
+            }
+            ActivePrompt::ExitPlan => {
+                // Use parsed options if available, otherwise fallback
+                let options = permission_options.unwrap_or_else(|| {
+                    vec![
+                        PromptOption {
+                            label: "Yes".to_string(),
+                            value: "1".to_string(),
+                            description: None,
+                        },
+                        PromptOption {
+                            label: "No".to_string(),
+                            value: "2".to_string(),
+                            description: None,
+                        },
+                    ]
+                });
+                CloudPromptData::ExitPlan { options }
+            }
+        });
+
+        CloudEvent::Prompt(PromptEvent::new(prompt_data))
     }
 }
 
