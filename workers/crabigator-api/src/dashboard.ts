@@ -665,6 +665,18 @@ export const dashboardHtml = `<!DOCTYPE html>
         .container[data-layout="2"] { column-count: 2; }
         .container[data-layout="3"] { column-count: 3; }
 
+        /* Adjust terminal heights for compact layouts */
+        .container[data-layout="2"] .terminal { height: 250px; }
+        .container[data-layout="3"] .terminal { height: 200px; }
+        .container[data-layout="fit"] .terminal { height: 150px; }
+
+        /* Stack widgets vertically in narrow layouts */
+        .container[data-layout="2"] .widgets-panel,
+        .container[data-layout="3"] .widgets-panel,
+        .container[data-layout="fit"] .widgets-panel {
+            grid-template-columns: 1fr;
+        }
+
         /* Permission action bar */
         .permission-bar {
             display: none;
@@ -1851,6 +1863,12 @@ export const dashboardHtml = `<!DOCTYPE html>
         function formatStartedAt(timestamp) {
             if (!timestamp) return 'Unknown';
             return formatElapsed(timestamp) + ' · ' + formatShortDate(timestamp);
+        }
+
+        function formatTime(timestamp) {
+            if (!timestamp) return '—';
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
 
         function formatStateIndicator(state) {
