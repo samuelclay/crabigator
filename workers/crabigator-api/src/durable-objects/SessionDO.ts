@@ -190,6 +190,22 @@ export class SessionDO implements DurableObject {
     }
 
     /**
+     * Notify SessionListDO about state changes
+     */
+    private notifySessionStateUpdate(sessionId: string, state: string): void {
+        // Fire and forget - don't await to avoid blocking event handling
+        const doId = this.env.SESSION_LIST.idFromName('global');
+        const stub = this.env.SESSION_LIST.get(doId);
+        stub.fetch(new Request('https://internal/update', {
+            method: 'POST',
+            body: JSON.stringify({ id: sessionId, state }),
+            headers: { 'Content-Type': 'application/json' },
+        })).catch((error) => {
+            console.error('Error updating session state in SessionListDO:', error);
+        });
+    }
+
+    /**
      * Handle incoming event from desktop
      */
     private async handleEvent(event: SessionEvent): Promise<void> {
@@ -197,6 +213,10 @@ export class SessionDO implements DurableObject {
         switch (event.type) {
             case 'state':
                 this.sessionState.state = event.state;
+                // Notify SessionListDO so /api/sessions returns correct state
+                if (this.sessionInfo) {
+                    this.notifySessionStateUpdate(this.sessionInfo.id, event.state);
+                }
                 break;
             case 'scrollback':
                 this.sessionState.lastScrollbackLine = event.total_lines;

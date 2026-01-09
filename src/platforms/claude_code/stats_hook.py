@@ -81,7 +81,37 @@ def load_stats(stats_file: Path) -> dict:
         "pending_question": False,
         "idle_since": None,
         "last_updated": None,
+        "model": None,
     }
+
+def extract_model_from_transcript(transcript_path: str) -> str | None:
+    """Extract model name from transcript file (reads last few lines for efficiency)."""
+    if not transcript_path:
+        return None
+    try:
+        path = Path(transcript_path)
+        if not path.exists():
+            return None
+        # Read last 50KB to find recent model info
+        with open(path, 'rb') as f:
+            f.seek(0, 2)  # End of file
+            size = f.tell()
+            f.seek(max(0, size - 50000))
+            content = f.read().decode('utf-8', errors='ignore')
+
+        # Find the last model reference
+        model = None
+        for line in content.split('\n'):
+            if '"model":' in line and 'claude' in line:
+                try:
+                    data = json.loads(line)
+                    if 'message' in data and 'model' in data['message']:
+                        model = data['message']['model']
+                except (json.JSONDecodeError, KeyError):
+                    pass
+        return model
+    except Exception:
+        return None
 
 def save_stats(stats_file: Path, stats: dict):
     """Atomically save stats to file."""
@@ -113,22 +143,41 @@ def main():
     event = data.get("hook_event_name", "")
 
     debug_log(session_id, f"EVENT: {event} cwd={cwd}")
+    debug_log(session_id, f"RAW_DATA: {json.dumps(data)}")
 
     stats_file = get_stats_file(cwd)
     stats = load_stats(stats_file)
+
+    # Extract model from transcript if not already known
+    transcript_path = data.get("transcript_path")
+    if transcript_path and not stats.get("model"):
+        model = extract_model_from_transcript(transcript_path)
+        if model:
+            stats["model"] = model
+            debug_log(session_id, f"  extracted model={model}")
 
     debug_log(session_id, f"  state_before={stats.get('state', 'ready')} file={stats_file}")
 
     if event == "PermissionRequest":
         # Permission dialog is being shown to user
         tool_name = data.get("tool_name", "unknown")
+        tool_input = data.get("tool_input", {})
+        permission_suggestions = data.get("permission_suggestions", [])
+
         add_event(stats, event, {"tool": tool_name})
+
         # Question-like tools that ask the user something
         if tool_name in ("AskUserQuestion", "ExitPlanMode"):
             stats["state"] = "question"
             stats["pending_question"] = True
         else:
             stats["state"] = "permission"
+            # Store permission details for dashboard
+            stats["permission"] = {
+                "tool": tool_name,
+                "input": tool_input,
+                "suggestions": permission_suggestions,
+            }
 
     elif event == "PostToolUse":
         tool_name = data.get("tool_name", "unknown")
@@ -142,6 +191,8 @@ def main():
             stats["pending_question"] = True
         # Tool completed - back to thinking (more tools may follow)
         stats["state"] = "thinking"
+        # Clear permission data since we're no longer waiting
+        stats.pop("permission", None)
 
     elif event == "Stop":
         add_event(stats, event, {"pending_question": stats.get("pending_question", False)})
@@ -154,6 +205,8 @@ def main():
             stats["state"] = "complete"
         # Start idle timer
         stats["idle_since"] = time.time()
+        # Clear permission data
+        stats.pop("permission", None)
 
     elif event == "SubagentStop":
         add_event(stats, event)
@@ -170,6 +223,8 @@ def main():
         stats["state"] = "thinking"
         stats["pending_question"] = False
         stats["idle_since"] = None
+        # Clear permission data
+        stats.pop("permission", None)
 
     else:
         # Log unhandled events for debugging

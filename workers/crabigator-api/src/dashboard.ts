@@ -5,6 +5,7 @@ export const dashboardHtml = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Crabigator Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -46,12 +47,13 @@ export const dashboardHtml = `<!DOCTYPE html>
             border: 1px solid #30363d;
             border-radius: 8px;
             overflow: hidden;
+            position: relative;
         }
         .session-header {
             padding: 12px 16px;
             border-bottom: 1px solid #30363d;
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             gap: 12px;
         }
         .session-header .state {
@@ -60,6 +62,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             font-size: 11px;
             font-weight: 500;
             text-transform: uppercase;
+            flex-shrink: 0;
         }
         .state.ready { background: #238636; color: #fff; }
         .state.thinking { background: #1f6feb; color: #fff; }
@@ -67,11 +70,17 @@ export const dashboardHtml = `<!DOCTYPE html>
         .state.question { background: #a371f7; color: #fff; }
         .state.complete { background: #8b949e; color: #fff; }
         .state.interrupted { background: #f85149; color: #fff; }
+        .session-info {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
         .session-header .title {
             font-size: 13px;
             font-weight: 500;
             color: #58a6ff;
-            max-width: 300px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -83,11 +92,63 @@ export const dashboardHtml = `<!DOCTYPE html>
             text-overflow: ellipsis;
             white-space: nowrap;
         }
-        .session-header .id {
-            font-size: 11px;
+        .session-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+        .info-btn {
+            background: transparent;
+            border: none;
+            padding: 4px 6px;
+            cursor: pointer;
+            font-size: 12px;
             color: #6e7681;
-            margin-left: auto;
+            border-radius: 4px;
+        }
+        .info-btn:hover { background: #21262d; color: #8b949e; }
+        .info-popover {
+            display: none;
+            position: absolute;
+            right: 16px;
+            top: 48px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 12px 16px;
             font-family: monospace;
+            font-size: 11px;
+            color: #c9d1d9;
+            z-index: 100;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            min-width: 280px;
+            user-select: text;
+        }
+        .info-popover.visible { display: block; }
+        .info-popover-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            gap: 16px;
+        }
+        .info-popover-row:not(:last-child) {
+            border-bottom: 1px solid #30363d;
+        }
+        .info-popover-label {
+            color: #8b949e;
+            flex-shrink: 0;
+        }
+        .info-popover-value {
+            color: #c9d1d9;
+            text-align: right;
+            word-break: break-all;
+        }
+        .info-popover-value.copyable {
+            cursor: pointer;
+        }
+        .info-popover-value.copyable:hover {
+            color: #58a6ff;
         }
         .pin-btn {
             background: #21262d;
@@ -173,6 +234,24 @@ export const dashboardHtml = `<!DOCTYPE html>
         .widget-value.cyan { color: #39c5cf; }
         .widget-value.purple { color: #bc8cff; }
         .widget-value.yellow { color: #d29922; }
+
+        /* Hide empty changes widget */
+        .widget.hidden-changes { display: none; }
+
+        /* 2-column grid when changes hidden (Stats + Git only) */
+        .widgets-panel.no-changes { grid-template-columns: repeat(2, 1fr); }
+
+        /* Stack widgets vertically for multi-column layouts */
+        .container[data-layout="2"] .widgets-panel,
+        .container[data-layout="3"] .widgets-panel,
+        .container[data-layout="fit"] .widgets-panel {
+            grid-template-columns: 1fr;
+        }
+
+        /* Mobile: always stack widgets */
+        @media (max-width: 768px) {
+            .widgets-panel { grid-template-columns: 1fr !important; }
+        }
 
         /* Git files list */
         .git-files {
@@ -300,6 +379,65 @@ export const dashboardHtml = `<!DOCTYPE html>
         .container[data-layout="2"] .terminal { height: 250px; }
         .container[data-layout="3"] .terminal { height: 200px; }
         .container[data-layout="fit"] .terminal { height: 150px; }
+
+        /* Permission action bar */
+        .permission-bar {
+            display: none;
+            padding: 12px 16px;
+            background: linear-gradient(180deg, #1c2128 0%, #161b22 100%);
+            border-bottom: 1px solid #30363d;
+            gap: 8px;
+            align-items: center;
+            justify-content: center;
+        }
+        .permission-bar.visible { display: flex; }
+        .permission-bar .perm-label {
+            color: #d29922;
+            font-size: 12px;
+            font-weight: 500;
+            margin-right: 8px;
+        }
+        .permission-bar .perm-tool {
+            color: #58a6ff;
+            font-family: monospace;
+            font-size: 12px;
+            background: #21262d;
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-right: 12px;
+        }
+        .perm-btn {
+            padding: 6px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.15s ease;
+        }
+        .perm-btn.yes {
+            background: #238636;
+            color: #fff;
+            border-color: #2ea043;
+        }
+        .perm-btn.yes:hover {
+            background: #2ea043;
+            border-color: #3fb950;
+        }
+        .perm-btn.always {
+            background: #1f6feb;
+            color: #fff;
+            border-color: #388bfd;
+        }
+        .perm-btn.always:hover {
+            background: #388bfd;
+            border-color: #58a6ff;
+        }
+        .perm-hint {
+            color: #6e7681;
+            font-size: 11px;
+            margin-left: 8px;
+        }
     </style>
 </head>
 <body>
@@ -340,6 +478,18 @@ export const dashboardHtml = `<!DOCTYPE html>
             } else {
                 container.style.gridTemplateColumns = '';
             }
+
+            // After layout change, scroll pinned sessions to bottom
+            requestAnimationFrame(() => {
+                for (const [id, sessionData] of sessions) {
+                    if (sessionData.pinned) {
+                        const terminal = document.getElementById('terminal-' + id);
+                        if (terminal) {
+                            terminal.scrollTop = terminal.scrollHeight;
+                        }
+                    }
+                }
+            });
         }
 
         // Recalculate fit layout when session count changes
@@ -642,15 +792,47 @@ export const dashboardHtml = `<!DOCTYPE html>
             const card = document.createElement('div');
             card.className = 'session-card';
             card.id = 'session-' + session.id;
+            const createdAt = session.created_at ? new Date(session.created_at * 1000).toLocaleString() : 'Unknown';
             card.innerHTML = \`
                 <div class="session-header">
                     <span class="state \${session.state}">\${session.state}</span>
-                    <span class="title" id="title-\${session.id}"></span>
-                    <span class="cwd">\${session.cwd}</span>
-                    <span class="id">\${session.id.slice(0, 8)}</span>
-                    <button class="pin-btn pinned" id="pin-\${session.id}" onclick="togglePin('\${session.id}')" title="Auto-scroll to bottom">⇣ Pinned</button>
+                    <div class="session-info">
+                        <span class="title" id="title-\${session.id}"></span>
+                        <span class="cwd">\${session.cwd}</span>
+                    </div>
+                    <div class="session-actions">
+                        <button class="info-btn" id="info-btn-\${session.id}" onclick="toggleInfoPopover('\${session.id}')" title="Session info">ⓘ</button>
+                        <button class="pin-btn pinned" id="pin-\${session.id}" onclick="togglePin('\${session.id}')" title="Auto-scroll to bottom">⇣ Pinned</button>
+                    </div>
+                </div>
+                <div class="info-popover" id="info-popover-\${session.id}">
+                    <div class="info-popover-row">
+                        <span class="info-popover-label">Session ID</span>
+                        <span class="info-popover-value copyable" onclick="copyToClipboard('\${session.id}')" title="Click to copy">\${session.id}</span>
+                    </div>
+                    <div class="info-popover-row">
+                        <span class="info-popover-label">Started</span>
+                        <span class="info-popover-value">\${createdAt}</span>
+                    </div>
+                    <div class="info-popover-row">
+                        <span class="info-popover-label">Directory</span>
+                        <span class="info-popover-value copyable" onclick="copyToClipboard('\${session.cwd}')" title="Click to copy">\${session.cwd}</span>
+                    </div>
+                    <div class="info-popover-row" id="info-model-\${session.id}" style="display:none">
+                        <span class="info-popover-label">Model</span>
+                        <span class="info-popover-value" id="info-model-value-\${session.id}">—</span>
+                    </div>
+                    <div class="info-popover-row" id="info-platform-\${session.id}" style="display:none">
+                        <span class="info-popover-label">Platform</span>
+                        <span class="info-popover-value" id="info-platform-value-\${session.id}">—</span>
+                    </div>
                 </div>
                 <div class="terminal" id="terminal-\${session.id}">Connecting...</div>
+                <div class="permission-bar" id="perm-\${session.id}">
+                    <button class="perm-btn yes" onclick="sendPermission('\${session.id}', 'yes')">Yes</button>
+                    <button class="perm-btn always" id="perm-always-\${session.id}" onclick="sendPermission('\${session.id}', 'always')">Yes, allow for session</button>
+                    <span class="perm-hint">Type below or Esc to cancel</span>
+                </div>
                 <div class="widgets-panel" id="widgets-\${session.id}">
                     <div class="widget" id="stats-\${session.id}">
                         <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right;color:#8b949e">○ Ready</span></div>
@@ -677,8 +859,11 @@ export const dashboardHtml = `<!DOCTYPE html>
                 </div>
             \`;
             container.appendChild(card);
-            sessions.set(session.id, { element: card, state: session.state, title: null, git: null, changes: null, stats: null, pinned: true });
+            sessions.set(session.id, { element: card, state: session.state, title: null, git: null, changes: null, stats: null, permission: null, pinned: true });
             updateFitLayout();
+
+            // Show permission bar if session is already in permission state
+            updatePermissionBar(session.id, session.state, null);
 
             // Set up scroll tracking for pin/unpin behavior
             const terminal = document.getElementById('terminal-' + session.id);
@@ -717,7 +902,12 @@ export const dashboardHtml = `<!DOCTYPE html>
             const stateEl = card.querySelector('.state');
             stateEl.className = 'state ' + session.state;
             stateEl.textContent = session.state;
-            sessions.get(session.id).state = session.state;
+            const sessionData = sessions.get(session.id);
+            if (sessionData) {
+                sessionData.state = session.state;
+                // Update permission bar visibility based on new state
+                updatePermissionBar(session.id, session.state, sessionData.permission);
+            }
         }
 
         function updatePinButton(sessionId, pinned) {
@@ -746,6 +936,51 @@ export const dashboardHtml = `<!DOCTYPE html>
                 terminal.scrollTop = terminal.scrollHeight;
             }
         }
+
+        let activePopover = null;
+
+        function toggleInfoPopover(sessionId) {
+            const popover = document.getElementById('info-popover-' + sessionId);
+            if (!popover) return;
+
+            // Close any other open popover
+            if (activePopover && activePopover !== popover) {
+                activePopover.classList.remove('visible');
+            }
+
+            const isVisible = popover.classList.contains('visible');
+            if (isVisible) {
+                popover.classList.remove('visible');
+                activePopover = null;
+            } else {
+                popover.classList.add('visible');
+                activePopover = popover;
+            }
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                // Brief visual feedback could be added here
+                console.log('Copied to clipboard:', text);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+            });
+        }
+
+        // Close popover when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!activePopover) return;
+
+            const target = e.target;
+            // Check if click is on info button or inside popover
+            const isInfoBtn = target.closest('.info-btn');
+            const isInsidePopover = target.closest('.info-popover');
+
+            if (!isInfoBtn && !isInsidePopover) {
+                activePopover.classList.remove('visible');
+                activePopover = null;
+            }
+        });
 
         function formatElapsed(timestamp) {
             if (!timestamp) return '';
@@ -806,9 +1041,33 @@ export const dashboardHtml = `<!DOCTYPE html>
             const stateIndicator = formatStateIndicator(state);
             const modeIndicator = formatModeIndicator(stats.mode || 'normal', sessionId);
 
-            // Store mode in session data for tracking
+            // Store mode and permission in session data for tracking
             if (session && stats.mode) {
                 session.mode = stats.mode;
+            }
+            if (session) {
+                session.permission = stats.permission || null;
+            }
+
+            // Update permission bar visibility
+            updatePermissionBar(sessionId, state, stats.permission);
+
+            // Update info popover with model/platform if available
+            if (stats.model) {
+                const modelRow = document.getElementById('info-model-' + sessionId);
+                const modelValue = document.getElementById('info-model-value-' + sessionId);
+                if (modelRow && modelValue) {
+                    modelRow.style.display = '';
+                    modelValue.textContent = stats.model;
+                }
+            }
+            if (stats.platform) {
+                const platformRow = document.getElementById('info-platform-' + sessionId);
+                const platformValue = document.getElementById('info-platform-value-' + sessionId);
+                if (platformRow && platformValue) {
+                    platformRow.style.display = '';
+                    platformValue.textContent = stats.platform;
+                }
             }
 
             const promptsElapsed = stats.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
@@ -867,13 +1126,17 @@ export const dashboardHtml = `<!DOCTYPE html>
 
             const files = git.files || [];
             const totalFiles = files.length;
+            const branch = git.branch || 'unknown';
+
+            // Compact display for clean repos - just header, no body
+            if (totalFiles === 0) {
+                widget.innerHTML = \`<div class="widget-title"><span style="color:#7ee787">\${branch}</span> <span style="color:#3fb950">✓ Clean</span></div>\`;
+                return;
+            }
 
             // Header: branch on left, "N files" on right (like CLI)
-            const branch = git.branch || 'unknown';
             const filesLabel = totalFiles === 1 ? 'file' : 'files';
-            const headerRight = totalFiles > 0
-                ? '<span style="color:#d29922">' + totalFiles + ' ' + filesLabel + '</span>'
-                : '<span style="color:#3fb950">✓ Clean</span>';
+            const headerRight = '<span style="color:#d29922">' + totalFiles + ' ' + filesLabel + '</span>';
 
             let filesHtml = files.slice(0, 10).map(f => {
                 const { icon, color } = getStatusIcon(f.status);
@@ -894,7 +1157,7 @@ export const dashboardHtml = `<!DOCTYPE html>
 
             widget.innerHTML = \`
                 <div class="widget-title"><span style="color:#7ee787">\${branch}</span> <span style="float:right">\${headerRight}</span></div>
-                <div class="git-files">\${filesHtml || '<span style="color:#8b949e">No changes</span>'}</div>
+                <div class="git-files">\${filesHtml}</div>
             \`;
         }
 
@@ -934,17 +1197,21 @@ export const dashboardHtml = `<!DOCTYPE html>
 
         function updateChangesWidget(sessionId, changes) {
             const widget = document.getElementById('changes-' + sessionId);
+            const widgetsPanel = document.getElementById('widgets-' + sessionId);
             if (!widget) return;
 
             const byLanguage = changes.by_language || [];
 
             if (byLanguage.length === 0) {
-                widget.innerHTML = \`
-                    <div class="widget-title"><span style="color:#db6d28">Changes</span></div>
-                    <div class="changes-list"><span style="color:#8b949e">No changes detected</span></div>
-                \`;
+                // Hide widget entirely when no changes
+                widget.classList.add('hidden-changes');
+                widgetsPanel?.classList.add('no-changes');
                 return;
             }
+
+            // Show widget when there are changes
+            widget.classList.remove('hidden-changes');
+            widgetsPanel?.classList.remove('no-changes');
 
             // Build header: "Language N changes" (like CLI)
             const firstLang = byLanguage[0];
@@ -1068,7 +1335,13 @@ export const dashboardHtml = `<!DOCTYPE html>
                     // Update session state for stats widget
                     if (sessionData) {
                         sessionData.state = event.state;
+                        // Clear permission when leaving permission state
+                        if (event.state !== 'permission') {
+                            sessionData.permission = null;
+                        }
                         updateStatsWidget(sessionId, sessionData.stats || {});
+                        // Also update permission bar directly
+                        updatePermissionBar(sessionId, event.state, sessionData.permission);
                     }
                     break;
                 case 'scrollback':
@@ -1087,6 +1360,10 @@ export const dashboardHtml = `<!DOCTYPE html>
                     updateChangesWidget(sessionId, event);
                     break;
                 case 'stats':
+                    // Store stats in session data
+                    if (sessionData) {
+                        sessionData.stats = event;
+                    }
                     updateStatsWidget(sessionId, event);
                     break;
                 case 'title':
@@ -1140,6 +1417,82 @@ export const dashboardHtml = `<!DOCTYPE html>
             } catch (err) {
                 console.error('Failed to send answer:', err);
                 alert('Failed to send: ' + err.message);
+            }
+        }
+
+        async function sendPermission(sessionId, action) {
+            // Immediately hide permission bar (optimistic UI)
+            const permBar = document.getElementById('perm-' + sessionId);
+            if (permBar) {
+                permBar.classList.remove('visible');
+            }
+
+            try {
+                if (action === 'yes') {
+                    // Send "1" to select option 1 (Yes, approve once)
+                    const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: '1' })
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.json();
+                        console.error('Permission yes failed:', err);
+                    }
+                } else if (action === 'always') {
+                    // Send "2" to select option 2 (Yes, allow for session/project)
+                    const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: '2' })
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.json();
+                        console.error('Permission always failed:', err);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to send permission:', err);
+            }
+        }
+
+        function updatePermissionBar(sessionId, state, permission) {
+            const permBar = document.getElementById('perm-' + sessionId);
+            const alwaysBtn = document.getElementById('perm-always-' + sessionId);
+            const inputEl = document.getElementById('input-' + sessionId);
+            if (!permBar) return;
+
+            // Show permission bar when in permission state (even without full data)
+            if (state === 'permission') {
+                permBar.classList.add('visible');
+
+                // Update "always" button text based on suggestion (if available)
+                if (alwaysBtn) {
+                    if (permission && permission.suggestions && permission.suggestions.length > 0) {
+                        const suggestion = permission.suggestions[0];
+                        if (suggestion.suggestion_type === 'setMode' && suggestion.mode === 'acceptEdits') {
+                            alwaysBtn.textContent = 'Yes, allow all edits during this session';
+                        } else if (suggestion.suggestion_type === 'addRules') {
+                            alwaysBtn.textContent = 'Yes, allow for this project';
+                        } else {
+                            alwaysBtn.textContent = 'Yes, allow for session';
+                        }
+                    } else {
+                        // Default text when permission data not yet available
+                        alwaysBtn.textContent = 'Yes, allow for session';
+                    }
+                }
+
+                // Update input placeholder
+                if (inputEl) {
+                    inputEl.placeholder = 'Type here to tell Claude what to do differently...';
+                }
+            } else {
+                permBar.classList.remove('visible');
+                // Reset input placeholder
+                if (inputEl) {
+                    inputEl.placeholder = 'Type a command or answer...';
+                }
             }
         }
 

@@ -104,6 +104,31 @@ pub struct HookEvent {
     pub details: Option<HashMap<String, serde_json::Value>>,
 }
 
+/// Permission suggestion from Claude Code
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PermissionSuggestion {
+    #[serde(rename = "type")]
+    pub suggestion_type: String,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub rules: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    pub behavior: Option<String>,
+    #[serde(default)]
+    pub destination: Option<String>,
+}
+
+/// Permission request details
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PermissionDetails {
+    pub tool: String,
+    #[serde(default)]
+    pub input: serde_json::Value,
+    #[serde(default)]
+    pub suggestions: Vec<PermissionSuggestion>,
+}
+
 /// Statistics collected from a platform's hook system
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PlatformStats {
@@ -137,6 +162,12 @@ pub struct PlatformStats {
     /// Current Claude Code operating mode (detected from screen)
     #[serde(default)]
     pub mode: ClaudeMode,
+    /// Current permission request details (when state is Permission)
+    #[serde(default)]
+    pub permission: Option<PermissionDetails>,
+    /// Model name (e.g., "claude-opus-4-5-20251101")
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 impl PlatformStats {

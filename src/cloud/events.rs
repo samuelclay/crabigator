@@ -143,6 +143,24 @@ impl ChangesEvent {
     }
 }
 
+/// Permission suggestion for dashboard
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionSuggestion {
+    #[serde(rename = "type")]
+    pub suggestion_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behavior: Option<String>,
+}
+
+/// Permission details for dashboard
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionInfo {
+    pub tool: String,
+    pub suggestions: Vec<PermissionSuggestion>,
+}
+
 /// Session statistics event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsEvent {
@@ -156,6 +174,12 @@ pub struct StatsEvent {
     /// Current Claude Code mode (normal, auto_accept, plan)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    /// Permission details when in permission state
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission: Option<PermissionInfo>,
+    /// Model name (e.g., "claude-opus-4-5-20251101")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl StatsEvent {
@@ -166,6 +190,8 @@ impl StatsEvent {
         thinking_seconds: u64,
         work_seconds: u64,
         mode: Option<String>,
+        permission: Option<PermissionInfo>,
+        model: Option<String>,
     ) -> Self {
         Self {
             event_type: "stats".to_string(),
@@ -175,6 +201,8 @@ impl StatsEvent {
             thinking_seconds,
             work_seconds,
             mode,
+            permission,
+            model,
         }
     }
 }
@@ -314,6 +342,21 @@ impl SessionEventBuilder {
         thinking_seconds: u64,
     ) -> CloudEvent {
         let total_tools: u32 = stats.tools.values().sum();
+
+        // Convert permission details if present
+        let permission = stats.permission.as_ref().map(|p| PermissionInfo {
+            tool: p.tool.clone(),
+            suggestions: p
+                .suggestions
+                .iter()
+                .map(|s| PermissionSuggestion {
+                    suggestion_type: s.suggestion_type.clone(),
+                    mode: s.mode.clone(),
+                    behavior: s.behavior.clone(),
+                })
+                .collect(),
+        });
+
         CloudEvent::Stats(StatsEvent::new(
             stats.prompts,
             stats.completions,
@@ -321,6 +364,8 @@ impl SessionEventBuilder {
             thinking_seconds,
             work_seconds,
             Some(stats.mode.as_str().to_string()),
+            permission,
+            stats.model.clone(),
         ))
     }
 }

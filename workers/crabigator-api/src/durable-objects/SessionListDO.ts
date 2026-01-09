@@ -45,6 +45,8 @@ export class SessionListDO implements DurableObject {
                 return this.handleConnect(request);
             case '/disconnect':
                 return this.handleDisconnect(request);
+            case '/update':
+                return this.handleUpdate(request);
             default:
                 return new Response('Not found', { status: 404 });
         }
@@ -185,6 +187,38 @@ export class SessionListDO implements DurableObject {
 
                 // Broadcast to dashboard viewers
                 await this.broadcast({ type: 'deleted', session: { id } });
+            }
+
+            return new Response(JSON.stringify({ ok: true }), {
+                headers: { 'Content-Type': 'application/json' },
+            });
+        } catch {
+            return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
+    }
+
+    /**
+     * Update session state (called when session state changes)
+     */
+    private async handleUpdate(request: Request): Promise<Response> {
+        if (request.method !== 'POST') {
+            return new Response('Method not allowed', { status: 405 });
+        }
+
+        try {
+            const { id, state } = await request.json() as { id: string; state: string };
+            const session = this.activeSessions.get(id);
+
+            if (session) {
+                session.state = state;
+                this.activeSessions.set(id, session);
+                await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
+
+                // Broadcast state update to dashboard viewers
+                await this.broadcast({ type: 'updated', session: { id, state } });
             }
 
             return new Response(JSON.stringify({ ok: true }), {
