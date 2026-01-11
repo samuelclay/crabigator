@@ -38,9 +38,8 @@ export const dashboardHtml = `<!DOCTYPE html>
             margin-left: auto;
         }
         .container {
-            display: grid;
-            gap: 16px;
             padding: 16px;
+            column-gap: 16px;
         }
         .session-card {
             background: #161b22;
@@ -48,6 +47,8 @@ export const dashboardHtml = `<!DOCTYPE html>
             border-radius: 8px;
             overflow: hidden;
             position: relative;
+            break-inside: avoid;
+            margin-bottom: 16px;
         }
         .session-header {
             padding: 12px 16px;
@@ -251,12 +252,27 @@ export const dashboardHtml = `<!DOCTYPE html>
         /* Mobile: always stack widgets */
         @media (max-width: 768px) {
             .widgets-panel { grid-template-columns: 1fr !important; }
+            .header {
+                flex-wrap: wrap;
+                padding: 12px 16px;
+                gap: 12px;
+            }
+            .layout-control {
+                display: none;  /* Hide on mobile - single column is default */
+            }
+            .container {
+                padding: 8px;
+            }
+            .session-card {
+                min-width: 0;  /* Allow shrinking */
+            }
+            .terminal {
+                font-size: 11px;  /* Slightly smaller on mobile */
+            }
         }
 
         /* Git files list */
         .git-files {
-            max-height: 120px;
-            overflow-y: auto;
         }
         .git-file {
             display: flex;
@@ -281,8 +297,6 @@ export const dashboardHtml = `<!DOCTYPE html>
 
         /* Changes list */
         .changes-list {
-            max-height: 120px;
-            overflow-y: auto;
         }
         .change-item {
             display: flex;
@@ -370,10 +384,10 @@ export const dashboardHtml = `<!DOCTYPE html>
             color: #fff;
         }
 
-        /* Layout-based container styles */
-        .container[data-layout="1"] { grid-template-columns: 1fr; }
-        .container[data-layout="2"] { grid-template-columns: repeat(2, 1fr); }
-        .container[data-layout="3"] { grid-template-columns: repeat(3, 1fr); }
+        /* Layout-based container styles (CSS columns for masonry) */
+        .container[data-layout="1"] { column-count: 1; }
+        .container[data-layout="2"] { column-count: 2; }
+        .container[data-layout="3"] { column-count: 3; }
 
         /* Adjust terminal heights for compact layouts */
         .container[data-layout="2"] .terminal { height: 250px; }
@@ -474,9 +488,9 @@ export const dashboardHtml = `<!DOCTYPE html>
             if (layout === 'fit') {
                 const count = sessions.size || 1;
                 const cols = Math.ceil(Math.sqrt(count));
-                container.style.gridTemplateColumns = 'repeat(' + Math.max(cols, 1) + ', 1fr)';
+                container.style.columnCount = Math.max(cols, 1);
             } else {
-                container.style.gridTemplateColumns = '';
+                container.style.columnCount = '';
             }
 
             // After layout change, scroll pinned sessions to bottom
@@ -868,29 +882,25 @@ export const dashboardHtml = `<!DOCTYPE html>
             // Set up scroll tracking for pin/unpin behavior
             const terminal = document.getElementById('terminal-' + session.id);
             if (terminal) {
-                let scrollTimeout = null;
                 terminal.addEventListener('scroll', () => {
                     const sessionData = sessions.get(session.id);
                     if (!sessionData) return;
 
-                    // Check if scrolled to bottom (with 20px tolerance for overscroll)
-                    const atBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 20;
+                    // Use different thresholds for pinning vs unpinning
+                    // - Unpin easily: 5px from bottom triggers unpin
+                    // - Re-pin strictly: only when truly at bottom (< 2px)
+                    const distFromBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight;
+                    const atVeryBottom = distFromBottom < 2;
+                    const nearBottom = distFromBottom < 5;
 
-                    if (atBottom && !sessionData.pinned) {
-                        // Re-pin when user scrolls to bottom
+                    if (atVeryBottom && !sessionData.pinned) {
+                        // Re-pin only when truly at the very bottom
                         sessionData.pinned = true;
                         updatePinButton(session.id, true);
-                    } else if (!atBottom && sessionData.pinned) {
-                        // Unpin when user scrolls away from bottom
-                        // Use a small delay to avoid flickering during programmatic scrolls
-                        if (scrollTimeout) clearTimeout(scrollTimeout);
-                        scrollTimeout = setTimeout(() => {
-                            const stillNotAtBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight >= 20;
-                            if (stillNotAtBottom && sessionData.pinned) {
-                                sessionData.pinned = false;
-                                updatePinButton(session.id, false);
-                            }
-                        }, 50);
+                    } else if (!nearBottom && sessionData.pinned) {
+                        // Unpin immediately when user scrolls away
+                        sessionData.pinned = false;
+                        updatePinButton(session.id, false);
                     }
                 });
             }
@@ -1138,7 +1148,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             const filesLabel = totalFiles === 1 ? 'file' : 'files';
             const headerRight = '<span style="color:#d29922">' + totalFiles + ' ' + filesLabel + '</span>';
 
-            let filesHtml = files.slice(0, 10).map(f => {
+            let filesHtml = files.map(f => {
                 const { icon, color } = getStatusIcon(f.status);
                 const bar = createProgressBar(f.additions || 0, f.deletions || 0);
                 const delNum = f.deletions > 0 ? '<span style="color:#f85149">−' + f.deletions + '</span>' : '';
@@ -1150,10 +1160,6 @@ export const dashboardHtml = `<!DOCTYPE html>
                     <span class="diff">\${delNum} \${bar} \${addNum}</span>
                 </div>\`;
             }).join('');
-
-            if (files.length > 10) {
-                filesHtml += '<div style="color:#8b949e;padding-top:4px">... and ' + (files.length - 10) + ' more</div>';
-            }
 
             widget.innerHTML = \`
                 <div class="widget-title"><span style="color:#7ee787">\${branch}</span> <span style="float:right">\${headerRight}</span></div>
@@ -1219,22 +1225,16 @@ export const dashboardHtml = `<!DOCTYPE html>
             const changeWord = totalChanges === 1 ? 'change' : 'changes';
 
             let changesHtml = '';
-            let shown = 0;
-            const maxShown = 10;
 
             for (const lang of byLanguage) {
-                if (shown >= maxShown) break;
-
                 // Add language header if multiple languages
                 if (byLanguage.length > 1) {
                     const langCount = lang.changes?.length || 0;
                     const langWord = langCount === 1 ? 'change' : 'changes';
-                    changesHtml += \`<div style="color:#db6d28;margin-top:4px">\${lang.language} <span style="color:#8b949e">\${langCount} \${langWord}</span></div>\`;
+                    changesHtml += \`<div style="color:#db6d28;margin-top:4px;font-size:11px">\${lang.language} <span style="color:#8b949e">\${langCount} \${langWord}</span></div>\`;
                 }
 
                 for (const c of (lang.changes || [])) {
-                    if (shown >= maxShown) break;
-
                     const { modifier, color: modColor } = getModifierStyle(c.change_type);
                     const { icon, color: iconColor } = getKindIcon(c.kind);
 
@@ -1252,12 +1252,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <span class="name">\${c.name}</span>
                         <span style="margin-left:auto;white-space:nowrap">\${stats}</span>
                     </div>\`;
-                    shown++;
                 }
-            }
-
-            if (totalChanges > maxShown) {
-                changesHtml += '<div style="color:#8b949e;padding-top:4px">... and ' + (totalChanges - maxShown) + ' more</div>';
             }
 
             widget.innerHTML = \`
