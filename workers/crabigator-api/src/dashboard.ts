@@ -3,16 +3,24 @@ export const dashboardHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Crabigator Dashboard</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * { box-sizing: border-box; margin: 0; padding: 0; max-width: 100%; }
+        html {
+            overflow-x: hidden;
+            width: 100%;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
             background: #0d1117;
             color: #c9d1d9;
             min-height: 100vh;
+            overflow-x: hidden;
+            width: 100%;
+            max-width: 100%;
+            position: relative;
         }
         .header {
             background: #161b22;
@@ -24,6 +32,8 @@ export const dashboardHtml = `<!DOCTYPE html>
             position: sticky;
             top: 0;
             z-index: 100;
+            max-width: 100%;
+            overflow: hidden;
         }
         .header h1 {
             font-size: 20px;
@@ -36,10 +46,16 @@ export const dashboardHtml = `<!DOCTYPE html>
             font-size: 12px;
             color: #8b949e;
             margin-left: auto;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
         }
         .container {
             padding: 16px;
             column-gap: 16px;
+            max-width: 100%;
+            overflow-x: hidden;
         }
         .session-card {
             background: #161b22;
@@ -49,6 +65,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             position: relative;
             break-inside: avoid;
             margin-bottom: 16px;
+            max-width: 100%;
         }
         .session-header {
             padding: 12px 16px;
@@ -112,7 +129,8 @@ export const dashboardHtml = `<!DOCTYPE html>
         .info-popover {
             display: none;
             position: absolute;
-            right: 16px;
+            right: 8px;
+            left: 8px;
             top: 48px;
             background: #21262d;
             border: 1px solid #30363d;
@@ -123,7 +141,6 @@ export const dashboardHtml = `<!DOCTYPE html>
             color: #c9d1d9;
             z-index: 100;
             box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-            min-width: 280px;
             user-select: text;
         }
         .info-popover.visible { display: block; }
@@ -195,7 +212,8 @@ export const dashboardHtml = `<!DOCTYPE html>
             line-height: 1.4;
             white-space: pre-wrap;
             word-wrap: break-word;
-            overflow-wrap: break-word;
+            overflow-wrap: anywhere;
+            word-break: break-all;
         }
         .terminal span { box-decoration-break: clone; -webkit-box-decoration-break: clone; }
         .terminal .ansi-bright { font-weight: bold; }
@@ -216,20 +234,27 @@ export const dashboardHtml = `<!DOCTYPE html>
             padding: 12px;
             font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
             font-size: 11px;
+            min-width: 0;
+            overflow: hidden;
         }
         .widget-title {
             color: #58a6ff;
             font-weight: 600;
             margin-bottom: 8px;
             font-size: 12px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         .widget-row {
             display: flex;
             justify-content: space-between;
             padding: 2px 0;
+            min-width: 0;
+            gap: 8px;
         }
-        .widget-label { color: #8b949e; }
-        .widget-value { color: #c9d1d9; }
+        .widget-label { color: #8b949e; flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .widget-value { color: #c9d1d9; flex-shrink: 0; }
         .widget-value.green { color: #3fb950; }
         .widget-value.red { color: #f85149; }
         .widget-value.cyan { color: #39c5cf; }
@@ -254,8 +279,11 @@ export const dashboardHtml = `<!DOCTYPE html>
             .widgets-panel { grid-template-columns: 1fr !important; }
             .header {
                 flex-wrap: wrap;
-                padding: 12px 16px;
-                gap: 12px;
+                padding: 12px 12px;
+                gap: 8px;
+            }
+            .header h1 {
+                font-size: 16px;
             }
             .layout-control {
                 display: none;  /* Hide on mobile - single column is default */
@@ -265,9 +293,38 @@ export const dashboardHtml = `<!DOCTYPE html>
             }
             .session-card {
                 min-width: 0;  /* Allow shrinking */
+                max-width: 100%;
+            }
+            .session-header {
+                padding: 10px 12px;
+                gap: 8px;
             }
             .terminal {
-                font-size: 11px;  /* Slightly smaller on mobile */
+                font-size: 10px;  /* Smaller on mobile for better fit */
+                padding: 6px;
+            }
+            .widget {
+                padding: 10px;
+            }
+            .input-area {
+                padding: 10px;
+            }
+            .input-area input {
+                font-size: 16px;  /* Prevent iOS zoom on focus */
+            }
+            .permission-bar {
+                padding: 10px 12px;
+            }
+            .perm-btn {
+                padding: 8px 12px;
+                font-size: 12px;
+            }
+            .perm-hint {
+                display: none;  /* Hide hint on mobile to save space */
+            }
+            .refresh-btn {
+                padding: 4px 8px;
+                font-size: 12px;
             }
         }
 
@@ -279,16 +336,18 @@ export const dashboardHtml = `<!DOCTYPE html>
             gap: 6px;
             padding: 1px 0;
             align-items: center;
+            min-width: 0;
         }
         .git-file .path {
             color: #c9d1d9;
             flex: 1;
+            min-width: 0;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
         .git-file .diff {
-            margin-left: auto;
+            flex-shrink: 0;
             white-space: nowrap;
             display: flex;
             gap: 4px;
@@ -303,10 +362,12 @@ export const dashboardHtml = `<!DOCTYPE html>
             gap: 4px;
             padding: 1px 0;
             align-items: center;
+            min-width: 0;
         }
         .change-item .name {
             color: #c9d1d9;
             flex: 1;
+            min-width: 0;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -403,6 +464,8 @@ export const dashboardHtml = `<!DOCTYPE html>
             gap: 8px;
             align-items: center;
             justify-content: center;
+            overflow: hidden;
+            flex-wrap: wrap;
         }
         .permission-bar.visible { display: flex; }
         .permission-bar .perm-label {
@@ -447,10 +510,32 @@ export const dashboardHtml = `<!DOCTYPE html>
             background: #388bfd;
             border-color: #58a6ff;
         }
+        .perm-btn.no {
+            background: #21262d;
+            color: #c9d1d9;
+            border-color: #30363d;
+        }
+        .perm-btn.no:hover {
+            background: #30363d;
+            border-color: #484f58;
+        }
+        .perm-btn.dynamic {
+            max-width: 45%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
         .perm-hint {
             color: #6e7681;
             font-size: 11px;
             margin-left: 8px;
+        }
+        .perm-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 100%;
         }
     </style>
 </head>
@@ -843,8 +928,9 @@ export const dashboardHtml = `<!DOCTYPE html>
                 </div>
                 <div class="terminal" id="terminal-\${session.id}">Connecting...</div>
                 <div class="permission-bar" id="perm-\${session.id}">
-                    <button class="perm-btn yes" onclick="sendPermission('\${session.id}', 'yes')">Yes</button>
-                    <button class="perm-btn always" id="perm-always-\${session.id}" onclick="sendPermission('\${session.id}', 'always')">Yes, allow for session</button>
+                    <div class="perm-buttons" id="perm-buttons-\${session.id}">
+                        <!-- Buttons generated dynamically -->
+                    </div>
                     <span class="perm-hint">Type below or Esc to cancel</span>
                 </div>
                 <div class="widgets-panel" id="widgets-\${session.id}">
@@ -1451,31 +1537,55 @@ export const dashboardHtml = `<!DOCTYPE html>
             }
         }
 
+        // Track when we answered a permission to prevent flickering
+        const permissionAnsweredAt = new Map();  // sessionId -> timestamp
+        const PERMISSION_DEBOUNCE_MS = 2000;  // Ignore permission states for 2s after answering
+
         function updatePermissionBar(sessionId, state, permission) {
             const permBar = document.getElementById('perm-' + sessionId);
-            const alwaysBtn = document.getElementById('perm-always-' + sessionId);
+            const permButtonsContainer = document.getElementById('perm-buttons-' + sessionId);
             const inputEl = document.getElementById('input-' + sessionId);
-            if (!permBar) return;
+            if (!permBar || !permButtonsContainer) return;
 
-            // Show permission bar when in permission state (even without full data)
+            // Check if we recently answered - ignore permission state to prevent flickering
+            const answeredAt = permissionAnsweredAt.get(sessionId);
+            if (answeredAt && Date.now() - answeredAt < PERMISSION_DEBOUNCE_MS) {
+                // Recently answered, don't show permission bar even if state is permission
+                permBar.classList.remove('visible');
+                return;
+            }
+
+            // Show permission bar when in permission state
             if (state === 'permission') {
                 permBar.classList.add('visible');
 
-                // Update "always" button text based on suggestion (if available)
-                if (alwaysBtn) {
-                    if (permission && permission.suggestions && permission.suggestions.length > 0) {
-                        const suggestion = permission.suggestions[0];
-                        if (suggestion.suggestion_type === 'setMode' && suggestion.mode === 'acceptEdits') {
-                            alwaysBtn.textContent = 'Yes, allow all edits during this session';
-                        } else if (suggestion.suggestion_type === 'addRules') {
-                            alwaysBtn.textContent = 'Yes, allow for this project';
+                // Generate buttons from permission options if available
+                if (permission && permission.options && permission.options.length > 0) {
+                    permButtonsContainer.innerHTML = permission.options.map((opt, idx) => {
+                        // Determine button style based on position and text
+                        let btnClass = 'perm-btn dynamic';
+                        const textLower = opt.text.toLowerCase();
+                        if (opt.number === 1 || textLower === 'yes') {
+                            btnClass += ' yes';
+                        } else if (textLower.startsWith('no') || textLower === 'cancel') {
+                            btnClass += ' no';
                         } else {
-                            alwaysBtn.textContent = 'Yes, allow for session';
+                            btnClass += ' always';
                         }
-                    } else {
-                        // Default text when permission data not yet available
-                        alwaysBtn.textContent = 'Yes, allow for session';
-                    }
+
+                        // Truncate long text but keep full text as title
+                        const displayText = opt.text.length > 50
+                            ? opt.text.substring(0, 47) + '...'
+                            : opt.text;
+
+                        return '<button class="' + btnClass + '" onclick="sendPermissionOption(\\'' + sessionId + '\\', ' + opt.number + ')" title="' + escapeHtml(opt.text) + '">' + escapeHtml(displayText) + '</button>';
+                    }).join('');
+                } else {
+                    // Fallback: show generic numbered buttons when options not yet available
+                    permButtonsContainer.innerHTML =
+                        '<button class="perm-btn yes" onclick="sendPermissionOption(\\'' + sessionId + '\\', 1)" title="Option 1">Yes</button>' +
+                        '<button class="perm-btn always" onclick="sendPermissionOption(\\'' + sessionId + '\\', 2)" title="Option 2">Yes, allow</button>' +
+                        '<button class="perm-btn no" onclick="sendPermissionOption(\\'' + sessionId + '\\', 3)" title="Option 3">No</button>';
                 }
 
                 // Update input placeholder
@@ -1484,10 +1594,47 @@ export const dashboardHtml = `<!DOCTYPE html>
                 }
             } else {
                 permBar.classList.remove('visible');
+                // Clear answered timestamp when we transition away from permission
+                permissionAnsweredAt.delete(sessionId);
                 // Reset input placeholder
                 if (inputEl) {
                     inputEl.placeholder = 'Type a command or answer...';
                 }
+            }
+        }
+
+        function escapeHtml(text) {
+            return text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        async function sendPermissionOption(sessionId, optionNumber) {
+            // Mark as answered to prevent flickering
+            permissionAnsweredAt.set(sessionId, Date.now());
+
+            // Immediately hide permission bar (optimistic UI)
+            const permBar = document.getElementById('perm-' + sessionId);
+            if (permBar) {
+                permBar.classList.remove('visible');
+            }
+
+            try {
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: String(optionNumber) })
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    console.error('Permission option failed:', err);
+                }
+            } catch (err) {
+                console.error('Failed to send permission option:', err);
             }
         }
 
