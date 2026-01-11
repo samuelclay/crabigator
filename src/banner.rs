@@ -3,7 +3,7 @@
 //! Prints styled session start/end banners with version, platform, and date.
 
 use crate::platforms::PlatformKind;
-use crate::terminal::escape::{BOLD, FG_BLUE, FG_CYAN, FG_GRAY, FG_ORANGE, FG_PURPLE, RESET};
+use crate::terminal::escape::{BOLD, FG_CYAN, FG_GRAY, FG_GREEN, FG_ORANGE, FG_PURPLE, FG_RED, RESET};
 #[cfg(debug_assertions)]
 use crate::terminal::escape::DIM;
 
@@ -32,7 +32,7 @@ pub fn print_session_banner(session_id: &str, platform: PlatformKind, cols: u16)
     let title = format!(
         "{FG_ORANGE}🦀{RESET} {BOLD}{FG_CYAN}Crabigator{RESET} {version_str} {FG_ORANGE}⛵{RESET}"
     );
-    let right_side = format!("{FG_PURPLE}{platform_name}{RESET} {FG_BLUE}·{RESET} {FG_BLUE}{date_str}{RESET}");
+    let right_side = format!("{FG_PURPLE}{platform_name}{RESET} {FG_GREEN}·{RESET} {FG_GREEN}{date_str}{RESET}");
 
     // Plain lengths
     let version_plain_len = 1 + VERSION.len(); // "v" + version
@@ -40,7 +40,7 @@ pub fn print_session_banner(session_id: &str, platform: PlatformKind, cols: u16)
     let right_plain_len = platform_name.len() + 3 + date_str.len(); // "Platform · Date"
     // +4 accounts for: leading space, 2 spaces around rule, trailing space
     let rule_len = (cols as usize).saturating_sub(title_plain_len + right_plain_len + 4);
-    let rule = format!("{FG_BLUE}{}{RESET}", "━".repeat(rule_len));
+    let rule = format!("{FG_GREEN}{}{RESET}", "━".repeat(rule_len));
     println!(" {title} {rule} {right_side} ");
 
     // Only show session directory in debug builds
@@ -78,7 +78,7 @@ pub fn print_session_end_line(platform: PlatformKind, cols: u16) {
 
     // Right side: Platform · Date
     let platform_name = platform.display_name();
-    let right_side = format!("{FG_PURPLE}{platform_name}{RESET} {FG_BLUE}·{RESET} {FG_BLUE}{date_str}{RESET}");
+    let right_side = format!("{FG_PURPLE}{platform_name}{RESET} {FG_RED}·{RESET} {FG_RED}{date_str}{RESET}");
 
     // Calculate plain lengths
     let version_plain_len = 1 + VERSION.len(); // "v" + version
@@ -87,7 +87,7 @@ pub fn print_session_end_line(platform: PlatformKind, cols: u16) {
 
     // +4 accounts for: leading space, 2 spaces around rule, trailing space
     let rule_len = width.saturating_sub(title_plain_len + right_plain_len + 4);
-    let rule = format!("{FG_BLUE}{}{RESET}", "━".repeat(rule_len));
+    let rule = format!("{FG_RED}{}{RESET}", "━".repeat(rule_len));
 
     println!(" {title} {rule} {right_side} ");
 }

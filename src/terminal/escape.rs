@@ -70,6 +70,7 @@ pub fn bg(color: u8) -> String {
 pub const FG_CYAN: &str = "\x1b[38;5;45m";
 
 /// Blue foreground (33)
+#[allow(dead_code)]
 pub const FG_BLUE: &str = "\x1b[38;5;33m";
 
 /// Purple foreground (141)
@@ -80,6 +81,12 @@ pub const FG_ORANGE: &str = "\x1b[38;5;179m";
 
 /// Gray foreground (245)
 pub const FG_GRAY: &str = "\x1b[38;5;245m";
+
+/// Green foreground (83) - Session start
+pub const FG_GREEN: &str = "\x1b[38;5;83m";
+
+/// Red foreground (203) - Session end
+pub const FG_RED: &str = "\x1b[38;5;203m";
 
 // === Named Colors (256-color palette) ===
 
