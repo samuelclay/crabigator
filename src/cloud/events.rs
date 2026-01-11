@@ -173,6 +173,9 @@ pub struct PermissionInfo {
     /// Options extracted from screen content (the actual menu items shown to user)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<PermissionOptionCloud>>,
+    /// The question being asked (e.g., "Do you want to create test-file.txt?")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
 }
 
 /// Session statistics event
@@ -351,21 +354,22 @@ impl SessionEventBuilder {
 
     /// Build a stats event from platform stats
     ///
-    /// `permission_options` are parsed from the screen content and override
-    /// the hook-provided permission data with actual menu options.
+    /// `permission_prompt` is parsed from the screen content and provides
+    /// the actual menu options and question text.
     pub fn stats(
         stats: &crate::platforms::PlatformStats,
         work_seconds: u64,
         thinking_seconds: u64,
-        permission_options: Option<Vec<crate::parsers::PermissionOption>>,
+        permission_prompt: Option<&crate::parsers::PermissionPrompt>,
     ) -> CloudEvent {
         let total_tools: u32 = stats.tools.values().sum();
 
         // Convert permission details - use screen-parsed options even if hook data is missing
-        let permission = if stats.permission.is_some() || permission_options.is_some() {
+        let permission = if stats.permission.is_some() || permission_prompt.is_some() {
             // Convert screen-parsed options to cloud format
-            let options = permission_options.as_ref().map(|opts| {
-                opts.iter()
+            let options = permission_prompt.as_ref().map(|p| {
+                p.options
+                    .iter()
                     .map(|o| PermissionOptionCloud {
                         number: o.number,
                         text: o.text.clone(),
@@ -373,6 +377,9 @@ impl SessionEventBuilder {
                     })
                     .collect()
             });
+
+            // Get question from parsed prompt
+            let question = permission_prompt.and_then(|p| p.question.clone());
 
             // Use hook data if available, otherwise create minimal permission info
             let (tool, suggestions) = if let Some(p) = &stats.permission {
@@ -395,6 +402,7 @@ impl SessionEventBuilder {
                 tool,
                 suggestions,
                 options,
+                question,
             })
         } else {
             None

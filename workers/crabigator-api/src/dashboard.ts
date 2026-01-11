@@ -930,6 +930,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                 </div>
                 <div class="terminal" id="terminal-\${session.id}">Connecting...</div>
                 <div class="permission-bar" id="perm-\${session.id}">
+                    <div class="perm-question" id="perm-question-\${session.id}" style="display:none; margin-bottom:8px; font-size:13px; color:#c9d1d9;"></div>
                     <div class="perm-buttons" id="perm-buttons-\${session.id}">
                         <!-- Buttons generated dynamically -->
                     </div>
@@ -1546,6 +1547,7 @@ export const dashboardHtml = `<!DOCTYPE html>
         function updatePermissionBar(sessionId, state, permission) {
             const permBar = document.getElementById('perm-' + sessionId);
             const permButtonsContainer = document.getElementById('perm-buttons-' + sessionId);
+            const permQuestionEl = document.getElementById('perm-question-' + sessionId);
             const inputEl = document.getElementById('input-' + sessionId);
             if (!permBar || !permButtonsContainer) return;
 
@@ -1560,6 +1562,16 @@ export const dashboardHtml = `<!DOCTYPE html>
             // Show permission bar when in permission state
             if (state === 'permission') {
                 permBar.classList.add('visible');
+
+                // Show the question if available
+                if (permQuestionEl) {
+                    if (permission && permission.question) {
+                        permQuestionEl.textContent = permission.question;
+                        permQuestionEl.style.display = 'block';
+                    } else {
+                        permQuestionEl.style.display = 'none';
+                    }
+                }
 
                 // Generate buttons from permission options if available
                 if (permission && permission.options && permission.options.length > 0) {
@@ -1591,6 +1603,10 @@ export const dashboardHtml = `<!DOCTYPE html>
                 }
             } else {
                 permBar.classList.remove('visible');
+                // Hide question when not in permission state
+                if (permQuestionEl) {
+                    permQuestionEl.style.display = 'none';
+                }
                 // Clear answered timestamp when we transition away from permission
                 permissionAnsweredAt.delete(sessionId);
                 // Reset input placeholder

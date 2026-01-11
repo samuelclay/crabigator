@@ -103,6 +103,8 @@ export interface PermissionInfo {
     suggestions: PermissionSuggestion[];
     /** Options extracted from screen content (the actual menu items shown to user) */
     options?: PermissionOption[];
+    /** The question being asked (e.g., "Do you want to create test-file.txt?") */
+    question?: string;
 }
 
 /**
