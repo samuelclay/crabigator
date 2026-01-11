@@ -186,9 +186,11 @@ def main():
         if "tool_timestamps" not in stats:
             stats["tool_timestamps"] = []
         stats["tool_timestamps"].append(time.time())
-        # Mark if this was a question tool
+        # Mark if this was a question tool, clear if it wasn't
         if tool_name == "AskUserQuestion":
             stats["pending_question"] = True
+        else:
+            stats["pending_question"] = False
         # Tool completed - back to thinking (more tools may follow)
         stats["state"] = "thinking"
         # Clear permission data since we're no longer waiting
