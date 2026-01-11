@@ -520,22 +520,24 @@ export const dashboardHtml = `<!DOCTYPE html>
             border-color: #484f58;
         }
         .perm-btn.dynamic {
-            max-width: 45%;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
+            width: 100%;
+            text-align: left;
+            white-space: normal;
+            word-wrap: break-word;
         }
         .perm-hint {
             color: #6e7681;
             font-size: 11px;
-            margin-left: 8px;
+            width: 100%;
+            text-align: center;
+            margin-top: 4px;
         }
         .perm-buttons {
             display: flex;
+            flex-direction: column;
             gap: 8px;
-            flex-wrap: wrap;
-            justify-content: center;
-            max-width: 100%;
+            width: 100%;
+            max-width: 600px;
         }
     </style>
 </head>
@@ -1573,12 +1575,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                             btnClass += ' always';
                         }
 
-                        // Truncate long text but keep full text as title
-                        const displayText = opt.text.length > 50
-                            ? opt.text.substring(0, 47) + '...'
-                            : opt.text;
-
-                        return '<button class="' + btnClass + '" onclick="sendPermissionOption(\\'' + sessionId + '\\', ' + opt.number + ')" title="' + escapeHtml(opt.text) + '">' + escapeHtml(displayText) + '</button>';
+                        return '<button class="' + btnClass + '" onclick="sendPermissionOption(\\'' + sessionId + '\\', ' + opt.number + ')">' + escapeHtml(opt.text) + '</button>';
                     }).join('');
                 } else {
                     // Fallback: show generic numbered buttons when options not yet available

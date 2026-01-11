@@ -404,6 +404,18 @@ impl App {
                         // Send updated stats to cloud when mode changes
                         self.send_cloud_stats_event();
                     }
+
+                    // Detect interrupted state from screen (user hit Escape on permission)
+                    // This catches cases where the hook doesn't fire
+                    if crate::parsers::is_interrupted(&screen) {
+                        let current_state = self.session_stats.effective_state();
+                        if current_state != SessionState::Interrupted {
+                            self.session_stats.set_interrupted();
+                            self.send_cloud_state_event(SessionState::Interrupted);
+                            self.draw_status_bar().ok();
+                        }
+                    }
+
                     self.send_cloud_screen_event(screen);
                     sent_initial_screen = true;
                 }

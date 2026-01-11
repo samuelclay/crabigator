@@ -2,9 +2,29 @@
 //!
 //! Parses Claude Code terminal screen content to extract permission menu options.
 //! This allows the web dashboard to display the exact same options shown in the terminal.
+//! Also detects interrupted state from screen content.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+
+/// Check if the screen shows an interrupted/cancelled state
+/// (user hit Escape during permission or thinking)
+pub fn is_interrupted(screen_content: &str) -> bool {
+    let stripped = strip_ansi_codes(screen_content);
+
+    // Look for various interrupted/cancelled messages from Claude Code
+    // "Interrupted · What should Claude do instead?" - during thinking
+    // "User rejected" - when user rejects a permission
+    // Also check for empty prompt with no permission dialog visible
+    if stripped.contains("Interrupted") && stripped.contains("What should Claude do instead") {
+        return true;
+    }
+    if stripped.contains("User rejected") {
+        return true;
+    }
+
+    false
+}
 
 /// A single permission option extracted from the screen
 #[derive(Debug, Clone, Serialize, Deserialize)]

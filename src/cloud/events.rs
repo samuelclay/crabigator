@@ -361,8 +361,8 @@ impl SessionEventBuilder {
     ) -> CloudEvent {
         let total_tools: u32 = stats.tools.values().sum();
 
-        // Convert permission details if present
-        let permission = stats.permission.as_ref().map(|p| {
+        // Convert permission details - use screen-parsed options even if hook data is missing
+        let permission = if stats.permission.is_some() || permission_options.is_some() {
             // Convert screen-parsed options to cloud format
             let options = permission_options.as_ref().map(|opts| {
                 opts.iter()
@@ -374,20 +374,31 @@ impl SessionEventBuilder {
                     .collect()
             });
 
-            PermissionInfo {
-                tool: p.tool.clone(),
-                suggestions: p
-                    .suggestions
-                    .iter()
-                    .map(|s| PermissionSuggestion {
-                        suggestion_type: s.suggestion_type.clone(),
-                        mode: s.mode.clone(),
-                        behavior: s.behavior.clone(),
-                    })
-                    .collect(),
+            // Use hook data if available, otherwise create minimal permission info
+            let (tool, suggestions) = if let Some(p) = &stats.permission {
+                (
+                    p.tool.clone(),
+                    p.suggestions
+                        .iter()
+                        .map(|s| PermissionSuggestion {
+                            suggestion_type: s.suggestion_type.clone(),
+                            mode: s.mode.clone(),
+                            behavior: s.behavior.clone(),
+                        })
+                        .collect(),
+                )
+            } else {
+                ("unknown".to_string(), vec![])
+            };
+
+            Some(PermissionInfo {
+                tool,
+                suggestions,
                 options,
-            }
-        });
+            })
+        } else {
+            None
+        };
 
         CloudEvent::Stats(StatsEvent::new(
             stats.prompts,
