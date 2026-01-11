@@ -4,6 +4,7 @@
 
 mod generic;
 mod objc;
+pub mod permission_prompt;
 mod python;
 mod rust;
 mod summary;
@@ -13,6 +14,7 @@ mod typescript;
 
 pub use generic::GenericParser;
 pub use objc::ObjCParser;
+pub use permission_prompt::{PermissionOption, PermissionPrompt};
 pub use python::PythonParser;
 pub use rust::RustParser;
 pub use summary::{DiffParser, DiffSummary};

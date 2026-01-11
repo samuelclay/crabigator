@@ -75,6 +75,37 @@ export interface ChangesEvent {
 export type ClaudeMode = 'normal' | 'auto_accept' | 'plan';
 
 /**
+ * Permission option extracted from screen content
+ */
+export interface PermissionOption {
+    /** Option number (1, 2, 3, etc.) */
+    number: number;
+    /** Full text of the option */
+    text: string;
+    /** Whether this option is currently selected */
+    selected: boolean;
+}
+
+/**
+ * Permission suggestion metadata
+ */
+export interface PermissionSuggestion {
+    type: string;
+    mode?: string;
+    behavior?: string;
+}
+
+/**
+ * Permission details when in permission state
+ */
+export interface PermissionInfo {
+    tool: string;
+    suggestions: PermissionSuggestion[];
+    /** Options extracted from screen content (the actual menu items shown to user) */
+    options?: PermissionOption[];
+}
+
+/**
  * Session statistics event
  */
 export interface StatsEvent {
@@ -85,6 +116,8 @@ export interface StatsEvent {
     thinking_seconds: number;
     work_seconds: number;
     mode?: ClaudeMode;
+    /** Permission details when in permission state */
+    permission?: PermissionInfo;
 }
 
 /**

@@ -678,10 +678,26 @@ impl App {
     /// Send stats event to cloud
     fn send_cloud_stats_event(&mut self) {
         if let Some(ref mut client) = self.cloud_client {
+            // Parse permission options from screen when in permission state
+            let permission_options = if self.session_stats.effective_state() == SessionState::Permission {
+                // Get current screen content
+                if let Ok(screen_content) = self.capture_manager.update_screen(self.platform_pty.screen()) {
+                    // Parse permission options from screen
+                    crate::parsers::PermissionPrompt::parse(&screen_content)
+                        .filter(|p| p.is_valid())
+                        .map(|p| p.options)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             let event = SessionEventBuilder::stats(
                 &self.session_stats.platform_stats,
                 self.session_stats.work_seconds,
                 self.session_stats.thinking_seconds(),
+                permission_options,
             );
             client.send_event(event);
         }

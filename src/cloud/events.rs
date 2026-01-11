@@ -154,11 +154,25 @@ pub struct PermissionSuggestion {
     pub behavior: Option<String>,
 }
 
+/// Permission option extracted from screen content
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionOptionCloud {
+    /// Option number (1, 2, 3, etc.)
+    pub number: u32,
+    /// Full text of the option
+    pub text: String,
+    /// Whether this option is currently selected
+    pub selected: bool,
+}
+
 /// Permission details for dashboard
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionInfo {
     pub tool: String,
     pub suggestions: Vec<PermissionSuggestion>,
+    /// Options extracted from screen content (the actual menu items shown to user)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<PermissionOptionCloud>>,
 }
 
 /// Session statistics event
@@ -336,25 +350,43 @@ impl SessionEventBuilder {
     }
 
     /// Build a stats event from platform stats
+    ///
+    /// `permission_options` are parsed from the screen content and override
+    /// the hook-provided permission data with actual menu options.
     pub fn stats(
         stats: &crate::platforms::PlatformStats,
         work_seconds: u64,
         thinking_seconds: u64,
+        permission_options: Option<Vec<crate::parsers::PermissionOption>>,
     ) -> CloudEvent {
         let total_tools: u32 = stats.tools.values().sum();
 
         // Convert permission details if present
-        let permission = stats.permission.as_ref().map(|p| PermissionInfo {
-            tool: p.tool.clone(),
-            suggestions: p
-                .suggestions
-                .iter()
-                .map(|s| PermissionSuggestion {
-                    suggestion_type: s.suggestion_type.clone(),
-                    mode: s.mode.clone(),
-                    behavior: s.behavior.clone(),
-                })
-                .collect(),
+        let permission = stats.permission.as_ref().map(|p| {
+            // Convert screen-parsed options to cloud format
+            let options = permission_options.as_ref().map(|opts| {
+                opts.iter()
+                    .map(|o| PermissionOptionCloud {
+                        number: o.number,
+                        text: o.text.clone(),
+                        selected: o.selected,
+                    })
+                    .collect()
+            });
+
+            PermissionInfo {
+                tool: p.tool.clone(),
+                suggestions: p
+                    .suggestions
+                    .iter()
+                    .map(|s| PermissionSuggestion {
+                        suggestion_type: s.suggestion_type.clone(),
+                        mode: s.mode.clone(),
+                        behavior: s.behavior.clone(),
+                    })
+                    .collect(),
+                options,
+            }
         });
 
         CloudEvent::Stats(StatsEvent::new(
