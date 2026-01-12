@@ -133,6 +133,26 @@ router.post('/api/sessions/:id/key', async (request, env, params) => {
     return stub.fetch(new Request(url.toString(), request));
 });
 
+// Save draft input text (for input persistence across deploys)
+router.post('/api/sessions/:id/draft', async (request, env, params) => {
+    const sessionId = params.id;
+    const doId = env.SESSION.idFromName(sessionId);
+    const stub = env.SESSION.get(doId);
+    const url = new URL(request.url);
+    url.pathname = '/draft';
+    return stub.fetch(new Request(url.toString(), request));
+});
+
+// Get draft input text
+router.get('/api/sessions/:id/draft', async (request, env, params) => {
+    const sessionId = params.id;
+    const doId = env.SESSION.idFromName(sessionId);
+    const stub = env.SESSION.get(doId);
+    const url = new URL(request.url);
+    url.pathname = '/draft';
+    return stub.fetch(new Request(url.toString(), request));
+});
+
 // Get session state (for debugging, no auth for dashboard)
 // Note: Skips D1 lookup - DO handles non-existent sessions gracefully
 router.get('/api/sessions/:id/state', async (request, env, params) => {
@@ -142,6 +162,78 @@ router.get('/api/sessions/:id/state', async (request, env, params) => {
     const url = new URL(request.url);
     url.pathname = '/state';
     return stub.fetch(new Request(url.toString(), request));
+});
+
+// ============================================
+// Dashboard settings (stored per client via cookie)
+// ============================================
+
+function getClientId(request: Request): string | null {
+    const cookie = request.headers.get('Cookie') || '';
+    const match = cookie.match(/crabigator_client=([a-zA-Z0-9-]+)/);
+    return match ? match[1] : null;
+}
+
+function generateClientId(): string {
+    return crypto.randomUUID();
+}
+
+interface DashboardSettings {
+    fontScaleIndex?: number;
+    terminalHeightIndex?: number;
+}
+
+const DEFAULT_SETTINGS: DashboardSettings = { fontScaleIndex: 3, terminalHeightIndex: 3 };
+
+router.get('/api/settings', async (request, env) => {
+    const clientId = getClientId(request);
+
+    // If no client ID, return defaults (cookie will be set on next POST)
+    if (!clientId) {
+        return jsonResponse(DEFAULT_SETTINGS);
+    }
+
+    const settings = await env.TOKENS.get(`settings:${clientId}`, 'json') as DashboardSettings | null;
+    return jsonResponse({ ...DEFAULT_SETTINGS, ...settings });
+});
+
+router.post('/api/settings', async (request, env) => {
+    let clientId = getClientId(request);
+    const isNew = !clientId;
+    if (!clientId) {
+        clientId = generateClientId();
+    }
+
+    let body: DashboardSettings;
+    try {
+        body = await request.json();
+    } catch {
+        return router.errorResponse('Invalid JSON', 'INVALID_JSON', 400);
+    }
+
+    // Load existing settings and merge
+    const existing = await env.TOKENS.get(`settings:${clientId}`, 'json') as DashboardSettings | null;
+    const settings: DashboardSettings = {
+        fontScaleIndex: typeof body.fontScaleIndex === 'number'
+            ? Math.max(0, Math.min(6, body.fontScaleIndex))
+            : existing?.fontScaleIndex ?? 3,
+        terminalHeightIndex: typeof body.terminalHeightIndex === 'number'
+            ? Math.max(0, Math.min(6, body.terminalHeightIndex))
+            : existing?.terminalHeightIndex ?? 3
+    };
+
+    await env.TOKENS.put(`settings:${clientId}`, JSON.stringify(settings), {
+        expirationTtl: 60 * 60 * 24 * 365 // 1 year
+    });
+
+    const headers: HeadersInit = { 'Content-Type': 'application/json' };
+    if (isNew) {
+        // Set cookie for new clients (1 year expiry)
+        const expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toUTCString();
+        headers['Set-Cookie'] = `crabigator_client=${clientId}; Path=/; Expires=${expires}; SameSite=Lax`;
+    }
+
+    return new Response(JSON.stringify({ ok: true }), { headers });
 });
 
 // ============================================

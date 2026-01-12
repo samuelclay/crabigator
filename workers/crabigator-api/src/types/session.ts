@@ -115,6 +115,7 @@ export interface StatsEvent {
     prompts: number;
     completions: number;
     tools: number;
+    compressions: number;
     thinking_seconds: number;
     work_seconds: number;
     mode?: ClaudeMode;

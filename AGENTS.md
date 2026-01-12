@@ -229,3 +229,17 @@ You can view your own running session on the dashboard - the screen preview will
 - **"Extension not connected"**: User needs to click PlayWriter icon in Chrome
 - **Connection errors**: Use `mcp__playwriter__reset` to reconnect
 - **No pages**: Ask user to restart Chrome (known Chrome bug)
+
+## Code Quality
+
+After completing code changes, use the code-simplifier agent to clean up the code:
+
+```
+Use the Task tool with subagent_type="code-simplifier:code-simplifier" to review and simplify recent changes
+```
+
+The code simplifier will:
+- Remove unused CSS classes, variables, and functions
+- Clean up dead code and redundant logic
+- Simplify overly complex patterns
+- Preserve all functionality

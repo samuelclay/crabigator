@@ -8,9 +8,58 @@ export const dashboardHtml = `<!DOCTYPE html>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; max-width: 100%; }
+        :root {
+            --font-scale: 1;
+        }
         html {
             overflow-x: hidden;
             width: 100%;
+        }
+        /* Font size scaling */
+        .container {
+            zoom: var(--font-scale);
+        }
+        @supports not (zoom: 1) {
+            .container {
+                transform: scale(var(--font-scale));
+                transform-origin: top left;
+            }
+        }
+        .deploy-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(13, 17, 23, 0.95);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            gap: 24px;
+        }
+        .deploy-overlay.visible { display: flex; }
+        .deploy-spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid #30363d;
+            border-top-color: #58a6ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .deploy-text {
+            font-size: 18px;
+            color: #c9d1d9;
+            text-align: center;
+        }
+        .deploy-subtext {
+            font-size: 13px;
+            color: #8b949e;
+            text-align: center;
+        }
+        .deploy-countdown {
+            font-size: 12px;
+            color: #6e7681;
+            font-family: monospace;
         }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
@@ -33,7 +82,6 @@ export const dashboardHtml = `<!DOCTYPE html>
             top: 0;
             z-index: 100;
             max-width: 100%;
-            overflow: hidden;
         }
         .header h1 {
             font-size: 20px;
@@ -74,20 +122,6 @@ export const dashboardHtml = `<!DOCTYPE html>
             align-items: flex-start;
             gap: 12px;
         }
-        .session-header .state {
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 500;
-            text-transform: uppercase;
-            flex-shrink: 0;
-        }
-        .state.ready { background: #238636; color: #fff; }
-        .state.thinking { background: #1f6feb; color: #fff; }
-        .state.permission { background: #db6d28; color: #fff; }
-        .state.question { background: #a371f7; color: #fff; }
-        .state.complete { background: #8b949e; color: #fff; }
-        .state.interrupted { background: #f85149; color: #fff; }
         .session-info {
             flex: 1;
             min-width: 0;
@@ -112,10 +146,30 @@ export const dashboardHtml = `<!DOCTYPE html>
         }
         .session-actions {
             display: flex;
-            align-items: center;
+            flex-direction: column;
+            align-items: flex-end;
             gap: 4px;
             flex-shrink: 0;
         }
+        .session-actions-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .session-header .state {
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+        .state.ready { background: #238636; color: #fff; }
+        .state.thinking { background: #1f6feb; color: #fff; }
+        .state.permission { background: #db6d28; color: #fff; }
+        .state.question { background: #a371f7; color: #fff; }
+        .state.complete { background: #8b949e; color: #fff; }
+        .state.interrupted { background: #f85149; color: #fff; }
         .info-btn {
             background: transparent;
             border: none;
@@ -168,49 +222,83 @@ export const dashboardHtml = `<!DOCTYPE html>
         .info-popover-value.copyable:hover {
             color: #58a6ff;
         }
+        .pin-indicator {
+            font-size: 11px;
+            color: #6e7681;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .pin-indicator.pinned {
+            color: #3fb950;
+        }
         .pin-btn {
-            background: #21262d;
-            border: 1px solid #30363d;
+            background: #161b22;
+            border: 1px dashed #d29922;
             padding: 3px 8px;
-            margin-left: 8px;
             cursor: pointer;
             font-size: 11px;
             border-radius: 4px;
             transition: all 0.15s ease;
-            color: #8b949e;
+            color: #d29922;
             display: flex;
             align-items: center;
             gap: 4px;
         }
         .pin-btn:hover {
-            background: #30363d;
-            border-color: #484f58;
-        }
-        .pin-btn.pinned {
-            background: #1f6feb;
-            border-color: #58a6ff;
-            color: #fff;
-            box-shadow: 0 0 8px rgba(88, 166, 255, 0.4);
-        }
-        .pin-btn.unpinned {
-            background: #161b22;
-            border-color: #d29922;
-            color: #d29922;
-            border-style: dashed;
-        }
-        .pin-btn.unpinned:hover {
             background: #2d2a1f;
             border-color: #e3b341;
+            color: #e3b341;
         }
+        .collapse-btn {
+            background: transparent;
+            border: none;
+            padding: 4px 6px;
+            cursor: pointer;
+            font-size: 12px;
+            color: #6e7681;
+            border-radius: 4px;
+            transition: transform 0.2s ease;
+        }
+        .collapse-btn:hover { background: #21262d; color: #8b949e; }
+        .collapse-btn.collapsed { transform: rotate(-90deg); }
+        .session-card.collapsed .terminal,
+        .session-card.collapsed .permission-bar,
+        .session-card.collapsed .widgets-panel,
+        .session-card.collapsed .input-area,
+        .session-card.collapsed .info-popover { display: none !important; }
+        .session-card.collapsed .session-header { border-bottom: none; }
+        .session-summary {
+            display: none;
+            padding: 8px 16px;
+            background: #161b22;
+            border-top: 1px solid #21262d;
+            font-size: 11px;
+            color: #8b949e;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .session-card.collapsed .session-summary { display: flex; }
+        .summary-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .summary-item .label { color: #6e7681; }
+        .summary-item .value { color: #c9d1d9; }
+        .summary-item .green { color: #3fb950; }
+        .summary-item .red { color: #f85149; }
+        .summary-item .purple { color: #bc8cff; }
+        .summary-item .blue { color: #58a6ff; }
         .terminal {
             background: #0d1117;
             padding: 8px;
-            height: 350px;
             overflow: auto;
             font-family: 'SF Mono', 'Fira Code', 'Consolas', 'DejaVu Sans Mono', monospace;
             font-size: 12px;
             line-height: 1.4;
             white-space: pre-wrap;
+            transition: height 0.25s ease-out;
             word-wrap: break-word;
             overflow-wrap: anywhere;
             word-break: break-all;
@@ -285,8 +373,9 @@ export const dashboardHtml = `<!DOCTYPE html>
             .header h1 {
                 font-size: 16px;
             }
-            .layout-control {
-                display: none;  /* Hide on mobile - single column is default */
+            .style-popover {
+                right: -8px;
+                min-width: 200px;
             }
             .container {
                 padding: 8px;
@@ -329,8 +418,6 @@ export const dashboardHtml = `<!DOCTYPE html>
         }
 
         /* Git files list */
-        .git-files {
-        }
         .git-file {
             display: flex;
             gap: 6px;
@@ -355,8 +442,6 @@ export const dashboardHtml = `<!DOCTYPE html>
         }
 
         /* Changes list */
-        .changes-list {
-        }
         .change-item {
             display: flex;
             gap: 4px;
@@ -418,42 +503,118 @@ export const dashboardHtml = `<!DOCTYPE html>
             font-size: 13px;
         }
         .refresh-btn:hover { background: #30363d; }
-        .mode-indicator:hover { background: #30363d; }
 
-        /* Layout segmented control */
-        .layout-control {
-            display: flex;
-            gap: 0;
+        /* Style popover */
+        .style-btn {
             background: #21262d;
             border: 1px solid #30363d;
-            border-radius: 6px;
-            overflow: hidden;
-        }
-        .layout-btn {
-            background: transparent;
-            border: none;
             padding: 6px 12px;
             color: #8b949e;
             cursor: pointer;
             font-size: 12px;
-            border-right: 1px solid #30363d;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s ease;
         }
-        .layout-btn:last-child { border-right: none; }
-        .layout-btn:hover { background: #30363d; }
-        .layout-btn.active {
+        .style-btn:hover { background: #30363d; color: #c9d1d9; }
+        .style-btn.active { background: #30363d; color: #c9d1d9; border-color: #58a6ff; }
+        .style-btn svg { width: 14px; height: 14px; }
+        .style-popover {
+            display: none;
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 16px;
+            min-width: 220px;
+            box-shadow: 0 16px 32px rgba(0,0,0,0.4);
+            z-index: 200;
+        }
+        .style-popover.visible { display: block; }
+        .style-section {
+            margin-bottom: 16px;
+        }
+        .style-section:last-child { margin-bottom: 0; }
+        .style-section-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: #6e7681;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        .style-options {
+            display: flex;
+            gap: 0;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .style-option {
+            flex: 1;
+            background: transparent;
+            border: none;
+            padding: 10px 12px;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            border-right: 1px solid #30363d;
+            transition: all 0.15s ease;
+        }
+        .style-option:last-child { border-right: none; }
+        .style-option:hover { background: #30363d; color: #c9d1d9; }
+        .style-option.active {
             background: #1f6feb;
             color: #fff;
+        }
+        .font-size-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .font-size-btn {
+            background: #21262d;
+            border: 1px solid #30363d;
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            color: #8b949e;
+            cursor: pointer;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s ease;
+        }
+        .font-size-btn:hover { background: #30363d; color: #c9d1d9; }
+        .font-size-btn:active { background: #1f6feb; color: #fff; }
+        .font-size-btn.decrease { font-size: 12px; }
+        .font-size-btn.increase { font-size: 18px; }
+        .font-size-value {
+            flex: 1;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 500;
+            color: #c9d1d9;
+            background: #0d1117;
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid #21262d;
+        }
+        .style-container {
+            position: relative;
         }
 
         /* Layout-based container styles (CSS columns for masonry) */
         .container[data-layout="1"] { column-count: 1; }
         .container[data-layout="2"] { column-count: 2; }
         .container[data-layout="3"] { column-count: 3; }
-
-        /* Adjust terminal heights for compact layouts */
-        .container[data-layout="2"] .terminal { height: 250px; }
-        .container[data-layout="3"] .terminal { height: 200px; }
-        .container[data-layout="fit"] .terminal { height: 150px; }
 
         /* Permission action bar */
         .permission-bar {
@@ -542,16 +703,51 @@ export const dashboardHtml = `<!DOCTYPE html>
     </style>
 </head>
 <body>
+    <div class="deploy-overlay" id="deploy-overlay">
+        <div class="deploy-spinner"></div>
+        <div class="deploy-text">Reconnecting to Crabigator...</div>
+        <div class="deploy-subtext">A new version was deployed</div>
+        <div class="deploy-countdown" id="deploy-countdown"></div>
+    </div>
     <div class="header">
         <h1>🦀 Crabigator Dashboard</h1>
         <button class="refresh-btn" onclick="loadSessions()">↻ Refresh</button>
-        <div class="layout-control">
-            <button class="layout-btn active" data-layout="1" onclick="setLayout('1')">1</button>
-            <button class="layout-btn" data-layout="2" onclick="setLayout('2')">2</button>
-            <button class="layout-btn" data-layout="3" onclick="setLayout('3')">3</button>
-            <button class="layout-btn" data-layout="fit" onclick="setLayout('fit')">Fit</button>
-        </div>
         <div class="status" id="status">Loading...</div>
+        <div class="style-container">
+            <button class="style-btn" id="style-btn" onclick="toggleStylePopover()">
+                <svg viewBox="0 0 16 16" fill="currentColor">
+                    <path fill-rule="evenodd" d="M7.429 1.525a6.593 6.593 0 011.142 0c.036.003.108.036.137.146l.289 1.105c.147.56.55.967.997 1.189.174.086.341.183.501.29.417.278.97.423 1.53.27l1.102-.303c.11-.03.175.016.195.046.219.31.41.641.573.989.014.031.022.11-.059.19l-.815.806c-.411.406-.562.957-.53 1.456a4.588 4.588 0 010 .582c-.032.499.119 1.05.53 1.456l.815.806c.08.08.073.159.059.19a6.494 6.494 0 01-.573.99c-.02.029-.086.074-.195.045l-1.103-.303c-.559-.153-1.112-.008-1.529.27-.16.107-.327.204-.5.29-.449.222-.851.628-.998 1.189l-.289 1.105c-.029.11-.101.143-.137.146a6.613 6.613 0 01-1.142 0c-.036-.003-.108-.037-.137-.146l-.289-1.105c-.147-.56-.55-.967-.997-1.189a4.502 4.502 0 01-.501-.29c-.417-.278-.97-.423-1.53-.27l-1.102.303c-.11.03-.175-.016-.195-.046a6.492 6.492 0 01-.573-.989c-.014-.031-.022-.11.059-.19l.815-.806c.411-.406.562-.957.53-1.456a4.587 4.587 0 010-.582c.032-.499-.119-1.05-.53-1.456l-.815-.806c-.08-.08-.073-.159-.059-.19a6.44 6.44 0 01.573-.99c.02-.029.086-.074.195-.045l1.103.303c.559.153 1.112.008 1.529-.27.16-.107.327-.204.5-.29.449-.222.851-.628.998-1.189l.289-1.105c.029-.11.101-.143.137-.146zM8 0c-.236 0-.47.01-.701.03-.743.065-1.29.615-1.458 1.261l-.29 1.106c-.017.066-.078.158-.211.224a5.994 5.994 0 00-.668.386c-.123.082-.233.09-.3.071L3.27 2.776c-.644-.177-1.392.02-1.82.63a7.977 7.977 0 00-.704 1.217c-.315.675-.111 1.422.363 1.891l.815.806c.05.048.098.147.088.294a6.084 6.084 0 000 .772c.01.147-.038.246-.088.294l-.815.806c-.474.469-.678 1.216-.363 1.891.2.428.436.835.704 1.218.428.609 1.176.806 1.82.63l1.103-.303c.066-.019.176-.011.299.071.213.143.436.272.668.386.133.066.194.158.212.224l.289 1.106c.169.646.715 1.196 1.458 1.26a8.094 8.094 0 001.402 0c.743-.064 1.29-.614 1.458-1.26l.29-1.106c.017-.066.078-.158.211-.224a5.98 5.98 0 00.668-.386c.123-.082.233-.09.3-.071l1.102.302c.644.177 1.392-.02 1.82-.63.268-.382.505-.789.704-1.217.315-.675.111-1.422-.364-1.891l-.814-.806c-.05-.048-.098-.147-.088-.294a6.1 6.1 0 000-.772c-.01-.147.039-.246.088-.294l.814-.806c.475-.469.679-1.216.364-1.891a7.992 7.992 0 00-.704-1.218c-.428-.609-1.176-.806-1.82-.63l-1.103.303c-.066.019-.176.011-.299-.071a5.991 5.991 0 00-.668-.386c-.133-.066-.194-.158-.212-.224L10.16 1.29C9.99.645 9.444.095 8.701.031A8.094 8.094 0 008 0zm1.5 8a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM11 8a3 3 0 11-6 0 3 3 0 016 0z"/>
+                </svg>
+                Style
+            </button>
+            <div class="style-popover" id="style-popover">
+                <div class="style-section">
+                    <div class="style-section-label">Columns</div>
+                    <div class="style-options">
+                        <button class="style-option active" data-layout="1" onclick="setLayout('1')">1</button>
+                        <button class="style-option" data-layout="2" onclick="setLayout('2')">2</button>
+                        <button class="style-option" data-layout="3" onclick="setLayout('3')">3</button>
+                        <button class="style-option" data-layout="fit" onclick="setLayout('fit')">Fit</button>
+                    </div>
+                </div>
+                <div class="style-section">
+                    <div class="style-section-label">Text Size</div>
+                    <div class="font-size-control">
+                        <button class="font-size-btn decrease" onclick="adjustFontSize(-1)" title="Smaller">A</button>
+                        <div class="font-size-value" id="font-label">100%</div>
+                        <button class="font-size-btn increase" onclick="adjustFontSize(1)" title="Larger">A</button>
+                    </div>
+                </div>
+                <div class="style-section">
+                    <div class="style-section-label">Terminal Height</div>
+                    <div class="font-size-control">
+                        <button class="font-size-btn decrease" onclick="adjustTerminalHeight(-1)" title="Shorter">−</button>
+                        <div class="font-size-value" id="height-label">350px</div>
+                        <button class="font-size-btn increase" onclick="adjustTerminalHeight(1)" title="Taller">+</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     <div class="container" id="sessions" data-layout="1"></div>
 
@@ -560,6 +756,252 @@ export const dashboardHtml = `<!DOCTYPE html>
         const sessions = new Map(); // sessionId -> { eventSource, state, element, git, changes, stats }
         let currentLayout = localStorage.getItem('crabigator-layout') || '1';
 
+        // Font size scaling
+        const FONT_SCALES = [0.75, 0.85, 0.9, 1.0, 1.1, 1.25, 1.5];
+        let currentFontScaleIndex = 3; // default 1.0
+        let isChangingFontSize = false; // Flag to prevent scroll unpinning during zoom changes
+
+        // Terminal height scaling
+        const TERMINAL_HEIGHTS = [150, 200, 250, 350, 450, 550, 700];
+        let currentHeightIndex = 3; // default 350px
+
+        function adjustFontSize(delta) {
+            const newIndex = Math.max(0, Math.min(FONT_SCALES.length - 1, currentFontScaleIndex + delta));
+            if (newIndex !== currentFontScaleIndex) {
+                currentFontScaleIndex = newIndex;
+                applyFontScale();
+                saveSettingsToServer();
+            }
+        }
+
+        function applyFontScale() {
+            const scale = FONT_SCALES[currentFontScaleIndex];
+
+            // Set flag to prevent scroll events from unpinning during zoom change
+            isChangingFontSize = true;
+
+            document.documentElement.style.setProperty('--font-scale', scale);
+            const label = document.getElementById('font-label');
+            if (label) label.textContent = Math.round(scale * 100) + '%';
+
+            // Scroll pinned sessions to bottom after zoom
+            requestAnimationFrame(() => {
+                for (const [id, sessionData] of sessions) {
+                    if (sessionData.pinned) {
+                        const terminal = document.getElementById('terminal-' + id);
+                        if (terminal) {
+                            terminal.scrollTop = terminal.scrollHeight;
+                        }
+                    }
+                }
+                // Clear flag after scroll positions are restored
+                setTimeout(() => { isChangingFontSize = false; }, 100);
+            });
+        }
+
+        function adjustTerminalHeight(delta) {
+            const newIndex = Math.max(0, Math.min(TERMINAL_HEIGHTS.length - 1, currentHeightIndex + delta));
+            if (newIndex !== currentHeightIndex) {
+                currentHeightIndex = newIndex;
+                applyTerminalHeight();
+                saveSettingsToServer();
+            }
+        }
+
+        function applyTerminalHeight() {
+            const height = TERMINAL_HEIGHTS[currentHeightIndex];
+            const label = document.getElementById('height-label');
+            if (label) label.textContent = height + 'px';
+
+            // Apply height directly to all terminal elements
+            document.querySelectorAll('.terminal').forEach(terminal => {
+                terminal.style.height = height + 'px';
+            });
+
+            // Scroll pinned sessions to bottom after height change
+            requestAnimationFrame(() => {
+                for (const [id, sessionData] of sessions) {
+                    if (sessionData.pinned) {
+                        const terminal = document.getElementById('terminal-' + id);
+                        if (terminal) {
+                            terminal.scrollTop = terminal.scrollHeight;
+                        }
+                    }
+                }
+            });
+        }
+
+        async function saveSettingsToServer() {
+            try {
+                await fetch(API_BASE + '/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fontScaleIndex: currentFontScaleIndex,
+                        terminalHeightIndex: currentHeightIndex
+                    }),
+                    credentials: 'same-origin'
+                });
+            } catch {}
+        }
+
+        async function loadSettingsFromServer() {
+            try {
+                const resp = await fetch(API_BASE + '/settings', {
+                    credentials: 'same-origin'
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (typeof data.fontScaleIndex === 'number') {
+                        currentFontScaleIndex = Math.max(0, Math.min(FONT_SCALES.length - 1, data.fontScaleIndex));
+                    }
+                    if (typeof data.terminalHeightIndex === 'number') {
+                        currentHeightIndex = Math.max(0, Math.min(TERMINAL_HEIGHTS.length - 1, data.terminalHeightIndex));
+                    }
+                }
+            } catch {}
+            applyFontScale();
+            applyTerminalHeight();
+        }
+
+        // Style popover
+        function toggleStylePopover() {
+            const popover = document.getElementById('style-popover');
+            const btn = document.getElementById('style-btn');
+            const isVisible = popover.classList.toggle('visible');
+            btn.classList.toggle('active', isVisible);
+        }
+
+        function closeStylePopover() {
+            const popover = document.getElementById('style-popover');
+            const btn = document.getElementById('style-btn');
+            popover.classList.remove('visible');
+            btn.classList.remove('active');
+        }
+
+        // Close popover when clicking outside
+        document.addEventListener('click', (e) => {
+            const popover = document.getElementById('style-popover');
+            const btn = document.getElementById('style-btn');
+            if (popover && btn && !popover.contains(e.target) && !btn.contains(e.target)) {
+                closeStylePopover();
+            }
+        });
+
+        // Deploy detection and reconnection
+        let isDeploying = false;
+        let deployReconnectDelay = 500;
+        const MAX_RECONNECT_DELAY = 10000;
+        let reconnectTimeout = null;
+        let hadSessionsBefore = false;
+
+        function showDeployOverlay() {
+            isDeploying = true;
+            document.getElementById('deploy-overlay').classList.add('visible');
+            updateDeployCountdown();
+        }
+
+        function hideDeployOverlay() {
+            isDeploying = false;
+            deployReconnectDelay = 500;
+            document.getElementById('deploy-overlay').classList.remove('visible');
+        }
+
+        function updateDeployCountdown() {
+            const el = document.getElementById('deploy-countdown');
+            if (el && isDeploying) {
+                el.textContent = 'Retrying in ' + (deployReconnectDelay / 1000).toFixed(1) + 's...';
+            }
+        }
+
+        function scheduleReconnect() {
+            if (reconnectTimeout) clearTimeout(reconnectTimeout);
+            updateDeployCountdown();
+            reconnectTimeout = setTimeout(() => {
+                loadSessions();
+                deployReconnectDelay = Math.min(deployReconnectDelay * 1.5, MAX_RECONNECT_DELAY);
+            }, deployReconnectDelay);
+        }
+
+        // Input preservation - save to localStorage and server
+        const inputCache = new Map(); // sessionId -> text
+
+        function saveInputLocally(sessionId, text) {
+            inputCache.set(sessionId, text);
+            try {
+                const stored = JSON.parse(localStorage.getItem('crabigator-inputs') || '{}');
+                stored[sessionId] = text;
+                localStorage.setItem('crabigator-inputs', JSON.stringify(stored));
+            } catch {}
+        }
+
+        function getLocalInput(sessionId) {
+            try {
+                const stored = JSON.parse(localStorage.getItem('crabigator-inputs') || '{}');
+                return stored[sessionId] || '';
+            } catch { return ''; }
+        }
+
+        function clearLocalInput(sessionId) {
+            inputCache.delete(sessionId);
+            try {
+                const stored = JSON.parse(localStorage.getItem('crabigator-inputs') || '{}');
+                delete stored[sessionId];
+                localStorage.setItem('crabigator-inputs', JSON.stringify(stored));
+            } catch {}
+        }
+
+        async function saveInputToServer(sessionId, text) {
+            try {
+                await fetch(API_BASE + '/sessions/' + sessionId + '/draft', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+            } catch {}
+        }
+
+        async function getServerInput(sessionId) {
+            try {
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/draft');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    return data.text || '';
+                }
+            } catch {}
+            return '';
+        }
+
+        async function restoreInput(sessionId) {
+            // Try local first, then server
+            let text = getLocalInput(sessionId);
+            if (!text) {
+                text = await getServerInput(sessionId);
+            }
+            if (text) {
+                const input = document.getElementById('input-' + sessionId);
+                if (input && !input.value) {
+                    input.value = text;
+                }
+            }
+        }
+
+        // Debounce server saves
+        const inputSaveTimers = new Map();
+        function handleInputChange(sessionId, text) {
+            // Always save locally immediately
+            saveInputLocally(sessionId, text);
+
+            // Debounce server save (500ms)
+            if (inputSaveTimers.has(sessionId)) {
+                clearTimeout(inputSaveTimers.get(sessionId));
+            }
+            inputSaveTimers.set(sessionId, setTimeout(() => {
+                saveInputToServer(sessionId, text);
+                inputSaveTimers.delete(sessionId);
+            }, 500));
+        }
+
         function setLayout(layout) {
             currentLayout = layout;
             localStorage.setItem('crabigator-layout', layout);
@@ -567,7 +1009,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             container.dataset.layout = layout;
 
             // Update button states
-            document.querySelectorAll('.layout-btn').forEach(btn => {
+            document.querySelectorAll('.style-option[data-layout]').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.layout === layout);
             });
 
@@ -608,8 +1050,6 @@ export const dashboardHtml = `<!DOCTYPE html>
             // Terminal buffers often pad lines with spaces
             text = text.split('\\n').map(line => line.trimEnd()).join('\\n');
 
-            const defaultFg = '#c9d1d9';
-            const defaultBg = '#0d1117';
             const colors = {
                 30: '#0d1117', 31: '#f85149', 32: '#3fb950', 33: '#d29922',
                 34: '#58a6ff', 35: '#bc8cff', 36: '#39c5cf', 37: '#c9d1d9',
@@ -826,6 +1266,7 @@ export const dashboardHtml = `<!DOCTYPE html>
         async function loadSessions() {
             try {
                 const resp = await fetch(API_BASE + '/sessions');
+                if (!resp.ok) throw new Error('Failed to fetch sessions');
                 const data = await resp.json();
 
                 document.getElementById('status').textContent =
@@ -834,26 +1275,46 @@ export const dashboardHtml = `<!DOCTYPE html>
                 const container = document.getElementById('sessions');
 
                 if (data.sessions.length === 0) {
+                    // If we had sessions before but now have none, likely a deploy
+                    if (hadSessionsBefore && !isDeploying) {
+                        showDeployOverlay();
+                    }
+
                     for (const [, session] of sessions) {
                         session.eventSource?.close();
                     }
                     sessions.clear();
                     container.innerHTML = '<div class="no-sessions">No active sessions</div>';
 
-                    // Exponential backoff polling when no sessions (e.g., after deploy)
-                    if (emptyPollTimeout) clearTimeout(emptyPollTimeout);
-                    console.log('No sessions, polling again in ' + (emptyPollDelay / 1000) + 's');
-                    document.getElementById('status').textContent =
-                        'No sessions (retry in ' + Math.round(emptyPollDelay / 1000) + 's)';
-                    emptyPollTimeout = setTimeout(() => {
-                        loadSessions();
-                        // Double the delay for next attempt, capped at max
-                        emptyPollDelay = Math.min(emptyPollDelay * 2, MAX_EMPTY_POLL_DELAY);
-                    }, emptyPollDelay);
+                    // Use deploy reconnect if deploying, otherwise normal backoff
+                    if (isDeploying) {
+                        scheduleReconnect();
+                    } else {
+                        // Exponential backoff polling when no sessions
+                        if (emptyPollTimeout) clearTimeout(emptyPollTimeout);
+                        console.log('No sessions, polling again in ' + (emptyPollDelay / 1000) + 's');
+                        document.getElementById('status').textContent =
+                            'No sessions (retry in ' + Math.round(emptyPollDelay / 1000) + 's)';
+                        emptyPollTimeout = setTimeout(() => {
+                            loadSessions();
+                            emptyPollDelay = Math.min(emptyPollDelay * 2, MAX_EMPTY_POLL_DELAY);
+                        }, emptyPollDelay);
+                    }
                     return;
                 }
 
-                // Found sessions - reset exponential backoff
+                // Found sessions - we're connected
+                hadSessionsBefore = true;
+                if (isDeploying) {
+                    hideDeployOverlay();
+                    // Reconnect session list SSE stream after deploy
+                    if (!sessionListSource) {
+                        sseRetryCount = 0;
+                        connectSessionListStream();
+                    }
+                }
+
+                // Reset exponential backoff
                 emptyPollDelay = MIN_EMPTY_POLL_DELAY;
                 if (emptyPollTimeout) {
                     clearTimeout(emptyPollTimeout);
@@ -885,6 +1346,11 @@ export const dashboardHtml = `<!DOCTYPE html>
             } catch (err) {
                 console.error('Failed to load sessions:', err);
                 document.getElementById('status').textContent = 'Error loading sessions';
+                // Network error likely means deploy
+                if (hadSessionsBefore) {
+                    showDeployOverlay();
+                    scheduleReconnect();
+                }
             }
         }
 
@@ -893,18 +1359,29 @@ export const dashboardHtml = `<!DOCTYPE html>
             const card = document.createElement('div');
             card.className = 'session-card';
             card.id = 'session-' + session.id;
-            const createdAt = session.created_at ? new Date(session.created_at * 1000).toLocaleString() : 'Unknown';
+            const startedAt = formatStartedAt(session.started_at);
             card.innerHTML = \`
                 <div class="session-header">
-                    <span class="state \${session.state}">\${session.state}</span>
                     <div class="session-info">
                         <span class="title" id="title-\${session.id}"></span>
                         <span class="cwd">\${session.cwd}</span>
+                        <span class="branch" id="branch-\${session.id}" style="color:#7ee787; font-size:11px;"></span>
                     </div>
                     <div class="session-actions">
-                        <button class="info-btn" id="info-btn-\${session.id}" onclick="toggleInfoPopover('\${session.id}')" title="Session info">ⓘ</button>
-                        <button class="pin-btn pinned" id="pin-\${session.id}" onclick="togglePin('\${session.id}')" title="Auto-scroll to bottom">⇣ Pinned</button>
+                        <div class="session-actions-row">
+                            <span class="state \${session.state}" id="state-\${session.id}">\${session.state}</span>
+                            <button class="collapse-btn" id="collapse-btn-\${session.id}" onclick="toggleCollapse('\${session.id}')" title="Collapse/expand">▼</button>
+                        </div>
+                        <div class="session-actions-row">
+                            <button class="info-btn" id="info-btn-\${session.id}" onclick="toggleInfoPopover('\${session.id}')" title="Session info">ⓘ</button>
+                            <span class="pin-indicator pinned" id="pin-\${session.id}" title="Auto-scroll enabled">⇣ pinned</span>
+                        </div>
                     </div>
+                </div>
+                <div class="session-summary" id="summary-\${session.id}">
+                    <span class="summary-item"><span class="label">Stats:</span> <span class="value" id="summary-stats-\${session.id}">—</span></span>
+                    <span class="summary-item"><span class="label">Git:</span> <span class="value" id="summary-git-\${session.id}">—</span></span>
+                    <span class="summary-item"><span class="label">Changes:</span> <span class="value" id="summary-changes-\${session.id}">—</span></span>
                 </div>
                 <div class="info-popover" id="info-popover-\${session.id}">
                     <div class="info-popover-row">
@@ -913,7 +1390,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                     </div>
                     <div class="info-popover-row">
                         <span class="info-popover-label">Started</span>
-                        <span class="info-popover-value">\${createdAt}</span>
+                        <span class="info-popover-value">\${startedAt}</span>
                     </div>
                     <div class="info-popover-row">
                         <span class="info-popover-label">Directory</span>
@@ -928,7 +1405,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <span class="info-popover-value" id="info-platform-value-\${session.id}">—</span>
                     </div>
                 </div>
-                <div class="terminal" id="terminal-\${session.id}">Connecting...</div>
+                <div class="terminal" id="terminal-\${session.id}" style="height:\${TERMINAL_HEIGHTS[currentHeightIndex]}px">Connecting...</div>
                 <div class="permission-bar" id="perm-\${session.id}">
                     <div class="perm-question" id="perm-question-\${session.id}" style="display:none; margin-bottom:8px; font-size:13px; color:#c9d1d9;"></div>
                     <div class="perm-buttons" id="perm-buttons-\${session.id}">
@@ -957,12 +1434,15 @@ export const dashboardHtml = `<!DOCTYPE html>
                 <div class="input-area">
                     <input type="text" id="input-\${session.id}"
                            placeholder="Type a command or answer..."
+                           oninput="handleInputChange('\${session.id}', this.value)"
                            onkeydown="if(event.key==='Enter')sendAnswer('\${session.id}')">
                     <button onclick="sendAnswer('\${session.id}')">Send</button>
                 </div>
             \`;
             container.appendChild(card);
             sessions.set(session.id, { element: card, state: session.state, title: null, git: null, changes: null, stats: null, permission: null, pinned: true });
+            applyCollapsedState(session.id);
+            restoreInput(session.id);
             updateFitLayout();
 
             // Show permission bar if session is already in permission state
@@ -974,6 +1454,9 @@ export const dashboardHtml = `<!DOCTYPE html>
                 terminal.addEventListener('scroll', () => {
                     const sessionData = sessions.get(session.id);
                     if (!sessionData) return;
+
+                    // Skip scroll handling during font size changes to preserve pin state
+                    if (isChangingFontSize) return;
 
                     // Use different thresholds for pinning vs unpinning
                     // - Unpin easily: 5px from bottom triggers unpin
@@ -1006,15 +1489,34 @@ export const dashboardHtml = `<!DOCTYPE html>
                 sessionData.state = session.state;
                 // Update permission bar visibility based on new state
                 updatePermissionBar(session.id, session.state, sessionData.permission);
+                updateSessionSummary(session.id, sessionData);
             }
         }
 
         function updatePinButton(sessionId, pinned) {
-            const btn = document.getElementById('pin-' + sessionId);
-            if (!btn) return;
-            btn.className = 'pin-btn ' + (pinned ? 'pinned' : 'unpinned');
-            btn.textContent = pinned ? '⇣ Pinned' : '⇣ Pin';
-            btn.title = pinned ? 'Auto-scroll enabled - click to disable' : 'Click to pin to bottom';
+            const el = document.getElementById('pin-' + sessionId);
+            if (!el) return;
+            const parent = el.parentNode;
+            if (!parent) return;
+
+            if (pinned) {
+                // Show neutral indicator
+                const indicator = document.createElement('span');
+                indicator.id = 'pin-' + sessionId;
+                indicator.className = 'pin-indicator pinned';
+                indicator.title = 'Auto-scroll enabled';
+                indicator.textContent = '⇣ pinned';
+                parent.replaceChild(indicator, el);
+            } else {
+                // Show clickable button
+                const btn = document.createElement('button');
+                btn.id = 'pin-' + sessionId;
+                btn.className = 'pin-btn';
+                btn.title = 'Click to pin to bottom';
+                btn.textContent = '⇣ Pin';
+                btn.onclick = () => togglePin(sessionId);
+                parent.replaceChild(btn, el);
+            }
         }
 
         function togglePin(sessionId) {
@@ -1033,6 +1535,102 @@ export const dashboardHtml = `<!DOCTYPE html>
                 sessionData.pinned = true;
                 updatePinButton(sessionId, true);
                 terminal.scrollTop = terminal.scrollHeight;
+            }
+        }
+
+        // Collapse state persistence
+        function getCollapsedSessions() {
+            try {
+                return JSON.parse(localStorage.getItem('collapsedSessions') || '{}');
+            } catch { return {}; }
+        }
+
+        function setCollapsedSession(sessionId, collapsed) {
+            const state = getCollapsedSessions();
+            if (collapsed) {
+                state[sessionId] = true;
+            } else {
+                delete state[sessionId];
+            }
+            localStorage.setItem('collapsedSessions', JSON.stringify(state));
+        }
+
+        function isSessionCollapsed(sessionId) {
+            return getCollapsedSessions()[sessionId] === true;
+        }
+
+        function toggleCollapse(sessionId) {
+            const card = document.getElementById('session-' + sessionId);
+            const btn = document.getElementById('collapse-btn-' + sessionId);
+            if (!card || !btn) return;
+
+            const isCollapsed = card.classList.contains('collapsed');
+            if (isCollapsed) {
+                card.classList.remove('collapsed');
+                btn.classList.remove('collapsed');
+                setCollapsedSession(sessionId, false);
+            } else {
+                card.classList.add('collapsed');
+                btn.classList.add('collapsed');
+                setCollapsedSession(sessionId, true);
+                // Update summary when collapsing
+                const sessionData = sessions.get(sessionId);
+                if (sessionData) {
+                    updateSessionSummary(sessionId, sessionData);
+                }
+            }
+            updateFitLayout();
+        }
+
+        function applyCollapsedState(sessionId) {
+            if (isSessionCollapsed(sessionId)) {
+                const card = document.getElementById('session-' + sessionId);
+                const btn = document.getElementById('collapse-btn-' + sessionId);
+                if (card) card.classList.add('collapsed');
+                if (btn) btn.classList.add('collapsed');
+            }
+        }
+
+        function updateSessionSummary(sessionId, sessionData) {
+            // Stats summary
+            const statsEl = document.getElementById('summary-stats-' + sessionId);
+            if (statsEl) {
+                const s = sessionData.stats || {};
+                const parts = [];
+                // Show state first
+                const state = sessionData.state || s.state;
+                if (state) parts.push(state);
+                if (s.prompts) parts.push(s.prompts + ' prompts');
+                if (s.tools) parts.push(s.tools + ' tools');
+                if (s.thinking_seconds) parts.push(formatDuration(s.thinking_seconds) + ' thinking');
+                statsEl.textContent = parts.length ? parts.join(', ') : '—';
+            }
+
+            // Git summary
+            const gitEl = document.getElementById('summary-git-' + sessionId);
+            if (gitEl && sessionData.git) {
+                const g = sessionData.git;
+                const adds = g.files?.reduce((sum, f) => sum + (f.additions || 0), 0) || 0;
+                const dels = g.files?.reduce((sum, f) => sum + (f.deletions || 0), 0) || 0;
+                const fileCount = g.files?.length || 0;
+                if (fileCount > 0) {
+                    gitEl.innerHTML = '<span class="green">+' + adds + '</span> <span class="red">-' + dels + '</span> in ' + fileCount + ' file' + (fileCount !== 1 ? 's' : '');
+                } else {
+                    gitEl.textContent = 'clean';
+                }
+            }
+
+            // Changes summary
+            const changesEl = document.getElementById('summary-changes-' + sessionId);
+            if (changesEl && sessionData.changes) {
+                const c = sessionData.changes;
+                const total = c.by_language?.reduce((sum, l) => sum + l.changes.length, 0) || 0;
+                if (total > 0) {
+                    const langs = c.by_language?.map(l => l.language).join(', ') || '';
+                    changesEl.innerHTML = '<span class="purple">' + total + '</span> change' + (total !== 1 ? 's' : '') + (langs ? ' (' + langs + ')' : '');
+                } else {
+                    changesEl.textContent = 'none';
+                }
             }
         }
 
@@ -1089,7 +1687,27 @@ export const dashboardHtml = `<!DOCTYPE html>
             const mins = Math.floor(secs / 60);
             if (mins < 60) return mins + 'm ago';
             const hours = Math.floor(mins / 60);
-            return hours + 'h ago';
+            if (hours < 24) return hours + 'h ago';
+            const days = Math.floor(hours / 24);
+            return days + 'd ago';
+        }
+
+        function formatShortDate(timestamp) {
+            if (!timestamp) return '';
+            const date = new Date(timestamp * 1000);
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const month = months[date.getMonth()];
+            const day = date.getDate();
+            let hours = date.getHours();
+            const mins = date.getMinutes().toString().padStart(2, '0');
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            hours = hours % 12 || 12;
+            return month + ' ' + day + ', ' + hours + ':' + mins + ' ' + ampm;
+        }
+
+        function formatStartedAt(timestamp) {
+            if (!timestamp) return 'Unknown';
+            return formatElapsed(timestamp) + ' · ' + formatShortDate(timestamp);
         }
 
         function formatStateIndicator(state) {
@@ -1172,6 +1790,10 @@ export const dashboardHtml = `<!DOCTYPE html>
             const promptsElapsed = stats.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
             const completionsElapsed = stats.completions_changed_at ? formatElapsed(stats.completions_changed_at) : '';
 
+            const compressionsRow = stats.compressions > 0
+                ? \`<div class="widget-row"><span class="widget-label">⊜ Compactions</span><span class="widget-value" style="color:#f0883e">\${stats.compressions}</span></div>\`
+                : '';
+
             widget.innerHTML = \`
                 <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right">\${modeIndicator} \${stateIndicator}</span></div>
                 <div class="widget-row"><span class="widget-label">◆ Session</span><span class="widget-value" style="color:#58a6ff">\${formatDuration(stats.work_seconds || 0)}</span></div>
@@ -1179,6 +1801,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                 <div class="widget-row"><span class="widget-label">▸ Prompts \${stats.prompts || 0}</span><span class="widget-value" style="color:#8b949e">\${promptsElapsed}</span></div>
                 <div class="widget-row"><span class="widget-label">◂ Completions \${stats.completions || 0}</span><span class="widget-value" style="color:#8b949e">\${completionsElapsed}</span></div>
                 <div class="widget-row"><span class="widget-label">⚙ Tools</span><span class="widget-value purple">\${stats.tools || 0}</span></div>
+                \${compressionsRow}
             \`;
         }
 
@@ -1226,6 +1849,12 @@ export const dashboardHtml = `<!DOCTYPE html>
             const files = git.files || [];
             const totalFiles = files.length;
             const branch = git.branch || 'unknown';
+
+            // Update branch in header
+            const branchEl = document.getElementById('branch-' + sessionId);
+            if (branchEl) {
+                branchEl.textContent = ' ' + branch;
+            }
 
             // Compact display for clean repos - just header, no body
             if (totalFiles === 0) {
@@ -1386,6 +2015,12 @@ export const dashboardHtml = `<!DOCTYPE html>
                     card.remove();
                 }
                 updateFitLayout();
+
+                // If all sessions disconnected and we had sessions before, likely a deploy
+                if (sessions.size === 0 && hadSessionsBefore && !isDeploying) {
+                    showDeployOverlay();
+                    scheduleReconnect();
+                }
             };
 
             const session = sessions.get(sessionId);
@@ -1426,6 +2061,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                         updateStatsWidget(sessionId, sessionData.stats || {});
                         // Also update permission bar directly
                         updatePermissionBar(sessionId, event.state, sessionData.permission);
+                        updateSessionSummary(sessionId, sessionData);
                     }
                     break;
                 case 'scrollback':
@@ -1438,15 +2074,24 @@ export const dashboardHtml = `<!DOCTYPE html>
                     }
                     break;
                 case 'git':
+                    if (sessionData) {
+                        sessionData.git = event;
+                        updateSessionSummary(sessionId, sessionData);
+                    }
                     updateGitWidget(sessionId, event);
                     break;
                 case 'changes':
+                    if (sessionData) {
+                        sessionData.changes = event;
+                        updateSessionSummary(sessionId, sessionData);
+                    }
                     updateChangesWidget(sessionId, event);
                     break;
                 case 'stats':
                     // Store stats in session data
                     if (sessionData) {
                         sessionData.stats = event;
+                        updateSessionSummary(sessionId, sessionData);
                     }
                     updateStatsWidget(sessionId, event);
                     break;
@@ -1494,6 +2139,8 @@ export const dashboardHtml = `<!DOCTYPE html>
 
                 if (resp.ok) {
                     input.value = '';
+                    clearLocalInput(sessionId);
+                    saveInputToServer(sessionId, ''); // Clear server draft too
                 } else {
                     const err = await resp.json();
                     alert('Error: ' + (err.error || 'Failed to send'));
@@ -1501,42 +2148,6 @@ export const dashboardHtml = `<!DOCTYPE html>
             } catch (err) {
                 console.error('Failed to send answer:', err);
                 alert('Failed to send: ' + err.message);
-            }
-        }
-
-        async function sendPermission(sessionId, action) {
-            // Immediately hide permission bar (optimistic UI)
-            const permBar = document.getElementById('perm-' + sessionId);
-            if (permBar) {
-                permBar.classList.remove('visible');
-            }
-
-            try {
-                if (action === 'yes') {
-                    // Send "1" to select option 1 (Yes, approve once)
-                    const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ text: '1' })
-                    });
-                    if (!resp.ok) {
-                        const err = await resp.json();
-                        console.error('Permission yes failed:', err);
-                    }
-                } else if (action === 'always') {
-                    // Send "2" to select option 2 (Yes, allow for session/project)
-                    const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ text: '2' })
-                    });
-                    if (!resp.ok) {
-                        const err = await resp.json();
-                        console.error('Permission always failed:', err);
-                    }
-                }
-            } catch (err) {
-                console.error('Failed to send permission:', err);
             }
         }
 
@@ -1699,19 +2310,29 @@ export const dashboardHtml = `<!DOCTYPE html>
                 console.error('Session list SSE error:', err);
                 sessionListSource.close();
                 sessionListSource = null;
-                sseRetryCount++;
 
-                if (sseRetryCount >= MAX_SSE_RETRIES) {
-                    // Fall back to polling after too many SSE failures
-                    console.log('SSE failed, falling back to polling');
-                    document.getElementById('status').textContent = sessions.size + ' session(s) (polling)';
-                    if (!pollingInterval) {
-                        pollingInterval = setInterval(loadSessions, 10000);
-                    }
+                // If we had sessions, this is likely a deploy - show overlay and use fast reconnect
+                if (hadSessionsBefore && !isDeploying) {
+                    showDeployOverlay();
+                }
+
+                if (isDeploying) {
+                    // Use fast deploy reconnect
+                    scheduleReconnect();
                 } else {
-                    document.getElementById('status').textContent = 'Reconnecting...';
-                    // Retry SSE with exponential backoff
-                    setTimeout(connectSessionListStream, Math.min(1000 * Math.pow(2, sseRetryCount), 10000));
+                    sseRetryCount++;
+                    if (sseRetryCount >= MAX_SSE_RETRIES) {
+                        // Fall back to polling after too many SSE failures
+                        console.log('SSE failed, falling back to polling');
+                        document.getElementById('status').textContent = sessions.size + ' session(s) (polling)';
+                        if (!pollingInterval) {
+                            pollingInterval = setInterval(loadSessions, 10000);
+                        }
+                    } else {
+                        document.getElementById('status').textContent = 'Reconnecting...';
+                        // Retry SSE with exponential backoff
+                        setTimeout(connectSessionListStream, Math.min(1000 * Math.pow(2, sseRetryCount), 10000));
+                    }
                 }
             };
         }
@@ -1782,8 +2403,24 @@ export const dashboardHtml = `<!DOCTYPE html>
             }
         }
 
+        // Detect when tab becomes visible again and check connection
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                // Check if SSE connection is still alive
+                if (sessionListSource && sessionListSource.readyState === EventSource.CLOSED) {
+                    console.log('SSE connection closed while tab was hidden, reconnecting...');
+                    if (hadSessionsBefore) {
+                        showDeployOverlay();
+                    }
+                    loadSessions();
+                    connectSessionListStream();
+                }
+            }
+        });
+
         // Initial load and connect to SSE for real-time updates
         setLayout(currentLayout);  // Apply saved layout preference
+        loadSettingsFromServer();  // Load style preferences
         loadSessions();
         connectSessionListStream();
     </script>

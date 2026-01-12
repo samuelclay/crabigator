@@ -80,6 +80,12 @@ export class SessionDO implements DurableObject {
                 return this.handleAnswer(request);
             case '/key':
                 return this.handleKey(request);
+            case '/draft':
+                if (request.method === 'POST') {
+                    return this.handleSaveDraft(request);
+                } else {
+                    return this.handleGetDraft();
+                }
             case '/state':
                 return this.handleGetState();
             default:
@@ -472,7 +478,36 @@ export class SessionDO implements DurableObject {
     }
 
     /**
-     * Get current session state
+     * Save draft input text (for persistence across deploys)
+     */
+    private async handleSaveDraft(request: Request): Promise<Response> {
+        try {
+            const body = await request.json() as { text?: string };
+            const text = body.text || '';
+            await this.state.storage.put('draft', text);
+            return new Response(JSON.stringify({ ok: true }), {
+                headers: { 'Content-Type': 'application/json' }
+            });
+        } catch {
+            return new Response(JSON.stringify({ error: 'Invalid request' }), {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' }
+            });
+        }
+    }
+
+    /**
+     * Get draft input text
+     */
+    private async handleGetDraft(): Promise<Response> {
+        const text = await this.state.storage.get<string>('draft') || '';
+        return new Response(JSON.stringify({ text }), {
+            headers: { 'Content-Type': 'application/json' }
+        });
+    }
+
+    /**
+     * Get current session state (for debugging)
      */
     private handleGetState(): Response {
         return new Response(
