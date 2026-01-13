@@ -293,15 +293,41 @@ export const dashboardHtml = `<!DOCTYPE html>
         .terminal {
             background: #0d1117;
             padding: 8px;
-            overflow: auto;
+            overflow-y: auto;
+            overflow-x: hidden;
             font-family: 'SF Mono', 'Fira Code', 'Consolas', 'DejaVu Sans Mono', monospace;
             font-size: 12px;
             line-height: 1.4;
-            white-space: pre-wrap;
             transition: height 0.25s ease-out;
+        }
+        .terminal .line {
+            white-space: pre-wrap;
             word-wrap: break-word;
             overflow-wrap: anywhere;
             word-break: break-all;
+        }
+        .terminal .line:empty::before {
+            content: ' ';
+            white-space: pre;
+        }
+        .terminal .split-line {
+            display: flex;
+            justify-content: space-between;
+            gap: 1em;
+        }
+        .terminal .split-line > span:first-child {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: anywhere;
+            min-width: 0;
+        }
+        .terminal .split-line > span:last-child {
+            white-space: pre;
+            flex-shrink: 0;
+        }
+        .terminal .rule-line {
+            white-space: pre;
+            overflow: hidden;
         }
         .terminal span { box-decoration-break: clone; -webkit-box-decoration-break: clone; }
         .terminal .ansi-bright { font-weight: bold; }
@@ -354,6 +380,29 @@ export const dashboardHtml = `<!DOCTYPE html>
 
         /* 2-column grid when changes hidden (Stats + Git only) */
         .widgets-panel.no-changes { grid-template-columns: repeat(2, 1fr); }
+
+        /* Title history widget - spans full width at bottom */
+        .title-history-widget {
+            grid-column: 1 / -1;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        .titles-list {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .titles-list .title-entry {
+            color: #8b949e;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-size: 10px;
+        }
+        .titles-list .title-entry:last-child {
+            color: #58a6ff;
+            font-weight: 500;
+        }
 
         /* Stack widgets vertically for multi-column layouts */
         .container[data-layout="2"] .widgets-panel,
@@ -1251,6 +1300,80 @@ export const dashboardHtml = `<!DOCTYPE html>
 
             if (inSpan) result += '</span>';
 
+            // Wrap each line in a div, detecting special line types
+            const boxDrawingChars = '─━═╌╍┄┅┈┉';
+
+            // Helper: find HTML index corresponding to visible character position
+            function findHtmlIndex(html, visiblePos) {
+                let visible = 0;
+                let inTag = false;
+                for (let i = 0; i < html.length; i++) {
+                    if (html[i] === '<') inTag = true;
+                    else if (html[i] === '>') inTag = false;
+                    else if (!inTag) {
+                        if (visible === visiblePos) return i;
+                        visible++;
+                    }
+                }
+                return html.length;
+            }
+
+            // Helper: split HTML at visible character boundaries, handling open spans
+            function splitHtmlForFlexbox(html, leftEnd, rightStart) {
+                const leftIdx = findHtmlIndex(html, leftEnd);
+                const rightIdx = findHtmlIndex(html, rightStart);
+
+                let leftHtml = html.slice(0, leftIdx);
+                let rightHtml = html.slice(rightIdx);
+
+                // Check if we need to close/reopen a span at the split
+                // Count open spans in left part
+                const leftSpanOpens = (leftHtml.match(/<span[^>]*>/g) || []).length;
+                const leftSpanCloses = (leftHtml.match(/<\\/span>/g) || []).length;
+                const unclosedSpans = leftSpanOpens - leftSpanCloses;
+
+                if (unclosedSpans > 0) {
+                    // Find the last unclosed span's style
+                    const spanMatches = leftHtml.match(/<span[^>]*>/g) || [];
+                    const lastSpan = spanMatches[spanMatches.length - 1];
+                    // Close it in left, reopen in right
+                    leftHtml += '</span>';
+                    rightHtml = lastSpan + rightHtml;
+                }
+
+                return [leftHtml, rightHtml];
+            }
+
+            const lines = result.split('\\n');
+            result = lines.map(lineHtml => {
+                // Strip HTML tags to analyze plain text content
+                const plain = lineHtml.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+                // Check for decorative rule line (>60% box chars)
+                let boxCount = 0;
+                for (const c of plain) {
+                    if (boxDrawingChars.includes(c)) boxCount++;
+                }
+                if (plain.length > 10 && boxCount / plain.length > 0.6) {
+                    return '<div class="rule-line">' + lineHtml + '</div>';
+                }
+
+                // Check for split line (text + 10+ spaces + text)
+                // Use non-greedy match for left, greedy for spaces, then remaining text
+                const splitMatch = plain.match(/^(.+?)( {10,})(.+)$/);
+                if (splitMatch) {
+                    const leftLen = splitMatch[1].length;
+                    const gapLen = splitMatch[2].length;
+                    const rightStart = leftLen + gapLen;
+
+                    const [leftHtml, rightHtml] = splitHtmlForFlexbox(lineHtml, leftLen, rightStart);
+
+                    return '<div class="line split-line"><span>' + leftHtml + '</span><span>' + rightHtml + '</span></div>';
+                }
+
+                return '<div class="line">' + lineHtml + '</div>';
+            }).join('');
+
             return result;
         }
 
@@ -1414,6 +1537,10 @@ export const dashboardHtml = `<!DOCTYPE html>
                     <span class="perm-hint">Type below or Esc to cancel</span>
                 </div>
                 <div class="widgets-panel" id="widgets-\${session.id}">
+                    <div class="widget title-history-widget" id="titles-\${session.id}" style="display:none">
+                        <div class="widget-title"><span style="color:#58a6ff">—</span></div>
+                        <div class="titles-list"></div>
+                    </div>
                     <div class="widget" id="stats-\${session.id}">
                         <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right;color:#8b949e">○ Ready</span></div>
                         <div class="widget-row"><span class="widget-label">◆ Session</span><span class="widget-value">--</span></div>
@@ -1800,7 +1927,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                 <div class="widget-row"><span class="widget-label">◇ Thinking</span><span class="widget-value" style="color:#3fb950">\${stats.thinking_seconds ? formatDuration(stats.thinking_seconds) : '—'}</span></div>
                 <div class="widget-row"><span class="widget-label">▸ Prompts \${stats.prompts || 0}</span><span class="widget-value" style="color:#8b949e">\${promptsElapsed}</span></div>
                 <div class="widget-row"><span class="widget-label">◂ Completions \${stats.completions || 0}</span><span class="widget-value" style="color:#8b949e">\${completionsElapsed}</span></div>
-                <div class="widget-row"><span class="widget-label">⚙ Tools</span><span class="widget-value purple">\${stats.tools || 0}</span></div>
+                <div class="widget-row"><span class="widget-label">⚙ Tools</span><span class="widget-value">\${renderToolsSparkline(stats.tool_timestamps, stats.session_start, Date.now() / 1000)}</span></div>
                 \${compressionsRow}
             \`;
         }
@@ -1822,6 +1949,101 @@ export const dashboardHtml = `<!DOCTYPE html>
                 result += '<span style="color:#3fb950">' + '█'.repeat(addBar) + '</span>';
             }
             return result;
+        }
+
+        // Unicode block characters for sparkline (8 levels + empty)
+        const SPARKLINE_BLOCKS = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+        const SPARKLINE_MAX = 10; // Fixed max: 10 tools = full height
+
+        // Render tools sparkline histogram like CLI
+        function renderToolsSparkline(timestamps, sessionStart, now) {
+            if (!timestamps || !sessionStart || timestamps.length === 0) {
+                return '<span style="color:#8b949e">—</span>';
+            }
+
+            const numBins = 20; // Number of histogram buckets
+            const duration = now - sessionStart;
+            if (duration <= 0) {
+                return '<span style="color:#8b949e">—</span>';
+            }
+
+            const binSize = duration / numBins;
+            const bins = new Array(numBins).fill(0);
+
+            // Bin the timestamps
+            for (const ts of timestamps) {
+                if (ts >= sessionStart && ts <= now) {
+                    const binIdx = Math.min(Math.floor((ts - sessionStart) / binSize), numBins - 1);
+                    bins[binIdx]++;
+                }
+            }
+
+            // Check if there's any activity
+            const hasActivity = bins.some(c => c > 0);
+            if (!hasActivity) {
+                return '<span style="color:#8b949e">' + ' '.repeat(numBins) + '</span>';
+            }
+
+            // Build sparkline
+            let sparkline = '';
+            for (const count of bins) {
+                if (count === 0) {
+                    sparkline += SPARKLINE_BLOCKS[0];
+                } else {
+                    // Scale to 1-8 range using fixed max (absolute scale)
+                    const scaled = Math.ceil((count / SPARKLINE_MAX) * 8);
+                    const level = Math.max(1, Math.min(8, scaled));
+                    sparkline += SPARKLINE_BLOCKS[level];
+                }
+            }
+
+            return '<span style="color:#f0883e">' + sparkline + '</span>';
+        }
+
+        // Count digits in a number
+        function digitCount(n) {
+            if (n === 0) return 1;
+            return Math.floor(Math.log10(n)) + 1;
+        }
+
+        // Create non-breaking spaces for HTML (regular spaces collapse)
+        function nbsp(count) {
+            return '&nbsp;'.repeat(Math.max(0, count));
+        }
+
+        // Compute column widths for git file diffs
+        function computeGitColumnWidths(files) {
+            let maxDel = 0;
+            let maxAdd = 0;
+            for (const f of files) {
+                maxDel = Math.max(maxDel, f.deletions || 0);
+                maxAdd = Math.max(maxAdd, f.additions || 0);
+            }
+            // Width for number columns: sign + digits
+            const delNumWidth = maxDel > 0 ? 1 + digitCount(maxDel) : 0;
+            const addNumWidth = maxAdd > 0 ? 1 + digitCount(maxAdd) : 0;
+            // Bar width: symmetric based on max of both (log scale)
+            const maxBar = Math.max(
+                maxDel > 0 ? digitCount(maxDel) : 0,
+                maxAdd > 0 ? digitCount(maxAdd) : 0
+            );
+            return { delNumWidth, addNumWidth, barWidth: maxBar };
+        }
+
+        // Compute column widths for semantic changes
+        function computeChangesColumnWidths(byLanguage) {
+            let maxDel = 0;
+            let maxAdd = 0;
+            for (const lang of byLanguage) {
+                for (const c of (lang.changes || [])) {
+                    maxDel = Math.max(maxDel, c.deletions || 0);
+                    maxAdd = Math.max(maxAdd, c.additions || 0);
+                }
+            }
+            // Width for number columns: sign + digits
+            const delNumWidth = maxDel > 0 ? 1 + digitCount(maxDel) : 0;
+            const addNumWidth = maxAdd > 0 ? 1 + digitCount(maxAdd) : 0;
+            return { delNumWidth, addNumWidth };
         }
 
         function getStatusIcon(status) {
@@ -1866,16 +2088,44 @@ export const dashboardHtml = `<!DOCTYPE html>
             const filesLabel = totalFiles === 1 ? 'file' : 'files';
             const headerRight = '<span style="color:#d29922">' + totalFiles + ' ' + filesLabel + '</span>';
 
+            // Compute column widths for alignment
+            const { delNumWidth, addNumWidth, barWidth } = computeGitColumnWidths(files);
+
             let filesHtml = files.map(f => {
                 const { icon, color } = getStatusIcon(f.status);
-                const bar = createProgressBar(f.additions || 0, f.deletions || 0);
-                const delNum = f.deletions > 0 ? '<span style="color:#f85149">−' + f.deletions + '</span>' : '';
-                const addNum = f.additions > 0 ? '<span style="color:#3fb950">+' + f.additions + '</span>' : '';
+                const del = f.deletions || 0;
+                const add = f.additions || 0;
+
+                // 4-column layout: [del num] [bars] [add num]
+                // Build deletion number (right-aligned)
+                const delNumStr = del > 0 ? '−' + del : '';
+                const delNumPad = delNumWidth - delNumStr.length;
+                const delNumHtml = delNumWidth > 0
+                    ? \`<span style="color:#f85149">\${nbsp(delNumPad)}\${delNumStr}</span>\`
+                    : '';
+
+                // Build combined bar (red left-padded, green right-padded, touching in middle)
+                const delBarLen = del > 0 ? digitCount(del) : 0;
+                const addBarLen = add > 0 ? digitCount(add) : 0;
+                const delBarPad = barWidth - delBarLen;
+                const addBarPad = barWidth - addBarLen;
+                const redBars = '▓'.repeat(delBarLen);
+                const greenBars = '█'.repeat(addBarLen);
+                const barsHtml = barWidth > 0
+                    ? \`\${nbsp(delBarPad)}<span style="display:inline-flex;gap:0"><span style="color:#f85149">\${redBars}</span><span style="color:#3fb950">\${greenBars}</span></span>\${nbsp(addBarPad)}\`
+                    : '';
+
+                // Build addition number (left-aligned)
+                const addNumStr = add > 0 ? '+' + add : '';
+                const addNumPad = addNumWidth - addNumStr.length;
+                const addNumHtml = addNumWidth > 0
+                    ? \`<span style="color:#3fb950">\${addNumStr}\${nbsp(addNumPad)}</span>\`
+                    : '';
 
                 return \`<div class="git-file">
                     <span style="color:\${color}">\${icon}</span>
                     <span class="path">\${f.path}</span>
-                    <span class="diff">\${delNum} \${bar} \${addNum}</span>
+                    <span class="diff">\${delNumHtml}\${barsHtml}\${addNumHtml}</span>
                 </div>\`;
             }).join('');
 
@@ -1942,6 +2192,9 @@ export const dashboardHtml = `<!DOCTYPE html>
             const totalChanges = byLanguage.reduce((sum, lang) => sum + (lang.changes?.length || 0), 0);
             const changeWord = totalChanges === 1 ? 'change' : 'changes';
 
+            // Compute column widths for alignment
+            const { delNumWidth, addNumWidth } = computeChangesColumnWidths(byLanguage);
+
             let changesHtml = '';
 
             for (const lang of byLanguage) {
@@ -1955,20 +2208,27 @@ export const dashboardHtml = `<!DOCTYPE html>
                 for (const c of (lang.changes || [])) {
                     const { modifier, color: modColor } = getModifierStyle(c.change_type);
                     const { icon, color: iconColor } = getKindIcon(c.kind);
+                    const del = c.deletions || 0;
+                    const add = c.additions || 0;
 
-                    // Format stats like CLI: −N +M
-                    let stats = '';
-                    if (c.deletions > 0) {
-                        stats += '<span style="color:#f85149">−' + c.deletions + '</span>';
-                    }
-                    if (c.additions > 0) {
-                        stats += '<span style="color:#3fb950">+' + c.additions + '</span>';
-                    }
+                    // Build deletion number (right-aligned)
+                    const delNumStr = del > 0 ? '−' + del : '';
+                    const delNumPad = delNumWidth - delNumStr.length;
+                    const delNumHtml = delNumWidth > 0
+                        ? \`<span style="color:#f85149">\${nbsp(delNumPad)}\${delNumStr}</span>\`
+                        : '';
+
+                    // Build addition number (left-aligned)
+                    const addNumStr = add > 0 ? '+' + add : '';
+                    const addNumPad = addNumWidth - addNumStr.length;
+                    const addNumHtml = addNumWidth > 0
+                        ? \`<span style="color:#3fb950">\${addNumStr}\${nbsp(addNumPad)}</span>\`
+                        : '';
 
                     changesHtml += \`<div class="change-item">
                         <span style="color:\${modColor}">\${modifier}</span><span style="color:\${iconColor}">\${icon}</span>
                         <span class="name">\${c.name}</span>
-                        <span style="margin-left:auto;white-space:nowrap">\${stats}</span>
+                        <span class="stats" style="margin-left:auto">\${delNumHtml}&nbsp;\${addNumHtml}</span>
                     </div>\`;
                 }
             }
@@ -1977,6 +2237,45 @@ export const dashboardHtml = `<!DOCTYPE html>
                 <div class="widget-title"><span style="color:#db6d28">\${firstLang.language}</span> <span style="color:#8b949e">\${totalChanges} \${changeWord}</span></div>
                 <div class="changes-list">\${changesHtml}</div>
             \`;
+        }
+
+        function updateTitlesWidget(sessionId, titleHistory) {
+            const widget = document.getElementById('titles-' + sessionId);
+            if (!widget) return;
+
+            // Hide widget if no titles
+            if (!titleHistory || titleHistory.length === 0) {
+                widget.style.display = 'none';
+                return;
+            }
+
+            // Show widget
+            widget.style.display = '';
+
+            // Latest title is the widget title
+            const latestTitle = titleHistory[titleHistory.length - 1];
+            const escapedLatest = latestTitle.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+            // Previous titles are the history content (all except the last one)
+            const previousTitles = titleHistory.slice(0, -1);
+
+            if (previousTitles.length === 0) {
+                // Just one title - show it as the module title, no content
+                widget.innerHTML = \`
+                    <div class="widget-title"><span style="color:#58a6ff">\${escapedLatest}</span></div>
+                \`;
+            } else {
+                // Multiple titles - latest as title, previous as history
+                const historyHtml = previousTitles.map(title => {
+                    const escaped = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    return \`<div class="title-entry">\${escaped}</div>\`;
+                }).join('');
+
+                widget.innerHTML = \`
+                    <div class="widget-title"><span style="color:#58a6ff">\${escapedLatest}</span></div>
+                    <div class="titles-list">\${historyHtml}</div>
+                \`;
+            }
         }
 
         function connectToSession(sessionId) {
@@ -2105,6 +2404,8 @@ export const dashboardHtml = `<!DOCTYPE html>
                     if (sessionData) {
                         sessionData.title = event.title;
                     }
+                    // Update titles widget with single title if no history yet
+                    updateTitlesWidget(sessionId, [event.title]);
                     break;
                 case 'desktop_status':
                     // Desktop connected/disconnected
@@ -2121,6 +2422,9 @@ export const dashboardHtml = `<!DOCTYPE html>
                         // Update status
                         document.getElementById('status').textContent = sessions.size + ' session(s)';
                     }
+                    break;
+                case 'title_history':
+                    updateTitlesWidget(sessionId, event.history);
                     break;
             }
         }
@@ -2139,6 +2443,11 @@ export const dashboardHtml = `<!DOCTYPE html>
 
                 if (resp.ok) {
                     input.value = '';
+                    // Cancel any pending debounced save to prevent race condition
+                    if (inputSaveTimers.has(sessionId)) {
+                        clearTimeout(inputSaveTimers.get(sessionId));
+                        inputSaveTimers.delete(sessionId);
+                    }
                     clearLocalInput(sessionId);
                     saveInputToServer(sessionId, ''); // Clear server draft too
                 } else {

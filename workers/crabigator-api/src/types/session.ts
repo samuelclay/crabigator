@@ -140,6 +140,14 @@ export interface TitleEvent {
 }
 
 /**
+ * Title history event - all titles from the session
+ */
+export interface TitleHistoryEvent {
+    type: 'title_history';
+    history: string[];      // All terminal titles from this session
+}
+
+/**
  * Desktop connection status event (for dashboard)
  */
 export interface DesktopStatusEvent {
@@ -159,6 +167,7 @@ export type SessionEvent =
     | StatsEvent
     | ScreenEvent
     | TitleEvent
+    | TitleHistoryEvent
     | DesktopStatusEvent;
 
 /**

@@ -185,6 +185,11 @@ impl SessionStats {
         }
     }
 
+    /// Get session start time as Unix timestamp
+    pub fn session_start_unix(&self) -> f64 {
+        self.session_start_unix
+    }
+
     /// Get binned tool usage for sparkline rendering
     pub fn tool_usage_bins(&self, num_bins: usize) -> Vec<u32> {
         let now = SystemTime::now()

@@ -64,6 +64,8 @@ pub struct App {
     osc_scanner: OscScanner,
     /// Terminal title extracted from OSC sequences (e.g., "Claude Code Ghostty Integration")
     terminal_title: Option<String>,
+    /// History of all terminal titles during this session
+    title_history: Vec<String>,
     /// Time taken for initial git refresh (set once on first load)
     initial_git_time_ms: Option<u64>,
     /// Time taken for initial diff parsing (set once on first load)
@@ -154,6 +156,7 @@ impl App {
             dsr_handler: DsrHandler::new(),
             osc_scanner: OscScanner::new(),
             terminal_title: None,
+            title_history: Vec::new(),
             initial_git_time_ms: None,
             initial_diff_time_ms: None,
             cloud_client,
@@ -513,6 +516,10 @@ impl App {
                     // Scan for OSC title sequences
                     let (passthrough, title) = self.osc_scanner.scan(&bytes);
                     if let Some(t) = title {
+                        // Add to history if not already present (no duplicates)
+                        if !self.title_history.contains(&t) {
+                            self.title_history.push(t.clone());
+                        }
                         self.terminal_title = Some(t.clone());
                         self.send_cloud_title_event(t);
                     }
@@ -579,6 +586,7 @@ impl App {
             &self.git_state,
             &self.diff_summary,
             self.terminal_title.as_deref(),
+            &self.title_history,
             self.initial_git_time_ms,
             self.initial_diff_time_ms,
         );
@@ -684,6 +692,13 @@ impl App {
         if let Some(ref mut client) = self.cloud_client {
             let event = SessionEventBuilder::title(title);
             client.send_event(event);
+
+            // Also send the full title history
+            if !self.title_history.is_empty() {
+                let history_event =
+                    SessionEventBuilder::title_history(self.title_history.clone());
+                client.send_event(history_event);
+            }
         }
     }
 

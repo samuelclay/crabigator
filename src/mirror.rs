@@ -32,6 +32,8 @@ pub struct MirrorState {
     pub session_id: String,
     pub cwd: String,
     pub terminal_title: Option<String>,
+    /// All terminal titles from this session (for history display)
+    pub title_history: Vec<String>,
     pub last_updated: f64,
     pub capture: CaptureMirror,
     pub launch_timing: LaunchTimingMirror,
@@ -76,6 +78,10 @@ pub struct StatsMirrorData {
     pub completions: u32,
     pub tools: u32,
     pub compressions: u32,
+    /// Unix timestamps of tool calls (for sparkline visualization)
+    pub tool_timestamps: Vec<f64>,
+    /// Session start time as Unix timestamp
+    pub session_start: f64,
 }
 
 /// Simplified git data for JSON
@@ -171,6 +177,7 @@ impl MirrorPublisher {
         git: &GitState,
         diff: &DiffSummary,
         terminal_title: Option<&str>,
+        title_history: &[String],
         initial_git_time_ms: Option<u64>,
         initial_diff_time_ms: Option<u64>,
     ) -> Result<bool> {
@@ -184,7 +191,7 @@ impl MirrorPublisher {
         }
 
         // Compute hash for change detection
-        let hash = self.compute_hash(stats, git, diff, terminal_title);
+        let hash = self.compute_hash(stats, git, diff, terminal_title, title_history);
         if hash == self.last_hash {
             return Ok(false);
         }
@@ -195,7 +202,7 @@ impl MirrorPublisher {
             git_time_ms: initial_git_time_ms,
             diff_time_ms: initial_diff_time_ms,
         };
-        let state = self.build_state(stats, git, diff, terminal_title, launch_timing);
+        let state = self.build_state(stats, git, diff, terminal_title, title_history, launch_timing);
         let json = serde_json::to_string_pretty(&state)?;
 
         // Ensure session directory exists
@@ -213,11 +220,12 @@ impl MirrorPublisher {
         Ok(true)
     }
 
-    fn compute_hash(&self, stats: &SessionStats, git: &GitState, diff: &DiffSummary, terminal_title: Option<&str>) -> u64 {
+    fn compute_hash(&self, stats: &SessionStats, git: &GitState, diff: &DiffSummary, terminal_title: Option<&str>, title_history: &[String]) -> u64 {
         let mut hasher = DefaultHasher::new();
 
-        // Hash terminal title
+        // Hash terminal title and history
         terminal_title.hash(&mut hasher);
+        title_history.hash(&mut hasher);
 
         // Hash key fields from stats
         stats.work_seconds.hash(&mut hasher);
@@ -259,6 +267,7 @@ impl MirrorPublisher {
         git: &GitState,
         diff: &DiffSummary,
         terminal_title: Option<&str>,
+        title_history: &[String],
         launch_timing: LaunchTimingMirror,
     ) -> MirrorState {
         let timestamp = SystemTime::now()
@@ -270,6 +279,7 @@ impl MirrorPublisher {
             session_id: self.session_id.clone(),
             cwd: self.cwd.clone(),
             terminal_title: terminal_title.map(String::from),
+            title_history: title_history.to_vec(),
             last_updated: timestamp,
             capture: self.capture.clone(),
             launch_timing,
@@ -284,6 +294,8 @@ impl MirrorPublisher {
                         completions: stats.platform_stats.completions,
                         tools: stats.platform_stats.total_tool_calls(),
                         compressions: stats.platform_stats.compressions,
+                        tool_timestamps: stats.platform_stats.tool_timestamps.clone(),
+                        session_start: stats.session_start_unix(),
                     },
                     rendered: render_stats_preview(stats),
                 },

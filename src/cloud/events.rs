@@ -263,6 +263,24 @@ impl TitleEvent {
     }
 }
 
+/// Title history event - all titles from the session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TitleHistoryEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    /// All terminal titles from this session
+    pub history: Vec<String>,
+}
+
+impl TitleHistoryEvent {
+    pub fn new(history: Vec<String>) -> Self {
+        Self {
+            event_type: "title_history".to_string(),
+            history,
+        }
+    }
+}
+
 /// Union of all cloud event types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -274,6 +292,7 @@ pub enum CloudEvent {
     Stats(StatsEvent),
     Screen(ScreenEvent),
     Title(TitleEvent),
+    TitleHistory(TitleHistoryEvent),
 }
 
 /// Message from cloud to desktop (via WebSocket)
@@ -311,6 +330,11 @@ impl SessionEventBuilder {
     /// Build a title event
     pub fn title(title: String) -> CloudEvent {
         CloudEvent::Title(TitleEvent::new(title))
+    }
+
+    /// Build a title history event
+    pub fn title_history(history: Vec<String>) -> CloudEvent {
+        CloudEvent::TitleHistory(TitleHistoryEvent::new(history))
     }
 
     /// Build a git status event
