@@ -533,12 +533,19 @@ impl App {
                     // Scan for OSC title sequences
                     let (passthrough, title) = self.osc_scanner.scan(&bytes);
                     if let Some(t) = title {
+                        // Strip leading progress spinner characters for history
+                        // Includes: ASCII asterisk, dingbat asterisks (U+2731-U+273D),
+                        // sparkles (U+2747-U+2748), rotation arrows, circle quarters, braille dots
+                        let clean_title = t.trim_start_matches(|c: char| {
+                            matches!(c, '*' | '✱' | '✲' | '✳' | '✴' | '✵' | '✶' | '✷' | '✸' | '✹' | '✺' | '✻' | '✼' | '✽' | '❇' | '❈' | '⟳' | '◐' | '◑' | '◒' | '◓' | '⠋' | '⠙' | '⠹' | '⠸' | '⠼' | '⠴' | '⠦' | '⠧' | '⠇' | '⠏' | ' ')
+                        }).to_string();
+
                         // Add to history if not already present (no duplicates)
-                        if !self.title_history.contains(&t) {
-                            self.title_history.push(t.clone());
+                        if !clean_title.is_empty() && !self.title_history.contains(&clean_title) {
+                            self.title_history.push(clean_title.clone());
                         }
-                        self.terminal_title = Some(t.clone());
-                        self.send_cloud_title_event(t);
+                        self.terminal_title = Some(clean_title.clone());
+                        self.send_cloud_title_event(clean_title);
                     }
 
                     if passthrough.is_empty() {
