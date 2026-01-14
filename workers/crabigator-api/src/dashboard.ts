@@ -418,10 +418,6 @@ export const dashboardHtml = `<!DOCTYPE html>
             text-overflow: ellipsis;
             font-size: 10px;
         }
-        .titles-list .title-entry:last-child {
-            color: #58a6ff;
-            font-weight: 500;
-        }
 
         /* Stack widgets vertically for multi-column layouts */
         .container[data-layout="2"] .widgets-panel,
@@ -2483,8 +2479,8 @@ export const dashboardHtml = `<!DOCTYPE html>
                     <div class="widget-title"><span style="color:#58a6ff">\${escapedLatest}</span></div>
                 \`;
             } else {
-                // Multiple titles - latest as title, previous as history
-                const historyHtml = previousTitles.map(title => {
+                // Multiple titles - latest as title, previous as history (newest first)
+                const historyHtml = previousTitles.slice().reverse().map(title => {
                     const escaped = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
                     return \`<div class="title-entry">\${escaped}</div>\`;
                 }).join('');
