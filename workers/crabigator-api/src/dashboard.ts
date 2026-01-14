@@ -263,7 +263,7 @@ export const dashboardHtml = `<!DOCTYPE html>
         .collapse-btn:hover { background: #21262d; color: #8b949e; }
         .collapse-btn.collapsed { transform: rotate(-90deg); }
         .session-card.collapsed .terminal,
-        .session-card.collapsed .permission-bar,
+        .session-card.collapsed .prompt-panel,
         .session-card.collapsed .widgets-panel,
         .session-card.collapsed .input-area,
         .session-card.collapsed .info-popover { display: none !important; }
@@ -677,89 +677,86 @@ export const dashboardHtml = `<!DOCTYPE html>
             grid-template-columns: 1fr;
         }
 
-        /* Permission action bar */
-        .permission-bar {
+        /* Prompt panel (questions, permissions) */
+        .prompt-panel {
             display: none;
-            padding: 12px 16px;
+            padding: 16px;
             background: linear-gradient(180deg, #1c2128 0%, #161b22 100%);
             border-bottom: 1px solid #30363d;
-            gap: 8px;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-            flex-wrap: wrap;
         }
-        .permission-bar.visible { display: flex; }
-        .permission-bar .perm-label {
+        .prompt-panel.visible { display: block; }
+        .prompt-header {
             color: #d29922;
             font-size: 12px;
             font-weight: 500;
-            margin-right: 8px;
+            margin-bottom: 8px;
         }
-        .permission-bar .perm-tool {
-            color: #58a6ff;
-            font-family: monospace;
-            font-size: 12px;
-            background: #21262d;
-            padding: 2px 8px;
-            border-radius: 4px;
-            margin-right: 12px;
-        }
-        .perm-btn {
-            padding: 6px 16px;
-            border-radius: 6px;
-            font-size: 13px;
-            font-weight: 500;
-            cursor: pointer;
-            border: 1px solid transparent;
-            transition: all 0.15s ease;
-        }
-        .perm-btn.yes {
-            background: #238636;
-            color: #fff;
-            border-color: #2ea043;
-        }
-        .perm-btn.yes:hover {
-            background: #2ea043;
-            border-color: #3fb950;
-        }
-        .perm-btn.always {
-            background: #1f6feb;
-            color: #fff;
-            border-color: #388bfd;
-        }
-        .perm-btn.always:hover {
-            background: #388bfd;
-            border-color: #58a6ff;
-        }
-        .perm-btn.no {
-            background: #21262d;
+        .prompt-question {
             color: #c9d1d9;
-            border-color: #30363d;
+            font-size: 13px;
+            margin-bottom: 12px;
+            line-height: 1.4;
         }
-        .perm-btn.no:hover {
-            background: #30363d;
-            border-color: #484f58;
-        }
-        .perm-btn.dynamic {
-            width: 100%;
-            text-align: left;
-            white-space: normal;
-            word-wrap: break-word;
-        }
-        .perm-hint {
-            color: #6e7681;
-            font-size: 11px;
-            width: 100%;
-            text-align: center;
-            margin-top: 4px;
-        }
-        .perm-buttons {
+        .prompt-options {
             display: flex;
             flex-direction: column;
             gap: 8px;
-            width: 100%;
-            max-width: 600px;
+        }
+        .prompt-option {
+            padding: 10px 12px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .prompt-option:hover {
+            background: #30363d;
+            border-color: #484f58;
+        }
+        .prompt-option.selected {
+            border-color: #58a6ff;
+            background: #1f6feb20;
+        }
+        .prompt-option-number {
+            color: #8b949e;
+            font-size: 12px;
+            margin-right: 8px;
+        }
+        .prompt-option-label {
+            color: #c9d1d9;
+            font-weight: 500;
+        }
+        .prompt-option-desc {
+            color: #8b949e;
+            font-size: 12px;
+            margin-top: 4px;
+            padding-left: 20px;
+        }
+        .prompt-other {
+            margin-top: 12px;
+            display: flex;
+            gap: 8px;
+        }
+        .prompt-other input {
+            flex: 1;
+            padding: 8px 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 13px;
+        }
+        .prompt-other button {
+            padding: 8px 16px;
+            background: #238636;
+            border: none;
+            border-radius: 6px;
+            color: #fff;
+            cursor: pointer;
+        }
+        .prompt-other button:hover {
+            background: #2ea043;
         }
     </style>
 </head>
@@ -961,6 +958,12 @@ export const dashboardHtml = `<!DOCTYPE html>
         const MAX_RECONNECT_DELAY = 10000;
         let reconnectTimeout = null;
         let hadSessionsBefore = false;
+        let lastSuccessfulConnection = 0;  // Timestamp of last successful API call
+        const DEPLOY_DETECTION_WINDOW = 30000;  // Only detect deploy if connected within last 30s
+
+        function wasRecentlyConnected() {
+            return Date.now() - lastSuccessfulConnection < DEPLOY_DETECTION_WINDOW;
+        }
 
         function showDeployOverlay() {
             isDeploying = true;
@@ -1416,8 +1419,8 @@ export const dashboardHtml = `<!DOCTYPE html>
                 const container = document.getElementById('sessions');
 
                 if (data.sessions.length === 0) {
-                    // If we had sessions before but now have none, likely a deploy
-                    if (hadSessionsBefore && !isDeploying) {
+                    // If we had sessions recently and now have none, likely a deploy
+                    if (hadSessionsBefore && wasRecentlyConnected() && !isDeploying) {
                         showDeployOverlay();
                     }
 
@@ -1446,6 +1449,7 @@ export const dashboardHtml = `<!DOCTYPE html>
 
                 // Found sessions - we're connected
                 hadSessionsBefore = true;
+                lastSuccessfulConnection = Date.now();
                 if (isDeploying) {
                     hideDeployOverlay();
                     // Reconnect session list SSE stream after deploy
@@ -1487,10 +1491,15 @@ export const dashboardHtml = `<!DOCTYPE html>
             } catch (err) {
                 console.error('Failed to load sessions:', err);
                 document.getElementById('status').textContent = 'Error loading sessions';
-                // Network error likely means deploy
-                if (hadSessionsBefore) {
+                // Network error might mean deploy - only show overlay if we were recently connected
+                if (hadSessionsBefore && wasRecentlyConnected() && !isDeploying) {
                     showDeployOverlay();
+                }
+                if (isDeploying) {
                     scheduleReconnect();
+                } else if (hadSessionsBefore) {
+                    // Silent retry without overlay
+                    setTimeout(loadSessions, 2000);
                 }
             }
         }
@@ -1547,12 +1556,15 @@ export const dashboardHtml = `<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="terminal" id="terminal-\${session.id}" style="height:\${TERMINAL_HEIGHTS[currentHeightIndex]}px">Connecting...</div>
-                <div class="permission-bar" id="perm-\${session.id}">
-                    <div class="perm-question" id="perm-question-\${session.id}" style="display:none; margin-bottom:8px; font-size:13px; color:#c9d1d9;"></div>
-                    <div class="perm-buttons" id="perm-buttons-\${session.id}">
-                        <!-- Buttons generated dynamically -->
+                <div class="prompt-panel" id="prompt-\${session.id}">
+                    <div class="prompt-header" id="prompt-header-\${session.id}"></div>
+                    <div class="prompt-question" id="prompt-question-\${session.id}"></div>
+                    <div class="prompt-options" id="prompt-options-\${session.id}"></div>
+                    <div class="prompt-other" id="prompt-other-\${session.id}" style="display:none">
+                        <input type="text" id="prompt-input-\${session.id}" placeholder="Type your response..."
+                               onkeydown="if(event.key==='Enter'){event.preventDefault();sendOtherAnswer('\${session.id}');}">
+                        <button type="button" onclick="sendOtherAnswer('\${session.id}')">Send</button>
                     </div>
-                    <span class="perm-hint">Type below or Esc to cancel</span>
                 </div>
                 <div class="widgets-panel" id="widgets-\${session.id}">
                     <div class="widget title-history-widget" id="titles-\${session.id}" style="display:none">
@@ -1576,16 +1588,6 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <div class="changes-list" style="color:#8b949e">Waiting for data...</div>
                     </div>
                 </div>
-                <div class="prompt-panel" id="prompt-\${session.id}">
-                    <div class="prompt-header" id="prompt-header-\${session.id}"></div>
-                    <div class="prompt-question" id="prompt-question-\${session.id}"></div>
-                    <div class="prompt-options" id="prompt-options-\${session.id}"></div>
-                    <div class="prompt-other" id="prompt-other-\${session.id}" style="display:none">
-                        <input type="text" id="prompt-input-\${session.id}" placeholder="Type your response..."
-                               onkeydown="if(event.key==='Enter'){event.preventDefault();sendOtherAnswer('\${session.id}');}">
-                        <button type="button" onclick="sendOtherAnswer('\${session.id}')">Send</button>
-                    </div>
-                </div>
                 <div class="input-area">
                     <input type="text" id="input-\${session.id}"
                            placeholder="Type a command or answer..."
@@ -1599,9 +1601,6 @@ export const dashboardHtml = `<!DOCTYPE html>
             applyCollapsedState(session.id);
             restoreInput(session.id);
             updateFitLayout();
-
-            // Show permission bar if session is already in permission state
-            updatePermissionBar(session.id, session.state, null);
 
             // Set up scroll tracking for pin/unpin behavior
             const terminal = document.getElementById('terminal-' + session.id);
@@ -1642,8 +1641,6 @@ export const dashboardHtml = `<!DOCTYPE html>
             const sessionData = sessions.get(session.id);
             if (sessionData) {
                 sessionData.state = session.state;
-                // Update permission bar visibility based on new state
-                updatePermissionBar(session.id, session.state, sessionData.permission);
                 updateSessionSummary(session.id, sessionData);
             }
         }
@@ -1926,9 +1923,6 @@ export const dashboardHtml = `<!DOCTYPE html>
             if (session) {
                 session.permission = stats.permission || null;
             }
-
-            // Update permission bar visibility
-            updatePermissionBar(sessionId, state, stats.permission);
 
             // Update info popover with model/platform if available
             if (stats.model) {
@@ -2392,8 +2386,6 @@ export const dashboardHtml = `<!DOCTYPE html>
                             sessionData.permission = null;
                         }
                         updateStatsWidget(sessionId, sessionData.stats || {});
-                        // Also update permission bar directly
-                        updatePermissionBar(sessionId, event.state, sessionData.permission);
                         updateSessionSummary(sessionId, sessionData);
                     }
                     break;
@@ -2484,19 +2476,29 @@ export const dashboardHtml = `<!DOCTYPE html>
 
             panel.classList.add('visible');
 
+            // Helper to render options as styled divs with numbers
+            function renderOptions(options) {
+                return options.map((opt, i) => {
+                    const num = i + 1;
+                    const desc = opt.description
+                        ? '<div class="prompt-option-desc">' + escapeHtml(opt.description) + '</div>'
+                        : '';
+                    return '<div class="prompt-option" onclick="sendPromptAnswer(\\'' + sessionId + '\\', \\'' + opt.value + '\\')">' +
+                           '<span class="prompt-option-number">' + num + '.</span>' +
+                           '<span class="prompt-option-label">' + escapeHtml(opt.label) + '</span>' +
+                           desc +
+                           '</div>';
+                }).join('');
+            }
+
             if (prompt.prompt_type === 'question') {
                 // AskUserQuestion prompt
                 const q = prompt.questions[0];
                 headerEl.textContent = q.header || 'Question';
                 questionEl.textContent = q.question;
 
-                // Render option buttons
-                optionsEl.innerHTML = q.options.map((opt, i) => {
-                    const cls = i === 0 ? 'prompt-btn primary' : 'prompt-btn';
-                    const desc = opt.description ? '<span class="desc">' + escapeHtml(opt.description) + '</span>' : '';
-                    return '<button type="button" class="' + cls + '" onclick="sendPromptAnswer(\\'' + sessionId + '\\', \\'' + opt.value + '\\')">' +
-                           escapeHtml(opt.label) + desc + '</button>';
-                }).join('');
+                // Render options
+                optionsEl.innerHTML = renderOptions(q.options);
 
                 // Show "Other" input if allowed
                 if (q.allows_other !== false) {
@@ -2516,34 +2518,23 @@ export const dashboardHtml = `<!DOCTYPE html>
                 else if (prompt.tool_input?.description) desc = prompt.tool_input.description;
                 questionEl.textContent = desc;
 
-                // Render option buttons
-                optionsEl.innerHTML = prompt.options.map((opt, i) => {
-                    let cls = 'prompt-btn';
-                    if (opt.value === '1' || opt.value === '2') cls += ' primary';
-                    if (opt.label.toLowerCase().includes('no') || opt.label.toLowerCase().includes('deny')) cls += ' danger';
-                    const desc = opt.description ? '<span class="desc">' + escapeHtml(opt.description) + '</span>' : '';
-                    return '<button type="button" class="' + cls + '" onclick="sendPromptAnswer(\\'' + sessionId + '\\', \\'' + opt.value + '\\')">' +
-                           escapeHtml(opt.label) + desc + '</button>';
-                }).join('');
+                // Render options
+                optionsEl.innerHTML = renderOptions(prompt.options);
 
-                // Show "Other" input - Permission prompts typically have "Type here..." option
-                otherEl.style.display = 'flex';
+                // Hide "Other" input for simple permission prompts
+                // Show only if there's a "Tab to add additional instructions" hint (detected by allows_other)
+                otherEl.style.display = prompt.allows_other ? 'flex' : 'none';
 
             } else if (prompt.prompt_type === 'exit_plan') {
                 // ExitPlanMode prompt - options parsed from screen
                 headerEl.textContent = 'Exit Plan Mode';
                 questionEl.textContent = 'Choose how to proceed:';
 
-                // Render option buttons
-                optionsEl.innerHTML = prompt.options.map((opt, i) => {
-                    const cls = i === 0 ? 'prompt-btn primary' : 'prompt-btn';
-                    const desc = opt.description ? '<span class="desc">' + escapeHtml(opt.description) + '</span>' : '';
-                    return '<button type="button" class="' + cls + '" onclick="sendPromptAnswer(\\'' + sessionId + '\\', \\'' + opt.value + '\\')">' +
-                           escapeHtml(opt.label) + desc + '</button>';
-                }).join('');
+                // Render options
+                optionsEl.innerHTML = renderOptions(prompt.options);
 
-                // Show "Other" input - ExitPlanMode typically has "Type here..." option
-                otherEl.style.display = 'flex';
+                // Hide "Other" input for simple exit plan prompts
+                otherEl.style.display = prompt.allows_other ? 'flex' : 'none';
             }
         }
 
@@ -2635,82 +2626,6 @@ export const dashboardHtml = `<!DOCTYPE html>
             }
         }
 
-        // Track when we answered a permission to prevent flickering
-        const permissionAnsweredAt = new Map();  // sessionId -> timestamp
-        const PERMISSION_DEBOUNCE_MS = 2000;  // Ignore permission states for 2s after answering
-
-        function updatePermissionBar(sessionId, state, permission) {
-            const permBar = document.getElementById('perm-' + sessionId);
-            const permButtonsContainer = document.getElementById('perm-buttons-' + sessionId);
-            const permQuestionEl = document.getElementById('perm-question-' + sessionId);
-            const inputEl = document.getElementById('input-' + sessionId);
-            if (!permBar || !permButtonsContainer) return;
-
-            // Check if we recently answered - ignore permission state to prevent flickering
-            const answeredAt = permissionAnsweredAt.get(sessionId);
-            if (answeredAt && Date.now() - answeredAt < PERMISSION_DEBOUNCE_MS) {
-                // Recently answered, don't show permission bar even if state is permission
-                permBar.classList.remove('visible');
-                return;
-            }
-
-            // Show permission bar when in permission state
-            if (state === 'permission') {
-                permBar.classList.add('visible');
-
-                // Show the question if available
-                if (permQuestionEl) {
-                    if (permission && permission.question) {
-                        permQuestionEl.textContent = permission.question;
-                        permQuestionEl.style.display = 'block';
-                    } else {
-                        permQuestionEl.style.display = 'none';
-                    }
-                }
-
-                // Generate buttons from permission options if available
-                if (permission && permission.options && permission.options.length > 0) {
-                    permButtonsContainer.innerHTML = permission.options.map((opt, idx) => {
-                        // Determine button style based on position and text
-                        let btnClass = 'perm-btn dynamic';
-                        const textLower = opt.text.toLowerCase();
-                        if (opt.number === 1 || textLower === 'yes') {
-                            btnClass += ' yes';
-                        } else if (textLower.startsWith('no') || textLower === 'cancel') {
-                            btnClass += ' no';
-                        } else {
-                            btnClass += ' always';
-                        }
-
-                        return '<button class="' + btnClass + '" onclick="sendPermissionOption(\\'' + sessionId + '\\', ' + opt.number + ')">' + escapeHtml(opt.text) + '</button>';
-                    }).join('');
-                } else {
-                    // Fallback: show generic numbered buttons when options not yet available
-                    permButtonsContainer.innerHTML =
-                        '<button class="perm-btn yes" onclick="sendPermissionOption(\\'' + sessionId + '\\', 1)" title="Option 1">Yes</button>' +
-                        '<button class="perm-btn always" onclick="sendPermissionOption(\\'' + sessionId + '\\', 2)" title="Option 2">Yes, allow</button>' +
-                        '<button class="perm-btn no" onclick="sendPermissionOption(\\'' + sessionId + '\\', 3)" title="Option 3">No</button>';
-                }
-
-                // Update input placeholder
-                if (inputEl) {
-                    inputEl.placeholder = 'Type here to tell Claude what to do differently...';
-                }
-            } else {
-                permBar.classList.remove('visible');
-                // Hide question when not in permission state
-                if (permQuestionEl) {
-                    permQuestionEl.style.display = 'none';
-                }
-                // Clear answered timestamp when we transition away from permission
-                permissionAnsweredAt.delete(sessionId);
-                // Reset input placeholder
-                if (inputEl) {
-                    inputEl.placeholder = 'Type a command or answer...';
-                }
-            }
-        }
-
         function escapeHtml(text) {
             return text
                 .replace(/&/g, '&amp;')
@@ -2718,32 +2633,6 @@ export const dashboardHtml = `<!DOCTYPE html>
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#39;');
-        }
-
-        async function sendPermissionOption(sessionId, optionNumber) {
-            // Mark as answered to prevent flickering
-            permissionAnsweredAt.set(sessionId, Date.now());
-
-            // Immediately hide permission bar (optimistic UI)
-            const permBar = document.getElementById('perm-' + sessionId);
-            if (permBar) {
-                permBar.classList.remove('visible');
-            }
-
-            try {
-                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: String(optionNumber) })
-                });
-
-                if (!resp.ok) {
-                    const err = await resp.json();
-                    console.error('Permission option failed:', err);
-                }
-            } catch (err) {
-                console.error('Failed to send permission option:', err);
-            }
         }
 
         // SSE connection for real-time session list updates with polling fallback
@@ -2795,8 +2684,8 @@ export const dashboardHtml = `<!DOCTYPE html>
                 sessionListSource.close();
                 sessionListSource = null;
 
-                // If we had sessions, this is likely a deploy - show overlay and use fast reconnect
-                if (hadSessionsBefore && !isDeploying) {
+                // If we were recently connected, this might be a deploy
+                if (hadSessionsBefore && wasRecentlyConnected() && !isDeploying) {
                     showDeployOverlay();
                 }
 
@@ -2893,9 +2782,14 @@ export const dashboardHtml = `<!DOCTYPE html>
                 // Check if SSE connection is still alive
                 if (sessionListSource && sessionListSource.readyState === EventSource.CLOSED) {
                     console.log('SSE connection closed while tab was hidden, reconnecting...');
-                    if (hadSessionsBefore) {
-                        showDeployOverlay();
-                    }
+                    // Don't show deploy overlay for tab visibility changes - just reconnect silently
+                    sseRetryCount = 0;
+                    loadSessions();
+                    connectSessionListStream();
+                } else if (!sessionListSource) {
+                    // No SSE connection at all - reconnect
+                    console.log('No SSE connection, reconnecting...');
+                    sseRetryCount = 0;
                     loadSessions();
                     connectSessionListStream();
                 }
