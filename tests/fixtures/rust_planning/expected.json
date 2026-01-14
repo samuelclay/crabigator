@@ -14,6 +14,7 @@
   },
   "session_id": "fixture-rust_planning",
   "terminal_title": null,
+  "title_history": [],
   "widgets": {
     "changes": {
       "data": {
@@ -97,8 +98,10 @@
         "compressions": 1,
         "mode": "normal",
         "prompts": 0,
+        "session_start": 1768431015.792651,
         "state": "thinking",
         "thinking_seconds": 0,
+        "tool_timestamps": [],
         "tools": 3,
         "work_seconds": 125
       },

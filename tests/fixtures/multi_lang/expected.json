@@ -14,6 +14,7 @@
   },
   "session_id": "fixture-multi_lang",
   "terminal_title": null,
+  "title_history": [],
   "widgets": {
     "changes": {
       "data": {
@@ -119,8 +120,10 @@
         "compressions": 0,
         "mode": "normal",
         "prompts": 0,
+        "session_start": 1768431015.539052,
         "state": "complete",
         "thinking_seconds": 0,
+        "tool_timestamps": [],
         "tools": 0,
         "work_seconds": 30
       },

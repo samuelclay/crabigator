@@ -4,8 +4,8 @@
 //! - `scrollback.log`: Clean text transcript without ANSI codes (append-only)
 //! - `screen.txt`: Current screen snapshot with ANSI codes (rendered by vt100)
 //!
-//! Uses a separate vt100 parser with a huge virtual screen to capture
-//! all output without losing anything to scrollback.
+//! Uses a vt100 parser matching PTY dimensions with large scrollback buffer.
+//! Content that scrolls off the visible area is captured to scrollback.log.
 
 use std::fs::{self, OpenOptions};
 #[cfg(debug_assertions)]
@@ -39,7 +39,7 @@ pub struct CaptureManager {
     config: CaptureConfig,
     /// Base directory: /tmp/crabigator-{session_id}/
     capture_dir: PathBuf,
-    /// Our own vt100 parser with huge screen to capture all output
+    /// vt100 parser matching PTY dimensions with large scrollback buffer
     capture_parser: vt100::Parser,
     /// Last scrollback.log update time (for throttling)
     last_scrollback_update: Instant,
@@ -49,8 +49,10 @@ pub struct CaptureManager {
     last_screen_update: Instant,
     /// Screen update interval
     screen_update_interval: Duration,
-    /// Last cursor row written to scrollback (for incremental updates)
-    last_scrollback_row: u16,
+    /// Amount of scrollback content already written to file
+    last_scrollback_extracted: usize,
+    /// Total line count in scrollback.log
+    total_scrollback_lines: usize,
     /// Raw PTY output log file (debug builds only)
     #[cfg(debug_assertions)]
     raw_log: Option<File>,
@@ -61,10 +63,13 @@ pub struct CaptureManager {
 
 impl CaptureManager {
     /// Create a new CaptureManager.
-    pub fn new(config: CaptureConfig) -> std::io::Result<Self> {
+    ///
+    /// Uses a large virtual screen (10000 rows) so all content remains accessible.
+    /// Claude Code's status bar content is filtered out during extraction.
+    pub fn new(config: CaptureConfig, cols: u16, _rows: u16) -> std::io::Result<Self> {
         // Use a very tall virtual screen (10000 rows) so content never scrolls off
-        // Width of 300 should handle most terminal widths
-        let capture_parser = vt100::Parser::new(10000, 300, 0);
+        // We filter out Claude Code's status bar during extraction
+        let capture_parser = vt100::Parser::new(10000, cols, 0);
 
         if !config.enabled {
             return Ok(Self {
@@ -75,7 +80,8 @@ impl CaptureManager {
                 scrollback_update_interval: Duration::from_millis(100),
                 last_screen_update: Instant::now(),
                 screen_update_interval: Duration::from_millis(100),
-                last_scrollback_row: 0,
+                last_scrollback_extracted: 0,
+                total_scrollback_lines: 0,
                 #[cfg(debug_assertions)]
                 raw_log: None,
                 #[cfg(debug_assertions)]
@@ -111,7 +117,8 @@ impl CaptureManager {
             scrollback_update_interval: Duration::from_millis(100),
             last_screen_update: Instant::now() - Duration::from_secs(10),
             screen_update_interval: Duration::from_millis(100),
-            last_scrollback_row: 0,
+            last_scrollback_extracted: 0,
+            total_scrollback_lines: 0,
             #[cfg(debug_assertions)]
             raw_log,
             #[cfg(debug_assertions)]
@@ -119,10 +126,16 @@ impl CaptureManager {
         })
     }
 
+    /// Resize the capture parser width to match PTY.
+    /// Height stays at 10000 to keep all content accessible.
+    pub fn resize(&mut self, cols: u16, _rows: u16) {
+        self.capture_parser.set_size(10000, cols);
+    }
+
     /// Process PTY output bytes through our capture parser.
     ///
-    /// This feeds the bytes to our internal vt100 parser which has a huge
-    /// virtual screen, so all content accumulates without scrolling off.
+    /// Feeds bytes to our internal vt100 parser with large virtual screen.
+    /// All content accumulates in the 10000-row buffer.
     pub fn capture_output(&mut self, data: &[u8]) -> std::io::Result<()> {
         if !self.config.enabled || data.is_empty() {
             return Ok(());
@@ -178,8 +191,8 @@ impl CaptureManager {
 
     /// Append new rows to scrollback.log (incremental update).
     ///
-    /// Only appends rows that haven't been written yet, making this O(new rows)
-    /// instead of O(total rows). Critical for performance in long sessions.
+    /// Extracts rows from the capture parser, filtering out Claude Code's
+    /// status bar content (context percentage, edit hints, path, token count).
     pub fn update_scrollback(&mut self) -> std::io::Result<Option<ScrollbackUpdate>> {
         if !self.config.enabled {
             return Ok(None);
@@ -190,30 +203,40 @@ impl CaptureManager {
         let (cursor_row, _) = screen.cursor_position();
 
         // Skip if no new rows to write
-        if cursor_row <= self.last_scrollback_row && self.last_scrollback_row > 0 {
+        if cursor_row as usize <= self.last_scrollback_extracted && self.last_scrollback_extracted > 0 {
             self.last_scrollback_update = Instant::now();
             return Ok(None);
         }
 
-        let start_row = self.last_scrollback_row as usize;
+        let start_row = self.last_scrollback_extracted;
         let end_row = cursor_row as usize + 1;
 
         // Build only the new content (plain text, no ANSI - much faster)
-        // Collapse multiple consecutive empty lines into a single blank line (paragraph break)
+        // Filter out Claude Code's status bar content and collapse empty lines
         let mut content: Vec<u8> = Vec::new();
         let mut consecutive_empty = 0u8;
+        let mut lines_extracted = 0usize;
+
         for row_str in screen.rows(0, cols).skip(start_row).take(end_row - start_row) {
             let trimmed = row_str.trim_end();
+
+            // Skip Claude Code status bar lines
+            if Self::is_status_bar_line(trimmed) {
+                continue;
+            }
+
             if trimmed.is_empty() {
                 consecutive_empty += 1;
-                // Allow at most one blank line (2 newlines = paragraph break)
+                // Allow at most one blank line (paragraph break)
                 if consecutive_empty <= 1 {
                     content.push(b'\n');
+                    lines_extracted += 1;
                 }
             } else {
                 consecutive_empty = 0;
                 content.extend_from_slice(trimmed.as_bytes());
                 content.push(b'\n');
+                lines_extracted += 1;
             }
         }
 
@@ -230,52 +253,87 @@ impl CaptureManager {
             .open(&scrollback_path)?;
         file.write_all(&content)?;
 
-        self.last_scrollback_row = cursor_row;
+        self.last_scrollback_extracted = cursor_row as usize;
+        self.total_scrollback_lines += lines_extracted;
         self.last_scrollback_update = Instant::now();
+
         Ok(Some(ScrollbackUpdate {
             diff: String::from_utf8_lossy(&content).to_string(),
-            total_lines: end_row,
+            total_lines: self.total_scrollback_lines,
         }))
+    }
+
+    /// Check if a line is part of Claude Code's status bar UI.
+    ///
+    /// These lines are redrawn frequently and should not be captured
+    /// in the scrollback transcript.
+    fn is_status_bar_line(line: &str) -> bool {
+        // Context percentage indicator
+        if line.contains("Context left until auto-compact:") {
+            return true;
+        }
+
+        // Edit mode hint with file counts
+        if line.contains("accept edits on") && line.contains("shift+tab") {
+            return true;
+        }
+
+        // Token count (usually at end of status bar)
+        // Match pattern like "140812 tokens" at the end
+        if line.ends_with(" tokens") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                if let Some(second_last) = parts.get(parts.len() - 2) {
+                    if second_last.chars().all(|c| c.is_ascii_digit()) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // MCP server status
+        if line.contains("MCP server") && (line.contains("needs auth") || line.contains("/mcp")) {
+            return true;
+        }
+
+        // Path with git branch - match "~/path ‹branch›" or "~/path ‹branch*›"
+        // These appear as part of Claude Code's prompt/status area
+        if line.contains('‹') && line.contains('›') && line.starts_with("  ~/") {
+            return true;
+        }
+
+        // Horizontal separator lines (all same character repeated)
+        let chars: Vec<char> = line.chars().collect();
+        if chars.len() > 50 {
+            let first = chars[0];
+            if first == '─' || first == '━' || first == '-' || first == '=' {
+                if chars.iter().all(|&c| c == first) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Get the full scrollback content accumulated so far.
     /// Used for initial sync when connecting to cloud.
+    ///
+    /// Reads from the scrollback.log file which contains all content
+    /// that has scrolled off the visible area.
     pub fn get_full_scrollback(&self) -> Option<String> {
         if !self.config.enabled {
             return None;
         }
 
-        let screen = self.capture_parser.screen();
-        let (_, cols) = screen.size();
-        let (cursor_row, _) = screen.cursor_position();
-
-        if cursor_row == 0 {
+        let scrollback_path = self.capture_dir.join("scrollback.log");
+        if !scrollback_path.exists() {
             return None;
         }
 
-        // Build full content from row 0 to current position
-        // Collapse multiple consecutive empty lines into a single blank line (paragraph break)
-        let mut content: Vec<u8> = Vec::new();
-        let mut consecutive_empty = 0u8;
-        for row_str in screen.rows(0, cols).take(cursor_row as usize) {
-            let trimmed = row_str.trim_end();
-            if trimmed.is_empty() {
-                consecutive_empty += 1;
-                // Allow at most one blank line (2 newlines = paragraph break)
-                if consecutive_empty <= 1 {
-                    content.push(b'\n');
-                }
-            } else {
-                consecutive_empty = 0;
-                content.extend_from_slice(trimmed.as_bytes());
-                content.push(b'\n');
-            }
-        }
-
-        if content.is_empty() {
-            None
-        } else {
-            Some(String::from_utf8_lossy(&content).to_string())
+        match fs::read_to_string(&scrollback_path) {
+            Ok(content) if !content.is_empty() => Some(content),
+            _ => None,
         }
     }
 

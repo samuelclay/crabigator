@@ -129,11 +129,12 @@ impl App {
         let mirror_publisher = MirrorPublisher::new(true, session_id.clone(), cwd_str.clone(), capture_enabled);
 
         // Create capture manager for output streaming
+        // Must match PTY dimensions for escape sequences to work correctly
         let capture_config = CaptureConfig {
             enabled: capture_enabled,
             session_id: session_id.clone(),
         };
-        let capture_manager = CaptureManager::new(capture_config)?;
+        let capture_manager = CaptureManager::new(capture_config, cols, pty_rows)?;
 
         // Initialize cloud client (optional - don't fail if cloud is unreachable)
         let cloud_client = Self::init_cloud_client(&session_id, &cwd_str, platform.as_ref()).await;
@@ -662,6 +663,9 @@ impl App {
 
         // Resize PTY to new dimensions (only the top portion)
         self.platform_pty.resize(width, self.pty_rows)?;
+
+        // Keep capture manager in sync with PTY dimensions
+        self.capture_manager.resize(width, self.pty_rows);
 
         // Redraw status bar in new position
         self.draw_status_bar()?;
