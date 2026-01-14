@@ -199,11 +199,22 @@ impl CaptureManager {
         let end_row = cursor_row as usize + 1;
 
         // Build only the new content (plain text, no ANSI - much faster)
+        // Collapse multiple consecutive empty lines into a single blank line (paragraph break)
         let mut content: Vec<u8> = Vec::new();
+        let mut consecutive_empty = 0u8;
         for row_str in screen.rows(0, cols).skip(start_row).take(end_row - start_row) {
             let trimmed = row_str.trim_end();
-            content.extend_from_slice(trimmed.as_bytes());
-            content.push(b'\n');
+            if trimmed.is_empty() {
+                consecutive_empty += 1;
+                // Allow at most one blank line (2 newlines = paragraph break)
+                if consecutive_empty <= 1 {
+                    content.push(b'\n');
+                }
+            } else {
+                consecutive_empty = 0;
+                content.extend_from_slice(trimmed.as_bytes());
+                content.push(b'\n');
+            }
         }
 
         if content.is_empty() {
@@ -225,6 +236,47 @@ impl CaptureManager {
             diff: String::from_utf8_lossy(&content).to_string(),
             total_lines: end_row,
         }))
+    }
+
+    /// Get the full scrollback content accumulated so far.
+    /// Used for initial sync when connecting to cloud.
+    pub fn get_full_scrollback(&self) -> Option<String> {
+        if !self.config.enabled {
+            return None;
+        }
+
+        let screen = self.capture_parser.screen();
+        let (_, cols) = screen.size();
+        let (cursor_row, _) = screen.cursor_position();
+
+        if cursor_row == 0 {
+            return None;
+        }
+
+        // Build full content from row 0 to current position
+        // Collapse multiple consecutive empty lines into a single blank line (paragraph break)
+        let mut content: Vec<u8> = Vec::new();
+        let mut consecutive_empty = 0u8;
+        for row_str in screen.rows(0, cols).take(cursor_row as usize) {
+            let trimmed = row_str.trim_end();
+            if trimmed.is_empty() {
+                consecutive_empty += 1;
+                // Allow at most one blank line (2 newlines = paragraph break)
+                if consecutive_empty <= 1 {
+                    content.push(b'\n');
+                }
+            } else {
+                consecutive_empty = 0;
+                content.extend_from_slice(trimmed.as_bytes());
+                content.push(b'\n');
+            }
+        }
+
+        if content.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&content).to_string())
+        }
     }
 
     /// Update screen.txt if the throttle interval has elapsed.

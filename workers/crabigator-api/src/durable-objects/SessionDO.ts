@@ -5,6 +5,8 @@ interface SessionDOState {
     sessionId: string;
     state: SessionState;
     lastScrollbackLine: number;
+    /** Accumulated scrollback content (capped at ~500KB) */
+    scrollbackContent: string;
     lastScreen: string | null;
     lastTitle: string | null;
     lastTitleHistory: string[] | null;
@@ -45,6 +47,7 @@ export class SessionDO implements DurableObject {
             sessionId: '',
             state: 'ready',
             lastScrollbackLine: 0,
+            scrollbackContent: '',
             lastScreen: null,
             lastTitle: null,
             lastTitleHistory: null,
@@ -230,6 +233,22 @@ export class SessionDO implements DurableObject {
                 break;
             case 'scrollback':
                 this.sessionState.lastScrollbackLine = event.total_lines;
+                // Accumulate scrollback content (cap at ~500KB to avoid memory issues)
+                const MAX_SCROLLBACK_SIZE = 500 * 1024;
+                if (event.diff) {
+                    this.sessionState.scrollbackContent += event.diff;
+                    // Trim from the beginning if too large
+                    if (this.sessionState.scrollbackContent.length > MAX_SCROLLBACK_SIZE) {
+                        // Find a good break point (newline) near the trim point
+                        const trimPoint = this.sessionState.scrollbackContent.length - MAX_SCROLLBACK_SIZE;
+                        const newlineAfterTrim = this.sessionState.scrollbackContent.indexOf('\n', trimPoint);
+                        if (newlineAfterTrim > 0) {
+                            this.sessionState.scrollbackContent = this.sessionState.scrollbackContent.slice(newlineAfterTrim + 1);
+                        } else {
+                            this.sessionState.scrollbackContent = this.sessionState.scrollbackContent.slice(trimPoint);
+                        }
+                    }
+                }
                 break;
             case 'screen':
                 this.sessionState.lastScreen = event.content;
@@ -300,6 +319,15 @@ export class SessionDO implements DurableObject {
         // If desktop is disconnected, no need to send other state
         if (!this.desktopWs) {
             return;
+        }
+
+        // Send accumulated scrollback history first (so it appears before screen)
+        if (this.sessionState.scrollbackContent) {
+            const scrollbackHistoryEvent: SessionEvent = {
+                type: 'scrollback_history',
+                content: this.sessionState.scrollbackContent,
+            };
+            await this.sendSSE(writer, scrollbackHistoryEvent);
         }
 
         // Send screen snapshot (for immediate visual)

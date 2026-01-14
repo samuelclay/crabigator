@@ -394,6 +394,9 @@ impl App {
             // Check for commands from cloud (answers + key sequences)
             self.check_cloud_commands()?;
 
+            // Send full scrollback after cloud (re)connects
+            self.maybe_send_initial_scrollback();
+
             // Redraw status bar after PTY output settles (debounced)
             if got_output && last_status_draw.elapsed() >= status_debounce {
                 self.draw_status_bar()?;
@@ -534,14 +537,18 @@ impl App {
                     let (passthrough, title) = self.osc_scanner.scan(&bytes);
                     if let Some(t) = title {
                         // Strip leading progress spinner characters for history
-                        // Includes: ASCII asterisk, dingbat asterisks (U+2731-U+273D),
-                        // sparkles (U+2747-U+2748), rotation arrows, circle quarters, braille dots
+                        // Includes: ASCII asterisk, dingbat asterisks, sparkles, rotation arrows,
+                        // circle quarters, and all braille patterns (U+2800-U+28FF)
                         let clean_title = t.trim_start_matches(|c: char| {
-                            matches!(c, '*' | '✱' | '✲' | '✳' | '✴' | '✵' | '✶' | '✷' | '✸' | '✹' | '✺' | '✻' | '✼' | '✽' | '❇' | '❈' | '⟳' | '◐' | '◑' | '◒' | '◓' | '⠋' | '⠙' | '⠹' | '⠸' | '⠼' | '⠴' | '⠦' | '⠧' | '⠇' | '⠏' | ' ')
+                            matches!(c, '*' | '✱' | '✲' | '✳' | '✴' | '✵' | '✶' | '✷' | '✸' | '✹' | '✺' | '✻' | '✼' | '✽' | '❇' | '❈' | '⟳' | '◐' | '◑' | '◒' | '◓' | ' ')
+                            || ('\u{2800}'..='\u{28FF}').contains(&c)  // All braille patterns
                         }).to_string();
 
                         // Add to history if not already present (no duplicates)
-                        if !clean_title.is_empty() && !self.title_history.contains(&clean_title) {
+                        // Skip generic default titles like "Claude Code" - they can be the
+                        // current title but shouldn't clutter the history
+                        let is_default_title = clean_title == "Claude Code" || clean_title == "Codex CLI";
+                        if !clean_title.is_empty() && !is_default_title && !self.title_history.contains(&clean_title) {
                             self.title_history.push(clean_title.clone());
                         }
                         self.terminal_title = Some(clean_title.clone());
@@ -811,6 +818,19 @@ impl App {
 
         // Track whether we sent a prompt (for clearing later)
         self.last_cloud_prompt_sent = active_prompt.is_some();
+    }
+
+    /// Send full scrollback to cloud after (re)connection
+    fn maybe_send_initial_scrollback(&mut self) {
+        if let Some(ref mut client) = self.cloud_client {
+            if client.take_just_connected() {
+                // Send full scrollback history for initial sync
+                if let Some(content) = self.capture_manager.get_full_scrollback() {
+                    let event = SessionEventBuilder::scrollback_history(content);
+                    client.send_event(event);
+                }
+            }
+        }
     }
 
     /// Check for answers and key commands from cloud and inject into PTY

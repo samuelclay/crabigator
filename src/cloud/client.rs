@@ -83,6 +83,8 @@ pub struct CloudClient {
     reconnect_attempts: u32,
     /// Pending reconnection attempt (receiver for async connection result)
     pending_reconnect: Option<std::sync::mpsc::Receiver<anyhow::Result<WebSocketHandle>>>,
+    /// Flag set when a (re)connection just succeeded - cleared after reading
+    just_connected: bool,
 }
 
 impl CloudClient {
@@ -110,6 +112,7 @@ impl CloudClient {
             reconnect_backoff_secs: 1,
             reconnect_attempts: 0,
             pending_reconnect: None,
+            just_connected: false,
         })
     }
 
@@ -135,6 +138,14 @@ impl CloudClient {
     /// Check if connected to cloud
     pub fn is_connected(&self) -> bool {
         self.ws_handle.as_ref().map(|h| h.is_alive()).unwrap_or(false)
+    }
+
+    /// Check if we just (re)connected and need to send initial state.
+    /// Returns true once after each successful connection, then resets.
+    pub fn take_just_connected(&mut self) -> bool {
+        let was_connected = self.just_connected;
+        self.just_connected = false;
+        was_connected
     }
 
     /// Get current cloud connection status for UI display
@@ -295,6 +306,8 @@ impl CloudClient {
         self.reconnect_backoff_secs = 1;
         self.reconnect_attempts = 0;
         self.last_reconnect_attempt = None;
+        // Mark that we just connected (for initial sync)
+        self.just_connected = true;
         Ok(())
     }
 
@@ -319,6 +332,7 @@ impl CloudClient {
                     self.reconnect_backoff_secs = 1;
                     self.reconnect_attempts = 0;
                     self.pending_reconnect = None;
+                    self.just_connected = true;
                     self.drain_queue();
                     return true;
                 }

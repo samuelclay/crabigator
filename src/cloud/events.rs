@@ -53,6 +53,24 @@ impl ScrollbackEvent {
     }
 }
 
+/// Scrollback history event - full accumulated scrollback for initial sync
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrollbackHistoryEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    /// Full accumulated scrollback content
+    pub content: String,
+}
+
+impl ScrollbackHistoryEvent {
+    pub fn new(content: String) -> Self {
+        Self {
+            event_type: "scrollback_history".to_string(),
+            content,
+        }
+    }
+}
+
 /// State change event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateEvent {
@@ -355,6 +373,7 @@ impl PromptEvent {
 #[serde(untagged)]
 pub enum CloudEvent {
     Scrollback(ScrollbackEvent),
+    ScrollbackHistory(ScrollbackHistoryEvent),
     State(StateEvent),
     Git(GitEvent),
     Changes(ChangesEvent),
@@ -385,6 +404,11 @@ impl SessionEventBuilder {
     /// Build a scrollback event from new lines
     pub fn scrollback(diff: String, total_lines: usize) -> CloudEvent {
         CloudEvent::Scrollback(ScrollbackEvent::new(diff, total_lines))
+    }
+
+    /// Build a scrollback history event for initial sync
+    pub fn scrollback_history(content: String) -> CloudEvent {
+        CloudEvent::ScrollbackHistory(ScrollbackHistoryEvent::new(content))
     }
 
     /// Build a state event

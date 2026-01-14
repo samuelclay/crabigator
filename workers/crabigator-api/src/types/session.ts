@@ -13,6 +13,14 @@ export interface ScrollbackEvent {
 }
 
 /**
+ * Scrollback history event - full accumulated scrollback for late joiners
+ */
+export interface ScrollbackHistoryEvent {
+    type: 'scrollback_history';
+    content: string;        // Full accumulated scrollback content
+}
+
+/**
  * State change event
  */
 export interface StateEvent {
@@ -220,6 +228,7 @@ export interface PromptEvent {
  */
 export type SessionEvent =
     | ScrollbackEvent
+    | ScrollbackHistoryEvent
     | StateEvent
     | GitEvent
     | ChangesEvent

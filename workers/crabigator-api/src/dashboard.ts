@@ -306,6 +306,27 @@ export const dashboardHtml = `<!DOCTYPE html>
             overflow-wrap: anywhere;
             word-break: break-all;
         }
+        .terminal-scrollback {
+            display: none;  /* Hidden until scrollback content available */
+            color: #8b949e;  /* Slightly dimmed for history */
+        }
+        .terminal-scrollback.has-content {
+            display: block;
+        }
+        .terminal-separator {
+            display: none;  /* Hidden until scrollback content available */
+            text-align: center;
+            color: #484f58;
+            font-size: 10px;
+            margin: 8px 0;
+            user-select: none;
+        }
+        .terminal-separator.visible {
+            display: block;
+        }
+        .terminal-screen {
+            /* Current screen content */
+        }
         .terminal .line:empty::before {
             content: ' ';
             white-space: pre;
@@ -384,8 +405,6 @@ export const dashboardHtml = `<!DOCTYPE html>
         /* Title history widget - spans full width at bottom */
         .title-history-widget {
             grid-column: 1 / -1;
-            max-height: 120px;
-            overflow-y: auto;
         }
         .titles-list {
             display: flex;
@@ -829,6 +848,121 @@ export const dashboardHtml = `<!DOCTYPE html>
         const TERMINAL_HEIGHTS = [150, 200, 250, 350, 450, 550, 700];
         let currentHeightIndex = 3; // default 350px
 
+        // Scrollback chunking - only render CHUNK_SIZE lines at a time for performance
+        const SCROLLBACK_CHUNK_SIZE = 1000;
+
+        // Load more scrollback lines when user scrolls to top
+        function loadMoreScrollback(sessionId) {
+            const sessionData = sessions.get(sessionId);
+            if (!sessionData || !sessionData.scrollbackBuffer) return;
+
+            const buffer = sessionData.scrollbackBuffer;
+            const alreadyRendered = sessionData.scrollbackRendered || 0;
+            const totalLines = buffer.length;
+
+            if (alreadyRendered >= totalLines) return; // Already showing everything
+
+            const scrollbackEl = document.getElementById('scrollback-' + sessionId);
+            const separatorEl = document.getElementById('separator-' + sessionId);
+            const terminal = document.getElementById('terminal-' + sessionId);
+            if (!scrollbackEl || !terminal) return;
+
+            // Calculate how many more lines to load
+            const linesToLoad = Math.min(SCROLLBACK_CHUNK_SIZE, totalLines - alreadyRendered);
+            const startIdx = totalLines - alreadyRendered - linesToLoad;
+            const endIdx = totalLines - alreadyRendered;
+
+            // Get the lines to prepend (they go at the beginning)
+            const newLines = buffer.slice(startIdx, endIdx);
+            const newHtml = ansiToHtml(newLines.join('\\n') + '\\n');
+
+            // Remember scroll position to maintain view after prepending
+            const prevScrollHeight = terminal.scrollHeight;
+
+            // Prepend new content
+            scrollbackEl.innerHTML = newHtml + scrollbackEl.innerHTML;
+            scrollbackEl.classList.add('has-content');
+            if (separatorEl) separatorEl.classList.add('visible');
+
+            // Update rendered count
+            sessionData.scrollbackRendered = alreadyRendered + linesToLoad;
+
+            // Restore scroll position (content was added above, so scroll down by the added height)
+            const newScrollHeight = terminal.scrollHeight;
+            terminal.scrollTop += (newScrollHeight - prevScrollHeight);
+            sessionData.lastScrollTop = terminal.scrollTop;
+
+            // Show indicator if there's more to load
+            updateScrollbackIndicator(sessionId, sessionData.scrollbackRendered, totalLines);
+        }
+
+        // Render initial scrollback (last CHUNK_SIZE lines)
+        function renderScrollback(sessionId, lines) {
+            const sessionData = sessions.get(sessionId);
+            if (!sessionData) return;
+
+            const scrollbackEl = document.getElementById('scrollback-' + sessionId);
+            const separatorEl = document.getElementById('separator-' + sessionId);
+            if (!scrollbackEl) return;
+
+            // Store full buffer
+            sessionData.scrollbackBuffer = lines;
+
+            // Render only the last CHUNK_SIZE lines
+            const linesToRender = Math.min(SCROLLBACK_CHUNK_SIZE, lines.length);
+            const startIdx = lines.length - linesToRender;
+            const visibleLines = lines.slice(startIdx);
+
+            scrollbackEl.innerHTML = ansiToHtml(visibleLines.join('\\n') + '\\n');
+            scrollbackEl.classList.add('has-content');
+            if (separatorEl) separatorEl.classList.add('visible');
+
+            sessionData.scrollbackRendered = linesToRender;
+            updateScrollbackIndicator(sessionId, linesToRender, lines.length);
+        }
+
+        // Append new scrollback content
+        function appendScrollback(sessionId, newContent) {
+            const sessionData = sessions.get(sessionId);
+            if (!sessionData) return;
+
+            const scrollbackEl = document.getElementById('scrollback-' + sessionId);
+            const separatorEl = document.getElementById('separator-' + sessionId);
+            const terminal = document.getElementById('terminal-' + sessionId);
+            if (!scrollbackEl) return;
+
+            // Split into lines and add to buffer
+            const newLines = newContent.split('\\n').filter(line => line.length > 0 || newContent.includes('\\n\\n'));
+            if (!sessionData.scrollbackBuffer) sessionData.scrollbackBuffer = [];
+            sessionData.scrollbackBuffer.push(...newLines);
+
+            // Append to rendered content (new content always visible at bottom of scrollback)
+            scrollbackEl.innerHTML += ansiToHtml(newContent);
+            scrollbackEl.classList.add('has-content');
+            if (separatorEl) separatorEl.classList.add('visible');
+
+            sessionData.scrollbackRendered = (sessionData.scrollbackRendered || 0) + newLines.length;
+
+            // Auto-scroll if pinned
+            if (sessionData.pinned && terminal) {
+                terminal.scrollTop = terminal.scrollHeight;
+                sessionData.lastScrollTop = terminal.scrollTop;
+            }
+        }
+
+        // Update indicator showing how much scrollback is available
+        function updateScrollbackIndicator(sessionId, rendered, total) {
+            const separatorEl = document.getElementById('separator-' + sessionId);
+            if (!separatorEl) return;
+
+            if (rendered < total) {
+                const remaining = total - rendered;
+                separatorEl.textContent = \`─── scrollback (\${remaining} more lines) ───\`;
+            } else {
+                separatorEl.textContent = '─── scrollback ───';
+            }
+        }
+
         function adjustFontSize(delta) {
             const newIndex = Math.max(0, Math.min(FONT_SCALES.length - 1, currentFontScaleIndex + delta));
             if (newIndex !== currentFontScaleIndex) {
@@ -855,6 +989,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                         const terminal = document.getElementById('terminal-' + id);
                         if (terminal) {
                             terminal.scrollTop = terminal.scrollHeight;
+                            sessionData.lastScrollTop = terminal.scrollTop;
                         }
                     }
                 }
@@ -889,6 +1024,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                         const terminal = document.getElementById('terminal-' + id);
                         if (terminal) {
                             terminal.scrollTop = terminal.scrollHeight;
+                            sessionData.lastScrollTop = terminal.scrollTop;
                         }
                     }
                 }
@@ -1099,6 +1235,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                         const terminal = document.getElementById('terminal-' + id);
                         if (terminal) {
                             terminal.scrollTop = terminal.scrollHeight;
+                            sessionData.lastScrollTop = terminal.scrollTop;
                         }
                     }
                 }
@@ -1555,7 +1692,11 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <span class="info-popover-value" id="info-platform-value-\${session.id}">—</span>
                     </div>
                 </div>
-                <div class="terminal" id="terminal-\${session.id}" style="height:\${TERMINAL_HEIGHTS[currentHeightIndex]}px">Connecting...</div>
+                <div class="terminal" id="terminal-\${session.id}" style="height:\${TERMINAL_HEIGHTS[currentHeightIndex]}px">
+                    <div class="terminal-scrollback" id="scrollback-\${session.id}"></div>
+                    <div class="terminal-separator" id="separator-\${session.id}">─── scrollback ───</div>
+                    <div class="terminal-screen" id="screen-\${session.id}">Connecting...</div>
+                </div>
                 <div class="prompt-panel" id="prompt-\${session.id}">
                     <div class="prompt-header" id="prompt-header-\${session.id}"></div>
                     <div class="prompt-question" id="prompt-question-\${session.id}"></div>
@@ -1597,12 +1738,26 @@ export const dashboardHtml = `<!DOCTYPE html>
                 </div>
             \`;
             container.appendChild(card);
-            sessions.set(session.id, { element: card, state: session.state, title: null, git: null, changes: null, stats: null, permission: null, pinned: true });
+            sessions.set(session.id, {
+                element: card,
+                state: session.state,
+                title: null,
+                git: null,
+                changes: null,
+                stats: null,
+                permission: null,
+                pinned: true,
+                lastScrollTop: 0,
+                // Scrollback chunking: store full buffer, render only visible portion
+                scrollbackBuffer: [],      // Full scrollback lines
+                scrollbackRendered: 0,     // How many lines currently rendered
+            });
             applyCollapsedState(session.id);
             restoreInput(session.id);
             updateFitLayout();
 
             // Set up scroll tracking for pin/unpin behavior
+            // Only unpin on explicit scroll UP gesture, re-pin when scrolling down to bottom
             const terminal = document.getElementById('terminal-' + session.id);
             if (terminal) {
                 terminal.addEventListener('scroll', () => {
@@ -1612,21 +1767,36 @@ export const dashboardHtml = `<!DOCTYPE html>
                     // Skip scroll handling during font size changes to preserve pin state
                     if (isChangingFontSize) return;
 
-                    // Use different thresholds for pinning vs unpinning
-                    // - Unpin easily: 5px from bottom triggers unpin
-                    // - Re-pin strictly: only when truly at bottom (< 2px)
-                    const distFromBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight;
-                    const atVeryBottom = distFromBottom < 2;
-                    const nearBottom = distFromBottom < 5;
+                    const currentScrollTop = terminal.scrollTop;
+                    const prevScrollTop = sessionData.lastScrollTop || 0;
+                    const scrollDelta = currentScrollTop - prevScrollTop;
+                    const scrollingUp = scrollDelta < 0;
+                    const scrollingDown = scrollDelta > 0;
 
-                    if (atVeryBottom && !sessionData.pinned) {
-                        // Re-pin only when truly at the very bottom
-                        sessionData.pinned = true;
-                        updatePinButton(session.id, true);
-                    } else if (!nearBottom && sessionData.pinned) {
-                        // Unpin immediately when user scrolls away
+                    // Update last scroll position
+                    sessionData.lastScrollTop = currentScrollTop;
+
+                    const distFromBottom = terminal.scrollHeight - currentScrollTop - terminal.clientHeight;
+                    const atBottom = distFromBottom < 5;
+
+                    // Ignore scroll bounce: small upward movements near the bottom are likely
+                    // elastic bounce, not intentional scrolling. Require scrolling up past
+                    // bounce threshold (50px from bottom) to unpin.
+                    const pastBounceZone = distFromBottom > 50;
+
+                    if (scrollingUp && sessionData.pinned && pastBounceZone) {
+                        // Unpin only on explicit scroll UP past the bounce zone
                         sessionData.pinned = false;
                         updatePinButton(session.id, false);
+                    } else if (scrollingDown && atBottom && !sessionData.pinned) {
+                        // Re-pin when scrolling DOWN and reaching bottom
+                        sessionData.pinned = true;
+                        updatePinButton(session.id, true);
+                    }
+
+                    // Load more scrollback when scrolling near the top
+                    if (currentScrollTop < 100 && sessionData.scrollbackBuffer && sessionData.scrollbackRendered < sessionData.scrollbackBuffer.length) {
+                        loadMoreScrollback(session.id);
                     }
                 });
             }
@@ -1687,6 +1857,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                 sessionData.pinned = true;
                 updatePinButton(sessionId, true);
                 terminal.scrollTop = terminal.scrollHeight;
+                sessionData.lastScrollTop = terminal.scrollTop;
             }
         }
 
@@ -1949,7 +2120,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                 ? \`<div class="widget-row"><span class="widget-label">⊜ Compactions</span><span class="widget-value" style="color:#f0883e">\${stats.compressions}</span></div>\`
                 : '';
 
-            widget.innerHTML = \`
+            const newHtml = \`
                 <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right">\${modeIndicator} \${stateIndicator}</span></div>
                 <div class="widget-row"><span class="widget-label">◆ Session</span><span class="widget-value" style="color:#58a6ff">\${formatDuration(stats.work_seconds || 0)}</span></div>
                 <div class="widget-row"><span class="widget-label">◇ Thinking</span><span class="widget-value" style="color:#3fb950">\${stats.thinking_seconds ? formatDuration(stats.thinking_seconds) : '—'}</span></div>
@@ -1958,6 +2129,11 @@ export const dashboardHtml = `<!DOCTYPE html>
                 <div class="widget-row"><span class="widget-label">⚙ Tools</span><span class="widget-value">\${renderToolsSparkline(stats.tool_timestamps, stats.session_start, Date.now() / 1000)}</span></div>
                 \${compressionsRow}
             \`;
+
+            // Only update if content changed (prevents flicker)
+            if (widget.innerHTML !== newHtml) {
+                widget.innerHTML = newHtml;
+            }
         }
 
         // Create two-sided progress bar like CLI: ▓▓ (red/deletions) █████ (green/additions)
@@ -2108,7 +2284,10 @@ export const dashboardHtml = `<!DOCTYPE html>
 
             // Compact display for clean repos - just header, no body
             if (totalFiles === 0) {
-                widget.innerHTML = \`<div class="widget-title"><span style="color:#7ee787">\${branch}</span> <span style="color:#3fb950">✓ Clean</span></div>\`;
+                const newHtml = \`<div class="widget-title"><span style="color:#7ee787">\${branch}</span> <span style="color:#3fb950">✓ Clean</span></div>\`;
+                if (widget.innerHTML !== newHtml) {
+                    widget.innerHTML = newHtml;
+                }
                 return;
             }
 
@@ -2157,10 +2336,15 @@ export const dashboardHtml = `<!DOCTYPE html>
                 </div>\`;
             }).join('');
 
-            widget.innerHTML = \`
+            const newHtml = \`
                 <div class="widget-title"><span style="color:#7ee787">\${branch}</span> <span style="float:right">\${headerRight}</span></div>
                 <div class="git-files">\${filesHtml}</div>
             \`;
+
+            // Only update if content changed (prevents flicker)
+            if (widget.innerHTML !== newHtml) {
+                widget.innerHTML = newHtml;
+            }
         }
 
         // Get icon and color for change type modifier (like CLI)
@@ -2261,10 +2445,15 @@ export const dashboardHtml = `<!DOCTYPE html>
                 }
             }
 
-            widget.innerHTML = \`
+            const newHtml = \`
                 <div class="widget-title"><span style="color:#db6d28">\${firstLang.language}</span> <span style="color:#8b949e">\${totalChanges} \${changeWord}</span></div>
                 <div class="changes-list">\${changesHtml}</div>
             \`;
+
+            // Only update if content changed (prevents flicker)
+            if (widget.innerHTML !== newHtml) {
+                widget.innerHTML = newHtml;
+            }
         }
 
         function updateTitlesWidget(sessionId, titleHistory) {
@@ -2287,9 +2476,10 @@ export const dashboardHtml = `<!DOCTYPE html>
             // Previous titles are the history content (all except the last one)
             const previousTitles = titleHistory.slice(0, -1);
 
+            let newHtml;
             if (previousTitles.length === 0) {
                 // Just one title - show it as the module title, no content
-                widget.innerHTML = \`
+                newHtml = \`
                     <div class="widget-title"><span style="color:#58a6ff">\${escapedLatest}</span></div>
                 \`;
             } else {
@@ -2299,10 +2489,15 @@ export const dashboardHtml = `<!DOCTYPE html>
                     return \`<div class="title-entry">\${escaped}</div>\`;
                 }).join('');
 
-                widget.innerHTML = \`
+                newHtml = \`
                     <div class="widget-title"><span style="color:#58a6ff">\${escapedLatest}</span></div>
                     <div class="titles-list">\${historyHtml}</div>
                 \`;
+            }
+
+            // Only update if content changed (prevents flicker)
+            if (widget.innerHTML !== newHtml) {
+                widget.innerHTML = newHtml;
             }
         }
 
@@ -2359,16 +2554,22 @@ export const dashboardHtml = `<!DOCTYPE html>
         function handleSessionEvent(sessionId, event) {
             const terminal = document.getElementById('terminal-' + sessionId);
             const card = document.getElementById('session-' + sessionId);
+            const scrollbackEl = document.getElementById('scrollback-' + sessionId);
+            const separatorEl = document.getElementById('separator-' + sessionId);
+            const screenEl = document.getElementById('screen-' + sessionId);
             if (!terminal || !card) return;
 
             const sessionData = sessions.get(sessionId);
 
             switch (event.type) {
                 case 'screen':
-                    // Full screen update
-                    terminal.innerHTML = ansiToHtml(event.content);
+                    // Full screen update - only update the screen section
+                    if (screenEl) {
+                        screenEl.innerHTML = ansiToHtml(event.content);
+                    }
                     if (sessionData?.pinned) {
                         terminal.scrollTop = terminal.scrollHeight;
+                        sessionData.lastScrollTop = terminal.scrollTop;
                     }
                     break;
                 case 'state':
@@ -2390,12 +2591,16 @@ export const dashboardHtml = `<!DOCTYPE html>
                     }
                     break;
                 case 'scrollback':
-                    // Append scrollback diff
+                    // Append scrollback diff to scrollback section (chunked)
                     if (event.diff) {
-                        terminal.innerHTML += ansiToHtml(event.diff);
-                        if (sessionData?.pinned) {
-                            terminal.scrollTop = terminal.scrollHeight;
-                        }
+                        appendScrollback(sessionId, event.diff);
+                    }
+                    break;
+                case 'scrollback_history':
+                    // Full scrollback history for late joiners (chunked - only render last N lines)
+                    if (event.content) {
+                        const lines = event.content.split('\\n').filter(line => line.length > 0);
+                        renderScrollback(sessionId, lines);
                     }
                     break;
                 case 'git':
