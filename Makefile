@@ -1,4 +1,4 @@
-.PHONY: run build check test test-update clean resume continue lint update release codex claude reinstall-hooks deploy
+.PHONY: run build check test test-update clean resume continue lint update release codex claude reinstall-hooks deploy cf-usage
 
 PROVIDER_FILE := .crabigator-provider
 DEFAULT_PROVIDER := claude
@@ -71,3 +71,6 @@ reinstall-hooks:
 
 deploy:
 	cd workers/crabigator-api && npm run deploy
+
+cf-usage:
+	@./scripts/cf-usage.sh

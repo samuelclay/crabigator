@@ -191,6 +191,14 @@ cd workers/crabigator-api && npm run typecheck
 - **Session state**: Managed by Durable Objects (`SessionDO`)
 - **Auth**: Desktop device_id + HMAC-SHA256 signatures, no user accounts
 
+### Usage Analytics
+
+```bash
+make cf-usage    # Show Cloudflare usage stats and scaling capacity
+```
+
+Queries Cloudflare GraphQL API for worker requests, Durable Objects, and D1 usage. Shows free tier consumption and estimates scaling headroom. Script at `scripts/cf-usage.sh` reads wrangler OAuth token automatically.
+
 ## Browser Testing with PlayWriter MCP
 
 The PlayWriter MCP allows Claude Code to control Chrome for testing the dashboard and other web functionality.
