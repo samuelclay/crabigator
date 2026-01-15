@@ -1968,6 +1968,7 @@ export const dashboardJs = `
                 if (resp.ok) {
                     console.log('[sendOtherAnswer] success');
                     input.value = '';
+                    input.blur(); // Hide mobile keyboard
                     // Hide prompt panel
                     const panel = document.getElementById('prompt-' + sessionId);
                     if (panel) panel.classList.remove('visible');
@@ -1996,6 +1997,7 @@ export const dashboardJs = `
 
                 if (resp.ok) {
                     input.value = '';
+                    input.blur(); // Hide mobile keyboard
                     // Cancel any pending debounced save to prevent race condition
                     if (inputSaveTimers.has(sessionId)) {
                         clearTimeout(inputSaveTimers.get(sessionId));
