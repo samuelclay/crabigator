@@ -812,7 +812,7 @@ export const dashboardJs = `
             }
         }
 
-        function createSessionCard(session) {
+        function createSessionCard(session, insertAtTop = false) {
             const container = document.getElementById('sessions');
             const card = document.createElement('div');
             card.className = 'session-card';
@@ -908,7 +908,11 @@ export const dashboardJs = `
                     <button type="button" onclick="sendAnswer('\${session.id}')">Send</button>
                 </div>
             \`;
-            container.appendChild(card);
+            if (insertAtTop && container.firstChild) {
+                container.insertBefore(card, container.firstChild);
+            } else {
+                container.appendChild(card);
+            }
             sessions.set(session.id, {
                 element: card,
                 state: session.state,
@@ -2123,12 +2127,12 @@ export const dashboardJs = `
                     break;
 
                 case 'created':
-                    // New session - add to view immediately
+                    // New session - add to view immediately at the top
                     console.log('New session created:', event.session?.id);
                     if (event.session && !sessions.has(event.session.id)) {
                         const emptyState = container.querySelector('.no-sessions');
                         if (emptyState) emptyState.remove();
-                        createSessionCard(event.session);
+                        createSessionCard(event.session, true);
                         connectToSession(event.session.id);
                         document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
                     }
