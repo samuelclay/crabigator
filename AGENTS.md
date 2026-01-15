@@ -179,8 +179,8 @@ workers/crabigator-api/
 
 ```bash
 make deploy                                   # Deploy to Cloudflare
+make typecheck                                # TypeScript type checking
 cd workers/crabigator-api && npm run dev      # Local dev
-cd workers/crabigator-api && npm run typecheck
 ```
 
 ### Key Notes
