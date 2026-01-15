@@ -755,9 +755,7 @@ impl App {
             };
 
             let event = SessionEventBuilder::stats(
-                &self.session_stats.platform_stats,
-                self.session_stats.work_seconds,
-                self.session_stats.thinking_seconds(),
+                &self.session_stats,
                 permission_prompt.as_ref(),
             );
             client.send_event(event);

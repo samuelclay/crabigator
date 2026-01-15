@@ -216,9 +216,26 @@ pub struct StatsEvent {
     /// Model name (e.g., "claude-opus-4-5-20251101")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Unix timestamp when prompts count last changed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompts_changed_at: Option<f64>,
+    /// Unix timestamp when completions count last changed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completions_changed_at: Option<f64>,
+    /// Unix timestamp when compressions count last changed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compressions_changed_at: Option<f64>,
+    /// Unix timestamps of tool invocations for sparkline
+    pub tool_timestamps: Vec<f64>,
+    /// Unix timestamp when session started
+    pub session_start: f64,
+    /// Unix timestamp when session became idle (for idle time display)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_since: Option<f64>,
 }
 
 impl StatsEvent {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         prompts: u32,
         completions: u32,
@@ -229,6 +246,12 @@ impl StatsEvent {
         mode: Option<String>,
         permission: Option<PermissionInfo>,
         model: Option<String>,
+        prompts_changed_at: Option<f64>,
+        completions_changed_at: Option<f64>,
+        compressions_changed_at: Option<f64>,
+        tool_timestamps: Vec<f64>,
+        session_start: f64,
+        idle_since: Option<f64>,
     ) -> Self {
         Self {
             event_type: "stats".to_string(),
@@ -241,6 +264,12 @@ impl StatsEvent {
             mode,
             permission,
             model,
+            prompts_changed_at,
+            completions_changed_at,
+            compressions_changed_at,
+            tool_timestamps,
+            session_start,
+            idle_since,
         }
     }
 }
@@ -473,16 +502,15 @@ impl SessionEventBuilder {
         CloudEvent::Changes(ChangesEvent::new(by_language))
     }
 
-    /// Build a stats event from platform stats
+    /// Build a stats event from session stats
     ///
     /// `permission_prompt` is parsed from the screen content and provides
     /// the actual menu options and question text.
     pub fn stats(
-        stats: &crate::platforms::PlatformStats,
-        work_seconds: u64,
-        thinking_seconds: u64,
+        session_stats: &crate::hooks::SessionStats,
         permission_prompt: Option<&crate::parsers::PermissionPrompt>,
     ) -> CloudEvent {
+        let stats = &session_stats.platform_stats;
         let total_tools: u32 = stats.tools.values().sum();
 
         // Convert permission details - use screen-parsed options even if hook data is missing
@@ -534,11 +562,17 @@ impl SessionEventBuilder {
             stats.completions,
             total_tools,
             stats.compressions,
-            thinking_seconds,
-            work_seconds,
+            session_stats.thinking_seconds(),
+            session_stats.work_seconds,
             Some(stats.mode.as_str().to_string()),
             permission,
             stats.model.clone(),
+            session_stats.prompts_changed_at,
+            session_stats.completions_changed_at,
+            session_stats.compressions_changed_at,
+            stats.tool_timestamps.clone(),
+            session_stats.session_start_unix(),
+            stats.idle_since,
         ))
     }
 

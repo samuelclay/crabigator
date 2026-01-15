@@ -129,6 +129,20 @@ export interface StatsEvent {
     mode?: ClaudeMode;
     /** Permission details when in permission state */
     permission?: PermissionInfo;
+    /** Model name (e.g., "claude-opus-4-5-20251101") */
+    model?: string;
+    /** Unix timestamp when prompts count last changed */
+    prompts_changed_at?: number;
+    /** Unix timestamp when completions count last changed */
+    completions_changed_at?: number;
+    /** Unix timestamp when compressions count last changed */
+    compressions_changed_at?: number;
+    /** Unix timestamps of tool invocations for sparkline */
+    tool_timestamps: number[];
+    /** Unix timestamp when session started */
+    session_start: number;
+    /** Unix timestamp when session became idle (for idle time display) */
+    idle_since?: number;
 }
 
 /**
