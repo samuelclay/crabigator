@@ -711,6 +711,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             font-size: 13px;
             margin-bottom: 12px;
             line-height: 1.4;
+            white-space: pre-wrap;
         }
         .prompt-options {
             display: flex;

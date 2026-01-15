@@ -381,6 +381,9 @@ impl CaptureManager {
         let mut content = Vec::new();
         for row_bytes in formatted_rows.into_iter().take(last_nonempty + 1) {
             content.extend_from_slice(&row_bytes);
+            // Reset ANSI attributes at end of row to prevent color leakage
+            // The vt100 crate's rows_formatted() doesn't emit reset codes
+            content.extend_from_slice(b"\x1b[0m");
             content.push(b'\n');
         }
 
