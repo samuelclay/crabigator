@@ -186,24 +186,29 @@ impl GitState {
         }
     }
 
-    /// Count lines in a file using wc -l
+    /// Count lines in a file by reading it directly
     async fn count_lines_in_file(base_dir: &Path, path: &str) -> usize {
+        let file_path = base_dir.join(path);
+
+        // Read the file content with a timeout
         let result = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            Command::new("wc")
-                .args(["-l", path])
-                .current_dir(base_dir)
-                .output(),
+            std::time::Duration::from_millis(200),
+            tokio::fs::read(&file_path),
         )
         .await;
 
         match result {
-            Ok(Ok(output)) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                // wc -l output format: "   123 filename"
-                stdout.split_whitespace().next()
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(0)
+            Ok(Ok(contents)) => {
+                // Count newlines (each \n is a line)
+                // Add 1 if file doesn't end with newline but has content
+                let newlines = contents.iter().filter(|&&b| b == b'\n').count();
+                if contents.is_empty() {
+                    0
+                } else if contents.last() == Some(&b'\n') {
+                    newlines
+                } else {
+                    newlines + 1
+                }
             }
             _ => 0,
         }
