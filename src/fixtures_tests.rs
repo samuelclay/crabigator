@@ -244,6 +244,14 @@ mod fixtures {
     fn normalize_mirror(value: &mut Value) {
         if let Some(obj) = value.as_object_mut() {
             obj.insert("last_updated".to_string(), Value::from(0.0));
+            // Normalize session_start timestamp in widgets.stats.data
+            if let Some(widgets) = obj.get_mut("widgets").and_then(|v| v.as_object_mut()) {
+                if let Some(stats) = widgets.get_mut("stats").and_then(|v| v.as_object_mut()) {
+                    if let Some(data) = stats.get_mut("data").and_then(|v| v.as_object_mut()) {
+                        data.insert("session_start".to_string(), Value::from(0.0));
+                    }
+                }
+            }
         }
     }
 

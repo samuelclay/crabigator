@@ -74,8 +74,9 @@ impl GitState {
         }
 
         // Get file statuses using porcelain format
+        // -uall shows individual files in untracked directories instead of aggregating
         if let Ok(output) = Command::new("git")
-            .args(["status", "--porcelain"])
+            .args(["status", "--porcelain", "-uall"])
             .current_dir(dir)
             .output()
             .await
