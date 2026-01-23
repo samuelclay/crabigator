@@ -21,7 +21,7 @@ use crate::ide::{self, IdeKind};
 use crate::platforms::{Platform, SessionState};
 use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
-use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty};
+use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, RedrawScanner};
 use crate::ui::{draw_status_bar, Layout};
 
 /// Result from background git refresh
@@ -62,6 +62,10 @@ pub struct App {
     dsr_handler: DsrHandler,
     /// Scans for OSC title sequences from the CLI
     osc_scanner: OscScanner,
+    /// Scans for full screen redraw sequences from the CLI
+    redraw_scanner: RedrawScanner,
+    /// Last time we triggered a HUD redraw from detected redraw sequences
+    last_redraw_trigger: Instant,
     /// Terminal title extracted from OSC sequences (e.g., "Claude Code Ghostty Integration")
     terminal_title: Option<String>,
     /// History of all terminal titles during this session
@@ -158,6 +162,8 @@ impl App {
             capture_manager,
             dsr_handler: DsrHandler::new(),
             osc_scanner: OscScanner::new(),
+            redraw_scanner: RedrawScanner::new(),
+            last_redraw_trigger: Instant::now(),
             terminal_title: None,
             title_history: Vec::new(),
             initial_git_time_ms: None,
@@ -226,9 +232,15 @@ impl App {
         // DECSTBM: Set Top and Bottom Margins (1-indexed)
         // This constrains scrolling to rows 1 through pty_rows
         write!(stdout, "{}", escape::scroll_region(1, self.pty_rows))?;
-        // Move cursor to bottom of scroll region so the CLI starts there
-        // and naturally scrolls up as it produces output (like a normal shell)
-        write!(stdout, "{}", escape::cursor_to(self.pty_rows, 1))?;
+
+        // Only move cursor on initial setup - during resize/redraw we preserve
+        // the CLI's cursor position to avoid disrupting its rendering
+        if initial {
+            // Move cursor to bottom of scroll region so the CLI starts there
+            // and naturally scrolls up as it produces output (like a normal shell)
+            write!(stdout, "{}", escape::cursor_to(self.pty_rows, 1))?;
+        }
+
         stdout.flush()?;
         Ok(())
     }
@@ -295,12 +307,27 @@ impl App {
         let session_start = std::time::Instant::now();
         let mut last_initial_screen_attempt = session_start;
 
+        // Debounce interval for redraw detection (prevents excessive redraws during rapid updates)
+        let redraw_debounce = Duration::from_millis(50);
+
         while self.running {
             // Receive PTY output and write directly to stdout
             let mut got_output = false;
+            let mut needs_hud_redraw = false;
             while let Ok(data) = self.pty_rx.try_recv() {
-                self.write_pty_output(&data)?;
+                if self.write_pty_output(&data)? {
+                    needs_hud_redraw = true;
+                }
                 got_output = true;
+            }
+
+            // Handle CLI-initiated full screen redraw (e.g., after resize via SIGWINCH)
+            // Re-establish scroll region and refresh HUD with debouncing
+            if needs_hud_redraw && self.last_redraw_trigger.elapsed() >= redraw_debounce {
+                self.last_redraw_trigger = Instant::now();
+                self.setup_scroll_region(false)?;
+                self.draw_status_bar()?;
+                last_status_draw = Instant::now();
             }
 
             // Check for completed background git refresh (non-blocking)
@@ -522,9 +549,11 @@ impl App {
     }
 
     /// Write PTY output directly to stdout - transparent passthrough
-    fn write_pty_output(&mut self, data: &[u8]) -> Result<()> {
+    /// Returns true if a full screen redraw was detected (requiring HUD refresh)
+    fn write_pty_output(&mut self, data: &[u8]) -> Result<bool> {
         let mut stdout = stdout();
         let mut wrote_output = false;
+        let mut needs_redraw = false;
 
         let chunks = self.dsr_handler.scan(data);
         for chunk in chunks {
@@ -534,8 +563,14 @@ impl App {
                         continue;
                     }
 
+                    // Scan for full screen redraw sequences
+                    let redraw_result = self.redraw_scanner.scan(&bytes);
+                    if redraw_result.needs_redraw {
+                        needs_redraw = true;
+                    }
+
                     // Scan for OSC title sequences
-                    let (passthrough, title) = self.osc_scanner.scan(&bytes);
+                    let (passthrough, title) = self.osc_scanner.scan(&redraw_result.output);
                     if let Some(t) = title {
                         // Strip leading progress spinner characters for history
                         // Includes: ASCII asterisk, dingbat asterisks, sparkles, rotation arrows,
@@ -582,7 +617,7 @@ impl App {
             stdout.flush()?;
         }
 
-        Ok(())
+        Ok(needs_redraw)
     }
 
     /// Draw status bar using the widget system
