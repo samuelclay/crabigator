@@ -258,7 +258,7 @@ impl App {
         let mut last_hook_refresh = Instant::now();
         let mut last_status_draw = Instant::now();
         let mut last_throbber_draw = Instant::now();
-        let git_refresh_interval = Duration::from_secs(3);
+        let git_refresh_interval = Duration::from_secs(1);
         let hook_refresh_interval = Duration::from_millis(500);
         let status_debounce = Duration::from_millis(100);
         let throbber_interval = Duration::from_millis(100);

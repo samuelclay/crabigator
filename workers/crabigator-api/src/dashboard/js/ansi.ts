@@ -62,7 +62,6 @@ export const ansiJs = `
 
             let result = '';
             let inSpan = false;
-            let currentRow = 1;  // Track current row (1-indexed like VT100)
             let i = 0;
             let currentStyle = '';
             let state = {
@@ -89,14 +88,17 @@ export const ansiJs = `
 
             function buildStyle() {
                 let fg = state.fg;
-                // For inverse, use bright white since we can't render backgrounds
+                let bg = state.bg;
+                // For inverse, swap fg and bg
                 if (state.inverse) {
-                    fg = '#ffffff';
+                    const tmp = fg;
+                    fg = bg || '#ffffff';
+                    bg = tmp || '#0d1117';
                 }
 
                 const styles = [];
                 if (fg) styles.push('color:' + fg);
-                // Skip background colors - they bleed to container edge due to terminal padding
+                if (bg) styles.push('background-color:' + bg);
                 if (state.bold) styles.push('font-weight:bold');
                 if (state.dim) styles.push('opacity:0.5');
                 if (state.italic) styles.push('font-style:italic');
@@ -161,20 +163,8 @@ export const ansiJs = `
                         }
 
                         applyStyle();
-                    } else if (command === 'H' || command === 'f') {
-                        // CUP - Cursor Position: ESC[row;colH or ESC[row;colf
-                        // Also handles ESC[H (home = 1;1)
-                        const parts = params ? params.split(';') : [];
-                        const newRow = parts[0] ? parseInt(parts[0], 10) : 1;
-
-                        // If moving to a later row, insert newlines for the gap
-                        if (newRow > currentRow) {
-                            const linesToAdd = newRow - currentRow;
-                            result += '\\n'.repeat(linesToAdd);
-                        }
-                        currentRow = newRow;
                     }
-                    // Skip other escape sequences (J, K, etc.) - they don't affect our line-based output
+                    // Skip other escape sequences (H, f, J, K, etc.) - they don't affect our line-based output
                     i = j;
                     continue;
                 }
@@ -191,7 +181,6 @@ export const ansiJs = `
                         if (inSpan) {
                             result += '<span style="' + currentStyle + '">';
                         }
-                        currentRow++;
                     }
                     // Skip carriage return - we only care about line feeds
                     i++;
