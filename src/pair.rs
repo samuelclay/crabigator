@@ -77,17 +77,30 @@ fn save_cached_code(code: &str, expires_at: u64) {
 /// 2. Navigate to `https://drinkcrabigator.com/dashboard?setup=<code>`
 /// 3. Dashboard authenticates automatically
 ///
-/// Codes are cached and reused until expiry to avoid unnecessary API calls.
+/// Codes are cached and reused until expiry or claimed by a browser.
 pub async fn run_pair() -> Result<()> {
+    let mut client = CloudClient::new()?;
+    client.register_device().await?;
+
     // Check for valid cached code first
     if let Some(code) = load_cached_code() {
-        println!("{}", code);
-        return Ok(());
+        // Verify the cached code hasn't been claimed yet
+        match client.poll_pairing_status(&code).await {
+            Ok(status) if !status.paired && !status.expired => {
+                // Code is still valid and unclaimed
+                println!("{}", code);
+                return Ok(());
+            }
+            _ => {
+                // Code was claimed or expired - clear cache and generate new
+                if let Some(path) = cache_path() {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
     }
 
     // Generate new code
-    let mut client = CloudClient::new()?;
-    client.register_device().await?;
     let pairing = client.generate_pairing_token().await?;
 
     // Cache it for future calls

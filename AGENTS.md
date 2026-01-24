@@ -236,27 +236,40 @@ You can view your own running session on the dashboard - the screen preview will
 
 The Chrome MCP controls an isolated Chrome instance without cookies. To authenticate:
 
-1. Generate a pairing code:
+1. **Generate a pairing code:**
    ```bash
-   crabigator pair    # Outputs: ABC-DEF-GHI
+   cargo run --release -- pair
+   # Or if crabigator is in PATH:
+   crabigator pair
    ```
+   This outputs a code like `ABC-DEF-GHI`
 
-2. Open Chrome with the setup URL (via Chrome MCP or manually):
+2. **Navigate to the dashboard with the setup parameter:**
    ```
    https://drinkcrabigator.com/dashboard?setup=ABC-DEF-GHI
    ```
 
-The dashboard auto-claims the code and authenticates. The code expires in 5 minutes.
+The dashboard auto-claims the code and authenticates. Codes expire in 5 minutes and can only be claimed once. The `pair` command automatically validates cached codes and generates new ones when needed.
 
-**Example Claude workflow:**
-1. Run `crabigator pair` to get the code
-2. Use `mcp__chrome-devtools__navigate_page` to open dashboard with `?setup=<code>`
-3. Dashboard authenticates automatically
+**Complete Claude Code workflow:**
+```bash
+# 1. Get pairing code (automatically validates cache)
+cargo run --release -- pair
+# Output: VQ6-NBP-EPM
+
+# 2. Use Chrome MCP to navigate (replace with actual code)
+mcp__chrome-devtools__navigate_page(url: "https://drinkcrabigator.com/dashboard?setup=VQ6-NBP-EPM", type: "url")
+
+# 3. Take snapshot to verify authentication worked
+mcp__chrome-devtools__take_snapshot()
+# Should show session list, not "Setup Failed"
+```
 
 ### Troubleshooting
 
-- **"Extension not connected"**: User needs to click PlayWriter icon in Chrome
-- **Connection errors**: Use `mcp__playwriter__reset` to reconnect
+- **"Invalid or expired pairing token"**: Run `crabigator pair` again to get a fresh code
+- **"Extension not connected"**: User needs to click the Chrome DevTools MCP extension icon in Chrome's toolbar
+- **Connection errors**: The MCP server may need to be restarted
 - **No pages**: Ask user to restart Chrome (known Chrome bug)
 
 ## Code Quality

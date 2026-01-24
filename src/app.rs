@@ -98,6 +98,10 @@ pub struct App {
     /// Last time we sent a screen event when no viewers are active
     /// Used to throttle to 1s intervals instead of 100ms
     last_reduced_screen_send: Instant,
+    /// Hash of last git state sent to cloud (for deduplication)
+    last_cloud_git_hash: Option<u64>,
+    /// Hash of last changes sent to cloud (for deduplication)
+    last_cloud_changes_hash: Option<u64>,
 }
 
 impl App {
@@ -191,6 +195,8 @@ impl App {
             pending_pairing_poll: None,
             cloud_viewers_active: false,
             last_reduced_screen_send: Instant::now(),
+            last_cloud_git_hash: None,
+            last_cloud_changes_hash: None,
         })
     }
 
@@ -887,12 +893,79 @@ impl App {
         }
     }
 
-    /// Send git + changes snapshot to cloud
+    /// Send git + changes snapshot to cloud (with deduplication)
     fn send_cloud_git_changes_events(&mut self) {
-        if let Some(ref mut client) = self.cloud_client {
-            client.send_event(SessionEventBuilder::git(&self.git_state));
-            client.send_event(SessionEventBuilder::changes(&self.diff_summary));
+        if self.cloud_client.is_none() {
+            return;
         }
+
+        // Compute hashes before borrowing cloud_client
+        let git_hash = self.compute_git_hash();
+        let changes_hash = self.compute_changes_hash();
+
+        // Check if git state changed
+        let send_git = self.last_cloud_git_hash != Some(git_hash);
+        let send_changes = self.last_cloud_changes_hash != Some(changes_hash);
+
+        if send_git {
+            self.last_cloud_git_hash = Some(git_hash);
+        }
+        if send_changes {
+            self.last_cloud_changes_hash = Some(changes_hash);
+        }
+
+        // Now borrow client and send events
+        if let Some(ref mut client) = self.cloud_client {
+            if send_git {
+                client.send_event(SessionEventBuilder::git(&self.git_state));
+            }
+            if send_changes {
+                client.send_event(SessionEventBuilder::changes(&self.diff_summary));
+            }
+        }
+    }
+
+    /// Compute hash of git state for deduplication
+    fn compute_git_hash(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        self.git_state.branch.hash(&mut hasher);
+        self.git_state.files.len().hash(&mut hasher);
+        for f in &self.git_state.files {
+            f.path.hash(&mut hasher);
+            f.status.hash(&mut hasher);
+            f.additions.hash(&mut hasher);
+            f.deletions.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Compute hash of changes for deduplication
+    ///
+    /// Uses by_language() which provides deterministic ordering (sorted by language,
+    /// then by name/file_path). This ensures consistent hashes even though the
+    /// underlying diff parsers use HashMap with non-deterministic iteration order.
+    fn compute_changes_hash(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+
+        // Use by_language() for deterministic ordering
+        let by_lang = self.diff_summary.by_language();
+        by_lang.len().hash(&mut hasher);
+        for lang in &by_lang {
+            lang.language.hash(&mut hasher);
+            lang.changes.len().hash(&mut hasher);
+            for c in &lang.changes {
+                c.name.hash(&mut hasher);
+                c.additions.hash(&mut hasher);
+                c.deletions.hash(&mut hasher);
+                // Note: intentionally not hashing line_number as it can vary
+                // between parses without affecting the semantic content
+            }
+        }
+        hasher.finish()
     }
 
     /// Send prompt event to cloud (for interactive dashboard)
@@ -938,6 +1011,10 @@ impl App {
     fn maybe_send_initial_scrollback(&mut self) {
         if let Some(ref mut client) = self.cloud_client {
             if client.take_just_connected() {
+                // Reset git/changes hashes to force resend on next refresh
+                self.last_cloud_git_hash = None;
+                self.last_cloud_changes_hash = None;
+
                 // Send full scrollback history for initial sync
                 if let Some(content) = self.capture_manager.get_full_scrollback() {
                     let event = SessionEventBuilder::scrollback_history(content);

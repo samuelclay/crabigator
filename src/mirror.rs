@@ -247,11 +247,14 @@ impl MirrorPublisher {
             f.deletions.hash(&mut hasher);
         }
 
-        // Hash key fields from diff
-        diff.files.len().hash(&mut hasher);
-        for f in &diff.files {
-            f.changes.len().hash(&mut hasher);
-            for c in &f.changes {
+        // Hash key fields from diff using by_language() for deterministic ordering
+        // (diff parsers use HashMap with non-deterministic iteration order)
+        let by_lang = diff.by_language();
+        by_lang.len().hash(&mut hasher);
+        for lang in &by_lang {
+            lang.language.hash(&mut hasher);
+            lang.changes.len().hash(&mut hasher);
+            for c in &lang.changes {
                 c.name.hash(&mut hasher);
                 c.additions.hash(&mut hasher);
                 c.deletions.hash(&mut hasher);
