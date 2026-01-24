@@ -70,14 +70,24 @@ impl PairingState {
     }
 
     /// Set that pairing just completed
+    /// Note: Does NOT clear pairing token - caller should regenerate a new one
+    /// so additional devices can pair
     pub fn set_just_paired(&mut self, device_name: String) {
         self.just_paired = Some(device_name);
         self.just_paired_at = Some(std::time::Instant::now());
         self.has_linked_devices = true;
-        // Clear pairing state
+        // Mark that we need a new token (the old one is consumed)
         self.pairing_token = None;
         self.pairing_code = None;
         self.qr_data = None;
+    }
+
+    /// Set a new pairing token (for pairing additional devices)
+    #[allow(dead_code)]
+    pub fn set_new_token(&mut self, token: String, code: String, qr_data: String) {
+        self.pairing_token = Some(token);
+        self.pairing_code = Some(code);
+        self.qr_data = Some(qr_data);
     }
 }
 

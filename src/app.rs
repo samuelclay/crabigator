@@ -921,27 +921,18 @@ impl App {
     // ========================================
 
     /// Initialize pairing state on startup
-    /// Checks for existing linked devices and generates pairing token if needed
+    /// Checks for existing linked devices and always generates pairing token
     async fn init_pairing(&mut self) {
         let Some(ref client) = self.cloud_client else {
             return;
         };
 
-        // Check if we have any linked devices
-        match client.get_linked_devices().await {
-            Ok(response) => {
-                if !response.devices.is_empty() {
-                    self.pairing_state.has_linked_devices = true;
-                    return;
-                }
-            }
-            Err(_) => {
-                // If the endpoint doesn't exist yet (404), continue with pairing
-                // Once server-side is implemented, this will work
-            }
+        // Check for existing linked devices (for stats display)
+        if let Ok(response) = client.get_linked_devices().await {
+            self.pairing_state.has_linked_devices = !response.devices.is_empty();
         }
 
-        // No linked devices - generate a pairing token
+        // ALWAYS generate a pairing token (allows adding more devices)
         match client.generate_pairing_token().await {
             Ok(response) => {
                 self.pairing_state.pairing_token = Some(response.token);
@@ -949,7 +940,6 @@ impl App {
                 self.pairing_state.qr_data = Some(response.qr_data);
             }
             Err(_) => {
-                // Server-side pairing endpoints not implemented yet
                 // Silently fail - pairing widget won't show
             }
         }

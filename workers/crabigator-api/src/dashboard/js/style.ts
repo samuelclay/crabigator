@@ -118,11 +118,81 @@ export const styleJs = `
 
         // Close popover when clicking outside
         document.addEventListener('click', (e) => {
-            const popover = document.getElementById('style-popover');
-            const btn = document.getElementById('style-btn');
-            if (popover && btn && !popover.contains(e.target) && !btn.contains(e.target)) {
+            const stylePopover = document.getElementById('style-popover');
+            const styleBtn = document.getElementById('style-btn');
+            const settingsPopover = document.getElementById('settings-popover');
+            const settingsBtn = document.getElementById('settings-btn');
+
+            if (stylePopover && styleBtn && !stylePopover.contains(e.target) && !styleBtn.contains(e.target)) {
                 closeStylePopover();
             }
+            if (settingsPopover && settingsBtn && !settingsPopover.contains(e.target) && !settingsBtn.contains(e.target)) {
+                closeSettingsPopover();
+            }
         });
+
+        // Settings popover
+        function toggleSettingsPopover() {
+            const popover = document.getElementById('settings-popover');
+            const btn = document.getElementById('settings-btn');
+            const isVisible = popover.classList.toggle('visible');
+            btn.classList.toggle('active', isVisible);
+            // Close style popover if open
+            if (isVisible) closeStylePopover();
+        }
+
+        function closeSettingsPopover() {
+            const popover = document.getElementById('settings-popover');
+            const btn = document.getElementById('settings-btn');
+            if (popover) popover.classList.remove('visible');
+            if (btn) btn.classList.remove('active');
+        }
+
+        async function generateInviteCode() {
+            const btn = document.getElementById('generate-invite-btn');
+            const result = document.getElementById('invite-result');
+
+            if (!mobileToken) {
+                result.innerHTML = '<div style="color: #f85149; font-size: 12px;">Not paired yet</div>';
+                result.classList.add('visible');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Generating…';
+
+            try {
+                const response = await fetch('/api/pairing/invite', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + mobileToken
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to generate invite code');
+                }
+
+                const data = await response.json();
+                const pairUrl = window.location.origin + '/pair/' + data.token;
+
+                result.innerHTML = \`
+                    <div class="invite-code">\${data.code}</div>
+                    <div class="invite-hint">Enter this code on your other device</div>
+                    <div class="invite-link">
+                        <a href="\${pairUrl}" target="_blank">Or open this link →</a>
+                    </div>
+                \`;
+                result.classList.add('visible');
+
+            } catch (err) {
+                result.innerHTML = '<div style="color: #f85149; font-size: 12px;">' + err.message + '</div>';
+                result.classList.add('visible');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Generate pairing code';
+            }
+        }
 
 `;

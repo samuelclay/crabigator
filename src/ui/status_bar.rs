@@ -98,6 +98,12 @@ pub fn draw_status_bar(
         write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + row, 1))?;
 
         // Stats column (leftmost, fixed width)
+        // Pass pairing token for "Pair another device" link when already paired
+        let pairing_token = if is_paired {
+            pairing_state.pairing_token.as_deref()
+        } else {
+            None
+        };
         draw_stats_widget(
             stdout,
             WidgetArea {
@@ -110,6 +116,7 @@ pub fn draw_status_bar(
             session_stats,
             cloud_status,
             is_paired,
+            pairing_token,
         )?;
 
         // Separator

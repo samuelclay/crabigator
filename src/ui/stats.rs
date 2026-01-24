@@ -113,6 +113,7 @@ pub fn draw_stats_widget(
     stats: &SessionStats,
     cloud_status: Option<&CloudStatus>,
     is_paired: bool,
+    pairing_token: Option<&str>,
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
 
@@ -121,9 +122,9 @@ pub fn draw_stats_widget(
     let compact = area.height <= 5;
 
     let content = if compact {
-        draw_compact_row(area.row, area.width, stats, cloud_status, is_paired)
+        draw_compact_row(area.row, area.width, stats, cloud_status, is_paired, pairing_token)
     } else {
-        draw_normal_row(area.row, area.width, stats, cloud_status, is_paired)
+        draw_normal_row(area.row, area.width, stats, cloud_status, is_paired, pairing_token)
     };
 
     write!(stdout, "{}", content)?;
@@ -156,8 +157,29 @@ fn format_cloud_header(cloud_status: Option<&CloudStatus>, is_paired: bool) -> S
     }
 }
 
+/// Format "Pair another device" as OSC 8 hyperlink showing truncated URL
+fn format_pair_link(pairing_token: Option<&str>, max_width: usize) -> Option<String> {
+    let token = pairing_token?;
+    let url = format!("https://drinkcrabigator.com/pair/{}", token);
+    // Show truncated URL to make it clear it's clickable
+    // "drinkcrabigator.com/pair/abc..." format
+    let display_url = format!("drinkcrabigator.com/pair/{}...", &token[..3.min(token.len())]);
+    let text = format!("+ Pair: {}", display_url);
+    // Truncate if needed
+    let truncated = if text.len() > max_width {
+        format!("{}...", &text[..max_width.saturating_sub(3)])
+    } else {
+        text
+    };
+    // OSC 8 hyperlink: \x1b]8;;URL\x07text\x1b]8;;\x07
+    Some(format!(
+        "{}\x1b]8;;{}\x07{}\x1b]8;;\x07{}",
+        fg(color::GRAY), url, truncated, RESET
+    ))
+}
+
 /// Draw a row in compact mode (two-column layout with separator)
-fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool) -> String {
+fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool, pairing_token: Option<&str>) -> String {
     // Split width into two columns with a separator
     let half = (width as usize) / 2;
 
@@ -253,12 +275,25 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
                 format!("{}{}", label, sparkline)
             }
         }
+        4 => {
+            // Separator before pair link (only show if we have a pairing token)
+            if pairing_token.is_some() {
+                let line: String = std::iter::repeat('─').take(width as usize).collect();
+                format!("{}{}{}", fg(color::DARK_GRAY), line, RESET)
+            } else {
+                String::new()
+            }
+        }
+        5 => {
+            // "Pair another device" link (only show if we have a pairing token)
+            format_pair_link(pairing_token, width as usize).unwrap_or_default()
+        }
         _ => String::new(),
     }
 }
 
 /// Draw a row in normal mode (full labels, single column)
-fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool) -> String {
+fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool, pairing_token: Option<&str>) -> String {
     match row {
         1 => {
             // Header: cloud status on left, state indicator on right
@@ -363,6 +398,19 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
             } else {
                 String::new()
             }
+        }
+        9 => {
+            // Separator before pair link (only show if we have a pairing token)
+            if pairing_token.is_some() {
+                let line: String = std::iter::repeat('─').take(width as usize).collect();
+                format!("{}{}{}", fg(color::DARK_GRAY), line, RESET)
+            } else {
+                String::new()
+            }
+        }
+        10 => {
+            // "Pair another device" link (only show if we have a pairing token)
+            format_pair_link(pairing_token, width as usize).unwrap_or_default()
         }
         _ => String::new(),
     }

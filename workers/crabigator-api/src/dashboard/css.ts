@@ -666,6 +666,120 @@ export const dashboardCss = `
             position: relative;
         }
 
+        /* Settings button and popover */
+        .settings-container {
+            position: relative;
+        }
+        .settings-btn {
+            background: #21262d;
+            border: 1px solid #30363d;
+            padding: 6px 12px;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 12px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s ease;
+        }
+        .settings-btn:hover { background: #30363d; color: #c9d1d9; }
+        .settings-btn.active { background: #30363d; color: #c9d1d9; border-color: #58a6ff; }
+        .settings-btn svg { width: 14px; height: 14px; }
+        .settings-popover {
+            display: none;
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 16px;
+            min-width: 280px;
+            box-shadow: 0 16px 32px rgba(0,0,0,0.4);
+            z-index: 200;
+        }
+        .settings-popover.visible { display: block; }
+        .settings-section {
+            margin-bottom: 0;
+        }
+        .settings-section-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #c9d1d9;
+            margin-bottom: 6px;
+        }
+        .settings-description {
+            font-size: 11px;
+            color: #6e7681;
+            margin-bottom: 12px;
+            line-height: 1.4;
+        }
+        .settings-divider {
+            height: 1px;
+            background: #30363d;
+            margin: 16px 0;
+        }
+        .settings-action-btn {
+            width: 100%;
+            background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
+            border: none;
+            padding: 10px 16px;
+            color: #fff;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 8px;
+            transition: all 0.15s ease;
+        }
+        .settings-action-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+        .settings-action-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .settings-danger-btn {
+            width: 100%;
+            background: transparent;
+            border: 1px solid #f8514966;
+            padding: 8px 16px;
+            color: #f85149;
+            cursor: pointer;
+            font-size: 12px;
+            border-radius: 6px;
+            transition: all 0.15s ease;
+        }
+        .settings-danger-btn:hover { background: #f8514922; }
+        .invite-result {
+            margin-top: 12px;
+            padding: 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            display: none;
+        }
+        .invite-result.visible { display: block; }
+        .invite-code {
+            font-family: 'SF Mono', monospace;
+            font-size: 20px;
+            font-weight: 700;
+            color: #fbbf24;
+            text-align: center;
+            letter-spacing: 0.1em;
+            margin-bottom: 8px;
+        }
+        .invite-hint {
+            font-size: 10px;
+            color: #6e7681;
+            text-align: center;
+        }
+        .invite-link {
+            margin-top: 8px;
+            text-align: center;
+        }
+        .invite-link a {
+            font-size: 11px;
+            color: #58a6ff;
+            text-decoration: none;
+        }
+        .invite-link a:hover { text-decoration: underline; }
+
         /* Layout-based container styles (CSS columns for masonry) */
         .container[data-layout="1"] { column-count: 1; }
         .container[data-layout="2"] { column-count: 2; }

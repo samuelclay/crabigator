@@ -2,7 +2,7 @@ import { Router, jsonResponse } from './router';
 import type { Env } from './types/env';
 import { registerDevice, deviceHeartbeat, getLinkedDevices, revokeLinkedDevice } from './handlers/devices';
 import { createSession, getSession, updateSession, deleteSession } from './handlers/sessions';
-import { generatePairingToken, claimPairingToken, getPairingStatus } from './handlers/pairing';
+import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCodePage, generateInviteCode } from './handlers/pairing';
 import { requireDeviceAuth } from './auth/middleware';
 import { dashboardHtml } from './dashboard';
 
@@ -45,7 +45,11 @@ router.delete('/api/devices/linked/:mobile_id', revokeLinkedDevice);
 
 router.post('/api/pairing/generate', generatePairingToken);
 router.post('/api/pairing/claim', claimPairingToken);
+router.post('/api/pairing/invite', generateInviteCode);
 router.get('/api/pairing/:token/status', getPairingStatus);
+
+// Public pairing code page (no auth)
+router.get('/pair/:token', getPairingCodePage);
 
 // ============================================
 // Session endpoints

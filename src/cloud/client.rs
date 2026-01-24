@@ -624,6 +624,7 @@ impl CloudClient {
     }
 
     /// Poll pairing status to check if mobile device has claimed the token
+    #[allow(dead_code)]
     pub async fn poll_pairing_status(&self, token: &str) -> Result<PairingStatusResponse> {
         let url = format!("{}/pairing/{}/status", self.api_url, token);
         let headers = self.device.auth_headers("GET", &format!("/api/pairing/{}/status", token))?;
@@ -699,6 +700,7 @@ impl CloudClient {
 
 /// Response from POST /api/pairing/generate
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct PairingTokenResponse {
     pub token: String,
     pub expires_at: u64,
@@ -725,6 +727,7 @@ pub struct LinkedDevicesResponse {
 
 /// A linked mobile device
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct LinkedDevice {
     pub mobile_id: String,
     pub mobile_name: Option<String>,
