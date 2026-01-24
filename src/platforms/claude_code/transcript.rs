@@ -3,6 +3,7 @@
 //! Reads conversation history from Claude Code's transcript files,
 //! which are stored as JSONL in ~/.claude/projects/{project}/{session}.jsonl
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
@@ -25,7 +26,6 @@ enum ContentBlock {
     ToolUse {
         name: String,
         input: Value,
-        #[allow(dead_code)]
         #[serde(default)]
         id: String,
     },
@@ -34,6 +34,7 @@ enum ContentBlock {
         #[allow(dead_code)]
         #[serde(default)]
         tool_use_id: String,
+        #[allow(dead_code)]
         #[serde(default)]
         content: Value,
     },
@@ -45,9 +46,14 @@ enum ContentBlock {
 mod colors {
     pub const RESET: &str = "\x1b[0m";
     pub const BOLD: &str = "\x1b[1m";
-    pub const DIM: &str = "\x1b[2m";
     pub const CYAN: &str = "\x1b[36m";
     pub const GREEN: &str = "\x1b[32m";
+}
+
+/// Stored tool call info for pairing with results
+struct PendingToolUse {
+    name: String,
+    formatted: String,
 }
 
 /// Read and format transcript messages from a JSONL file.
@@ -69,6 +75,9 @@ pub fn read_transcript(path: &Path, offset: u64) -> std::io::Result<(String, u64
     let mut output = String::new();
     let mut current_pos = offset;
 
+    // Buffer tool calls to pair with their results
+    let mut pending_tools: HashMap<String, PendingToolUse> = HashMap::new();
+
     for line in reader.lines() {
         let line = line?;
         current_pos += line.len() as u64 + 1; // +1 for newline
@@ -88,33 +97,22 @@ pub fn read_transcript(path: &Path, offset: u64) -> std::io::Result<(String, u64
         match msg_type {
             "user" => {
                 if let Some(content) = entry.get("message").and_then(|m| m.get("content")) {
-                    // User prompts have string content, tool results have array content
                     if let Some(text) = content.as_str() {
+                        // User prompt (string content)
                         output.push_str(&format_user_message(text));
-                    } else if content.is_array() {
-                        // Tool results come as user messages with array content
-                        output.push_str(&format_assistant_message(content));
+                    } else if let Some(arr) = content.as_array() {
+                        // Tool results (array content) - pair with pending tool calls
+                        output.push_str(&format_tool_results(arr, &mut pending_tools));
                     }
                 }
             }
             "assistant" => {
                 if let Some(content) = entry.get("message").and_then(|m| m.get("content")) {
-                    output.push_str(&format_assistant_message(content));
-                }
-            }
-            "progress" => {
-                // Progress messages contain tool results in data.message.message.content
-                if let Some(content) = entry
-                    .get("data")
-                    .and_then(|d| d.get("message"))
-                    .and_then(|m| m.get("message"))
-                    .and_then(|m| m.get("content"))
-                {
-                    output.push_str(&format_assistant_message(content));
+                    output.push_str(&format_assistant_message(content, &mut pending_tools));
                 }
             }
             _ => {
-                // Skip other message types (file-history-snapshot, etc.)
+                // Skip other message types (file-history-snapshot, progress, etc.)
             }
         }
     }
@@ -136,8 +134,8 @@ fn format_user_message(content: &str) -> String {
     out
 }
 
-/// Format an assistant message, handling different content block types
-fn format_assistant_message(content: &Value) -> String {
+/// Format an assistant message, storing tool calls for later pairing
+fn format_assistant_message(content: &Value, pending_tools: &mut HashMap<String, PendingToolUse>) -> String {
     let mut out = String::new();
 
     let blocks: Vec<ContentBlock> = match content {
@@ -147,7 +145,7 @@ fn format_assistant_message(content: &Value) -> String {
             .collect(),
         Value::String(s) => {
             // Simple string content (older format)
-            out.push_str("\n");
+            out.push_str("\n● ");
             out.push_str(s.trim());
             out.push('\n');
             return out;
@@ -158,18 +156,21 @@ fn format_assistant_message(content: &Value) -> String {
     for block in blocks {
         match block {
             ContentBlock::Text { text } => {
-                out.push('\n');
+                // Assistant text gets white dot prefix
+                out.push_str("\n● ");
                 out.push_str(text.trim());
                 out.push('\n');
             }
-            ContentBlock::ToolUse { name, input, .. } => {
-                out.push_str(&format_tool_use(&name, &input));
+            ContentBlock::ToolUse { name, input, id } => {
+                // Store tool call for pairing with result
+                let formatted = format_tool_use(&name, &input);
+                pending_tools.insert(id, PendingToolUse {
+                    name,
+                    formatted,
+                });
             }
-            ContentBlock::ToolResult { content, .. } => {
-                out.push_str(&format_tool_result(&content));
-            }
-            ContentBlock::Thinking { .. } | ContentBlock::Other => {
-                // Skip thinking blocks and unknown types
+            ContentBlock::ToolResult { .. } | ContentBlock::Thinking { .. } | ContentBlock::Other => {
+                // Skip - results handled separately, thinking/other ignored
             }
         }
     }
@@ -177,7 +178,32 @@ fn format_assistant_message(content: &Value) -> String {
     out
 }
 
-/// Format a tool use block
+/// Format tool results, pairing with their corresponding tool calls
+fn format_tool_results(results: &[Value], pending_tools: &mut HashMap<String, PendingToolUse>) -> String {
+    let mut out = String::new();
+
+    for result in results {
+        let Some(tool_use_id) = result.get("tool_use_id").and_then(|id| id.as_str()) else {
+            continue;
+        };
+
+        // Get the matching tool call
+        let Some(tool) = pending_tools.remove(tool_use_id) else {
+            continue;
+        };
+
+        // Output the tool call header
+        out.push_str(&tool.formatted);
+
+        // Format the result summary
+        let content = result.get("content").cloned().unwrap_or(Value::Null);
+        out.push_str(&format_tool_result_summary(&tool.name, &content));
+    }
+
+    out
+}
+
+/// Format a tool use block header
 fn format_tool_use(name: &str, input: &Value) -> String {
     let mut out = String::new();
 
@@ -257,6 +283,65 @@ fn format_tool_use(name: &str, input: &Value) -> String {
     out
 }
 
+/// Format a tool result summary (e.g., "⎿  Read 177 lines")
+fn format_tool_result_summary(tool_name: &str, content: &Value) -> String {
+    // Extract text from tool result
+    let text = match content {
+        Value::String(s) => s.clone(),
+        Value::Array(arr) => {
+            arr.iter()
+                .filter_map(|v| {
+                    if v.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        v.get("text").and_then(|t| t.as_str()).map(String::from)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => String::new(),
+    };
+
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let line_count = text.lines().count();
+
+    // Format like Claude Code's terminal: "⎿  Read 177 lines" or "⎿  <short output>"
+    match tool_name {
+        "Read" => {
+            format!("  ⎿  Read {} lines\n", line_count)
+        }
+        "Grep" | "Glob" => {
+            if line_count == 1 && text.len() < 60 {
+                format!("  ⎿  {}\n", text.trim())
+            } else {
+                format!("  ⎿  {} matches\n", line_count)
+            }
+        }
+        "Bash" => {
+            if line_count == 1 && text.len() < 60 {
+                format!("  ⎿  {}\n", text.trim())
+            } else if line_count > 1 {
+                format!("  ⎿  {} lines\n", line_count)
+            } else {
+                String::new()
+            }
+        }
+        _ => {
+            if line_count == 1 && text.len() < 60 {
+                format!("  ⎿  {}\n", text.trim())
+            } else if line_count > 1 {
+                format!("  ⎿  {} lines\n", line_count)
+            } else {
+                String::new()
+            }
+        }
+    }
+}
+
 /// Format an edit diff showing removed and added lines
 fn format_edit_diff(old: &str, new: &str) -> String {
     let mut out = String::new();
@@ -265,7 +350,6 @@ fn format_edit_diff(old: &str, new: &str) -> String {
     let new_lines: Vec<&str> = new.lines().collect();
 
     // Simple diff: show removed lines then added lines
-    // Red for removed, green for added
     const RED: &str = "\x1b[31m";
     const GREEN: &str = "\x1b[32m";
 
@@ -283,44 +367,6 @@ fn format_edit_diff(old: &str, new: &str) -> String {
         }
     }
 
-    out
-}
-
-/// Format a tool result block
-fn format_tool_result(content: &Value) -> String {
-    let mut out = String::new();
-
-    // Extract text from tool result
-    let text = match content {
-        Value::String(s) => s.clone(),
-        Value::Array(arr) => {
-            // Tool results can be array of content blocks
-            arr.iter()
-                .filter_map(|v| {
-                    if v.get("type").and_then(|t| t.as_str()) == Some("text") {
-                        v.get("text").and_then(|t| t.as_str()).map(String::from)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
-        _ => return out,
-    };
-
-    if text.is_empty() {
-        return out;
-    }
-
-    // Show full result with dim white dot prefix to match terminal style
-    let lines: Vec<&str> = text.lines().collect();
-
-    out.push_str(&format!("{}  ● ", colors::DIM));
-    out.push_str(&lines.join(&format!("{}\n{}  ● ", colors::RESET, colors::DIM)));
-
-    out.push_str(colors::RESET);
-    out.push('\n');
     out
 }
 
