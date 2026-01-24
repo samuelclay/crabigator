@@ -154,6 +154,8 @@ export const eventsJs = `
                         updateFitLayout();
                         // Update status
                         document.getElementById('status').textContent = sessions.size + ' session(s)';
+                        // Check for version change immediately - likely a deploy
+                        checkVersionAndReload();
                     }
                     break;
                 case 'title_history':

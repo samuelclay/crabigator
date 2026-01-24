@@ -159,6 +159,11 @@ export const sseJs = `
                         document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
                         if (sessions.size === 0) {
                             container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                            // If all sessions gone and we had sessions before, likely a deploy
+                            if (hadSessionsBefore && !isDeploying) {
+                                showDeployOverlay();
+                                scheduleReconnect();
+                            }
                         }
                     }
                     break;
