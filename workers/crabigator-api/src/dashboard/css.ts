@@ -287,18 +287,29 @@ export const dashboardCss = `
             background: #0d1117;
             padding: 8px;
             overflow-y: auto;
-            overflow-x: auto;
+            overflow-x: hidden;
             font-family: 'SF Mono', 'Fira Code', 'Consolas', 'DejaVu Sans Mono', monospace;
             font-size: 12px;
             line-height: 1;
             transition: height 0.25s ease-out;
         }
         .terminal .line {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        /* Scroll mode (horizontal scroll instead of wrap) */
+        .terminal.scroll-mode {
+            overflow-x: auto;
+        }
+        .terminal.scroll-mode .line {
             white-space: pre;
+            max-width: none;
+            word-break: normal;
         }
         .terminal-scrollback {
-            display: none;  /* Hidden until scrollback content available */
-            color: #8b949e;  /* Slightly dimmed for history */
+            display: none;
+            opacity: 0.7;
+            text-align: left;
         }
         .terminal-scrollback.has-content {
             display: block;

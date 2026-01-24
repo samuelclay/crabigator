@@ -278,6 +278,11 @@ impl CaptureManager {
             return true;
         }
 
+        // Plan mode hint
+        if line.contains("plan mode") && line.contains("shift+tab") {
+            return true;
+        }
+
         // Token count (usually at end of status bar)
         // Match pattern like "140812 tokens" at the end
         if line.ends_with(" tokens") {

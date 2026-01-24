@@ -56,6 +56,13 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <button class="font-size-btn increase" onclick="adjustTerminalHeight(1)" title="Taller">+</button>
                     </div>
                 </div>
+                <div class="style-section">
+                    <div class="style-section-label">Text Wrap</div>
+                    <div class="style-options">
+                        <button class="style-option active" data-wrap="wrap" onclick="setTerminalWrap(true)">Wrap</button>
+                        <button class="style-option" data-wrap="scroll" onclick="setTerminalWrap(false)">Scroll</button>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="settings-container">

@@ -24,4 +24,7 @@ export const constantsJs = `
         const SCROLLBACK_CHUNK_SIZE = 1000;
 
         // Load more scrollback lines when user scrolls to top
+
+        // Terminal wrap mode (true = wrap text, false = horizontal scroll)
+        let terminalWrapEnabled = true;
 `;

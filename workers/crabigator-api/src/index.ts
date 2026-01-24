@@ -207,9 +207,10 @@ function generateClientId(): string {
 interface DashboardSettings {
     fontScaleIndex?: number;
     terminalHeightIndex?: number;
+    terminalWrapEnabled?: boolean;
 }
 
-const DEFAULT_SETTINGS: DashboardSettings = { fontScaleIndex: 3, terminalHeightIndex: 3 };
+const DEFAULT_SETTINGS: DashboardSettings = { fontScaleIndex: 3, terminalHeightIndex: 3, terminalWrapEnabled: true };
 
 router.get('/api/settings', async (request, env) => {
     const clientId = getClientId(request);
@@ -245,7 +246,10 @@ router.post('/api/settings', async (request, env) => {
             : existing?.fontScaleIndex ?? 3,
         terminalHeightIndex: typeof body.terminalHeightIndex === 'number'
             ? Math.max(0, Math.min(6, body.terminalHeightIndex))
-            : existing?.terminalHeightIndex ?? 3
+            : existing?.terminalHeightIndex ?? 3,
+        terminalWrapEnabled: typeof body.terminalWrapEnabled === 'boolean'
+            ? body.terminalWrapEnabled
+            : existing?.terminalWrapEnabled ?? true
     };
 
     await env.TOKENS.put(`settings:${clientId}`, JSON.stringify(settings), {

@@ -75,7 +75,8 @@ export const styleJs = `
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         fontScaleIndex: currentFontScaleIndex,
-                        terminalHeightIndex: currentHeightIndex
+                        terminalHeightIndex: currentHeightIndex,
+                        terminalWrapEnabled: terminalWrapEnabled
                     }),
                     credentials: 'same-origin'
                 });
@@ -95,10 +96,34 @@ export const styleJs = `
                     if (typeof data.terminalHeightIndex === 'number') {
                         currentHeightIndex = Math.max(0, Math.min(TERMINAL_HEIGHTS.length - 1, data.terminalHeightIndex));
                     }
+                    if (typeof data.terminalWrapEnabled === 'boolean') {
+                        terminalWrapEnabled = data.terminalWrapEnabled;
+                    }
                 }
             } catch {}
             applyFontScale();
             applyTerminalHeight();
+            applyTerminalWrap();
+        }
+
+        // Terminal wrap mode
+        function setTerminalWrap(enabled) {
+            terminalWrapEnabled = enabled;
+            applyTerminalWrap();
+            saveSettingsToServer();
+        }
+
+        function applyTerminalWrap() {
+            // Update button states
+            document.querySelectorAll('[data-wrap]').forEach(btn => {
+                const isWrap = btn.getAttribute('data-wrap') === 'wrap';
+                btn.classList.toggle('active', isWrap === terminalWrapEnabled);
+            });
+
+            // Toggle scroll-mode class on all terminals
+            document.querySelectorAll('.terminal').forEach(terminal => {
+                terminal.classList.toggle('scroll-mode', !terminalWrapEnabled);
+            });
         }
 
         // Style popover
