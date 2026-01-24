@@ -17,8 +17,23 @@ export const eventsJs = `
 
             eventSource.onmessage = (event) => {
                 try {
-                    console.log('SSE event for', sessionId, ':', event.data.substring(0, 100));
                     const data = JSON.parse(event.data);
+                    const shortId = sessionId.split('-')[0];
+                    const typeColors = {
+                        screen: '#8b5cf6',
+                        state: '#f59e0b',
+                        stats: '#10b981',
+                        git: '#3b82f6',
+                        changes: '#ec4899',
+                        scrollback: '#6b7280',
+                        scrollback_history: '#6b7280',
+                        title: '#06b6d4',
+                        title_history: '#06b6d4',
+                        desktop_status: '#ef4444',
+                        prompt: '#f97316',
+                    };
+                    const color = typeColors[data.type] || '#9ca3af';
+                    console.log('%c[' + shortId + '] ' + data.type, 'color:' + color + ';font-weight:bold', data);
                     handleSessionEvent(sessionId, data);
                 } catch (err) {
                     console.error('Failed to parse event:', err, event.data);
@@ -144,7 +159,6 @@ export const eventsJs = `
                     // Desktop connected/disconnected
                     if (!event.connected) {
                         // Desktop disconnected - remove session from view
-                        console.log('Desktop disconnected for session:', sessionId);
                         const session = sessions.get(sessionId);
                         if (session) {
                             session.eventSource?.close();

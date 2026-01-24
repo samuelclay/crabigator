@@ -75,14 +75,25 @@ export const sseJs = `
             };
         }
 
+        const sessionListColors = {
+            connected: '#10b981',
+            created: '#3b82f6',
+            updated: '#f59e0b',
+            deleted: '#ef4444',
+        };
+
         function handleSessionListEvent(event) {
             const container = document.getElementById('sessions');
+            const color = sessionListColors[event.type] || '#9ca3af';
+            const shortId = event.session?.id?.split('-')[0] || '';
+            const label = shortId ? '[' + shortId + '] ' + event.type : event.type;
+            console.log('%c' + label, 'color:' + color + ';font-weight:bold', event);
 
             switch (event.type) {
                 case 'connected':
                     // Check for version mismatch on reconnect (deploy detected)
                     if (serverVersion !== null && event.version && event.version !== serverVersion) {
-                        console.log('Version mismatch (' + serverVersion + ' -> ' + event.version + '), reloading for new code');
+                        console.log('%cversion mismatch', 'color:#ef4444', serverVersion, '->', event.version);
                         // Use cache-busting URL to ensure fresh HTML/JS/CSS
                         const url = new URL(location.href);
                         url.searchParams.set('v', event.version);
@@ -92,16 +103,12 @@ export const sseJs = `
                     // Store version on first connect
                     if (event.version) {
                         serverVersion = event.version;
-                        console.log('Dashboard version:', serverVersion);
                     }
-                    // Initial connection established - load full session list once
-                    console.log('SSE connected, loading initial session list');
                     loadSessions();
                     break;
 
                 case 'created':
                     // New session - add to view immediately at the top
-                    console.log('New session created:', event.session?.id);
                     if (event.session && !sessions.has(event.session.id)) {
                         const emptyState = container.querySelector('.no-sessions');
                         if (emptyState) emptyState.remove();
@@ -113,7 +120,6 @@ export const sseJs = `
 
                 case 'updated':
                     // Session updated - update header
-                    console.log('Session updated:', event.session?.id, event.session?.state);
                     if (event.session && event.session.id) {
                         updateSessionHeader(event.session);
                         // If session became inactive, remove it from view
@@ -141,7 +147,6 @@ export const sseJs = `
 
                 case 'deleted':
                     // Session deleted - remove from view
-                    console.log('Session deleted:', event.session?.id);
                     if (event.session && event.session.id) {
                         const session = sessions.get(event.session.id);
                         if (session) {
