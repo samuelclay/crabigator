@@ -290,14 +290,12 @@ export const dashboardCss = `
             overflow-x: hidden;
             font-family: 'SF Mono', 'Fira Code', 'Consolas', 'DejaVu Sans Mono', monospace;
             font-size: 12px;
-            line-height: 1.4;
+            line-height: 1;
             transition: height 0.25s ease-out;
         }
         .terminal .line {
             white-space: pre-wrap;
             word-wrap: break-word;
-            overflow-wrap: anywhere;
-            word-break: break-all;
         }
         .terminal-scrollback {
             display: none;  /* Hidden until scrollback content available */
