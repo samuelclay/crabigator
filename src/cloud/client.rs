@@ -493,12 +493,6 @@ impl CloudClient {
         self.viewer_active
     }
 
-    /// Check if there are active viewers watching
-    /// Note: Call poll_viewer_status() first to get latest updates
-    pub fn has_active_viewers(&self) -> bool {
-        self.viewer_active
-    }
-
     /// Drain queued events after reconnection
     fn drain_queue(&mut self) {
         if self.queue.is_empty() {

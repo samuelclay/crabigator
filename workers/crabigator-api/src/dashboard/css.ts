@@ -287,15 +287,14 @@ export const dashboardCss = `
             background: #0d1117;
             padding: 8px;
             overflow-y: auto;
-            overflow-x: hidden;
+            overflow-x: auto;
             font-family: 'SF Mono', 'Fira Code', 'Consolas', 'DejaVu Sans Mono', monospace;
             font-size: 12px;
             line-height: 1;
             transition: height 0.25s ease-out;
         }
         .terminal .line {
-            white-space: pre-wrap;
-            word-wrap: break-word;
+            white-space: pre;
         }
         .terminal-scrollback {
             display: none;  /* Hidden until scrollback content available */
@@ -328,9 +327,7 @@ export const dashboardCss = `
             gap: 1em;
         }
         .terminal .split-line > span:first-child {
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            overflow-wrap: anywhere;
+            white-space: pre;
             min-width: 0;
         }
         .terminal .split-line > span:last-child {
