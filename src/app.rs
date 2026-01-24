@@ -156,7 +156,13 @@ impl App {
             enabled: capture_enabled,
             session_id: session_id.clone(),
         };
-        let capture_manager = CaptureManager::new(capture_config, cols, pty_rows)?;
+        let mut capture_manager = CaptureManager::new(capture_config, cols, pty_rows)?;
+
+        // Try to find transcript path on startup (before hooks fire)
+        // This allows scrollback to appear immediately on resume
+        if let Some(transcript_path) = platform.find_transcript_path(&cwd_str) {
+            capture_manager.set_transcript_path(Some(transcript_path));
+        }
 
         // Initialize cloud client (optional - don't fail if cloud is unreachable)
         let cloud_client = Self::init_cloud_client(&session_id, &cwd_str, platform.as_ref()).await;
@@ -427,6 +433,12 @@ impl App {
                     .refresh_platform_stats(self.platform.as_ref(), &self.cwd.to_string_lossy());
                 let new_effective_state = self.session_stats.effective_state();
                 let new_last_updated = self.session_stats.platform_stats.last_updated;
+
+                // Update transcript path for scrollback capture
+                if let Some(ref path) = self.session_stats.platform_stats.transcript_path {
+                    self.capture_manager
+                        .set_transcript_path(Some(path.clone()));
+                }
 
                 // Redraw immediately if effective state changed (e.g., Thinking -> Complete, or Interrupted -> Thinking)
                 if old_effective_state != new_effective_state {

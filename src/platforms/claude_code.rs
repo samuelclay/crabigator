@@ -4,6 +4,7 @@
 //! for the Claude Code CLI.
 
 mod hook_script;
+pub mod transcript;
 
 use std::fs;
 use std::io::Write;
@@ -460,6 +461,36 @@ impl Platform for ClaudeCodePlatform {
     fn cleanup_stats(&self, cwd: &str) {
         let stats_path = Self::stats_file_path(cwd);
         let _ = fs::remove_file(stats_path);
+    }
+
+    fn find_transcript_path(&self, cwd: &str) -> Option<String> {
+        // Convert cwd to Claude project directory format: /path/to/project -> -path-to-project
+        let project_dir_name = cwd.replace('/', "-");
+        let projects_dir = self.claude_dir.join("projects").join(&project_dir_name);
+
+        if !projects_dir.exists() {
+            return None;
+        }
+
+        // Find all .jsonl files and sort by modification time (most recent first)
+        let mut jsonl_files: Vec<_> = fs::read_dir(&projects_dir)
+            .ok()?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry.path().extension().map(|ext| ext == "jsonl").unwrap_or(false)
+            })
+            .filter_map(|entry| {
+                let metadata = entry.metadata().ok()?;
+                let modified = metadata.modified().ok()?;
+                Some((entry.path(), modified))
+            })
+            .collect();
+
+        // Sort by modification time descending (most recent first)
+        jsonl_files.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Return the path of the most recently modified file
+        jsonl_files.first().map(|(path, _)| path.to_string_lossy().to_string())
     }
 }
 

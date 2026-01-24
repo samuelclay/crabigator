@@ -215,6 +215,9 @@ pub struct PlatformStats {
     /// Currently active prompt awaiting user response
     #[serde(default)]
     pub active_prompt: Option<ActivePrompt>,
+    /// Path to Claude Code transcript JSONL file
+    #[serde(default)]
+    pub transcript_path: Option<String>,
 }
 
 impl PlatformStats {
@@ -250,6 +253,12 @@ pub trait Platform {
 
     /// Clean up stats file on exit (default: no-op)
     fn cleanup_stats(&self, _cwd: &str) {}
+
+    /// Find the most recent transcript file for the given working directory.
+    /// Used to initialize scrollback on startup before hooks fire.
+    fn find_transcript_path(&self, _cwd: &str) -> Option<String> {
+        None
+    }
 }
 
 pub fn platform_for(kind: PlatformKind) -> Box<dyn Platform> {

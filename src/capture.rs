@@ -1,11 +1,11 @@
 //! Output capture for streaming-ready session recording.
 //!
-//! Captures assistant CLI PTY output to files:
-//! - `scrollback.log`: Session transcript with ANSI codes (append-only)
+//! Captures assistant CLI output to files:
+//! - `scrollback.log`: Session transcript from Claude Code JSONL (append-only)
 //! - `screen.txt`: Current screen snapshot with ANSI codes (rendered by vt100)
 //!
-//! Uses a vt100 parser matching PTY dimensions with large scrollback buffer.
-//! Content that scrolls off the visible area is captured to scrollback.log.
+//! Scrollback is read from Claude Code's transcript files (~/.claude/projects/...)
+//! which provides clean conversation history without status bar noise.
 
 use std::fs::{self, OpenOptions};
 #[cfg(debug_assertions)]
@@ -13,6 +13,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+use crate::platforms::claude_code::transcript;
 
 /// Maximum size for raw PTY log before rotation (50MB)
 #[cfg(debug_assertions)]
@@ -39,18 +41,20 @@ pub struct CaptureManager {
     config: CaptureConfig,
     /// Base directory: /tmp/crabigator-{session_id}/
     capture_dir: PathBuf,
-    /// vt100 parser matching PTY dimensions with large scrollback buffer
+    /// vt100 parser for screen capture (uses actual terminal dimensions)
     capture_parser: vt100::Parser,
     /// Last scrollback.log update time (for throttling)
     last_scrollback_update: Instant,
-    /// Scrollback update interval (scales with buffer size)
+    /// Scrollback update interval
     scrollback_update_interval: Duration,
     /// Last screen.txt update time (for throttling)
     last_screen_update: Instant,
     /// Screen update interval
     screen_update_interval: Duration,
-    /// Amount of scrollback content already written to file
-    last_scrollback_extracted: usize,
+    /// Path to Claude Code transcript JSONL file
+    transcript_path: Option<PathBuf>,
+    /// Byte offset into transcript file (for incremental reads)
+    transcript_offset: u64,
     /// Total line count in scrollback.log
     total_scrollback_lines: usize,
     /// Raw PTY output log file (debug builds only)
@@ -64,12 +68,11 @@ pub struct CaptureManager {
 impl CaptureManager {
     /// Create a new CaptureManager.
     ///
-    /// Uses a large virtual screen (10000 rows) so all content remains accessible.
-    /// Claude Code's status bar content is filtered out during extraction.
-    pub fn new(config: CaptureConfig, cols: u16, _rows: u16) -> std::io::Result<Self> {
-        // Use a very tall virtual screen (10000 rows) so content never scrolls off
-        // We filter out Claude Code's status bar during extraction
-        let capture_parser = vt100::Parser::new(10000, cols, 0);
+    /// Screen capture uses actual terminal dimensions.
+    /// Scrollback is read from Claude Code's transcript JSONL file.
+    pub fn new(config: CaptureConfig, cols: u16, rows: u16) -> std::io::Result<Self> {
+        // Use actual terminal dimensions for screen capture
+        let capture_parser = vt100::Parser::new(rows, cols, 0);
 
         if !config.enabled {
             return Ok(Self {
@@ -77,10 +80,11 @@ impl CaptureManager {
                 capture_dir: PathBuf::new(),
                 capture_parser,
                 last_scrollback_update: Instant::now(),
-                scrollback_update_interval: Duration::from_millis(100),
+                scrollback_update_interval: Duration::from_millis(500),
                 last_screen_update: Instant::now(),
                 screen_update_interval: Duration::from_millis(100),
-                last_scrollback_extracted: 0,
+                transcript_path: None,
+                transcript_offset: 0,
                 total_scrollback_lines: 0,
                 #[cfg(debug_assertions)]
                 raw_log: None,
@@ -114,10 +118,11 @@ impl CaptureManager {
             capture_dir,
             capture_parser,
             last_scrollback_update: Instant::now() - Duration::from_secs(10),
-            scrollback_update_interval: Duration::from_millis(100),
+            scrollback_update_interval: Duration::from_millis(500),
             last_screen_update: Instant::now() - Duration::from_secs(10),
             screen_update_interval: Duration::from_millis(100),
-            last_scrollback_extracted: 0,
+            transcript_path: None,
+            transcript_offset: 0,
             total_scrollback_lines: 0,
             #[cfg(debug_assertions)]
             raw_log,
@@ -126,10 +131,29 @@ impl CaptureManager {
         })
     }
 
-    /// Resize the capture parser width to match PTY.
-    /// Height stays at 10000 to keep all content accessible.
-    pub fn resize(&mut self, cols: u16, _rows: u16) {
-        self.capture_parser.set_size(10000, cols);
+    /// Resize the capture parser to match PTY dimensions.
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        self.capture_parser.set_size(rows, cols);
+    }
+
+    /// Set the transcript file path for scrollback reading.
+    /// Called when we receive transcript_path from platform stats or on startup.
+    pub fn set_transcript_path(&mut self, path: Option<String>) {
+        if let Some(p) = path {
+            let path_buf = PathBuf::from(&p);
+            // Only update if path changed
+            if self.transcript_path.as_ref() != Some(&path_buf) {
+                self.transcript_path = Some(path_buf);
+                // Reset offset when switching to a different file
+                self.transcript_offset = 0;
+                self.total_scrollback_lines = 0;
+                // Clear scrollback.log to avoid mixing content from different sessions
+                if self.config.enabled {
+                    let scrollback_path = self.capture_dir.join("scrollback.log");
+                    let _ = fs::write(&scrollback_path, "");
+                }
+            }
+        }
     }
 
     /// Process PTY output bytes through our capture parser.
@@ -189,63 +213,37 @@ impl CaptureManager {
         self.update_scrollback()
     }
 
-    /// Append new rows to scrollback.log (incremental update).
+    /// Append new content to scrollback.log from Claude Code transcript.
     ///
-    /// Extracts rows from the capture parser, filtering out Claude Code's
-    /// status bar content (context percentage, edit hints, path, token count).
+    /// Reads incrementally from the JSONL transcript file, which contains
+    /// clean conversation history without status bar noise.
     pub fn update_scrollback(&mut self) -> std::io::Result<Option<ScrollbackUpdate>> {
         if !self.config.enabled {
             return Ok(None);
         }
 
-        let screen = self.capture_parser.screen();
-        let (_, cols) = screen.size();
-        let (cursor_row, _) = screen.cursor_position();
+        let Some(ref transcript_path) = self.transcript_path else {
+            // No transcript path yet - nothing to read
+            self.last_scrollback_update = Instant::now();
+            return Ok(None);
+        };
 
-        // Skip if no new rows to write
-        if cursor_row as usize <= self.last_scrollback_extracted && self.last_scrollback_extracted > 0 {
+        if !transcript_path.exists() {
             self.last_scrollback_update = Instant::now();
             return Ok(None);
         }
 
-        let start_row = self.last_scrollback_extracted;
-        let end_row = cursor_row as usize + 1;
+        // Read new content from transcript
+        let (new_content, new_offset) =
+            transcript::read_transcript(transcript_path, self.transcript_offset)?;
 
-        // Build the new content with ANSI codes for color preservation
-        // Filter out Claude Code's status bar content and collapse empty lines
-        let mut content: Vec<u8> = Vec::new();
-        let mut consecutive_empty = 0u8;
-        let mut lines_extracted = 0usize;
-
-        for row_bytes in screen.rows_formatted(0, cols).skip(start_row).take(end_row - start_row) {
-            let row_str = String::from_utf8_lossy(&row_bytes);
-            let trimmed = row_str.trim_end();
-
-            // Skip Claude Code status bar lines
-            if Self::is_status_bar_line(trimmed) {
-                continue;
-            }
-
-            if trimmed.is_empty() {
-                consecutive_empty += 1;
-                // Allow at most one blank line (paragraph break)
-                if consecutive_empty <= 1 {
-                    content.push(b'\n');
-                    lines_extracted += 1;
-                }
-            } else {
-                consecutive_empty = 0;
-                content.extend_from_slice(trimmed.as_bytes());
-                content.extend_from_slice(b"\x1b[0m"); // Reset to prevent color leakage
-                content.push(b'\n');
-                lines_extracted += 1;
-            }
-        }
-
-        if content.is_empty() {
+        if new_content.is_empty() {
             self.last_scrollback_update = Instant::now();
             return Ok(None);
         }
+
+        // Count lines in new content
+        let lines_added = new_content.lines().count();
 
         // Append to scrollback file
         let scrollback_path = self.capture_dir.join("scrollback.log");
@@ -253,81 +251,23 @@ impl CaptureManager {
             .create(true)
             .append(true)
             .open(&scrollback_path)?;
-        file.write_all(&content)?;
+        file.write_all(new_content.as_bytes())?;
 
-        self.last_scrollback_extracted = cursor_row as usize;
-        self.total_scrollback_lines += lines_extracted;
+        self.transcript_offset = new_offset;
+        self.total_scrollback_lines += lines_added;
         self.last_scrollback_update = Instant::now();
 
         Ok(Some(ScrollbackUpdate {
-            diff: String::from_utf8_lossy(&content).to_string(),
+            diff: new_content,
             total_lines: self.total_scrollback_lines,
         }))
-    }
-
-    /// Check if a line is part of Claude Code's status bar UI.
-    ///
-    /// These lines are redrawn frequently and should not be captured
-    /// in the scrollback transcript.
-    fn is_status_bar_line(line: &str) -> bool {
-        // Context percentage indicator
-        if line.contains("Context left until auto-compact:") {
-            return true;
-        }
-
-        // Edit mode hint with file counts
-        if line.contains("accept edits on") && line.contains("shift+tab") {
-            return true;
-        }
-
-        // Plan mode hint
-        if line.contains("plan mode") && line.contains("shift+tab") {
-            return true;
-        }
-
-        // Token count (usually at end of status bar)
-        // Match pattern like "140812 tokens" at the end
-        if line.ends_with(" tokens") {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2 {
-                if let Some(second_last) = parts.get(parts.len() - 2) {
-                    if second_last.chars().all(|c| c.is_ascii_digit()) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        // MCP server status
-        if line.contains("MCP server") && (line.contains("needs auth") || line.contains("/mcp")) {
-            return true;
-        }
-
-        // Path with git branch - match "~/path ‹branch›" or "~/path ‹branch*›"
-        // These appear as part of Claude Code's prompt/status area
-        if line.contains('‹') && line.contains('›') && line.starts_with("  ~/") {
-            return true;
-        }
-
-        // Horizontal separator lines (all same character repeated)
-        let chars: Vec<char> = line.chars().collect();
-        if chars.len() > 50 {
-            let first = chars[0];
-            if first == '─' || first == '━' || first == '-' || first == '=' {
-                if chars.iter().all(|&c| c == first) {
-                    return true;
-                }
-            }
-        }
-
-        false
     }
 
     /// Get the full scrollback content accumulated so far.
     /// Used for initial sync when connecting to cloud.
     ///
-    /// Reads from the scrollback.log file which contains all content
-    /// that has scrolled off the visible area.
+    /// Reads from the scrollback.log file which contains formatted
+    /// conversation history from Claude Code's transcript.
     pub fn get_full_scrollback(&self) -> Option<String> {
         if !self.config.enabled {
             return None;
@@ -343,6 +283,7 @@ impl CaptureManager {
             _ => None,
         }
     }
+
 
     /// Update screen.txt if the throttle interval has elapsed.
     pub fn maybe_update_screen(&mut self, screen: &vt100::Screen) -> std::io::Result<Option<String>> {

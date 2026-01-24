@@ -153,8 +153,12 @@ def main():
     stats_file = get_stats_file(cwd)
     stats = load_stats(stats_file)
 
-    # Extract model from transcript if not already known
+    # Store transcript path for scrollback reading
     transcript_path = data.get("transcript_path")
+    if transcript_path:
+        stats["transcript_path"] = transcript_path
+
+    # Extract model from transcript if not already known
     if transcript_path and not stats.get("model"):
         model = extract_model_from_transcript(transcript_path)
         if model:
