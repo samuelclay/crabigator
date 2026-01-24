@@ -6,6 +6,15 @@ import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCo
 import { requireDeviceAuth } from './auth/middleware';
 import { dashboardHtml } from './dashboard';
 
+// Build version - generated lazily on first request, stable for lifetime of this worker instance
+let buildVersion: string | null = null;
+function getBuildVersion(): string {
+    if (!buildVersion) {
+        buildVersion = crypto.randomUUID().slice(0, 8);
+    }
+    return buildVersion;
+}
+
 // Re-export Durable Objects
 export { SessionDO } from './durable-objects/SessionDO';
 export { SessionListDO } from './durable-objects/SessionListDO';
@@ -18,7 +27,11 @@ const router = new Router();
 
 router.get('/dashboard', async () => {
     return new Response(dashboardHtml, {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-cache, must-revalidate',
+            'ETag': getBuildVersion()
+        }
     });
 });
 
@@ -74,6 +87,7 @@ router.get('/api/sessions/stream', async (request, env) => {
     const stub = env.SESSION_LIST.get(doId);
     const url = new URL(request.url);
     url.pathname = '/subscribe';
+    url.searchParams.set('version', getBuildVersion());
     return stub.fetch(new Request(url.toString(), request));
 });
 
@@ -271,7 +285,7 @@ router.post('/api/settings', async (request, env) => {
 // ============================================
 
 router.get('/api/health', async () => {
-    return jsonResponse({ status: 'ok', version: '0.1.0' });
+    return jsonResponse({ status: 'ok', version: '0.1.0', build: getBuildVersion() });
 });
 
 // ============================================

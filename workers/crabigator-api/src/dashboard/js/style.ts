@@ -296,13 +296,15 @@ export const styleJs = `
                     </div>
                 </div>
                 <div class="project-sessions">
-                    <div class="project-sessions-inner"></div>
+                    <div class="project-sessions-inner">
+                        <div class="project-sessions-content"></div>
+                    </div>
                 </div>
             \`;
 
-            const sessionsInner = group.querySelector('.project-sessions-inner');
+            const sessionsContent = group.querySelector('.project-sessions-content');
             sessionCards.forEach(({ card }) => {
-                sessionsInner.appendChild(card);
+                sessionsContent.appendChild(card);
             });
 
             // Set initial fit columns for this group
@@ -329,8 +331,8 @@ export const styleJs = `
             const group = document.querySelector(\`.project-group[data-project="\${CSS.escape(cwd)}"]\`);
             if (!group) return;
 
-            const sessionsInner = group.querySelector('.project-sessions-inner');
-            const count = sessionsInner ? sessionsInner.querySelectorAll('.session-card').length : 0;
+            const sessionsContent = group.querySelector('.project-sessions-content');
+            const count = sessionsContent ? sessionsContent.querySelectorAll('.session-card').length : 0;
             const countEl = group.querySelector('.project-count');
             if (countEl) {
                 countEl.textContent = count + ' session' + (count !== 1 ? 's' : '');
@@ -346,18 +348,22 @@ export const styleJs = `
         }
 
         function updateProjectFitColumns(group, count) {
-            const sessionsInner = group.querySelector('.project-sessions-inner');
-            if (!sessionsInner) return;
+            const sessionsContent = group.querySelector('.project-sessions-content');
+            if (!sessionsContent) return;
 
-            // Calculate columns based on this group's session count
-            const cols = Math.max(Math.ceil(Math.sqrt(count || 1)), 1);
-            sessionsInner.style.setProperty('--group-fit-columns', cols);
+            // Calculate columns based on available width
+            const containerWidth = document.getElementById('sessions').offsetWidth || window.innerWidth - 32;
+            const minCardWidth = 450;  // Minimum comfortable card width
+            const maxCols = Math.max(Math.floor(containerWidth / minCardWidth), 1);
+            // Don't use more columns than we have sessions in this group
+            const cols = Math.min(maxCols, count || 1);
+            sessionsContent.style.setProperty('--group-fit-columns', cols);
         }
 
         function updateAllProjectFitColumns() {
             document.querySelectorAll('.project-group').forEach(group => {
-                const sessionsInner = group.querySelector('.project-sessions-inner');
-                const count = sessionsInner ? sessionsInner.querySelectorAll('.session-card').length : 0;
+                const sessionsContent = group.querySelector('.project-sessions-content');
+                const count = sessionsContent ? sessionsContent.querySelectorAll('.session-card').length : 0;
                 updateProjectFitColumns(group, count);
             });
         }

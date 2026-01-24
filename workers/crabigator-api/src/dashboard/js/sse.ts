@@ -5,6 +5,7 @@ export const sseJs = `
         let pollingInterval = null;
         let emptyPollDelay = 2000;  // Start at 2s when no sessions
         let emptyPollTimeout = null;
+        let serverVersion = null;  // Track server version for deploy detection
         const MAX_SSE_RETRIES = 3;
         const MIN_EMPTY_POLL_DELAY = 2000;   // 2 seconds
         const MAX_EMPTY_POLL_DELAY = 30000;  // 30 seconds
@@ -79,6 +80,20 @@ export const sseJs = `
 
             switch (event.type) {
                 case 'connected':
+                    // Check for version mismatch on reconnect (deploy detected)
+                    if (serverVersion !== null && event.version && event.version !== serverVersion) {
+                        console.log('Version mismatch (' + serverVersion + ' -> ' + event.version + '), reloading for new code');
+                        // Use cache-busting URL to ensure fresh HTML/JS/CSS
+                        const url = new URL(location.href);
+                        url.searchParams.set('v', event.version);
+                        location.href = url.toString();
+                        return;
+                    }
+                    // Store version on first connect
+                    if (event.version) {
+                        serverVersion = event.version;
+                        console.log('Dashboard version:', serverVersion);
+                    }
                     // Initial connection established - load full session list once
                     console.log('SSE connected, loading initial session list');
                     loadSessions();

@@ -10,6 +10,7 @@ mod ide;
 mod inspect;
 mod mirror;
 mod mode;
+mod pair;
 mod parsers;
 mod platforms;
 mod screen_parser;
@@ -120,6 +121,9 @@ async fn main() -> Result<()> {
             history,
         } => {
             return inspect::run_inspect(dir_filter, watch, raw, history);
+        }
+        Command::Pair => {
+            return pair::run_pair().await;
         }
         Command::Run => {}
     }

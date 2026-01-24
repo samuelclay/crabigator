@@ -222,11 +222,11 @@ export const sessionJs = `
                         container.appendChild(group);
                     }
                 }
-                const sessionsInner = group.querySelector('.project-sessions-inner');
-                if (insertAtTop && sessionsInner.firstChild) {
-                    sessionsInner.insertBefore(card, sessionsInner.firstChild);
+                const sessionsContent = group.querySelector('.project-sessions-content');
+                if (insertAtTop && sessionsContent.firstChild) {
+                    sessionsContent.insertBefore(card, sessionsContent.firstChild);
                 } else {
-                    sessionsInner.appendChild(card);
+                    sessionsContent.appendChild(card);
                 }
                 updateProjectGroupCount(session.cwd);
             } else {

@@ -25,6 +25,8 @@ pub enum Command {
         /// Show hook event history for debugging
         history: bool,
     },
+    /// Generate a pairing code for Chrome MCP auto-login
+    Pair,
 }
 
 /// Parsed command-line arguments
@@ -93,6 +95,11 @@ pub fn parse_args() -> Args {
             "resume" | "r" => {
                 iter.next(); // consume the subcommand
                 args.platform_args.push("--resume".to_string());
+            }
+            "pair" => {
+                iter.next(); // consume "pair"
+                args.command = Command::Pair;
+                return args;
             }
             _ => {}
         }

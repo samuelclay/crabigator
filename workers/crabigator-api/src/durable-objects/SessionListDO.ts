@@ -74,7 +74,7 @@ export class SessionListDO implements DurableObject {
 
         switch (url.pathname) {
             case '/subscribe':
-                return this.handleSubscribe();
+                return this.handleSubscribe(request);
             case '/notify':
                 return this.handleNotify(request);
             case '/sessions':
@@ -93,14 +93,17 @@ export class SessionListDO implements DurableObject {
     /**
      * Handle SSE subscription from dashboard
      */
-    private handleSubscribe(): Response {
+    private handleSubscribe(request: Request): Response {
+        const url = new URL(request.url);
+        const version = url.searchParams.get('version') || 'unknown';
+
         const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
         const writer = writable.getWriter();
 
         this.sseClients.add(writer);
 
-        // Send initial connected event
-        this.sendSSE(writer, { type: 'connected', clients: this.sseClients.size });
+        // Send initial connected event with build version
+        this.sendSSE(writer, { type: 'connected', clients: this.sseClients.size, version });
 
         return new Response(readable, {
             headers: {

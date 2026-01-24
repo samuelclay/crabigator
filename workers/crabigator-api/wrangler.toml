@@ -44,7 +44,7 @@ pattern = "drinkcrabigator.com/api/*"
 zone_name = "drinkcrabigator.com"
 
 [[routes]]
-pattern = "drinkcrabigator.com/dashboard"
+pattern = "drinkcrabigator.com/dashboard*"
 zone_name = "drinkcrabigator.com"
 
 [[routes]]

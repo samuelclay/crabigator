@@ -977,6 +977,9 @@ export const dashboardCss = `
             width: 100%;
             height: 100%;
         }
+        .pairing-icon.spinning svg {
+            animation: spin 1s linear infinite;
+        }
         .pairing-card h2 {
             font-size: 24px;
             font-weight: 600;
@@ -1062,19 +1065,22 @@ export const dashboardCss = `
             column-count: 1 !important;
         }
         .project-group {
-            margin-bottom: 0;
+            margin-bottom: 16px;
             break-inside: avoid;
         }
+        .project-group:last-child {
+            margin-bottom: 0;
+        }
         /* Apply column layout within each project group */
-        .container[data-grouping="project"][data-layout="2"] .project-sessions-inner {
+        .container[data-grouping="project"][data-layout="2"] .project-sessions-content {
             column-count: 2;
             column-gap: 16px;
         }
-        .container[data-grouping="project"][data-layout="3"] .project-sessions-inner {
+        .container[data-grouping="project"][data-layout="3"] .project-sessions-content {
             column-count: 3;
             column-gap: 16px;
         }
-        .container[data-grouping="project"][data-layout="fit"] .project-sessions-inner {
+        .container[data-grouping="project"][data-layout="fit"] .project-sessions-content {
             column-count: var(--group-fit-columns, 1);
             column-gap: 16px;
         }
@@ -1092,6 +1098,10 @@ export const dashboardCss = `
         .container[data-grouping="project"][data-layout="fit"] .project-sessions-inner {
             border-left: none;
             margin-left: 0;
+        }
+        .container[data-grouping="project"][data-layout="2"] .project-sessions-content,
+        .container[data-grouping="project"][data-layout="3"] .project-sessions-content,
+        .container[data-grouping="project"][data-layout="fit"] .project-sessions-content {
             padding: 16px;
             padding-top: 8px;
         }
@@ -1173,7 +1183,7 @@ export const dashboardCss = `
         .project-sessions {
             display: grid;
             grid-template-rows: 1fr;
-            transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: grid-template-rows 0.35s cubic-bezier(0.4, 0, 0.2, 1);
             overflow: hidden;
         }
         .project-sessions-inner {
@@ -1182,6 +1192,9 @@ export const dashboardCss = `
         }
         .project-group.collapsed .project-sessions {
             grid-template-rows: 0fr;
+        }
+        .project-group.collapsed .project-sessions-inner {
+            min-height: 0;
         }
         /* Hide individual session cwd when grouped (shown in project header) */
         .container[data-grouping="project"] .session-card .cwd {
@@ -1198,14 +1211,15 @@ export const dashboardCss = `
         .container[data-grouping="project"] .session-card:first-child {
             border-top: none;
         }
-        /* Add subtle left border accent for visual grouping */
-        .container[data-grouping="project"] .project-sessions-inner {
-            border-left: 3px solid #30363d;
+        /* Add subtle left border accent for visual grouping (single column mode) */
+        .container[data-grouping="project"][data-layout="1"] .project-sessions-content {
+            border-left: 3px solid #238636;
             margin-left: 8px;
             background: #0d1117;
+            transition: border-color 0.2s ease;
         }
-        .project-group:not(.collapsed) .project-sessions-inner {
-            border-left-color: #238636;
+        .container[data-grouping="project"][data-layout="1"] .project-group.collapsed .project-sessions-content {
+            border-left-color: #30363d;
         }
 
         /* Mobile adjustments for project groups */
@@ -1224,7 +1238,7 @@ export const dashboardCss = `
                 font-size: 10px;
                 padding: 2px 6px;
             }
-            .container[data-grouping="project"] .project-sessions-inner {
+            .container[data-grouping="project"][data-layout="1"] .project-sessions-content {
                 margin-left: 4px;
                 border-left-width: 2px;
             }

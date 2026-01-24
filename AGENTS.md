@@ -232,6 +232,27 @@ The accessibility snapshot shows the dashboard structure including:
 
 You can view your own running session on the dashboard - the screen preview will show the conversation you're currently having, creating a recursive view of yourself.
 
+### Chrome MCP Auto-Login
+
+The Chrome MCP controls an isolated Chrome instance without cookies. To authenticate:
+
+1. Generate a pairing code:
+   ```bash
+   crabigator pair    # Outputs: ABC-DEF-GHI
+   ```
+
+2. Open Chrome with the setup URL (via Chrome MCP or manually):
+   ```
+   https://drinkcrabigator.com/dashboard?setup=ABC-DEF-GHI
+   ```
+
+The dashboard auto-claims the code and authenticates. The code expires in 5 minutes.
+
+**Example Claude workflow:**
+1. Run `crabigator pair` to get the code
+2. Use `mcp__chrome-devtools__navigate_page` to open dashboard with `?setup=<code>`
+3. Dashboard authenticates automatically
+
 ### Troubleshooting
 
 - **"Extension not connected"**: User needs to click PlayWriter icon in Chrome

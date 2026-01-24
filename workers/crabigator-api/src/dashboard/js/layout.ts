@@ -11,10 +11,14 @@ export const layoutJs = `
                 btn.classList.toggle('active', btn.dataset.layout === layout);
             });
 
-            // For 'fit' mode, calculate columns based on session count
+            // For 'fit' mode, calculate columns based on available width
             if (layout === 'fit') {
                 const count = sessions.size || 1;
-                const cols = Math.max(Math.ceil(Math.sqrt(count)), 1);
+                const containerWidth = container.offsetWidth || window.innerWidth - 32;
+                const minCardWidth = 450;  // Minimum comfortable card width
+                const maxCols = Math.max(Math.floor(containerWidth / minCardWidth), 1);
+                // Don't use more columns than we have sessions
+                const cols = Math.min(maxCols, count);
                 container.style.columnCount = cols;
                 // Update per-group fit columns for project grouping mode
                 if (typeof updateAllProjectFitColumns === 'function') {
@@ -44,5 +48,14 @@ export const layoutJs = `
                 setLayout('fit');
             }
         }
+
+        // Recalculate fit layout on window resize
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            if (currentLayout === 'fit') {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(() => setLayout('fit'), 100);
+            }
+        });
 
 `;
