@@ -14,8 +14,12 @@ export const layoutJs = `
             // For 'fit' mode, calculate columns based on session count
             if (layout === 'fit') {
                 const count = sessions.size || 1;
-                const cols = Math.ceil(Math.sqrt(count));
-                container.style.columnCount = Math.max(cols, 1);
+                const cols = Math.max(Math.ceil(Math.sqrt(count)), 1);
+                container.style.columnCount = cols;
+                // Update per-group fit columns for project grouping mode
+                if (typeof updateAllProjectFitColumns === 'function') {
+                    updateAllProjectFitColumns();
+                }
             } else {
                 container.style.columnCount = '';
             }

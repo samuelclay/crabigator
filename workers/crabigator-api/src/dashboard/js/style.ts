@@ -220,6 +220,9 @@ export const styleJs = `
         function rerenderSessions() {
             const container = document.getElementById('sessions');
 
+            // Don't re-render if not paired (preserve pairing gate)
+            if (!isPaired) return;
+
             if (groupingMode === 'project') {
                 // Group sessions by cwd
                 const groups = new Map();
@@ -284,19 +287,26 @@ export const styleJs = `
             const projectName = cwd.split('/').pop() || cwd;
 
             group.innerHTML = \`
-                <div class="project-header" onclick="toggleProjectGroup('\${escapeHtml(cwd)}')">
-                    <button class="project-collapse-btn">▼</button>
-                    <span class="project-name">\${escapeHtml(projectName)}</span>
-                    <span class="project-path">\${escapeHtml(cwd)}</span>
-                    <span class="project-count">\${sessionCards.length} session\${sessionCards.length !== 1 ? 's' : ''}</span>
+                <div class="project-separator" onclick="toggleProjectGroup('\${escapeHtml(cwd)}')">
+                    <div class="project-separator-content">
+                        <span class="project-collapse-icon">▼</span>
+                        <span class="project-name">\${escapeHtml(projectName)}</span>
+                        <span class="project-path">\${escapeHtml(cwd)}</span>
+                        <span class="project-count">\${sessionCards.length} session\${sessionCards.length !== 1 ? 's' : ''}</span>
+                    </div>
                 </div>
-                <div class="project-sessions"></div>
+                <div class="project-sessions">
+                    <div class="project-sessions-inner"></div>
+                </div>
             \`;
 
-            const sessionsContainer = group.querySelector('.project-sessions');
+            const sessionsInner = group.querySelector('.project-sessions-inner');
             sessionCards.forEach(({ card }) => {
-                sessionsContainer.appendChild(card);
+                sessionsInner.appendChild(card);
             });
+
+            // Set initial fit columns for this group
+            updateProjectFitColumns(group, sessionCards.length);
 
             return group;
         }
@@ -319,16 +329,37 @@ export const styleJs = `
             const group = document.querySelector(\`.project-group[data-project="\${CSS.escape(cwd)}"]\`);
             if (!group) return;
 
-            const count = group.querySelectorAll('.session-card').length;
+            const sessionsInner = group.querySelector('.project-sessions-inner');
+            const count = sessionsInner ? sessionsInner.querySelectorAll('.session-card').length : 0;
             const countEl = group.querySelector('.project-count');
             if (countEl) {
                 countEl.textContent = count + ' session' + (count !== 1 ? 's' : '');
             }
 
+            // Update fit columns for this group
+            updateProjectFitColumns(group, count);
+
             // Remove empty groups
             if (count === 0) {
                 group.remove();
             }
+        }
+
+        function updateProjectFitColumns(group, count) {
+            const sessionsInner = group.querySelector('.project-sessions-inner');
+            if (!sessionsInner) return;
+
+            // Calculate columns based on this group's session count
+            const cols = Math.max(Math.ceil(Math.sqrt(count || 1)), 1);
+            sessionsInner.style.setProperty('--group-fit-columns', cols);
+        }
+
+        function updateAllProjectFitColumns() {
+            document.querySelectorAll('.project-group').forEach(group => {
+                const sessionsInner = group.querySelector('.project-sessions-inner');
+                const count = sessionsInner ? sessionsInner.querySelectorAll('.session-card').length : 0;
+                updateProjectFitColumns(group, count);
+            });
         }
 
         // Settings popover

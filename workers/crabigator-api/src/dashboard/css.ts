@@ -1057,91 +1057,176 @@ export const dashboardCss = `
         }
 
         /* Project grouping */
+        /* When grouped by project, disable columns on container - apply to inner groups instead */
+        .container[data-grouping="project"] {
+            column-count: 1 !important;
+        }
         .project-group {
+            margin-bottom: 0;
+            break-inside: avoid;
+        }
+        /* Apply column layout within each project group */
+        .container[data-grouping="project"][data-layout="2"] .project-sessions-inner {
+            column-count: 2;
+            column-gap: 16px;
+        }
+        .container[data-grouping="project"][data-layout="3"] .project-sessions-inner {
+            column-count: 3;
+            column-gap: 16px;
+        }
+        .container[data-grouping="project"][data-layout="fit"] .project-sessions-inner {
+            column-count: var(--group-fit-columns, 1);
+            column-gap: 16px;
+        }
+        /* When columns active in project mode, restore card styling */
+        .container[data-grouping="project"][data-layout="2"] .session-card,
+        .container[data-grouping="project"][data-layout="3"] .session-card,
+        .container[data-grouping="project"][data-layout="fit"] .session-card {
+            border: 1px solid #30363d;
+            border-radius: 8px;
             margin-bottom: 16px;
             break-inside: avoid;
         }
-        .project-header {
+        .container[data-grouping="project"][data-layout="2"] .project-sessions-inner,
+        .container[data-grouping="project"][data-layout="3"] .project-sessions-inner,
+        .container[data-grouping="project"][data-layout="fit"] .project-sessions-inner {
+            border-left: none;
+            margin-left: 0;
+            padding: 16px;
+            padding-top: 8px;
+        }
+        /* Project separator - the tappable divider between groups */
+        .project-separator {
             display: flex;
             align-items: center;
-            gap: 8px;
-            padding: 10px 14px;
-            background: #21262d;
-            border: 1px solid #30363d;
-            border-radius: 8px;
+            gap: 12px;
+            padding: 14px 20px;
+            background: linear-gradient(180deg, #0d1117 0%, #161b22 50%, #0d1117 100%);
             cursor: pointer;
-            margin-bottom: 8px;
             user-select: none;
-            transition: background 0.15s ease;
+            transition: all 0.2s ease;
+            border-top: 1px solid #21262d;
+            border-bottom: 1px solid #21262d;
+            margin: 0;
+            position: relative;
         }
-        .project-header:hover {
-            background: #30363d;
+        .project-separator::before,
+        .project-separator::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, #30363d 20%, #30363d 80%, transparent);
         }
-        .project-collapse-btn {
-            background: none;
-            border: none;
-            color: #8b949e;
-            cursor: pointer;
-            padding: 0;
-            font-size: 12px;
-            transition: transform 0.2s ease;
+        .project-separator:hover {
+            background: linear-gradient(180deg, #161b22 0%, #21262d 50%, #161b22 100%);
+        }
+        .project-separator:active {
+            background: linear-gradient(180deg, #1c2128 0%, #30363d 50%, #1c2128 100%);
+        }
+        .project-separator-content {
+            display: flex;
+            align-items: center;
+            gap: 10px;
             flex-shrink: 0;
         }
-        .project-group.collapsed .project-collapse-btn {
+        .project-collapse-icon {
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #6e7681;
+            font-size: 10px;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            background: #21262d;
+            border-radius: 4px;
+            border: 1px solid #30363d;
+        }
+        .project-group.collapsed .project-collapse-icon {
             transform: rotate(-90deg);
         }
         .project-name {
             font-weight: 600;
             color: #58a6ff;
-            font-size: 14px;
+            font-size: 13px;
             flex-shrink: 0;
         }
         .project-path {
             font-family: 'SF Mono', monospace;
             font-size: 11px;
-            color: #6e7681;
+            color: #484f58;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-            flex: 1;
-            min-width: 0;
+            max-width: 300px;
         }
         .project-count {
-            color: #8b949e;
-            font-size: 12px;
+            color: #6e7681;
+            font-size: 11px;
             flex-shrink: 0;
+            background: #21262d;
+            padding: 2px 8px;
+            border-radius: 10px;
+            border: 1px solid #30363d;
         }
+        /* Animated sessions container */
         .project-sessions {
-            display: flex;
-            flex-direction: column;
-            gap: 0;
+            display: grid;
+            grid-template-rows: 1fr;
+            transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            overflow: hidden;
+        }
+        .project-sessions-inner {
+            min-height: 0;
+            overflow: hidden;
         }
         .project-group.collapsed .project-sessions {
-            display: none;
+            grid-template-rows: 0fr;
         }
         /* Hide individual session cwd when grouped (shown in project header) */
         .container[data-grouping="project"] .session-card .cwd {
             display: none;
         }
-        /* In grouped mode, remove card margin since group provides spacing */
+        /* In grouped mode, cards inside group */
         .container[data-grouping="project"] .session-card {
-            margin-bottom: 8px;
-        }
-        .container[data-grouping="project"] .project-sessions .session-card:last-child {
             margin-bottom: 0;
+            border-radius: 0;
+            border-left: none;
+            border-right: none;
+            border-bottom: none;
+        }
+        .container[data-grouping="project"] .session-card:first-child {
+            border-top: none;
+        }
+        /* Add subtle left border accent for visual grouping */
+        .container[data-grouping="project"] .project-sessions-inner {
+            border-left: 3px solid #30363d;
+            margin-left: 8px;
+            background: #0d1117;
+        }
+        .project-group:not(.collapsed) .project-sessions-inner {
+            border-left-color: #238636;
         }
 
         /* Mobile adjustments for project groups */
         @media (max-width: 768px) {
-            .project-header {
-                padding: 8px 10px;
-                gap: 6px;
+            .project-separator {
+                padding: 12px 14px;
+                gap: 8px;
             }
             .project-name {
-                font-size: 13px;
+                font-size: 12px;
             }
             .project-path {
                 display: none;  /* Hide full path on mobile */
+            }
+            .project-count {
+                font-size: 10px;
+                padding: 2px 6px;
+            }
+            .container[data-grouping="project"] .project-sessions-inner {
+                margin-left: 4px;
+                border-left-width: 2px;
             }
         }
 `;
