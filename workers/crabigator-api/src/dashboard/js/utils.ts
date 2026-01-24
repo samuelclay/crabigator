@@ -10,4 +10,8 @@ export const utilsJs = `
             return hours + 'h ' + (mins % 60) + 'm';
         }
 
+        function sessionCount(n) {
+            return n + (n === 1 ? ' session' : ' sessions');
+        }
+
 `;

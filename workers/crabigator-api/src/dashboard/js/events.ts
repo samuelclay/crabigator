@@ -153,7 +153,7 @@ export const eventsJs = `
                         card.remove();
                         updateFitLayout();
                         // Update status
-                        document.getElementById('status').textContent = sessions.size + ' session(s)';
+                        document.getElementById('status').textContent = sessionCount(sessions.size);
                         // Check for version change immediately - likely a deploy
                         checkVersionAndReload();
                     }

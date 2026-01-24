@@ -6,8 +6,7 @@ export const sessionJs = `
                 if (!resp.ok) throw new Error('Failed to fetch sessions');
                 const data = await resp.json();
 
-                document.getElementById('status').textContent =
-                    data.sessions.length + ' session(s)';
+                document.getElementById('status').textContent = sessionCount(data.sessions.length);
 
                 const container = document.getElementById('sessions');
 

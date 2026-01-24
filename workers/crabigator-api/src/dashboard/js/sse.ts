@@ -32,7 +32,7 @@ export const sseJs = `
                     emptyPollTimeout = null;
                 }
                 emptyPollDelay = MIN_EMPTY_POLL_DELAY;
-                document.getElementById('status').textContent = 'Connected (real-time)';
+                document.getElementById('status').textContent = 'Connected';
             };
 
             sessionListSource.onmessage = (event) => {
@@ -62,7 +62,7 @@ export const sseJs = `
                     if (sseRetryCount >= MAX_SSE_RETRIES) {
                         // Fall back to polling after too many SSE failures
                         console.log('SSE failed, falling back to polling');
-                        document.getElementById('status').textContent = sessions.size + ' session(s) (polling)';
+                        document.getElementById('status').textContent = sessionCount(sessions.size);
                         if (!pollingInterval) {
                             pollingInterval = setInterval(loadSessions, 10000);
                         }
@@ -107,7 +107,7 @@ export const sseJs = `
                         if (emptyState) emptyState.remove();
                         createSessionCard(event.session, true);
                         connectToSession(event.session.id);
-                        document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
+                        document.getElementById('status').textContent = sessionCount(sessions.size);
                     }
                     break;
 
@@ -130,7 +130,7 @@ export const sseJs = `
                                     updateProjectGroupCount(cwd);
                                 }
                                 updateFitLayout();
-                                document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
+                                document.getElementById('status').textContent = sessionCount(sessions.size);
                                 if (sessions.size === 0) {
                                     container.innerHTML = '<div class="no-sessions">No active sessions</div>';
                                 }
@@ -156,7 +156,7 @@ export const sseJs = `
                             updateProjectGroupCount(cwd);
                         }
                         updateFitLayout();
-                        document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
+                        document.getElementById('status').textContent = sessionCount(sessions.size);
                         if (sessions.size === 0) {
                             container.innerHTML = '<div class="no-sessions">No active sessions</div>';
                             // If all sessions gone and we had sessions before, likely a deploy
