@@ -112,6 +112,7 @@ pub fn draw_stats_widget(
     area: WidgetArea,
     stats: &SessionStats,
     cloud_status: Option<&CloudStatus>,
+    is_paired: bool,
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
 
@@ -120,9 +121,9 @@ pub fn draw_stats_widget(
     let compact = area.height <= 5;
 
     let content = if compact {
-        draw_compact_row(area.row, area.width, stats, cloud_status)
+        draw_compact_row(area.row, area.width, stats, cloud_status, is_paired)
     } else {
-        draw_normal_row(area.row, area.width, stats, cloud_status)
+        draw_normal_row(area.row, area.width, stats, cloud_status, is_paired)
     };
 
     write!(stdout, "{}", content)?;
@@ -134,10 +135,14 @@ pub fn draw_stats_widget(
 }
 
 /// Format cloud status as header text
-fn format_cloud_header(cloud_status: Option<&CloudStatus>) -> String {
+fn format_cloud_header(cloud_status: Option<&CloudStatus>, is_paired: bool) -> String {
     match cloud_status {
         Some(status) if status.connected => {
-            format!("{} Live{}", fg(color::GREEN), RESET)
+            if is_paired {
+                format!("{} Streaming{}", fg(color::GREEN), RESET)
+            } else {
+                format!("{} Waiting to pair{}", fg(color::YELLOW), RESET)
+            }
         }
         Some(status) if status.reconnect_attempts > 0 => {
             format!("{} Retry{}", fg(color::ORANGE), RESET)
@@ -152,14 +157,14 @@ fn format_cloud_header(cloud_status: Option<&CloudStatus>) -> String {
 }
 
 /// Draw a row in compact mode (two-column layout with separator)
-fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>) -> String {
+fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool) -> String {
     // Split width into two columns with a separator
     let half = (width as usize) / 2;
 
     match row {
         1 => {
             // Header: cloud status on left, state indicator on right
-            let header = format_cloud_header(cloud_status);
+            let header = format_cloud_header(cloud_status, is_paired);
             let state = format_state_indicator(stats.effective_state());
             let header_len = strip_ansi_len(&header);
             let state_len = strip_ansi_len(&state);
@@ -253,11 +258,11 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
 }
 
 /// Draw a row in normal mode (full labels, single column)
-fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>) -> String {
+fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool) -> String {
     match row {
         1 => {
             // Header: cloud status on left, state indicator on right
-            let header = format_cloud_header(cloud_status);
+            let header = format_cloud_header(cloud_status, is_paired);
             let state = format_state_indicator(stats.effective_state());
             let header_len = strip_ansi_len(&header);
             let state_len = strip_ansi_len(&state);

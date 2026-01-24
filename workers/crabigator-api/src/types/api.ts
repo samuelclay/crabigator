@@ -27,6 +27,7 @@ export interface GeneratePairingTokenResponse {
     token: string;
     expires_at: number;
     qr_data: string;        // Full QR code data string
+    code: string;           // Human-readable pairing code (AAA-BBB-CCC)
 }
 
 export interface ClaimPairingTokenRequest {

@@ -16,6 +16,7 @@ import { changesWidgetJs } from './changes-widget';
 import { eventsJs } from './events';
 import { promptJs } from './prompt';
 import { sseJs } from './sse';
+import { pairingJs } from './pairing';
 import { initJs } from './init';
 
 export const dashboardJs = [
@@ -36,5 +37,6 @@ export const dashboardJs = [
     eventsJs,
     promptJs,
     sseJs,
+    pairingJs,
     initJs
 ].join('\n');

@@ -1,8 +1,16 @@
 // Dashboard JavaScript - init
 export const initJs = `
-        // Initial load and connect to SSE for real-time updates
+        // Initial load
         setLayout(currentLayout);  // Apply saved layout preference
         loadSettingsFromServer();  // Load style preferences
-        loadSessions();
-        connectSessionListStream();
+
+        // Check pairing status - if not paired, show pairing gate
+        if (!checkPairingStatus()) {
+            showPairingGate();
+            document.getElementById('status').textContent = 'Not paired';
+        } else {
+            // Paired - load sessions normally
+            loadSessions();
+            connectSessionListStream();
+        }
 `;

@@ -135,6 +135,21 @@ impl CloudClient {
         self.session_id.as_deref()
     }
 
+    /// Get the device identity (for pairing)
+    pub fn device(&self) -> &DeviceIdentity {
+        &self.device
+    }
+
+    /// Get the HTTP client (for pairing)
+    pub fn http_client(&self) -> &HttpClient {
+        &self.http
+    }
+
+    /// Get the API URL (for pairing)
+    pub fn api_url(&self) -> &str {
+        &self.api_url
+    }
+
     /// Check if connected to cloud
     pub fn is_connected(&self) -> bool {
         self.ws_handle.as_ref().map(|h| h.is_alive()).unwrap_or(false)
@@ -580,4 +595,138 @@ impl CloudClient {
 
         Ok(())
     }
+
+    // ========================================
+    // Pairing API Methods
+    // ========================================
+
+    /// Generate a pairing token for mobile device linking
+    pub async fn generate_pairing_token(&self) -> Result<PairingTokenResponse> {
+        let url = format!("{}/pairing/generate", self.api_url);
+        let headers = self.device.auth_headers("POST", "/api/pairing/generate")?;
+
+        let mut req = self.http.post(&url);
+        for (key, value) in headers {
+            req = req.header(&key, &value);
+        }
+
+        let response = req.send().await
+            .with_context(|| "Failed to generate pairing token")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to generate pairing token: {} - {}", status, body);
+        }
+
+        let data: PairingTokenResponse = response.json().await?;
+        Ok(data)
+    }
+
+    /// Poll pairing status to check if mobile device has claimed the token
+    pub async fn poll_pairing_status(&self, token: &str) -> Result<PairingStatusResponse> {
+        let url = format!("{}/pairing/{}/status", self.api_url, token);
+        let headers = self.device.auth_headers("GET", &format!("/api/pairing/{}/status", token))?;
+
+        let mut req = self.http.get(&url);
+        for (key, value) in headers {
+            req = req.header(&key, &value);
+        }
+
+        let response = req.send().await
+            .with_context(|| "Failed to poll pairing status")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to poll pairing status: {} - {}", status, body);
+        }
+
+        let data: PairingStatusResponse = response.json().await?;
+        Ok(data)
+    }
+
+    /// Get list of linked mobile devices
+    pub async fn get_linked_devices(&self) -> Result<LinkedDevicesResponse> {
+        let url = format!("{}/devices/linked", self.api_url);
+        let headers = self.device.auth_headers("GET", "/api/devices/linked")?;
+
+        let mut req = self.http.get(&url);
+        for (key, value) in headers {
+            req = req.header(&key, &value);
+        }
+
+        let response = req.send().await
+            .with_context(|| "Failed to get linked devices")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to get linked devices: {} - {}", status, body);
+        }
+
+        let data: LinkedDevicesResponse = response.json().await?;
+        Ok(data)
+    }
+
+    /// Revoke a linked mobile device
+    #[allow(dead_code)]
+    pub async fn revoke_linked_device(&self, mobile_id: &str) -> Result<()> {
+        let url = format!("{}/devices/linked/{}", self.api_url, mobile_id);
+        let headers = self.device.auth_headers("DELETE", &format!("/api/devices/linked/{}", mobile_id))?;
+
+        let mut req = self.http.delete(&url);
+        for (key, value) in headers {
+            req = req.header(&key, &value);
+        }
+
+        let response = req.send().await
+            .with_context(|| "Failed to revoke linked device")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to revoke linked device: {} - {}", status, body);
+        }
+
+        Ok(())
+    }
+}
+
+// ========================================
+// Pairing Response Types
+// ========================================
+
+/// Response from POST /api/pairing/generate
+#[derive(Debug, Deserialize)]
+pub struct PairingTokenResponse {
+    pub token: String,
+    pub expires_at: u64,
+    pub qr_data: String,
+    pub code: String,
+}
+
+/// Response from GET /api/pairing/{token}/status
+#[derive(Debug, Deserialize)]
+pub struct PairingStatusResponse {
+    /// Whether pairing is complete
+    pub paired: bool,
+    /// Name of the mobile device (if paired)
+    pub mobile_name: Option<String>,
+    /// Whether the token has expired
+    pub expired: bool,
+}
+
+/// Response from GET /api/devices/linked
+#[derive(Debug, Deserialize)]
+pub struct LinkedDevicesResponse {
+    pub devices: Vec<LinkedDevice>,
+}
+
+/// A linked mobile device
+#[derive(Debug, Deserialize)]
+pub struct LinkedDevice {
+    pub mobile_id: String,
+    pub mobile_name: Option<String>,
+    pub paired_at: u64,
 }

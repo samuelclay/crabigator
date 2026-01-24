@@ -765,4 +765,105 @@ export const dashboardCss = `
         .prompt-other button:hover {
             background: #2ea043;
         }
+
+        /* Pairing gate styles */
+        .pairing-gate {
+            width: 100%;
+            max-width: 400px;
+        }
+        .pairing-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 32px;
+            text-align: center;
+        }
+        .pairing-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 24px;
+            color: #58a6ff;
+        }
+        .pairing-icon svg {
+            width: 100%;
+            height: 100%;
+        }
+        .pairing-card h2 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #c9d1d9;
+        }
+        .pairing-description {
+            color: #8b949e;
+            font-size: 14px;
+            line-height: 1.5;
+            margin-bottom: 24px;
+        }
+        .pairing-form {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .pairing-form input {
+            flex: 1;
+            min-width: 0;
+            padding: 12px 16px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            color: #c9d1d9;
+            font-size: 18px;
+            font-family: monospace;
+            text-align: center;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        .pairing-form input:focus {
+            outline: none;
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
+        }
+        .pairing-form input::placeholder {
+            color: #484f58;
+            letter-spacing: 2px;
+        }
+        .pairing-form button {
+            flex-shrink: 0;
+            padding: 12px 24px;
+            background: #238636;
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+        .pairing-form button:hover {
+            background: #2ea043;
+        }
+        .pairing-form button:disabled {
+            background: #21262d;
+            color: #8b949e;
+            cursor: not-allowed;
+        }
+        .pairing-error {
+            color: #f85149;
+            font-size: 13px;
+            min-height: 20px;
+            margin-bottom: 16px;
+        }
+        .pairing-help {
+            color: #8b949e;
+            font-size: 12px;
+        }
+        .pairing-help code {
+            background: #21262d;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #c9d1d9;
+        }
 `;

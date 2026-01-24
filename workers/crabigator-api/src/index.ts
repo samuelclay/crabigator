@@ -1,7 +1,8 @@
 import { Router, jsonResponse } from './router';
 import type { Env } from './types/env';
-import { registerDevice, deviceHeartbeat } from './handlers/devices';
+import { registerDevice, deviceHeartbeat, getLinkedDevices, revokeLinkedDevice } from './handlers/devices';
 import { createSession, getSession, updateSession, deleteSession } from './handlers/sessions';
+import { generatePairingToken, claimPairingToken, getPairingStatus } from './handlers/pairing';
 import { requireDeviceAuth } from './auth/middleware';
 import { dashboardHtml } from './dashboard';
 
@@ -35,6 +36,16 @@ router.get('/', async () => {
 
 router.post('/api/devices', registerDevice);
 router.post('/api/devices/heartbeat', deviceHeartbeat);
+router.get('/api/devices/linked', getLinkedDevices);
+router.delete('/api/devices/linked/:mobile_id', revokeLinkedDevice);
+
+// ============================================
+// Pairing endpoints
+// ============================================
+
+router.post('/api/pairing/generate', generatePairingToken);
+router.post('/api/pairing/claim', claimPairingToken);
+router.get('/api/pairing/:token/status', getPairingStatus);
 
 // ============================================
 // Session endpoints

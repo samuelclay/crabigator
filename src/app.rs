@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use crate::capture::{CaptureConfig, CaptureManager, ScrollbackUpdate};
-use crate::cloud::{CloudClient, SessionEventBuilder};
+use crate::cloud::{CloudClient, PairingStatusResponse, SessionEventBuilder};
 use crate::config::Config;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
@@ -22,7 +22,7 @@ use crate::platforms::{Platform, SessionState};
 use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
 use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, RedrawScanner};
-use crate::ui::{draw_status_bar, Layout};
+use crate::ui::{draw_status_bar, Layout, PairingState};
 
 /// Result from background git refresh
 struct GitRefreshResult {
@@ -86,6 +86,12 @@ pub struct App {
     cloud_stats_sent: bool,
     /// Whether we've sent a prompt event (to track clearing)
     last_cloud_prompt_sent: bool,
+    /// Pairing state for mobile device linking
+    pairing_state: PairingState,
+    /// Last time we polled pairing status
+    last_pairing_poll: Instant,
+    /// Pending pairing poll result
+    pending_pairing_poll: Option<std::sync::mpsc::Receiver<anyhow::Result<PairingStatusResponse>>>,
 }
 
 impl App {
@@ -174,6 +180,9 @@ impl App {
             last_cloud_title: None,
             cloud_stats_sent: false,
             last_cloud_prompt_sent: false,
+            pairing_state: PairingState::default(),
+            last_pairing_poll: Instant::now(),
+            pending_pairing_poll: None,
         })
     }
 
@@ -269,6 +278,9 @@ impl App {
 
         // Initial status bar draw (shows "loading" state for git widgets)
         self.draw_status_bar()?;
+
+        // Initialize pairing state (check for linked devices, generate token if needed)
+        self.init_pairing().await;
 
         // Channel for receiving background git refresh results
         let (git_tx, mut git_rx) = mpsc::channel::<GitRefreshResult>(1);
@@ -421,6 +433,9 @@ impl App {
 
             // Check for commands from cloud (answers + key sequences)
             self.check_cloud_commands()?;
+
+            // Poll pairing status if waiting for mobile pairing
+            self.maybe_poll_pairing();
 
             // Send full scrollback after cloud (re)connects
             self.maybe_send_initial_scrollback();
@@ -645,6 +660,7 @@ impl App {
             self.ide,
             &self.cwd,
             cloud_status.as_ref(),
+            &self.pairing_state,
         )?;
 
         // Publish mirror state (throttled, only when --profile)
@@ -898,6 +914,137 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    // ========================================
+    // Pairing Methods
+    // ========================================
+
+    /// Initialize pairing state on startup
+    /// Checks for existing linked devices and generates pairing token if needed
+    async fn init_pairing(&mut self) {
+        let Some(ref client) = self.cloud_client else {
+            return;
+        };
+
+        // Check if we have any linked devices
+        match client.get_linked_devices().await {
+            Ok(response) => {
+                if !response.devices.is_empty() {
+                    self.pairing_state.has_linked_devices = true;
+                    return;
+                }
+            }
+            Err(_) => {
+                // If the endpoint doesn't exist yet (404), continue with pairing
+                // Once server-side is implemented, this will work
+            }
+        }
+
+        // No linked devices - generate a pairing token
+        match client.generate_pairing_token().await {
+            Ok(response) => {
+                self.pairing_state.pairing_token = Some(response.token);
+                self.pairing_state.pairing_code = Some(response.code);
+                self.pairing_state.qr_data = Some(response.qr_data);
+            }
+            Err(_) => {
+                // Server-side pairing endpoints not implemented yet
+                // Silently fail - pairing widget won't show
+            }
+        }
+    }
+
+    /// Poll pairing status periodically (non-blocking)
+    fn maybe_poll_pairing(&mut self) {
+        // Only poll if we have a pairing token and no linked devices
+        if self.pairing_state.has_linked_devices || self.pairing_state.pairing_token.is_none() {
+            return;
+        }
+
+        // Clear expired toast
+        self.pairing_state.maybe_clear_toast();
+
+        // Check for pending poll result
+        if let Some(ref rx) = self.pending_pairing_poll {
+            match rx.try_recv() {
+                Ok(Ok(response)) => {
+                    if response.paired {
+                        // Pairing complete!
+                        let device_name = response.mobile_name.unwrap_or_else(|| "device".to_string());
+                        self.pairing_state.set_just_paired(device_name);
+                    } else if response.expired {
+                        // Token expired - need to regenerate
+                        // This will be handled on next poll cycle
+                        self.pairing_state.pairing_token = None;
+                        self.pairing_state.pairing_code = None;
+                        self.pairing_state.qr_data = None;
+                    }
+                    self.pending_pairing_poll = None;
+                }
+                Ok(Err(_)) => {
+                    // Poll failed - ignore and retry
+                    self.pending_pairing_poll = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Still polling
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.pending_pairing_poll = None;
+                }
+            }
+        }
+
+        // Poll every 2 seconds
+        if self.last_pairing_poll.elapsed() < Duration::from_secs(2) {
+            return;
+        }
+        self.last_pairing_poll = Instant::now();
+
+        // Start async poll
+        let Some(ref token) = self.pairing_state.pairing_token else {
+            return;
+        };
+        let Some(ref client) = self.cloud_client else {
+            return;
+        };
+
+        // Clone what we need for the async task
+        let token = token.clone();
+        let http = client.http_client().clone();
+        let api_url = client.api_url().to_string();
+        let device = client.device().clone();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pending_pairing_poll = Some(rx);
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+
+            let result = rt.block_on(async {
+                let url = format!("{}/pairing/{}/status", api_url, token);
+                let headers = device.auth_headers("GET", &format!("/api/pairing/{}/status", token))?;
+
+                let mut req = http.get(&url);
+                for (key, value) in headers {
+                    req = req.header(&key, &value);
+                }
+
+                let response = req.send().await?;
+                if !response.status().is_success() {
+                    anyhow::bail!("Poll failed");
+                }
+
+                let data: PairingStatusResponse = response.json().await?;
+                Ok(data)
+            });
+
+            let _ = tx.send(result);
+        });
     }
 }
 

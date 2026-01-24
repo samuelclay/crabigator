@@ -1,5 +1,5 @@
 import type { Env } from '../types/env';
-import type { RegisterDeviceRequest, RegisterDeviceResponse, HeartbeatResponse } from '../types/api';
+import type { RegisterDeviceRequest, RegisterDeviceResponse, HeartbeatResponse, LinkedDevice } from '../types/api';
 import { jsonResponse } from '../router';
 import { requireDeviceAuth } from '../auth/middleware';
 
@@ -88,4 +88,85 @@ export async function deviceHeartbeat(
         last_seen_at: Math.floor(Date.now() / 1000),
     };
     return jsonResponse(response);
+}
+
+/**
+ * GET /api/devices/linked - List linked mobile devices
+ * Requires device auth
+ */
+export async function getLinkedDevices(
+    request: Request,
+    env: Env
+): Promise<Response> {
+    const authResult = await requireDeviceAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { device_id } = authResult.auth;
+
+    // Get all linked devices for this desktop
+    const results = await env.DB.prepare(`
+        SELECT mobile_id, mobile_name, paired_at
+        FROM linked_devices
+        WHERE desktop_id = ? AND revoked_at IS NULL
+        ORDER BY paired_at DESC
+    `).bind(device_id).all<{ mobile_id: string; mobile_name: string | null; paired_at: number }>();
+
+    const devices: LinkedDevice[] = results.results.map(row => ({
+        mobile_id: row.mobile_id,
+        mobile_name: row.mobile_name,
+        paired_at: row.paired_at,
+    }));
+
+    return jsonResponse({ devices });
+}
+
+/**
+ * DELETE /api/devices/linked/:mobile_id - Revoke a linked mobile device
+ * Requires device auth
+ */
+export async function revokeLinkedDevice(
+    request: Request,
+    env: Env,
+    params: Record<string, string>
+): Promise<Response> {
+    const authResult = await requireDeviceAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { device_id } = authResult.auth;
+    const mobile_id = params.mobile_id;
+
+    if (!mobile_id) {
+        return new Response(
+            JSON.stringify({ error: 'Mobile ID required', code: 'MISSING_MOBILE_ID' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+
+    // Get the linked device record to find the token hash
+    const link = await env.DB.prepare(`
+        SELECT id, mobile_token_hash
+        FROM linked_devices
+        WHERE desktop_id = ? AND mobile_id = ? AND revoked_at IS NULL
+    `).bind(device_id, mobile_id).first<{ id: string; mobile_token_hash: string }>();
+
+    if (!link) {
+        return new Response(
+            JSON.stringify({ error: 'Linked device not found', code: 'NOT_FOUND' }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+
+    // Mark as revoked
+    await env.DB.prepare(`
+        UPDATE linked_devices SET revoked_at = ? WHERE id = ?
+    `).bind(now, link.id).run();
+
+    // Delete the mobile token from KV
+    await env.TOKENS.delete(`mobile:${link.mobile_token_hash}`);
+
+    return jsonResponse({ ok: true });
 }

@@ -12,5 +12,5 @@ mod events;
 mod queue;
 mod websocket;
 
-pub use client::{CloudClient, CloudStatus};
+pub use client::{CloudClient, CloudStatus, LinkedDevice, LinkedDevicesResponse, PairingStatusResponse, PairingTokenResponse};
 pub use events::{PromptOption, SessionEventBuilder};
