@@ -87,12 +87,14 @@ pub fn read_transcript(path: &Path, offset: u64) -> std::io::Result<(String, u64
 
         match msg_type {
             "user" => {
-                if let Some(content) = entry
-                    .get("message")
-                    .and_then(|m| m.get("content"))
-                    .and_then(|c| c.as_str())
-                {
-                    output.push_str(&format_user_message(content));
+                if let Some(content) = entry.get("message").and_then(|m| m.get("content")) {
+                    // User prompts have string content, tool results have array content
+                    if let Some(text) = content.as_str() {
+                        output.push_str(&format_user_message(text));
+                    } else if content.is_array() {
+                        // Tool results come as user messages with array content
+                        output.push_str(&format_assistant_message(content));
+                    }
                 }
             }
             "assistant" => {
