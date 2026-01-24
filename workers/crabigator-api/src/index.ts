@@ -179,6 +179,17 @@ router.get('/api/sessions/:id/state', async (request, env, params) => {
     return stub.fetch(new Request(url.toString(), request));
 });
 
+// Notify session that a viewer is active (heartbeat from dashboard/phone)
+// This allows the desktop to optimize streaming when no one is watching
+router.post('/api/sessions/:id/viewer-active', async (request, env, params) => {
+    const sessionId = params.id;
+    const doId = env.SESSION.idFromName(sessionId);
+    const stub = env.SESSION.get(doId);
+    const url = new URL(request.url);
+    url.pathname = '/viewer-active';
+    return stub.fetch(new Request(url.toString(), request));
+});
+
 // ============================================
 // Dashboard settings (stored per client via cookie)
 // ============================================

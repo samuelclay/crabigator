@@ -85,6 +85,9 @@ pub struct CloudClient {
     pending_reconnect: Option<std::sync::mpsc::Receiver<anyhow::Result<WebSocketHandle>>>,
     /// Flag set when a (re)connection just succeeded - cleared after reading
     just_connected: bool,
+    /// Whether there are active viewers watching via dashboard/phone
+    /// When false, desktop can reduce streaming frequency to save costs
+    viewer_active: bool,
 }
 
 impl CloudClient {
@@ -113,6 +116,7 @@ impl CloudClient {
             reconnect_attempts: 0,
             pending_reconnect: None,
             just_connected: false,
+            viewer_active: false, // Assume no viewers initially, will be notified when one connects
         })
     }
 
@@ -475,6 +479,24 @@ impl CloudClient {
     /// Try to receive a key command from cloud (non-blocking)
     pub fn try_recv_key(&mut self) -> Option<String> {
         self.ws_handle.as_mut()?.try_recv_key()
+    }
+
+    /// Poll for viewer status changes and update internal state
+    /// Returns true if there are active viewers watching
+    pub fn poll_viewer_status(&mut self) -> bool {
+        // Check for any status updates from the cloud
+        if let Some(handle) = self.ws_handle.as_mut() {
+            while let Some(active) = handle.try_recv_viewer_status() {
+                self.viewer_active = active;
+            }
+        }
+        self.viewer_active
+    }
+
+    /// Check if there are active viewers watching
+    /// Note: Call poll_viewer_status() first to get latest updates
+    pub fn has_active_viewers(&self) -> bool {
+        self.viewer_active
     }
 
     /// Drain queued events after reconnection

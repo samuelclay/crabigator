@@ -92,6 +92,12 @@ pub struct App {
     last_pairing_poll: Instant,
     /// Pending pairing poll result
     pending_pairing_poll: Option<std::sync::mpsc::Receiver<anyhow::Result<PairingStatusResponse>>>,
+    /// Whether there are active viewers watching via dashboard/phone
+    /// When false, we reduce screen send frequency to save DO costs
+    cloud_viewers_active: bool,
+    /// Last time we sent a screen event when no viewers are active
+    /// Used to throttle to 1s intervals instead of 100ms
+    last_reduced_screen_send: Instant,
 }
 
 impl App {
@@ -183,6 +189,8 @@ impl App {
             pairing_state: PairingState::default(),
             last_pairing_poll: Instant::now(),
             pending_pairing_poll: None,
+            cloud_viewers_active: false,
+            last_reduced_screen_send: Instant::now(),
         })
     }
 
@@ -434,6 +442,11 @@ impl App {
             // Check for commands from cloud (answers + key sequences)
             self.check_cloud_commands()?;
 
+            // Poll viewer status from cloud to optimize screen streaming
+            if let Some(ref mut client) = self.cloud_client {
+                self.cloud_viewers_active = client.poll_viewer_status();
+            }
+
             // Poll pairing status if waiting for mobile pairing
             self.maybe_poll_pairing();
 
@@ -482,7 +495,22 @@ impl App {
                         }
                     }
 
-                    self.send_cloud_screen_event(screen);
+                    // Optimize screen streaming based on viewer activity:
+                    // - When viewers are active: send immediately (full real-time experience)
+                    // - When no viewers: throttle to 1s intervals (reduces DO costs)
+                    let should_send_screen = if self.cloud_viewers_active {
+                        true // Always send when viewers are watching
+                    } else {
+                        // Throttle to 1s when no viewers
+                        self.last_reduced_screen_send.elapsed() >= Duration::from_secs(1)
+                    };
+
+                    if should_send_screen {
+                        self.send_cloud_screen_event(screen);
+                        if !self.cloud_viewers_active {
+                            self.last_reduced_screen_send = Instant::now();
+                        }
+                    }
                     sent_initial_screen = true;
                 }
                 if let Ok(Some(update)) = self.capture_manager.maybe_update_scrollback() {

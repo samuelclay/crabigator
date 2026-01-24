@@ -273,7 +273,17 @@ export interface KeyMessage {
     key: string;            // Key identifier: "shift_tab", etc.
 }
 
-export type CloudToDesktopMessage = AnswerMessage | PingMessage | KeyMessage;
+/**
+ * Viewer status notification to desktop
+ * Sent when dashboard/phone viewer becomes active/inactive
+ * Desktop can use this to adjust streaming frequency
+ */
+export interface ViewerStatusMessage {
+    type: 'viewer_status';
+    active: boolean;        // True if viewers are actively watching
+}
+
+export type CloudToDesktopMessage = AnswerMessage | PingMessage | KeyMessage | ViewerStatusMessage;
 
 /**
  * Session info for listing

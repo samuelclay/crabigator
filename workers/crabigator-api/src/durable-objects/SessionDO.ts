@@ -1,18 +1,32 @@
 import type { SessionEvent, SessionState, CloudToDesktopMessage, CloudPromptData } from '../types/session';
 import type { Env } from '../types/env';
 
-interface SessionDOState {
+/**
+ * Persistent state - written to storage only on meaningful changes
+ * (state transitions, prompt changes, title changes)
+ */
+interface PersistentState {
     sessionId: string;
     state: SessionState;
+    currentPrompt: CloudPromptData | null;
+    lastTitle: string | null;
+}
+
+/**
+ * Ephemeral state - kept in memory only, rebuilt from desktop on reconnect
+ * This is the high-frequency data that was causing excessive storage writes
+ */
+interface EphemeralState {
     lastScrollbackLine: number;
     /** Accumulated scrollback content (capped at ~500KB) */
     scrollbackContent: string;
     lastScreen: string | null;
-    lastTitle: string | null;
     lastTitleHistory: string[] | null;
     eventSequence: number;
-    currentPrompt: CloudPromptData | null;
 }
+
+/** Viewer activity timeout - 35s to allow for 5s heartbeat intervals */
+const VIEWER_ACTIVITY_TIMEOUT_MS = 35_000;
 
 interface SessionInfo {
     id: string;
@@ -28,38 +42,50 @@ interface SessionInfo {
  * Handles:
  * - Desktop WebSocket connection (receives events, sends answers)
  * - SSE streams for mobile/web viewers
- * - Event persistence
+ * - Event persistence (only critical state)
  * - Late-joiner state catchup
+ *
+ * Cost optimization:
+ * - Splits state into persistent (state/prompt/title) and ephemeral (screen/scrollback)
+ * - Only persists on meaningful state changes, not every event
+ * - Tracks viewer activity to notify desktop for streaming optimization
  */
 export class SessionDO implements DurableObject {
     private state: DurableObjectState;
     private env: Env;
     private desktopWs: WebSocket | null = null;
     private sseClients: Set<WritableStreamDefaultWriter<Uint8Array>> = new Set();
-    private sessionState: SessionDOState;
+    private persistentState: PersistentState;
+    private ephemeralState: EphemeralState;
     private sessionInfo: SessionInfo | null = null;
     private encoder = new TextEncoder();
+    /** Last time a viewer (dashboard/phone) signaled activity */
+    private lastViewerActivity: number = 0;
+    /** Whether we've notified desktop that viewers are active */
+    private desktopNotifiedViewerActive: boolean = false;
 
     constructor(state: DurableObjectState, env: Env) {
         this.state = state;
         this.env = env;
-        this.sessionState = {
+        this.persistentState = {
             sessionId: '',
             state: 'ready',
+            currentPrompt: null,
+            lastTitle: null,
+        };
+        this.ephemeralState = {
             lastScrollbackLine: 0,
             scrollbackContent: '',
             lastScreen: null,
-            lastTitle: null,
             lastTitleHistory: null,
             eventSequence: 0,
-            currentPrompt: null,
         };
 
-        // Restore state from storage
+        // Restore persistent state from storage
         state.blockConcurrencyWhile(async () => {
-            const stored = await state.storage.get<SessionDOState>('sessionState');
+            const stored = await state.storage.get<PersistentState>('persistentState');
             if (stored) {
-                this.sessionState = stored;
+                this.persistentState = stored;
             }
             const storedInfo = await state.storage.get<SessionInfo>('sessionInfo');
             if (storedInfo) {
@@ -73,9 +99,9 @@ export class SessionDO implements DurableObject {
 
         // Extract session ID from query params if provided
         const sessionId = url.searchParams.get('sessionId');
-        if (sessionId && !this.sessionState.sessionId) {
-            this.sessionState.sessionId = sessionId;
-            await this.state.storage.put('sessionState', this.sessionState);
+        if (sessionId && !this.persistentState.sessionId) {
+            this.persistentState.sessionId = sessionId;
+            await this.state.storage.put('persistentState', this.persistentState);
         }
 
         switch (url.pathname) {
@@ -95,6 +121,8 @@ export class SessionDO implements DurableObject {
                 }
             case '/state':
                 return this.handleGetState();
+            case '/viewer-active':
+                return this.handleViewerActive();
             default:
                 return new Response('Not found', { status: 404 });
         }
@@ -126,18 +154,23 @@ export class SessionDO implements DurableObject {
         const startedAt = parseInt(url.searchParams.get('started_at') || '0', 10);
 
         // Store session info for disconnect notification
-        if (this.sessionState.sessionId) {
+        if (this.persistentState.sessionId) {
             this.sessionInfo = {
-                id: this.sessionState.sessionId,
+                id: this.persistentState.sessionId,
                 cwd,
                 platform,
-                state: this.sessionState.state,
+                state: this.persistentState.state,
                 started_at: startedAt || Math.floor(Date.now() / 1000),
             };
             await this.state.storage.put('sessionInfo', this.sessionInfo);
 
             // Notify SessionListDO that desktop connected
             await this.notifySessionList('connect', this.sessionInfo);
+
+            // Notify desktop of current viewer status
+            if (this.hasActiveViewers()) {
+                this.notifyDesktopViewerStatus(true);
+            }
         }
 
         const pair = new WebSocketPair();
@@ -222,57 +255,78 @@ export class SessionDO implements DurableObject {
      * Handle incoming event from desktop
      */
     private async handleEvent(event: SessionEvent): Promise<void> {
+        // Track whether persistent state changed (requires storage write)
+        let persistentChanged = false;
+
         // Update local state based on event type
         switch (event.type) {
             case 'state':
-                this.sessionState.state = event.state;
-                // Notify SessionListDO so /api/sessions returns correct state
-                if (this.sessionInfo) {
-                    this.notifySessionStateUpdate(this.sessionInfo.id, event.state);
+                if (this.persistentState.state !== event.state) {
+                    this.persistentState.state = event.state;
+                    persistentChanged = true;
+                    // Notify SessionListDO so /api/sessions returns correct state
+                    if (this.sessionInfo) {
+                        this.notifySessionStateUpdate(this.sessionInfo.id, event.state);
+                    }
                 }
                 break;
             case 'scrollback':
-                this.sessionState.lastScrollbackLine = event.total_lines;
+                // Ephemeral state - no storage write
+                this.ephemeralState.lastScrollbackLine = event.total_lines;
                 // Accumulate scrollback content (cap at ~500KB to avoid memory issues)
                 const MAX_SCROLLBACK_SIZE = 500 * 1024;
                 if (event.diff) {
-                    this.sessionState.scrollbackContent += event.diff;
+                    this.ephemeralState.scrollbackContent += event.diff;
                     // Trim from the beginning if too large
-                    if (this.sessionState.scrollbackContent.length > MAX_SCROLLBACK_SIZE) {
+                    if (this.ephemeralState.scrollbackContent.length > MAX_SCROLLBACK_SIZE) {
                         // Find a good break point (newline) near the trim point
-                        const trimPoint = this.sessionState.scrollbackContent.length - MAX_SCROLLBACK_SIZE;
-                        const newlineAfterTrim = this.sessionState.scrollbackContent.indexOf('\n', trimPoint);
+                        const trimPoint = this.ephemeralState.scrollbackContent.length - MAX_SCROLLBACK_SIZE;
+                        const newlineAfterTrim = this.ephemeralState.scrollbackContent.indexOf('\n', trimPoint);
                         if (newlineAfterTrim > 0) {
-                            this.sessionState.scrollbackContent = this.sessionState.scrollbackContent.slice(newlineAfterTrim + 1);
+                            this.ephemeralState.scrollbackContent = this.ephemeralState.scrollbackContent.slice(newlineAfterTrim + 1);
                         } else {
-                            this.sessionState.scrollbackContent = this.sessionState.scrollbackContent.slice(trimPoint);
+                            this.ephemeralState.scrollbackContent = this.ephemeralState.scrollbackContent.slice(trimPoint);
                         }
                     }
                 }
                 break;
             case 'screen':
-                this.sessionState.lastScreen = event.content;
+                // Ephemeral state - no storage write
+                this.ephemeralState.lastScreen = event.content;
                 break;
             case 'title':
-                this.sessionState.lastTitle = event.title;
+                if (this.persistentState.lastTitle !== event.title) {
+                    this.persistentState.lastTitle = event.title;
+                    persistentChanged = true;
+                }
                 break;
             case 'title_history':
-                this.sessionState.lastTitleHistory = event.history;
+                // Ephemeral state - no storage write
+                this.ephemeralState.lastTitleHistory = event.history;
                 break;
             case 'prompt':
-                this.sessionState.currentPrompt = event.prompt;
+                // Compare prompts - this is critical for dashboard interaction
+                const currentPromptJson = JSON.stringify(this.persistentState.currentPrompt);
+                const newPromptJson = JSON.stringify(event.prompt);
+                if (currentPromptJson !== newPromptJson) {
+                    this.persistentState.currentPrompt = event.prompt;
+                    persistentChanged = true;
+                }
                 break;
         }
 
-        // Increment sequence and persist state
-        this.sessionState.eventSequence++;
-        await this.state.storage.put('sessionState', this.sessionState);
+        // Increment ephemeral sequence
+        this.ephemeralState.eventSequence++;
 
-        // Broadcast to all SSE clients
+        // Only persist to storage on meaningful state changes
+        // This is the key optimization: screen/scrollback updates (high frequency)
+        // no longer trigger storage writes
+        if (persistentChanged) {
+            await this.state.storage.put('persistentState', this.persistentState);
+        }
+
+        // Broadcast to all SSE clients (still immediate for real-time feel)
         await this.broadcast(event);
-
-        // Note: Event persistence to D1 would be done here in production
-        // For MVP, we rely on in-memory state
     }
 
     /**
@@ -322,54 +376,56 @@ export class SessionDO implements DurableObject {
         }
 
         // Send accumulated scrollback history first (so it appears before screen)
-        if (this.sessionState.scrollbackContent) {
+        // Note: This is ephemeral state - may be empty after DO hibernation
+        if (this.ephemeralState.scrollbackContent) {
             const scrollbackHistoryEvent: SessionEvent = {
                 type: 'scrollback_history',
-                content: this.sessionState.scrollbackContent,
+                content: this.ephemeralState.scrollbackContent,
             };
             await this.sendSSE(writer, scrollbackHistoryEvent);
         }
 
         // Send screen snapshot (for immediate visual)
-        if (this.sessionState.lastScreen) {
+        // Note: This is ephemeral state - may be empty after DO hibernation
+        if (this.ephemeralState.lastScreen) {
             const screenEvent: SessionEvent = {
                 type: 'screen',
-                content: this.sessionState.lastScreen,
+                content: this.ephemeralState.lastScreen,
             };
             await this.sendSSE(writer, screenEvent);
         }
 
-        // Send current state
+        // Send current state (persistent)
         const stateEvent: SessionEvent = {
             type: 'state',
-            state: this.sessionState.state,
+            state: this.persistentState.state,
             timestamp: Date.now(),
         };
         await this.sendSSE(writer, stateEvent);
 
-        // Send current title if available
-        if (this.sessionState.lastTitle) {
+        // Send current title if available (persistent)
+        if (this.persistentState.lastTitle) {
             const titleEvent: SessionEvent = {
                 type: 'title',
-                title: this.sessionState.lastTitle,
+                title: this.persistentState.lastTitle,
             };
             await this.sendSSE(writer, titleEvent);
         }
 
-        // Send title history if available
-        if (this.sessionState.lastTitleHistory && this.sessionState.lastTitleHistory.length > 0) {
+        // Send title history if available (ephemeral)
+        if (this.ephemeralState.lastTitleHistory && this.ephemeralState.lastTitleHistory.length > 0) {
             const titleHistoryEvent: SessionEvent = {
                 type: 'title_history',
-                history: this.sessionState.lastTitleHistory,
+                history: this.ephemeralState.lastTitleHistory,
             };
             await this.sendSSE(writer, titleHistoryEvent);
         }
 
-        // Send current prompt if any (for interactive dashboard)
-        if (this.sessionState.currentPrompt) {
+        // Send current prompt if any (persistent - for interactive dashboard)
+        if (this.persistentState.currentPrompt) {
             const promptEvent: SessionEvent = {
                 type: 'prompt',
-                prompt: this.sessionState.currentPrompt,
+                prompt: this.persistentState.currentPrompt,
             };
             await this.sendSSE(writer, promptEvent);
         }
@@ -568,15 +624,63 @@ export class SessionDO implements DurableObject {
     private handleGetState(): Response {
         return new Response(
             JSON.stringify({
-                state: this.sessionState.state,
-                scrollback_lines: this.sessionState.lastScrollbackLine,
-                has_screen: this.sessionState.lastScreen !== null,
-                title: this.sessionState.lastTitle,
-                event_sequence: this.sessionState.eventSequence,
+                state: this.persistentState.state,
+                scrollback_lines: this.ephemeralState.lastScrollbackLine,
+                has_screen: this.ephemeralState.lastScreen !== null,
+                title: this.persistentState.lastTitle,
+                event_sequence: this.ephemeralState.eventSequence,
                 desktop_connected: this.desktopWs !== null,
                 sse_clients: this.sseClients.size,
+                has_active_viewers: this.hasActiveViewers(),
             }),
             { headers: { 'Content-Type': 'application/json' } }
         );
+    }
+
+    /**
+     * Handle viewer activity heartbeat from dashboard
+     * Viewers send this every 5s while active, stops after 30s inactivity
+     */
+    private handleViewerActive(): Response {
+        const wasActive = this.hasActiveViewers();
+        this.lastViewerActivity = Date.now();
+
+        // Notify desktop if viewer status changed from inactive to active
+        if (!wasActive && this.desktopWs) {
+            this.notifyDesktopViewerStatus(true);
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+
+    /**
+     * Check if there are active viewers (heartbeat within timeout)
+     */
+    private hasActiveViewers(): boolean {
+        return Date.now() - this.lastViewerActivity < VIEWER_ACTIVITY_TIMEOUT_MS;
+    }
+
+    /**
+     * Notify desktop WebSocket about viewer status change
+     */
+    private notifyDesktopViewerStatus(active: boolean): void {
+        if (!this.desktopWs) return;
+
+        // Track what we've notified to avoid redundant messages
+        if (this.desktopNotifiedViewerActive === active) return;
+        this.desktopNotifiedViewerActive = active;
+
+        const message = {
+            type: 'viewer_status',
+            active,
+        };
+
+        try {
+            this.desktopWs.send(JSON.stringify(message));
+        } catch {
+            // Connection may have failed, ignore
+        }
     }
 }

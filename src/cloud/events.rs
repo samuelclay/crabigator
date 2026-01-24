@@ -424,6 +424,10 @@ pub enum CloudToDesktopMessage {
     /// Send a key sequence (e.g., Shift+Tab for mode switching)
     #[serde(rename = "key")]
     Key { key: String },
+    /// Notify desktop that viewer activity status changed
+    /// Desktop can use this to adjust streaming frequency
+    #[serde(rename = "viewer_status")]
+    ViewerStatus { active: bool },
 }
 
 /// Helper for building events from crabigator's internal state

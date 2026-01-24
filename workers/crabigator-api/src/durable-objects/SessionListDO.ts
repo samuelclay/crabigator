@@ -202,6 +202,9 @@ export class SessionListDO implements DurableObject {
 
     /**
      * Update session state (called when session state changes)
+     *
+     * State changes are infrequent (few per minute) so persistence is cheap.
+     * This ensures state survives DO hibernation.
      */
     private async handleUpdate(request: Request): Promise<Response> {
         if (request.method !== 'POST') {

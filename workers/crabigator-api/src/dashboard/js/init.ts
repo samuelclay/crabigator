@@ -12,5 +12,7 @@ export const initJs = `
             // Paired - load sessions normally
             loadSessions();
             connectSessionListStream();
+            // Start viewer activity tracking for streaming optimization
+            startViewerActivityTracking();
         }
 `;

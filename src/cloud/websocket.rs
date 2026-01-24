@@ -22,6 +22,8 @@ pub struct CloudWebSocket {
     answer_rx: mpsc::Receiver<String>,
     /// Receiver for incoming key commands
     key_rx: mpsc::Receiver<String>,
+    /// Receiver for viewer status changes
+    viewer_status_rx: mpsc::Receiver<bool>,
     /// Receiver that completes when the connection closes
     shutdown_rx: mpsc::Receiver<()>,
 }
@@ -65,6 +67,9 @@ impl CloudWebSocket {
         // Channel for incoming key commands (cloud -> desktop)
         let (key_tx, key_rx) = mpsc::channel::<String>(16);
 
+        // Channel for viewer status changes (cloud -> desktop)
+        let (viewer_status_tx, viewer_status_rx) = mpsc::channel::<bool>(4);
+
         // Channel to signal when connection closes (read task will signal this)
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
@@ -98,6 +103,9 @@ impl CloudWebSocket {
                         Ok(CloudToDesktopMessage::Key { key }) => {
                             let _ = key_tx.send(key).await;
                         }
+                        Ok(CloudToDesktopMessage::ViewerStatus { active }) => {
+                            let _ = viewer_status_tx.send(active).await;
+                        }
                         Ok(CloudToDesktopMessage::Ping) | Err(_) => {}
                     }
                 }
@@ -110,6 +118,7 @@ impl CloudWebSocket {
             event_tx,
             answer_rx,
             key_rx,
+            viewer_status_rx,
             shutdown_rx,
         })
     }
@@ -120,6 +129,7 @@ pub struct WebSocketHandle {
     event_tx: mpsc::Sender<CloudEvent>,
     answer_rx: mpsc::Receiver<String>,
     key_rx: mpsc::Receiver<String>,
+    viewer_status_rx: mpsc::Receiver<bool>,
 }
 
 impl CloudWebSocket {
@@ -129,6 +139,7 @@ impl CloudWebSocket {
             event_tx: self.event_tx,
             answer_rx: self.answer_rx,
             key_rx: self.key_rx,
+            viewer_status_rx: self.viewer_status_rx,
         };
         (handle, self.shutdown_rx)
     }
@@ -148,6 +159,11 @@ impl WebSocketHandle {
     /// Try to receive a key command (non-blocking)
     pub fn try_recv_key(&mut self) -> Option<String> {
         self.key_rx.try_recv().ok()
+    }
+
+    /// Try to receive a viewer status change (non-blocking)
+    pub fn try_recv_viewer_status(&mut self) -> Option<bool> {
+        self.viewer_status_rx.try_recv().ok()
     }
 
     /// Check if the connection is still alive

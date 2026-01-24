@@ -16,6 +16,7 @@ import { changesWidgetJs } from './changes-widget';
 import { eventsJs } from './events';
 import { promptJs } from './prompt';
 import { sseJs } from './sse';
+import { viewerActivityJs } from './viewer-activity';
 import { pairingJs } from './pairing';
 import { initJs } from './init';
 
@@ -37,6 +38,7 @@ export const dashboardJs = [
     eventsJs,
     promptJs,
     sseJs,
+    viewerActivityJs,
     pairingJs,
     initJs
 ].join('\n');
