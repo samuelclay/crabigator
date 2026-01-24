@@ -3,7 +3,7 @@ export const constantsJs = `
 
         const API_BASE = '/api';
         const sessions = new Map(); // sessionId -> { eventSource, state, element, git, changes, stats }
-        let currentLayout = localStorage.getItem('crabigator-layout') || '1';
+        let currentLayout = localStorage.getItem('crabigator-layout') || 'fit';
 
         function escapeHtml(text) {
             const div = document.createElement('div');
@@ -29,10 +29,10 @@ export const constantsJs = `
         let terminalWrapEnabled = true;
 
         // Widgets panel visibility (true = expanded, false = collapsed by default)
-        let widgetsExpanded = true;
+        let widgetsExpanded = false;
 
         // Session grouping mode ('all' = flat list, 'project' = grouped by working directory)
-        let groupingMode = localStorage.getItem('crabigator-grouping') || 'all';
+        let groupingMode = localStorage.getItem('crabigator-grouping') || 'project';
 
         // Track collapsed state for project groups
         const collapsedProjects = new Set(JSON.parse(localStorage.getItem('crabigator-collapsed-projects') || '[]'));
