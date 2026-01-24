@@ -35,10 +35,10 @@ export const dashboardJs = [
     statsWidgetJs,
     gitWidgetJs,
     changesWidgetJs,
+    viewerActivityJs,  // Must be before eventsJs (defines sendViewerHeartbeat)
     eventsJs,
     promptJs,
     sseJs,
-    viewerActivityJs,
     pairingJs,
     initJs
 ].join('\n');

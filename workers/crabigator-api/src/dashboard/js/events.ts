@@ -6,10 +6,13 @@ export const eventsJs = `
 
             eventSource.onopen = () => {
                 console.log('SSE connected for session:', sessionId);
-                const terminal = document.getElementById('terminal-' + sessionId);
-                if (terminal && terminal.innerHTML === 'Connecting...') {
-                    terminal.innerHTML = '<span style="color:#8b949e">Connected, waiting for screen data...</span>';
+                const screenEl = document.getElementById('screen-' + sessionId);
+                if (screenEl && screenEl.innerHTML === 'Connecting...') {
+                    screenEl.innerHTML = '<span style="color:#8b949e">Connected, waiting for screen data...</span>';
                 }
+                // Send viewer heartbeat immediately - this triggers desktop to send screen
+                // Must happen AFTER SSE is connected so we can receive the screen event
+                sendViewerHeartbeat(sessionId);
             };
 
             eventSource.onmessage = (event) => {

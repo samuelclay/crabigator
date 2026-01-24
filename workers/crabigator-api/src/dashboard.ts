@@ -63,6 +63,13 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <button class="style-option" data-wrap="scroll" onclick="setTerminalWrap(false)">Scroll</button>
                     </div>
                 </div>
+                <div class="style-section">
+                    <div class="style-section-label">Widgets</div>
+                    <div class="style-options">
+                        <button class="style-option active" data-widgets="expanded" onclick="setWidgetsExpanded(true)">Expanded</button>
+                        <button class="style-option" data-widgets="collapsed" onclick="setWidgetsExpanded(false)">Collapsed</button>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="settings-container">

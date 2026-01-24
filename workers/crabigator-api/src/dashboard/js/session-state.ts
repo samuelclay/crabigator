@@ -112,6 +112,54 @@ export const sessionStateJs = `
             }
         }
 
+        // Widgets collapse state persistence
+        function getWidgetsCollapsedSessions() {
+            try {
+                return JSON.parse(localStorage.getItem('widgetsCollapsedSessions') || '{}');
+            } catch { return {}; }
+        }
+
+        function setWidgetsCollapsedSession(sessionId, collapsed) {
+            const state = getWidgetsCollapsedSessions();
+            if (collapsed) {
+                state[sessionId] = true;
+            } else {
+                delete state[sessionId];
+            }
+            localStorage.setItem('widgetsCollapsedSessions', JSON.stringify(state));
+        }
+
+        function isWidgetsCollapsed(sessionId) {
+            // Check per-session override first, then fall back to global setting
+            const perSession = getWidgetsCollapsedSessions();
+            if (sessionId in perSession) {
+                return perSession[sessionId] === true;
+            }
+            // Use global setting (widgetsExpanded is the global default)
+            return !widgetsExpanded;
+        }
+
+        function toggleWidgets(sessionId) {
+            const card = document.getElementById('session-' + sessionId);
+            if (!card) return;
+
+            const isCollapsed = card.classList.contains('widgets-collapsed');
+            if (isCollapsed) {
+                card.classList.remove('widgets-collapsed');
+                setWidgetsCollapsedSession(sessionId, false);
+            } else {
+                card.classList.add('widgets-collapsed');
+                setWidgetsCollapsedSession(sessionId, true);
+            }
+        }
+
+        function applyWidgetsCollapsedState(sessionId) {
+            if (isWidgetsCollapsed(sessionId)) {
+                const card = document.getElementById('session-' + sessionId);
+                if (card) card.classList.add('widgets-collapsed');
+            }
+        }
+
         function updateSessionSummary(sessionId, sessionData) {
             // Stats summary
             const statsEl = document.getElementById('summary-stats-' + sessionId);

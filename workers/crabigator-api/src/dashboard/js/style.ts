@@ -76,7 +76,8 @@ export const styleJs = `
                     body: JSON.stringify({
                         fontScaleIndex: currentFontScaleIndex,
                         terminalHeightIndex: currentHeightIndex,
-                        terminalWrapEnabled: terminalWrapEnabled
+                        terminalWrapEnabled: terminalWrapEnabled,
+                        widgetsExpanded: widgetsExpanded
                     }),
                     credentials: 'same-origin'
                 });
@@ -99,11 +100,15 @@ export const styleJs = `
                     if (typeof data.terminalWrapEnabled === 'boolean') {
                         terminalWrapEnabled = data.terminalWrapEnabled;
                     }
+                    if (typeof data.widgetsExpanded === 'boolean') {
+                        widgetsExpanded = data.widgetsExpanded;
+                    }
                 }
             } catch {}
             applyFontScale();
             applyTerminalHeight();
             applyTerminalWrap();
+            applyWidgetsExpanded();
         }
 
         // Terminal wrap mode
@@ -123,6 +128,32 @@ export const styleJs = `
             // Toggle scroll-mode class on all terminals
             document.querySelectorAll('.terminal').forEach(terminal => {
                 terminal.classList.toggle('scroll-mode', !terminalWrapEnabled);
+            });
+        }
+
+        // Widgets panel visibility
+        function setWidgetsExpanded(expanded) {
+            widgetsExpanded = expanded;
+            // Clear per-session overrides so all sessions use global setting
+            localStorage.removeItem('widgetsCollapsedSessions');
+            applyWidgetsExpanded();
+            saveSettingsToServer();
+        }
+
+        function applyWidgetsExpanded() {
+            // Update button states in style popover
+            document.querySelectorAll('[data-widgets]').forEach(btn => {
+                const isExpanded = btn.getAttribute('data-widgets') === 'expanded';
+                btn.classList.toggle('active', isExpanded === widgetsExpanded);
+            });
+
+            // Apply to all session cards
+            document.querySelectorAll('.session-card').forEach(card => {
+                if (widgetsExpanded) {
+                    card.classList.remove('widgets-collapsed');
+                } else {
+                    card.classList.add('widgets-collapsed');
+                }
             });
         }
 

@@ -27,4 +27,7 @@ export const constantsJs = `
 
         // Terminal wrap mode (true = wrap text, false = horizontal scroll)
         let terminalWrapEnabled = true;
+
+        // Widgets panel visibility (true = expanded, false = collapsed by default)
+        let widgetsExpanded = true;
 `;

@@ -14,6 +14,18 @@ export const viewerActivityJs = `
             lastActivity = Date.now();
         }
 
+        // Send heartbeat for a specific session
+        async function sendViewerHeartbeat(sessionId) {
+            try {
+                await fetch(API_BASE + '/sessions/' + sessionId + '/viewer-active', {
+                    method: 'POST',
+                    headers: getAuthHeaders()
+                });
+            } catch {
+                // Ignore errors - heartbeats are best-effort
+            }
+        }
+
         // Send heartbeat for all active sessions
         async function sendViewerHeartbeats() {
             // Only send if user has been active recently
@@ -23,14 +35,7 @@ export const viewerActivityJs = `
 
             // Send heartbeat to all connected sessions
             for (const [sessionId] of sessions) {
-                try {
-                    await fetch(API_BASE + '/sessions/' + sessionId + '/viewer-active', {
-                        method: 'POST',
-                        headers: getAuthHeaders()
-                    });
-                } catch {
-                    // Ignore errors - heartbeats are best-effort
-                }
+                sendViewerHeartbeat(sessionId);
             }
         }
 
@@ -42,13 +47,11 @@ export const viewerActivityJs = `
             });
 
             // Send heartbeats periodically
+            // Initial heartbeat for each session is sent in connectToSession's onopen handler
             if (viewerHeartbeatInterval) {
                 clearInterval(viewerHeartbeatInterval);
             }
             viewerHeartbeatInterval = setInterval(sendViewerHeartbeats, VIEWER_HEARTBEAT_INTERVAL);
-
-            // Send initial heartbeat when dashboard loads
-            setTimeout(sendViewerHeartbeats, 1000);
         }
 
         // Stop viewer activity tracking

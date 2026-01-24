@@ -36,7 +36,7 @@ export const changesWidgetJs = `
 
         function updateChangesWidget(sessionId, changes) {
             const widget = document.getElementById('changes-' + sessionId);
-            const widgetsPanel = document.getElementById('widgets-' + sessionId);
+            const widgetsContent = document.getElementById('widgets-content-' + sessionId);
             if (!widget) return;
 
             const byLanguage = changes.by_language || [];
@@ -44,13 +44,13 @@ export const changesWidgetJs = `
             if (byLanguage.length === 0) {
                 // Hide widget entirely when no changes
                 widget.classList.add('hidden-changes');
-                widgetsPanel?.classList.add('no-changes');
+                widgetsContent?.classList.add('no-changes');
                 return;
             }
 
             // Show widget when there are changes
             widget.classList.remove('hidden-changes');
-            widgetsPanel?.classList.remove('no-changes');
+            widgetsContent?.classList.remove('no-changes');
 
             // Build header: "Language N changes" (like CLI)
             const firstLang = byLanguage[0];
@@ -151,6 +151,12 @@ export const changesWidgetJs = `
             // Only update if content changed (prevents flicker)
             if (widget.innerHTML !== newHtml) {
                 widget.innerHTML = newHtml;
+            }
+
+            // Update widgets summary with latest title
+            const titleSummaryEl = document.getElementById('widgets-title-' + sessionId);
+            if (titleSummaryEl) {
+                titleSummaryEl.textContent = latestTitle;
             }
         }
 

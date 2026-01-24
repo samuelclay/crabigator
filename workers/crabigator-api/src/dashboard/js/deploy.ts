@@ -36,7 +36,10 @@ export const deployJs = `
             if (reconnectTimeout) clearTimeout(reconnectTimeout);
             updateDeployCountdown();
             reconnectTimeout = setTimeout(() => {
-                loadSessions();
+                // Reconnect SSE - it calls loadSessions() on 'connected' event
+                // and receives real-time 'created' events for sessions that reconnect
+                sseRetryCount = 0;
+                connectSessionListStream();
                 deployReconnectDelay = Math.min(deployReconnectDelay * 1.5, MAX_RECONNECT_DELAY);
             }, deployReconnectDelay);
         }

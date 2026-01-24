@@ -444,7 +444,16 @@ impl App {
 
             // Poll viewer status from cloud to optimize screen streaming
             if let Some(ref mut client) = self.cloud_client {
+                let was_active = self.cloud_viewers_active;
                 self.cloud_viewers_active = client.poll_viewer_status();
+
+                // When viewers become active, send screen immediately
+                // This fixes "Connecting..." showing indefinitely on dashboard
+                if !was_active && self.cloud_viewers_active {
+                    if let Ok(contents) = self.capture_manager.update_screen(self.platform_pty.screen()) {
+                        self.send_cloud_screen_event(contents);
+                    }
+                }
             }
 
             // Poll pairing status if waiting for mobile pairing

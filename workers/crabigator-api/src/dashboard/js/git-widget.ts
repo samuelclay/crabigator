@@ -141,6 +141,30 @@ export const gitWidgetJs = `
             if (widget.innerHTML !== newHtml) {
                 widget.innerHTML = newHtml;
             }
+
+            // Update widgets summary with git aggregate
+            updateGitSummary(sessionId, files);
+        }
+
+        function updateGitSummary(sessionId, files) {
+            const gitSummaryEl = document.getElementById('widgets-git-' + sessionId);
+            if (!gitSummaryEl) return;
+
+            const totalFiles = files.length;
+            if (totalFiles === 0) {
+                gitSummaryEl.innerHTML = '';
+                return;
+            }
+
+            const totalAdds = files.reduce((sum, f) => sum + (f.additions || 0), 0);
+            const totalDels = files.reduce((sum, f) => sum + (f.deletions || 0), 0);
+
+            let parts = [];
+            if (totalAdds > 0) parts.push('<span class="green">+' + totalAdds + '</span>');
+            if (totalDels > 0) parts.push('<span class="red">-' + totalDels + '</span>');
+            parts.push(totalFiles + ' file' + (totalFiles !== 1 ? 's' : ''));
+
+            gitSummaryEl.innerHTML = parts.join(' ');
         }
 
 `;

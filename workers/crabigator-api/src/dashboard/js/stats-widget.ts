@@ -67,6 +67,22 @@ export const statsWidgetJs = `
             if (widget.innerHTML !== newHtml) {
                 widget.innerHTML = newHtml;
             }
+
+            // Update widgets summary
+            const sessionEl = document.getElementById('widgets-session-' + sessionId);
+            const thinkingEl = document.getElementById('widgets-thinking-' + sessionId);
+            const idleEl = document.getElementById('widgets-idle-' + sessionId);
+            if (sessionEl) sessionEl.textContent = formatDuration(stats.work_seconds || 0);
+            if (thinkingEl) thinkingEl.textContent = stats.thinking_seconds ? formatDuration(stats.thinking_seconds) : '—';
+            if (idleEl) {
+                const isIdleState = ['complete', 'question', 'interrupted'].includes(session?.state);
+                if (isIdleState && stats.idle_since) {
+                    const idleSecs = Math.floor(Date.now() / 1000 - stats.idle_since);
+                    idleEl.textContent = idleSecs >= 60 ? formatDuration(idleSecs) : '—';
+                } else {
+                    idleEl.textContent = '—';
+                }
+            }
         }
 
         // Create two-sided progress bar like CLI: ▓▓ (red/deletions) █████ (green/additions)

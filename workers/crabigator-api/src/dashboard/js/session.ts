@@ -164,6 +164,21 @@ export const sessionJs = `
                     </div>
                 </div>
                 <div class="widgets-panel" id="widgets-\${session.id}">
+                    <div class="widgets-header" onclick="toggleWidgets('\${session.id}')">
+                        <div class="widgets-summary" id="widgets-summary-\${session.id}">
+                            <span class="widgets-summary-title" id="widgets-title-\${session.id}"></span>
+                            <span class="widgets-summary-stats">
+                                <span id="widgets-session-\${session.id}">--</span>
+                                <span class="sep">·</span>
+                                <span id="widgets-thinking-\${session.id}">—</span>
+                                <span class="sep">·</span>
+                                <span id="widgets-idle-\${session.id}">—</span>
+                            </span>
+                            <span class="widgets-summary-git" id="widgets-git-\${session.id}"></span>
+                        </div>
+                        <button class="collapse-btn" id="widgets-btn-\${session.id}" title="Toggle widgets">▼</button>
+                    </div>
+                    <div class="widgets-content" id="widgets-content-\${session.id}">
                     <div class="widget title-history-widget" id="titles-\${session.id}" style="display:none">
                         <div class="widget-title"><span style="color:#58a6ff">—</span></div>
                         <div class="titles-list"></div>
@@ -183,6 +198,7 @@ export const sessionJs = `
                     <div class="widget" id="changes-\${session.id}">
                         <div class="widget-title"><span style="color:#db6d28">Changes</span></div>
                         <div class="changes-list" style="color:#8b949e">Waiting for data...</div>
+                    </div>
                     </div>
                 </div>
                 <div class="input-area">
@@ -213,6 +229,7 @@ export const sessionJs = `
                 scrollbackRendered: 0,     // How many lines currently rendered
             });
             applyCollapsedState(session.id);
+            applyWidgetsCollapsedState(session.id);
             restoreInput(session.id);
             updateFitLayout();
 
