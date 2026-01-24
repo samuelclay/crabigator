@@ -156,13 +156,11 @@ impl App {
             enabled: capture_enabled,
             session_id: session_id.clone(),
         };
-        let mut capture_manager = CaptureManager::new(capture_config, cols, pty_rows)?;
+        let capture_manager = CaptureManager::new(capture_config, cols, pty_rows)?;
 
-        // Try to find transcript path on startup (before hooks fire)
-        // This allows scrollback to appear immediately on resume
-        if let Some(transcript_path) = platform.find_transcript_path(&cwd_str) {
-            capture_manager.set_transcript_path(Some(transcript_path));
-        }
+        // Note: We don't pre-initialize transcript_path on startup because we can't
+        // reliably determine which session is being resumed. The hooks will provide
+        // the correct transcript_path once Claude Code starts.
 
         // Initialize cloud client (optional - don't fail if cloud is unreachable)
         let cloud_client = Self::init_cloud_client(&session_id, &cwd_str, platform.as_ref()).await;

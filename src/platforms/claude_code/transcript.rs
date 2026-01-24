@@ -101,10 +101,11 @@ pub fn read_transcript(path: &Path, offset: u64) -> std::io::Result<(String, u64
                 }
             }
             "progress" => {
-                // Progress messages contain tool results
+                // Progress messages contain tool results in data.message.message.content
                 if let Some(content) = entry
                     .get("data")
                     .and_then(|d| d.get("message"))
+                    .and_then(|m| m.get("message"))
                     .and_then(|m| m.get("content"))
                 {
                     output.push_str(&format_assistant_message(content));
