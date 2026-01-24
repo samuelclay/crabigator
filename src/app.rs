@@ -102,6 +102,8 @@ pub struct App {
     last_cloud_git_hash: Option<u64>,
     /// Hash of last changes sent to cloud (for deduplication)
     last_cloud_changes_hash: Option<u64>,
+    /// Hash of last screen sent to cloud (for deduplication)
+    last_cloud_screen_hash: Option<u64>,
 }
 
 impl App {
@@ -197,6 +199,7 @@ impl App {
             last_reduced_screen_send: Instant::now(),
             last_cloud_git_hash: None,
             last_cloud_changes_hash: None,
+            last_cloud_screen_hash: None,
         })
     }
 
@@ -509,12 +512,30 @@ impl App {
                 last_status_draw = Instant::now();
             }
 
-            // Update captures (throttled internally)
+            // Update captures and send to cloud
+            // When viewers are active: bypass throttle, send every unique frame
+            // When no viewers: use throttled capture (100ms local, 1s cloud)
             if got_output {
-                if let Ok(Some(screen)) =
+                let screen_to_send = if self.cloud_viewers_active {
+                    // Bypass throttle - get screen immediately for real-time streaming
+                    self.capture_manager
+                        .update_screen(self.platform_pty.screen())
+                        .ok()
+                } else if self.last_reduced_screen_send.elapsed() >= Duration::from_secs(1) {
+                    // No viewers: only capture/send once per second
                     self.capture_manager
                         .maybe_update_screen(self.platform_pty.screen())
-                {
+                        .ok()
+                        .flatten()
+                } else {
+                    // No viewers and within 1s throttle: still update local file at 100ms
+                    let _ = self
+                        .capture_manager
+                        .maybe_update_screen(self.platform_pty.screen());
+                    None // Don't send to cloud
+                };
+
+                if let Some(screen) = screen_to_send {
                     // Detect mode from screen content
                     let new_mode = crate::mode::detect_mode(&screen);
                     if new_mode != self.session_stats.platform_stats.mode {
@@ -534,17 +555,16 @@ impl App {
                         }
                     }
 
-                    // Optimize screen streaming based on viewer activity:
-                    // - When viewers are active: send immediately (full real-time experience)
-                    // - When no viewers: throttle to 1s intervals (reduces DO costs)
-                    let should_send_screen = if self.cloud_viewers_active {
-                        true // Always send when viewers are watching
-                    } else {
-                        // Throttle to 1s when no viewers
-                        self.last_reduced_screen_send.elapsed() >= Duration::from_secs(1)
+                    // Deduplicate: only send if content changed
+                    let hash = {
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        screen.hash(&mut hasher);
+                        hasher.finish()
                     };
 
-                    if should_send_screen {
+                    if self.last_cloud_screen_hash != Some(hash) {
+                        self.last_cloud_screen_hash = Some(hash);
                         self.send_cloud_screen_event(screen);
                         if !self.cloud_viewers_active {
                             self.last_reduced_screen_send = Instant::now();
@@ -552,6 +572,7 @@ impl App {
                     }
                     sent_initial_screen = true;
                 }
+
                 if let Ok(Some(update)) = self.capture_manager.maybe_update_scrollback() {
                     self.send_cloud_scrollback_event(update);
                 }

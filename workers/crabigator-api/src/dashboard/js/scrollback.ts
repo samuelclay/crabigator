@@ -80,7 +80,7 @@ export const scrollbackJs = `
             if (!scrollbackEl) return;
 
             // Split into lines and add to buffer
-            const newLines = newContent.split('\\n').filter(line => line.length > 0 || newContent.includes('\\n\\n'));
+            const newLines = newContent.split('\\n');
             if (!sessionData.scrollbackBuffer) sessionData.scrollbackBuffer = [];
             sessionData.scrollbackBuffer.push(...newLines);
 

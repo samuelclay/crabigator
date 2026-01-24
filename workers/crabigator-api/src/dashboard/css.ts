@@ -338,7 +338,6 @@ export const dashboardCss = `
         }
         .terminal-scrollback {
             display: none;
-            opacity: 0.7;
             text-align: left;
             min-width: 0;
             width: 100%;

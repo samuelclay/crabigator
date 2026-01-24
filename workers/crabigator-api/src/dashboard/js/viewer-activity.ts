@@ -18,8 +18,7 @@ export const viewerActivityJs = `
         async function sendViewerHeartbeat(sessionId) {
             try {
                 await fetch(API_BASE + '/sessions/' + sessionId + '/viewer-active', {
-                    method: 'POST',
-                    headers: getAuthHeaders()
+                    method: 'POST'
                 });
             } catch {
                 // Ignore errors - heartbeats are best-effort

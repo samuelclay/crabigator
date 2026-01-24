@@ -116,7 +116,7 @@ export const eventsJs = `
                 case 'scrollback_history':
                     // Full scrollback history for late joiners (chunked - only render last N lines)
                     if (event.content) {
-                        const lines = event.content.split('\\n').filter(line => line.length > 0);
+                        const lines = event.content.split('\\n');
                         renderScrollback(sessionId, lines);
                     }
                     break;

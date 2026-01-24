@@ -1,7 +1,7 @@
 //! Output capture for streaming-ready session recording.
 //!
 //! Captures assistant CLI PTY output to files:
-//! - `scrollback.log`: Clean text transcript without ANSI codes (append-only)
+//! - `scrollback.log`: Session transcript with ANSI codes (append-only)
 //! - `screen.txt`: Current screen snapshot with ANSI codes (rendered by vt100)
 //!
 //! Uses a vt100 parser matching PTY dimensions with large scrollback buffer.
@@ -211,13 +211,14 @@ impl CaptureManager {
         let start_row = self.last_scrollback_extracted;
         let end_row = cursor_row as usize + 1;
 
-        // Build only the new content (plain text, no ANSI - much faster)
+        // Build the new content with ANSI codes for color preservation
         // Filter out Claude Code's status bar content and collapse empty lines
         let mut content: Vec<u8> = Vec::new();
         let mut consecutive_empty = 0u8;
         let mut lines_extracted = 0usize;
 
-        for row_str in screen.rows(0, cols).skip(start_row).take(end_row - start_row) {
+        for row_bytes in screen.rows_formatted(0, cols).skip(start_row).take(end_row - start_row) {
+            let row_str = String::from_utf8_lossy(&row_bytes);
             let trimmed = row_str.trim_end();
 
             // Skip Claude Code status bar lines
@@ -235,6 +236,7 @@ impl CaptureManager {
             } else {
                 consecutive_empty = 0;
                 content.extend_from_slice(trimmed.as_bytes());
+                content.extend_from_slice(b"\x1b[0m"); // Reset to prevent color leakage
                 content.push(b'\n');
                 lines_extracted += 1;
             }
