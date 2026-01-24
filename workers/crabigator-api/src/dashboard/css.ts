@@ -8,6 +8,25 @@ export const dashboardCss = `
             overflow-x: hidden;
             width: 100%;
         }
+        /* Dark scrollbars */
+        * {
+            scrollbar-width: thin;
+            scrollbar-color: #30363d #0d1117;
+        }
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0d1117;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #30363d;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #484f58;
+        }
         /* Font size scaling */
         .container {
             zoom: var(--font-scale);
