@@ -1,3 +1,5 @@
+import type { Env } from '../types/env';
+
 interface ActiveSession {
     id: string;
     cwd: string;
@@ -15,20 +17,56 @@ interface ActiveSession {
  */
 export class SessionListDO implements DurableObject {
     private state: DurableObjectState;
+    private env: Env;
     private sseClients: Set<WritableStreamDefaultWriter<Uint8Array>> = new Set();
     private encoder = new TextEncoder();
     private activeSessions: Map<string, ActiveSession> = new Map();
 
-    constructor(state: DurableObjectState) {
+    constructor(state: DurableObjectState, env: Env) {
         this.state = state;
+        this.env = env;
 
-        // Restore active sessions from storage
+        // Restore active sessions from storage and validate them
         state.blockConcurrencyWhile(async () => {
             const stored = await state.storage.get<[string, ActiveSession][]>('activeSessions');
             if (stored) {
                 this.activeSessions = new Map(stored);
+                // Validate each session - remove stale ones
+                await this.validateSessions();
             }
         });
+    }
+
+    /**
+     * Validate all sessions by checking if their desktops are still connected.
+     * Removes stale sessions that no longer have active desktop connections.
+     */
+    private async validateSessions(): Promise<void> {
+        const stale: string[] = [];
+
+        for (const [id] of this.activeSessions) {
+            try {
+                const doId = this.env.SESSION.idFromName(id);
+                const stub = this.env.SESSION.get(doId);
+                const resp = await stub.fetch(new Request('https://internal/state'));
+                const state = (await resp.json()) as { desktop_connected?: boolean };
+
+                if (!state.desktop_connected) {
+                    stale.push(id);
+                }
+            } catch {
+                // If we can't reach SessionDO, assume stale
+                stale.push(id);
+            }
+        }
+
+        if (stale.length > 0) {
+            for (const id of stale) {
+                this.activeSessions.delete(id);
+            }
+            await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
+            console.log(`Cleaned up ${stale.length} stale session(s): ${stale.join(', ')}`);
+        }
     }
 
     async fetch(request: Request): Promise<Response> {
