@@ -30,4 +30,10 @@ export const constantsJs = `
 
         // Widgets panel visibility (true = expanded, false = collapsed by default)
         let widgetsExpanded = true;
+
+        // Session grouping mode ('all' = flat list, 'project' = grouped by working directory)
+        let groupingMode = localStorage.getItem('crabigator-grouping') || 'all';
+
+        // Track collapsed state for project groups
+        const collapsedProjects = new Set(JSON.parse(localStorage.getItem('crabigator-collapsed-projects') || '[]'));
 `;

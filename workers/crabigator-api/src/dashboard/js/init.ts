@@ -2,6 +2,7 @@
 export const initJs = `
         // Initial load
         setLayout(currentLayout);  // Apply saved layout preference
+        applyGrouping();           // Apply saved grouping preference
         loadSettingsFromServer();  // Load style preferences
 
         // Check pairing status - if not paired, show pairing gate

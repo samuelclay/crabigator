@@ -174,6 +174,9 @@ pub fn hyperlink(url: &str, text: &str) -> String {
 
 // === Screen Control ===
 
+/// Clear from cursor to end of screen (ED mode 0)
+pub const CLEAR_TO_END: &str = "\x1b[J";
+
 /// Clear entire screen
 #[allow(dead_code)]
 pub const CLEAR_SCREEN: &str = "\x1b[2J";

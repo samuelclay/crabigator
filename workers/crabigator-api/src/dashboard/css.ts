@@ -1055,4 +1055,93 @@ export const dashboardCss = `
             font-family: monospace;
             color: #c9d1d9;
         }
+
+        /* Project grouping */
+        .project-group {
+            margin-bottom: 16px;
+            break-inside: avoid;
+        }
+        .project-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 8px;
+            user-select: none;
+            transition: background 0.15s ease;
+        }
+        .project-header:hover {
+            background: #30363d;
+        }
+        .project-collapse-btn {
+            background: none;
+            border: none;
+            color: #8b949e;
+            cursor: pointer;
+            padding: 0;
+            font-size: 12px;
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+        }
+        .project-group.collapsed .project-collapse-btn {
+            transform: rotate(-90deg);
+        }
+        .project-name {
+            font-weight: 600;
+            color: #58a6ff;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+        .project-path {
+            font-family: 'SF Mono', monospace;
+            font-size: 11px;
+            color: #6e7681;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+            min-width: 0;
+        }
+        .project-count {
+            color: #8b949e;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+        .project-sessions {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+        .project-group.collapsed .project-sessions {
+            display: none;
+        }
+        /* Hide individual session cwd when grouped (shown in project header) */
+        .container[data-grouping="project"] .session-card .cwd {
+            display: none;
+        }
+        /* In grouped mode, remove card margin since group provides spacing */
+        .container[data-grouping="project"] .session-card {
+            margin-bottom: 8px;
+        }
+        .container[data-grouping="project"] .project-sessions .session-card:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Mobile adjustments for project groups */
+        @media (max-width: 768px) {
+            .project-header {
+                padding: 8px 10px;
+                gap: 6px;
+            }
+            .project-name {
+                font-size: 13px;
+            }
+            .project-path {
+                display: none;  /* Hide full path on mobile */
+            }
+        }
 `;

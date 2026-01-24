@@ -642,11 +642,11 @@ export class SessionDO implements DurableObject {
      * Viewers send this every 5s while active, stops after 30s inactivity
      */
     private handleViewerActive(): Response {
-        const wasActive = this.hasActiveViewers();
         this.lastViewerActivity = Date.now();
 
-        // Notify desktop if viewer status changed from inactive to active
-        if (!wasActive && this.desktopWs) {
+        // Always notify desktop that viewers are active
+        // This ensures desktop knows even if previous notifications were missed
+        if (this.desktopWs) {
             this.notifyDesktopViewerStatus(true);
         }
 
@@ -668,8 +668,9 @@ export class SessionDO implements DurableObject {
     private notifyDesktopViewerStatus(active: boolean): void {
         if (!this.desktopWs) return;
 
-        // Track what we've notified to avoid redundant messages
-        if (this.desktopNotifiedViewerActive === active) return;
+        // For inactive notifications, still track to avoid spam
+        // For active notifications, always send (heartbeats are throttled to 5s anyway)
+        if (!active && this.desktopNotifiedViewerActive === active) return;
         this.desktopNotifiedViewerActive = active;
 
         const message = {

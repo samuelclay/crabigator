@@ -209,10 +209,33 @@ export const sessionJs = `
                     <button type="button" onclick="sendAnswer('\${session.id}')">Send</button>
                 </div>
             \`;
-            if (insertAtTop && container.firstChild) {
-                container.insertBefore(card, container.firstChild);
+            // Insert card into the correct location based on grouping mode
+            if (groupingMode === 'project') {
+                // Find or create project group for this cwd
+                let group = container.querySelector(\`.project-group[data-project="\${CSS.escape(session.cwd)}"]\`);
+                if (!group) {
+                    // Create new group
+                    group = createProjectGroup(session.cwd, []);
+                    if (insertAtTop && container.firstChild) {
+                        container.insertBefore(group, container.firstChild);
+                    } else {
+                        container.appendChild(group);
+                    }
+                }
+                const sessionsContainer = group.querySelector('.project-sessions');
+                if (insertAtTop && sessionsContainer.firstChild) {
+                    sessionsContainer.insertBefore(card, sessionsContainer.firstChild);
+                } else {
+                    sessionsContainer.appendChild(card);
+                }
+                updateProjectGroupCount(session.cwd);
             } else {
-                container.appendChild(card);
+                // Flat mode
+                if (insertAtTop && container.firstChild) {
+                    container.insertBefore(card, container.firstChild);
+                } else {
+                    container.appendChild(card);
+                }
             }
             sessions.set(session.id, {
                 element: card,

@@ -70,6 +70,13 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <button class="style-option" data-widgets="collapsed" onclick="setWidgetsExpanded(false)">Collapsed</button>
                     </div>
                 </div>
+                <div class="style-section">
+                    <div class="style-section-label">Grouping</div>
+                    <div class="style-options">
+                        <button class="style-option active" data-grouping="all" onclick="setGrouping('all')">All</button>
+                        <button class="style-option" data-grouping="project" onclick="setGrouping('project')">By Project</button>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="settings-container">
@@ -99,7 +106,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             </div>
         </div>
     </div>
-    <div class="container" id="sessions" data-layout="1"></div>
+    <div class="container" id="sessions" data-layout="1" data-grouping="all"></div>
 
     <script>${dashboardJs}</script>
 </body>

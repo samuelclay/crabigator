@@ -77,7 +77,8 @@ export const styleJs = `
                         fontScaleIndex: currentFontScaleIndex,
                         terminalHeightIndex: currentHeightIndex,
                         terminalWrapEnabled: terminalWrapEnabled,
-                        widgetsExpanded: widgetsExpanded
+                        widgetsExpanded: widgetsExpanded,
+                        groupingMode: groupingMode
                     }),
                     credentials: 'same-origin'
                 });
@@ -103,12 +104,22 @@ export const styleJs = `
                     if (typeof data.widgetsExpanded === 'boolean') {
                         widgetsExpanded = data.widgetsExpanded;
                     }
+                    if (typeof data.groupingMode === 'string' && (data.groupingMode === 'all' || data.groupingMode === 'project')) {
+                        const oldMode = groupingMode;
+                        groupingMode = data.groupingMode;
+                        localStorage.setItem('crabigator-grouping', groupingMode);
+                        // Re-render if mode changed and sessions exist
+                        if (oldMode !== groupingMode && sessions.size > 0) {
+                            setTimeout(() => rerenderSessions(), 0);
+                        }
+                    }
                 }
             } catch {}
             applyFontScale();
             applyTerminalHeight();
             applyTerminalWrap();
             applyWidgetsExpanded();
+            applyGrouping();
         }
 
         // Terminal wrap mode
@@ -186,6 +197,139 @@ export const styleJs = `
                 closeSettingsPopover();
             }
         });
+
+        // Session grouping mode
+        function setGrouping(mode) {
+            groupingMode = mode;
+            localStorage.setItem('crabigator-grouping', mode);
+            applyGrouping();
+            // Re-render the session list to apply grouping
+            rerenderSessions();
+        }
+
+        function applyGrouping() {
+            const container = document.getElementById('sessions');
+            container.dataset.grouping = groupingMode;
+
+            // Update button states
+            document.querySelectorAll('[data-grouping]').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.grouping === groupingMode);
+            });
+        }
+
+        function rerenderSessions() {
+            const container = document.getElementById('sessions');
+
+            if (groupingMode === 'project') {
+                // Group sessions by cwd
+                const groups = new Map();
+                for (const [id, sessionData] of sessions) {
+                    const card = document.getElementById('session-' + id);
+                    if (!card) continue;
+                    const cwd = card.querySelector('.cwd')?.textContent || 'Unknown';
+                    if (!groups.has(cwd)) {
+                        groups.set(cwd, []);
+                    }
+                    groups.get(cwd).push({ id, card });
+                }
+
+                // Clear container
+                container.innerHTML = '';
+
+                // Create project groups
+                for (const [cwd, sessionCards] of groups) {
+                    const group = createProjectGroup(cwd, sessionCards);
+                    container.appendChild(group);
+                }
+
+                // Show empty state if no sessions
+                if (groups.size === 0) {
+                    container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                }
+            } else {
+                // Flat mode - extract cards from groups if needed and append directly
+                const existingCards = [];
+                container.querySelectorAll('.session-card').forEach(card => {
+                    existingCards.push(card);
+                });
+
+                // Remove project groups
+                container.querySelectorAll('.project-group').forEach(g => g.remove());
+
+                // Re-add cards directly to container
+                existingCards.forEach(card => {
+                    container.appendChild(card);
+                });
+
+                // Show empty state if no sessions
+                if (sessions.size === 0 && !container.querySelector('.no-sessions')) {
+                    container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                }
+            }
+
+            updateFitLayout();
+        }
+
+        function createProjectGroup(cwd, sessionCards) {
+            const group = document.createElement('div');
+            group.className = 'project-group';
+            group.dataset.project = cwd;
+
+            const isCollapsed = collapsedProjects.has(cwd);
+            if (isCollapsed) {
+                group.classList.add('collapsed');
+            }
+
+            // Get project name (last path component)
+            const projectName = cwd.split('/').pop() || cwd;
+
+            group.innerHTML = \`
+                <div class="project-header" onclick="toggleProjectGroup('\${escapeHtml(cwd)}')">
+                    <button class="project-collapse-btn">▼</button>
+                    <span class="project-name">\${escapeHtml(projectName)}</span>
+                    <span class="project-path">\${escapeHtml(cwd)}</span>
+                    <span class="project-count">\${sessionCards.length} session\${sessionCards.length !== 1 ? 's' : ''}</span>
+                </div>
+                <div class="project-sessions"></div>
+            \`;
+
+            const sessionsContainer = group.querySelector('.project-sessions');
+            sessionCards.forEach(({ card }) => {
+                sessionsContainer.appendChild(card);
+            });
+
+            return group;
+        }
+
+        function toggleProjectGroup(cwd) {
+            const group = document.querySelector(\`.project-group[data-project="\${CSS.escape(cwd)}"]\`);
+            if (!group) return;
+
+            const isNowCollapsed = group.classList.toggle('collapsed');
+
+            if (isNowCollapsed) {
+                collapsedProjects.add(cwd);
+            } else {
+                collapsedProjects.delete(cwd);
+            }
+            localStorage.setItem('crabigator-collapsed-projects', JSON.stringify([...collapsedProjects]));
+        }
+
+        function updateProjectGroupCount(cwd) {
+            const group = document.querySelector(\`.project-group[data-project="\${CSS.escape(cwd)}"]\`);
+            if (!group) return;
+
+            const count = group.querySelectorAll('.session-card').length;
+            const countEl = group.querySelector('.project-count');
+            if (countEl) {
+                countEl.textContent = count + ' session' + (count !== 1 ? 's' : '');
+            }
+
+            // Remove empty groups
+            if (count === 0) {
+                group.remove();
+            }
+        }
 
         // Settings popover
         function toggleSettingsPopover() {

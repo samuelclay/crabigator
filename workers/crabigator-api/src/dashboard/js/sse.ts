@@ -108,7 +108,12 @@ export const sseJs = `
                                 session.eventSource?.close();
                                 sessions.delete(event.session.id);
                                 const card = document.getElementById('session-' + event.session.id);
+                                const cwd = event.session.cwd;
                                 if (card) card.remove();
+                                // Update project group count if in grouped mode
+                                if (groupingMode === 'project' && cwd) {
+                                    updateProjectGroupCount(cwd);
+                                }
                                 updateFitLayout();
                                 document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
                                 if (sessions.size === 0) {
@@ -129,7 +134,12 @@ export const sseJs = `
                             sessions.delete(event.session.id);
                         }
                         const card = document.getElementById('session-' + event.session.id);
+                        const cwd = event.session.cwd;
                         if (card) card.remove();
+                        // Update project group count if in grouped mode
+                        if (groupingMode === 'project' && cwd) {
+                            updateProjectGroupCount(cwd);
+                        }
                         updateFitLayout();
                         document.getElementById('status').textContent = sessions.size + ' session(s) (real-time)';
                         if (sessions.size === 0) {

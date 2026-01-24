@@ -270,15 +270,31 @@ impl App {
         Ok(())
     }
 
+    /// Clear the status bar area (below scroll region) to remove artifacts
+    fn clear_status_area(&self) -> Result<()> {
+        let mut stdout = stdout();
+        // Save cursor so we don't disrupt PTY cursor position
+        write!(stdout, "{}", escape::CURSOR_SAVE)?;
+        // Move to first status bar row and clear from there to end of screen
+        write!(stdout, "{}", escape::cursor_to(self.pty_rows + 1, 1))?;
+        write!(stdout, "{}", escape::CLEAR_TO_END)?;
+        // Restore cursor to PTY position
+        write!(stdout, "{}", escape::CURSOR_RESTORE)?;
+        stdout.flush()?;
+        Ok(())
+    }
+
     pub async fn run(&mut self) -> Result<()> {
         let mut last_git_refresh = Instant::now();
         let mut last_hook_refresh = Instant::now();
         let mut last_status_draw = Instant::now();
         let mut last_throbber_draw = Instant::now();
+        let mut last_full_refresh = Instant::now();
         let git_refresh_interval = Duration::from_secs(1);
         let hook_refresh_interval = Duration::from_millis(500);
         let status_debounce = Duration::from_millis(100);
         let throbber_interval = Duration::from_millis(100);
+        let full_refresh_interval = Duration::from_secs(5);
 
         // Set up scroll region to constrain the CLI to the top area
         // Pass true to scroll existing content up and make room for status bar
@@ -477,6 +493,14 @@ impl App {
             if needs_throbber && last_throbber_draw.elapsed() >= throbber_interval {
                 self.draw_status_bar()?;
                 last_throbber_draw = Instant::now();
+            }
+
+            // Periodic full refresh to prevent visual artifact buildup
+            if last_full_refresh.elapsed() >= full_refresh_interval {
+                last_full_refresh = Instant::now();
+                self.clear_status_area()?;
+                self.draw_status_bar()?;
+                last_status_draw = Instant::now();
             }
 
             // Update captures (throttled internally)
