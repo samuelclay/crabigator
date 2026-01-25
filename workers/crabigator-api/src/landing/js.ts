@@ -45,6 +45,36 @@ export const landingJs = `
         };
     }
 
+    // Scroll spy for navigation
+    function initScrollSpy() {
+        const sections = document.querySelectorAll('section[id]');
+        const navLinks = document.querySelectorAll('.nav-link');
+
+        function updateActiveLink() {
+            const scrollPos = window.scrollY + 100; // offset for nav height
+
+            let currentSection = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                const sectionHeight = section.offsetHeight;
+                if (scrollPos >= sectionTop && scrollPos < sectionTop + sectionHeight) {
+                    currentSection = section.getAttribute('id');
+                }
+            });
+
+            navLinks.forEach(link => {
+                link.classList.remove('active');
+                const href = link.getAttribute('href');
+                if (href === '#' + currentSection) {
+                    link.classList.add('active');
+                }
+            });
+        }
+
+        window.addEventListener('scroll', updateActiveLink, { passive: true });
+        updateActiveLink(); // Initial check
+    }
+
     // Initialize
     document.addEventListener('DOMContentLoaded', function() {
         // Hero email form
@@ -58,5 +88,8 @@ export const landingJs = `
         if (emailForm) {
             emailForm.addEventListener('submit', handleEmailSignup('email-form', 'email-success', '.email-privacy'));
         }
+
+        // Initialize scroll spy
+        initScrollSpy();
     });
 `;

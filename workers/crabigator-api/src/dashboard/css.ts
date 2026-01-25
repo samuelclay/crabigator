@@ -1499,6 +1499,95 @@ body {
     color: var(--accent-cyan);
 }
 
+/* Install card (shown on pairing page) */
+.install-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-dim);
+    border-radius: 12px;
+    padding: 24px;
+    margin-top: 24px;
+    text-align: center;
+}
+.install-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    color: var(--text-mid);
+    font-size: 13px;
+}
+.install-icon {
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    min-height: 18px;
+    max-width: 18px;
+    max-height: 18px;
+    color: var(--accent-purple);
+    flex-shrink: 0;
+}
+.install-icon svg {
+    width: 100%;
+    height: 100%;
+}
+.install-command {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: var(--bg-abyss);
+    border: 1px solid var(--border-dim);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+}
+.install-command code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    color: var(--accent-cyan);
+    letter-spacing: 0.5px;
+}
+.install-copy-btn {
+    background: transparent;
+    border: none;
+    padding: 6px;
+    cursor: pointer;
+    color: var(--text-dim);
+    border-radius: 4px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.install-copy-btn:hover {
+    color: var(--accent-cyan);
+    background: rgba(34, 211, 238, 0.1);
+}
+.install-hint {
+    color: var(--text-dim);
+    font-size: 12px;
+    margin-bottom: 16px;
+}
+.install-hint code {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg-card);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--text-mid);
+}
+.install-link {
+    display: inline-block;
+    color: var(--accent-magenta);
+    font-size: 12px;
+    text-decoration: none;
+    transition: all 0.2s;
+}
+.install-link:hover {
+    color: var(--accent-cyan);
+    text-decoration: underline;
+}
+
 /* Project grouping */
 .container[data-grouping="project"] {
     column-count: 1 !important;
