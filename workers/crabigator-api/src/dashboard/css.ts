@@ -429,13 +429,24 @@ body {
 }
 .collapse-btn.collapsed { transform: rotate(-90deg); }
 
+/* Session body - animated collapse container */
+.session-body {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+}
+.session-body-inner {
+    min-height: 0;
+    overflow: hidden;
+}
+
 /* Collapsed state */
-.session-card.collapsed .terminal,
-.session-card.collapsed .prompt-panel,
-.session-card.collapsed .widgets-panel,
-.session-card.collapsed .input-area,
-.session-card.collapsed .info-popover { display: none !important; }
+.session-card.collapsed .session-body {
+    grid-template-rows: 0fr;
+}
 .session-card.collapsed .session-header { border-bottom: none; }
+.session-card.collapsed .info-popover { display: none; }
 .session-card.widgets-collapsed .widgets-content {
     max-height: 0;
     overflow: hidden;
@@ -475,7 +486,7 @@ body {
     overflow-x: hidden;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
-    line-height: 1.4;
+    line-height: 1;
     transition: height 0.25s ease-out;
     width: 100%;
     min-width: 0;

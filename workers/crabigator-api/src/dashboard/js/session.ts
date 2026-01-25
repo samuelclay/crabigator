@@ -148,65 +148,69 @@ export const sessionJs = `
                         <span class="info-popover-value" id="info-platform-value-\${session.id}">—</span>
                     </div>
                 </div>
-                <div class="terminal" id="terminal-\${session.id}" style="height:\${TERMINAL_HEIGHTS[currentHeightIndex]}px">
-                    <div class="terminal-scrollback" id="scrollback-\${session.id}"></div>
-                    <div class="terminal-separator" id="separator-\${session.id}">─── scrollback ───</div>
-                    <div class="terminal-screen" id="screen-\${session.id}">Connecting...</div>
-                </div>
-                <div class="prompt-panel" id="prompt-\${session.id}">
-                    <div class="prompt-header" id="prompt-header-\${session.id}"></div>
-                    <div class="prompt-question" id="prompt-question-\${session.id}"></div>
-                    <div class="prompt-options" id="prompt-options-\${session.id}"></div>
-                    <div class="prompt-other" id="prompt-other-\${session.id}" style="display:none">
-                        <input type="text" id="prompt-input-\${session.id}" placeholder="Type your response..."
-                               onkeydown="if(event.key==='Enter'){event.preventDefault();sendOtherAnswer('\${session.id}');}">
-                        <button type="button" onclick="sendOtherAnswer('\${session.id}')">Send</button>
-                    </div>
-                </div>
-                <div class="widgets-panel" id="widgets-\${session.id}">
-                    <div class="widgets-header" onclick="toggleWidgets('\${session.id}')">
-                        <div class="widgets-summary" id="widgets-summary-\${session.id}">
-                            <span class="widgets-summary-title" id="widgets-title-\${session.id}"></span>
-                            <span class="widgets-summary-stats">
-                                <span id="widgets-session-\${session.id}">--</span>
-                                <span class="sep">·</span>
-                                <span id="widgets-thinking-\${session.id}">—</span>
-                                <span class="sep">·</span>
-                                <span id="widgets-idle-\${session.id}">—</span>
-                            </span>
-                            <span class="widgets-summary-git" id="widgets-git-\${session.id}"></span>
+                <div class="session-body" id="body-\${session.id}">
+                    <div class="session-body-inner">
+                        <div class="terminal" id="terminal-\${session.id}" style="height:\${TERMINAL_HEIGHTS[currentHeightIndex]}px">
+                            <div class="terminal-scrollback" id="scrollback-\${session.id}"></div>
+                            <div class="terminal-separator" id="separator-\${session.id}">─── scrollback ───</div>
+                            <div class="terminal-screen" id="screen-\${session.id}">Connecting...</div>
                         </div>
-                        <button class="collapse-btn" id="widgets-btn-\${session.id}" title="Toggle widgets">▼</button>
+                        <div class="prompt-panel" id="prompt-\${session.id}">
+                            <div class="prompt-header" id="prompt-header-\${session.id}"></div>
+                            <div class="prompt-question" id="prompt-question-\${session.id}"></div>
+                            <div class="prompt-options" id="prompt-options-\${session.id}"></div>
+                            <div class="prompt-other" id="prompt-other-\${session.id}" style="display:none">
+                                <input type="text" id="prompt-input-\${session.id}" placeholder="Type your response..."
+                                       onkeydown="if(event.key==='Enter'){event.preventDefault();sendOtherAnswer('\${session.id}');}">
+                                <button type="button" onclick="sendOtherAnswer('\${session.id}')">Send</button>
+                            </div>
+                        </div>
+                        <div class="widgets-panel" id="widgets-\${session.id}">
+                            <div class="widgets-header" onclick="toggleWidgets('\${session.id}')">
+                                <div class="widgets-summary" id="widgets-summary-\${session.id}">
+                                    <span class="widgets-summary-title" id="widgets-title-\${session.id}"></span>
+                                    <span class="widgets-summary-stats">
+                                        <span id="widgets-session-\${session.id}">--</span>
+                                        <span class="sep">·</span>
+                                        <span id="widgets-thinking-\${session.id}">—</span>
+                                        <span class="sep">·</span>
+                                        <span id="widgets-idle-\${session.id}">—</span>
+                                    </span>
+                                    <span class="widgets-summary-git" id="widgets-git-\${session.id}"></span>
+                                </div>
+                                <button class="collapse-btn" id="widgets-btn-\${session.id}" title="Toggle widgets">▼</button>
+                            </div>
+                            <div class="widgets-content" id="widgets-content-\${session.id}">
+                            <div class="widget title-history-widget" id="titles-\${session.id}" style="display:none">
+                                <div class="widget-title"><span style="color:#58a6ff">—</span></div>
+                                <div class="titles-list"></div>
+                            </div>
+                            <div class="widget" id="stats-\${session.id}">
+                                <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right;color:#8b949e">○ Ready</span></div>
+                                <div class="widget-row"><span class="widget-label">◆ Session</span><span class="widget-value">--</span></div>
+                                <div class="widget-row"><span class="widget-label">◇ Thinking</span><span class="widget-value">—</span></div>
+                                <div class="widget-row"><span class="widget-label">▸ Prompts 0</span><span class="widget-value"></span></div>
+                                <div class="widget-row"><span class="widget-label">◂ Completions 0</span><span class="widget-value"></span></div>
+                                <div class="widget-row"><span class="widget-label">⚙ Tools</span><span class="widget-value purple">0</span></div>
+                            </div>
+                            <div class="widget" id="git-\${session.id}">
+                                <div class="widget-title"><span style="color:#7ee787">...</span> <span style="float:right;color:#8b949e">...</span></div>
+                                <div class="git-files" style="color:#8b949e">Waiting for data...</div>
+                            </div>
+                            <div class="widget" id="changes-\${session.id}">
+                                <div class="widget-title"><span style="color:#db6d28">Changes</span></div>
+                                <div class="changes-list" style="color:#8b949e">Waiting for data...</div>
+                            </div>
+                            </div>
+                        </div>
+                        <div class="input-area">
+                            <input type="text" id="input-\${session.id}"
+                                   placeholder="Type a command or answer..."
+                                   oninput="handleInputChange('\${session.id}', this.value)"
+                                   onkeydown="if(event.key==='Enter')sendAnswer('\${session.id}')">
+                            <button type="button" onclick="sendAnswer('\${session.id}')">Send</button>
+                        </div>
                     </div>
-                    <div class="widgets-content" id="widgets-content-\${session.id}">
-                    <div class="widget title-history-widget" id="titles-\${session.id}" style="display:none">
-                        <div class="widget-title"><span style="color:#58a6ff">—</span></div>
-                        <div class="titles-list"></div>
-                    </div>
-                    <div class="widget" id="stats-\${session.id}">
-                        <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right;color:#8b949e">○ Ready</span></div>
-                        <div class="widget-row"><span class="widget-label">◆ Session</span><span class="widget-value">--</span></div>
-                        <div class="widget-row"><span class="widget-label">◇ Thinking</span><span class="widget-value">—</span></div>
-                        <div class="widget-row"><span class="widget-label">▸ Prompts 0</span><span class="widget-value"></span></div>
-                        <div class="widget-row"><span class="widget-label">◂ Completions 0</span><span class="widget-value"></span></div>
-                        <div class="widget-row"><span class="widget-label">⚙ Tools</span><span class="widget-value purple">0</span></div>
-                    </div>
-                    <div class="widget" id="git-\${session.id}">
-                        <div class="widget-title"><span style="color:#7ee787">...</span> <span style="float:right;color:#8b949e">...</span></div>
-                        <div class="git-files" style="color:#8b949e">Waiting for data...</div>
-                    </div>
-                    <div class="widget" id="changes-\${session.id}">
-                        <div class="widget-title"><span style="color:#db6d28">Changes</span></div>
-                        <div class="changes-list" style="color:#8b949e">Waiting for data...</div>
-                    </div>
-                    </div>
-                </div>
-                <div class="input-area">
-                    <input type="text" id="input-\${session.id}"
-                           placeholder="Type a command or answer..."
-                           oninput="handleInputChange('\${session.id}', this.value)"
-                           onkeydown="if(event.key==='Enter')sendAnswer('\${session.id}')">
-                    <button type="button" onclick="sendAnswer('\${session.id}')">Send</button>
                 </div>
             \`;
             // Insert card into the correct location based on grouping mode
