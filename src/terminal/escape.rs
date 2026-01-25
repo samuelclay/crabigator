@@ -50,6 +50,9 @@ pub const DIM: &str = "\x1b[2m";
 /// Reset all text attributes
 pub const RESET: &str = "\x1b[0m";
 
+/// Reset foreground color only (keeps background)
+pub const RESET_FG: &str = "\x1b[39m";
+
 // === Color Helpers ===
 
 /// Set foreground color using 256-color palette

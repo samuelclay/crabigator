@@ -725,7 +725,6 @@ impl CloudClient {
 pub struct PairingTokenResponse {
     pub token: String,
     pub expires_at: u64,
-    pub qr_data: String,
     pub code: String,
 }
 

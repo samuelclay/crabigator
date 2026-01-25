@@ -13,7 +13,7 @@ pub mod utils;
 
 pub use changes::draw_changes_widget;
 pub use git::draw_git_widget;
-pub use pairing::{draw_pairing_widget, PairingState};
+pub use pairing::{draw_pairing_banner, PairingState};
 pub use stats::draw_stats_widget;
 pub use status_bar::{draw_status_bar, Layout};
 

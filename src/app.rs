@@ -120,7 +120,10 @@ impl App {
         // Also ensure pty_rows is at least 1 to avoid PTY errors
         // Guard: ensure max >= min for clamp (handles very short terminals)
         let status_rows = ((rows as f32 * 0.2) as u16).clamp(2, rows.saturating_sub(1).max(2));
-        let pty_rows = rows.saturating_sub(status_rows).max(1);
+        // Reserve 2 extra rows for the pairing banner (top border + content)
+        // These rows sit between the PTY and the status bar
+        let banner_reserved = 2u16;
+        let pty_rows = rows.saturating_sub(status_rows + banner_reserved).max(1);
 
         // Give the assistant CLI only the top portion
         let platform_pty = PlatformPty::new(
@@ -738,16 +741,18 @@ impl App {
         // Update stats each draw
         self.session_stats.tick();
 
+        // Banner space is reserved at startup (2 rows between PTY and status bar)
+        // The layout uses the actual pty_rows which already accounts for this
         let layout = Layout {
             pty_rows: self.pty_rows,
             total_cols: self.total_cols,
             status_rows: self.status_rows,
         };
 
+        let mut stdout = stdout();
+
         // Get cloud status if connected
         let cloud_status = self.cloud_client.as_ref().map(|c| c.status());
-
-        let mut stdout = stdout();
         draw_status_bar(
             &mut stdout,
             &layout,
@@ -805,7 +810,9 @@ impl App {
         // Recalculate layout with same guards as App::new
         // Guard: ensure max >= min for clamp (handles very short terminals)
         self.status_rows = ((height as f32 * 0.2) as u16).clamp(2, height.saturating_sub(1).max(2));
-        self.pty_rows = height.saturating_sub(self.status_rows).max(1);
+        // Reserve 2 rows for banner space (same as in App::new)
+        let banner_reserved = 2u16;
+        self.pty_rows = height.saturating_sub(self.status_rows + banner_reserved).max(1);
 
         // Re-setup scroll region for new size (not initial, don't scroll content)
         self.setup_scroll_region(false)?;
@@ -1129,7 +1136,6 @@ impl App {
             Ok(response) => {
                 self.pairing_state.pairing_token = Some(response.token);
                 self.pairing_state.pairing_code = Some(response.code);
-                self.pairing_state.qr_data = Some(response.qr_data);
             }
             Err(_) => {
                 // Silently fail - pairing widget won't show
@@ -1160,7 +1166,6 @@ impl App {
                         // This will be handled on next poll cycle
                         self.pairing_state.pairing_token = None;
                         self.pairing_state.pairing_code = None;
-                        self.pairing_state.qr_data = None;
                     }
                     self.pending_pairing_poll = None;
                 }

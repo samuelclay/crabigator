@@ -1,19 +1,17 @@
-//! Pairing widget - displays QR code and pairing code for mobile pairing
+//! Pairing banner - full-width display for mobile pairing
 //!
-//! Shows a QR code and human-readable pairing code when no mobile devices are linked.
+//! Shows a prominent, clickable URL banner when no mobile devices are linked.
+//! Renders as a single line above the widget row for maximum clarity.
 //! Disappears automatically when pairing completes.
 
 use std::io::{Stdout, Write};
 
 use anyhow::Result;
-use qrcode::{QrCode, EcLevel};
 
-use crate::terminal::escape::{self, color, fg, RESET};
-use super::utils::strip_ansi_len;
-use super::WidgetArea;
+use crate::terminal::escape::{self, color, bg, fg, hyperlink, RESET, RESET_FG};
 
-/// Pairing state for the widget
-#[derive(Clone, Debug)]
+/// Pairing state for the banner
+#[derive(Clone, Debug, Default)]
 pub struct PairingState {
     /// Whether we have any linked devices
     pub has_linked_devices: bool,
@@ -21,29 +19,14 @@ pub struct PairingState {
     pub pairing_token: Option<String>,
     /// Human-readable pairing code (e.g., "ABC-DEF-GHI")
     pub pairing_code: Option<String>,
-    /// QR code data URL
-    pub qr_data: Option<String>,
     /// Whether pairing just completed (for toast message)
     pub just_paired: Option<String>,
     /// Timestamp when just_paired was set (for auto-clear)
     pub just_paired_at: Option<std::time::Instant>,
 }
 
-impl Default for PairingState {
-    fn default() -> Self {
-        Self {
-            has_linked_devices: false,
-            pairing_token: None,
-            pairing_code: None,
-            qr_data: None,
-            just_paired: None,
-            just_paired_at: None,
-        }
-    }
-}
-
 impl PairingState {
-    /// Check if we should show the pairing widget
+    /// Check if we should show the pairing banner
     pub fn should_show_widget(&self) -> bool {
         // Show if not paired and we have a pairing code
         !self.has_linked_devices && self.pairing_code.is_some()
@@ -79,182 +62,117 @@ impl PairingState {
         // Mark that we need a new token (the old one is consumed)
         self.pairing_token = None;
         self.pairing_code = None;
-        self.qr_data = None;
     }
 
     /// Set a new pairing token (for pairing additional devices)
     #[allow(dead_code)]
-    pub fn set_new_token(&mut self, token: String, code: String, qr_data: String) {
+    pub fn set_new_token(&mut self, token: String, code: String) {
         self.pairing_token = Some(token);
         self.pairing_code = Some(code);
-        self.qr_data = Some(qr_data);
-    }
-}
-
-/// Convert QR data to a compact terminal representation using Unicode block characters
-/// Uses half-block characters to display 2 rows per line
-fn render_qr_compact(qr_data: &str, max_width: usize, max_height: usize) -> Vec<String> {
-    let code = match QrCode::with_error_correction_level(qr_data, EcLevel::L) {
-        Ok(c) => c,
-        Err(_) => return vec!["[QR Error]".to_string()],
-    };
-
-    let modules = code.to_colors();
-    let size = (modules.len() as f64).sqrt() as usize;
-
-    // Calculate scaling factor
-    // Each character represents 2 QR modules vertically (using half blocks)
-    // and 1 QR module horizontally (but we need some padding)
-    let scale = 1usize;
-    let qr_width = size / scale + 2; // +2 for quiet zone
-    let qr_height = (size / scale + 1) / 2 + 1; // /2 for half blocks, +1 for quiet zone
-
-    if qr_width > max_width || qr_height > max_height {
-        return vec!["[QR too large]".to_string()];
     }
 
-    let mut lines = Vec::new();
-
-    // Unicode half blocks:
-    // '▀' (U+2580) = upper half block
-    // '▄' (U+2584) = lower half block
-    // '█' (U+2588) = full block
-    // ' ' = empty
-
-    // Process 2 rows at a time
-    for y in (0..size).step_by(2 * scale) {
-        let mut line = String::new();
-        for x in (0..size).step_by(scale) {
-            let top_dark = modules.get(y * size + x).map(|c| *c == qrcode::Color::Dark).unwrap_or(false);
-            let bottom_dark = if y + scale < size {
-                modules.get((y + scale) * size + x).map(|c| *c == qrcode::Color::Dark).unwrap_or(false)
-            } else {
-                false
-            };
-
-            let ch = match (top_dark, bottom_dark) {
-                (true, true) => '█',
-                (true, false) => '▀',
-                (false, true) => '▄',
-                (false, false) => ' ',
-            };
-            line.push(ch);
+    /// Get the number of rows needed for the pairing banner (0 if not shown)
+    pub fn banner_rows(&self) -> u16 {
+        if self.should_show_widget() || self.should_show_toast() {
+            2 // Top border + content (bottom border is the main separator)
+        } else {
+            0
         }
-        lines.push(line);
     }
-
-    lines
 }
 
-/// Draw the pairing widget at the given position
-pub fn draw_pairing_widget(
+/// Draw the full-width pairing banner
+/// Returns the number of rows consumed (0, 1, or 2)
+pub fn draw_pairing_banner(
     stdout: &mut Stdout,
-    area: WidgetArea,
+    row: u16,
+    width: u16,
     state: &PairingState,
-) -> Result<()> {
-    write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
+) -> Result<u16> {
+    // Nothing to show
+    if !state.should_show_widget() && !state.should_show_toast() {
+        return Ok(0);
+    }
 
-    // Handle toast message
+    // Handle toast message (success notification) - single row
     if state.should_show_toast() {
         if let Some(ref device_name) = state.just_paired {
-            let content = format!(
-                "{}Paired with {}!{}",
-                fg(color::GREEN), device_name, RESET
-            );
-            write!(stdout, "{}", content)?;
-            let content_len = strip_ansi_len(&content);
-            let pad = (area.width as usize).saturating_sub(content_len);
-            write!(stdout, "{:pad$}", "", pad = pad)?;
-            return Ok(());
+            // Draw top border
+            write!(stdout, "{}", escape::cursor_to(row, 1))?;
+            write!(stdout, "{}{}", bg(color::BG_DARK), fg(color::DARK_GRAY))?;
+            for _ in 0..width {
+                write!(stdout, "━")?;
+            }
+            write!(stdout, "{}", RESET)?;
+
+            // Draw toast content
+            write!(stdout, "{}", escape::cursor_to(row + 1, 1))?;
+            write!(stdout, "{}", bg(color::BG_DARK))?;
+            write!(stdout, " {}✓{} ", fg(color::GREEN), RESET_FG)?;
+            write!(stdout, "{}{}Paired with {}{}", bg(color::BG_DARK), fg(color::GREEN), device_name, RESET)?;
+
+            // Fill remaining width
+            let used = 4 + 12 + device_name.len();
+            let remaining = (width as usize).saturating_sub(used);
+            write!(stdout, "{}{:remaining$}{}", bg(color::BG_DARK), "", RESET)?;
+            return Ok(2);
         }
     }
 
-    // Show pairing widget based on available height
-    let content = draw_pairing_row(area.row, area.width, state);
-    write!(stdout, "{}", content)?;
-    let content_len = strip_ansi_len(&content);
-    let pad = (area.width as usize).saturating_sub(content_len);
-    write!(stdout, "{:pad$}", "", pad = pad)?;
+    // Show pairing banner with clickable URL
+    if let Some(ref code) = state.pairing_code {
+        let url = format!("https://drinkcrabigator.com/dashboard?setup={}", code);
 
-    Ok(())
-}
+        // Row 1: Top border - gray line on dark background
+        write!(stdout, "{}", escape::cursor_to(row, 1))?;
+        write!(stdout, "{}{}", bg(color::BG_DARK), fg(color::DARK_GRAY))?;
+        for _ in 0..width {
+            write!(stdout, "━")?;
+        }
+        write!(stdout, "{}", RESET)?;
 
-/// Draw a row of the pairing widget
-fn draw_pairing_row(row: u16, width: u16, state: &PairingState) -> String {
-    let Some(ref code) = state.pairing_code else {
-        return String::new();
-    };
+        // Row 2: Content row
+        write!(stdout, "{}", escape::cursor_to(row + 1, 1))?;
 
-    // Check if we have enough width for QR code
-    let qr_data = state.qr_data.as_deref().unwrap_or("");
-    let qr_lines = if !qr_data.is_empty() && width >= 40 {
-        render_qr_compact(qr_data, 20, 10)
-    } else {
-        vec![]
-    };
+        // Fill entire row with dark background first
+        write!(stdout, "{}", bg(color::BG_DARK))?;
+        for _ in 0..width {
+            write!(stdout, " ")?;
+        }
+        write!(stdout, "{}", RESET)?;
 
-    match row {
-        1 => {
-            // Header
-            format!(
-                "{}Pair with mobile{} {}(scan QR){}",
-                fg(color::PURPLE), RESET,
-                fg(color::GRAY), RESET
-            )
-        }
-        2 => {
-            // QR code line 1 or empty
-            if !qr_lines.is_empty() {
-                qr_lines.get(0).cloned().unwrap_or_default()
-            } else {
-                format!(
-                    "{}Visit{} drinkcrabigator.com",
-                    fg(color::GRAY), RESET
-                )
-            }
-        }
-        3 => {
-            // QR code line 2 or code label
-            if qr_lines.len() > 1 {
-                qr_lines.get(1).cloned().unwrap_or_default()
-            } else {
-                format!(
-                    "{}Code:{} {}{}{}",
-                    fg(color::GRAY), RESET,
-                    fg(color::YELLOW), code, RESET
-                )
-            }
-        }
-        4 => {
-            // QR code line 3 or empty
-            if qr_lines.len() > 2 {
-                qr_lines.get(2).cloned().unwrap_or_default()
-            } else {
-                String::new()
-            }
-        }
-        5 => {
-            // Code display if QR is showing
-            if !qr_lines.is_empty() {
-                format!(
-                    "{}Code:{} {}{}{}",
-                    fg(color::GRAY), RESET,
-                    fg(color::YELLOW), code, RESET
-                )
-            } else {
-                String::new()
-            }
-        }
-        _ => {
-            // Additional QR lines or empty
-            let qr_row = (row as usize).saturating_sub(2);
-            if qr_row < qr_lines.len() {
-                qr_lines.get(qr_row).cloned().unwrap_or_default()
-            } else {
-                String::new()
-            }
-        }
+        // Reposition and draw content
+        write!(stdout, "{}", escape::cursor_to(row + 1, 1))?;
+        write!(stdout, "{}", bg(color::BG_DARK))?;
+
+        // Phone icon in cyan
+        write!(stdout, " {}📱{}", fg(color::CYAN), fg(color::WHITE))?;
+
+        // Explanatory text in white
+        write!(stdout, " Access on phone or web  ")?;
+
+        // Arrow separator in gray
+        write!(stdout, "{}▸  {}", fg(color::DARK_GRAY), fg(color::WHITE))?;
+
+        // Clickable link pill with dark teal background
+        // URL in white, code highlighted in bright yellow
+        let link_text = format!(
+            "{}{} drinkcrabigator.com/dashboard?setup={}{}{} {}",
+            bg(30),              // Dark teal background (color 30)
+            fg(color::WHITE),    // White text for URL
+            fg(color::YELLOW),   // Bright yellow for the code
+            code,
+            fg(color::WHITE),    // Back to white after code
+            RESET,
+        );
+        let clickable = hyperlink(&url, &link_text);
+        write!(stdout, "{}", clickable)?;
+        write!(stdout, "{}", RESET)?;
+
+        return Ok(2);
     }
+
+    Ok(0)
 }
 
 #[cfg(test)]
@@ -266,18 +184,22 @@ mod tests {
         let state = PairingState::default();
         assert!(!state.has_linked_devices);
         assert!(!state.should_show_widget());
+        assert_eq!(state.banner_rows(), 0);
     }
 
     #[test]
     fn test_should_show_widget() {
         let mut state = PairingState::default();
         assert!(!state.should_show_widget());
+        assert_eq!(state.banner_rows(), 0);
 
         state.pairing_code = Some("ABC-DEF-GHI".to_string());
         assert!(state.should_show_widget());
+        assert_eq!(state.banner_rows(), 2); // Top border + content
 
         state.has_linked_devices = true;
         assert!(!state.should_show_widget());
+        assert_eq!(state.banner_rows(), 0);
     }
 
     #[test]
@@ -286,5 +208,6 @@ mod tests {
         state.set_just_paired("iPhone".to_string());
         assert!(state.should_show_toast());
         assert!(state.has_linked_devices);
+        assert_eq!(state.banner_rows(), 2); // Top border + content
     }
 }
