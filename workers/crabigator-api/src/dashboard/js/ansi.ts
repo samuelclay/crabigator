@@ -5,8 +5,22 @@ export const ansiJs = `
             if (!text) return '';
 
             // Trim trailing whitespace from each line to prevent background color bleeding
-            // Terminal buffers often pad lines with spaces
-            text = text.split('\\n').map(line => line.trimEnd()).join('\\n');
+            // Terminal buffers often pad lines with spaces. Preserve trailing ANSI resets.
+            function trimLineEndPreserveAnsi(line) {
+                // Peel off any ANSI sequences at the end of the line.
+                let end = line.length;
+                let ansiSuffix = '';
+                while (end > 0) {
+                    const match = line.slice(0, end).match(/\\x1b\\[[0-9;?]*[A-Za-z]$/);
+                    if (!match) break;
+                    ansiSuffix = match[0] + ansiSuffix;
+                    end -= match[0].length;
+                }
+                const trimmed = line.slice(0, end).trimEnd();
+                return trimmed + ansiSuffix;
+            }
+
+            text = text.split('\\n').map(trimLineEndPreserveAnsi).join('\\n');
 
             const colors = {
                 30: '#0d1117', 31: '#f85149', 32: '#3fb950', 33: '#d29922',
@@ -256,17 +270,23 @@ export const ansiJs = `
                     return '<div class="rule-line">' + lineHtml + '</div>';
                 }
 
-                // Check for split line (text + 10+ spaces + text)
-                // Use non-greedy match for left, greedy for spaces, then remaining text
+                // Check for split line (text + 10+ spaces + text) that looks like two columns
+                // Avoid matching indented code blocks or diff output with long right-hand text.
                 const splitMatch = plain.match(/^(.+?)( {10,})(.+)$/);
                 if (splitMatch) {
                     const leftLen = splitMatch[1].length;
                     const gapLen = splitMatch[2].length;
-                    const rightStart = leftLen + gapLen;
+                    const rightLen = splitMatch[3].length;
+                    const leftToken = splitMatch[1].trim();
+                    const leftIsNumeric = /^[0-9]+$/.test(leftToken);
+                    const looksLikeColumns = !leftIsNumeric && leftLen >= 4 && rightLen <= 30 && gapLen >= rightLen;
 
-                    const [leftHtml, rightHtml] = splitHtmlForFlexbox(lineHtml, leftLen, rightStart);
+                    if (looksLikeColumns) {
+                        const rightStart = leftLen + gapLen;
+                        const [leftHtml, rightHtml] = splitHtmlForFlexbox(lineHtml, leftLen, rightStart);
 
-                    return '<div class="line split-line"><span>' + leftHtml + '</span><span>' + rightHtml + '</span></div>';
+                        return '<div class="line split-line"><span>' + leftHtml + '</span><span>' + rightHtml + '</span></div>';
+                    }
                 }
 
                 return '<div class="line">' + lineHtml + '</div>';
