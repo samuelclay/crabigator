@@ -14,7 +14,7 @@ use crate::ide::IdeKind;
 use crate::parsers::DiffSummary;
 use crate::terminal::escape::{self, color, RESET};
 
-use super::{draw_changes_widget, draw_git_widget, draw_pairing_widget, draw_stats_widget, PairingState, WidgetArea};
+use super::{draw_changes_widget, draw_git_widget, draw_pairing_banner, draw_stats_widget, PairingState, WidgetArea};
 
 /// Layout information needed for rendering widgets
 pub struct Layout {
@@ -40,31 +40,37 @@ pub fn draw_status_bar(
     // Save cursor position
     write!(stdout, "{}", escape::CURSOR_SAVE)?;
 
-    // Move to status area (below the scroll region)
+    // Banner space is always reserved (2 rows between PTY and status bar)
+    // Draw banner if active, otherwise leave the space empty
+    const BANNER_RESERVED: u16 = 2;
+    let banner_rows = pairing_state.banner_rows();
+
+    // Move to banner area (below PTY scroll region)
     write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1, 1))?;
 
-    // Draw thick separator line (matching banner style)
+    // Draw pairing banner if needed
+    if banner_rows > 0 {
+        draw_pairing_banner(
+            stdout,
+            layout.pty_rows + 1,
+            layout.total_cols,
+            pairing_state,
+        )?;
+    }
+
+    // Draw thick separator line (always after the reserved banner space)
+    let separator_row = layout.pty_rows + 1 + BANNER_RESERVED;
+    write!(stdout, "{}", escape::cursor_to(separator_row, 1))?;
     write!(stdout, "{}{}", escape::bg(color::BG_DARK), escape::fg(color::DARK_GRAY))?;
     for _ in 0..layout.total_cols {
         write!(stdout, "━")?;
     }
     write!(stdout, "{}", RESET)?;
-
-    // Determine if pairing widget should be shown
-    let show_pairing = pairing_state.should_show_widget() || pairing_state.should_show_toast();
     let is_paired = pairing_state.has_linked_devices;
 
     // Calculate column widths based on available height
     // In compact mode (short terminal), stats gets more width for two-column layout
     let compact = layout.status_rows <= 5;
-
-    // Pairing widget width (only when shown)
-    let pairing_width = if show_pairing {
-        // Pairing widget: ~20% of width, min 24 chars
-        ((layout.total_cols as f32) * 0.20).max(24.0) as u16
-    } else {
-        0
-    };
 
     let stats_width = if compact {
         // Wider stats for two-column layout: ~30% of width, min 36 chars
@@ -74,12 +80,13 @@ pub fn draw_status_bar(
         ((layout.total_cols as f32) * 0.17).max(24.0) as u16
     };
 
-    // Account for separators: 1 for each separator between columns
-    let num_separators = if show_pairing { 3 } else { 2 };
-    let remaining = layout.total_cols.saturating_sub(stats_width + pairing_width + num_separators as u16);
+    // Account for separators: 2 separators between 3 columns
+    let num_separators = 2;
+    let remaining = layout.total_cols.saturating_sub(stats_width + num_separators as u16);
 
     // Check if git needs multiple columns (files > available rows)
-    let git_available_rows = layout.status_rows.saturating_sub(2) as usize; // -2 for separator + header
+    let widget_rows = layout.status_rows;
+    let git_available_rows = widget_rows.saturating_sub(2) as usize; // -2 for separator + header
     let git_needs_multi_column = git_state.files.len() > git_available_rows;
 
     // Flex ratio: git gets 4/8 if multi-column, 3/8 if single-column
@@ -93,8 +100,10 @@ pub fn draw_status_bar(
         (git_w, remaining - git_w)
     };
 
-    // Draw content rows
-    for row in 1..layout.status_rows {
+    // Draw content rows (after reserved banner space + separator)
+    let first_widget_row = 1 + BANNER_RESERVED;
+    let widget_pty_rows = layout.pty_rows + BANNER_RESERVED;
+    for row in first_widget_row..layout.status_rows {
         write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + row, 1))?;
 
         // Stats column (leftmost, fixed width)
@@ -104,12 +113,14 @@ pub fn draw_status_bar(
         } else {
             None
         };
+        // Adjust widget row to be relative (starting from 1)
+        let widget_row = row - BANNER_RESERVED;
         draw_stats_widget(
             stdout,
             WidgetArea {
-                pty_rows: layout.pty_rows,
+                pty_rows: widget_pty_rows,
                 col: 0,
-                row,
+                row: widget_row,
                 width: stats_width,
                 height: layout.status_rows,
             },
@@ -125,32 +136,13 @@ pub fn draw_status_bar(
         // Track current column position
         let mut current_col = stats_width + 1;
 
-        // Pairing widget (optional, between stats and git)
-        if show_pairing {
-            draw_pairing_widget(
-                stdout,
-                WidgetArea {
-                    pty_rows: layout.pty_rows,
-                    col: current_col,
-                    row,
-                    width: pairing_width,
-                    height: layout.status_rows,
-                },
-                pairing_state,
-            )?;
-
-            // Separator
-            write!(stdout, "{}│{}", escape::fg(color::DARK_GRAY), RESET)?;
-            current_col += pairing_width + 1;
-        }
-
         // Git column
         draw_git_widget(
             stdout,
             WidgetArea {
-                pty_rows: layout.pty_rows,
+                pty_rows: widget_pty_rows,
                 col: current_col,
-                row,
+                row: widget_row,
                 width: git_width,
                 height: layout.status_rows,
             },
@@ -167,9 +159,9 @@ pub fn draw_status_bar(
         draw_changes_widget(
             stdout,
             WidgetArea {
-                pty_rows: layout.pty_rows,
+                pty_rows: widget_pty_rows,
                 col: current_col,
-                row,
+                row: widget_row,
                 width: changes_width,
                 height: layout.status_rows,
             },
