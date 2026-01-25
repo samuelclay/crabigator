@@ -51,7 +51,12 @@ export const eventsJs = `
                 // Remove the card - it will be recreated if session is still active
                 const card = document.getElementById('session-' + sessionId);
                 if (card) {
+                    const cwd = card.querySelector('.cwd')?.textContent;
                     card.remove();
+                    // Update project group count if in grouped mode
+                    if (groupingMode === 'project' && cwd) {
+                        updateProjectGroupCount(cwd);
+                    }
                 }
                 updateFitLayout();
 
@@ -166,7 +171,12 @@ export const eventsJs = `
                             session.eventSource?.close();
                             sessions.delete(sessionId);
                         }
+                        const cwd = card.querySelector('.cwd')?.textContent;
                         card.remove();
+                        // Update project group count if in grouped mode
+                        if (groupingMode === 'project' && cwd) {
+                            updateProjectGroupCount(cwd);
+                        }
                         updateFitLayout();
                         // Update status
                         document.getElementById('status').textContent = sessionCount(sessions.size);
