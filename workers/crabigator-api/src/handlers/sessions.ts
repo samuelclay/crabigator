@@ -137,12 +137,16 @@ export async function listSessions(
     }
     const auth = authResult.auth;
 
-    // Determine device_id based on auth type
-    let deviceId: string;
+    // Determine scope based on auth type
+    let deviceId: string | null = null;
+    let groupId: string | null = null;
     if (auth.type === 'device') {
         deviceId = auth.device_id;
     } else if (auth.type === 'mobile') {
-        deviceId = auth.desktop_id;
+        groupId = auth.group_id || null;
+        if (!groupId) {
+            deviceId = auth.desktop_id;
+        }
     } else {
         return new Response(
             JSON.stringify({ error: 'Cannot list sessions with share token', code: 'INVALID_AUTH' }),
@@ -156,12 +160,20 @@ export async function listSessions(
     const offset = parseInt(url.searchParams.get('offset') || '0', 10);
 
     let query = `
-        SELECT id, client_session_id, cwd, platform, state, started_at, ended_at, is_active,
-               prompts, completions, tool_calls, thinking_seconds
+        SELECT sessions.id, sessions.client_session_id, sessions.cwd, sessions.platform, sessions.state,
+               sessions.started_at, sessions.ended_at, sessions.is_active,
+               sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds
         FROM sessions
-        WHERE device_id = ?
     `;
-    const params: (string | number)[] = [deviceId];
+    const params: (string | number)[] = [];
+
+    if (groupId) {
+        query += ' JOIN devices ON devices.id = sessions.device_id WHERE devices.group_id = ?';
+        params.push(groupId);
+    } else if (deviceId) {
+        query += ' WHERE sessions.device_id = ?';
+        params.push(deviceId);
+    }
 
     if (activeOnly) {
         query += ' AND is_active = 1';
@@ -219,11 +231,15 @@ export async function getSession(
         return authResult.error;
     }
     const auth = authResult.auth;
-    let deviceId: string;
+    let deviceId: string | null = null;
+    let groupId: string | null = null;
     if (auth.type === 'device') {
         deviceId = auth.device_id;
     } else if (auth.type === 'mobile') {
-        deviceId = auth.desktop_id;
+        groupId = auth.group_id || null;
+        if (!groupId) {
+            deviceId = auth.desktop_id;
+        }
     } else {
         return new Response(
             JSON.stringify({ error: 'Cannot get session with share token', code: 'INVALID_AUTH' }),
@@ -233,12 +249,26 @@ export async function getSession(
 
     const sessionId = params.id;
 
-    const session = await env.DB.prepare(`
-        SELECT id, client_session_id, cwd, platform, state, started_at, ended_at, is_active,
-               prompts, completions, tool_calls, thinking_seconds, share_token
+    let sessionQuery = `
+        SELECT sessions.id, sessions.client_session_id, sessions.cwd, sessions.platform, sessions.state,
+               sessions.started_at, sessions.ended_at, sessions.is_active,
+               sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds,
+               sessions.share_token
         FROM sessions
-        WHERE id = ? AND device_id = ?
-    `).bind(sessionId, deviceId).first<{
+    `;
+    const sessionParams: (string | number)[] = [sessionId];
+    if (groupId) {
+        sessionQuery += `
+            JOIN devices ON devices.id = sessions.device_id
+            WHERE sessions.id = ? AND devices.group_id = ?
+        `;
+        sessionParams.push(groupId);
+    } else {
+        sessionQuery += ' WHERE sessions.id = ? AND sessions.device_id = ?';
+        sessionParams.push(deviceId || '');
+    }
+
+    const session = await env.DB.prepare(sessionQuery).bind(...sessionParams).first<{
         id: string;
         client_session_id: string;
         cwd: string;

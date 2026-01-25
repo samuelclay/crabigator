@@ -6,6 +6,8 @@ interface ActiveSession {
     platform: string;
     state: string;
     started_at: number;
+    device_id?: string;
+    group_id?: string | null;
 }
 
 /**
@@ -18,7 +20,7 @@ interface ActiveSession {
 export class SessionListDO implements DurableObject {
     private state: DurableObjectState;
     private env: Env;
-    private sseClients: Set<WritableStreamDefaultWriter<Uint8Array>> = new Set();
+    private sseClients: Map<WritableStreamDefaultWriter<Uint8Array>, { group_id: string }> = new Map();
     private encoder = new TextEncoder();
     private activeSessions: Map<string, ActiveSession> = new Map();
 
@@ -33,6 +35,8 @@ export class SessionListDO implements DurableObject {
                 this.activeSessions = new Map(stored);
                 // Validate each session - remove stale ones
                 await this.validateSessions();
+                // Refresh any missing group/device metadata
+                await this.refreshMissingSessionMetadata();
             }
         });
     }
@@ -69,6 +73,39 @@ export class SessionListDO implements DurableObject {
         }
     }
 
+    /**
+     * Refresh missing device/group metadata for stored sessions.
+     */
+    private async refreshMissingSessionMetadata(): Promise<void> {
+        let updated = false;
+        for (const [id, session] of this.activeSessions) {
+            if (session.device_id && session.group_id) {
+                continue;
+            }
+            const row = await this.env.DB.prepare(`
+                SELECT sessions.device_id as device_id, devices.group_id as group_id
+                FROM sessions
+                JOIN devices ON devices.id = sessions.device_id
+                WHERE sessions.id = ?
+            `).bind(id).first<{ device_id: string; group_id: string | null }>();
+            if (row) {
+                session.device_id = session.device_id || row.device_id;
+                session.group_id = session.group_id || row.group_id || null;
+                this.activeSessions.set(id, session);
+                updated = true;
+            }
+        }
+
+        if (updated) {
+            await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
+        }
+    }
+
+    private sanitizeSession(session: ActiveSession): Omit<ActiveSession, 'device_id' | 'group_id'> {
+        const { device_id: _deviceId, group_id: _groupId, ...rest } = session;
+        return rest;
+    }
+
     async fetch(request: Request): Promise<Response> {
         const url = new URL(request.url);
 
@@ -78,7 +115,7 @@ export class SessionListDO implements DurableObject {
             case '/notify':
                 return this.handleNotify(request);
             case '/sessions':
-                return this.handleGetSessions();
+                return this.handleGetSessions(request);
             case '/connect':
                 return this.handleConnect(request);
             case '/disconnect':
@@ -96,11 +133,15 @@ export class SessionListDO implements DurableObject {
     private handleSubscribe(request: Request): Response {
         const url = new URL(request.url);
         const version = url.searchParams.get('version') || 'unknown';
+        const groupId = url.searchParams.get('group_id');
+        if (!groupId) {
+            return new Response('Missing group_id', { status: 400 });
+        }
 
         const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
         const writer = writable.getWriter();
 
-        this.sseClients.add(writer);
+        this.sseClients.set(writer, { group_id: groupId });
 
         // Send initial connected event with build version
         this.sendSSE(writer, { type: 'connected', clients: this.sseClients.size, version });
@@ -155,12 +196,46 @@ export class SessionListDO implements DurableObject {
      * Broadcast event to all SSE clients
      */
     private async broadcast(event: unknown): Promise<void> {
-        const data = `data: ${JSON.stringify(event)}\n\n`;
+        const eventObj = event as { type?: string; session?: ActiveSession | Partial<ActiveSession> };
+        let groupId: string | null = null;
+
+        if (eventObj.session?.group_id) {
+            groupId = eventObj.session.group_id;
+        } else if (eventObj.session?.id) {
+            const existing = this.activeSessions.get(eventObj.session.id);
+            if (existing?.group_id) {
+                groupId = existing.group_id;
+            } else if (eventObj.session.id) {
+                const row = await this.env.DB.prepare(`
+                    SELECT devices.group_id as group_id
+                    FROM sessions
+                    JOIN devices ON devices.id = sessions.device_id
+                    WHERE sessions.id = ?
+                `).bind(eventObj.session.id).first<{ group_id: string | null }>();
+                groupId = row?.group_id || null;
+            }
+        }
+
+        if (!groupId) {
+            // Can't safely determine ownership - skip broadcast
+            return;
+        }
+
+        let payload = eventObj;
+        if (eventObj.session && typeof eventObj.session === 'object') {
+            const { group_id: _groupId, device_id: _deviceId, ...rest } = eventObj.session as Record<string, unknown>;
+            payload = { ...eventObj, session: rest };
+        }
+
+        const data = `data: ${JSON.stringify(payload)}\n\n`;
         const encoded = this.encoder.encode(data);
 
         const deadClients: WritableStreamDefaultWriter<Uint8Array>[] = [];
 
-        for (const writer of this.sseClients) {
+        for (const [writer, meta] of this.sseClients.entries()) {
+            if (meta.group_id !== groupId) {
+                continue;
+            }
             try {
                 await writer.write(encoded);
             } catch {
@@ -176,8 +251,21 @@ export class SessionListDO implements DurableObject {
     /**
      * Get list of currently connected sessions
      */
-    private handleGetSessions(): Response {
-        const sessions = Array.from(this.activeSessions.values());
+    private async handleGetSessions(request: Request): Promise<Response> {
+        const url = new URL(request.url);
+        const groupId = url.searchParams.get('group_id');
+        if (!groupId) {
+            return new Response(JSON.stringify({ error: 'Missing group_id' }), {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
+
+        await this.refreshMissingSessionMetadata();
+
+        const sessions = Array.from(this.activeSessions.values())
+            .filter(session => session.group_id === groupId)
+            .map(session => this.sanitizeSession(session));
         return new Response(JSON.stringify({ sessions }), {
             headers: { 'Content-Type': 'application/json' },
         });
@@ -193,6 +281,18 @@ export class SessionListDO implements DurableObject {
 
         try {
             const session = await request.json() as ActiveSession;
+            if (!session.group_id || !session.device_id) {
+                const row = await this.env.DB.prepare(`
+                    SELECT sessions.device_id as device_id, devices.group_id as group_id
+                    FROM sessions
+                    JOIN devices ON devices.id = sessions.device_id
+                    WHERE sessions.id = ?
+                `).bind(session.id).first<{ device_id: string; group_id: string | null }>();
+                if (row) {
+                    session.device_id = session.device_id || row.device_id;
+                    session.group_id = session.group_id || row.group_id || null;
+                }
+            }
             this.activeSessions.set(session.id, session);
             await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
 
@@ -227,7 +327,15 @@ export class SessionListDO implements DurableObject {
                 await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
 
                 // Broadcast to dashboard viewers
-                await this.broadcast({ type: 'deleted', session: { id } });
+                await this.broadcast({ type: 'deleted', session: { id, group_id: session.group_id } });
+
+                if (session.device_id) {
+                    const remainingForDevice = Array.from(this.activeSessions.values())
+                        .some(active => active.device_id === session.device_id);
+                    if (!remainingForDevice) {
+                        await this.cleanupPairingTokens(session.device_id);
+                    }
+                }
             }
 
             return new Response(JSON.stringify({ ok: true }), {
@@ -262,7 +370,7 @@ export class SessionListDO implements DurableObject {
                 await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
 
                 // Broadcast state update to dashboard viewers
-                await this.broadcast({ type: 'updated', session: { id, state } });
+                await this.broadcast({ type: 'updated', session: { id, state, group_id: session.group_id } });
             }
 
             return new Response(JSON.stringify({ ok: true }), {
@@ -273,6 +381,34 @@ export class SessionListDO implements DurableObject {
                 status: 400,
                 headers: { 'Content-Type': 'application/json' },
             });
+        }
+    }
+
+    private async cleanupPairingTokens(deviceId: string): Promise<void> {
+        try {
+            const tokenList = await this.env.TOKENS.get(`pairing_device:${deviceId}`, 'json') as string[] | null;
+            if (!Array.isArray(tokenList) || tokenList.length === 0) {
+                return;
+            }
+
+            for (const token of tokenList) {
+                const tokenDataStr = await this.env.TOKENS.get(`pairing:${token}`);
+                if (tokenDataStr) {
+                    try {
+                        const data = JSON.parse(tokenDataStr) as { code?: string };
+                        if (data.code) {
+                            await this.env.TOKENS.delete(`pairing_code:${data.code}`);
+                        }
+                    } catch {
+                        // Ignore JSON parse errors
+                    }
+                }
+                await this.env.TOKENS.delete(`pairing:${token}`);
+            }
+
+            await this.env.TOKENS.delete(`pairing_device:${deviceId}`);
+        } catch (error) {
+            console.error('Error cleaning up pairing tokens:', error);
         }
     }
 }

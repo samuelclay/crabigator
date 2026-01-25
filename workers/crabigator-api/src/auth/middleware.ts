@@ -5,6 +5,18 @@ import { sha256, hmacVerify } from './tokens';
 const TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
+ * Extract bearer token from header or query param (for SSE)
+ */
+export function extractToken(request: Request): string | null {
+    const authHeader = request.headers.get('Authorization');
+    if (authHeader?.startsWith('Bearer ')) {
+        return authHeader.slice(7);
+    }
+    const url = new URL(request.url);
+    return url.searchParams.get('token');
+}
+
+/**
  * Verify device signature from headers
  * Headers required:
  * - X-Device-Id: device_id
@@ -64,18 +76,18 @@ export async function verifyMobileToken(
     request: Request,
     env: Env
 ): Promise<MobileAuth | null> {
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
+    const token = extractToken(request);
+    if (!token) {
         return null;
     }
 
-    const token = authHeader.slice(7);
     const tokenHash = await sha256(token);
 
     // Look up in KV
     const data = await env.TOKENS.get(`mobile:${tokenHash}`, 'json') as {
         desktop_id: string;
         mobile_id: string;
+        group_id?: string;
     } | null;
 
     if (!data) {
@@ -93,7 +105,15 @@ export async function verifyMobileToken(
         return null;
     }
 
-    return { type: 'mobile', desktop_id: data.desktop_id, mobile_id: data.mobile_id };
+    let groupId = data.group_id || null;
+    if (!groupId) {
+        const device = await env.DB.prepare(
+            'SELECT group_id FROM devices WHERE id = ?'
+        ).bind(data.desktop_id).first<{ group_id: string | null }>();
+        groupId = device?.group_id || null;
+    }
+
+    return { type: 'mobile', desktop_id: data.desktop_id, mobile_id: data.mobile_id, group_id: groupId || undefined };
 }
 
 /**
@@ -173,4 +193,64 @@ export async function requireDeviceAuth(
         };
     }
     return { auth };
+}
+
+/**
+ * Require mobile authentication specifically (includes group_id)
+ */
+export async function requireMobileAuth(
+    request: Request,
+    env: Env
+): Promise<{ auth: MobileAuth & { group_id: string } } | { error: Response }> {
+    const auth = await verifyMobileToken(request, env);
+    if (!auth || !auth.group_id) {
+        return {
+            error: new Response(
+                JSON.stringify({ error: 'Mobile authentication required', code: 'MOBILE_AUTH_REQUIRED' }),
+                { status: 401, headers: { 'Content-Type': 'application/json' } }
+            ),
+        };
+    }
+    return { auth: auth as MobileAuth & { group_id: string } };
+}
+
+/**
+ * Require access to a session based on mobile group membership
+ */
+export async function requireSessionAccess(
+    request: Request,
+    env: Env,
+    sessionId: string
+): Promise<{ auth: MobileAuth & { group_id: string } } | { error: Response }> {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult;
+    }
+
+    const session = await env.DB.prepare(`
+        SELECT devices.group_id as group_id
+        FROM sessions
+        JOIN devices ON devices.id = sessions.device_id
+        WHERE sessions.id = ?
+    `).bind(sessionId).first<{ group_id: string | null }>();
+
+    if (!session) {
+        return {
+            error: new Response(
+                JSON.stringify({ error: 'Session not found', code: 'NOT_FOUND' }),
+                { status: 404, headers: { 'Content-Type': 'application/json' } }
+            ),
+        };
+    }
+
+    if (!session.group_id || session.group_id !== authResult.auth.group_id) {
+        return {
+            error: new Response(
+                JSON.stringify({ error: 'Forbidden', code: 'FORBIDDEN' }),
+                { status: 403, headers: { 'Content-Type': 'application/json' } }
+            ),
+        };
+    }
+
+    return authResult;
 }

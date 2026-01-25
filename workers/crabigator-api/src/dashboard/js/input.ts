@@ -30,17 +30,21 @@ export const inputJs = `
 
         async function saveInputToServer(sessionId, text) {
             try {
-                await fetch(API_BASE + '/sessions/' + sessionId + '/draft', {
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/draft', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({ text })
                 });
+                if (resp) handleAuthFailure(resp);
             } catch {}
         }
 
         async function getServerInput(sessionId) {
             try {
-                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/draft');
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/draft', {
+                    headers: getAuthHeaders()
+                });
+                if (handleAuthFailure(resp)) return '';
                 if (resp.ok) {
                     const data = await resp.json();
                     return data.text || '';

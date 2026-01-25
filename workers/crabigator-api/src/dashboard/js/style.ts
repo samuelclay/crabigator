@@ -401,12 +401,10 @@ export const styleJs = `
             try {
                 const response = await fetch('/api/pairing/invite', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + mobileToken
-                    }
+                    headers: getAuthHeaders()
                 });
 
+                if (handleAuthFailure(response)) return;
                 if (!response.ok) {
                     throw new Error('Failed to generate invite code');
                 }

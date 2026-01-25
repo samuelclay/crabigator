@@ -17,9 +17,11 @@ export const viewerActivityJs = `
         // Send heartbeat for a specific session
         async function sendViewerHeartbeat(sessionId) {
             try {
-                await fetch(API_BASE + '/sessions/' + sessionId + '/viewer-active', {
-                    method: 'POST'
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/viewer-active', {
+                    method: 'POST',
+                    headers: getAuthHeaders()
                 });
+                if (resp) handleAuthFailure(resp);
             } catch {
                 // Ignore errors - heartbeats are best-effort
             }

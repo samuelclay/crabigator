@@ -63,10 +63,11 @@ export const formatJs = `
             try {
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/key', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({ key: 'shift_tab' })
                 });
 
+                if (handleAuthFailure(resp)) return;
                 if (!resp.ok) {
                     const err = await resp.json();
                     console.error('Mode switch failed:', err);

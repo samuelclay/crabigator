@@ -9,7 +9,7 @@ import { jsonResponse } from '../router';
 import { requireDeviceAuth, verifyMobileToken } from '../auth/middleware';
 import { generateToken, generatePairingCode, generateUUID, sha256 } from '../auth/tokens';
 
-const PAIRING_TOKEN_TTL = 5 * 60; // 5 minutes
+const PAIRING_TOKEN_TTL = 60 * 60 * 24 * 365; // 1 year (display only)
 
 interface PairingTokenData {
     device_id: string;
@@ -48,16 +48,16 @@ export async function generatePairingToken(
     };
     await env.TOKENS.put(
         `pairing:${token}`,
-        JSON.stringify(tokenData),
-        { expirationTtl: PAIRING_TOKEN_TTL }
+        JSON.stringify(tokenData)
     );
 
     // Also store code -> token mapping for web-based pairing
     await env.TOKENS.put(
         `pairing_code:${code}`,
-        token,
-        { expirationTtl: PAIRING_TOKEN_TTL }
+        token
     );
+
+    await addPairingTokenForDevice(env, device_id, token);
 
     // Generate QR data URL
     const qrData = `crabigator://pair?t=${token}&d=${device_id}`;
@@ -121,13 +121,6 @@ export async function claimPairingToken(
 
     const tokenData: PairingTokenData = JSON.parse(tokenDataStr);
 
-    if (tokenData.claimed) {
-        return new Response(
-            JSON.stringify({ error: 'Token already claimed', code: 'ALREADY_CLAIMED' }),
-            { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-    }
-
     // Generate mobile token
     const mobileToken = generateToken(32);
     const mobileTokenHash = await sha256(mobileToken);
@@ -166,8 +159,7 @@ export async function claimPairingToken(
     tokenData.mobile_name = mobileName || undefined;
     await env.TOKENS.put(
         `pairing:${token}`,
-        JSON.stringify(tokenData),
-        { expirationTtl: 60 } // Keep for 1 minute so desktop can see it was claimed
+        JSON.stringify(tokenData)
     );
 
     // Get desktop name for response
@@ -265,14 +257,7 @@ export async function getPairingCodePage(
 
     const tokenData: PairingTokenData = JSON.parse(tokenDataStr);
 
-    if (tokenData.claimed) {
-        return new Response(pairingPageHtml('CLAIMED', false, true), {
-            status: 200,
-            headers: { 'Content-Type': 'text/html; charset=utf-8' }
-        });
-    }
-
-    return new Response(pairingPageHtml(tokenData.code, false, false), {
+    return new Response(pairingPageHtml(tokenData.code, false, tokenData.claimed), {
         status: 200,
         headers: { 'Content-Type': 'text/html; charset=utf-8' }
     });
@@ -449,16 +434,17 @@ function pairingPageHtml(code: string, expired: boolean, claimed: boolean = fals
                 <p>This pairing link has expired</p>
                 <p>Generate a new code from the desktop app</p>
             </div>
-        ` : claimed ? `
-            <p class="subtitle">Already paired</p>
-            <div class="status-claimed">
-                <p>This device has been paired!</p>
-                <p>You can now view sessions on the dashboard</p>
-            </div>
         ` : `
             <p class="subtitle">Enter this code on your other device</p>
             <div class="code-display">${formattedCode}</div>
-            <p class="hint">Open drinkcrabigator.com/dashboard and enter this code</p>
+            ${claimed ? `
+                <div class="status-claimed">
+                    <p>Already paired</p>
+                    <p>This code can still be reused</p>
+                </div>
+            ` : `
+                <p class="hint">Open drinkcrabigator.com/dashboard and enter this code</p>
+            `}
         `}
         <a href="/dashboard" class="dashboard-link">Go to Dashboard</a>
     </div>
@@ -500,16 +486,16 @@ export async function generateInviteCode(
     };
     await env.TOKENS.put(
         `pairing:${token}`,
-        JSON.stringify(tokenData),
-        { expirationTtl: PAIRING_TOKEN_TTL }
+        JSON.stringify(tokenData)
     );
 
     // Store code -> token mapping
     await env.TOKENS.put(
         `pairing_code:${code}`,
-        token,
-        { expirationTtl: PAIRING_TOKEN_TTL }
+        token
     );
+
+    await addPairingTokenForDevice(env, desktop_id, token);
 
     // Return code and URL
     const response: GeneratePairingTokenResponse = {
@@ -550,4 +536,17 @@ async function getOrCreateDeviceGroup(env: Env, deviceId: string): Promise<strin
     `).bind(groupId, deviceId).run();
 
     return groupId;
+}
+
+async function addPairingTokenForDevice(env: Env, deviceId: string, token: string): Promise<void> {
+    try {
+        const existing = await env.TOKENS.get(`pairing_device:${deviceId}`, 'json') as string[] | null;
+        const tokens = Array.isArray(existing) ? existing : [];
+        if (!tokens.includes(token)) {
+            tokens.push(token);
+            await env.TOKENS.put(`pairing_device:${deviceId}`, JSON.stringify(tokens));
+        }
+    } catch {
+        // Ignore token tracking failures
+    }
 }

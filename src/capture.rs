@@ -7,6 +7,7 @@
 //! Scrollback is read from Claude Code's transcript files (~/.claude/projects/...)
 //! which provides clean conversation history without status bar noise.
 
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 #[cfg(debug_assertions)]
 use std::fs::File;
@@ -14,7 +15,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::platforms::claude_code::transcript;
+use crate::platforms::claude_code::transcript::{self, PendingToolUse};
 
 /// Maximum size for raw PTY log before rotation (50MB)
 #[cfg(debug_assertions)]
@@ -55,6 +56,8 @@ pub struct CaptureManager {
     transcript_path: Option<PathBuf>,
     /// Byte offset into transcript file (for incremental reads)
     transcript_offset: u64,
+    /// Pending tool calls awaiting results (persisted across incremental reads)
+    pending_tools: HashMap<String, PendingToolUse>,
     /// Total line count in scrollback.log
     total_scrollback_lines: usize,
     /// Raw PTY output log file (debug builds only)
@@ -85,6 +88,7 @@ impl CaptureManager {
                 screen_update_interval: Duration::from_millis(100),
                 transcript_path: None,
                 transcript_offset: 0,
+                pending_tools: HashMap::new(),
                 total_scrollback_lines: 0,
                 #[cfg(debug_assertions)]
                 raw_log: None,
@@ -123,6 +127,7 @@ impl CaptureManager {
             screen_update_interval: Duration::from_millis(100),
             transcript_path: None,
             transcript_offset: 0,
+            pending_tools: HashMap::new(),
             total_scrollback_lines: 0,
             #[cfg(debug_assertions)]
             raw_log,
@@ -144,8 +149,9 @@ impl CaptureManager {
             // Only update if path changed
             if self.transcript_path.as_ref() != Some(&path_buf) {
                 self.transcript_path = Some(path_buf);
-                // Reset offset when switching to a different file
+                // Reset state when switching to a different file
                 self.transcript_offset = 0;
+                self.pending_tools.clear();
                 self.total_scrollback_lines = 0;
                 // Clear scrollback.log to avoid mixing content from different sessions
                 if self.config.enabled {
@@ -233,9 +239,9 @@ impl CaptureManager {
             return Ok(None);
         }
 
-        // Read new content from transcript
+        // Read new content from transcript (pending_tools persisted across reads)
         let (new_content, new_offset) =
-            transcript::read_transcript(transcript_path, self.transcript_offset)?;
+            transcript::read_transcript(transcript_path, self.transcript_offset, &mut self.pending_tools)?;
 
         if new_content.is_empty() {
             self.last_scrollback_update = Instant::now();

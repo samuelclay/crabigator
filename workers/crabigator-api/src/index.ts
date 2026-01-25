@@ -3,7 +3,7 @@ import type { Env } from './types/env';
 import { registerDevice, deviceHeartbeat, getLinkedDevices, revokeLinkedDevice } from './handlers/devices';
 import { createSession, getSession, updateSession, deleteSession } from './handlers/sessions';
 import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCodePage, generateInviteCode } from './handlers/pairing';
-import { requireDeviceAuth } from './auth/middleware';
+import { requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
 import { dashboardHtml } from './dashboard';
 
 // Build version - generated lazily on first request, stable for lifetime of this worker instance
@@ -73,9 +73,17 @@ router.post('/api/sessions', createSession);
 // List all active sessions (no auth for dashboard)
 // Queries SessionListDO for currently-connected sessions to avoid stale data
 router.get('/api/sessions', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+
     const doId = env.SESSION_LIST.idFromName('global');
     const stub = env.SESSION_LIST.get(doId);
-    const response = await stub.fetch(new Request('https://internal/sessions'));
+    const url = new URL('https://internal/sessions');
+    url.searchParams.set('group_id', group_id);
+    const response = await stub.fetch(new Request(url.toString()));
     const data = await response.json() as { sessions: Array<{ id: string; cwd: string; platform: string; state: string; started_at: number }> };
 
     return jsonResponse({ sessions: data.sessions });
@@ -83,11 +91,18 @@ router.get('/api/sessions', async (request, env) => {
 
 // SSE stream for real-time session list updates (no polling needed)
 router.get('/api/sessions/stream', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+
     const doId = env.SESSION_LIST.idFromName('global');
     const stub = env.SESSION_LIST.get(doId);
     const url = new URL(request.url);
     url.pathname = '/subscribe';
     url.searchParams.set('version', getBuildVersion());
+    url.searchParams.set('group_id', group_id);
     return stub.fetch(new Request(url.toString(), request));
 });
 
@@ -110,8 +125,11 @@ router.get('/api/sessions/:id/connect', async (request, env, params) => {
 
     // Verify session belongs to device and get session info
     const session = await env.DB.prepare(
-        'SELECT id, cwd, platform, started_at FROM sessions WHERE id = ? AND device_id = ?'
-    ).bind(sessionId, device_id).first<{ id: string; cwd: string; platform: string; started_at: number }>();
+        `SELECT sessions.id, sessions.cwd, sessions.platform, sessions.started_at, devices.group_id as group_id
+         FROM sessions
+         JOIN devices ON devices.id = sessions.device_id
+         WHERE sessions.id = ? AND sessions.device_id = ?`
+    ).bind(sessionId, device_id).first<{ id: string; cwd: string; platform: string; started_at: number; group_id: string | null }>();
 
     if (!session) {
         return router.errorResponse('Session not found', 'NOT_FOUND', 404);
@@ -126,6 +144,10 @@ router.get('/api/sessions/:id/connect', async (request, env, params) => {
     url.searchParams.set('cwd', session.cwd);
     url.searchParams.set('platform', session.platform);
     url.searchParams.set('started_at', String(session.started_at));
+    url.searchParams.set('device_id', device_id);
+    if (session.group_id) {
+        url.searchParams.set('group_id', session.group_id);
+    }
     return stub.fetch(new Request(url.toString(), request));
 });
 
@@ -133,6 +155,10 @@ router.get('/api/sessions/:id/connect', async (request, env, params) => {
 // Note: Skips D1 lookup - DO handles non-existent sessions gracefully
 router.get('/api/sessions/:id/events', async (request, env, params) => {
     const sessionId = params.id;
+    const access = await requireSessionAccess(request, env, sessionId);
+    if ('error' in access) {
+        return access.error;
+    }
     const doId = env.SESSION.idFromName(sessionId);
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);
@@ -144,6 +170,10 @@ router.get('/api/sessions/:id/events', async (request, env, params) => {
 // Note: Skips D1 lookup - DO handles non-existent sessions gracefully
 router.post('/api/sessions/:id/answer', async (request, env, params) => {
     const sessionId = params.id;
+    const access = await requireSessionAccess(request, env, sessionId);
+    if ('error' in access) {
+        return access.error;
+    }
     const doId = env.SESSION.idFromName(sessionId);
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);
@@ -155,6 +185,10 @@ router.post('/api/sessions/:id/answer', async (request, env, params) => {
 // Used for mode switching via Shift+Tab
 router.post('/api/sessions/:id/key', async (request, env, params) => {
     const sessionId = params.id;
+    const access = await requireSessionAccess(request, env, sessionId);
+    if ('error' in access) {
+        return access.error;
+    }
     const doId = env.SESSION.idFromName(sessionId);
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);
@@ -165,6 +199,10 @@ router.post('/api/sessions/:id/key', async (request, env, params) => {
 // Save draft input text (for input persistence across deploys)
 router.post('/api/sessions/:id/draft', async (request, env, params) => {
     const sessionId = params.id;
+    const access = await requireSessionAccess(request, env, sessionId);
+    if ('error' in access) {
+        return access.error;
+    }
     const doId = env.SESSION.idFromName(sessionId);
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);
@@ -175,6 +213,10 @@ router.post('/api/sessions/:id/draft', async (request, env, params) => {
 // Get draft input text
 router.get('/api/sessions/:id/draft', async (request, env, params) => {
     const sessionId = params.id;
+    const access = await requireSessionAccess(request, env, sessionId);
+    if ('error' in access) {
+        return access.error;
+    }
     const doId = env.SESSION.idFromName(sessionId);
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);
@@ -186,6 +228,10 @@ router.get('/api/sessions/:id/draft', async (request, env, params) => {
 // Note: Skips D1 lookup - DO handles non-existent sessions gracefully
 router.get('/api/sessions/:id/state', async (request, env, params) => {
     const sessionId = params.id;
+    const access = await requireSessionAccess(request, env, sessionId);
+    if ('error' in access) {
+        return access.error;
+    }
     const doId = env.SESSION.idFromName(sessionId);
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);
@@ -197,6 +243,10 @@ router.get('/api/sessions/:id/state', async (request, env, params) => {
 // This allows the desktop to optimize streaming when no one is watching
 router.post('/api/sessions/:id/viewer-active', async (request, env, params) => {
     const sessionId = params.id;
+    const access = await requireSessionAccess(request, env, sessionId);
+    if ('error' in access) {
+        return access.error;
+    }
     const doId = env.SESSION.idFromName(sessionId);
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);

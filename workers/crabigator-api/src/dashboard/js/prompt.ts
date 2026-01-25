@@ -90,10 +90,11 @@ export const promptJs = `
             try {
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({ text: value })
                 });
 
+                if (handleAuthFailure(resp)) return;
                 if (resp.ok) {
                     console.log('[sendPromptAnswer] success');
                     // Hide prompt panel immediately for responsive feel
@@ -125,10 +126,11 @@ export const promptJs = `
                 console.log('[sendOtherAnswer] sending:', text);
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({ text: text })
                 });
 
+                if (handleAuthFailure(resp)) return;
                 if (resp.ok) {
                     console.log('[sendOtherAnswer] success');
                     input.value = '';
@@ -155,10 +157,11 @@ export const promptJs = `
             try {
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({ text })
                 });
 
+                if (handleAuthFailure(resp)) return;
                 if (resp.ok) {
                     input.value = '';
                     input.blur(); // Hide mobile keyboard

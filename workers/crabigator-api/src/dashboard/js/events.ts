@@ -2,7 +2,7 @@
 export const eventsJs = `
         function connectToSession(sessionId) {
             console.log('Connecting SSE for session:', sessionId);
-            const eventSource = new EventSource(API_BASE + '/sessions/' + sessionId + '/events');
+            const eventSource = new EventSource(API_BASE + '/sessions/' + sessionId + '/events' + getAuthQueryParam());
 
             eventSource.onopen = () => {
                 console.log('SSE connected for session:', sessionId);
@@ -99,9 +99,11 @@ export const eventsJs = `
                     // Update session state for stats widget
                     if (sessionData) {
                         sessionData.state = event.state;
-                        // Clear permission when leaving permission state
-                        if (event.state !== 'permission') {
+                        // Clear permission/prompt when leaving interactive states
+                        // This is a safety net in case the prompt event was missed
+                        if (event.state !== 'permission' && event.state !== 'question') {
                             sessionData.permission = null;
+                            updatePromptPanel(sessionId, null);
                         }
                         updateStatsWidget(sessionId, sessionData.stats || {});
                         updateSessionSummary(sessionId, sessionData);

@@ -10,6 +10,26 @@ export const pairingJs = `
             return isPaired;
         }
 
+        function getAuthHeaders() {
+            const headers = { 'Content-Type': 'application/json' };
+            if (mobileToken) {
+                headers['Authorization'] = 'Bearer ' + mobileToken;
+            }
+            return headers;
+        }
+
+        function getAuthQueryParam() {
+            return mobileToken ? '?token=' + encodeURIComponent(mobileToken) : '';
+        }
+
+        function handleAuthFailure(resp) {
+            if (resp.status === 401) {
+                clearPairing();
+                return true;
+            }
+            return false;
+        }
+
         // Auto-setup via URL parameter (for Chrome MCP)
         async function handleSetupParam() {
             const params = new URLSearchParams(window.location.search);

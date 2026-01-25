@@ -50,8 +50,9 @@ mod colors {
     pub const GREEN: &str = "\x1b[32m";
 }
 
-/// Stored tool call info for pairing with results
-struct PendingToolUse {
+/// Stored tool call info for pairing with results.
+/// Public so CaptureManager can persist across incremental reads.
+pub struct PendingToolUse {
     name: String,
     formatted: String,
 }
@@ -60,7 +61,15 @@ struct PendingToolUse {
 ///
 /// Returns formatted text suitable for display in a terminal scrollback,
 /// with ANSI color codes for syntax highlighting.
-pub fn read_transcript(path: &Path, offset: u64) -> std::io::Result<(String, u64)> {
+///
+/// `pending_tools` is persisted across calls so tool_use blocks from one
+/// incremental read can be paired with tool_result blocks in a later read
+/// (subagent tasks can take many seconds to complete).
+pub fn read_transcript(
+    path: &Path,
+    offset: u64,
+    pending_tools: &mut HashMap<String, PendingToolUse>,
+) -> std::io::Result<(String, u64)> {
     let file = File::open(path)?;
     let file_len = file.metadata()?.len();
 
@@ -74,9 +83,6 @@ pub fn read_transcript(path: &Path, offset: u64) -> std::io::Result<(String, u64
 
     let mut output = String::new();
     let mut current_pos = offset;
-
-    // Buffer tool calls to pair with their results
-    let mut pending_tools: HashMap<String, PendingToolUse> = HashMap::new();
 
     for line in reader.lines() {
         let line = line?;
@@ -102,13 +108,13 @@ pub fn read_transcript(path: &Path, offset: u64) -> std::io::Result<(String, u64
                         output.push_str(&format_user_message(text));
                     } else if let Some(arr) = content.as_array() {
                         // Tool results (array content) - pair with pending tool calls
-                        output.push_str(&format_tool_results(arr, &mut pending_tools));
+                        output.push_str(&format_tool_results(arr, pending_tools));
                     }
                 }
             }
             "assistant" => {
                 if let Some(content) = entry.get("message").and_then(|m| m.get("content")) {
-                    output.push_str(&format_assistant_message(content, &mut pending_tools));
+                    output.push_str(&format_assistant_message(content, pending_tools));
                 }
             }
             _ => {
@@ -156,9 +162,14 @@ fn format_assistant_message(content: &Value, pending_tools: &mut HashMap<String,
     for block in blocks {
         match block {
             ContentBlock::Text { text } => {
+                let trimmed = text.trim();
+                // Skip streaming placeholder blocks
+                if trimmed.is_empty() || trimmed == "(no content)" {
+                    continue;
+                }
                 // Assistant text gets white dot prefix
                 out.push_str("\n● ");
-                out.push_str(text.trim());
+                out.push_str(trimmed);
                 out.push('\n');
             }
             ContentBlock::ToolUse { name, input, id } => {
@@ -257,6 +268,19 @@ fn format_tool_use(name: &str, input: &Value) -> String {
                 out.push_str(&format!("({})", desc));
             }
         }
+        "ExitPlanMode" => {
+            // Show the plan content
+            out.push('\n');
+            if let Some(plan) = input.get("plan").and_then(|p| p.as_str()) {
+                // Indent the plan content slightly
+                for line in plan.lines() {
+                    out.push_str("  ");
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+            return out;
+        }
         "WebFetch" | "WebSearch" => {
             if let Some(url) = input.get("url").and_then(|u| u.as_str()) {
                 out.push_str(&format!("({})", truncate(url, 50)));
@@ -349,21 +373,21 @@ fn format_edit_diff(old: &str, new: &str) -> String {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
 
-    // Simple diff: show removed lines then added lines
+    // Match Claude Code's diff format: -/+ directly followed by original line content
     const RED: &str = "\x1b[31m";
     const GREEN: &str = "\x1b[32m";
 
     // Show removed lines (from old but not in new)
     for line in &old_lines {
         if !new_lines.contains(line) {
-            out.push_str(&format!("{}  - {}{}\n", RED, line, colors::RESET));
+            out.push_str(&format!("{}- {}{}\n", RED, line, colors::RESET));
         }
     }
 
     // Show added lines (in new but not in old)
     for line in &new_lines {
         if !old_lines.contains(line) {
-            out.push_str(&format!("{}  + {}{}\n", GREEN, line, colors::RESET));
+            out.push_str(&format!("{}+ {}{}\n", GREEN, line, colors::RESET));
         }
     }
 

@@ -2,7 +2,8 @@
 export const sessionJs = `
         async function loadSessions() {
             try {
-                const resp = await fetch(API_BASE + '/sessions');
+                const resp = await fetch(API_BASE + '/sessions', { headers: getAuthHeaders() });
+                if (handleAuthFailure(resp)) return;
                 if (!resp.ok) throw new Error('Failed to fetch sessions');
                 const data = await resp.json();
 

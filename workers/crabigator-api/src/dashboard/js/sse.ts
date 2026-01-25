@@ -16,7 +16,7 @@ export const sseJs = `
             }
 
             console.log('Connecting to session list SSE...');
-            sessionListSource = new EventSource(API_BASE + '/sessions/stream');
+            sessionListSource = new EventSource(API_BASE + '/sessions/stream' + getAuthQueryParam());
 
             sessionListSource.onopen = () => {
                 console.log('Session list SSE connected');
