@@ -16,13 +16,40 @@ export const promptJs = `
 
             panel.classList.add('visible');
 
+            // Store prompt data for key sequence navigation
+            sessionPromptData.set(sessionId, prompt);
+
             // Helper to render options as styled divs with numbers
-            function renderOptions(options) {
+            // For permissions with allows_tab_instructions, adds inline inputs on options 1 (Yes) and 3 (No)
+            function renderOptions(options, promptData) {
+                const allowsTab = promptData?.allows_tab_instructions === true;
+                const selectedOption = promptData?.selected_option || 1;
+
                 return options.map((opt, i) => {
-                    const num = i + 1;
+                    const num = parseInt(opt.value) || (i + 1);
                     const desc = opt.description
                         ? '<div class="prompt-option-desc">' + escapeHtml(opt.description) + '</div>'
                         : '';
+
+                    // Check if this option should have a tab input (Yes or No, not "allow all edits")
+                    const isYesOrNo = (num === 1 || num === 3) && allowsTab;
+                    const tabInputId = 'tab-input-' + sessionId + '-' + num;
+
+                    if (isYesOrNo) {
+                        // Wrap option + input in a row
+                        return '<div class="prompt-option-row">' +
+                               '<div class="prompt-option" onclick="handleOptionClick(\\'' + sessionId + '\\', ' + num + ', ' + selectedOption + ')">' +
+                               '<span class="prompt-option-number">' + num + '.</span>' +
+                               '<span class="prompt-option-label">' + escapeHtml(opt.label) + '</span>' +
+                               desc +
+                               '</div>' +
+                               '<input type="text" class="prompt-tab-input" id="' + tabInputId + '" ' +
+                               'placeholder="+ instructions" onclick="event.stopPropagation()" ' +
+                               'onkeydown="if(event.key===\\'Enter\\'){handleOptionClick(\\'' + sessionId + '\\', ' + num + ', ' + selectedOption + ');event.preventDefault();}">' +
+                               '</div>';
+                    }
+
+                    // Regular option without tab input
                     return '<div class="prompt-option" onclick="sendPromptAnswer(\\'' + sessionId + '\\', \\'' + opt.value + '\\')">' +
                            '<span class="prompt-option-number">' + num + '.</span>' +
                            '<span class="prompt-option-label">' + escapeHtml(opt.label) + '</span>' +
@@ -37,8 +64,8 @@ export const promptJs = `
                 headerEl.textContent = q.header || 'Question';
                 questionEl.textContent = q.question;
 
-                // Render options
-                optionsEl.innerHTML = renderOptions(q.options);
+                // Render options (no tab instructions for questions)
+                optionsEl.innerHTML = renderOptions(q.options, null);
 
                 // Show "Other" input if allowed
                 if (q.allows_other !== false) {
@@ -58,23 +85,103 @@ export const promptJs = `
                 else if (prompt.tool_input?.description) desc = prompt.tool_input.description;
                 questionEl.textContent = desc;
 
-                // Render options
-                optionsEl.innerHTML = renderOptions(prompt.options);
+                // Render options with tab instruction inputs
+                optionsEl.innerHTML = renderOptions(prompt.options, prompt);
 
-                // Hide "Other" input for simple permission prompts
-                // Show only if there's a "Tab to add additional instructions" hint (detected by allows_other)
-                otherEl.style.display = prompt.allows_other ? 'flex' : 'none';
+                // Hide "Other" input when we have inline tab inputs
+                // Only show if no tab instructions available
+                otherEl.style.display = 'none';
 
             } else if (prompt.prompt_type === 'exit_plan') {
                 // ExitPlanMode prompt - options parsed from screen
                 headerEl.textContent = 'Exit Plan Mode';
                 questionEl.textContent = 'Choose how to proceed:';
 
-                // Render options
-                optionsEl.innerHTML = renderOptions(prompt.options);
+                // Render options (no tab instructions for exit plan)
+                optionsEl.innerHTML = renderOptions(prompt.options, null);
 
                 // Hide "Other" input for simple exit plan prompts
-                otherEl.style.display = prompt.allows_other ? 'flex' : 'none';
+                otherEl.style.display = 'none';
+            }
+        }
+
+        // Store prompt data for each session (for key sequence navigation)
+        const sessionPromptData = new Map();
+
+        // Handle option click - check for tab instructions first
+        async function handleOptionClick(sessionId, targetOption, currentSelected) {
+            const inputEl = document.getElementById('tab-input-' + sessionId + '-' + targetOption);
+            const instructions = inputEl?.value?.trim();
+
+            if (!instructions) {
+                // No instructions - just send the option value directly
+                sendPromptAnswer(sessionId, String(targetOption));
+                return;
+            }
+
+            // Has instructions - need to send key sequence
+            await sendWithInstructions(sessionId, targetOption, currentSelected, instructions);
+        }
+
+        // Send option with additional instructions using key sequence
+        async function sendWithInstructions(sessionId, targetOption, currentSelected, instructions) {
+            console.log('[sendWithInstructions]', { sessionId, targetOption, currentSelected, instructions });
+
+            const steps = [];
+
+            // Navigate to target option if needed
+            const delta = targetOption - currentSelected;
+            if (delta > 0) {
+                for (let i = 0; i < delta; i++) {
+                    steps.push({ type: 'key', key: 'down' });
+                }
+            } else if (delta < 0) {
+                for (let i = 0; i < Math.abs(delta); i++) {
+                    steps.push({ type: 'key', key: 'up' });
+                }
+            }
+
+            // Tab to open instruction input
+            steps.push({ type: 'key', key: 'tab' });
+
+            // Small delay for the input to appear
+            steps.push({ type: 'delay', ms: 50 });
+
+            // Type the instructions
+            steps.push({ type: 'text', text: instructions });
+
+            // Small delay before enter
+            steps.push({ type: 'delay', ms: 50 });
+
+            // Press enter to submit
+            steps.push({ type: 'key', key: 'enter' });
+
+            console.log('[sendWithInstructions] sending steps:', steps);
+
+            try {
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/key-sequence', {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ steps })
+                });
+
+                if (handleAuthFailure(resp)) return;
+                if (resp.ok) {
+                    console.log('[sendWithInstructions] success');
+                    // Hide prompt panel immediately for responsive feel
+                    const panel = document.getElementById('prompt-' + sessionId);
+                    if (panel) panel.classList.remove('visible');
+                    // Clear the input
+                    const inputEl = document.getElementById('tab-input-' + sessionId + '-' + targetOption);
+                    if (inputEl) inputEl.value = '';
+                    // Scroll to top of session so user can see what's happening
+                    scrollToSession(sessionId);
+                } else {
+                    const err = await resp.json();
+                    console.error('Failed to send key sequence:', err);
+                }
+            } catch (err) {
+                console.error('Failed to send key sequence:', err);
             }
         }
 

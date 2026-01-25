@@ -214,6 +214,10 @@ export interface PermissionPrompt {
     tool_name: string;
     tool_input?: unknown;
     options: PromptOption[];
+    /** Whether "Tab to add additional instructions" is available */
+    allows_tab_instructions?: boolean;
+    /** Currently selected option number (1-indexed) */
+    selected_option?: number;
 }
 
 /**
@@ -274,6 +278,22 @@ export interface KeyMessage {
 }
 
 /**
+ * A single step in a key sequence
+ */
+export type KeyStep =
+    | { type: 'key'; key: string }      // Named key: "up", "down", "tab", "enter"
+    | { type: 'text'; text: string }    // Raw text to type
+    | { type: 'delay'; ms: number };    // Wait in milliseconds
+
+/**
+ * Multi-step key sequence to send to desktop (for Tab instructions)
+ */
+export interface KeySequenceMessage {
+    type: 'key_sequence';
+    steps: KeyStep[];
+}
+
+/**
  * Viewer status notification to desktop
  * Sent when dashboard/phone viewer becomes active/inactive
  * Desktop can use this to adjust streaming frequency
@@ -283,7 +303,7 @@ export interface ViewerStatusMessage {
     active: boolean;        // True if viewers are actively watching
 }
 
-export type CloudToDesktopMessage = AnswerMessage | PingMessage | KeyMessage | ViewerStatusMessage;
+export type CloudToDesktopMessage = AnswerMessage | PingMessage | KeyMessage | KeySequenceMessage | ViewerStatusMessage;
 
 /**
  * Session info for listing

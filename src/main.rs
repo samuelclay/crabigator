@@ -13,7 +13,6 @@ mod mode;
 mod pair;
 mod parsers;
 mod platforms;
-mod screen_parser;
 mod terminal;
 mod ui;
 

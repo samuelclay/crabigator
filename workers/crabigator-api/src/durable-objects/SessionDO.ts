@@ -1,4 +1,4 @@
-import type { SessionEvent, SessionState, CloudToDesktopMessage, CloudPromptData } from '../types/session';
+import type { SessionEvent, SessionState, CloudToDesktopMessage, CloudPromptData, KeyStep } from '../types/session';
 import type { Env } from '../types/env';
 
 /**
@@ -115,6 +115,8 @@ export class SessionDO implements DurableObject {
                 return this.handleAnswer(request);
             case '/key':
                 return this.handleKey(request);
+            case '/key-sequence':
+                return this.handleKeySequence(request);
             case '/draft':
                 if (request.method === 'POST') {
                     return this.handleSaveDraft(request);
@@ -583,6 +585,60 @@ export class SessionDO implements DurableObject {
             this.desktopWs.send(JSON.stringify(message));
         } catch (error) {
             console.error('Error sending key to desktop:', error);
+            return new Response(
+                JSON.stringify({ error: 'Failed to send', code: 'SEND_FAILED' }),
+                { status: 500, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        return new Response(
+            JSON.stringify({ ok: true }),
+            { headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+
+    /**
+     * Handle key sequence from dashboard, forward to desktop
+     * Used for Tab instructions (navigate + tab + type + enter)
+     */
+    private async handleKeySequence(request: Request): Promise<Response> {
+        if (request.method !== 'POST') {
+            return new Response('Method not allowed', { status: 405 });
+        }
+
+        let body: { steps: KeyStep[] };
+        try {
+            body = await request.json();
+        } catch {
+            return new Response(
+                JSON.stringify({ error: 'Invalid JSON', code: 'INVALID_JSON' }),
+                { status: 400, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        if (!body.steps || !Array.isArray(body.steps) || body.steps.length === 0) {
+            return new Response(
+                JSON.stringify({ error: 'Missing or empty steps', code: 'MISSING_STEPS' }),
+                { status: 400, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        if (!this.desktopWs) {
+            return new Response(
+                JSON.stringify({ error: 'Desktop not connected', code: 'DESKTOP_OFFLINE' }),
+                { status: 503, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        const message: CloudToDesktopMessage = {
+            type: 'key_sequence',
+            steps: body.steps,
+        };
+
+        try {
+            this.desktopWs.send(JSON.stringify(message));
+        } catch (error) {
+            console.error('Error sending key sequence to desktop:', error);
             return new Response(
                 JSON.stringify({ error: 'Failed to send', code: 'SEND_FAILED' }),
                 { status: 500, headers: { 'Content-Type': 'application/json' } }

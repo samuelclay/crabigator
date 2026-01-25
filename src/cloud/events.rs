@@ -372,6 +372,12 @@ pub enum CloudPromptData {
         #[serde(skip_serializing_if = "Option::is_none")]
         tool_input: Option<serde_json::Value>,
         options: Vec<PromptOption>,
+        /// Whether "Tab to add additional instructions" is available
+        #[serde(skip_serializing_if = "Option::is_none")]
+        allows_tab_instructions: Option<bool>,
+        /// Currently selected option number (1-indexed, for navigation)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selected_option: Option<u32>,
     },
     /// ExitPlanMode (plan approval)
     ExitPlan {
@@ -413,6 +419,18 @@ pub enum CloudEvent {
     Prompt(PromptEvent),
 }
 
+/// A single step in a key sequence
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum KeyStep {
+    /// Send a named key: "up", "down", "tab", "enter"
+    Key { key: String },
+    /// Type raw text
+    Text { text: String },
+    /// Wait for a delay in milliseconds
+    Delay { ms: u32 },
+}
+
 /// Message from cloud to desktop (via WebSocket)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -424,6 +442,9 @@ pub enum CloudToDesktopMessage {
     /// Send a key sequence (e.g., Shift+Tab for mode switching)
     #[serde(rename = "key")]
     Key { key: String },
+    /// Send a multi-step key sequence (for Tab instructions)
+    #[serde(rename = "key_sequence")]
+    KeySequence { steps: Vec<KeyStep> },
     /// Notify desktop that viewer activity status changed
     /// Desktop can use this to adjust streaming frequency
     #[serde(rename = "viewer_status")]
@@ -581,10 +602,10 @@ impl SessionEventBuilder {
     }
 
     /// Build a prompt event from active prompt
-    /// `permission_options` should be parsed from the screen when prompt is Permission
+    /// `permission_prompt` should be parsed from the screen when prompt is Permission
     pub fn prompt(
         active_prompt: Option<&crate::platforms::ActivePrompt>,
-        permission_options: Option<Vec<PromptOption>>,
+        permission_prompt: Option<&crate::parsers::PermissionPrompt>,
     ) -> CloudEvent {
         use crate::platforms::ActivePrompt;
 
@@ -617,43 +638,77 @@ impl SessionEventBuilder {
                 tool_name,
                 tool_input,
             } => {
-                // Use parsed options if available, otherwise fallback
-                let options = permission_options.unwrap_or_else(|| {
-                    vec![
-                        PromptOption {
-                            label: "Yes".to_string(),
-                            value: "y".to_string(),
-                            description: Some("Allow once".to_string()),
-                        },
-                        PromptOption {
-                            label: "No".to_string(),
-                            value: "n".to_string(),
-                            description: Some("Deny".to_string()),
-                        },
-                    ]
+                // Convert parsed prompt options to PromptOption format
+                let options = permission_prompt
+                    .map(|p| {
+                        p.options
+                            .iter()
+                            .map(|o| PromptOption {
+                                label: o.text.clone(),
+                                value: o.number.to_string(),
+                                description: None,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_else(|| {
+                        vec![
+                            PromptOption {
+                                label: "Yes".to_string(),
+                                value: "y".to_string(),
+                                description: Some("Allow once".to_string()),
+                            },
+                            PromptOption {
+                                label: "No".to_string(),
+                                value: "n".to_string(),
+                                description: Some("Deny".to_string()),
+                            },
+                        ]
+                    });
+
+                // Extract allows_tab_instructions and selected_option from parsed prompt
+                let allows_tab_instructions = permission_prompt.map(|p| p.allows_tab_instructions);
+                let selected_option = permission_prompt.and_then(|p| {
+                    p.options
+                        .iter()
+                        .find(|o| o.selected)
+                        .map(|o| o.number)
                 });
+
                 CloudPromptData::Permission {
                     tool_name: tool_name.clone(),
                     tool_input: tool_input.clone(),
                     options,
+                    allows_tab_instructions,
+                    selected_option,
                 }
             }
             ActivePrompt::ExitPlan => {
-                // Use parsed options if available, otherwise fallback
-                let options = permission_options.unwrap_or_else(|| {
-                    vec![
-                        PromptOption {
-                            label: "Yes".to_string(),
-                            value: "1".to_string(),
-                            description: None,
-                        },
-                        PromptOption {
-                            label: "No".to_string(),
-                            value: "2".to_string(),
-                            description: None,
-                        },
-                    ]
-                });
+                // Convert parsed prompt options to PromptOption format
+                let options = permission_prompt
+                    .map(|p| {
+                        p.options
+                            .iter()
+                            .map(|o| PromptOption {
+                                label: o.text.clone(),
+                                value: o.number.to_string(),
+                                description: None,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_else(|| {
+                        vec![
+                            PromptOption {
+                                label: "Yes".to_string(),
+                                value: "1".to_string(),
+                                description: None,
+                            },
+                            PromptOption {
+                                label: "No".to_string(),
+                                value: "2".to_string(),
+                                description: None,
+                            },
+                        ]
+                    });
                 CloudPromptData::ExitPlan { options }
             }
         });

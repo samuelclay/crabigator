@@ -63,6 +63,8 @@ pub struct PermissionPrompt {
     pub question: Option<String>,
     /// List of available options
     pub options: Vec<PermissionOption>,
+    /// Whether "Tab to add additional instructions" is available
+    pub allows_tab_instructions: bool,
 }
 
 impl PermissionPrompt {
@@ -85,6 +87,11 @@ impl PermissionPrompt {
             .lines()
             .find(|line| line.trim().starts_with("Do you want to"))
             .map(|line| line.trim().to_string());
+
+        // Check for "Tab to add additional instructions" in footer
+        let allows_tab_instructions = stripped
+            .lines()
+            .any(|line| line.contains("Tab to add"));
 
         let mut options = Vec::new();
         let mut current_number: Option<u32> = None;
@@ -155,7 +162,11 @@ impl PermissionPrompt {
         if options.is_empty() {
             None
         } else {
-            Some(Self { question, options })
+            Some(Self {
+                question,
+                options,
+                allows_tab_instructions,
+            })
         }
     }
 
@@ -234,6 +245,7 @@ Esc to cancel
                 PermissionOption { number: 1, text: "Yes".to_string(), selected: true },
                 PermissionOption { number: 2, text: "No".to_string(), selected: false },
             ],
+            allows_tab_instructions: false,
         };
         assert!(valid.is_valid());
 
@@ -242,8 +254,32 @@ Esc to cancel
             options: vec![
                 PermissionOption { number: 1, text: "Something".to_string(), selected: true },
             ],
+            allows_tab_instructions: false,
         };
         assert!(!invalid.is_valid());
+    }
+
+    #[test]
+    fn test_detects_tab_instructions() {
+        let screen_with_tab = r#"
+Do you want to proceed?
+❯ 1. Yes
+   2. No
+
+Esc to cancel · Tab to add additional instructions
+"#;
+        let prompt = PermissionPrompt::parse(screen_with_tab).unwrap();
+        assert!(prompt.allows_tab_instructions);
+
+        let screen_without_tab = r#"
+Do you want to proceed?
+❯ 1. Yes
+   2. No
+
+Esc to cancel
+"#;
+        let prompt = PermissionPrompt::parse(screen_without_tab).unwrap();
+        assert!(!prompt.allows_tab_instructions);
     }
 
     #[test]

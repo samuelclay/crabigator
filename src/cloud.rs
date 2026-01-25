@@ -13,4 +13,4 @@ mod queue;
 mod websocket;
 
 pub use client::{CloudClient, CloudStatus, PairingStatusResponse};
-pub use events::{PromptOption, SessionEventBuilder};
+pub use events::{KeyStep, SessionEventBuilder};

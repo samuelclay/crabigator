@@ -481,6 +481,11 @@ impl CloudClient {
         self.ws_handle.as_mut()?.try_recv_key()
     }
 
+    /// Try to receive a key sequence from cloud (non-blocking)
+    pub fn try_recv_key_sequence(&mut self) -> Option<Vec<super::events::KeyStep>> {
+        self.ws_handle.as_mut()?.try_recv_key_sequence()
+    }
+
     /// Poll for viewer status changes and update internal state
     /// Returns true if there are active viewers watching
     pub fn poll_viewer_status(&mut self) -> bool {

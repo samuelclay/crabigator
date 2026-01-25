@@ -973,6 +973,45 @@ export const dashboardCss = `
             background: #2ea043;
         }
 
+        /* Inline tab instruction inputs */
+        .prompt-option-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .prompt-option-row .prompt-option {
+            flex: 1;
+            min-width: 0;
+        }
+        .prompt-tab-input {
+            flex: 0 0 180px;
+            padding: 8px 10px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 12px;
+        }
+        .prompt-tab-input:focus {
+            border-color: #58a6ff;
+            outline: none;
+        }
+        .prompt-tab-input::placeholder {
+            color: #484f58;
+            font-size: 11px;
+        }
+        @media (max-width: 768px) {
+            .prompt-option-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .prompt-tab-input {
+                flex: none;
+                width: 100%;
+                margin-top: 4px;
+            }
+        }
+
         /* Pairing gate styles */
         .pairing-gate {
             width: 100%;

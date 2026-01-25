@@ -1007,20 +1007,16 @@ impl App {
 
         let active_prompt = self.session_stats.platform_stats.active_prompt.as_ref();
 
-        // Parse options from screen for permission and exit_plan prompts
-        let permission_options = match active_prompt {
+        // Parse permission prompt from screen for permission and exit_plan prompts
+        let permission_prompt = match active_prompt {
             Some(crate::platforms::ActivePrompt::Permission { .. })
             | Some(crate::platforms::ActivePrompt::ExitPlan) => {
                 // Get current screen content for parsing
                 if let Ok(screen_content) =
                     self.capture_manager.update_screen(self.platform_pty.screen())
                 {
-                    let options = crate::screen_parser::parse_permission_options(&screen_content);
-                    if options.is_empty() {
-                        None // Use fallback options in builder
-                    } else {
-                        Some(options)
-                    }
+                    crate::parsers::PermissionPrompt::parse(&screen_content)
+                        .filter(|p| p.is_valid())
                 } else {
                     None
                 }
@@ -1029,7 +1025,7 @@ impl App {
         };
 
         // Build and send the event
-        let event = SessionEventBuilder::prompt(active_prompt, permission_options);
+        let event = SessionEventBuilder::prompt(active_prompt, permission_prompt.as_ref());
         if let Some(ref mut client) = self.cloud_client {
             client.send_event(event);
         }
@@ -1079,6 +1075,33 @@ impl App {
                     _ => {
                         // Unknown key command - ignore
                     }
+                }
+            }
+
+            // Handle incoming key sequences (for Tab instructions)
+            while let Some(steps) = client.try_recv_key_sequence() {
+                for step in steps {
+                    match step {
+                        crate::cloud::KeyStep::Key { key } => {
+                            let bytes: &[u8] = match key.as_str() {
+                                "up" => &[0x1b, b'[', b'A'],      // CSI A - cursor up
+                                "down" => &[0x1b, b'[', b'B'],    // CSI B - cursor down
+                                "tab" => &[0x09],                  // Tab
+                                "enter" => &[0x0D],                // Carriage return
+                                "shift_tab" => &[0x1b, b'[', b'Z'], // CSI Z - shift+tab
+                                _ => continue,
+                            };
+                            self.platform_pty.write(bytes)?;
+                        }
+                        crate::cloud::KeyStep::Text { text } => {
+                            self.platform_pty.write(text.as_bytes())?;
+                        }
+                        crate::cloud::KeyStep::Delay { ms } => {
+                            std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+                        }
+                    }
+                    // Small delay between steps to ensure terminal processes them
+                    std::thread::sleep(std::time::Duration::from_millis(20));
                 }
             }
         }

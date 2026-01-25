@@ -12,7 +12,7 @@ use tokio_tungstenite::{
     tungstenite::{http::Request, Message},
 };
 
-use super::events::{CloudEvent, CloudToDesktopMessage};
+use super::events::{CloudEvent, CloudToDesktopMessage, KeyStep};
 
 /// WebSocket connection handle
 pub struct CloudWebSocket {
@@ -22,6 +22,8 @@ pub struct CloudWebSocket {
     answer_rx: mpsc::Receiver<String>,
     /// Receiver for incoming key commands
     key_rx: mpsc::Receiver<String>,
+    /// Receiver for incoming key sequences (multi-step)
+    key_sequence_rx: mpsc::Receiver<Vec<KeyStep>>,
     /// Receiver for viewer status changes
     viewer_status_rx: mpsc::Receiver<bool>,
     /// Receiver that completes when the connection closes
@@ -67,6 +69,9 @@ impl CloudWebSocket {
         // Channel for incoming key commands (cloud -> desktop)
         let (key_tx, key_rx) = mpsc::channel::<String>(16);
 
+        // Channel for incoming key sequences (cloud -> desktop)
+        let (key_sequence_tx, key_sequence_rx) = mpsc::channel::<Vec<KeyStep>>(16);
+
         // Channel for viewer status changes (cloud -> desktop)
         let (viewer_status_tx, viewer_status_rx) = mpsc::channel::<bool>(4);
 
@@ -103,6 +108,9 @@ impl CloudWebSocket {
                         Ok(CloudToDesktopMessage::Key { key }) => {
                             let _ = key_tx.send(key).await;
                         }
+                        Ok(CloudToDesktopMessage::KeySequence { steps }) => {
+                            let _ = key_sequence_tx.send(steps).await;
+                        }
                         Ok(CloudToDesktopMessage::ViewerStatus { active }) => {
                             let _ = viewer_status_tx.send(active).await;
                         }
@@ -118,6 +126,7 @@ impl CloudWebSocket {
             event_tx,
             answer_rx,
             key_rx,
+            key_sequence_rx,
             viewer_status_rx,
             shutdown_rx,
         })
@@ -129,6 +138,7 @@ pub struct WebSocketHandle {
     event_tx: mpsc::Sender<CloudEvent>,
     answer_rx: mpsc::Receiver<String>,
     key_rx: mpsc::Receiver<String>,
+    key_sequence_rx: mpsc::Receiver<Vec<KeyStep>>,
     viewer_status_rx: mpsc::Receiver<bool>,
 }
 
@@ -139,6 +149,7 @@ impl CloudWebSocket {
             event_tx: self.event_tx,
             answer_rx: self.answer_rx,
             key_rx: self.key_rx,
+            key_sequence_rx: self.key_sequence_rx,
             viewer_status_rx: self.viewer_status_rx,
         };
         (handle, self.shutdown_rx)
@@ -159,6 +170,11 @@ impl WebSocketHandle {
     /// Try to receive a key command (non-blocking)
     pub fn try_recv_key(&mut self) -> Option<String> {
         self.key_rx.try_recv().ok()
+    }
+
+    /// Try to receive a key sequence (non-blocking)
+    pub fn try_recv_key_sequence(&mut self) -> Option<Vec<KeyStep>> {
+        self.key_sequence_rx.try_recv().ok()
     }
 
     /// Try to receive a viewer status change (non-blocking)
