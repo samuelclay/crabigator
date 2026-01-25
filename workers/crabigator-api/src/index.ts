@@ -3,8 +3,9 @@ import type { Env } from './types/env';
 import { registerDevice, deviceHeartbeat, getLinkedDevices, revokeLinkedDevice } from './handlers/devices';
 import { createSession, getSession, updateSession, deleteSession } from './handlers/sessions';
 import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCodePage, generateInviteCode } from './handlers/pairing';
-import { requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
+import { requireAuth, requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
 import { dashboardHtml } from './dashboard';
+import { landingHtml } from './landing';
 
 // Build version - generated lazily on first request, stable for lifetime of this worker instance
 let buildVersion: string | null = null;
@@ -35,11 +36,14 @@ router.get('/dashboard', async () => {
     });
 });
 
-// Redirect root to dashboard
+// Landing page
 router.get('/', async () => {
-    return new Response(null, {
-        status: 302,
-        headers: { 'Location': '/dashboard' }
+    return new Response(landingHtml, {
+        headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'public, max-age=3600',
+            'ETag': getBuildVersion()
+        }
     });
 });
 
@@ -87,6 +91,40 @@ router.get('/api/sessions', async (request, env) => {
     const data = await response.json() as { sessions: Array<{ id: string; cwd: string; platform: string; state: string; started_at: number }> };
 
     return jsonResponse({ sessions: data.sessions });
+});
+
+// Debug view of SessionListDO state (scoped to device or group)
+router.get('/api/sessions/debug', async (request, env) => {
+    const authResult = await requireAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const auth = authResult.auth;
+    if (auth.type === 'share') {
+        return router.errorResponse('Forbidden', 'FORBIDDEN', 403);
+    }
+
+    const url = new URL(request.url);
+    const doId = env.SESSION_LIST.idFromName('global');
+    const stub = env.SESSION_LIST.get(doId);
+    const debugUrl = new URL('https://internal/debug');
+
+    const full = url.searchParams.get('full');
+    if (full) {
+        debugUrl.searchParams.set('full', full);
+    }
+
+    if (auth.type === 'device') {
+        debugUrl.searchParams.set('device_id', auth.device_id);
+    } else if (auth.type === 'mobile') {
+        if (auth.group_id) {
+            debugUrl.searchParams.set('group_id', auth.group_id);
+        } else {
+            debugUrl.searchParams.set('device_id', auth.desktop_id);
+        }
+    }
+
+    return stub.fetch(new Request(debugUrl.toString(), request));
 });
 
 // SSE stream for real-time session list updates (no polling needed)
