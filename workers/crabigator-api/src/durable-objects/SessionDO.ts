@@ -65,6 +65,8 @@ export class SessionDO implements DurableObject {
     private lastViewerActivity: number = 0;
     /** Whether we've notified desktop that viewers are active */
     private desktopNotifiedViewerActive: boolean = false;
+    /** Last time we notified SessionListDO of activity (throttled) */
+    private lastSeenNotifiedAt: number = 0;
 
     constructor(state: DurableObjectState, env: Env) {
         this.state = state;
@@ -260,6 +262,33 @@ export class SessionDO implements DurableObject {
     }
 
     /**
+     * Check if enough time has passed to send another last_seen update
+     * Throttles to every 10 seconds to avoid excessive updates
+     */
+    private shouldUpdateLastSeen(): boolean {
+        return Date.now() - this.lastSeenNotifiedAt > 10_000; // 10s throttle
+    }
+
+    /**
+     * Notify SessionListDO of session activity (for deploy grace period)
+     *
+     * This updates the last_seen timestamp in SessionListDO, which prevents
+     * the session from being cleaned up during deploy validation.
+     */
+    private notifySessionLastSeen(): void {
+        this.lastSeenNotifiedAt = Date.now();
+        const doId = this.env.SESSION_LIST.idFromName('global');
+        const stub = this.env.SESSION_LIST.get(doId);
+        stub.fetch(new Request('https://internal/touch', {
+            method: 'POST',
+            body: JSON.stringify({ id: this.sessionInfo!.id }),
+            headers: { 'Content-Type': 'application/json' },
+        })).catch(() => {
+            // Ignore errors - this is a best-effort update
+        });
+    }
+
+    /**
      * Handle incoming event from desktop
      */
     private async handleEvent(event: SessionEvent): Promise<void> {
@@ -335,6 +364,12 @@ export class SessionDO implements DurableObject {
 
         // Broadcast to all SSE clients (still immediate for real-time feel)
         await this.broadcast(event);
+
+        // Notify SessionListDO of activity (throttled to every 10s)
+        // This keeps sessions alive during deploys via the grace period
+        if (this.sessionInfo && this.shouldUpdateLastSeen()) {
+            this.notifySessionLastSeen();
+        }
     }
 
     /**

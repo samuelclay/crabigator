@@ -306,11 +306,13 @@ impl App {
         let mut last_status_draw = Instant::now();
         let mut last_throbber_draw = Instant::now();
         let mut last_full_refresh = Instant::now();
+        let mut last_cloud_reconnect_check = Instant::now();
         let git_refresh_interval = Duration::from_secs(1);
         let hook_refresh_interval = Duration::from_millis(500);
         let status_debounce = Duration::from_millis(100);
         let throbber_interval = Duration::from_millis(100);
         let full_refresh_interval = Duration::from_secs(5);
+        let cloud_reconnect_interval = Duration::from_secs(2);
 
         // Set up scroll region to constrain the CLI to the top area
         // Pass true to scroll existing content up and make room for status bar
@@ -479,6 +481,16 @@ impl App {
 
             // Check for commands from cloud (answers + key sequences)
             self.check_cloud_commands()?;
+
+            // Keep cloud WebSocket connected even when idle (no outgoing events).
+            if last_cloud_reconnect_check.elapsed() >= cloud_reconnect_interval {
+                if let Some(ref mut client) = self.cloud_client {
+                    if !client.is_connected() {
+                        client.try_reconnect();
+                    }
+                }
+                last_cloud_reconnect_check = Instant::now();
+            }
 
             // Poll viewer status from cloud to optimize screen streaming
             if let Some(ref mut client) = self.cloud_client {

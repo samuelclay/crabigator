@@ -8,14 +8,15 @@ interface ActiveSession {
     started_at: number;
     device_id?: string;
     group_id?: string | null;
+    last_seen?: number;  // Timestamp of last desktop activity
 }
 
 /**
  * Durable Object for broadcasting session list changes to dashboard viewers
  *
- * Maintains the authoritative list of currently-connected sessions.
- * Sessions are added when desktop connects, removed when desktop disconnects.
- * This ensures /api/sessions only returns sessions with active desktop connections.
+ * Maintains the authoritative list of active/recoverable sessions.
+ * Sessions are added when desktop connects, removed when the session ends.
+ * COMPLETE sessions are kept across transient disconnects (e.g., deploys).
  */
 export class SessionListDO implements DurableObject {
     private state: DurableObjectState;
@@ -43,12 +44,27 @@ export class SessionListDO implements DurableObject {
 
     /**
      * Validate all sessions by checking if their desktops are still connected.
-     * Removes stale sessions that no longer have active desktop connections.
+     * Removes stale sessions that no longer have active desktop connections
+     * AND have been inactive for more than the grace period.
+     *
+     * The grace period allows desktops to reconnect after deploys break WebSockets.
+     * COMPLETE sessions are skipped entirely - they're intentionally idle and will
+     * be cleaned up when the desktop explicitly disconnects.
      */
     private async validateSessions(): Promise<void> {
+        const GRACE_PERIOD_MS = 60_000; // 60 seconds
+        const now = Date.now();
         const stale: string[] = [];
 
-        for (const [id] of this.activeSessions) {
+        // Log all sessions at start of validation
+        console.log(`validateSessions: checking ${this.activeSessions.size} sessions`);
+        for (const [id, session] of this.activeSessions) {
+            console.log(`validateSessions: session ${id} state="${session.state}" last_seen=${session.last_seen}`);
+            if (session.state === 'complete') {
+                console.log(`validateSessions: skipping complete session ${id}`);
+                continue;
+            }
+
             try {
                 const doId = this.env.SESSION.idFromName(id);
                 const stub = this.env.SESSION.get(doId);
@@ -56,11 +72,18 @@ export class SessionListDO implements DurableObject {
                 const state = (await resp.json()) as { desktop_connected?: boolean };
 
                 if (!state.desktop_connected) {
-                    stale.push(id);
+                    // Only stale if disconnected AND past grace period
+                    const lastSeen = session.last_seen || 0;
+                    if (now - lastSeen > GRACE_PERIOD_MS) {
+                        stale.push(id);
+                    }
                 }
             } catch {
-                // If we can't reach SessionDO, assume stale
-                stale.push(id);
+                // Can't reach SessionDO - check grace period before removing
+                const lastSeen = session.last_seen || 0;
+                if (now - lastSeen > GRACE_PERIOD_MS) {
+                    stale.push(id);
+                }
             }
         }
 
@@ -122,6 +145,10 @@ export class SessionListDO implements DurableObject {
                 return this.handleDisconnect(request);
             case '/update':
                 return this.handleUpdate(request);
+            case '/touch':
+                return this.handleTouch(request);
+            case '/debug':
+                return this.handleDebug(request);
             default:
                 return new Response('Not found', { status: 404 });
         }
@@ -164,8 +191,34 @@ export class SessionListDO implements DurableObject {
         }
 
         try {
-            const event = await request.json();
+            const event = await request.json() as {
+                type?: string;
+                session?: Partial<ActiveSession> & { ended_at?: number | null; is_active?: boolean };
+            };
             await this.broadcast(event);
+
+            const sessionId = event.session?.id;
+            const endedAt = event.session?.ended_at;
+            const isInactive = event.session?.is_active === false;
+            const shouldRemove =
+                event.type === 'deleted'
+                || (event.type === 'updated' && (endedAt != null || isInactive));
+            if (shouldRemove && sessionId) {
+                const existing = this.activeSessions.get(sessionId);
+                if (existing) {
+                    this.activeSessions.delete(sessionId);
+                    await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
+
+                    if (existing.device_id) {
+                        const remainingForDevice = Array.from(this.activeSessions.values())
+                            .some(active => active.device_id === existing.device_id);
+                        if (!remainingForDevice) {
+                            await this.cleanupPairingTokens(existing.device_id);
+                        }
+                    }
+                }
+            }
+
             return new Response(JSON.stringify({ ok: true, clients: this.sseClients.size }), {
                 headers: { 'Content-Type': 'application/json' },
             });
@@ -293,7 +346,12 @@ export class SessionListDO implements DurableObject {
                     session.group_id = session.group_id || row.group_id || null;
                 }
             }
-            this.activeSessions.set(session.id, session);
+            const sessionWithLastSeen = {
+                ...session,
+                last_seen: Date.now(),
+            };
+            console.log(`handleConnect: storing session ${session.id} with state=${session.state}`);
+            this.activeSessions.set(session.id, sessionWithLastSeen);
             await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
 
             // Broadcast to dashboard viewers
@@ -323,6 +381,13 @@ export class SessionListDO implements DurableObject {
             const session = this.activeSessions.get(id);
 
             if (session) {
+                // COMPLETE sessions are intentionally idle; keep them until explicitly ended.
+                if (session.state === 'complete') {
+                    return new Response(JSON.stringify({ ok: true }), {
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                }
+
                 this.activeSessions.delete(id);
                 await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
 
@@ -366,6 +431,7 @@ export class SessionListDO implements DurableObject {
 
             if (session) {
                 session.state = state;
+                session.last_seen = Date.now();  // Refresh on any update
                 this.activeSessions.set(id, session);
                 await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
 
@@ -373,6 +439,90 @@ export class SessionListDO implements DurableObject {
                 await this.broadcast({ type: 'updated', session: { id, state, group_id: session.group_id } });
             }
 
+            return new Response(JSON.stringify({ ok: true }), {
+                headers: { 'Content-Type': 'application/json' },
+            });
+        } catch {
+            return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
+    }
+
+    /**
+     * Update last_seen timestamp for a session (called periodically from SessionDO)
+     *
+     * This keeps sessions alive during deploys by updating the grace period timer.
+     * SessionDO calls this every ~10s during activity. We persist to storage so
+     * that after a deploy, the DO can reload and see the recent last_seen.
+     */
+    /**
+     * Debug endpoint to inspect activeSessions state
+     */
+    private handleDebug(request: Request): Response {
+        const url = new URL(request.url);
+        const full = url.searchParams.get('full') === '1';
+        const groupFilter = url.searchParams.get('group_id');
+        const deviceFilter = url.searchParams.get('device_id');
+        const now = Date.now();
+
+        const entries = Array.from(this.activeSessions.entries()).filter(([, session]) => {
+            if (groupFilter && session.group_id !== groupFilter) {
+                return false;
+            }
+            if (deviceFilter && session.device_id !== deviceFilter) {
+                return false;
+            }
+            return true;
+        });
+
+        const sessions = entries.map(([id, s]) => {
+            const lastSeen = s.last_seen ?? null;
+            const lastSeenAgeMs = lastSeen ? now - lastSeen : null;
+            return {
+                id: full ? id : id.slice(0, 8),
+                cwd: s.cwd,
+                platform: s.platform,
+                state: s.state,
+                started_at: s.started_at,
+                last_seen: lastSeen,
+                last_seen_age_ms: lastSeenAgeMs,
+                device_id: s.device_id ? (full ? s.device_id : s.device_id.slice(0, 8)) : undefined,
+                group_id: s.group_id ? (full ? s.group_id : s.group_id.slice(0, 8)) : null,
+            };
+        });
+
+        const byState: Record<string, number> = {};
+        for (const session of sessions) {
+            const key = session.state || 'unknown';
+            byState[key] = (byState[key] || 0) + 1;
+        }
+
+        return new Response(JSON.stringify({
+            now,
+            count: sessions.length,
+            by_state: byState,
+            sessions,
+        }, null, 2), {
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+
+    private async handleTouch(request: Request): Promise<Response> {
+        if (request.method !== 'POST') {
+            return new Response('Method not allowed', { status: 405 });
+        }
+
+        try {
+            const { id } = await request.json() as { id: string };
+            const session = this.activeSessions.get(id);
+            if (session) {
+                session.last_seen = Date.now();
+                this.activeSessions.set(id, session);
+                // Persist so deploys see the updated last_seen (10s writes are acceptable)
+                await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
+            }
             return new Response(JSON.stringify({ ok: true }), {
                 headers: { 'Content-Type': 'application/json' },
             });
