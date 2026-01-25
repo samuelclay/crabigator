@@ -7,8 +7,8 @@ export const landingHtml = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crabigator - Monitor Claude from anywhere</title>
-    <meta name="description" content="Real-time widgets, cloud dashboard, and mobile access for Claude Code and Codex CLI sessions. Know what your AI is doing without being at your desk.">
+    <title>Crabigator - Monitor and control Claude Code from anywhere</title>
+    <meta name="description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code sessions.">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
     <style>${landingCss}</style>
 </head>
@@ -35,17 +35,17 @@ export const landingHtml = `<!DOCTYPE html>
     <section class="hero">
         <div class="hero-content">
             <div class="hero-text">
-                <p class="hero-tagline">Remote AI Monitoring</p>
+                <p class="hero-tagline">Remote AI Control</p>
                 <h1 class="hero-headline">
-                    Monitor <span class="highlight">Claude Code</span> from anywhere
+                    Control <span class="highlight">Claude Code</span> from anywhere
                 </h1>
                 <p class="hero-subheadline">
-                    Real-time widgets, cloud dashboard, and mobile access for Claude Code
-                    and Codex CLI sessions. Know what your AI is doing without being at your desk.
+                    Answer permissions, approve plans, and respond to questions—all from your phone.
+                    Never miss a prompt when Claude needs your input.
                 </p>
                 <div class="hero-ctas">
                     <a href="#install" class="btn-primary">Install Now</a>
-                    <a href="/dashboard" class="btn-secondary">View Dashboard</a>
+                    <a href="/dashboard" class="btn-secondary">View Demo Dashboard</a>
                 </div>
                 <p class="hero-price">
                     <span class="price">$3/month</span>
@@ -56,6 +56,22 @@ export const landingHtml = `<!DOCTYPE html>
                     <span>·</span>
                     <span>Cancel anytime</span>
                 </p>
+                <div class="hero-email-card">
+                    <div class="hero-email-header">
+                        <svg class="hero-email-icon" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
+                            <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/>
+                        </svg>
+                        <span class="hero-email-label">Stay in the loop</span>
+                    </div>
+                    <form class="hero-email-form" id="hero-email-form">
+                        <input type="email" class="hero-email-input" placeholder="you@example.com" required>
+                        <button type="submit" class="hero-email-btn">Subscribe</button>
+                    </form>
+                    <div class="hero-email-success" id="hero-email-success">
+                        ✓ You're on the list!
+                    </div>
+                </div>
             </div>
 
             <div class="hero-terminal">
@@ -133,15 +149,17 @@ export const landingHtml = `<!DOCTYPE html>
                 <p class="section-label">Multi-device</p>
                 <h2 class="section-title">Check in from phone or desktop</h2>
                 <p class="section-subtitle">
-                    Pair any device in seconds with a simple code. Sessions sync automatically
-                    across all your devices. No VPN or port forwarding needed.
+                    No Tmux. No Tailscale. No Termius. Native integration built for Claude Code.
+                    Pair any device in seconds—monitor progress and respond to prompts on the go.
                 </p>
-                <div style="margin-top: 32px;">
+                <div class="showcase-status">
                     <div class="status-pills">
                         <span class="status-pill thinking">Thinking</span>
                         <span class="status-pill permission">Permission</span>
+                        <span class="status-pill question">Question</span>
                         <span class="status-pill complete">Complete</span>
                     </div>
+                    <p class="status-hint">Real-time state updates across all sessions</p>
                 </div>
             </div>
             <div class="showcase-devices">
@@ -216,68 +234,226 @@ export const landingHtml = `<!DOCTYPE html>
         </div>
     </section>
 
+    <!-- Interactive Section -->
+    <section class="section interactive">
+        <div class="interactive-content">
+            <div class="interactive-visual">
+                <div class="prompt-mockup">
+                    <div class="prompt-mockup-header">
+                        <span class="prompt-mockup-state">Permission Request</span>
+                        <span class="prompt-mockup-path">~/projects/api</span>
+                    </div>
+                    <div class="prompt-mockup-question">
+                        Claude wants to run: <code>pnpm install lodash</code>
+                    </div>
+                    <div class="prompt-mockup-options">
+                        <div class="prompt-mockup-row">
+                            <div class="prompt-mockup-option selected">
+                                <span class="option-num">1.</span> Yes, allow this
+                            </div>
+                            <input type="text" class="prompt-mockup-input" placeholder="+ instructions" value="use npm instead">
+                        </div>
+                        <div class="prompt-mockup-row">
+                            <div class="prompt-mockup-option no-input">
+                                <span class="option-num">2.</span> Yes, don't ask again
+                            </div>
+                        </div>
+                        <div class="prompt-mockup-row">
+                            <div class="prompt-mockup-option">
+                                <span class="option-num">3.</span> No, deny this
+                            </div>
+                            <input type="text" class="prompt-mockup-input" placeholder="+ instructions">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="interactive-text">
+                <p class="section-label">Interactive</p>
+                <h2 class="section-title">Respond from anywhere</h2>
+                <p class="section-subtitle">
+                    Answer permissions, review plans, and respond to questions—all from your phone or any browser.
+                    Add custom instructions before approving to guide Claude's next steps.
+                </p>
+                <ul class="interactive-features">
+                    <li>
+                        <span class="feature-icon">✓</span>
+                        <span class="feature-text"><strong>Permission prompts</strong> with one-tap approve or deny</span>
+                    </li>
+                    <li>
+                        <span class="feature-icon">✓</span>
+                        <span class="feature-text"><strong>Add instructions</strong> before approving—guide Claude's approach</span>
+                    </li>
+                    <li>
+                        <span class="feature-icon">✓</span>
+                        <span class="feature-text"><strong>Answer questions</strong> when Claude needs clarification</span>
+                    </li>
+                    <li>
+                        <span class="feature-icon">✓</span>
+                        <span class="feature-text"><strong>Review plans</strong> before Claude starts implementing</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
     <!-- Features Bento Grid -->
-    <section class="section" id="features">
+    <section class="section features-section" id="features">
         <div class="section-header">
             <p class="section-label">Features</p>
             <h2 class="section-title">Everything you need to stay connected</h2>
         </div>
         <div class="bento-grid">
-            <div class="bento-card large">
+            <!-- Row 1-2: Session Stats (tall) + Git Changes (tall) + Cloud Dashboard + Mobile -->
+            <div class="bento-card tall">
                 <div class="bento-icon">📊</div>
-                <h3 class="bento-title">Live Status Widgets</h3>
-                <p class="bento-desc">Git status, session stats, and state indicators update in real-time as Claude works. See changes organized by functions, classes, and structs with language-aware semantic diff parsing.</p>
+                <h3 class="bento-title">Session Statistics</h3>
+                <p class="bento-desc">Real-time metrics that update as Claude works. Track prompts, completions, tool calls, and session duration at a glance.</p>
                 <div class="bento-visual">
-                    <div class="mini-terminal">
-                        <div style="color: #22d3ee;">📊 Session Stats</div>
-                        <div style="margin-top: 8px; color: #94a3b8;">
-                            Duration <span style="float: right; color: #f1f5f9;">12m 34s</span>
+                    <div class="mini-widget">
+                        <div class="widget-header-mini">📊 Session Stats</div>
+                        <div class="widget-row-mini">
+                            <span>Session</span>
+                            <span class="val">34m</span>
                         </div>
-                        <div style="color: #94a3b8;">
-                            Prompts <span style="float: right; color: #f1f5f9;">7</span>
+                        <div class="widget-row-mini">
+                            <span>Thinking</span>
+                            <span class="val">16m</span>
                         </div>
-                        <div style="color: #94a3b8;">
-                            Tool calls <span style="float: right; color: #f1f5f9;">23</span>
+                        <div class="widget-row-mini">
+                            <span>Prompts</span>
+                            <span class="val">17</span>
+                        </div>
+                        <div class="widget-row-mini">
+                            <span>Completions</span>
+                            <span class="val">16</span>
+                        </div>
+                        <div class="widget-row-mini">
+                            <span>Tools</span>
+                            <span class="sparkline">
+                                <span class="spark" style="height: 4px;"></span>
+                                <span class="spark" style="height: 8px;"></span>
+                                <span class="spark" style="height: 6px;"></span>
+                                <span class="spark" style="height: 12px;"></span>
+                                <span class="spark" style="height: 10px;"></span>
+                                <span class="spark" style="height: 14px;"></span>
+                                <span class="spark" style="height: 8px;"></span>
+                                <span class="spark" style="height: 6px;"></span>
+                                <span class="spark" style="height: 10px;"></span>
+                                <span class="spark" style="height: 12px;"></span>
+                                <span class="spark" style="height: 8px;"></span>
+                                <span class="spark" style="height: 4px;"></span>
+                            </span>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="bento-card medium">
+            <div class="bento-card tall">
+                <div class="bento-icon">📁</div>
+                <h3 class="bento-title">Git Changes</h3>
+                <p class="bento-desc">See every file Claude modifies with visual diff bars. Additions in green, deletions in red—know exactly what's changing.</p>
+                <div class="bento-visual">
+                    <div class="mini-widget">
+                        <div class="widget-header-mini">📁 6 files</div>
+                        <div class="file-row">
+                            <span class="file-name">● css.ts</span>
+                            <span class="diff-bar"><span class="del" style="width: 8px;"></span><span class="add" style="width: 45px;"></span></span>
+                        </div>
+                        <div class="file-row">
+                            <span class="file-name">? update.rs</span>
+                            <span class="diff-bar"><span class="add" style="width: 40px;"></span></span>
+                        </div>
+                        <div class="file-row">
+                            <span class="file-name">● landing.ts</span>
+                            <span class="diff-bar"><span class="del" style="width: 12px;"></span><span class="add" style="width: 30px;"></span></span>
+                        </div>
+                        <div class="file-row">
+                            <span class="file-name">● js.ts</span>
+                            <span class="diff-bar"><span class="del" style="width: 10px;"></span><span class="add" style="width: 18px;"></span></span>
+                        </div>
+                        <div class="file-row">
+                            <span class="file-name">● main.rs</span>
+                            <span class="diff-bar"><span class="del" style="width: 3px;"></span><span class="add" style="width: 9px;"></span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="bento-card small">
                 <div class="bento-icon">☁️</div>
                 <h3 class="bento-title">Cloud Dashboard</h3>
-                <p class="bento-desc">View all active sessions from any browser. No VPN or port forwarding needed.</p>
+                <p class="bento-desc">View sessions and respond to prompts from any browser. No VPN needed.</p>
             </div>
             <div class="bento-card small">
                 <div class="bento-icon">📱</div>
                 <h3 class="bento-title">Mobile Access</h3>
-                <p class="bento-desc">Pair your phone or tablet with a simple code. Check on Claude anywhere.</p>
+                <p class="bento-desc">Approve permissions and answer questions from your phone.</p>
             </div>
             <div class="bento-card small">
-                <div class="bento-icon">💻</div>
-                <h3 class="bento-title">Claude Code + Codex</h3>
-                <p class="bento-desc">Works with both Claude Code (Anthropic) and Codex CLI (OpenAI).</p>
+                <div class="bento-icon anthropic">⬡</div>
+                <h3 class="bento-title">Claude Code</h3>
+                <p class="bento-desc">First-class support with deep hook integration.</p>
             </div>
             <div class="bento-card small">
-                <div class="bento-icon">📈</div>
-                <h3 class="bento-title">Detailed Statistics</h3>
-                <p class="bento-desc">Track tokens consumed, tool calls made, prompts sent, and session duration.</p>
+                <div class="bento-icon openai">◈</div>
+                <h3 class="bento-title">Codex CLI</h3>
+                <p class="bento-desc">Works seamlessly with OpenAI's Codex CLI.</p>
             </div>
-            <div class="bento-card medium">
-                <div class="bento-icon">🔍</div>
-                <h3 class="bento-title">CLI Inspection</h3>
-                <p class="bento-desc">Use <code>crabigator inspect</code> to view running instances programmatically. Perfect for automation.</p>
+
+            <!-- Row 3-4: Semantic Diff (wide + tall) + File Links (tall) -->
+            <div class="bento-card wide tall">
+                <div class="bento-icon">🧬</div>
+                <h3 class="bento-title">Semantic Diff Parsing</h3>
+                <p class="bento-desc">Changes grouped by language with function and method names extracted. See exactly which functions are being modified, not just file names.</p>
                 <div class="bento-visual">
-                    <div class="mini-terminal">
-                        <span style="color: #4ade80;">❯</span> crabigator inspect<br>
-                        <span style="color: #94a3b8;">  ~/api</span> <span style="color: #3b82f6;">THINKING</span><br>
-                        <span style="color: #94a3b8;">  ~/web</span> <span style="color: #fb923c;">PERMISSION</span>
+                    <div class="mini-widget semantic">
+                        <div class="lang-group">
+                            <div class="lang-header"><span class="lang-tag js">JavaScript</span> 5 changes</div>
+                            <div class="func-row"><span class="func-icon">~ƒ</span> handleEmailSignup <span class="func-diff"><span class="red">-20</span> <span class="green">+33</span></span></div>
+                            <div class="func-row"><span class="func-icon">~ƒ</span> copyInstallCommand <span class="func-diff"><span class="red">-8</span> <span class="green">+12</span></span></div>
+                            <div class="func-row"><span class="func-icon">+ƒ</span> initDashboard <span class="func-diff"><span class="green">+45</span></span></div>
+                        </div>
+                        <div class="lang-group">
+                            <div class="lang-header"><span class="lang-tag rs">Rust</span> 4 changes</div>
+                            <div class="func-row"><span class="func-icon">~ƒ</span> main <span class="func-diff"><span class="red">-2</span> <span class="green">+5</span></span></div>
+                            <div class="func-row"><span class="func-icon">+ƒ</span> default_true <span class="func-diff"><span class="green">+2</span></span></div>
+                            <div class="func-row"><span class="func-icon">~◇</span> Default for Config <span class="func-diff"><span class="red">-1</span> <span class="green">+3</span></span></div>
+                        </div>
                     </div>
                 </div>
             </div>
-            <div class="bento-card small">
+            <div class="bento-card tall">
                 <div class="bento-icon">🔗</div>
                 <h3 class="bento-title">Clickable File Links</h3>
-                <p class="bento-desc">Click any file path to open directly in VS Code, Cursor, or your editor.</p>
+                <p class="bento-desc">Every file path is a link. Click to open directly in VS Code, Cursor, Zed, or your preferred editor.</p>
+                <div class="bento-visual">
+                    <div class="mini-widget file-links">
+                        <div class="link-row"><span class="link-path">src/app.rs</span><span class="link-line">:142</span></div>
+                        <div class="link-row"><span class="link-path">src/config.ts</span><span class="link-line">:38</span></div>
+                        <div class="link-row"><span class="link-path">tests/fixture.rs</span><span class="link-line">:256</span></div>
+                        <div class="link-row"><span class="link-path">src/main.rs</span><span class="link-line">:89</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Row 5: CLI + Scrollback + Mouse + ? -->
+            <div class="bento-card small">
+                <div class="bento-icon">🔍</div>
+                <h3 class="bento-title">CLI Inspection</h3>
+                <p class="bento-desc">Use <code>crabigator inspect</code> to view running instances. Perfect for automation.</p>
+            </div>
+            <div class="bento-card small">
+                <div class="bento-icon">📋</div>
+                <h3 class="bento-title">Native Scrollback</h3>
+                <p class="bento-desc">Uses your terminal's primary buffer—unlike tmux. Scroll naturally.</p>
+            </div>
+            <div class="bento-card small">
+                <div class="bento-icon">🖱️</div>
+                <h3 class="bento-title">Mouse Selection</h3>
+                <p class="bento-desc">Select and copy text naturally—no tmux capture mode.</p>
+            </div>
+            <div class="bento-card small">
+                <div class="bento-icon">⚡</div>
+                <h3 class="bento-title">Instant Pairing</h3>
+                <p class="bento-desc">Scan a QR code or enter a short code. Connected in seconds.</p>
             </div>
         </div>
     </section>
@@ -288,18 +464,34 @@ export const landingHtml = `<!DOCTYPE html>
             <p class="section-label">Pricing</p>
             <h2 class="section-title">Simple, transparent pricing</h2>
         </div>
-        <div class="pricing-card">
-            <div class="pricing-inner">
-                <div class="pricing-amount">$3<span class="pricing-period">/month</span></div>
-                <ul class="pricing-features">
-                    <li><span class="check">✓</span> Unlimited Claude Code sessions</li>
-                    <li><span class="check">✓</span> Unlimited remote viewers</li>
-                    <li><span class="check">✓</span> Web and mobile access</li>
-                    <li><span class="check">✓</span> Real-time sync</li>
-                    <li><span class="check">✓</span> Cancel anytime</li>
-                </ul>
-                <a href="#install" class="btn-primary pricing-cta">Start Monitoring</a>
-                <p class="pricing-note">No credit card required to install. Upgrade when you're ready.</p>
+        <div class="pricing-cards">
+            <div class="pricing-card">
+                <div class="pricing-inner">
+                    <div class="pricing-tier">Free</div>
+                    <div class="pricing-amount">$0<span class="pricing-period">/month</span></div>
+                    <ul class="pricing-features">
+                        <li><span class="check">✓</span> Unlimited Claude Code sessions</li>
+                        <li><span class="check">✓</span> Answer permissions & questions</li>
+                        <li><span class="check">✓</span> Unlimited web and mobile access</li>
+                        <li><span class="check">✓</span> Real-time sync</li>
+                        <li><span class="check dim">✓</span> <span class="dim">30 min/day remote access</span></li>
+                    </ul>
+                    <a href="#install" class="btn-primary pricing-cta outline">Get Started</a>
+                </div>
+            </div>
+            <div class="pricing-card featured">
+                <div class="pricing-inner">
+                    <div class="pricing-tier">Pro</div>
+                    <div class="pricing-amount">$3<span class="pricing-period">/month</span></div>
+                    <ul class="pricing-features">
+                        <li><span class="check">✓</span> Unlimited Claude Code sessions</li>
+                        <li><span class="check">✓</span> Answer permissions & questions</li>
+                        <li><span class="check">✓</span> Unlimited web and mobile access</li>
+                        <li><span class="check">✓</span> Real-time sync</li>
+                        <li><span class="check">✓</span> Unlimited remote access</li>
+                    </ul>
+                    <a href="#install" class="btn-primary pricing-cta">Get Started</a>
+                </div>
             </div>
         </div>
     </section>
@@ -376,7 +568,7 @@ export const landingHtml = `<!DOCTYPE html>
             <h2 class="section-title">Native mobile apps</h2>
             <p class="section-subtitle">
                 Get notified when Crabigator launches on iOS and Android.
-                Push notifications, native performance, and offline support.
+                Push notifications when Claude needs you, native performance, and offline support.
             </p>
         </div>
         <form class="email-form" id="email-form">
@@ -393,7 +585,7 @@ export const landingHtml = `<!DOCTYPE html>
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-cta">
-                <span class="footer-cta-text">Ready to monitor Claude Code from anywhere?</span>
+                <span class="footer-cta-text">Ready to control Claude Code from anywhere?</span>
                 <a href="#install" class="btn-primary">Install Now</a>
             </div>
             <div class="footer-links">
@@ -406,7 +598,7 @@ export const landingHtml = `<!DOCTYPE html>
             </div>
         </div>
         <div class="footer-bottom">
-            <p class="footer-bottom-text">Built with <span>Rust</span>. Hosted on <span>Cloudflare</span>.</p>
+            <p class="footer-bottom-text">Built by <a href="https://samuelclay.com" target="_blank" rel="noopener">Samuel Clay</a>. Talk to <a href="https://x.com/samuelclay" target="_blank" rel="noopener">Samuel Clay</a> on X.</p>
         </div>
     </footer>
 

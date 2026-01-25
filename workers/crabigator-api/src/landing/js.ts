@@ -18,33 +18,45 @@ export const landingJs = `
         });
     }
 
-    // Email signup form
-    function handleEmailSignup(event) {
-        event.preventDefault();
-        const form = event.target;
-        const email = form.querySelector('input[type="email"]').value;
-        const btn = form.querySelector('button');
-        const successEl = document.getElementById('email-success');
-        const formEl = document.getElementById('email-form');
+    // Email signup handler (works for both hero and bottom forms)
+    function handleEmailSignup(formId, successId, privacySelector) {
+        return function(event) {
+            event.preventDefault();
+            const form = event.target;
+            const email = form.querySelector('input[type="email"]').value;
+            const btn = form.querySelector('button');
+            const successEl = document.getElementById(successId);
+            const formEl = document.getElementById(formId);
 
-        if (!email) return;
+            if (!email) return;
 
-        btn.disabled = true;
-        btn.textContent = 'Signing up...';
+            btn.disabled = true;
+            btn.textContent = 'Signing up...';
 
-        // Simulate API call (in production, this would POST to an actual endpoint)
-        setTimeout(() => {
-            formEl.style.display = 'none';
-            successEl.classList.add('visible');
-            document.querySelector('.email-privacy').style.display = 'none';
-        }, 800);
+            // Simulate API call (in production, this would POST to an actual endpoint)
+            setTimeout(() => {
+                formEl.style.display = 'none';
+                successEl.classList.add('visible');
+                if (privacySelector) {
+                    const privacy = document.querySelector(privacySelector);
+                    if (privacy) privacy.style.display = 'none';
+                }
+            }, 800);
+        };
     }
 
     // Initialize
     document.addEventListener('DOMContentLoaded', function() {
+        // Hero email form
+        const heroEmailForm = document.getElementById('hero-email-form');
+        if (heroEmailForm) {
+            heroEmailForm.addEventListener('submit', handleEmailSignup('hero-email-form', 'hero-email-success', null));
+        }
+
+        // Bottom email form
         const emailForm = document.getElementById('email-form');
         if (emailForm) {
-            emailForm.addEventListener('submit', handleEmailSignup);
+            emailForm.addEventListener('submit', handleEmailSignup('email-form', 'email-success', '.email-privacy'));
         }
     });
 `;
