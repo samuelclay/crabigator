@@ -2,7 +2,7 @@
 export const landingCss = `
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
     --bg-abyss: #030712;
@@ -32,6 +32,11 @@ body {
     color: var(--text-bright);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+    max-width: 100vw;
+}
+
+html {
     overflow-x: hidden;
 }
 
@@ -69,6 +74,18 @@ code, .mono {
     font-family: 'JetBrains Mono', monospace;
 }
 
+/* SVG Icons */
+.icon {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    vertical-align: -0.125em;
+    fill: currentColor;
+}
+.icon-sm { width: 0.875em; height: 0.875em; }
+.icon-lg { width: 1.25em; height: 1.25em; }
+.icon-widget { width: 14px; height: 14px; vertical-align: -2px; }
+
 /* === NAVIGATION === */
 .nav {
     position: fixed;
@@ -98,6 +115,11 @@ code, .mono {
     content: '>';
     color: var(--accent-cyan);
     animation: blink 1s step-end infinite;
+}
+.nav-logo svg {
+    width: 24px;
+    height: 24px;
+    fill: var(--accent-orange);
 }
 @keyframes blink {
     50% { opacity: 0; }
@@ -175,6 +197,7 @@ code, .mono {
     padding: 120px 32px 80px;
     position: relative;
     overflow: hidden;
+    max-width: 100%;
 }
 
 /* Animated sonar rings background */
@@ -223,6 +246,11 @@ code, .mono {
     display: flex;
     align-items: center;
     gap: 12px;
+}
+.hero-tagline svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
 }
 .hero-tagline::before {
     content: '';
@@ -327,6 +355,7 @@ code, .mono {
     display: flex;
     align-items: center;
     gap: 16px;
+    flex-wrap: wrap;
 }
 .hero-price .price {
     color: var(--accent-green);
@@ -566,6 +595,8 @@ code, .mono {
 .section {
     padding: 120px 32px;
     position: relative;
+    overflow: hidden;
+    max-width: 100%;
 }
 
 .features-section {
@@ -585,6 +616,15 @@ code, .mono {
     text-transform: uppercase;
     letter-spacing: 3px;
     margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+.section-label svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
 }
 
 .section-title {
@@ -661,6 +701,12 @@ code, .mono {
     font-size: 24px;
     margin-bottom: 20px;
     border: 1px solid var(--border-dim);
+}
+.bento-icon svg {
+    width: 24px;
+    height: 24px;
+    fill: currentColor;
+    color: var(--accent-cyan);
 }
 
 .bento-title {
@@ -1074,6 +1120,11 @@ code, .mono {
     flex-shrink: 0;
     margin-top: 2px;
 }
+.feature-icon svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
 .feature-text {
     font-size: 15px;
     color: var(--text-mid);
@@ -1288,6 +1339,13 @@ code, .mono {
     color: var(--accent-cyan);
     font-weight: bold;
     font-size: 18px;
+    display: flex;
+    align-items: center;
+}
+.pricing-features .check svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
 }
 .pricing-features .check.dim {
     color: var(--text-dim);
@@ -1642,15 +1700,19 @@ code, .mono {
     .nav-links { gap: 4px; }
     .nav-link { display: none; }
     .nav-btn { padding: 8px 16px; font-size: 11px; }
+    .nav-logo { font-size: 16px; }
+    .nav-logo svg { width: 20px; height: 20px; }
 
     .hero {
         padding: 100px 16px 60px;
         min-height: auto;
     }
-    .hero-headline { font-size: 36px; letter-spacing: -1px; }
-    .hero-subheadline { font-size: 16px; }
+    .hero-headline { font-size: 32px; letter-spacing: -1px; }
+    .hero-subheadline { font-size: 15px; }
     .hero-ctas { flex-direction: column; }
+    .hero-price { font-size: 11px; gap: 8px; justify-content: center; }
     .btn-primary, .btn-secondary { width: 100%; justify-content: center; padding: 14px 24px; }
+    .terminal-widgets { grid-template-columns: 1fr; }
 
     .section { padding: 80px 16px; }
     .section-title { font-size: 28px; }
@@ -1703,6 +1765,8 @@ code, .mono {
         text-align: center;
     }
     .footer-cta { flex-direction: column; }
-    .footer-links { flex-wrap: wrap; justify-content: center; }
+    .footer-links { flex-wrap: wrap; justify-content: center; gap: 16px; }
+    .section-label { font-size: 11px; letter-spacing: 2px; }
+    .section-title { word-break: break-word; }
 }
 `;
