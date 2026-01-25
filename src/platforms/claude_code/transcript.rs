@@ -234,10 +234,30 @@ fn format_tool_use(name: &str, input: &Value) -> String {
                 out.push_str(&format!("({})", truncate(cmd, 60)));
             }
         }
-        "Read" | "Write" => {
+        "Read" => {
             if let Some(path) = input.get("file_path").and_then(|p| p.as_str()) {
                 out.push_str(&format!("({})", shorten_path(path)));
             }
+        }
+        "Write" => {
+            if let Some(path) = input.get("file_path").and_then(|p| p.as_str()) {
+                out.push_str(&format!("({})", shorten_path(path)));
+            }
+            out.push('\n');
+            // Show written content (plans, markdown, etc.)
+            if let Some(content) = input.get("content").and_then(|c| c.as_str()) {
+                let lines: Vec<&str> = content.lines().collect();
+                let preview_lines = 20;
+                for line in lines.iter().take(preview_lines) {
+                    out.push_str("  ");
+                    out.push_str(line);
+                    out.push('\n');
+                }
+                if lines.len() > preview_lines {
+                    out.push_str(&format!("  ... ({} more lines)\n", lines.len() - preview_lines));
+                }
+            }
+            return out;
         }
         "Edit" => {
             if let Some(path) = input.get("file_path").and_then(|p| p.as_str()) {

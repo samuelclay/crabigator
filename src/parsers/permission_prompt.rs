@@ -82,10 +82,15 @@ impl PermissionPrompt {
         // Look for numbered options pattern
         let option_re = Regex::new(r"(?m)^[\s❯>]*(\d+)\.\s+(.+)$").ok()?;
 
-        // Find the question - look for "Do you want to" pattern
+        // Find the question - look for common question patterns
+        // "Do you want to" - standard permission prompts
+        // "Would you like to" - Exit Plan Mode and similar
         let question = stripped
             .lines()
-            .find(|line| line.trim().starts_with("Do you want to"))
+            .find(|line| {
+                let trimmed = line.trim();
+                trimmed.starts_with("Do you want to") || trimmed.starts_with("Would you like to")
+            })
             .map(|line| line.trim().to_string());
 
         // Check for "Tab to add additional instructions" in footer
@@ -292,5 +297,28 @@ Do you want to create test-file.txt?
 
         let prompt = PermissionPrompt::parse(screen).unwrap();
         assert_eq!(prompt.question, Some("Do you want to create test-file.txt?".to_string()));
+    }
+
+    #[test]
+    fn test_parse_would_you_like_question() {
+        // Exit Plan Mode uses "Would you like to" instead of "Do you want to"
+        let screen = r#"
+Would you like to proceed?
+❯ 1. Yes, and continue with the planned work
+   2. Yes, but let me provide more guidance first
+   3. No, let's discuss further
+   4. No, cancel this plan
+
+Esc to cancel · Tab to add additional instructions
+"#;
+
+        let prompt = PermissionPrompt::parse(screen).unwrap();
+        assert_eq!(prompt.question, Some("Would you like to proceed?".to_string()));
+        assert_eq!(prompt.options.len(), 4);
+        assert_eq!(prompt.options[0].text, "Yes, and continue with the planned work");
+        assert!(prompt.options[0].selected);
+        assert_eq!(prompt.options[1].text, "Yes, but let me provide more guidance first");
+        assert_eq!(prompt.options[2].text, "No, let's discuss further");
+        assert_eq!(prompt.options[3].text, "No, cancel this plan");
     }
 }
