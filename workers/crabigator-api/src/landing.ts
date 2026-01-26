@@ -645,7 +645,7 @@ export const landingHtml = `<!DOCTYPE html>
                         <li><span class="check">${iconCheck}</span> Answer permissions & questions</li>
                         <li><span class="check">${iconCheck}</span> Unlimited web and mobile access</li>
                         <li><span class="check">${iconCheck}</span> Real-time sync</li>
-                        <li><span class="check dim">${iconCheck}</span> <span class="dim">30 min/day remote access</span></li>
+                        <li><span class="check dim">${iconCheck}</span> <span class="dim">10 min/day remote access</span></li>
                     </ul>
                     <a href="#install" class="btn-primary pricing-cta outline">Get Started</a>
                 </div>
