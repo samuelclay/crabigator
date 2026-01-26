@@ -190,6 +190,10 @@ cd workers/crabigator-api && npm run dev      # Local dev
 - **Deploys break WebSockets**: Desktop auto-reconnects with exponential backoff (1s-30s)
 - **Session state**: Managed by Durable Objects (`SessionDO`)
 - **Auth**: Desktop device_id + HMAC-SHA256 signatures, no user accounts
+- **SVG Icons**: Keep raw SVG icons in dedicated `icons.ts` files rather than inline in HTML templates:
+  - `src/landing/icons.ts` - Icons for landing page
+  - `src/dashboard/icons.ts` - Icons for dashboard (favicon, etc.)
+  - Export icons as named string constants and import where needed
 
 ### Usage Analytics
 
