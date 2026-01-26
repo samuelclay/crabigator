@@ -302,6 +302,9 @@ impl App {
         // Move to first status bar row and clear from there to end of screen
         write!(stdout, "{}", escape::cursor_to(self.pty_rows + 1, 1))?;
         write!(stdout, "{}", escape::CLEAR_TO_END)?;
+        // Re-establish scroll region after operating outside it to prevent
+        // some terminals from resetting cursor origin or scroll context
+        write!(stdout, "{}", escape::scroll_region(1, self.pty_rows))?;
         // Restore cursor to PTY position
         write!(stdout, "{}", escape::CURSOR_RESTORE)?;
         stdout.flush()?;
