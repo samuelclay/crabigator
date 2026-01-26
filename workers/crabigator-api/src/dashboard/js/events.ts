@@ -165,6 +165,10 @@ export const eventsJs = `
                 case 'desktop_status':
                     // Desktop connected/disconnected
                     if (!event.connected) {
+                        // Check for version change FIRST - likely a deploy
+                        // Do this before DOM cleanup that might throw
+                        checkVersionAndReload();
+
                         // Desktop disconnected - remove session from view
                         const session = sessions.get(sessionId);
                         if (session) {
@@ -180,8 +184,6 @@ export const eventsJs = `
                         updateFitLayout();
                         // Update status
                         document.getElementById('status').textContent = sessionCount(sessions.size);
-                        // Check for version change immediately - likely a deploy
-                        checkVersionAndReload();
                     }
                     break;
                 case 'title_history':
