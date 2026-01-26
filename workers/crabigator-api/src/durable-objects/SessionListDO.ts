@@ -48,22 +48,15 @@ export class SessionListDO implements DurableObject {
      * AND have been inactive for more than the grace period.
      *
      * The grace period allows desktops to reconnect after deploys break WebSockets.
-     * COMPLETE sessions are skipped entirely - they're intentionally idle and will
-     * be cleaned up when the desktop explicitly disconnects.
      */
     private async validateSessions(): Promise<void> {
         const GRACE_PERIOD_MS = 60_000; // 60 seconds
         const now = Date.now();
         const stale: string[] = [];
 
-        // Log all sessions at start of validation
         console.log(`validateSessions: checking ${this.activeSessions.size} sessions`);
         for (const [id, session] of this.activeSessions) {
             console.log(`validateSessions: session ${id} state="${session.state}" last_seen=${session.last_seen}`);
-            if (session.state === 'complete') {
-                console.log(`validateSessions: skipping complete session ${id}`);
-                continue;
-            }
 
             try {
                 const doId = this.env.SESSION.idFromName(id);
@@ -381,13 +374,6 @@ export class SessionListDO implements DurableObject {
             const session = this.activeSessions.get(id);
 
             if (session) {
-                // COMPLETE sessions are intentionally idle; keep them until explicitly ended.
-                if (session.state === 'complete') {
-                    return new Response(JSON.stringify({ ok: true }), {
-                        headers: { 'Content-Type': 'application/json' },
-                    });
-                }
-
                 this.activeSessions.delete(id);
                 await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
 
