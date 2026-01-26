@@ -111,17 +111,19 @@ export const sseJs = `
                     // New session - add to view immediately at the top
                     // But skip if we're filtering to a specific session
                     if (event.session && !sessions.has(event.session.id)) {
+                        // Always add to allSessions for popover
+                        if (!allSessions.find(s => s.id === event.session.id)) {
+                            allSessions.unshift(event.session);
+                            updateSessionsCount();
+                        }
                         if (singleSessionId && event.session.id !== singleSessionId) {
-                            // Skip - we're filtering to a different session
+                            // Skip rendering - we're filtering to a different session
                             break;
                         }
                         const emptyState = container.querySelector('.no-sessions');
                         if (emptyState) emptyState.remove();
                         createSessionCard(event.session, true);
                         connectToSession(event.session.id);
-                        if (!singleSessionId) {
-                            document.getElementById('status').textContent = sessionCount(sessions.size);
-                        }
                     }
                     break;
 
@@ -135,6 +137,12 @@ export const sseJs = `
                             if (session) {
                                 session.eventSource?.close();
                                 sessions.delete(event.session.id);
+                                // Remove from allSessions for popover
+                                const allIdx = allSessions.findIndex(s => s.id === event.session.id);
+                                if (allIdx !== -1) {
+                                    allSessions.splice(allIdx, 1);
+                                    updateSessionsCount();
+                                }
                                 const card = document.getElementById('session-' + event.session.id);
                                 const cwd = event.session.cwd;
                                 if (card) card.remove();
@@ -143,7 +151,6 @@ export const sseJs = `
                                     updateProjectGroupCount(cwd);
                                 }
                                 updateFitLayout();
-                                document.getElementById('status').textContent = sessionCount(sessions.size);
                                 if (sessions.size === 0) {
                                     container.innerHTML = '<div class="no-sessions">No active sessions</div>';
                                 }
@@ -160,6 +167,12 @@ export const sseJs = `
                             session.eventSource?.close();
                             sessions.delete(event.session.id);
                         }
+                        // Remove from allSessions for popover
+                        const allIdx = allSessions.findIndex(s => s.id === event.session.id);
+                        if (allIdx !== -1) {
+                            allSessions.splice(allIdx, 1);
+                            updateSessionsCount();
+                        }
                         const card = document.getElementById('session-' + event.session.id);
                         const cwd = event.session.cwd;
                         if (card) card.remove();
@@ -168,7 +181,6 @@ export const sseJs = `
                             updateProjectGroupCount(cwd);
                         }
                         updateFitLayout();
-                        document.getElementById('status').textContent = sessionCount(sessions.size);
                         if (sessions.size === 0) {
                             container.innerHTML = '<div class="no-sessions">No active sessions</div>';
                             // If all sessions gone and we had sessions before, likely a deploy
