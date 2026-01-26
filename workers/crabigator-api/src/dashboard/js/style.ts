@@ -189,12 +189,17 @@ export const styleJs = `
             const styleBtn = document.getElementById('style-btn');
             const settingsPopover = document.getElementById('settings-popover');
             const settingsBtn = document.getElementById('settings-btn');
+            const sessionsPopover = document.getElementById('sessions-popover');
+            const sessionsBtn = document.getElementById('sessions-btn');
 
             if (stylePopover && styleBtn && !stylePopover.contains(e.target) && !styleBtn.contains(e.target)) {
                 closeStylePopover();
             }
             if (settingsPopover && settingsBtn && !settingsPopover.contains(e.target) && !settingsBtn.contains(e.target)) {
                 closeSettingsPopover();
+            }
+            if (sessionsPopover && sessionsBtn && !sessionsPopover.contains(e.target) && !sessionsBtn.contains(e.target)) {
+                closeSessionsPopover();
             }
         });
 

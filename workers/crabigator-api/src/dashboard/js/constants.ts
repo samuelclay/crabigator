@@ -3,6 +3,7 @@ export const constantsJs = `
 
         const API_BASE = '/api';
         const sessions = new Map(); // sessionId -> { eventSource, state, element, git, changes, stats }
+        let allSessions = []; // All sessions from API (for popover)
         let currentLayout = localStorage.getItem('crabigator-layout') || 'fit';
 
         function escapeHtml(text) {

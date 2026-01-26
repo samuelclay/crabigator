@@ -2,6 +2,7 @@
 import { constantsJs } from './constants';
 import { scrollbackJs } from './scrollback';
 import { styleJs } from './style';
+import { sessionsPopoverJs } from './sessions-popover';
 import { deployJs } from './deploy';
 import { inputJs } from './input';
 import { layoutJs } from './layout';
@@ -25,6 +26,7 @@ export const dashboardJs = [
     constantsJs,
     scrollbackJs,
     styleJs,
+    sessionsPopoverJs,
     deployJs,
     inputJs,
     layoutJs,

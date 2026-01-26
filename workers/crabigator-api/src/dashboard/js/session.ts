@@ -7,6 +7,9 @@ export const sessionJs = `
                 if (!resp.ok) throw new Error('Failed to fetch sessions');
                 const data = await resp.json();
 
+                // Store all sessions for popover
+                allSessions = data.sessions;
+
                 // Filter to single session if specified via URL parameter
                 let filteredSessions = data.sessions;
                 if (singleSessionId) {
@@ -14,8 +17,8 @@ export const sessionJs = `
                     // Force single-column layout for single session view
                     document.getElementById('sessions').dataset.layout = '1';
                 }
-                // Always show session count in status (filter indicator handles filter display)
-                document.getElementById('status').textContent = sessionCount(filteredSessions.length);
+                // Always update session count in sessions button
+                updateSessionsCount();
 
                 const container = document.getElementById('sessions');
 
@@ -38,8 +41,7 @@ export const sessionJs = `
                         // Exponential backoff polling when no sessions
                         if (emptyPollTimeout) clearTimeout(emptyPollTimeout);
                         console.log('No sessions, polling again in ' + (emptyPollDelay / 1000) + 's');
-                        document.getElementById('status').textContent =
-                            'No sessions (retry in ' + Math.round(emptyPollDelay / 1000) + 's)';
+                        updateSessionsCount();
                         emptyPollTimeout = setTimeout(() => {
                             loadSessions();
                             emptyPollDelay = Math.min(emptyPollDelay * 2, MAX_EMPTY_POLL_DELAY);
@@ -91,7 +93,7 @@ export const sessionJs = `
                 }
             } catch (err) {
                 console.error('Failed to load sessions:', err);
-                document.getElementById('status').textContent = 'Error loading sessions';
+                updateSessionsCount();
                 // Network error might mean deploy - only show overlay if we were recently connected
                 if (hadSessionsBefore && wasRecentlyConnected() && !isDeploying) {
                     showDeployOverlay();
@@ -264,6 +266,8 @@ export const sessionJs = `
                 permission: null,
                 pinned: true,
                 lastScrollTop: 0,
+                startedAt: session.started_at,
+                cwd: session.cwd,
                 // Scrollback chunking: store full buffer, render only visible portion
                 scrollbackBuffer: [],      // Full scrollback lines
                 scrollbackRendered: 0,     // How many lines currently rendered

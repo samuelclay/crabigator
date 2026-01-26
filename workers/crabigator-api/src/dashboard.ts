@@ -25,7 +25,18 @@ export const dashboardHtml = `<!DOCTYPE html>
             <span class="filter-text">Viewing 1 session</span>
             <button class="filter-clear" onclick="clearSessionFilter()" title="Show all sessions">✕</button>
         </div>
-        <div class="status" id="status">Loading...</div>
+        <div class="sessions-container">
+            <button class="sessions-btn" id="sessions-btn" onclick="toggleSessionsPopover()">
+                <span class="sessions-count" id="sessions-count">0</span>
+                <span class="sessions-label">sessions</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+            </button>
+            <div class="sessions-popover" id="sessions-popover">
+                <div class="sessions-popover-content" id="sessions-popover-content"></div>
+            </div>
+        </div>
         <div class="style-container">
             <button class="style-btn" id="style-btn" onclick="toggleStylePopover()">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
