@@ -2010,7 +2010,6 @@ code, .mono {
     .why-icon-gator svg { width: 40px; height: 40px; }
     .why-plus { font-size: 14px; margin-top: 10px; }
     .why-label { font-size: 11px; }
-    .why-sub { display: none; }
     .why-tagline { font-size: 14px; letter-spacing: 1px; }
     .why-crabigator::before { display: none; }
 }
