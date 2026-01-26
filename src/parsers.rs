@@ -14,7 +14,7 @@ mod typescript;
 
 pub use generic::GenericParser;
 pub use objc::ObjCParser;
-pub use permission_prompt::{is_interrupted, PermissionPrompt};
+pub use permission_prompt::{is_interrupted, strip_ansi_for_debug, PermissionPrompt};
 pub use python::PythonParser;
 pub use rust::RustParser;
 pub use summary::{DiffParser, DiffSummary};

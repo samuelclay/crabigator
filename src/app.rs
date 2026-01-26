@@ -87,6 +87,8 @@ pub struct App {
     cloud_stats_sent: bool,
     /// Whether we've sent a prompt event (to track clearing)
     last_cloud_prompt_sent: bool,
+    /// Number of options in last sent exit plan prompt (for re-sending when options appear)
+    last_exit_plan_option_count: usize,
     /// Pairing state for mobile device linking
     pairing_state: PairingState,
     /// Update state for version banner
@@ -203,6 +205,7 @@ impl App {
             last_cloud_title: None,
             cloud_stats_sent: false,
             last_cloud_prompt_sent: false,
+            last_exit_plan_option_count: 0,
             pairing_state: PairingState::default(),
             update_state,
             last_pairing_poll: Instant::now(),
@@ -471,6 +474,16 @@ impl App {
                     if is_interactive || (was_interactive && self.last_cloud_prompt_sent) {
                         self.send_cloud_prompt_event();
                     }
+                }
+
+                // For ExitPlan prompts, keep checking for options (handles timing issue)
+                // The screen may not have options rendered immediately when hook fires
+                if matches!(
+                    self.session_stats.platform_stats.active_prompt.as_ref(),
+                    Some(crate::platforms::ActivePrompt::ExitPlan)
+                ) && self.last_exit_plan_option_count < 3 {
+                    // Keep trying until we have at least 3 options (the real exit plan prompt has 4)
+                    self.send_cloud_prompt_event();
                 }
 
                 // Stream stats when platform stats update (or first send)
@@ -1040,14 +1053,50 @@ impl App {
                 if let Ok(screen_content) =
                     self.capture_manager.update_screen(self.platform_pty.screen())
                 {
-                    crate::parsers::PermissionPrompt::parse(&screen_content)
-                        .filter(|p| p.is_valid())
+                    let parsed = crate::parsers::PermissionPrompt::parse(&screen_content);
+
+                    // Debug logging for exit plan mode
+                    #[cfg(debug_assertions)]
+                    if matches!(active_prompt, Some(crate::platforms::ActivePrompt::ExitPlan)) {
+                        let debug_path = self.capture_manager.capture_dir().join("parse_debug.txt");
+                        let valid = parsed.as_ref().map(|p| p.is_valid()).unwrap_or(false);
+                        let debug_info = format!(
+                            "=== Parse Debug (ExitPlan) ===\n\
+                             Timestamp: {:?}\n\
+                             Screen content length: {} bytes\n\n\
+                             --- Screen content (ANSI stripped) ---\n{}\n\n\
+                             --- Parse result ---\n{:?}\n\n\
+                             --- is_valid() ---\n{}\n",
+                            std::time::SystemTime::now(),
+                            screen_content.len(),
+                            crate::parsers::strip_ansi_for_debug(&screen_content),
+                            parsed,
+                            valid
+                        );
+                        let _ = std::fs::write(&debug_path, debug_info);
+                    }
+
+                    parsed.filter(|p| p.is_valid())
                 } else {
                     None
                 }
             }
             _ => None,
         };
+
+        // For exit plan prompts, track option count and only send if changed
+        // This handles the timing issue where screen isn't ready when hook fires
+        if matches!(active_prompt, Some(crate::platforms::ActivePrompt::ExitPlan)) {
+            let new_option_count = permission_prompt.as_ref().map(|p| p.options.len()).unwrap_or(0);
+
+            // Skip if option count hasn't changed (avoid duplicate sends)
+            // But always send if we have 0 options (fallback) and now have real options
+            if new_option_count == self.last_exit_plan_option_count && new_option_count > 0 {
+                return;
+            }
+
+            self.last_exit_plan_option_count = new_option_count;
+        }
 
         // Build and send the event
         let event = SessionEventBuilder::prompt(active_prompt, permission_prompt.as_ref());
@@ -1057,6 +1106,11 @@ impl App {
 
         // Track whether we sent a prompt (for clearing later)
         self.last_cloud_prompt_sent = active_prompt.is_some();
+
+        // Reset exit plan option count when leaving exit plan state
+        if !matches!(active_prompt, Some(crate::platforms::ActivePrompt::ExitPlan)) {
+            self.last_exit_plan_option_count = 0;
+        }
     }
 
     /// Send full scrollback to cloud after (re)connection

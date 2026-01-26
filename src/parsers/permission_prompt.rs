@@ -190,6 +190,11 @@ fn strip_ansi_codes(text: &str) -> String {
     ansi_re.replace_all(text, "").to_string()
 }
 
+/// Public wrapper for debug logging
+pub fn strip_ansi_for_debug(text: &str) -> String {
+    strip_ansi_codes(text)
+}
+
 
 #[cfg(test)]
 mod tests {
