@@ -24,3 +24,6 @@ debug/
 
 prompts.md
 .crabigator-provider
+
+# NPM vendor binaries (populated by CI)
+npm/vendor/

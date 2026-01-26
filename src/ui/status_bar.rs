@@ -13,8 +13,9 @@ use crate::hooks::SessionStats;
 use crate::ide::IdeKind;
 use crate::parsers::DiffSummary;
 use crate::terminal::escape::{self, color, RESET};
+use crate::update::UpdateState;
 
-use super::{draw_changes_widget, draw_git_widget, draw_pairing_banner, draw_stats_widget, PairingState, WidgetArea};
+use super::{draw_changes_widget, draw_git_widget, draw_pairing_banner, draw_update_banner, draw_stats_widget, PairingState, WidgetArea};
 
 /// Layout information needed for rendering widgets
 pub struct Layout {
@@ -36,26 +37,55 @@ pub fn draw_status_bar(
     cwd: &Path,
     cloud_status: Option<&CloudStatus>,
     pairing_state: &PairingState,
+    update_state: &UpdateState,
 ) -> Result<()> {
     // Save cursor position
     write!(stdout, "{}", escape::CURSOR_SAVE)?;
 
     // Banner space is always reserved (2 rows between PTY and status bar)
-    // Draw banner if active, otherwise leave the space empty
+    // Draw banners if active, otherwise leave the space empty
+    // Update banner takes first row, pairing banner takes remaining space
     const BANNER_RESERVED: u16 = 2;
-    let banner_rows = pairing_state.banner_rows();
+    let update_banner_rows = update_state.banner_rows();
+    let pairing_compact = update_banner_rows > 0;
+    let pairing_banner_rows = if pairing_compact {
+        pairing_state.banner_rows_compact()
+    } else {
+        pairing_state.banner_rows()
+    };
 
     // Move to banner area (below PTY scroll region)
     write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1, 1))?;
 
-    // Draw pairing banner if needed
-    if banner_rows > 0 {
-        draw_pairing_banner(
+    // Track current row for stacking banners
+    let mut current_banner_row = layout.pty_rows + 1;
+
+    // Draw update banner first (if needed) - single row
+    if update_banner_rows > 0 {
+        draw_update_banner(
             stdout,
-            layout.pty_rows + 1,
+            current_banner_row,
             layout.total_cols,
-            pairing_state,
+            update_state,
         )?;
+        current_banner_row += update_banner_rows;
+    }
+
+    // Draw pairing banner if needed (and there's room)
+    if pairing_banner_rows > 0 {
+        let banner_limit = layout.pty_rows + BANNER_RESERVED;
+        let end_row = current_banner_row
+            .saturating_add(pairing_banner_rows)
+            .saturating_sub(1);
+        if end_row <= banner_limit {
+            draw_pairing_banner(
+                stdout,
+                current_banner_row,
+                layout.total_cols,
+                pairing_state,
+                pairing_compact,
+            )?;
+        }
     }
 
     // Draw thick separator line (always after the reserved banner space)

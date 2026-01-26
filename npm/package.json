@@ -1,0 +1,44 @@
+{
+  "name": "crabigator",
+  "version": "0.3.1",
+  "description": "A TUI wrapper for Claude Code with real-time status widgets",
+  "bin": {
+    "crabigator": "bin/crabigator.js"
+  },
+  "files": [
+    "bin",
+    "vendor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/samuelclay/crabigator.git"
+  },
+  "homepage": "https://github.com/samuelclay/crabigator#readme",
+  "bugs": {
+    "url": "https://github.com/samuelclay/crabigator/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "terminal",
+    "tui",
+    "cli",
+    "ai",
+    "anthropic",
+    "codex"
+  ],
+  "author": "Samuel Clay",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

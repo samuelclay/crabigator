@@ -15,6 +15,7 @@ mod parsers;
 mod platforms;
 mod terminal;
 mod ui;
+mod update;
 
 #[cfg(test)]
 mod fixtures_tests;
@@ -30,11 +31,13 @@ use std::env;
 use std::io::{stdout, Write};
 use std::panic;
 use std::sync::atomic::Ordering;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::app::App;
 use crate::banner::{print_session_banner, print_session_end_line};
 use crate::cli::{parse_args, resolve_platform, Command, DebugTimer};
+use crate::config::Config;
+use crate::update::{check_for_update, dismiss_version, detect_install_method, UpdateState};
 
 fn setup_terminal() -> Result<(u16, u16)> {
     let mut stdout = stdout();
@@ -187,6 +190,9 @@ async fn main() -> Result<()> {
     let (cols, _) = terminal_size()?;
     print_session_banner(&session_id, platform_kind, cols);
 
+    // Check for updates before entering raw mode (non-blocking modal prompt)
+    let update_state = check_and_prompt_for_update().await;
+
     let begin = Instant::now();
     let (cols, rows) = match setup_terminal() {
         Ok(size) => size,
@@ -201,7 +207,7 @@ async fn main() -> Result<()> {
     let (result, final_rows) = {
         let begin = Instant::now();
         let platform = platforms::platform_for(platform_kind);
-        let app_result = App::new(cols, rows, platform, args.platform_args, args.capture).await;
+        let app_result = App::new(cols, rows, platform, args.platform_args, args.capture, update_state).await;
         timer.duration("App::new", begin.elapsed());
 
         match app_result {
@@ -254,6 +260,209 @@ async fn main() -> Result<()> {
     // Print session end line with platform and date (get fresh terminal width)
     let end_cols = terminal_size().map(|(c, _)| c).unwrap_or(cols);
     print_session_end_line(platform_kind, end_cols);
+
+    result
+}
+
+/// Check for updates and show modal prompt if available
+/// Returns UpdateState to pass to the app for banner display
+async fn check_and_prompt_for_update() -> UpdateState {
+    // Load config to check if updates are enabled
+    let config = Config::load().unwrap_or_default();
+    if !config.check_for_updates {
+        return UpdateState::default();
+    }
+
+    // Spawn background task to check for updates
+    let check_handle = tokio::spawn(async {
+        check_for_update().await
+    });
+
+    // Wait briefly for result (don't block startup too long)
+    let result = tokio::time::timeout(Duration::from_millis(500), check_handle).await;
+
+    let check_result = match result {
+        Ok(Ok(Ok(r))) => r,
+        _ => return UpdateState::default(), // Timeout or error, skip update check
+    };
+
+    // No update available
+    if !check_result.update_available {
+        return UpdateState::default();
+    }
+
+    // User already dismissed this version
+    if check_result.was_dismissed {
+        return UpdateState::from_check(&check_result, true);
+    }
+
+    // Show modal prompt
+    let version = check_result.new_version.as_deref().unwrap_or("unknown");
+    let current = crate::update::CURRENT_VERSION;
+    let install_method = detect_install_method();
+    let update_cmd = install_method.update_command();
+
+    // Print update prompt
+    println!();
+    println!(
+        "{}  {}Update available v{} → v{}{}",
+        terminal::escape::fg(terminal::escape::color::CYAN),
+        terminal::escape::BOLD,
+        current,
+        version,
+        terminal::escape::RESET
+    );
+    println!(
+        "{}  Run: {}{}{}",
+        terminal::escape::fg(terminal::escape::color::GRAY),
+        terminal::escape::fg(terminal::escape::color::GREEN),
+        update_cmd,
+        terminal::escape::RESET
+    );
+    println!();
+    print!(
+        "{}  Update now? [y/N] {}",
+        terminal::escape::fg(terminal::escape::color::GRAY),
+        terminal::escape::RESET
+    );
+    let _ = stdout().flush();
+
+    // Read single character response (non-blocking with timeout)
+    let response = read_single_char_with_timeout(Duration::from_secs(10));
+
+    println!(); // Move to next line after input
+
+    match response {
+        Some('y') | Some('Y') => {
+            // Run update command
+            println!(
+                "{}  Running: {}{}{}",
+                terminal::escape::fg(terminal::escape::color::GRAY),
+                terminal::escape::fg(terminal::escape::color::GREEN),
+                update_cmd,
+                terminal::escape::RESET
+            );
+            println!();
+
+            // Execute the update command
+            let status = if cfg!(windows) {
+                std::process::Command::new("cmd")
+                    .arg("/C")
+                    .arg(update_cmd)
+                    .status()
+            } else {
+                std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(update_cmd)
+                    .status()
+            };
+
+            match status {
+                Ok(s) if s.success() => {
+                    println!();
+                    println!(
+                        "{}  Update complete! Please restart crabigator.{}",
+                        terminal::escape::fg(terminal::escape::color::GREEN),
+                        terminal::escape::RESET
+                    );
+                    std::process::exit(0);
+                }
+                Ok(s) => {
+                    println!();
+                    println!(
+                        "{}  Update failed (exit code: {:?}). Continuing with current version.{}",
+                        terminal::escape::fg(terminal::escape::color::RED),
+                        s.code(),
+                        terminal::escape::RESET
+                    );
+                }
+                Err(e) => {
+                    println!();
+                    println!(
+                        "{}  Update failed: {}. Continuing with current version.{}",
+                        terminal::escape::fg(terminal::escape::color::RED),
+                        e,
+                        terminal::escape::RESET
+                    );
+                }
+            }
+            // Continue with current version, show banner
+            UpdateState::from_check(&check_result, true)
+        }
+        _ => {
+            // User said no or timeout - dismiss this version and show banner
+            let _ = dismiss_version(version);
+            UpdateState::from_check(&check_result, true)
+        }
+    }
+}
+
+/// Read a single character with timeout (for update prompt)
+fn read_single_char_with_timeout(timeout: Duration) -> Option<char> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    struct RawModeGuard {
+        enabled: bool,
+    }
+
+    impl RawModeGuard {
+        fn new() -> Self {
+            Self {
+                enabled: enable_raw_mode().is_ok(),
+            }
+        }
+    }
+
+    impl Drop for RawModeGuard {
+        fn drop(&mut self) {
+            if self.enabled {
+                let _ = disable_raw_mode();
+            }
+        }
+    }
+
+    let raw_guard = RawModeGuard::new();
+    if !raw_guard.enabled {
+        return None;
+    }
+
+    let deadline = Instant::now() + timeout;
+    let mut result = None;
+
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .unwrap_or(Duration::ZERO);
+        if remaining.is_zero() {
+            break;
+        }
+
+        match event::poll(remaining) {
+            Ok(true) => match event::read() {
+                Ok(Event::Key(key)) if key.kind == KeyEventKind::Press => match key.code {
+                    KeyCode::Char(c) => {
+                        result = Some(c);
+                        break;
+                    }
+                    KeyCode::Enter => {
+                        result = Some('\n');
+                        break;
+                    }
+                    _ => {}
+                },
+                Ok(_) => {}
+                Err(_) => break,
+            },
+            Ok(false) => break,
+            Err(_) => break,
+        }
+    }
+
+    // Drain any queued input so it doesn't leak into the main app.
+    while event::poll(Duration::from_millis(0)).unwrap_or(false) {
+        let _ = event::read();
+    }
 
     result
 }

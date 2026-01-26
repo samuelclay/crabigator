@@ -19,6 +19,14 @@ pub struct Config {
     /// If not set, auto-detects from environment
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ide: Option<String>,
+
+    /// Whether to check for updates on startup
+    #[serde(default = "default_true")]
+    pub check_for_updates: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_platform() -> String {
@@ -30,6 +38,7 @@ impl Default for Config {
         Self {
             default_platform: default_platform(),
             ide: None,
+            check_for_updates: true,
         }
     }
 }

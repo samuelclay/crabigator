@@ -1,0 +1,173 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS ARM64 (Apple Silicon)
+          - target: aarch64-apple-darwin
+            os: macos-14
+            platform: darwin-arm64
+            binary: crabigator
+
+          # macOS x64 (Intel)
+          - target: x86_64-apple-darwin
+            os: macos-13
+            platform: darwin-x64
+            binary: crabigator
+
+          # Linux x64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            platform: linux-x64
+            binary: crabigator
+
+          # Linux ARM64 (cross-compile)
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            platform: linux-arm64
+            binary: crabigator
+            cross: true
+
+          # Windows x64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            platform: win32-x64
+            binary: crabigator.exe
+
+          # Windows ARM64
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            platform: win32-arm64
+            binary: crabigator.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (for Linux ARM64)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build (native)
+        if: "!matrix.cross"
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          mkdir -p dist/${{ matrix.platform }}
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} dist/${{ matrix.platform }}/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/${{ matrix.platform }}
+
+  publish:
+    name: Publish to NPM
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: npm/vendor
+
+      - name: Verify version sync
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          NPM_VERSION=$(node -p "require('./npm/package.json').version")
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+
+          echo "Cargo.toml version: $CARGO_VERSION"
+          echo "package.json version: $NPM_VERSION"
+          echo "Git tag version: $TAG_VERSION"
+
+          if [ "$CARGO_VERSION" != "$NPM_VERSION" ]; then
+            echo "ERROR: Cargo.toml ($CARGO_VERSION) and package.json ($NPM_VERSION) versions don't match!"
+            exit 1
+          fi
+
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "ERROR: Cargo.toml ($CARGO_VERSION) and git tag ($TAG_VERSION) versions don't match!"
+            exit 1
+          fi
+
+      - name: Make binaries executable
+        run: |
+          chmod +x npm/vendor/darwin-arm64/crabigator || true
+          chmod +x npm/vendor/darwin-x64/crabigator || true
+          chmod +x npm/vendor/linux-arm64/crabigator || true
+          chmod +x npm/vendor/linux-x64/crabigator || true
+
+      - name: Publish to NPM
+        working-directory: npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github-release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release archives
+        run: |
+          cd artifacts
+          for platform in */; do
+            platform=${platform%/}
+            if [[ "$platform" == win32-* ]]; then
+              zip -j "../crabigator-${GITHUB_REF_NAME}-${platform}.zip" "$platform"/*
+            else
+              tar -czvf "../crabigator-${GITHUB_REF_NAME}-${platform}.tar.gz" -C "$platform" .
+            fi
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            crabigator-*.tar.gz
+            crabigator-*.zip
+          generate_release_notes: true

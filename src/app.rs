@@ -23,6 +23,7 @@ use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
 use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, RedrawScanner};
 use crate::ui::{draw_status_bar, Layout, PairingState};
+use crate::update::UpdateState;
 
 /// Result from background git refresh
 struct GitRefreshResult {
@@ -88,6 +89,8 @@ pub struct App {
     last_cloud_prompt_sent: bool,
     /// Pairing state for mobile device linking
     pairing_state: PairingState,
+    /// Update state for version banner
+    update_state: UpdateState,
     /// Last time we polled pairing status
     last_pairing_poll: Instant,
     /// Pending pairing poll result
@@ -113,6 +116,7 @@ impl App {
         platform: Box<dyn Platform>,
         platform_args: Vec<String>,
         capture_enabled: bool,
+        update_state: UpdateState,
     ) -> Result<Self> {
         let (pty_tx, pty_rx) = mpsc::channel(256);
 
@@ -200,6 +204,7 @@ impl App {
             cloud_stats_sent: false,
             last_cloud_prompt_sent: false,
             pairing_state: PairingState::default(),
+            update_state,
             last_pairing_poll: Instant::now(),
             pending_pairing_poll: None,
             cloud_viewers_active: false,
@@ -776,6 +781,7 @@ impl App {
             &self.cwd,
             cloud_status.as_ref(),
             &self.pairing_state,
+            &self.update_state,
         )?;
 
         // Publish mirror state (throttled, only when --profile)
