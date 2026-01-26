@@ -42,7 +42,7 @@ export const landingHtml = `<!DOCTYPE html>
                 </h1>
                 <p class="hero-subheadline">
                     Answer permissions, approve plans, and respond to questions—all from your phone.
-                    Claude Code runs natively on your Mac, exactly as intended.
+                    Claude Code runs natively on Mac, Windows, or Linux—exactly as intended.
                 </p>
                 <div class="hero-ctas">
                     <a href="#install" class="btn-primary">Install Now</a>
