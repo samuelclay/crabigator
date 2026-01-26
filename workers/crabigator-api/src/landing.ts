@@ -705,6 +705,9 @@ export const landingHtml = `<!DOCTYPE html>
 
     <!-- Open Source Section -->
     <section class="section open-source" id="open-source">
+        <div class="section-header">
+            <p class="section-label">${iconGithubSmall} Open Source</p>
+        </div>
         <div class="github-card">
             <div class="github-header">
                 ${iconGithubLogo}
@@ -769,6 +772,7 @@ export const landingHtml = `<!DOCTYPE html>
     <!-- Why Crabigator Easter Egg -->
     <section class="why-crabigator">
         <div class="why-inner">
+            <p class="section-label">${iconGator} Origin</p>
             <div class="why-question">Why "Crabigator"?</div>
             <div class="why-equation">
                 <div class="why-term">

@@ -7,11 +7,17 @@ import { requireAuth, requireDeviceAuth, requireMobileAuth, requireSessionAccess
 import { dashboardHtml } from './dashboard';
 import { landingHtml } from './landing';
 
-// Build version - generated lazily on first request, stable for lifetime of this worker instance
+// Build version - deterministic hash of dashboard content
+// This ensures all worker instances return the same version for the same code
 let buildVersion: string | null = null;
-function getBuildVersion(): string {
+async function getBuildVersion(): Promise<string> {
     if (!buildVersion) {
-        buildVersion = crypto.randomUUID().slice(0, 8);
+        // Hash the dashboard HTML to get a deterministic version across all instances
+        const encoder = new TextEncoder();
+        const data = encoder.encode(dashboardHtml);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        buildVersion = hashArray.slice(0, 4).map(b => b.toString(16).padStart(2, '0')).join('');
     }
     return buildVersion;
 }
@@ -31,7 +37,7 @@ router.get('/dashboard', async () => {
         headers: {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'no-cache, must-revalidate',
-            'ETag': getBuildVersion()
+            'ETag': await getBuildVersion()
         }
     });
 });
@@ -42,7 +48,7 @@ router.get('/', async () => {
         headers: {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'public, max-age=3600',
-            'ETag': getBuildVersion()
+            'ETag': await getBuildVersion()
         }
     });
 });
@@ -139,7 +145,7 @@ router.get('/api/sessions/stream', async (request, env) => {
     const stub = env.SESSION_LIST.get(doId);
     const url = new URL(request.url);
     url.pathname = '/subscribe';
-    url.searchParams.set('version', getBuildVersion());
+    url.searchParams.set('version', await getBuildVersion());
     url.searchParams.set('group_id', group_id);
     return stub.fetch(new Request(url.toString(), request));
 });
@@ -373,7 +379,7 @@ router.post('/api/settings', async (request, env) => {
 // ============================================
 
 router.get('/api/health', async () => {
-    return jsonResponse({ status: 'ok', version: '0.1.0', build: getBuildVersion() });
+    return jsonResponse({ status: 'ok', version: '0.1.0', build: await getBuildVersion() });
 });
 
 // ============================================

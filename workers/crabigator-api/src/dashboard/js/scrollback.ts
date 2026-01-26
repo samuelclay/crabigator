@@ -51,6 +51,7 @@ export const scrollbackJs = `
 
             const scrollbackEl = document.getElementById('scrollback-' + sessionId);
             const separatorEl = document.getElementById('separator-' + sessionId);
+            const terminal = document.getElementById('terminal-' + sessionId);
             if (!scrollbackEl) return;
 
             // Store full buffer
@@ -67,6 +68,13 @@ export const scrollbackJs = `
 
             sessionData.scrollbackRendered = linesToRender;
             updateScrollbackIndicator(sessionId, linesToRender, lines.length);
+
+            // If pinned, scroll to bottom after adding scrollback content
+            // This handles reconnect after deploy when scrollback_history arrives
+            if (sessionData.pinned && terminal) {
+                terminal.scrollTop = terminal.scrollHeight;
+                sessionData.lastScrollTop = terminal.scrollTop;
+            }
         }
 
         // Append new scrollback content

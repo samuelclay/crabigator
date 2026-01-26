@@ -33,6 +33,12 @@ html {
     overflow-x: hidden;
     width: 100%;
     scroll-behavior: smooth;
+    touch-action: pan-x pan-y;
+}
+
+/* Prevent double-tap zoom on interactive elements */
+button, input, select, .style-option, .style-popover {
+    touch-action: manipulation;
 }
 
 /* Scanline overlay for retro terminal feel */
@@ -486,7 +492,7 @@ body {
     overflow-x: hidden;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
-    line-height: 1;
+    line-height: 1.25;
     transition: height 0.25s ease-out;
     width: 100%;
     min-width: 0;
@@ -498,6 +504,10 @@ body {
     min-width: 0;
     max-width: 100%;
     display: block;
+    margin-bottom: -0.25em;
+}
+.terminal .line:last-child {
+    margin-bottom: 0;
 }
 /* Scroll mode */
 .terminal.scroll-mode {
@@ -736,6 +746,10 @@ body {
         min-width: 0;
         max-width: 100%;
         border-radius: 8px;
+        margin-bottom: 12px;
+    }
+    .session-card:last-child {
+        margin-bottom: 0;
     }
     .session-header {
         padding: 12px 14px;
@@ -1751,15 +1765,9 @@ body {
     display: none;
 }
 
-/* Left border accent for single column mode */
+/* Single column mode spacing */
 .container[data-grouping="project"][data-layout="1"] .project-sessions-content {
-    border-left: 3px solid var(--accent-cyan);
-    margin-left: 10px;
     background: var(--bg-abyss);
-    transition: border-color 0.2s ease;
-}
-.container[data-grouping="project"][data-layout="1"] .project-group.collapsed .project-sessions-content {
-    border-left-color: var(--border-dim);
 }
 
 /* Mobile adjustments for project groups */
@@ -1778,9 +1786,14 @@ body {
         font-size: 9px;
         padding: 2px 8px;
     }
-    .container[data-grouping="project"][data-layout="1"] .project-sessions-content {
-        margin-left: 6px;
-        border-left-width: 2px;
+    /* Add spacing between cards in project groups on mobile */
+    .container[data-grouping="project"] .session-card {
+        margin-bottom: 8px;
+        border-radius: 8px;
+        border: 1px solid var(--border-dim);
+    }
+    .container[data-grouping="project"] .session-card:last-child {
+        margin-bottom: 0;
     }
 }
 `;

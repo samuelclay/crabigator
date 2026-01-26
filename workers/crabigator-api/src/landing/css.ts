@@ -1567,6 +1567,9 @@ code, .mono {
 .showcase-text {
     max-width: 500px;
 }
+.showcase-text .section-label {
+    justify-content: flex-start;
+}
 
 .showcase-devices {
     position: relative;
@@ -1714,6 +1717,9 @@ code, .mono {
 }
 .interactive-text {
     max-width: 500px;
+}
+.interactive-text .section-label {
+    justify-content: flex-start;
 }
 .interactive-features {
     list-style: none;
@@ -2916,6 +2922,9 @@ code, .mono {
         max-width: 600px;
         margin: 0 auto;
         text-align: center;
+    }
+    .interactive-text .section-label {
+        justify-content: center;
     }
     .interactive-features {
         text-align: left;

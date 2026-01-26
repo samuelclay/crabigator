@@ -12,7 +12,7 @@ export const constantsJs = `
         }
 
         // Font size scaling
-        const FONT_SCALES = [0.75, 0.85, 0.9, 1.0, 1.1, 1.25, 1.5];
+        const FONT_SCALES = [0.75, 0.85, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5];
         let currentFontScaleIndex = 3; // default 1.0
         let isChangingFontSize = false; // Flag to prevent scroll unpinning during zoom changes
 
