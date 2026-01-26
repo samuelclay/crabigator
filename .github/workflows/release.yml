@@ -23,9 +23,9 @@ jobs:
             platform: darwin-arm64
             binary: crabigator
 
-          # macOS x64 (Intel)
+          # macOS x64 (Intel) - cross-compile from ARM
           - target: x86_64-apple-darwin
-            os: macos-15-large
+            os: macos-14
             platform: darwin-x64
             binary: crabigator
 
