@@ -1,4 +1,4 @@
-# Crabigator
+# <img src="assets/crab.svg" width="32" height="32" alt="Crabigator"> Crabigator
 
 Control Claude Code from anywhere. Answer prompts from your phone while Claude runs on your desktop.
 
@@ -14,10 +14,10 @@ Control Claude Code from anywhere. Answer prompts from your phone while Claude r
 
 Crabigator is a terminal wrapper that runs Claude Code (or Codex CLI) with real-time status widgets and **remote control from your phone**. Claude runs natively on your machine exactly as intended, while Crabigator streams the session to a web dashboard where you can:
 
-- **Answer permission requests** - Approve file writes, command execution, and tool use from anywhere
-- **Respond to questions** - When Claude asks for clarification, reply from your phone
-- **Monitor progress** - Watch Claude think, see what files it's reading, track token usage
-- **Stay in the loop** - Get notified when Claude needs your input
+- <img src="assets/shield-check.svg" width="16" height="16"> **Answer permission requests** — Approve file writes, command execution, and tool use from anywhere
+- <img src="assets/chat-dots.svg" width="16" height="16"> **Respond to questions** — When Claude asks for clarification, reply from your phone
+- <img src="assets/eye.svg" width="16" height="16"> **Monitor progress** — Watch Claude think, see what files it's reading, track token usage
+- <img src="assets/bell.svg" width="16" height="16"> **Stay in the loop** — Get notified when Claude needs your input
 
 ## Installation
 
@@ -62,26 +62,26 @@ Once paired, your sessions automatically stream to the dashboard.
 
 ## Features
 
-### Remote Control
+### <img src="assets/device-mobile.svg" width="20" height="20"> Remote Control
 
 Answer Claude's prompts from your phone when you're away from your desk. Permission requests, questions, and plan approvals all work remotely.
 
-### Status Widgets
+### <img src="assets/chart-line-up.svg" width="20" height="20"> Status Widgets
 
 Real-time widgets below Claude's interface show:
 
-- **Session stats** - Time elapsed, prompts sent, tokens used
-- **Git status** - Modified, added, and deleted files
-- **Semantic diff** - Changes organized by functions and classes
+- <img src="assets/clock.svg" width="14" height="14"> **Session stats** — Time elapsed, prompts sent, tokens used
+- <img src="assets/folder.svg" width="14" height="14"> **Git status** — Modified, added, and deleted files
+- <img src="assets/dna.svg" width="14" height="14"> **Semantic diff** — Changes organized by functions and classes
 
-### Native Terminal Experience
+### <img src="assets/terminal.svg" width="20" height="20"> Native Terminal Experience
 
-- Claude Code runs in a PTY exactly as normal
-- Full scrollback history preserved
-- Native text selection and clipboard
-- All keyboard shortcuts work (Option+Arrow, etc.)
+- <img src="assets/check-circle.svg" width="14" height="14"> Claude Code runs in a PTY exactly as normal
+- <img src="assets/check-circle.svg" width="14" height="14"> Full scrollback history preserved
+- <img src="assets/check-circle.svg" width="14" height="14"> Native text selection and clipboard
+- <img src="assets/check-circle.svg" width="14" height="14"> All keyboard shortcuts work (Option+Arrow, etc.)
 
-### Multi-Platform
+### <img src="assets/screens.svg" width="20" height="20"> Multi-Platform
 
 Supports both [Claude Code](https://claude.ai/code) (Anthropic) and [Codex CLI](https://github.com/openai/codex) (OpenAI).
 
@@ -113,7 +113,7 @@ Crabigator spawns Claude Code in a pseudo-terminal and uses ANSI scroll region e
 
 The codebase is organized into focused modules:
 
-### Core
+### <img src="assets/cube.svg" width="18" height="18"> Core
 
 | Module | Description |
 |--------|-------------|
@@ -121,7 +121,7 @@ The codebase is organized into focused modules:
 | [`src/main.rs`](src/main.rs) | CLI entry point, argument parsing, session initialization |
 | [`src/config.rs`](src/config.rs) | Configuration loading/saving (`~/.crabigator/config.toml`) |
 
-### Terminal
+### <img src="assets/terminal.svg" width="18" height="18"> Terminal
 
 | Module | Description |
 |--------|-------------|
@@ -129,7 +129,7 @@ The codebase is organized into focused modules:
 | [`src/terminal/input.rs`](src/terminal/input.rs) | Keyboard input forwarding with Option/Alt key encoding |
 | [`src/terminal/escape.rs`](src/terminal/escape.rs) | ANSI escape sequence definitions (colors, cursor, scroll regions) |
 
-### User Interface
+### <img src="assets/browser.svg" width="18" height="18"> User Interface
 
 | Module | Description |
 |--------|-------------|
@@ -139,14 +139,14 @@ The codebase is organized into focused modules:
 | [`src/ui/changes.rs`](src/ui/changes.rs) | File changes widget with semantic diff |
 | [`src/ui/pairing.rs`](src/ui/pairing.rs) | Pairing code display for mobile setup |
 
-### Platform Integrations
+### <img src="assets/plugs-connected.svg" width="18" height="18"> Platform Integrations
 
 | Module | Description |
 |--------|-------------|
 | [`src/platforms/claude_code.rs`](src/platforms/claude_code.rs) | Claude Code hooks and session stats |
 | [`src/platforms/codex_cli.rs`](src/platforms/codex_cli.rs) | Codex CLI log parsing |
 
-### Language Parsers
+### <img src="assets/code.svg" width="18" height="18"> Language Parsers
 
 | Module | Description |
 |--------|-------------|
@@ -155,7 +155,7 @@ The codebase is organized into focused modules:
 | [`src/parsers/python.rs`](src/parsers/python.rs) | Python parsing |
 | [`src/parsers/generic.rs`](src/parsers/generic.rs) | Fallback for other languages |
 
-### Cloud Integration
+### <img src="assets/cloud.svg" width="18" height="18"> Cloud Integration
 
 | Module | Description |
 |--------|-------------|
@@ -163,7 +163,7 @@ The codebase is organized into focused modules:
 | [`src/mirror.rs`](src/mirror.rs) | Widget state serialization for external inspection |
 | [`src/capture.rs`](src/capture.rs) | Terminal output capture for streaming |
 
-### Cloud Backend
+### <img src="assets/globe.svg" width="18" height="18"> Cloud Backend
 
 | Module | Description |
 |--------|-------------|
@@ -187,9 +187,9 @@ crabigator --help       # Show all options
 
 Each session creates `/tmp/crabigator-{session_id}/` containing:
 
-- `scrollback.log` - Clean text transcript (ANSI stripped)
-- `screen.txt` - Current screen snapshot
-- `mirror.json` - Widget state for external tools
+- <img src="assets/scroll.svg" width="14" height="14"> `scrollback.log` — Clean text transcript (ANSI stripped)
+- <img src="assets/desktop.svg" width="14" height="14"> `screen.txt` — Current screen snapshot
+- <img src="assets/file-code.svg" width="14" height="14"> `mirror.json` — Widget state for external tools
 
 ## Configuration
 
@@ -203,7 +203,7 @@ Claude Code hooks are installed to `~/.claude/crabigator/` for tracking session 
 
 ## Why "Crabigator"?
 
-Rust's mascot is a crab. We're wrapping Claude like an alligator wraps its prey. Plus: Clawd + Navigator.
+<img src="assets/crab.svg" width="18" height="18"> Rust's mascot is a crab. We're wrapping Claude like an alligator wraps its prey. Plus: Clawd + Navigator.
 
 RIP to Cal Academy's albino alligator Claude. We had membership for two years and miss him terribly.
 
