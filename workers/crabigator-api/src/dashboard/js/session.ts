@@ -119,14 +119,10 @@ export const sessionJs = `
                         <span class="branch" id="branch-\${session.id}" style="color:#7ee787; font-size:11px;"></span>
                     </div>
                     <div class="session-actions">
-                        <div class="session-actions-row">
-                            <span class="state \${session.state}" id="state-\${session.id}">\${session.state}</span>
-                            <button class="collapse-btn" id="collapse-btn-\${session.id}" onclick="toggleCollapse('\${session.id}')" title="Collapse/expand">▼</button>
-                        </div>
-                        <div class="session-actions-row">
-                            <button class="info-btn" id="info-btn-\${session.id}" onclick="toggleInfoPopover('\${session.id}')" title="Session info">ⓘ</button>
-                            <span class="pin-indicator pinned" id="pin-\${session.id}" title="Auto-scroll enabled">⇣ pinned</span>
-                        </div>
+                        <button class="info-btn" id="info-btn-\${session.id}" onclick="toggleInfoPopover('\${session.id}')" title="Session info">ⓘ</button>
+                        <span class="pin-indicator pinned" id="pin-\${session.id}" title="Auto-scroll enabled">⇣</span>
+                        <span class="state \${session.state}" id="state-\${session.id}">\${session.state}</span>
+                        <button class="collapse-btn" id="collapse-btn-\${session.id}" onclick="toggleCollapse('\${session.id}')" title="Collapse/expand">▼</button>
                     </div>
                 </div>
                 <div class="session-summary" id="summary-\${session.id}">
@@ -154,6 +150,15 @@ export const sessionJs = `
                     <div class="info-popover-row" id="info-platform-\${session.id}" style="display:none">
                         <span class="info-popover-label">Platform</span>
                         <span class="info-popover-value" id="info-platform-value-\${session.id}">—</span>
+                    </div>
+                    <div class="info-popover-actions">
+                        <button class="focus-session-btn" onclick="focusOnSession('\${session.id}')" title="View only this session">
+                            <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
+                                <path d="M10.5 8a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/>
+                                <path fill-rule="evenodd" d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z"/>
+                            </svg>
+                            Focus
+                        </button>
                     </div>
                 </div>
                 <div class="session-body" id="body-\${session.id}">

@@ -274,10 +274,10 @@ body {
 }
 
 .session-header {
-    padding: 14px 16px;
+    padding: 12px 16px;
     border-bottom: 1px solid var(--border-dim);
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 12px;
     background: var(--bg-card);
 }
@@ -309,15 +309,9 @@ body {
 /* Session actions */
 .session-actions {
     display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 6px;
-    flex-shrink: 0;
-}
-.session-actions-row {
-    display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    flex-shrink: 0;
 }
 
 /* State badges */
@@ -424,6 +418,43 @@ body {
 }
 .info-popover-value.copyable:hover {
     color: var(--accent-cyan);
+}
+.info-popover-actions {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-dim);
+    display: flex;
+    gap: 10px;
+}
+.focus-session-btn {
+    font-family: 'JetBrains Mono', monospace;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: linear-gradient(135deg, rgba(34, 211, 238, 0.15) 0%, rgba(59, 130, 246, 0.15) 100%);
+    border: 1px solid var(--accent-cyan);
+    border-radius: 6px;
+    color: var(--accent-cyan);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.2s;
+}
+.focus-session-btn:hover {
+    background: linear-gradient(135deg, rgba(34, 211, 238, 0.25) 0%, rgba(59, 130, 246, 0.25) 100%);
+    box-shadow: 0 0 20px var(--glow-cyan);
+    transform: translateY(-1px);
+}
+.focus-session-btn:active {
+    transform: translateY(0);
+}
+.focus-session-btn svg {
+    flex-shrink: 0;
 }
 
 /* Pin indicator and button */

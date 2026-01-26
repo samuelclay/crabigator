@@ -25,7 +25,7 @@ export const sessionStateJs = `
                 indicator.id = 'pin-' + sessionId;
                 indicator.className = 'pin-indicator pinned';
                 indicator.title = 'Auto-scroll enabled';
-                indicator.textContent = '⇣ pinned';
+                indicator.textContent = '⇣';
                 parent.replaceChild(indicator, el);
             } else {
                 // Show clickable button
@@ -33,7 +33,7 @@ export const sessionStateJs = `
                 btn.id = 'pin-' + sessionId;
                 btn.className = 'pin-btn';
                 btn.title = 'Click to pin to bottom';
-                btn.textContent = '⇣ Pin';
+                btn.textContent = '⇣';
                 btn.onclick = () => togglePin(sessionId);
                 parent.replaceChild(btn, el);
             }

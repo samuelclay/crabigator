@@ -21,4 +21,11 @@ export const utilsJs = `
             window.location.href = url.toString();
         }
 
+        function focusOnSession(sessionId) {
+            // Navigate to single-session view
+            const url = new URL(window.location.href);
+            url.searchParams.set('session', sessionId);
+            window.location.href = url.toString();
+        }
+
 `;
