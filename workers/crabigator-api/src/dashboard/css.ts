@@ -833,6 +833,7 @@ body {
     }
     .terminal {
         font-size: 10px;
+        line-height: 15px;  /* Match desktop ratio for descender room */
         padding: 10px;
     }
     .widget {
@@ -1410,9 +1411,12 @@ body {
 }
 @media (max-width: 768px) {
     .sessions-popover {
-        right: -60px;
-        min-width: 280px;
-        max-width: calc(100vw - 32px);
+        position: fixed;
+        top: 95px;
+        left: 16px;
+        right: 16px;
+        min-width: auto;
+        max-width: none;
     }
     .sessions-btn .sessions-label {
         display: none;
