@@ -1345,9 +1345,15 @@ body {
     flex: 1;
     min-width: 0;
 }
+.prompt-tab-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
 .prompt-tab-input {
     font-family: 'JetBrains Mono', monospace;
-    flex: 0 0 180px;
+    width: 180px;
     padding: 10px 12px;
     background: var(--bg-abyss);
     border: 1px solid var(--border-dim);
@@ -1365,15 +1371,36 @@ body {
     color: var(--text-dim);
     font-size: 10px;
 }
+.prompt-tab-send {
+    font-family: 'JetBrains Mono', monospace;
+    padding: 8px 12px;
+    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    border: none;
+    border-radius: 6px;
+    color: var(--bg-abyss);
+    font-weight: 700;
+    font-size: 10px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.prompt-tab-send:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px var(--glow-cyan);
+}
 @media (max-width: 768px) {
     .prompt-option-row {
         flex-direction: column;
         align-items: stretch;
     }
-    .prompt-tab-input {
-        flex: none;
-        width: 100%;
+    .prompt-tab-wrapper {
         margin-top: 6px;
+    }
+    .prompt-tab-input {
+        flex: 1;
+        width: auto;
     }
 }
 

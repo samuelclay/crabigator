@@ -36,16 +36,23 @@ export const promptJs = `
                     const tabInputId = 'tab-input-' + sessionId + '-' + num;
 
                     if (isYesOrNo) {
-                        // Wrap option + input in a row
+                        // Wrap option + input + send button in a row
+                        const sendBtnId = 'tab-send-' + sessionId + '-' + num;
                         return '<div class="prompt-option-row">' +
                                '<div class="prompt-option" onclick="handleOptionClick(\\'' + sessionId + '\\', ' + num + ', ' + selectedOption + ')">' +
                                '<span class="prompt-option-number">' + num + '.</span>' +
                                '<span class="prompt-option-label">' + escapeHtml(opt.label) + '</span>' +
                                desc +
                                '</div>' +
+                               '<div class="prompt-tab-wrapper">' +
                                '<input type="text" class="prompt-tab-input" id="' + tabInputId + '" ' +
                                'placeholder="+ instructions" onclick="event.stopPropagation()" ' +
+                               'oninput="toggleTabSendButton(\\'' + sessionId + '\\', ' + num + ')" ' +
                                'onkeydown="if(event.key===\\'Enter\\'){handleOptionClick(\\'' + sessionId + '\\', ' + num + ', ' + selectedOption + ');event.preventDefault();}">' +
+                               '<button type="button" class="prompt-tab-send" id="' + sendBtnId + '" ' +
+                               'onclick="event.stopPropagation();handleOptionClick(\\'' + sessionId + '\\', ' + num + ', ' + selectedOption + ')" ' +
+                               'style="display:none">Send</button>' +
+                               '</div>' +
                                '</div>';
                     }
 
@@ -107,6 +114,16 @@ export const promptJs = `
 
         // Store prompt data for each session (for key sequence navigation)
         const sessionPromptData = new Map();
+
+        // Toggle the visibility of the Send button based on input content
+        function toggleTabSendButton(sessionId, optionNum) {
+            const inputEl = document.getElementById('tab-input-' + sessionId + '-' + optionNum);
+            const sendBtn = document.getElementById('tab-send-' + sessionId + '-' + optionNum);
+            if (!inputEl || !sendBtn) return;
+
+            const hasText = inputEl.value.trim().length > 0;
+            sendBtn.style.display = hasText ? 'block' : 'none';
+        }
 
         // Handle option click - check for tab instructions first
         async function handleOptionClick(sessionId, targetOption, currentSelected) {

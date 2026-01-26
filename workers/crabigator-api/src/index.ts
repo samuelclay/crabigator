@@ -11,6 +11,7 @@ import { handleStripeWebhook } from './handlers/payments/stripe-webhook';
 import { createPayPalSubscription } from './handlers/payments/paypal';
 import { handlePayPalWebhook } from './handlers/payments/paypal-webhook';
 import { getSubscription, cancelSubscription, getSubscriptionPortal } from './handlers/payments/subscription';
+import { handleUpdateCheck, handleStaffDashboard, handleStaffTelemetry, handleStaffSyncUsage } from './handlers/telemetry';
 
 // Build version - deterministic hash of dashboard content
 // This ensures all worker instances return the same version for the same code
@@ -243,6 +244,21 @@ router.post('/api/sessions/:id/key', async (request, env, params) => {
     const stub = env.SESSION.get(doId);
     const url = new URL(request.url);
     url.pathname = '/key';
+    return stub.fetch(new Request(url.toString(), request));
+});
+
+// Send key sequence from dashboard (no auth required)
+// Used for Tab instructions (navigate + tab + type + enter)
+router.post('/api/sessions/:id/key-sequence', async (request, env, params) => {
+    const sessionId = params.id;
+    const access = await requireSessionAccess(request, env, sessionId);
+    if ('error' in access) {
+        return access.error;
+    }
+    const doId = env.SESSION.idFromName(sessionId);
+    const stub = env.SESSION.get(doId);
+    const url = new URL(request.url);
+    url.pathname = '/key-sequence';
     return stub.fetch(new Request(url.toString(), request));
 });
 
@@ -498,6 +514,20 @@ router.post('/api/payments/paypal/subscribe', async (request, env) => {
 // Webhook endpoints (no auth - signature verified internally)
 router.post('/api/webhooks/stripe', handleStripeWebhook);
 router.post('/api/webhooks/paypal', handlePayPalWebhook);
+
+// ============================================
+// Update check with telemetry (no auth)
+// ============================================
+
+router.post('/api/update-check', handleUpdateCheck);
+
+// ============================================
+// Staff dashboard (no auth - obscurity is security for now)
+// ============================================
+
+router.get('/staff', handleStaffDashboard);
+router.get('/api/staff/telemetry', handleStaffTelemetry);
+router.post('/api/staff/sync-usage', handleStaffSyncUsage);
 
 // ============================================
 // Health check

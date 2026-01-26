@@ -925,7 +925,7 @@ export const landingHtml = `<!DOCTYPE html>
             </div>
         </div>
         <div class="footer-bottom">
-            <p class="footer-bottom-text">Built by <a href="https://samuelclay.com" target="_blank" rel="noopener">Samuel Clay</a>. Talk to <a href="https://x.com/samuelclay" target="_blank" rel="noopener">Samuel Clay</a> on X.</p>
+            <p class="footer-bottom-text">Built by <a href="https://samuelclay.com" target="_blank" rel="noopener">Samuel Clay</a> in San Francisco. Talk to <a href="https://x.com/samuelclay" target="_blank" rel="noopener">@samuelclay on X</a>.</p>
         </div>
     </footer>
 

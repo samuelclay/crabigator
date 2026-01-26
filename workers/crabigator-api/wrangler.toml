@@ -60,6 +60,10 @@ pattern = "drinkcrabigator.com/pair/*"
 zone_name = "drinkcrabigator.com"
 
 [[routes]]
+pattern = "drinkcrabigator.com/staff"
+zone_name = "drinkcrabigator.com"
+
+[[routes]]
 pattern = "drinkcrabigator.com/"
 zone_name = "drinkcrabigator.com"
 

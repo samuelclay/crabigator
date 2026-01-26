@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::cloud::DeviceIdentity;
 use crate::config::Config;
 
 /// Current version from Cargo.toml
@@ -175,7 +176,107 @@ struct GitHubRelease {
     html_url: String,
 }
 
-/// Check for updates by querying GitHub Releases API
+/// Cloud API URL for update checks
+const CLOUD_API_URL: &str = "https://drinkcrabigator.com/api/update-check";
+
+/// Telemetry data sent with update checks
+#[derive(Debug, Serialize)]
+struct TelemetryRequest {
+    device_id: String,
+    machine_name: Option<String>,
+    os: &'static str,
+    timezone_offset: i32,
+    app_version: &'static str,
+}
+
+/// Response from cloud update check endpoint
+#[derive(Debug, Deserialize)]
+struct CloudUpdateResponse {
+    tag_name: String,
+    html_url: String,
+}
+
+/// Get current OS name for telemetry
+fn get_os_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "unknown"
+    }
+}
+
+/// Get local timezone offset in minutes (e.g., -480 for PST)
+fn get_timezone_offset() -> i32 {
+    chrono::Local::now().offset().local_minus_utc() / 60
+}
+
+/// Check for updates via cloud endpoint (sends telemetry)
+async fn check_via_cloud(client: &reqwest::Client) -> Result<(String, String)> {
+    // Load device identity (creates one if doesn't exist)
+    let identity = DeviceIdentity::load_or_create()?;
+
+    // Get machine name
+    let machine_name = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok());
+
+    let telemetry = TelemetryRequest {
+        device_id: identity.device_id,
+        machine_name,
+        os: get_os_name(),
+        timezone_offset: get_timezone_offset(),
+        app_version: CURRENT_VERSION,
+    };
+
+    let response = client
+        .post(CLOUD_API_URL)
+        .json(&telemetry)
+        .send()
+        .await
+        .context("Failed to reach cloud API")?;
+
+    if !response.status().is_success() {
+        anyhow::bail!("Cloud API returned status {}", response.status());
+    }
+
+    let cloud_response: CloudUpdateResponse = response
+        .json()
+        .await
+        .context("Failed to parse cloud response")?;
+
+    Ok((cloud_response.tag_name, cloud_response.html_url))
+}
+
+/// Check for updates via direct GitHub API (fallback, no telemetry)
+async fn check_via_github(client: &reqwest::Client) -> Result<(String, String)> {
+    let url = format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        GITHUB_REPO
+    );
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .context("Failed to fetch latest release")?;
+
+    if !response.status().is_success() {
+        anyhow::bail!("GitHub API returned status {}", response.status());
+    }
+
+    let release: GitHubRelease = response
+        .json()
+        .await
+        .context("Failed to parse release response")?;
+
+    Ok((release.tag_name, release.html_url))
+}
+
+/// Check for updates by querying cloud API (with telemetry) or falling back to GitHub
 pub async fn check_for_update() -> Result<UpdateCheckResult> {
     let cache = VersionCache::load();
 
@@ -194,38 +295,26 @@ pub async fn check_for_update() -> Result<UpdateCheckResult> {
         });
     }
 
-    // Fetch from GitHub API
-    let url = format!(
-        "https://api.github.com/repos/{}/releases/latest",
-        GITHUB_REPO
-    );
-
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .user_agent("crabigator")
         .build()?;
 
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .context("Failed to fetch latest release")?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("GitHub API returned status {}", response.status());
-    }
-
-    let release: GitHubRelease = response
-        .json()
-        .await
-        .context("Failed to parse release response")?;
+    // Try cloud endpoint first (sends telemetry), fallback to direct GitHub
+    let (tag_name, html_url) = match check_via_cloud(&client).await {
+        Ok(result) => result,
+        Err(_) => {
+            // Fallback to direct GitHub API if cloud fails
+            check_via_github(&client).await?
+        }
+    };
 
     // Strip 'v' prefix if present (e.g., "v0.4.0" -> "0.4.0")
-    let latest_version = release.tag_name.trim_start_matches('v').to_string();
+    let latest_version = tag_name.trim_start_matches('v').to_string();
 
     // Update cache
     let mut cache = cache;
-    cache.update(latest_version.clone(), Some(release.html_url.clone()));
+    cache.update(latest_version.clone(), Some(html_url.clone()));
     let _ = cache.save(); // Best-effort save
 
     let update_available = is_newer_version(&latest_version, CURRENT_VERSION);
@@ -236,7 +325,7 @@ pub async fn check_for_update() -> Result<UpdateCheckResult> {
         new_version: Some(latest_version),
         current_version: CURRENT_VERSION.to_string(),
         was_dismissed,
-        release_url: Some(release.html_url),
+        release_url: Some(html_url),
     })
 }
 

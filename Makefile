@@ -1,4 +1,4 @@
-.PHONY: run build check test test-update clean resume continue lint update release codex claude reinstall-hooks deploy typecheck cf-usage dev
+.PHONY: run build check test test-update clean resume continue lint update release codex claude reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage
 
 PROVIDER_FILE := .crabigator-provider
 DEFAULT_PROVIDER := claude
@@ -80,3 +80,22 @@ typecheck:
 
 cf-usage:
 	@./scripts/cf-usage.sh
+
+reset-usage:
+	@echo "Resetting all usage for today..."
+	@today=$$(date -u +%Y-%m-%d); \
+	cd workers/crabigator-api && \
+	npx wrangler d1 execute crabigator --remote --command "DELETE FROM daily_usage WHERE date = '$$today'" && \
+	echo "Usage reset for $$today. Note: Durable Objects may still have cached state until they're accessed again."
+
+sync-usage:
+	@if [ -z "$(GROUP)" ]; then \
+		echo "Usage: make sync-usage GROUP=<group_id>"; \
+		echo ""; \
+		echo "Find group_id with:"; \
+		cd workers/crabigator-api && npx wrangler d1 execute crabigator --remote --command "SELECT d.group_id, d.name FROM devices d WHERE d.group_id IS NOT NULL GROUP BY d.group_id ORDER BY MAX(d.last_seen_at) DESC LIMIT 10"; \
+	else \
+		curl -s -X POST 'https://drinkcrabigator.com/api/staff/sync-usage' \
+			-H 'Content-Type: application/json' \
+			-d "{\"group_id\":\"$(GROUP)\"}" && echo ""; \
+	fi
