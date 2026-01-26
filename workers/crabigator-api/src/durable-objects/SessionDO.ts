@@ -747,8 +747,35 @@ export class SessionDO implements DurableObject {
             this.notifyDesktopViewerStatus(true);
         }
 
+        // Note: Usage tracking is now handled by /api/usage/heartbeat (one per browser)
+        // NOT per-session, to avoid multiplying usage when viewing multiple sessions
+
         return new Response(JSON.stringify({ ok: true }), {
             headers: { 'Content-Type': 'application/json' },
+        });
+    }
+
+    /**
+     * Record viewer heartbeat in UsageDO for usage tracking
+     * Fire-and-forget to avoid blocking the response
+     */
+    private recordUsageHeartbeat(): void {
+        if (!this.sessionInfo?.group_id || !this.persistentState.sessionId) {
+            return;
+        }
+
+        const groupId = this.sessionInfo.group_id;
+        const sessionId = this.persistentState.sessionId;
+
+        // Fire and forget - don't await
+        const doId = this.env.USAGE.idFromName(groupId);
+        const stub = this.env.USAGE.get(doId);
+        stub.fetch(new Request(`https://internal/heartbeat?group_id=${groupId}`, {
+            method: 'POST',
+            body: JSON.stringify({ session_id: sessionId }),
+            headers: { 'Content-Type': 'application/json' },
+        })).catch((error) => {
+            console.error('Error recording usage heartbeat:', error);
         });
     }
 

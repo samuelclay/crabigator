@@ -23,6 +23,8 @@ export const initJs = `
                 connectSessionListStream();
                 // Start viewer activity tracking for streaming optimization
                 startViewerActivityTracking();
+                // Initialize usage tracking and paywall
+                initUsageTracking();
             }
         })();
 `;

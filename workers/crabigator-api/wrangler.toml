@@ -22,6 +22,10 @@ class_name = "SessionDO"
 name = "SESSION_LIST"
 class_name = "SessionListDO"
 
+[[durable_objects.bindings]]
+name = "USAGE"
+class_name = "UsageDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["SessionDO"]
@@ -37,6 +41,10 @@ deleted_classes = ["SessionListDO"]
 [[migrations]]
 tag = "v4"
 new_sqlite_classes = ["SessionListDO"]
+
+[[migrations]]
+tag = "v5"
+new_sqlite_classes = ["UsageDO"]
 
 # Production routes
 [[routes]]
@@ -57,3 +65,7 @@ zone_name = "drinkcrabigator.com"
 
 [vars]
 API_VERSION = "v1"
+# Stripe mode: "test" or "live" (controls which secrets are used)
+STRIPE_MODE = "live"
+# PayPal mode: "sandbox" or "live"
+PAYPAL_MODE = "live"

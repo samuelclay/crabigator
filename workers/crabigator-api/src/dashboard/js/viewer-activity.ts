@@ -6,6 +6,7 @@ export const viewerActivityJs = `
         // Viewer activity tracking
         let lastActivity = Date.now();
         let viewerHeartbeatInterval = null;
+        let usageHeartbeatInterval = null;
         const VIEWER_INACTIVITY_TIMEOUT = 30000;  // 30 seconds
         const VIEWER_HEARTBEAT_INTERVAL = 5000;   // 5 seconds
 
@@ -14,7 +15,7 @@ export const viewerActivityJs = `
             lastActivity = Date.now();
         }
 
-        // Send heartbeat for a specific session
+        // Send heartbeat for a specific session (for desktop notifications)
         async function sendViewerHeartbeat(sessionId) {
             try {
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/viewer-active', {
@@ -27,7 +28,24 @@ export const viewerActivityJs = `
             }
         }
 
-        // Send heartbeat for all active sessions
+        // Send usage heartbeat (ONE per browser tab, for billing)
+        async function sendUsageHeartbeat() {
+            // Only send if user has been active recently
+            if (Date.now() - lastActivity > VIEWER_INACTIVITY_TIMEOUT) {
+                return;
+            }
+
+            try {
+                await fetch(API_BASE + '/usage/heartbeat', {
+                    method: 'POST',
+                    headers: getAuthHeaders()
+                });
+            } catch {
+                // Ignore errors - heartbeats are best-effort
+            }
+        }
+
+        // Send heartbeat for all active sessions (for desktop notifications)
         async function sendViewerHeartbeats() {
             // Only send if user has been active recently
             if (Date.now() - lastActivity > VIEWER_INACTIVITY_TIMEOUT) {
@@ -47,12 +65,18 @@ export const viewerActivityJs = `
                 document.addEventListener(event, onViewerActivity, { passive: true });
             });
 
-            // Send heartbeats periodically
-            // Initial heartbeat for each session is sent in connectToSession's onopen handler
+            // Send viewer heartbeats periodically (for desktop notifications)
             if (viewerHeartbeatInterval) {
                 clearInterval(viewerHeartbeatInterval);
             }
             viewerHeartbeatInterval = setInterval(sendViewerHeartbeats, VIEWER_HEARTBEAT_INTERVAL);
+
+            // Send SINGLE usage heartbeat per browser tab (for billing)
+            if (usageHeartbeatInterval) {
+                clearInterval(usageHeartbeatInterval);
+            }
+            usageHeartbeatInterval = setInterval(sendUsageHeartbeat, VIEWER_HEARTBEAT_INTERVAL);
+            sendUsageHeartbeat();  // Send initial heartbeat immediately
         }
 
         // Stop viewer activity tracking
@@ -60,6 +84,10 @@ export const viewerActivityJs = `
             if (viewerHeartbeatInterval) {
                 clearInterval(viewerHeartbeatInterval);
                 viewerHeartbeatInterval = null;
+            }
+            if (usageHeartbeatInterval) {
+                clearInterval(usageHeartbeatInterval);
+                usageHeartbeatInterval = null;
             }
         }
 `;

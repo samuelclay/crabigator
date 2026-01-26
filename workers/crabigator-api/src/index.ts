@@ -6,6 +6,11 @@ import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCo
 import { requireAuth, requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
 import { dashboardHtml } from './dashboard';
 import { landingHtml } from './landing';
+import { createStripeCheckout } from './handlers/payments/stripe';
+import { handleStripeWebhook } from './handlers/payments/stripe-webhook';
+import { createPayPalSubscription } from './handlers/payments/paypal';
+import { handlePayPalWebhook } from './handlers/payments/paypal-webhook';
+import { getSubscription, cancelSubscription, getSubscriptionPortal } from './handlers/payments/subscription';
 
 // Build version - deterministic hash of dashboard content
 // This ensures all worker instances return the same version for the same code
@@ -25,6 +30,7 @@ async function getBuildVersion(): Promise<string> {
 // Re-export Durable Objects
 export { SessionDO } from './durable-objects/SessionDO';
 export { SessionListDO } from './durable-objects/SessionListDO';
+export { UsageDO } from './durable-objects/UsageDO';
 
 const router = new Router();
 
@@ -373,6 +379,125 @@ router.post('/api/settings', async (request, env) => {
 
     return new Response(JSON.stringify({ ok: true }), { headers });
 });
+
+// ============================================
+// Usage tracking
+// ============================================
+
+router.get('/api/usage', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+
+    const doId = env.USAGE.idFromName(group_id);
+    const stub = env.USAGE.get(doId);
+    return stub.fetch(new Request(`https://internal/usage?group_id=${group_id}`));
+});
+
+router.post('/api/usage/sync', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+
+    const doId = env.USAGE.idFromName(group_id);
+    const stub = env.USAGE.get(doId);
+    return stub.fetch(new Request(`https://internal/sync?group_id=${group_id}`));
+});
+
+router.post('/api/usage/reset', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+
+    // Also clear D1
+    await env.DB.prepare('DELETE FROM daily_usage WHERE group_id = ?').bind(group_id).run();
+
+    const doId = env.USAGE.idFromName(group_id);
+    const stub = env.USAGE.get(doId);
+    return stub.fetch(new Request(`https://internal/reset?group_id=${group_id}`));
+});
+
+// Single heartbeat per browser tab for usage tracking
+router.post('/api/usage/heartbeat', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id, mobile_id } = authResult.auth;
+
+    const doId = env.USAGE.idFromName(group_id);
+    const stub = env.USAGE.get(doId);
+    return stub.fetch(new Request(`https://internal/heartbeat?group_id=${group_id}`, {
+        method: 'POST',
+        body: JSON.stringify({ session_id: mobile_id }),  // Use mobile_id to dedupe by browser
+        headers: { 'Content-Type': 'application/json' },
+    }));
+});
+
+// ============================================
+// Subscription management
+// ============================================
+
+router.get('/api/subscription', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+    return getSubscription(env, group_id);
+});
+
+router.post('/api/subscription/cancel', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+    return cancelSubscription(env, group_id);
+});
+
+router.post('/api/subscription/portal', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+    const body = await request.json() as { return_url?: string };
+    const returnUrl = body.return_url || 'https://drinkcrabigator.com/dashboard';
+    return getSubscriptionPortal(env, group_id, returnUrl);
+});
+
+// ============================================
+// Payment endpoints
+// ============================================
+
+router.post('/api/payments/stripe/checkout', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+    return createStripeCheckout(request, env, group_id);
+});
+
+router.post('/api/payments/paypal/subscribe', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+    return createPayPalSubscription(request, env, group_id);
+});
+
+// Webhook endpoints (no auth - signature verified internally)
+router.post('/api/webhooks/stripe', handleStripeWebhook);
+router.post('/api/webhooks/paypal', handlePayPalWebhook);
 
 // ============================================
 // Health check

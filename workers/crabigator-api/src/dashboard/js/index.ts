@@ -18,6 +18,7 @@ import { promptJs } from './prompt';
 import { sseJs } from './sse';
 import { viewerActivityJs } from './viewer-activity';
 import { pairingJs } from './pairing';
+import { paywallJs } from './paywall';
 import { initJs } from './init';
 
 export const dashboardJs = [
@@ -40,5 +41,6 @@ export const dashboardJs = [
     promptJs,
     sseJs,
     pairingJs,
+    paywallJs,  // Must be after pairingJs (uses auth functions)
     initJs
 ].join('\n');
