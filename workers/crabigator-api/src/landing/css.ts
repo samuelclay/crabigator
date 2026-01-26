@@ -1853,6 +1853,162 @@ code, .mono {
     color: var(--text-dim);
 }
 
+/* === WHY CRABIGATOR === */
+.why-crabigator {
+    padding: 80px 24px;
+    background: linear-gradient(180deg, var(--bg-deep) 0%, var(--bg-abyss) 100%);
+    border-top: 1px solid var(--border-dim);
+    border-bottom: 1px solid var(--border-dim);
+    position: relative;
+    overflow: hidden;
+}
+
+.why-crabigator::before {
+    content: '?';
+    position: absolute;
+    right: -40px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 400px;
+    font-weight: 800;
+    color: rgba(34, 211, 238, 0.03);
+    pointer-events: none;
+    font-family: 'Space Grotesk', sans-serif;
+}
+
+.why-inner {
+    max-width: 1000px;
+    margin: 0 auto;
+    text-align: center;
+}
+
+.why-question {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 36px;
+    font-weight: 700;
+    color: var(--text-bright);
+    margin-bottom: 48px;
+}
+
+.why-equation {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 48px;
+}
+
+.why-term {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    min-width: 120px;
+}
+
+.why-icon {
+    width: 80px;
+    height: 80px;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.why-icon svg {
+    width: 44px;
+    height: 44px;
+}
+
+.why-icon-claude {
+    background: linear-gradient(135deg, #e2a07f 0%, #d4896b 100%);
+    box-shadow: 0 8px 32px rgba(226, 160, 127, 0.4);
+}
+.why-icon-claude svg { fill: #1a0f0a; }
+
+.why-icon-nav {
+    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    box-shadow: 0 8px 32px rgba(34, 211, 238, 0.4);
+}
+.why-icon-nav svg { fill: var(--bg-abyss); }
+
+.why-icon-crab {
+    background: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
+    box-shadow: 0 8px 32px rgba(249, 115, 22, 0.4);
+}
+.why-icon-crab svg { fill: #1a0f0a; }
+
+.why-icon-gator {
+    background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+    box-shadow: 0 8px 32px rgba(74, 222, 128, 0.4);
+}
+.why-icon-gator svg { fill: #0a1a0f; width: 60px; height: 60px; margin: auto; }
+
+.why-term:hover .why-icon {
+    transform: translateY(-6px) scale(1.08);
+}
+
+.why-plus {
+    font-size: 32px;
+    color: var(--text-dim);
+    font-weight: 300;
+    margin-top: 24px;
+}
+
+.why-label {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-bright);
+}
+
+.why-sub {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.why-tagline {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--accent-cyan);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    text-shadow: 0 0 40px rgba(34, 211, 238, 0.5);
+}
+
+@media (max-width: 768px) {
+    .why-crabigator { padding: 48px 16px; }
+    .why-question { font-size: 28px; margin-bottom: 32px; }
+    .why-equation { gap: 8px; }
+    .why-term { min-width: 70px; }
+    .why-icon { width: 56px; height: 56px; border-radius: 14px; }
+    .why-icon svg { width: 32px; height: 32px; }
+    .why-icon-gator svg { width: 48px; height: 48px; }
+    .why-plus { font-size: 18px; margin-top: 12px; }
+    .why-label { font-size: 12px; }
+    .why-sub { font-size: 9px; }
+    .why-tagline { font-size: 16px; letter-spacing: 1px; }
+    .why-crabigator::before { font-size: 200px; right: -30px; }
+}
+
+@media (max-width: 480px) {
+    .why-crabigator { padding: 40px 12px; }
+    .why-question { font-size: 24px; margin-bottom: 24px; }
+    .why-equation { gap: 4px; margin-bottom: 32px; }
+    .why-term { min-width: 60px; gap: 4px; }
+    .why-icon { width: 48px; height: 48px; border-radius: 12px; }
+    .why-icon svg { width: 26px; height: 26px; }
+    .why-icon-gator svg { width: 40px; height: 40px; }
+    .why-plus { font-size: 14px; margin-top: 10px; }
+    .why-label { font-size: 11px; }
+    .why-sub { display: none; }
+    .why-tagline { font-size: 14px; letter-spacing: 1px; }
+    .why-crabigator::before { display: none; }
+}
+
 /* === PRICING === */
 .pricing {
     background: var(--bg-abyss);
