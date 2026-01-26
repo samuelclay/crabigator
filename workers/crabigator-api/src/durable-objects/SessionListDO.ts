@@ -362,7 +362,12 @@ export class SessionListDO implements DurableObject {
     }
 
     /**
-     * Unregister a session as disconnected (called when desktop WebSocket closes)
+     * Handle desktop WebSocket disconnect.
+     *
+     * Don't delete immediately - the disconnect might be temporary (e.g., deploy).
+     * Just update last_seen so validateSessions can clean up truly stale sessions.
+     * Sessions are only removed when validateSessions finds them disconnected
+     * past the grace period, or when explicitly ended via /notify.
      */
     private async handleDisconnect(request: Request): Promise<Response> {
         if (request.method !== 'POST') {
@@ -374,19 +379,10 @@ export class SessionListDO implements DurableObject {
             const session = this.activeSessions.get(id);
 
             if (session) {
-                this.activeSessions.delete(id);
+                // Update last_seen so grace period starts from disconnect time
+                session.last_seen = Date.now();
+                this.activeSessions.set(id, session);
                 await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
-
-                // Broadcast to dashboard viewers
-                await this.broadcast({ type: 'deleted', session: { id, group_id: session.group_id } });
-
-                if (session.device_id) {
-                    const remainingForDevice = Array.from(this.activeSessions.values())
-                        .some(active => active.device_id === session.device_id);
-                    if (!remainingForDevice) {
-                        await this.cleanupPairingTokens(session.device_id);
-                    }
-                }
             }
 
             return new Response(JSON.stringify({ ok: true }), {
