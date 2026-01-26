@@ -4,7 +4,7 @@ version = "0.3.4"
 edition = "2021"
 
 [dependencies]
-crossterm = "0.28"
+crossterm = { version = "0.28", features = ["event-stream"] }
 portable-pty = "0.8"
 vt100 = "0.15"
 anyhow = "1.0"

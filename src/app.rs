@@ -7,10 +7,12 @@
 //! - PTY output passes through untouched
 
 use anyhow::Result;
-use crossterm::event::{self, Event, MouseEvent};
+use crossterm::event::{Event, EventStream, MouseEvent};
+use futures_util::StreamExt;
 use std::io::{stdout, Write};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+use tokio::time::interval;
 
 use crate::capture::{CaptureConfig, CaptureManager, ScrollbackUpdate};
 use crate::cloud::{CloudClient, PairingStatusResponse, SessionEventBuilder};
@@ -312,18 +314,19 @@ impl App {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        let mut last_git_refresh = Instant::now();
-        let mut last_hook_refresh = Instant::now();
         let mut last_status_draw = Instant::now();
         let mut last_throbber_draw = Instant::now();
-        let mut last_full_refresh = Instant::now();
-        let mut last_cloud_reconnect_check = Instant::now();
-        let git_refresh_interval = Duration::from_secs(1);
-        let hook_refresh_interval = Duration::from_millis(500);
         let status_debounce = Duration::from_millis(100);
-        let throbber_interval = Duration::from_millis(100);
-        let full_refresh_interval = Duration::from_secs(5);
-        let cloud_reconnect_interval = Duration::from_secs(2);
+
+        // Event-driven timers using tokio intervals (no polling!)
+        let mut git_interval = interval(Duration::from_secs(1));
+        let mut hook_interval = interval(Duration::from_millis(500));
+        let mut throbber_interval_timer = interval(Duration::from_millis(100));
+        let mut full_refresh_interval = interval(Duration::from_secs(5));
+        let mut cloud_reconnect_interval = interval(Duration::from_secs(2));
+
+        // Async terminal event stream (replaces polling)
+        let mut event_stream = EventStream::new();
 
         // Set up scroll region to constrain the CLI to the top area
         // Pass true to scroll existing content up and make room for status bar
@@ -370,298 +373,177 @@ impl App {
         // Track whether we've sent an initial screen capture (after PTY has rendered)
         let mut sent_initial_screen = false;
         let session_start = std::time::Instant::now();
-        let mut last_initial_screen_attempt = session_start;
 
         // Debounce interval for redraw detection (prevents excessive redraws during rapid updates)
         let redraw_debounce = Duration::from_millis(50);
 
-        while self.running {
-            // Receive PTY output and write directly to stdout
-            let mut got_output = false;
-            let mut needs_hud_redraw = false;
-            while let Ok(data) = self.pty_rx.try_recv() {
-                if self.write_pty_output(&data)? {
-                    needs_hud_redraw = true;
-                }
-                got_output = true;
-            }
+        // Initial screen send interval
+        let mut initial_screen_interval = interval(Duration::from_millis(500));
 
-            // Handle CLI-initiated full screen redraw (e.g., after resize via SIGWINCH)
-            // Re-establish scroll region and refresh HUD with debouncing
-            if needs_hud_redraw && self.last_redraw_trigger.elapsed() >= redraw_debounce {
-                self.last_redraw_trigger = Instant::now();
-                self.setup_scroll_region(false)?;
-                self.draw_status_bar()?;
-                last_status_draw = Instant::now();
-            }
-
-            // Check for completed background git refresh (non-blocking)
-            if let Ok(result) = git_rx.try_recv() {
-                self.git_state = result.git_state;
-                self.diff_summary = result.diff_summary;
-                git_refresh_pending = false;
-
-                // Stream git + changes snapshot to cloud
-                self.send_cloud_git_changes_events();
-
-                // Capture initial timing (only set once, on first load)
-                if self.initial_git_time_ms.is_none() {
-                    self.initial_git_time_ms = Some(result.git_time_ms);
-                    self.initial_diff_time_ms = Some(result.diff_time_ms);
-                }
-
-                // Redraw with new data
-                self.draw_status_bar()?;
-                last_status_draw = Instant::now();
-            }
-
-            // Spawn background git refresh periodically (if not already pending)
-            if !git_refresh_pending && last_git_refresh.elapsed() >= git_refresh_interval {
-                git_refresh_pending = true;
-                last_git_refresh = Instant::now();
-                let tx = git_tx.clone();
-                tokio::spawn(async move {
-                    let git_state_tmp = GitState::new();
-                    let diff_summary_tmp = DiffSummary::new();
-                    let (git_result, diff_result) = tokio::join!(
-                        git_state_tmp.refresh(),
-                        diff_summary_tmp.refresh()
-                    );
-                    let git_state = git_result.unwrap_or_default();
-                    let diff_summary = diff_result.unwrap_or_default();
-                    // Timing not tracked for periodic refreshes (only initial)
-                    let _ = tx.send(GitRefreshResult {
-                        git_state,
-                        diff_summary,
-                        git_time_ms: 0,
-                        diff_time_ms: 0,
-                    }).await;
-                });
-            }
-
-            // Refresh platform stats more frequently and redraw if state changed
-            if last_hook_refresh.elapsed() >= hook_refresh_interval {
-                let old_effective_state = self.session_stats.effective_state();
-                let old_last_updated = self.session_stats.platform_stats.last_updated;
-                self.session_stats
-                    .refresh_platform_stats(self.platform.as_ref(), &self.cwd.to_string_lossy());
-                let new_effective_state = self.session_stats.effective_state();
-                let new_last_updated = self.session_stats.platform_stats.last_updated;
-
-                // Update transcript path for scrollback capture
-                if let Some(ref path) = self.session_stats.platform_stats.transcript_path {
-                    self.capture_manager
-                        .set_transcript_path(Some(path.clone()));
-                }
-
-                // Redraw immediately if effective state changed (e.g., Thinking -> Complete, or Interrupted -> Thinking)
-                if old_effective_state != new_effective_state {
-                    self.draw_status_bar()?;
-                    last_status_draw = Instant::now();
-                }
-
-                // Send initial state once, then on changes
-                if self.last_cloud_state.is_none() || old_effective_state != new_effective_state {
-                    self.send_cloud_state_event(new_effective_state);
-
-                    // Send prompt event when entering/leaving interactive states
-                    let is_interactive = matches!(
-                        new_effective_state,
-                        SessionState::Question | SessionState::Permission
-                    );
-                    let was_interactive = matches!(
-                        old_effective_state,
-                        SessionState::Question | SessionState::Permission
-                    );
-
-                    if is_interactive || (was_interactive && self.last_cloud_prompt_sent) {
-                        self.send_cloud_prompt_event();
-                    }
-                }
-
-                // For ExitPlan prompts, keep checking for options (handles timing issue)
-                // The screen may not have options rendered immediately when hook fires
-                if matches!(
-                    self.session_stats.platform_stats.active_prompt.as_ref(),
-                    Some(crate::platforms::ActivePrompt::ExitPlan)
-                ) && self.last_exit_plan_option_count < 3 {
-                    // Keep trying until we have at least 3 options (the real exit plan prompt has 4)
-                    self.send_cloud_prompt_event();
-                }
-
-                // Stream stats when platform stats update (or first send)
-                if new_last_updated != old_last_updated || !self.cloud_stats_sent {
-                    self.cloud_stats_sent = true;
-                    self.session_stats.tick();
-                    self.send_cloud_stats_event();
-                    self.send_cloud_stats_update();
-                }
-
-                last_hook_refresh = Instant::now();
-            }
-
-            // Check for commands from cloud (answers + key sequences)
-            self.check_cloud_commands()?;
-
-            // Keep cloud WebSocket connected even when idle (no outgoing events).
-            if last_cloud_reconnect_check.elapsed() >= cloud_reconnect_interval {
-                if let Some(ref mut client) = self.cloud_client {
-                    if !client.is_connected() {
-                        client.try_reconnect();
-                    }
-                }
-                last_cloud_reconnect_check = Instant::now();
-            }
-
-            // Poll viewer status from cloud to optimize screen streaming
-            if let Some(ref mut client) = self.cloud_client {
-                let was_active = self.cloud_viewers_active;
-                self.cloud_viewers_active = client.poll_viewer_status();
-
-                // When viewers become active, send screen immediately
-                // This fixes "Connecting..." showing indefinitely on dashboard
-                if !was_active && self.cloud_viewers_active {
-                    if let Ok(contents) = self.capture_manager.update_screen(self.platform_pty.screen()) {
-                        self.send_cloud_screen_event(contents);
-                    }
-                }
-            }
-
-            // Poll pairing status if waiting for mobile pairing
-            self.maybe_poll_pairing();
-
-            // Send full scrollback after cloud (re)connects
-            self.maybe_send_initial_scrollback();
-
-            // Redraw status bar after PTY output settles (debounced)
-            if got_output && last_status_draw.elapsed() >= status_debounce {
-                self.draw_status_bar()?;
-                last_status_draw = Instant::now();
-                last_throbber_draw = Instant::now();
-            }
-
-            // Animate throbber independently when in active states (Thinking/Permission)
+        // Event-driven main loop using tokio::select!
+        // This replaces the polling loop - we only wake up when something actually happens
+        loop {
+            // Check if throbber animation is needed (for conditional timer)
             let needs_throbber = matches!(
                 self.session_stats.effective_state(),
                 SessionState::Thinking | SessionState::Permission
             );
-            if needs_throbber && last_throbber_draw.elapsed() >= throbber_interval {
-                self.draw_status_bar()?;
-                last_throbber_draw = Instant::now();
-            }
 
-            // Periodic full refresh to prevent visual artifact buildup
-            if last_full_refresh.elapsed() >= full_refresh_interval {
-                last_full_refresh = Instant::now();
-                self.clear_status_area()?;
-                self.draw_status_bar()?;
-                last_status_draw = Instant::now();
-            }
+            tokio::select! {
+                // PTY output - highest priority, handle immediately
+                Some(data) = self.pty_rx.recv() => {
+                    let needs_hud_redraw = self.write_pty_output(&data)?;
 
-            // Update captures and send to cloud
-            // When viewers are active: bypass throttle, send every unique frame
-            // When no viewers: use throttled capture (100ms local, 1s cloud)
-            if got_output {
-                let screen_to_send = if self.cloud_viewers_active {
-                    // Bypass throttle - get screen immediately for real-time streaming
-                    self.capture_manager
-                        .update_screen(self.platform_pty.screen())
-                        .ok()
-                } else if self.last_reduced_screen_send.elapsed() >= Duration::from_secs(1) {
-                    // No viewers: only capture/send once per second
-                    self.capture_manager
-                        .maybe_update_screen(self.platform_pty.screen())
-                        .ok()
-                        .flatten()
-                } else {
-                    // No viewers and within 1s throttle: still update local file at 100ms
-                    let _ = self
-                        .capture_manager
-                        .maybe_update_screen(self.platform_pty.screen());
-                    None // Don't send to cloud
-                };
-
-                if let Some(screen) = screen_to_send {
-                    // Detect mode from screen content
-                    let new_mode = crate::mode::detect_mode(&screen);
-                    if new_mode != self.session_stats.platform_stats.mode {
-                        self.session_stats.platform_stats.mode = new_mode;
-                        // Send updated stats to cloud when mode changes
-                        self.send_cloud_stats_event();
+                    // Handle CLI-initiated full screen redraw with debouncing
+                    if needs_hud_redraw && self.last_redraw_trigger.elapsed() >= redraw_debounce {
+                        self.last_redraw_trigger = Instant::now();
+                        self.setup_scroll_region(false)?;
+                        self.draw_status_bar()?;
+                        last_status_draw = Instant::now();
                     }
 
-                    // Detect interrupted state from screen (user hit Escape on permission)
-                    // This catches cases where the hook doesn't fire
-                    if crate::parsers::is_interrupted(&screen) {
-                        let current_state = self.session_stats.effective_state();
-                        if current_state != SessionState::Interrupted {
-                            self.session_stats.set_interrupted();
-                            self.send_cloud_state_event(SessionState::Interrupted);
-                            self.draw_status_bar().ok();
+                    // Redraw status bar after PTY output (debounced)
+                    if last_status_draw.elapsed() >= status_debounce {
+                        self.draw_status_bar()?;
+                        last_status_draw = Instant::now();
+                        last_throbber_draw = Instant::now();
+                    }
+
+                    // Update captures and send to cloud
+                    self.handle_pty_output_capture(&mut sent_initial_screen)?;
+                }
+
+                // Terminal events (keyboard, resize, paste) - async stream, no polling!
+                Some(event_result) = event_stream.next() => {
+                    match event_result {
+                        Ok(Event::Key(key)) => {
+                            self.handle_key_event(key).await?;
+                        }
+                        Ok(Event::Resize(width, height)) => {
+                            self.handle_resize(width, height)?;
+                        }
+                        Ok(Event::Paste(text)) => {
+                            self.platform_pty.write(text.as_bytes())?;
+                        }
+                        Ok(Event::Mouse(mouse)) => {
+                            self.last_mouse_event = Some(mouse);
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            // Log error but continue - terminal events shouldn't crash the app
+                            eprintln!("Terminal event error: {}", e);
+                        }
+                    }
+                }
+
+                // Git refresh results
+                Some(result) = git_rx.recv() => {
+                    self.git_state = result.git_state;
+                    self.diff_summary = result.diff_summary;
+                    git_refresh_pending = false;
+
+                    // Stream git + changes snapshot to cloud
+                    self.send_cloud_git_changes_events();
+
+                    // Capture initial timing (only set once, on first load)
+                    if self.initial_git_time_ms.is_none() {
+                        self.initial_git_time_ms = Some(result.git_time_ms);
+                        self.initial_diff_time_ms = Some(result.diff_time_ms);
+                    }
+
+                    // Redraw with new data
+                    self.draw_status_bar()?;
+                    last_status_draw = Instant::now();
+                }
+
+                // Git refresh timer - only fires when not already pending
+                _ = git_interval.tick(), if !git_refresh_pending => {
+                    git_refresh_pending = true;
+                    let tx = git_tx.clone();
+                    tokio::spawn(async move {
+                        let git_state_tmp = GitState::new();
+                        let diff_summary_tmp = DiffSummary::new();
+                        let (git_result, diff_result) = tokio::join!(
+                            git_state_tmp.refresh(),
+                            diff_summary_tmp.refresh()
+                        );
+                        let git_state = git_result.unwrap_or_default();
+                        let diff_summary = diff_result.unwrap_or_default();
+                        let _ = tx.send(GitRefreshResult {
+                            git_state,
+                            diff_summary,
+                            git_time_ms: 0,
+                            diff_time_ms: 0,
+                        }).await;
+                    });
+                }
+
+                // Hook/stats refresh timer
+                _ = hook_interval.tick() => {
+                    self.handle_hook_refresh(&mut last_status_draw)?;
+                }
+
+                // Throbber animation timer - only active when in Thinking/Permission state
+                _ = throbber_interval_timer.tick(), if needs_throbber => {
+                    if last_throbber_draw.elapsed() >= Duration::from_millis(100) {
+                        self.draw_status_bar()?;
+                        last_throbber_draw = Instant::now();
+                    }
+                }
+
+                // Full refresh timer - prevent visual artifact buildup
+                _ = full_refresh_interval.tick() => {
+                    self.clear_status_area()?;
+                    self.draw_status_bar()?;
+                    last_status_draw = Instant::now();
+                }
+
+                // Cloud reconnect timer
+                _ = cloud_reconnect_interval.tick() => {
+                    // Check for commands from cloud
+                    self.check_cloud_commands()?;
+
+                    // Keep cloud WebSocket connected
+                    if let Some(ref mut client) = self.cloud_client {
+                        if !client.is_connected() {
+                            client.try_reconnect();
                         }
                     }
 
-                    // Deduplicate: only send if content changed
-                    let hash = {
-                        use std::hash::{Hash, Hasher};
-                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                        screen.hash(&mut hasher);
-                        hasher.finish()
-                    };
+                    // Poll viewer status
+                    if let Some(ref mut client) = self.cloud_client {
+                        let was_active = self.cloud_viewers_active;
+                        self.cloud_viewers_active = client.poll_viewer_status();
 
-                    if self.last_cloud_screen_hash != Some(hash) {
-                        self.last_cloud_screen_hash = Some(hash);
-                        self.send_cloud_screen_event(screen);
-                        if !self.cloud_viewers_active {
-                            self.last_reduced_screen_send = Instant::now();
+                        if !was_active && self.cloud_viewers_active {
+                            if let Ok(contents) = self.capture_manager.update_screen(self.platform_pty.screen()) {
+                                self.send_cloud_screen_event(contents);
+                            }
                         }
                     }
-                    sent_initial_screen = true;
+
+                    // Poll pairing status
+                    self.maybe_poll_pairing();
+
+                    // Send initial scrollback if needed
+                    self.maybe_send_initial_scrollback();
                 }
 
-                if let Ok(Some(update)) = self.capture_manager.maybe_update_scrollback() {
-                    self.send_cloud_scrollback_event(update);
-                }
-            }
-
-            // Send initial screen after terminal has had time to render
-            // Try every 500ms until we get meaningful content (>50 bytes)
-            // or give up after 5 seconds and send whatever we have
-            if !sent_initial_screen && last_initial_screen_attempt.elapsed() > Duration::from_millis(500) {
-                last_initial_screen_attempt = Instant::now();
-                let elapsed = session_start.elapsed();
-                if let Ok(contents) = self.capture_manager.update_screen(self.platform_pty.screen()) {
-                    // Send if we have meaningful content or we've waited long enough
-                    if contents.len() > 50 || elapsed > Duration::from_secs(5) {
-                        self.send_cloud_screen_event(contents);
-                        sent_initial_screen = true;
+                // Initial screen send timer - only until first screen is sent
+                _ = initial_screen_interval.tick(), if !sent_initial_screen => {
+                    let elapsed = session_start.elapsed();
+                    if let Ok(contents) = self.capture_manager.update_screen(self.platform_pty.screen()) {
+                        if contents.len() > 50 || elapsed > Duration::from_secs(5) {
+                            self.send_cloud_screen_event(contents);
+                            sent_initial_screen = true;
+                        }
                     }
                 }
             }
 
             // Check if the platform CLI has exited
-            if !self.platform_pty.is_running() {
-                self.running = false;
+            if !self.running || !self.platform_pty.is_running() {
                 break;
-            }
-
-            // Poll for terminal events
-            if event::poll(Duration::from_millis(50))? {
-                match event::read()? {
-                    Event::Key(key) => {
-                        self.handle_key_event(key).await?;
-                    }
-                    Event::Resize(width, height) => {
-                        self.handle_resize(width, height)?;
-                    }
-                    Event::Paste(text) => {
-                        self.platform_pty.write(text.as_bytes())?;
-                    }
-                    Event::Mouse(mouse) => {
-                        self.last_mouse_event = Some(mouse);
-                    }
-                    _ => {}
-                }
             }
         }
 
@@ -810,6 +692,128 @@ impl App {
             self.initial_git_time_ms,
             self.initial_diff_time_ms,
         );
+
+        Ok(())
+    }
+
+    /// Handle PTY output capture and cloud streaming
+    fn handle_pty_output_capture(&mut self, sent_initial_screen: &mut bool) -> Result<()> {
+        let screen_to_send = if self.cloud_viewers_active {
+            // Bypass throttle - get screen immediately for real-time streaming
+            self.capture_manager
+                .update_screen(self.platform_pty.screen())
+                .ok()
+        } else if self.last_reduced_screen_send.elapsed() >= Duration::from_secs(1) {
+            // No viewers: only capture/send once per second
+            self.capture_manager
+                .maybe_update_screen(self.platform_pty.screen())
+                .ok()
+                .flatten()
+        } else {
+            // No viewers and within 1s throttle: still update local file at 100ms
+            let _ = self
+                .capture_manager
+                .maybe_update_screen(self.platform_pty.screen());
+            None // Don't send to cloud
+        };
+
+        if let Some(screen) = screen_to_send {
+            // Detect mode from screen content
+            let new_mode = crate::mode::detect_mode(&screen);
+            if new_mode != self.session_stats.platform_stats.mode {
+                self.session_stats.platform_stats.mode = new_mode;
+                self.send_cloud_stats_event();
+            }
+
+            // Detect interrupted state from screen
+            if crate::parsers::is_interrupted(&screen) {
+                let current_state = self.session_stats.effective_state();
+                if current_state != SessionState::Interrupted {
+                    self.session_stats.set_interrupted();
+                    self.send_cloud_state_event(SessionState::Interrupted);
+                    self.draw_status_bar().ok();
+                }
+            }
+
+            // Deduplicate: only send if content changed
+            let hash = {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                screen.hash(&mut hasher);
+                hasher.finish()
+            };
+
+            if self.last_cloud_screen_hash != Some(hash) {
+                self.last_cloud_screen_hash = Some(hash);
+                self.send_cloud_screen_event(screen);
+                if !self.cloud_viewers_active {
+                    self.last_reduced_screen_send = Instant::now();
+                }
+            }
+            *sent_initial_screen = true;
+        }
+
+        if let Ok(Some(update)) = self.capture_manager.maybe_update_scrollback() {
+            self.send_cloud_scrollback_event(update);
+        }
+
+        Ok(())
+    }
+
+    /// Handle hook/stats refresh
+    fn handle_hook_refresh(&mut self, last_status_draw: &mut Instant) -> Result<()> {
+        let old_effective_state = self.session_stats.effective_state();
+        let old_last_updated = self.session_stats.platform_stats.last_updated;
+        self.session_stats
+            .refresh_platform_stats(self.platform.as_ref(), &self.cwd.to_string_lossy());
+        let new_effective_state = self.session_stats.effective_state();
+        let new_last_updated = self.session_stats.platform_stats.last_updated;
+
+        // Update transcript path for scrollback capture
+        if let Some(ref path) = self.session_stats.platform_stats.transcript_path {
+            self.capture_manager
+                .set_transcript_path(Some(path.clone()));
+        }
+
+        // Redraw immediately if effective state changed
+        if old_effective_state != new_effective_state {
+            self.draw_status_bar()?;
+            *last_status_draw = Instant::now();
+        }
+
+        // Send initial state once, then on changes
+        if self.last_cloud_state.is_none() || old_effective_state != new_effective_state {
+            self.send_cloud_state_event(new_effective_state);
+
+            let is_interactive = matches!(
+                new_effective_state,
+                SessionState::Question | SessionState::Permission
+            );
+            let was_interactive = matches!(
+                old_effective_state,
+                SessionState::Question | SessionState::Permission
+            );
+
+            if is_interactive || (was_interactive && self.last_cloud_prompt_sent) {
+                self.send_cloud_prompt_event();
+            }
+        }
+
+        // For ExitPlan prompts, keep checking for options
+        if matches!(
+            self.session_stats.platform_stats.active_prompt.as_ref(),
+            Some(crate::platforms::ActivePrompt::ExitPlan)
+        ) && self.last_exit_plan_option_count < 3 {
+            self.send_cloud_prompt_event();
+        }
+
+        // Stream stats when platform stats update
+        if new_last_updated != old_last_updated || !self.cloud_stats_sent {
+            self.cloud_stats_sent = true;
+            self.session_stats.tick();
+            self.send_cloud_stats_event();
+            self.send_cloud_stats_update();
+        }
 
         Ok(())
     }
