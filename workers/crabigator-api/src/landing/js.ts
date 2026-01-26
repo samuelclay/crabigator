@@ -75,6 +75,94 @@ export const landingJs = `
         updateActiveLink(); // Initial check
     }
 
+    // Hero devices scaling for mobile
+    function initHeroDevicesScaling() {
+        const devices = document.querySelector('.hero-devices');
+        const phone = document.querySelector('.hero-phone');
+        const terminal = document.querySelector('.hero-terminal');
+
+        if (!devices || !phone || !terminal) return;
+
+        const OVERLAP = 20; // pixels of overlap
+        const PHONE_WIDTH = 220; // natural phone width
+        const TERMINAL_WIDTH = 580; // natural terminal width
+        const MOBILE_BREAKPOINT = 1024; // Apply scaling for mobile and tablet
+
+        function scaleDevices() {
+            const viewportWidth = window.innerWidth;
+
+            // Only apply scaling on mobile
+            if (viewportWidth >= MOBILE_BREAKPOINT) {
+                // Reset to default desktop styles
+                devices.style.transform = '';
+                devices.style.width = '';
+                devices.style.marginLeft = '';
+                devices.style.marginRight = '';
+                devices.style.position = '';
+                devices.style.left = '';
+                devices.style.flexDirection = '';
+                devices.style.justifyContent = '';
+                devices.style.alignItems = '';
+                devices.style.height = '';
+                phone.style.position = '';
+                phone.style.left = '';
+                phone.style.marginRight = '';
+                phone.style.width = '';
+                phone.style.order = '';
+                phone.style.zIndex = '';
+                terminal.style.width = '';
+                terminal.style.maxWidth = '';
+                terminal.style.order = '';
+                return;
+            }
+
+            // Calculate scale factor based on viewport width
+            const totalNaturalWidth = PHONE_WIDTH + TERMINAL_WIDTH - OVERLAP;
+            const scale = viewportWidth / totalNaturalWidth;
+
+            // Container: set to natural width, then scaled
+            // Use transform-origin: top left and position from left edge
+            devices.style.width = totalNaturalWidth + 'px';
+            devices.style.flexDirection = 'row';
+            devices.style.justifyContent = 'flex-start';
+            devices.style.alignItems = 'flex-start';
+            devices.style.position = 'relative';
+            devices.style.left = '0';
+            // Offset to break out of hero-content padding to viewport edge
+            devices.style.marginLeft = '-16px';
+            devices.style.marginRight = '-16px';
+            // Reset height and transform to measure natural height
+            devices.style.height = 'auto';
+            devices.style.transform = 'none';
+
+            // Measure natural height before scaling
+            const naturalHeight = devices.scrollHeight;
+
+            // Apply transform
+            devices.style.transform = 'scale(' + scale + ')';
+            devices.style.transformOrigin = 'top left';
+
+            // Set container height to match scaled height (prevents empty space)
+            devices.style.height = (naturalHeight * scale) + 'px';
+
+            // Phone: on left, overlapping terminal by OVERLAP pixels
+            phone.style.order = '-1';
+            phone.style.position = 'relative';
+            phone.style.left = '0';
+            phone.style.marginRight = '-' + OVERLAP + 'px';
+            phone.style.width = PHONE_WIDTH + 'px';
+            phone.style.zIndex = '10';
+
+            // Terminal: on the right
+            terminal.style.width = TERMINAL_WIDTH + 'px';
+            terminal.style.maxWidth = TERMINAL_WIDTH + 'px';
+        }
+
+        // Run on load and resize
+        scaleDevices();
+        window.addEventListener('resize', scaleDevices, { passive: true });
+    }
+
     // Initialize
     document.addEventListener('DOMContentLoaded', function() {
         // Hero email form
@@ -91,5 +179,8 @@ export const landingJs = `
 
         // Initialize scroll spy
         initScrollSpy();
+
+        // Initialize hero devices scaling
+        initHeroDevicesScaling();
     });
 `;

@@ -24,7 +24,7 @@ export const landingHtml = `<!DOCTYPE html>
             <a href="#pricing" class="nav-link">Pricing</a>
             <a href="#install" class="nav-link">Install</a>
             <a href="/dashboard" class="nav-btn">Open Dashboard</a>
-            <a href="https://github.com/anthropics/crabigator" target="_blank" rel="noopener" class="nav-github">
+            <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener" class="nav-github">
                 <svg viewBox="0 0 16 16" fill="currentColor">
                     <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
                 </svg>
@@ -50,8 +50,9 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
             </div>
 
-            <div class="hero-terminal">
-                <div class="terminal-window">
+            <div class="hero-devices">
+                <div class="hero-terminal">
+                    <div class="terminal-window">
                     <div class="terminal-bar">
                         <div class="terminal-dot red"></div>
                         <div class="terminal-dot yellow"></div>
@@ -82,34 +83,150 @@ export const landingHtml = `<!DOCTYPE html>
 
                         <div class="terminal-widgets">
                             <div class="widget-card">
-                                <div class="widget-header"><svg class="icon-widget" viewBox="0 0 256 256"><path d="M232,208a8,8,0,0,1-8,8H32a8,8,0,0,1-8-8V48a8,8,0,0,1,16,0V156.69l50.34-50.35a8,8,0,0,1,11.32,0L128,132.69,180.69,80H160a8,8,0,0,1,0-16h40a8,8,0,0,1,8,8v40a8,8,0,0,1-16,0V91.31l-58.34,58.35a8,8,0,0,1-11.32,0L96,123.31l-56,56V200H224A8,8,0,0,1,232,208Z"/></svg> Session Stats</div>
+                                <div class="widget-header"><svg class="icon-widget" viewBox="0 0 256 256"><path d="M232,208a8,8,0,0,1-8,8H32a8,8,0,0,1-8-8V48a8,8,0,0,1,16,0V156.69l50.34-50.35a8,8,0,0,1,11.32,0L128,132.69,180.69,80H160a8,8,0,0,1,0-16h40a8,8,0,0,1,8,8v40a8,8,0,0,1-16,0V91.31l-58.34,58.35a8,8,0,0,1-11.32,0L96,123.31l-56,56V200H224A8,8,0,0,1,232,208Z"/></svg> Session Stats <span class="widget-state thinking">thinking</span></div>
                                 <div class="widget-row">
-                                    <span>Duration</span>
-                                    <span class="widget-value">12m 34s</span>
+                                    <span class="widget-label">◆ Session</span>
+                                    <span class="widget-value blue">12m 34s</span>
                                 </div>
                                 <div class="widget-row">
-                                    <span>Prompts</span>
-                                    <span class="widget-value">7</span>
+                                    <span class="widget-label">▸ Prompts 7</span>
+                                    <span class="widget-value dim">2m ago</span>
                                 </div>
                                 <div class="widget-row">
-                                    <span>Tool calls</span>
-                                    <span class="widget-value">23</span>
+                                    <span class="widget-label">⚙ Tools</span>
+                                    <span class="widget-sparkline">▁▂▄▅▇█▆▄▂▃▅▄</span>
+                                </div>
+                                <div class="widget-row">
+                                    <span class="widget-label">⊜ Compactions 1</span>
+                                    <span class="widget-value dim">5m ago</span>
                                 </div>
                             </div>
                             <div class="widget-card">
-                                <div class="widget-header"><svg class="icon-widget" viewBox="0 0 256 256"><path d="M216,72H131.31L104,44.69A15.86,15.86,0,0,0,92.69,40H40A16,16,0,0,0,24,56V200.62A15.4,15.4,0,0,0,39.38,216H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72Z"/></svg> Git Status</div>
-                                <div class="widget-row">
-                                    <span>Branch</span>
-                                    <span class="widget-value">main</span>
+                                <div class="widget-header">
+                                    <svg class="icon-widget" viewBox="0 0 256 256"><path d="M216,72H131.31L104,44.69A15.86,15.86,0,0,0,92.69,40H40A16,16,0,0,0,24,56V200.62A15.4,15.4,0,0,0,39.38,216H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72Z"/></svg>
+                                    <span class="widget-branch">main</span>
+                                    <span class="widget-files">3 files</span>
                                 </div>
-                                <div class="widget-row">
-                                    <span>Changes</span>
-                                    <span><span class="widget-value green">+142</span> <span class="widget-value red">-38</span></span>
+                                <div class="git-files">
+                                    <div class="git-file">
+                                        <span class="git-status modified">●</span>
+                                        <span class="git-path">src/app.rs</span>
+                                        <span class="git-diff"><span class="del-num">−42</span><span class="bars"><span class="bar-del">▓▓</span><span class="bar-add">███</span></span><span class="add-num">+87</span></span>
+                                    </div>
+                                    <div class="git-file">
+                                        <span class="git-status modified">●</span>
+                                        <span class="git-path">src/ui.rs</span>
+                                        <span class="git-diff"><span class="del-num">−12</span><span class="bars"><span class="bar-del">▓▓</span><span class="bar-add">██</span></span><span class="add-num">+34</span></span>
+                                    </div>
+                                    <div class="git-file">
+                                        <span class="git-status added">+</span>
+                                        <span class="git-path">src/update.rs</span>
+                                        <span class="git-diff"><span class="del-num"></span><span class="bars"><span class="bar-del"></span><span class="bar-add">██</span></span><span class="add-num">+21</span></span>
+                                    </div>
                                 </div>
-                                <div class="widget-row">
-                                    <span>Modified</span>
-                                    <span class="widget-value">3 files</span>
+                            </div>
+                            <div class="widget-card changes">
+                                <div class="widget-header">
+                                    <svg class="icon-widget" viewBox="0 0 256 256"><path d="M200,204.5V232a8,8,0,0,1-16,0V204.5a63.67,63.67,0,0,1-35.38-18.24L124.31,162H72a8,8,0,0,1,0-16h44.69l30.35-30.34A63.65,63.65,0,0,1,184,97.5V56a8,8,0,0,1,16,0V97.5a79.58,79.58,0,0,0,22.63,55.37l5.66,5.66a8,8,0,0,1-11.32,11.32l-5.65-5.66A79.75,79.75,0,0,0,200,204.5Z"/></svg>
+                                    <span class="widget-lang">TypeScript</span>
+                                    <span class="widget-count">4 changes</span>
                                 </div>
+                                <div class="changes-list">
+                                    <div class="change-item">
+                                        <span class="change-mod">~</span><span class="change-icon fn">ƒ</span>
+                                        <span class="change-name">handleSSE</span>
+                                        <span class="change-stats"><span class="del">−8</span> <span class="add">+24</span></span>
+                                    </div>
+                                    <div class="change-item">
+                                        <span class="change-mod">+</span><span class="change-icon fn">ƒ</span>
+                                        <span class="change-name">parseEvent</span>
+                                        <span class="change-stats"><span class="add">+42</span></span>
+                                    </div>
+                                    <div class="change-item">
+                                        <span class="change-mod">~</span><span class="change-icon cls">◆</span>
+                                        <span class="change-name">SessionDO</span>
+                                        <span class="change-stats"><span class="del">−3</span> <span class="add">+18</span></span>
+                                    </div>
+                                </div>
+                                <div class="changes-lang-header">
+                                    <span class="widget-lang rust">Rust</span>
+                                    <span class="widget-count">2 changes</span>
+                                </div>
+                                <div class="changes-list">
+                                    <div class="change-item">
+                                        <span class="change-mod">~</span><span class="change-icon fn">ƒ</span>
+                                        <span class="change-name">update_widgets</span>
+                                        <span class="change-stats"><span class="del">−15</span> <span class="add">+31</span></span>
+                                    </div>
+                                    <div class="change-item">
+                                        <span class="change-mod">+</span><span class="change-icon struct">◇</span>
+                                        <span class="change-name">UpdateState</span>
+                                        <span class="change-stats"><span class="add">+26</span></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                </div>
+                <div class="hero-phone">
+                    <div class="phone-notch"></div>
+                    <div class="phone-screen">
+                        <div class="phone-header">
+                            <svg class="phone-logo" viewBox="0 0 512 512"><path fill="#f97316" d="M379.204,266.236c-1.879,0-3.78-0.07-5.648-0.206c-11.05-0.806-19.356-10.418-18.55-21.468c0.807-11.05,10.416-19.352,21.469-18.55c0.9,0.066,1.819,0.099,2.729,0.099c20.173,0,36.585-16.412,36.585-36.585c0-1.337-0.072-2.687-0.215-4.01c-1.193-11.016,6.77-20.913,17.786-22.106c11.014-1.19,20.913,6.77,22.105,17.786c0.298,2.751,0.449,5.553,0.449,8.329C455.914,231.824,421.502,266.236,379.204,266.236z"/><ellipse fill="#fb923c" cx="255.996" cy="294.45" rx="144.436" ry="120.976"/><path fill="#f97316" d="M400.43,294.451c0-66.813-64.664-120.975-144.431-120.976v241.952C335.767,415.428,400.43,361.265,400.43,294.451z"/></svg>
+                            <span class="phone-title">~/projects/api</span>
+                            <span class="phone-state thinking">thinking</span>
+                        </div>
+                        <div class="phone-terminal">
+                            <div class="pt-line"><span class="pt-prompt">❯</span> crabigator</div>
+                            <div class="pt-line pt-dim">Starting Claude Code session...</div>
+                            <div class="pt-line pt-success">✓ Streaming</div>
+                            <div class="pt-line pt-dim" style="margin-top: 8px;">╭─ Claude is thinking <span class="pt-thinking"><span></span><span></span><span></span></span></div>
+                            <div class="pt-line pt-dim">│ Analyzing codebase structure</div>
+                            <div class="pt-line pt-dim">│ Reading src/app.rs</div>
+                        </div>
+                        <div class="phone-widget">
+                            <div class="phone-widget-header">
+                                <span class="pw-icon">◆</span> Session
+                                <span class="pw-value">12m 34s</span>
+                            </div>
+                            <div class="phone-widget-row">
+                                <span>▸ Prompts 7</span>
+                                <span class="pw-dim">2m ago</span>
+                            </div>
+                            <div class="phone-widget-row">
+                                <span>⚙ Tools</span>
+                                <span class="pw-sparkline">▁▂▄▃▅▇█▆▄▂▁▃▅▄</span>
+                            </div>
+                        </div>
+                        <div class="phone-widget">
+                            <div class="phone-widget-header">
+                                <span class="pw-branch">main</span>
+                                <span class="pw-files">3 files</span>
+                            </div>
+                            <div class="phone-git-file">
+                                <span class="pf-status">●</span>
+                                <span class="pf-path">src/app.rs</span>
+                                <span class="pf-diff"><span class="del">−42</span><span class="add">+87</span></span>
+                            </div>
+                            <div class="phone-git-file">
+                                <span class="pf-status">●</span>
+                                <span class="pf-path">src/ui.rs</span>
+                                <span class="pf-diff"><span class="del">−12</span><span class="add">+34</span></span>
+                            </div>
+                        </div>
+                        <div class="phone-widget">
+                            <div class="phone-widget-header">
+                                <span class="pw-lang">TypeScript</span>
+                                <span class="pw-count">4 changes</span>
+                            </div>
+                            <div class="phone-change">
+                                <span class="pc-mod">~</span><span class="pc-icon">ƒ</span>
+                                <span class="pc-name">handleSSE</span>
+                            </div>
+                            <div class="phone-change">
+                                <span class="pc-mod">+</span><span class="pc-icon">ƒ</span>
+                                <span class="pc-name">parseEvent</span>
                             </div>
                         </div>
                     </div>
@@ -528,56 +645,172 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
                 <div class="install-step">
                     <div class="install-step-num">3</div>
-                    <p class="install-step-text">Scan QR code to pair your phone</p>
+                    <p class="install-step-text">Click the pairing link to connect your phone</p>
                 </div>
             </div>
         </div>
     </section>
 
     <!-- Open Source Section -->
-    <section class="section open-source">
-        <div class="section-header">
-            <p class="section-label"><svg class="icon" viewBox="0 0 256 256"><path d="M208,104a79.86,79.86,0,0,0-29.27-61.81,80,80,0,0,0-101.46,0A79.86,79.86,0,0,0,48,104c0,44.18,36,80,80,80s80-35.82,80-80ZM128,56a48,48,0,0,1,32,83.89V128a8,8,0,0,0-8-8H104a8,8,0,0,0-8,8v11.89A48,48,0,0,1,128,56ZM80,232a8,8,0,0,1,0-16h96a8,8,0,0,1,0,16Zm88-32H88a8,8,0,0,1-8-8V160a8,8,0,0,1,8-8H168a8,8,0,0,1,8,8v32A8,8,0,0,1,168,200Z"/></svg> Open Source</p>
-            <h2 class="section-title">Free and open source</h2>
-        </div>
-        <div class="open-source-content">
-            <p class="open-source-text">
-                Crabigator is MIT licensed. View the source, submit issues, contribute
-                features, or fork it for your own needs. The cloud dashboard is optional —
-                the local TUI works standalone.
+    <section class="section open-source" id="open-source">
+        <div class="github-card">
+            <div class="github-header">
+                <svg class="github-logo" viewBox="0 0 98 96" fill="currentColor">
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z"/>
+                </svg>
+                <div class="github-repo">
+                    <span class="github-org">samuelclay</span>
+                    <span class="github-sep">/</span>
+                    <span class="github-name">crabigator</span>
+                </div>
+            </div>
+            <p class="github-desc">
+                A Rust TUI wrapper for Claude Code with real-time mobile streaming. MIT licensed.
             </p>
-            <div class="open-source-links">
-                <a href="https://github.com/anthropics/crabigator" target="_blank" rel="noopener" class="open-source-link primary">
-                    View on GitHub
+            <div class="github-meta">
+                <span class="github-lang">
+                    <span class="lang-dot rust"></span>
+                    Rust
+                </span>
+                <span class="github-license">
+                    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8.75.75V2h.985c.304 0 .603.08.867.231l1.29.736c.038.022.08.033.124.033h2.234a.75.75 0 0 1 0 1.5h-.427l2.111 4.692a.75.75 0 0 1-.154.838l-.53-.53.529.531-.001.002-.002.002-.006.006-.016.015-.045.04a3.514 3.514 0 0 1-.686.45A4.492 4.492 0 0 1 13 11c-.88 0-1.556-.22-2.023-.454a3.515 3.515 0 0 1-.686-.45l-.045-.04-.016-.015-.006-.006-.004-.004-.001-.001a.75.75 0 0 1-.154-.838L12.178 4.5h-.162c-.305 0-.604-.079-.868-.231l-1.29-.736a.245.245 0 0 0-.124-.033H8.75V13h2.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1 0-1.5h2.5V3.5h-.984a.245.245 0 0 0-.124.033l-1.289.737c-.265.15-.564.23-.869.23h-.162l2.112 4.692a.75.75 0 0 1-.154.838l-.53-.53.529.531-.001.002-.002.002-.006.006-.016.015-.045.04a3.517 3.517 0 0 1-.686.45A4.492 4.492 0 0 1 3 11c-.88 0-1.556-.22-2.023-.454a3.512 3.512 0 0 1-.686-.45l-.045-.04-.016-.015-.006-.006-.004-.004-.001-.001a.75.75 0 0 1-.154-.838L2.178 4.5H1.75a.75.75 0 0 1 0-1.5h2.234c.044 0 .086-.011.124-.033l1.29-.736A1.75 1.75 0 0 1 6.265 2H7.25V.75a.75.75 0 0 1 1.5 0Z"/></svg>
+                    MIT
+                </span>
+            </div>
+            <div class="github-actions">
+                <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener" class="github-btn primary">
+                    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+                    Star
                 </a>
-                <a href="https://github.com/anthropics/crabigator#readme" target="_blank" rel="noopener" class="open-source-link secondary">
-                    Read the Docs
+                <a href="https://github.com/samuelclay/crabigator/fork" target="_blank" rel="noopener" class="github-btn">
+                    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 5.372v.878c0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75v-.878a2.25 2.25 0 1 1 1.5 0v.878a2.25 2.25 0 0 1-2.25 2.25h-1.5v2.128a2.251 2.251 0 1 1-1.5 0V8.5h-1.5A2.25 2.25 0 0 1 3.5 6.25v-.878a2.25 2.25 0 1 1 1.5 0ZM5 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm6.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm-3 8.75a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z"/></svg>
+                    Fork
                 </a>
-                <a href="https://github.com/anthropics/crabigator/issues" target="_blank" rel="noopener" class="open-source-link secondary">
-                    Report an Issue
+                <a href="https://github.com/samuelclay/crabigator/issues" target="_blank" rel="noopener" class="github-btn">
+                    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z"/></svg>
+                    Issues
+                </a>
+                <a href="https://github.com/samuelclay/crabigator/pulls" target="_blank" rel="noopener" class="github-btn">
+                    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"/></svg>
+                    PRs
+                </a>
+            </div>
+            <div class="github-links">
+                <a href="https://github.com/samuelclay/crabigator#readme" target="_blank" rel="noopener" class="github-link">
+                    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Zm7.251 10.324.004-5.073-.002-2.253A2.25 2.25 0 0 0 5.003 2.5H1.5v9h3.757a3.75 3.75 0 0 1 1.994.574ZM8.755 4.75l-.004 7.322a3.752 3.752 0 0 1 1.992-.572H14.5v-9h-3.495a2.25 2.25 0 0 0-2.25 2.25Z"/></svg>
+                    README
+                </a>
+                <a href="https://github.com/samuelclay/crabigator/blob/main/LICENSE" target="_blank" rel="noopener" class="github-link">
+                    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8.75.75V2h.985c.304 0 .603.08.867.231l1.29.736c.038.022.08.033.124.033h2.234a.75.75 0 0 1 0 1.5h-.427l2.111 4.692a.75.75 0 0 1-.154.838l-.53-.53.529.531-.001.002-.002.002-.006.006-.016.015-.045.04a3.514 3.514 0 0 1-.686.45A4.492 4.492 0 0 1 13 11c-.88 0-1.556-.22-2.023-.454a3.515 3.515 0 0 1-.686-.45l-.045-.04-.016-.015-.006-.006-.004-.004-.001-.001a.75.75 0 0 1-.154-.838L12.178 4.5h-.162c-.305 0-.604-.079-.868-.231l-1.29-.736a.245.245 0 0 0-.124-.033H8.75V13h2.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1 0-1.5h2.5V3.5h-.984a.245.245 0 0 0-.124.033l-1.289.737c-.265.15-.564.23-.869.23h-.162l2.112 4.692a.75.75 0 0 1-.154.838l-.53-.53.529.531-.001.002-.002.002-.006.006-.016.015-.045.04a3.517 3.517 0 0 1-.686.45A4.492 4.492 0 0 1 3 11c-.88 0-1.556-.22-2.023-.454a3.512 3.512 0 0 1-.686-.45l-.045-.04-.016-.015-.006-.006-.004-.004-.001-.001a.75.75 0 0 1-.154-.838L2.178 4.5H1.75a.75.75 0 0 1 0-1.5h2.234c.044 0 .086-.011.124-.033l1.29-.736A1.75 1.75 0 0 1 6.265 2H7.25V.75a.75.75 0 0 1 1.5 0Z"/></svg>
+                    LICENSE
+                </a>
+                <a href="https://github.com/samuelclay/crabigator/releases" target="_blank" rel="noopener" class="github-link">
+                    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 7.775V2.75C1 1.784 1.784 1 2.75 1h5.025c.464 0 .91.184 1.238.513l6.25 6.25a1.75 1.75 0 0 1 0 2.474l-5.026 5.026a1.75 1.75 0 0 1-2.474 0l-6.25-6.25A1.752 1.752 0 0 1 1 7.775Zm1.5 0c0 .066.026.13.073.177l6.25 6.25a.25.25 0 0 0 .354 0l5.025-5.025a.25.25 0 0 0 0-.354l-6.25-6.25a.25.25 0 0 0-.177-.073H2.75a.25.25 0 0 0-.25.25ZM6 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"/></svg>
+                    Releases
+                </a>
+                <a href="https://github.com/samuelclay/crabigator/wiki" target="_blank" rel="noopener" class="github-link">
+                    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm10.5 6.5a.75.75 0 0 0 0-1.5h-8.5a.75.75 0 0 0 0 1.5Zm0-3a.75.75 0 0 0 0-1.5h-8.5a.75.75 0 0 0 0 1.5Z"/></svg>
+                    Discussions
                 </a>
             </div>
         </div>
     </section>
 
     <!-- Mobile Apps Coming Soon -->
-    <section class="section mobile-apps">
-        <div class="section-header">
-            <p class="section-label"><svg class="icon" viewBox="0 0 256 256"><path d="M176,16H80A24,24,0,0,0,56,40V216a24,24,0,0,0,24,24h96a24,24,0,0,0,24-24V40A24,24,0,0,0,176,16ZM140,208H116a8,8,0,0,1,0-16h24a8,8,0,0,1,0,16Z"/></svg> Coming Soon</p>
-            <h2 class="section-title">Native mobile apps</h2>
-            <p class="section-subtitle">
-                Get notified when Crabigator launches on iOS and Android.
-                Push notifications when Claude needs you, native performance, and offline support.
-            </p>
+    <section class="section mobile-apps" id="mobile">
+        <div class="mobile-content">
+            <div class="mobile-phones">
+                <!-- iPhone -->
+                <div class="phone iphone">
+                    <div class="phone-notch"></div>
+                    <div class="phone-screen">
+                        <div class="app-header">
+                            <span class="app-logo">🦀</span>
+                            <span class="app-title">Crabigator</span>
+                        </div>
+                        <div class="app-notification">
+                            <div class="notif-icon">
+                                <svg viewBox="0 0 256 256" fill="currentColor"><path d="M221.8,175.94C216.25,166.38,208,139.33,208,104a80,80,0,1,0-160,0c0,35.34-8.26,62.38-13.81,71.94A16,16,0,0,0,48,200H88.81a40,40,0,0,0,78.38,0H208a16,16,0,0,0,13.8-24.06Z"/></svg>
+                            </div>
+                            <div class="notif-content">
+                                <div class="notif-title">Permission Required</div>
+                                <div class="notif-body">Claude wants to run: git commit</div>
+                            </div>
+                        </div>
+                        <div class="app-session">
+                            <div class="session-state thinking">Thinking...</div>
+                            <div class="session-path">~/projects/app</div>
+                        </div>
+                        <div class="app-actions">
+                            <button class="app-btn approve">Approve</button>
+                            <button class="app-btn deny">Deny</button>
+                        </div>
+                    </div>
+                    <div class="phone-label">
+                        <svg viewBox="0 0 256 256" fill="currentColor"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216ZM173.66,90.34a8,8,0,0,1,0,11.32l-40,40a8,8,0,0,1-11.32-11.32l40-40A8,8,0,0,1,173.66,90.34ZM96,16a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,16Z"/></svg>
+                        iOS
+                    </div>
+                </div>
+                <!-- Android -->
+                <div class="phone android">
+                    <div class="phone-screen">
+                        <div class="app-header">
+                            <span class="app-logo">🦀</span>
+                            <span class="app-title">Crabigator</span>
+                        </div>
+                        <div class="app-terminal">
+                            <div class="term-line"><span class="term-prompt">❯</span> Analyzing codebase...</div>
+                            <div class="term-line"><span class="term-file">src/main.rs</span> modified</div>
+                            <div class="term-line"><span class="term-added">+42</span> <span class="term-removed">-12</span></div>
+                        </div>
+                        <div class="app-stats">
+                            <div class="stat"><span class="stat-value">3</span><span class="stat-label">Sessions</span></div>
+                            <div class="stat"><span class="stat-value">47</span><span class="stat-label">Prompts</span></div>
+                            <div class="stat"><span class="stat-value">2.1h</span><span class="stat-label">Time</span></div>
+                        </div>
+                    </div>
+                    <div class="phone-label">
+                        <svg viewBox="0 0 256 256" fill="currentColor"><path d="M176,16H80A24,24,0,0,0,56,40V216a24,24,0,0,0,24,24h96a24,24,0,0,0,24-24V40A24,24,0,0,0,176,16ZM72,64H184V192H72Zm8-32h96a8,8,0,0,1,8,8v8H72V40A8,8,0,0,1,80,32Zm96,192H80a8,8,0,0,1-8-8v-8H184v8A8,8,0,0,1,176,224Z"/></svg>
+                        Android
+                    </div>
+                </div>
+            </div>
+            <div class="mobile-info">
+                <p class="section-label"><svg class="icon" viewBox="0 0 256 256"><path d="M176,16H80A24,24,0,0,0,56,40V216a24,24,0,0,0,24,24h96a24,24,0,0,0,24-24V40A24,24,0,0,0,176,16ZM140,208H116a8,8,0,0,1,0-16h24a8,8,0,0,1,0,16Z"/></svg> Coming Soon</p>
+                <h2 class="section-title">Native mobile apps</h2>
+                <div class="mobile-features">
+                    <div class="mobile-feature">
+                        <svg viewBox="0 0 256 256" fill="currentColor"><path d="M221.8,175.94C216.25,166.38,208,139.33,208,104a80,80,0,1,0-160,0c0,35.34-8.26,62.38-13.81,71.94A16,16,0,0,0,48,200H88.81a40,40,0,0,0,78.38,0H208a16,16,0,0,0,13.8-24.06Z"/></svg>
+                        <div>
+                            <strong>Push notifications</strong>
+                            <span>Know instantly when Claude needs your approval</span>
+                        </div>
+                    </div>
+                    <div class="mobile-feature">
+                        <svg viewBox="0 0 256 256" fill="currentColor"><path d="M197.66,133.66l-56,56a8,8,0,0,1-11.32-11.32L172.69,136H48a8,8,0,0,1,0-16H172.69L130.34,77.66a8,8,0,0,1,11.32-11.32l56,56A8,8,0,0,1,197.66,133.66Z"/></svg>
+                        <div>
+                            <strong>Native performance</strong>
+                            <span>Smooth 60fps animations and instant response</span>
+                        </div>
+                    </div>
+                    <div class="mobile-feature">
+                        <svg viewBox="0 0 256 256" fill="currentColor"><path d="M160,40A88.09,88.09,0,0,0,81.29,88.67,64,64,0,1,0,72,216h88a88,88,0,0,0,0-176Z"/></svg>
+                        <div>
+                            <strong>Offline support</strong>
+                            <span>Review sessions even without internet</span>
+                        </div>
+                    </div>
+                </div>
+                <form class="email-form" id="email-form">
+                    <input type="email" class="email-input" placeholder="you@example.com" required>
+                    <button type="submit" class="email-btn">Notify Me</button>
+                </form>
+                <div class="email-success" id="email-success">
+                    <svg class="icon" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm45.66,85.66-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35a8,8,0,0,1,11.32,11.32Z"/></svg> You're on the list!
+                </div>
+                <p class="email-privacy">Get notified about product launches and updates.</p>
+            </div>
         </div>
-        <form class="email-form" id="email-form">
-            <input type="email" class="email-input" placeholder="you@example.com" required>
-            <button type="submit" class="email-btn">Notify Me</button>
-        </form>
-        <div class="email-success" id="email-success">
-            <svg class="icon" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm45.66,85.66-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35a8,8,0,0,1,11.32,11.32Z"/></svg> You're on the list! We'll email you when mobile apps launch.
-        </div>
-        <p class="email-privacy">We'll only email you about the mobile app launch. No spam.</p>
     </section>
 
     <!-- Footer -->
@@ -589,8 +822,8 @@ export const landingHtml = `<!DOCTYPE html>
             </div>
             <div class="footer-links">
                 <a href="/dashboard" class="footer-link">Dashboard</a>
-                <a href="https://github.com/anthropics/crabigator" target="_blank" rel="noopener" class="footer-link">GitHub</a>
-                <a href="https://github.com/anthropics/crabigator#readme" target="_blank" rel="noopener" class="footer-link">Documentation</a>
+                <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener" class="footer-link">GitHub</a>
+                <a href="https://github.com/samuelclay/crabigator#readme" target="_blank" rel="noopener" class="footer-link">Documentation</a>
             </div>
             <div class="footer-meta">
                 MIT License
