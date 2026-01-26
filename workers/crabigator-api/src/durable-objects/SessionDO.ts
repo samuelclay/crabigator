@@ -207,6 +207,9 @@ export class SessionDO implements DurableObject {
                 if (this.sessionInfo) {
                     this.notifySessionList('disconnect', { id: this.sessionInfo.id });
                 }
+                // Schedule cleanup alarm - if desktop doesn't reconnect within 15s, clean up
+                // This handles force quits while allowing deploy reconnections
+                this.state.storage.setAlarm(Date.now() + 15_000);
             }
         });
 
@@ -219,6 +222,8 @@ export class SessionDO implements DurableObject {
                 if (this.sessionInfo) {
                     this.notifySessionList('disconnect', { id: this.sessionInfo.id });
                 }
+                // Schedule cleanup alarm
+                this.state.storage.setAlarm(Date.now() + 15_000);
             }
         });
 
@@ -806,6 +811,60 @@ export class SessionDO implements DurableObject {
             this.desktopWs.send(JSON.stringify(message));
         } catch {
             // Connection may have failed, ignore
+        }
+    }
+
+    /**
+     * Alarm handler for cleaning up disconnected sessions.
+     *
+     * Called 15 seconds after WebSocket disconnect. If desktop has reconnected
+     * (e.g., after a deploy), do nothing. If still disconnected, mark session
+     * as ended in D1 and notify SessionListDO to remove it.
+     */
+    async alarm(): Promise<void> {
+        // If desktop reconnected (e.g., after deploy), nothing to clean up
+        if (this.desktopWs !== null) {
+            return;
+        }
+
+        // Desktop is still disconnected - this is a real quit
+        if (!this.sessionInfo) {
+            return;
+        }
+
+        const sessionId = this.sessionInfo.id;
+        const endedAt = Math.floor(Date.now() / 1000);
+
+        // Update D1 to mark session as ended
+        try {
+            await this.env.DB.prepare(`
+                UPDATE sessions
+                SET is_active = 0, ended_at = ?
+                WHERE id = ? AND is_active = 1
+            `).bind(endedAt, sessionId).run();
+        } catch (error) {
+            console.error('Error updating session in D1:', error);
+        }
+
+        // Notify SessionListDO to remove from active sessions
+        try {
+            const doId = this.env.SESSION_LIST.idFromName('global');
+            const stub = this.env.SESSION_LIST.get(doId);
+            await stub.fetch(new Request('https://internal/notify', {
+                method: 'POST',
+                body: JSON.stringify({
+                    type: 'updated',
+                    session: {
+                        id: sessionId,
+                        ended_at: endedAt,
+                        is_active: false,
+                        group_id: this.sessionInfo.group_id,
+                    },
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            }));
+        } catch (error) {
+            console.error('Error notifying SessionListDO:', error);
         }
     }
 }
