@@ -203,9 +203,12 @@ Claude Code hooks are installed to `~/.claude/crabigator/` for tracking session 
 
 ## Why "Crabigator"?
 
-<img src="assets/crab.svg" width="18" height="18"> Rust's mascot is a crab. We're wrapping Claude like an alligator wraps its prey. Plus: Clawd + Navigator.
+<img src="assets/crab.svg" width="18" height="18"> It's a quadruple wordplay:
 
-RIP to Cal Academy's albino alligator Claude. We had membership for two years and miss him terribly.
+- **Claude** — The AI we're wrapping
+- **Navigator** — It navigates and controls your Claude Code sessions
+- **Crab** — Rust's mascot is Ferris the crab
+- **Alligator** — Named after the late Claude, the beloved albino alligator at the California Academy of Sciences
 
 ## Contributing
 
