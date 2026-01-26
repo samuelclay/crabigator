@@ -21,6 +21,10 @@ export const dashboardHtml = `<!DOCTYPE html>
     <div class="header">
         <h1>🦀 Crabigator Dashboard</h1>
         <button class="refresh-btn" onclick="loadSessions()">↻ Refresh</button>
+        <div class="filter-indicator" id="filter-indicator">
+            <span class="filter-text">Viewing 1 session</span>
+            <button class="filter-clear" onclick="clearSessionFilter()" title="Show all sessions">✕</button>
+        </div>
         <div class="status" id="status">Loading...</div>
         <div class="style-container">
             <button class="style-btn" id="style-btn" onclick="toggleStylePopover()">

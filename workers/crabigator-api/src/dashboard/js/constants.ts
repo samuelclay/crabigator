@@ -36,4 +36,7 @@ export const constantsJs = `
 
         // Track collapsed state for project groups
         const collapsedProjects = new Set(JSON.parse(localStorage.getItem('crabigator-collapsed-projects') || '[]'));
+
+        // Single session filter mode (from ?session=xxx URL parameter)
+        const singleSessionId = new URLSearchParams(window.location.search).get('session');
 `;

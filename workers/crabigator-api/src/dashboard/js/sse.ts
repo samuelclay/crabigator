@@ -109,12 +109,19 @@ export const sseJs = `
 
                 case 'created':
                     // New session - add to view immediately at the top
+                    // But skip if we're filtering to a specific session
                     if (event.session && !sessions.has(event.session.id)) {
+                        if (singleSessionId && event.session.id !== singleSessionId) {
+                            // Skip - we're filtering to a different session
+                            break;
+                        }
                         const emptyState = container.querySelector('.no-sessions');
                         if (emptyState) emptyState.remove();
                         createSessionCard(event.session, true);
                         connectToSession(event.session.id);
-                        document.getElementById('status').textContent = sessionCount(sessions.size);
+                        if (!singleSessionId) {
+                            document.getElementById('status').textContent = sessionCount(sessions.size);
+                        }
                     }
                     break;
 

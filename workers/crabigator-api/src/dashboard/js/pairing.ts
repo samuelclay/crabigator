@@ -70,7 +70,10 @@ export const pairingJs = `
                 localStorage.setItem('crabigator_mobile_token', data.mobile_token);
 
                 showSetupSuccess();
-                setTimeout(() => { window.location.href = '/dashboard'; }, 1000);
+                // Preserve session parameter if present
+                const sessionParam = new URLSearchParams(window.location.search).get('session');
+                const redirectUrl = sessionParam ? '/dashboard?session=' + sessionParam : '/dashboard';
+                setTimeout(() => { window.location.href = redirectUrl; }, 1000);
             } catch (err) {
                 showSetupError(err.message);
             }

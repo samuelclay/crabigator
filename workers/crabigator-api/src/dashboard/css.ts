@@ -189,6 +189,51 @@ body {
     letter-spacing: 0.5px;
 }
 
+/* Filter indicator */
+.filter-indicator {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px;
+    background: rgba(251, 191, 36, 0.15);
+    border: 1px solid var(--accent-yellow);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--accent-yellow);
+    animation: filter-pulse 2s ease-in-out infinite;
+}
+.filter-indicator.visible {
+    display: flex;
+}
+@keyframes filter-pulse {
+    0%, 100% { box-shadow: 0 0 0 rgba(251, 191, 36, 0); }
+    50% { box-shadow: 0 0 12px rgba(251, 191, 36, 0.3); }
+}
+.filter-text {
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+.filter-clear {
+    background: transparent;
+    border: none;
+    color: var(--accent-yellow);
+    cursor: pointer;
+    padding: 2px 6px;
+    font-size: 14px;
+    line-height: 1;
+    border-radius: 4px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.filter-clear:hover {
+    background: rgba(251, 191, 36, 0.2);
+    color: var(--text-bright);
+}
+
 /* Container */
 .container {
     padding: 16px;

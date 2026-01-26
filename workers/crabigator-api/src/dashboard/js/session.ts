@@ -7,11 +7,19 @@ export const sessionJs = `
                 if (!resp.ok) throw new Error('Failed to fetch sessions');
                 const data = await resp.json();
 
-                document.getElementById('status').textContent = sessionCount(data.sessions.length);
+                // Filter to single session if specified via URL parameter
+                let filteredSessions = data.sessions;
+                if (singleSessionId) {
+                    filteredSessions = data.sessions.filter(s => s.id === singleSessionId);
+                    // Force single-column layout for single session view
+                    document.getElementById('sessions').dataset.layout = '1';
+                }
+                // Always show session count in status (filter indicator handles filter display)
+                document.getElementById('status').textContent = sessionCount(filteredSessions.length);
 
                 const container = document.getElementById('sessions');
 
-                if (data.sessions.length === 0) {
+                if (filteredSessions.length === 0) {
                     // If we had sessions recently and now have none, likely a deploy
                     if (hadSessionsBefore && wasRecentlyConnected() && !isDeploying) {
                         showDeployOverlay();
@@ -65,7 +73,7 @@ export const sessionJs = `
 
                 // Close event sources for removed sessions
                 for (const [id, session] of sessions) {
-                    if (!data.sessions.find(s => s.id === id)) {
+                    if (!filteredSessions.find(s => s.id === id)) {
                         session.eventSource?.close();
                         sessions.delete(id);
                     }
@@ -73,7 +81,7 @@ export const sessionJs = `
                 updateFitLayout();
 
                 // Add/update sessions
-                for (const session of data.sessions) {
+                for (const session of filteredSessions) {
                     if (!sessions.has(session.id)) {
                         createSessionCard(session);
                         connectToSession(session.id);

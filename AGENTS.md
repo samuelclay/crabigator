@@ -272,6 +272,95 @@ mcp__chrome-devtools__take_snapshot()
 - **Connection errors**: The MCP server may need to be restarted
 - **No pages**: Ask user to restart Chrome (known Chrome bug)
 
+## E2E Testing with tmux
+
+Claude Code can spawn and control Crabigator instances for end-to-end testing using tmux. This allows testing dashboard visual output by generating real Claude Code sessions.
+
+### Basic Workflow
+
+```bash
+# 1. Start crabigator in a detached tmux session
+tmux new-session -d -s crab "cd /path/to/test/project && crabigator"
+
+# 2. Wait for startup
+sleep 3
+
+# 3. Send a prompt
+tmux send-keys -t crab "explain this codebase" Enter
+
+# 4. Wait for processing, then inspect via Chrome MCP or local files
+sleep 5
+cat /tmp/crabigator-*/screen.txt
+cat /tmp/crabigator-*/scrollback.log
+
+# 5. Clean up
+tmux kill-session -t crab
+```
+
+### Special Keys
+
+```bash
+# Shift+Tab (mode cycling)
+tmux send-keys -t crab Escape "[" "Z"
+
+# Escape
+tmux send-keys -t crab Escape
+
+# Tab
+tmux send-keys -t crab Tab
+
+# Arrow keys
+tmux send-keys -t crab Up
+tmux send-keys -t crab Down
+```
+
+### Inspecting Output
+
+**Local files** (in `/tmp/crabigator-*/`):
+- `screen.txt` - Current terminal snapshot with ANSI codes
+- `scrollback.log` - Conversation transcript
+- `inspect.json` - Widget state
+
+**Dashboard** (via Chrome MCP):
+1. Navigate to `https://drinkcrabigator.com/dashboard`
+2. Use `take_snapshot` to get accessibility tree
+3. Use `take_screenshot` for visual verification
+
+**Single-session view** - Filter to one session for focused testing:
+```
+https://drinkcrabigator.com/dashboard?session=SESSION_ID
+```
+This hides Style/Account buttons and forces single-column layout.
+
+### Example: Testing Plan Mode Display
+
+```bash
+# Start session
+tmux new-session -d -s test "cd ~/test-project && crabigator"
+sleep 3
+
+# Get session ID for single-session dashboard view
+SESSION_ID=$(cat /tmp/crabigator-*/inspect.json 2>/dev/null | grep -o '"session_id":"[^"]*"' | tail -1 | cut -d'"' -f4)
+echo "Session: $SESSION_ID"
+
+# Enter plan mode
+tmux send-keys -t test "make a plan for adding authentication" Enter
+
+# Wait for plan
+sleep 10
+
+# Check dashboard via Chrome MCP (single-session view)
+# mcp__chrome-devtools__navigate_page(url: "https://drinkcrabigator.com/dashboard?session=$SESSION_ID")
+# mcp__chrome-devtools__take_screenshot()
+
+# Check local files
+cat /tmp/crabigator-*/screen.txt
+cat /tmp/crabigator-*/scrollback.log
+
+# Cleanup
+tmux kill-session -t test
+```
+
 ## Code Quality
 
 After completing code changes, use the code-simplifier agent to clean up the code:

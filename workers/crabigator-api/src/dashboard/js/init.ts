@@ -2,7 +2,21 @@
 export const initJs = `
         // Initial load (wrapped in async IIFE for await support)
         (async function() {
-            setLayout(currentLayout);  // Apply saved layout preference
+            // Single session mode - show filter indicator
+            if (singleSessionId) {
+                document.getElementById('sessions').dataset.layout = '1';
+                // Show filter indicator
+                const filterIndicator = document.getElementById('filter-indicator');
+                if (filterIndicator) {
+                    filterIndicator.classList.add('visible');
+                    const filterText = filterIndicator.querySelector('.filter-text');
+                    if (filterText) {
+                        filterText.textContent = 'Filtered: ' + singleSessionId.slice(0, 8);
+                    }
+                }
+            } else {
+                setLayout(currentLayout);  // Apply saved layout preference
+            }
             applyGrouping();           // Apply saved grouping preference
             loadSettingsFromServer();  // Load style preferences
 

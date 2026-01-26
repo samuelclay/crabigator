@@ -14,4 +14,11 @@ export const utilsJs = `
             return n + (n === 1 ? ' session' : ' sessions');
         }
 
+        function clearSessionFilter() {
+            // Remove the session parameter and reload
+            const url = new URL(window.location.href);
+            url.searchParams.delete('session');
+            window.location.href = url.toString();
+        }
+
 `;
