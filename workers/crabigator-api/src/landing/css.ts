@@ -295,6 +295,107 @@ code, .mono {
     margin-bottom: 32px;
 }
 
+/* Hero Install */
+.hero-install {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    margin-bottom: 32px;
+}
+.hero-install-command {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-abyss);
+    border: 1px solid var(--border-dim);
+    border-radius: 8px;
+    padding: 14px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    width: fit-content;
+    transition: all 0.3s;
+}
+.hero-install-command:hover {
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 20px var(--glow-cyan);
+}
+.hero-install-prompt {
+    color: var(--accent-green);
+    font-weight: 600;
+}
+.hero-install-text {
+    color: var(--text-bright);
+}
+.hero-copy-btn {
+    background: transparent;
+    border: none;
+    padding: 6px;
+    cursor: pointer;
+    color: var(--text-dim);
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+}
+.hero-copy-btn:hover {
+    color: var(--accent-cyan);
+    background: rgba(34, 211, 238, 0.1);
+}
+.hero-copy-btn.copied {
+    color: var(--accent-green);
+}
+.hero-copy-btn svg {
+    width: 16px;
+    height: 16px;
+}
+.hero-install-steps {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+}
+.hero-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--text-mid);
+}
+.hero-step code {
+    background: var(--bg-surface);
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: var(--accent-cyan);
+    border: 1px solid var(--border-dim);
+}
+.hero-step-link {
+    color: var(--accent-cyan);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: all 0.2s;
+}
+.hero-step-link:hover {
+    color: var(--accent-cyan);
+    border-bottom-color: var(--accent-cyan);
+}
+.hero-step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: linear-gradient(135deg, var(--accent-magenta) 0%, var(--accent-blue) 100%);
+    color: white;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 700;
+}
+.hero-demo-btn {
+    width: fit-content;
+}
+
 .btn-primary {
     font-family: 'JetBrains Mono', monospace;
     background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
@@ -2610,6 +2711,9 @@ code, .mono {
     }
     .hero-ctas {
         justify-content: center;
+    }
+    .hero-install-command {
+        width: auto;
     }
     .hero-price {
         justify-content: center;
