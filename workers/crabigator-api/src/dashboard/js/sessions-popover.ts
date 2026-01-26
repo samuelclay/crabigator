@@ -80,8 +80,9 @@ export const sessionsPopoverJs = `
 
                 for (const session of sessionList) {
                     const duration = session.startedAt ? formatSessionDuration(session.startedAt) : '';
+                    const isFocused = singleSessionId && session.id === singleSessionId;
                     html += \`
-                        <div class="session-item" onclick="selectSessionFromPopover('\${session.id}')">
+                        <div class="session-item\${isFocused ? ' focused' : ''}" onclick="selectSessionFromPopover('\${session.id}')">
                             <div class="session-item-row">
                                 <span class="session-item-title">\${escapeHtml(session.title)}</span>
                                 <span class="session-item-state \${session.state}">\${session.state}</span>

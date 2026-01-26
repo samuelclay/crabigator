@@ -1344,6 +1344,14 @@ body {
 .session-item:hover {
     background: var(--bg-surface);
 }
+.session-item.focused {
+    background: rgba(74, 222, 128, 0.08);
+    border-left: 2px solid var(--accent-green);
+    padding-left: 14px;
+}
+.session-item.focused:hover {
+    background: rgba(74, 222, 128, 0.12);
+}
 .session-item-row {
     display: flex;
     align-items: center;
