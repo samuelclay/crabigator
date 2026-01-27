@@ -485,8 +485,9 @@ gh release view vX.Y.Z
 
 ### Clean Up Draft Releases
 
-Failed workflows may leave draft releases. Clean them up:
+Failed workflows may leave draft releases. If a retry run uploads to an existing draft, the release may stay as a draft even after success. Check and publish:
 ```bash
-gh release list  # Check for drafts
-gh release delete vX.Y.Z --yes  # Delete draft (won't affect published release)
+gh release list                    # Check for drafts (shows "Draft" status)
+gh release edit vX.Y.Z --draft=false  # Publish a draft release
+gh release delete vX.Y.Z --yes     # Or delete draft entirely
 ```
