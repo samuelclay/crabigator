@@ -1794,6 +1794,8 @@ code, .mono {
 
 /* === INTERACTIVE SECTION === */
 .interactive {
+    position: relative;
+    overflow: hidden;
     border-top: 1px solid var(--border-dim);
     border-bottom: 1px solid var(--border-dim);
 }
@@ -3059,6 +3061,7 @@ code, .mono {
     }
     .hero-headline { font-size: 32px; letter-spacing: -1px; }
     .hero-subheadline { font-size: 15px; }
+    .hero-install-command { font-size: 14px; padding: 12px 16px; gap: 10px; }
     .hero-ctas { flex-direction: column; align-items: stretch; }
     .hero-price { font-size: 11px; gap: 8px; justify-content: center; }
     .btn-primary, .btn-secondary { width: auto; display: flex; justify-content: center; text-align: center; padding: 14px 24px; }
