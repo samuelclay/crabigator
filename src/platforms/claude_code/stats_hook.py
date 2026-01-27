@@ -36,6 +36,31 @@ def debug_log(session_id: str, message: str):
         pass  # Silently ignore logging errors
 
 
+def create_claude_session_symlink(crabigator_session_id: str, claude_session_id: str):
+    """Create a symlink from Claude Code's session UUID to crabigator's session directory.
+
+    This allows accessing /tmp/crabigator-{claude_uuid} which points to the actual
+    /tmp/crabigator-{crabigator_id} directory, enabling correlation between the two.
+    """
+    if not crabigator_session_id or not claude_session_id:
+        return
+
+    # Don't create symlink if they're the same
+    if crabigator_session_id == claude_session_id:
+        return
+
+    try:
+        target = Path(f"/tmp/crabigator-{crabigator_session_id}")
+        symlink = Path(f"/tmp/crabigator-{claude_session_id}")
+
+        # Only create if target exists and symlink doesn't
+        if target.exists() and not symlink.exists():
+            symlink.symlink_to(target)
+            debug_log(crabigator_session_id, f"Created symlink: {symlink} -> {target}")
+    except Exception as e:
+        debug_log(crabigator_session_id, f"Failed to create symlink: {e}")
+
+
 def get_stats_file(cwd: str) -> Path:
     """Get stats file path based on session ID (from env) or working directory hash."""
     session_id = os.environ.get("CRABIGATOR_SESSION_ID")
@@ -137,21 +162,32 @@ def save_stats(stats_file: Path, stats: dict):
 
 
 def main():
-    session_id = os.environ.get("CRABIGATOR_SESSION_ID", "")
+    crabigator_session_id = os.environ.get("CRABIGATOR_SESSION_ID", "")
     try:
         data = json.load(sys.stdin)
     except json.JSONDecodeError as e:
-        debug_log(session_id, f"JSON decode error: {e}")
+        debug_log(crabigator_session_id, f"JSON decode error: {e}")
         sys.exit(0)
 
     cwd = data.get("cwd", os.getcwd())
     event = data.get("hook_event_name", "")
 
-    debug_log(session_id, f"EVENT: {event} cwd={cwd}")
-    debug_log(session_id, f"RAW_DATA: {json.dumps(data)}")
+    # Extract Claude Code's session UUID from hook data
+    claude_session_id = data.get("session_id", "")
+
+    debug_log(crabigator_session_id, f"EVENT: {event} cwd={cwd} claude_session={claude_session_id}")
+    debug_log(crabigator_session_id, f"RAW_DATA: {json.dumps(data)}")
+
+    # Create symlink from Claude session UUID to crabigator directory (first event only)
+    if claude_session_id and crabigator_session_id:
+        create_claude_session_symlink(crabigator_session_id, claude_session_id)
 
     stats_file = get_stats_file(cwd)
     stats = load_stats(stats_file)
+
+    # Store Claude Code's session UUID for correlation
+    if claude_session_id:
+        stats["claude_session_id"] = claude_session_id
 
     # Store transcript path for scrollback reading
     transcript_path = data.get("transcript_path")
@@ -163,9 +199,9 @@ def main():
         model = extract_model_from_transcript(transcript_path)
         if model:
             stats["model"] = model
-            debug_log(session_id, f"  extracted model={model}")
+            debug_log(crabigator_session_id, f"  extracted model={model}")
 
-    debug_log(session_id, f"  state_before={stats.get('state', 'ready')} file={stats_file}")
+    debug_log(crabigator_session_id, f"  state_before={stats.get('state', 'ready')} file={stats_file}")
 
     if event == "PermissionRequest":
         # Permission dialog is being shown to user
@@ -259,9 +295,9 @@ def main():
         # Log unhandled events for debugging
         add_event(stats, event, {"unhandled": True})
 
-    debug_log(session_id, f"  state_after={stats.get('state', 'ready')}")
+    debug_log(crabigator_session_id, f"  state_after={stats.get('state', 'ready')}")
     save_stats(stats_file, stats)
-    debug_log(session_id, f"  saved to {stats_file}")
+    debug_log(crabigator_session_id, f"  saved to {stats_file}")
     sys.exit(0)
 
 

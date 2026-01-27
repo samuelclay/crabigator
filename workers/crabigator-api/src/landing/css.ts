@@ -2107,13 +2107,14 @@ code, .mono {
 @media (max-width: 480px) {
     .why-crabigator { padding: 40px 12px; }
     .why-question { font-size: 24px; margin-bottom: 24px; }
-    .why-equation { gap: 4px; margin-bottom: 32px; }
-    .why-term { min-width: 60px; gap: 4px; }
-    .why-icon { width: 48px; height: 48px; border-radius: 12px; }
-    .why-icon svg { width: 26px; height: 26px; }
-    .why-icon-gator svg { width: 40px; height: 40px; }
-    .why-plus { font-size: 14px; margin-top: 10px; }
-    .why-label { font-size: 11px; }
+    .why-equation { gap: 2px; margin-bottom: 32px; flex-wrap: nowrap; }
+    .why-term { min-width: 0; flex: 1 1 0; gap: 4px; }
+    .why-icon { width: 44px; height: 44px; border-radius: 12px; }
+    .why-icon svg { width: 24px; height: 24px; }
+    .why-icon-gator svg { width: 36px; height: 36px; }
+    .why-plus { font-size: 12px; margin-top: 10px; flex-shrink: 0; }
+    .why-label { font-size: 10px; }
+    .why-sub { font-size: 8px; }
     .why-tagline { font-size: 14px; letter-spacing: 1px; }
     .why-crabigator::before { display: none; }
 }
