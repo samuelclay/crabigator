@@ -1,7 +1,8 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::env;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
@@ -31,7 +32,8 @@ impl PlatformPty {
             pixel_height: 0,
         })?;
 
-        let mut cmd = CommandBuilder::new(command);
+        let (resolved_command, path_prefix) = resolve_command(command)?;
+        let mut cmd = CommandBuilder::new(&resolved_command);
 
         // Add any extra arguments (e.g., --resume, --continue)
         for arg in extra_args {
@@ -44,8 +46,25 @@ impl PlatformPty {
         }
 
         // Inherit all environment variables from parent process
+        // Ensure PATH includes the resolved command directory if needed.
+        let mut saw_path = false;
+        let path_override = build_path_override(path_prefix.as_ref());
         for (key, value) in env::vars() {
-            cmd.env(key, value);
+            if key == "PATH" {
+                saw_path = true;
+                if let Some(ref override_path) = path_override {
+                    cmd.env("PATH", override_path);
+                } else {
+                    cmd.env(key, value);
+                }
+            } else {
+                cmd.env(key, value);
+            }
+        }
+        if !saw_path {
+            if let Some(override_path) = path_override {
+                cmd.env("PATH", override_path);
+            }
         }
 
         // Override TERM for proper terminal support
@@ -171,4 +190,81 @@ impl PlatformPty {
     pub fn screen(&self) -> &vt100::Screen {
         self.parser.screen()
     }
+}
+
+fn resolve_command(command: &str) -> Result<(String, Option<PathBuf>)> {
+    if looks_like_path(command) {
+        let path = PathBuf::from(command);
+        if path.is_file() {
+            return Ok((path.to_string_lossy().into_owned(), path.parent().map(Path::to_path_buf)));
+        }
+        bail!("Command path not found: {command}");
+    }
+
+    if let Some(found) = find_in_path(command) {
+        return Ok((
+            found.to_string_lossy().into_owned(),
+            None,
+        ));
+    }
+
+    if let Some(found) = find_in_fallbacks(command) {
+        let prefix = found.parent().map(Path::to_path_buf);
+        return Ok((found.to_string_lossy().into_owned(), prefix));
+    }
+
+    bail!("Command '{command}' not found in PATH. Install it or add it to PATH.");
+}
+
+fn looks_like_path(command: &str) -> bool {
+    command.contains('/') || command.contains('\\')
+}
+
+fn find_in_path(command: &str) -> Option<PathBuf> {
+    let paths = env::var_os("PATH")?;
+    for dir in env::split_paths(&paths) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = dir.join(command);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn find_in_fallbacks(command: &str) -> Option<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        dirs.push(home.join(".local/bin"));
+        dirs.push(home.join(".npm-global/bin"));
+        dirs.push(home.join(".yarn/bin"));
+        dirs.push(home.join(".volta/bin"));
+        dirs.push(home.join("bin"));
+    }
+
+    dirs.push(PathBuf::from("/opt/homebrew/bin"));
+    dirs.push(PathBuf::from("/opt/homebrew/opt/node/bin"));
+    dirs.push(PathBuf::from("/usr/local/bin"));
+    dirs.push(PathBuf::from("/usr/bin"));
+    dirs.push(PathBuf::from("/bin"));
+
+    for dir in dirs {
+        let candidate = dir.join(command);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn build_path_override(prefix: Option<&PathBuf>) -> Option<String> {
+    let prefix = prefix?;
+    let existing = env::var_os("PATH").unwrap_or_default();
+    let mut paths: Vec<PathBuf> = env::split_paths(&existing).collect();
+    if !paths.iter().any(|p| p == prefix) {
+        paths.insert(0, prefix.to_path_buf());
+    }
+    env::join_paths(paths).ok().and_then(|p| p.into_string().ok())
 }
