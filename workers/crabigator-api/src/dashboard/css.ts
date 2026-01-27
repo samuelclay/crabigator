@@ -1601,6 +1601,18 @@ body {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
 }
+/* Question tabs for multi-question prompts */
+.question-tab {
+    color: var(--text-dim);
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: transparent;
+}
+.question-tab.current {
+    color: var(--accent-cyan);
+    background: rgba(34, 211, 238, 0.15);
+}
 .prompt-question {
     color: var(--text-bright);
     font-size: 14px;

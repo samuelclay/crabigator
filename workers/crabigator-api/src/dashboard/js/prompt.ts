@@ -77,13 +77,44 @@ export const promptJs = `
             }
 
             if (prompt.prompt_type === 'question') {
-                // AskUserQuestion prompt
-                const q = prompt.questions[0];
-                headerEl.textContent = q.header || 'Question';
+                // AskUserQuestion prompt - may have multiple questions
+                // Track which question index we're on per session
+                let qIdx = sessionQuestionIndex.get(sessionId) || 0;
+
+                // If this is a new prompt (different questions), reset index
+                const prevPrompt = sessionPromptData.get(sessionId);
+                if (!prevPrompt || prevPrompt.questions?.length !== prompt.questions?.length ||
+                    prevPrompt.questions?.[0]?.question !== prompt.questions?.[0]?.question) {
+                    qIdx = 0;
+                    sessionQuestionIndex.set(sessionId, 0);
+                }
+
+                // Clamp index to valid range
+                if (qIdx >= prompt.questions.length) {
+                    qIdx = 0;
+                    sessionQuestionIndex.set(sessionId, 0);
+                }
+
+                const q = prompt.questions[qIdx];
+                console.log('[updatePromptPanel] question', qIdx + 1, 'of', prompt.questions.length, ':', q.header);
+
+                // Show question tabs if multiple questions
+                if (prompt.questions.length > 1) {
+                    const tabs = prompt.questions.map((quest, i) => {
+                        const checked = i < qIdx ? '☒' : '☐';
+                        const isCurrent = i === qIdx;
+                        return '<span class="question-tab' + (isCurrent ? ' current' : '') + '">' +
+                               checked + ' ' + quest.header + '</span>';
+                    }).join(' ');
+                    headerEl.innerHTML = tabs;
+                } else {
+                    headerEl.textContent = q.header || 'Question';
+                }
                 questionEl.textContent = q.question;
 
                 // Render options (no tab instructions for questions)
-                optionsEl.innerHTML = renderOptions(q.options, null);
+                // Pass question index for answer tracking
+                optionsEl.innerHTML = renderQuestionOptions(sessionId, qIdx, q.options, prompt.questions.length);
 
                 // Show "Other" input if allowed
                 if (q.allows_other !== false) {
@@ -139,6 +170,66 @@ export const promptJs = `
 
         // Store prompt data for each session (for key sequence navigation)
         const sessionPromptData = new Map();
+
+        // Track which question index we're on for multi-question prompts
+        const sessionQuestionIndex = new Map();
+
+        // Render options for AskUserQuestion with question index tracking
+        function renderQuestionOptions(sessionId, qIdx, options, totalQuestions) {
+            return options.map((opt, i) => {
+                const num = i + 1;
+                const desc = opt.description
+                    ? '<div class="prompt-option-desc">' + escapeHtml(opt.description) + '</div>'
+                    : '';
+
+                return '<div class="prompt-option" onclick="sendQuestionAnswer(\\'' + sessionId + '\\', ' + qIdx + ', \\'' + opt.value + '\\', ' + totalQuestions + ')">' +
+                       '<span class="prompt-option-number">' + num + '.</span>' +
+                       '<span class="prompt-option-label">' + escapeHtml(opt.label) + '</span>' +
+                       desc +
+                       '</div>';
+            }).join('');
+        }
+
+        // Send answer for a multi-question prompt and advance to next question
+        async function sendQuestionAnswer(sessionId, qIdx, value, totalQuestions) {
+            console.log('[sendQuestionAnswer] session:', sessionId, 'question:', qIdx + 1, 'of', totalQuestions, 'value:', value);
+
+            try {
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ text: value })
+                });
+
+                if (handleAuthFailure(resp)) return;
+                if (resp.ok) {
+                    console.log('[sendQuestionAnswer] success');
+
+                    // Advance to next question
+                    const nextIdx = qIdx + 1;
+                    if (nextIdx < totalQuestions) {
+                        // More questions - update index and re-render
+                        sessionQuestionIndex.set(sessionId, nextIdx);
+                        const prompt = sessionPromptData.get(sessionId);
+                        if (prompt) {
+                            updatePromptPanel(sessionId, prompt);
+                        }
+                    } else {
+                        // All questions answered - hide prompt panel
+                        const panel = document.getElementById('prompt-' + sessionId);
+                        if (panel) panel.classList.remove('visible');
+                        sessionQuestionIndex.delete(sessionId);
+                    }
+                    // Scroll to top of session
+                    scrollToSession(sessionId);
+                } else {
+                    const err = await resp.json();
+                    console.error('Failed to send question answer:', err);
+                }
+            } catch (err) {
+                console.error('Failed to send question answer:', err);
+            }
+        }
 
         // Toggle the visibility of the Send button based on input content
         function toggleTabSendButton(sessionId, optionNum) {
