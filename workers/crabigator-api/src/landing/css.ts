@@ -3022,6 +3022,7 @@ code, .mono {
         order: -1;
     }
     .interactive-text {
+        position: relative;
         max-width: 600px;
         margin: 0 auto;
         text-align: center;

@@ -3,15 +3,27 @@ import { vertexShader, neonPalmShader } from './shaders';
 
 export const palmWebglJs = `
 (function() {
-    // Find the interactive section and create canvas dynamically
+    // Find the interactive section and text area
     const section = document.querySelector('.interactive');
+    const textArea = document.querySelector('.interactive-text');
     if (!section) return;
+
+    // On mobile (<=1024px), canvas goes in text area only; on desktop, whole section
+    const isMobile = () => window.innerWidth <= 1024;
 
     // Create canvas element
     const canvas = document.createElement('canvas');
     canvas.id = 'palm-canvas';
     canvas.style.cssText = 'position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none;';
-    section.insertBefore(canvas, section.firstChild);
+
+    // Get current container based on viewport
+    function getContainer() {
+        return (isMobile() && textArea) ? textArea : section;
+    }
+
+    // Insert canvas into appropriate container
+    let currentContainer = getContainer();
+    currentContainer.insertBefore(canvas, currentContainer.firstChild);
 
     const gl = canvas.getContext('webgl', { alpha: true, preserveDrawingBuffer: true });
     if (!gl) {
@@ -64,9 +76,14 @@ export const palmWebglJs = `
     let animationId = null;
     let isVisible = false;
 
-    // Resize canvas to match section
+    // Resize canvas to match container (and re-parent if needed)
     function resize() {
-        const rect = section.getBoundingClientRect();
+        const newContainer = getContainer();
+        if (newContainer !== currentContainer) {
+            currentContainer = newContainer;
+            currentContainer.insertBefore(canvas, currentContainer.firstChild);
+        }
+        const rect = currentContainer.getBoundingClientRect();
         const dpr = window.devicePixelRatio || 1;
         canvas.width = rect.width * dpr;
         canvas.height = rect.height * dpr;
@@ -123,7 +140,7 @@ export const palmWebglJs = `
         });
     }, { threshold: 0.1 });
 
-    observer.observe(section);
+    observer.observe(currentContainer);
 
     // Initial resize
     resize();
