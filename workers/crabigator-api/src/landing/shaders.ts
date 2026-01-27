@@ -216,8 +216,8 @@ float palmLeaf(vec2 p, vec2 start, vec2 ctrl, vec2 end, float maxWidth) {
         }
     }
 
-    // Leaf width: thin at ends, fat in middle
-    float width = maxWidth * sin(bestT * 3.14159);
+    // Leaf width: sin^0.6 keeps sharp tips but spreads middle
+    float width = maxWidth * pow(sin(bestT * 3.14159), 0.6);
     return minDist - width;
 }
 
