@@ -93,6 +93,13 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <button class="style-option" data-grouping="project" onclick="setGrouping('project')">By Project</button>
                     </div>
                 </div>
+                <div class="style-section" id="project-order-section" style="display:none">
+                    <div class="style-section-label">Project Order</div>
+                    <div class="style-options">
+                        <button class="style-option active" data-project-order="recent" onclick="setProjectOrder('recent')">Most Recent</button>
+                        <button class="style-option" data-project-order="alpha" onclick="setProjectOrder('alpha')">Alphabetical</button>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="settings-container">

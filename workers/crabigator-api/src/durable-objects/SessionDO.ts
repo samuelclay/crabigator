@@ -306,6 +306,11 @@ export class SessionDO implements DurableObject {
                 if (this.persistentState.state !== event.state) {
                     this.persistentState.state = event.state;
                     persistentChanged = true;
+                    // Clear prompt when leaving interactive states (permission/question)
+                    // This prevents stale prompts from being sent to reconnecting viewers
+                    if (event.state !== 'permission' && event.state !== 'question') {
+                        this.persistentState.currentPrompt = null;
+                    }
                     // Notify SessionListDO so /api/sessions returns correct state
                     if (this.sessionInfo) {
                         this.notifySessionStateUpdate(this.sessionInfo.id, event.state);
@@ -470,7 +475,9 @@ export class SessionDO implements DurableObject {
         }
 
         // Send current prompt if any (persistent - for interactive dashboard)
-        if (this.persistentState.currentPrompt) {
+        // Only send if session is in interactive state (permission/question)
+        const isInteractiveState = this.persistentState.state === 'permission' || this.persistentState.state === 'question';
+        if (this.persistentState.currentPrompt && isInteractiveState) {
             const promptEvent: SessionEvent = {
                 type: 'prompt',
                 prompt: this.persistentState.currentPrompt,

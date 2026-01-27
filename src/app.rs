@@ -195,7 +195,7 @@ impl App {
             capture_manager,
             dsr_handler: DsrHandler::new(),
             osc_scanner: OscScanner::new(),
-            redraw_scanner: RedrawScanner::new(),
+            redraw_scanner: RedrawScanner::new(pty_rows),
             last_redraw_trigger: Instant::now(),
             terminal_title: None,
             title_history: Vec::new(),
@@ -852,6 +852,9 @@ impl App {
         let banner_reserved = 2u16;
         self.pty_rows = height.saturating_sub(self.status_rows + banner_reserved).max(1);
 
+        // Update scroll region filter with new PTY size
+        self.redraw_scanner.set_pty_rows(self.pty_rows);
+
         // Re-setup scroll region for new size (not initial, don't scroll content)
         self.setup_scroll_region(false)?;
 
@@ -1120,7 +1123,7 @@ impl App {
         }
     }
 
-    /// Send full scrollback to cloud after (re)connection
+    /// Send full scrollback and screen to cloud after (re)connection
     fn maybe_send_initial_scrollback(&mut self) {
         if let Some(ref mut client) = self.cloud_client {
             if client.take_just_connected() {
@@ -1128,10 +1131,19 @@ impl App {
                 self.last_cloud_git_hash = None;
                 self.last_cloud_changes_hash = None;
 
+                // Reset viewer state so first heartbeat triggers a screen send
+                // (in case viewers were already active before disconnect)
+                self.cloud_viewers_active = false;
+
                 // Send full scrollback history for initial sync
                 if let Some(content) = self.capture_manager.get_full_scrollback() {
                     let event = SessionEventBuilder::scrollback_history(content);
                     client.send_event(event);
+                }
+
+                // Send current screen immediately (don't wait for viewer heartbeat)
+                if let Ok(contents) = self.capture_manager.update_screen(self.platform_pty.screen()) {
+                    self.send_cloud_screen_event(contents);
                 }
             }
         }

@@ -108,12 +108,12 @@ export const sseJs = `
                     break;
 
                 case 'created':
-                    // New session - add to view immediately at the top
+                    // New session - add to view at the bottom (newest last for deterministic ordering)
                     // But skip if we're filtering to a specific session
                     if (event.session && !sessions.has(event.session.id)) {
                         // Always add to allSessions for popover
                         if (!allSessions.find(s => s.id === event.session.id)) {
-                            allSessions.unshift(event.session);
+                            allSessions.push(event.session);
                             updateSessionsCount();
                         }
                         if (singleSessionId && event.session.id !== singleSessionId) {
@@ -122,7 +122,8 @@ export const sseJs = `
                         }
                         const emptyState = container.querySelector('.no-sessions');
                         if (emptyState) emptyState.remove();
-                        createSessionCard(event.session, true);
+                        // Insert at bottom (false) for deterministic ordering (oldest first, newest last)
+                        createSessionCard(event.session, false);
                         connectToSession(event.session.id);
                     }
                     break;

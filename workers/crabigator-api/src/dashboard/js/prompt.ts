@@ -278,6 +278,19 @@ export const promptJs = `
             const text = input.value.trim();
             if (!text) return;
 
+            // Cancel any pending debounced save
+            if (inputSaveTimers.has(sessionId)) {
+                clearTimeout(inputSaveTimers.get(sessionId));
+                inputSaveTimers.delete(sessionId);
+            }
+
+            // Clear input and cache BEFORE sending (optimistically)
+            // This prevents stale text from being restored if page reloads mid-send
+            input.value = '';
+            input.blur();
+            clearLocalInput(sessionId);
+            saveInputToServer(sessionId, '');
+
             try {
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
                     method: 'POST',
@@ -285,24 +298,26 @@ export const promptJs = `
                     body: JSON.stringify({ text })
                 });
 
-                if (handleAuthFailure(resp)) return;
+                if (handleAuthFailure(resp)) {
+                    // Auth failure - restore input so user can retry after re-auth
+                    input.value = text;
+                    saveInputLocally(sessionId, text);
+                    return;
+                }
                 if (resp.ok) {
-                    input.value = '';
-                    input.blur(); // Hide mobile keyboard
-                    // Cancel any pending debounced save to prevent race condition
-                    if (inputSaveTimers.has(sessionId)) {
-                        clearTimeout(inputSaveTimers.get(sessionId));
-                        inputSaveTimers.delete(sessionId);
-                    }
-                    clearLocalInput(sessionId);
-                    saveInputToServer(sessionId, ''); // Clear server draft too
                     // Scroll to top of session so user can see what's happening
                     scrollToSession(sessionId);
                 } else {
+                    // Server error - restore input so user can retry
+                    input.value = text;
+                    saveInputLocally(sessionId, text);
                     const err = await resp.json();
                     alert('Error: ' + (err.error || 'Failed to send'));
                 }
             } catch (err) {
+                // Network error - restore input so user can retry
+                input.value = text;
+                saveInputLocally(sessionId, text);
                 console.error('Failed to send answer:', err);
                 alert('Failed to send: ' + err.message);
             }

@@ -35,6 +35,9 @@ export const constantsJs = `
         // Session grouping mode ('all' = flat list, 'project' = grouped by working directory)
         let groupingMode = localStorage.getItem('crabigator-grouping') || 'project';
 
+        // Project ordering mode when grouped ('recent' = most recently active first, 'alpha' = alphabetical)
+        let projectOrderMode = localStorage.getItem('crabigator-project-order') || 'recent';
+
         // Track collapsed state for project groups
         const collapsedProjects = new Set(JSON.parse(localStorage.getItem('crabigator-collapsed-projects') || '[]'));
 

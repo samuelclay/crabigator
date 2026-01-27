@@ -78,7 +78,8 @@ export const styleJs = `
                         terminalHeightIndex: currentHeightIndex,
                         terminalWrapEnabled: terminalWrapEnabled,
                         widgetsExpanded: widgetsExpanded,
-                        groupingMode: groupingMode
+                        groupingMode: groupingMode,
+                        projectOrderMode: projectOrderMode
                     }),
                     credentials: 'same-origin'
                 });
@@ -113,6 +114,10 @@ export const styleJs = `
                             setTimeout(() => rerenderSessions(), 0);
                         }
                     }
+                    if (typeof data.projectOrderMode === 'string' && (data.projectOrderMode === 'recent' || data.projectOrderMode === 'alpha')) {
+                        projectOrderMode = data.projectOrderMode;
+                        localStorage.setItem('crabigator-project-order', projectOrderMode);
+                    }
                 }
             } catch {}
             applyFontScale();
@@ -120,6 +125,7 @@ export const styleJs = `
             applyTerminalWrap();
             applyWidgetsExpanded();
             applyGrouping();
+            applyProjectOrder();
         }
 
         // Terminal wrap mode
@@ -220,6 +226,28 @@ export const styleJs = `
             document.querySelectorAll('[data-grouping]').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.grouping === groupingMode);
             });
+
+            // Show/hide project order section based on grouping mode
+            const projectOrderSection = document.getElementById('project-order-section');
+            if (projectOrderSection) {
+                projectOrderSection.style.display = groupingMode === 'project' ? '' : 'none';
+            }
+        }
+
+        // Project ordering mode (when grouped by project)
+        function setProjectOrder(mode) {
+            projectOrderMode = mode;
+            localStorage.setItem('crabigator-project-order', mode);
+            applyProjectOrder();
+            // Re-render the session list to apply ordering
+            rerenderSessions();
+        }
+
+        function applyProjectOrder() {
+            // Update button states
+            document.querySelectorAll('[data-project-order]').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.projectOrder === projectOrderMode);
+            });
         }
 
         function rerenderSessions() {
@@ -229,24 +257,51 @@ export const styleJs = `
             if (!isPaired) return;
 
             if (groupingMode === 'project') {
-                // Group sessions by cwd
+                // Group sessions by cwd, tracking most recent session per group
                 const groups = new Map();
                 for (const [id, sessionData] of sessions) {
                     const card = document.getElementById('session-' + id);
                     if (!card) continue;
-                    const cwd = card.querySelector('.cwd')?.textContent || 'Unknown';
+                    const cwd = sessionData.cwd || card.querySelector('.cwd')?.textContent || 'Unknown';
                     if (!groups.has(cwd)) {
-                        groups.set(cwd, []);
+                        groups.set(cwd, { sessions: [], mostRecentTime: 0 });
                     }
-                    groups.get(cwd).push({ id, card });
+                    const group = groups.get(cwd);
+                    group.sessions.push({ id, card, startedAt: sessionData.startedAt || 0 });
+                    // Track most recent session time for this project
+                    const sessionTime = sessionData.startedAt || 0;
+                    if (sessionTime > group.mostRecentTime) {
+                        group.mostRecentTime = sessionTime;
+                    }
+                }
+
+                // Sort sessions within each group by age (oldest first, newest last) for determinism
+                for (const [cwd, group] of groups) {
+                    group.sessions.sort((a, b) => a.startedAt - b.startedAt);
+                }
+
+                // Sort projects based on projectOrderMode
+                let sortedCwds;
+                if (projectOrderMode === 'alpha') {
+                    // Alphabetical by project name (last path component)
+                    sortedCwds = [...groups.keys()].sort((a, b) => {
+                        const nameA = a.split('/').pop()?.toLowerCase() || a;
+                        const nameB = b.split('/').pop()?.toLowerCase() || b;
+                        return nameA.localeCompare(nameB);
+                    });
+                } else {
+                    // Most recent first (by most recent session in the project)
+                    sortedCwds = [...groups.keys()].sort((a, b) => {
+                        return groups.get(b).mostRecentTime - groups.get(a).mostRecentTime;
+                    });
                 }
 
                 // Clear container
                 container.innerHTML = '';
 
-                // Create project groups
-                for (const [cwd, sessionCards] of groups) {
-                    const group = createProjectGroup(cwd, sessionCards);
+                // Create project groups in sorted order
+                for (const cwd of sortedCwds) {
+                    const group = createProjectGroup(cwd, groups.get(cwd).sessions);
                     container.appendChild(group);
                 }
 
@@ -256,16 +311,21 @@ export const styleJs = `
                 }
             } else {
                 // Flat mode - extract cards from groups if needed and append directly
-                const existingCards = [];
-                container.querySelectorAll('.session-card').forEach(card => {
-                    existingCards.push(card);
-                });
+                // Sort by session startedAt (oldest first, newest last) for determinism
+                const sessionList = [];
+                for (const [id, sessionData] of sessions) {
+                    const card = document.getElementById('session-' + id);
+                    if (card) {
+                        sessionList.push({ id, card, startedAt: sessionData.startedAt || 0 });
+                    }
+                }
+                sessionList.sort((a, b) => a.startedAt - b.startedAt);
 
                 // Remove project groups
                 container.querySelectorAll('.project-group').forEach(g => g.remove());
 
-                // Re-add cards directly to container
-                existingCards.forEach(card => {
+                // Re-add cards directly to container in sorted order
+                sessionList.forEach(({ card }) => {
                     container.appendChild(card);
                 });
 

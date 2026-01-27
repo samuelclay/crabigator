@@ -1,172 +1,290 @@
-//! Full screen redraw detection
+//! Scroll region filter
 //!
-//! Detects escape sequences that indicate the CLI has reset the scroll region,
-//! requiring us to re-establish our scroll region constraints.
+//! Detects DECSTBM "full-screen reset" sequences and injects our scroll region
+//! immediately after to maintain constraints. All bytes pass through immediately
+//! (no buffering) to avoid display glitches.
 //!
-//! Sequences detected:
-//! - `\x1b[r` - Reset scroll region (DECSTBM with no params)
+//! Reset forms detected (followed by scroll region injection):
+//! - `\x1b[r` - No params (most common)
+//! - `\x1b[0r` - Single zero
+//! - `\x1b[;r` - Empty params (semicolon only)
+//! - `\x1b[0;0r` - Both zeros
 //!
-//! Note: We intentionally do NOT trigger on `\x1b[2J` (clear screen) since that
-//! operates within the existing scroll region and doesn't require re-establishment.
+//! Parameterized sequences like `\x1b[3;15r` (sub-regions) pass through unchanged.
 
-/// Parse state for redraw sequence detection
+/// Parse state for scroll region sequence detection
 #[derive(Clone, Copy, Debug)]
-enum RedrawParseState {
+enum ParseState {
     Idle,
-    Esc,
-    EscBracket,
+    Esc,                              // Saw ESC
+    EscBracket,                       // Saw ESC [
+    Param1(u16),                      // Parsing first numeric param
+    AfterSemicolon(u16),              // Saw semicolon after first param
+    Param2(u16, u16),                 // Parsing second numeric param
 }
 
-/// Result from scanning PTY output for redraw sequences
-pub struct RedrawScanResult {
-    /// Output bytes to pass through (sequences are NOT stripped)
+/// Result from filtering PTY output
+pub struct ScrollRegionFilterResult {
+    /// Output bytes (all input passed through, with scroll region injected after resets)
     pub output: Vec<u8>,
     /// Whether a scroll region reset was detected
     pub needs_redraw: bool,
 }
 
-/// Scans PTY output for escape sequences that reset the scroll region
-pub struct RedrawScanner {
-    state: RedrawParseState,
+/// Filters PTY output to inject scroll region after reset sequences
+pub struct ScrollRegionFilter {
+    state: ParseState,
+    pty_rows: u16,
 }
 
-impl RedrawScanner {
-    pub fn new() -> Self {
+impl ScrollRegionFilter {
+    pub fn new(pty_rows: u16) -> Self {
         Self {
-            state: RedrawParseState::Idle,
+            state: ParseState::Idle,
+            pty_rows,
         }
     }
 
-    /// Scan data for scroll region reset sequences.
-    /// Passes through ALL bytes (including the sequences).
-    /// Only signals whether a scroll region reset was detected.
-    pub fn scan(&mut self, data: &[u8]) -> RedrawScanResult {
+    /// Update the PTY rows (call on terminal resize)
+    pub fn set_pty_rows(&mut self, pty_rows: u16) {
+        self.pty_rows = pty_rows;
+    }
+
+    /// Check if params indicate a "full reset" (needs scroll region injection)
+    fn is_full_reset(param1: u16, param2: u16) -> bool {
+        param1 == 0 && param2 == 0
+    }
+
+    /// Generate our scroll region sequence
+    fn scroll_region_sequence(&self) -> Vec<u8> {
+        format!("\x1b[1;{}r", self.pty_rows).into_bytes()
+    }
+
+    /// Filter data, injecting scroll region after full-screen resets.
+    /// All input bytes pass through immediately (no buffering).
+    pub fn scan(&mut self, data: &[u8]) -> ScrollRegionFilterResult {
+        // Estimate output size: input + possible scroll region injections
+        let mut output = Vec::with_capacity(data.len() + 16);
         let mut needs_redraw = false;
 
         for &byte in data {
+            // Always pass through the byte immediately
+            output.push(byte);
+
             match self.state {
-                RedrawParseState::Idle => {
+                ParseState::Idle => {
                     if byte == 0x1b {
-                        self.state = RedrawParseState::Esc;
+                        self.state = ParseState::Esc;
                     }
                 }
-                RedrawParseState::Esc => {
+                ParseState::Esc => {
                     if byte == b'[' {
-                        self.state = RedrawParseState::EscBracket;
+                        self.state = ParseState::EscBracket;
                     } else {
-                        self.state = RedrawParseState::Idle;
-                        // Check if this is another ESC starting a new sequence
+                        self.state = ParseState::Idle;
                         if byte == 0x1b {
-                            self.state = RedrawParseState::Esc;
+                            self.state = ParseState::Esc;
                         }
                     }
                 }
-                RedrawParseState::EscBracket => {
+                ParseState::EscBracket => {
                     if byte == b'r' {
-                        // ESC [ r - Reset scroll region to full terminal
-                        // This breaks our layout, so we need to re-establish
+                        // ESC [ r - Full reset with no params, inject our scroll region
                         needs_redraw = true;
+                        output.extend_from_slice(&self.scroll_region_sequence());
+                        self.state = ParseState::Idle;
+                    } else if byte == b';' {
+                        self.state = ParseState::AfterSemicolon(0);
+                    } else if byte.is_ascii_digit() {
+                        self.state = ParseState::Param1((byte - b'0') as u16);
+                    } else {
+                        // Not a DECSTBM sequence
+                        self.state = ParseState::Idle;
+                        if byte == 0x1b {
+                            self.state = ParseState::Esc;
+                        }
                     }
-                    self.state = RedrawParseState::Idle;
-                    // Check if this is another ESC
-                    if byte == 0x1b {
-                        self.state = RedrawParseState::Esc;
+                }
+                ParseState::Param1(p1) => {
+                    if byte == b'r' {
+                        if p1 == 0 {
+                            // ESC [ 0 r - Full reset, inject scroll region
+                            needs_redraw = true;
+                            output.extend_from_slice(&self.scroll_region_sequence());
+                        }
+                        self.state = ParseState::Idle;
+                    } else if byte == b';' {
+                        self.state = ParseState::AfterSemicolon(p1);
+                    } else if byte.is_ascii_digit() {
+                        let new_p1 = p1.saturating_mul(10).saturating_add((byte - b'0') as u16);
+                        self.state = ParseState::Param1(new_p1);
+                    } else {
+                        self.state = ParseState::Idle;
+                        if byte == 0x1b {
+                            self.state = ParseState::Esc;
+                        }
+                    }
+                }
+                ParseState::AfterSemicolon(p1) => {
+                    if byte == b'r' {
+                        if Self::is_full_reset(p1, 0) {
+                            // ESC [ ; r or ESC [ 0 ; r - Full reset
+                            needs_redraw = true;
+                            output.extend_from_slice(&self.scroll_region_sequence());
+                        }
+                        self.state = ParseState::Idle;
+                    } else if byte.is_ascii_digit() {
+                        self.state = ParseState::Param2(p1, (byte - b'0') as u16);
+                    } else {
+                        self.state = ParseState::Idle;
+                        if byte == 0x1b {
+                            self.state = ParseState::Esc;
+                        }
+                    }
+                }
+                ParseState::Param2(p1, p2) => {
+                    if byte == b'r' {
+                        if Self::is_full_reset(p1, p2) {
+                            // ESC [ 0 ; 0 r - Full reset
+                            needs_redraw = true;
+                            output.extend_from_slice(&self.scroll_region_sequence());
+                        }
+                        self.state = ParseState::Idle;
+                    } else if byte.is_ascii_digit() {
+                        let new_p2 = p2.saturating_mul(10).saturating_add((byte - b'0') as u16);
+                        self.state = ParseState::Param2(p1, new_p2);
+                    } else {
+                        self.state = ParseState::Idle;
+                        if byte == 0x1b {
+                            self.state = ParseState::Esc;
+                        }
                     }
                 }
             }
         }
 
-        RedrawScanResult {
-            output: data.to_vec(),
-            needs_redraw,
-        }
+        ScrollRegionFilterResult { output, needs_redraw }
     }
 }
 
-impl Default for RedrawScanner {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Keep old name as alias for backward compatibility
+pub type RedrawScanner = ScrollRegionFilter;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_scroll_region_reset_detection() {
-        let mut scanner = RedrawScanner::new();
+    fn test_no_params_reset() {
+        let mut filter = ScrollRegionFilter::new(20);
+        let result = filter.scan(b"\x1b[r");
+        assert!(result.needs_redraw);
+        // Original reset passes through, then our scroll region is injected
+        assert_eq!(result.output, b"\x1b[r\x1b[1;20r");
+    }
 
-        // Normal output - no redraw needed
-        let result = scanner.scan(b"hello world");
+    #[test]
+    fn test_zero_param_reset() {
+        let mut filter = ScrollRegionFilter::new(20);
+        let result = filter.scan(b"\x1b[0r");
+        assert!(result.needs_redraw);
+        assert_eq!(result.output, b"\x1b[0r\x1b[1;20r");
+    }
+
+    #[test]
+    fn test_semicolon_only_reset() {
+        let mut filter = ScrollRegionFilter::new(20);
+        let result = filter.scan(b"\x1b[;r");
+        assert!(result.needs_redraw);
+        assert_eq!(result.output, b"\x1b[;r\x1b[1;20r");
+    }
+
+    #[test]
+    fn test_zero_zero_reset() {
+        let mut filter = ScrollRegionFilter::new(20);
+        let result = filter.scan(b"\x1b[0;0r");
+        assert!(result.needs_redraw);
+        assert_eq!(result.output, b"\x1b[0;0r\x1b[1;20r");
+    }
+
+    #[test]
+    fn test_sub_region_passthrough() {
+        let mut filter = ScrollRegionFilter::new(20);
+        let result = filter.scan(b"\x1b[3;15r");
+        assert!(!result.needs_redraw);
+        // Sub-region passes through unchanged, no injection
+        assert_eq!(result.output, b"\x1b[3;15r");
+    }
+
+    #[test]
+    fn test_normal_output_passthrough() {
+        let mut filter = ScrollRegionFilter::new(20);
+        let result = filter.scan(b"hello world");
         assert!(!result.needs_redraw);
         assert_eq!(result.output, b"hello world");
-
-        // Reset scroll region - needs redraw
-        let result = scanner.scan(b"\x1b[r");
-        assert!(result.needs_redraw);
-        assert_eq!(result.output, b"\x1b[r");
     }
 
     #[test]
-    fn test_clear_screen_does_not_trigger() {
-        let mut scanner = RedrawScanner::new();
+    fn test_other_csi_passthrough() {
+        let mut filter = ScrollRegionFilter::new(20);
 
-        // Clear screen does NOT trigger redraw (operates within scroll region)
-        let result = scanner.scan(b"\x1b[2J");
+        let result = filter.scan(b"\x1b[2J");
         assert!(!result.needs_redraw);
         assert_eq!(result.output, b"\x1b[2J");
+
+        let result = filter.scan(b"\x1b[H");
+        assert!(!result.needs_redraw);
+        assert_eq!(result.output, b"\x1b[H");
     }
 
     #[test]
-    fn test_embedded_sequences() {
-        let mut scanner = RedrawScanner::new();
-
-        // Scroll region reset embedded in output
-        let result = scanner.scan(b"before\x1b[rafter");
+    fn test_embedded_reset() {
+        let mut filter = ScrollRegionFilter::new(20);
+        let result = filter.scan(b"before\x1b[rafter");
         assert!(result.needs_redraw);
-        assert_eq!(result.output, b"before\x1b[rafter");
+        assert_eq!(result.output, b"before\x1b[r\x1b[1;20rafter");
     }
 
     #[test]
-    fn test_partial_sequences() {
-        let mut scanner = RedrawScanner::new();
+    fn test_split_sequence() {
+        let mut filter = ScrollRegionFilter::new(20);
 
-        // Partial sequence (state carries across calls)
-        let result = scanner.scan(b"\x1b[");
-        assert!(!result.needs_redraw);
+        // First chunk - state carries over
+        let result1 = filter.scan(b"text\x1b[");
+        assert!(!result1.needs_redraw);
+        assert_eq!(result1.output, b"text\x1b[");
 
-        let result = scanner.scan(b"r");
+        // Second chunk completes the sequence
+        let result2 = filter.scan(b"r");
+        assert!(result2.needs_redraw);
+        assert_eq!(result2.output, b"r\x1b[1;20r");
+    }
+
+    #[test]
+    fn test_resize_updates_sequence() {
+        let mut filter = ScrollRegionFilter::new(20);
+
+        let result = filter.scan(b"\x1b[r");
+        assert_eq!(result.output, b"\x1b[r\x1b[1;20r");
+
+        filter.set_pty_rows(30);
+
+        let result = filter.scan(b"\x1b[r");
+        assert_eq!(result.output, b"\x1b[r\x1b[1;30r");
+    }
+
+    #[test]
+    fn test_multiple_resets() {
+        let mut filter = ScrollRegionFilter::new(20);
+        let result = filter.scan(b"\x1b[H\x1b[r\x1b[2J\x1b[0;0r");
         assert!(result.needs_redraw);
+        assert_eq!(result.output, b"\x1b[H\x1b[r\x1b[1;20r\x1b[2J\x1b[0;0r\x1b[1;20r");
     }
 
     #[test]
-    fn test_non_matching_sequences() {
-        let mut scanner = RedrawScanner::new();
-
-        // Other CSI sequences should not trigger
-        let result = scanner.scan(b"\x1b[1J"); // Clear to cursor
-        assert!(!result.needs_redraw);
-
-        let result = scanner.scan(b"\x1b[3;10r"); // Set scroll region WITH params (not reset)
-        assert!(!result.needs_redraw);
-
-        let result = scanner.scan(b"\x1b[H"); // Cursor home
-        assert!(!result.needs_redraw);
-
-        let result = scanner.scan(b"\x1b[2J"); // Clear screen
-        assert!(!result.needs_redraw);
-    }
-
-    #[test]
-    fn test_multiple_sequences() {
-        let mut scanner = RedrawScanner::new();
-
-        // Multiple sequences - only triggers if scroll region reset is present
-        let result = scanner.scan(b"\x1b[H\x1b[2J\x1b[3J");
-        assert!(!result.needs_redraw); // No \x1b[r present
-
-        let result = scanner.scan(b"\x1b[H\x1b[r\x1b[3J");
-        assert!(result.needs_redraw); // \x1b[r present
+    fn test_backward_compat_names() {
+        let mut scanner = RedrawScanner::new(20);
+        let result = scanner.scan(b"\x1b[r");
+        assert!(result.needs_redraw);
     }
 }
