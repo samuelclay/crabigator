@@ -264,25 +264,26 @@ impl App {
     fn setup_scroll_region(&self, initial: bool) -> Result<()> {
         let mut stdout = stdout();
 
-        // On initial setup, scroll existing terminal content up to make room
-        // for our status bar. This preserves the user's last commands.
+        // On initial setup, scroll existing content up into scrollback
+        // so Claude can start in fresh space without losing history
         if initial {
-            // Move to bottom of terminal and emit newlines to push content up
-            write!(stdout, "{}", escape::cursor_to(self.total_rows, 1))?;
-            write!(stdout, "{}", escape::scroll_up(self.status_rows))?;
+            // Scroll the entire visible area up by printing newlines
+            // This pushes existing content into scrollback
+            for _ in 0..self.total_rows {
+                write!(stdout, "\n")?;
+            }
+            // Move cursor back to top of screen
+            write!(stdout, "{}", escape::CURSOR_HOME)?;
+            // Clear status bar area
+            write!(stdout, "{}", escape::cursor_to(self.pty_rows + 1, 1))?;
+            write!(stdout, "{}", escape::CLEAR_TO_END)?;
+            // Return to top
+            write!(stdout, "{}", escape::CURSOR_HOME)?;
         }
 
         // DECSTBM: Set Top and Bottom Margins (1-indexed)
         // This constrains scrolling to rows 1 through pty_rows
         write!(stdout, "{}", escape::scroll_region(1, self.pty_rows))?;
-
-        // Only move cursor on initial setup - during resize/redraw we preserve
-        // the CLI's cursor position to avoid disrupting its rendering
-        if initial {
-            // Move cursor to bottom of scroll region so the CLI starts there
-            // and naturally scrolls up as it produces output (like a normal shell)
-            write!(stdout, "{}", escape::cursor_to(self.pty_rows, 1))?;
-        }
 
         stdout.flush()?;
         Ok(())
@@ -573,6 +574,10 @@ impl App {
         // Clean up stats file before exit
         self.platform.cleanup_stats(&self.cwd.to_string_lossy());
 
+        // Clear status bar area before exiting to prevent artifacts
+        // from remaining on screen for the next session
+        self.clear_status_area()?;
+
         // Reset scroll region before exit
         self.reset_scroll_region()?;
 
@@ -842,6 +847,10 @@ impl App {
     }
 
     fn handle_resize(&mut self, width: u16, height: u16) -> Result<()> {
+        // Clear old status bar area BEFORE changing dimensions
+        // This is critical: if terminal grows, old status bar would be above new position
+        self.clear_status_area()?;
+
         self.total_cols = width;
         self.total_rows = height;
 
@@ -864,7 +873,8 @@ impl App {
         // Keep capture manager in sync with PTY dimensions
         self.capture_manager.resize(width, self.pty_rows);
 
-        // Redraw status bar in new position
+        // Clear new status bar area and redraw
+        self.clear_status_area()?;
         self.draw_status_bar()?;
 
         Ok(())

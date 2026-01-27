@@ -42,6 +42,11 @@ pub fn draw_status_bar(
     // Save cursor position
     write!(stdout, "{}", escape::CURSOR_SAVE)?;
 
+    // Clear the entire status bar area first to prevent artifacts
+    // This is critical: without clearing, resizes or partial redraws leave old content
+    write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1, 1))?;
+    write!(stdout, "{}", escape::CLEAR_TO_END)?;
+
     // Banner space is always reserved (2 rows between PTY and status bar)
     // Draw banners if active, otherwise leave the space empty
     // Update banner takes first row, pairing banner takes remaining space

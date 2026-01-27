@@ -6,7 +6,6 @@
 // === Cursor Control ===
 
 /// Move cursor to home position (top-left)
-#[allow(dead_code)]
 pub const CURSOR_HOME: &str = "\x1b[H";
 
 /// Save current cursor position
@@ -35,6 +34,7 @@ pub fn scroll_region(top: u16, bottom: u16) -> String {
 /// Scroll display up by n lines (content moves up, blank lines appear at bottom)
 /// Uses Index (IND) repeated n times - works regardless of scroll region
 #[inline]
+#[allow(dead_code)]
 pub fn scroll_up(n: u16) -> String {
     "\n".repeat(n as usize)
 }
