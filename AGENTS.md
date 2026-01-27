@@ -114,6 +114,33 @@ The session directory path is shown in the startup banner in debug builds (`carg
 
 Use `--no-capture` to disable output capture (scrollback.log and screen.txt).
 
+**Claude Code Session UUID Symlink:**
+
+On the first hook event, crabigator creates a symlink from the Claude Code conversation UUID to the session directory:
+```
+/tmp/crabigator-{claude_uuid} -> /tmp/crabigator-{crabigator_id}
+```
+
+This allows accessing the session directory using either ID. The Claude session UUID is also stored in the stats file as `claude_session_id`.
+
+### Self-Inspection (for Claude Code)
+
+When running inside crabigator, Claude Code can inspect its own session using the conversation UUID. The UUID is visible in the Claude Code UI or can be provided by the user.
+
+**To inspect your own session:**
+```bash
+# Using Claude Code conversation UUID (e.g., f5cd7167-fc18-4ab2-8686-274fdfb098e1)
+cat /tmp/crabigator-{uuid}/screen.txt      # Current screen
+cat /tmp/crabigator-{uuid}/scrollback.log  # Conversation transcript
+cat /tmp/crabigator-{uuid}/mirror.json     # Widget state (stats, git status, etc.)
+cat /tmp/crabigator-{uuid}/hooks.log       # Hook event log
+```
+
+**Example workflow:**
+1. User provides their Claude Code session UUID (from URL or UI)
+2. Use the UUID to read session files and inspect current state
+3. The `mirror.json` contains widget data including git status, session stats, and claude_session_id
+
 ### Instance Inspection
 
 Use `crabigator inspect` to view other running instances:
