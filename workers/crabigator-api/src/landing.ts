@@ -1,6 +1,7 @@
 // Landing page HTML served at /
 import { landingCss } from './landing/css';
 import { landingJs } from './landing/js';
+import { palmWebglJs } from './landing/palm-webgl';
 import {
     iconCrabigator,
     iconCrabigatorEncoded,
@@ -930,5 +931,6 @@ export const landingHtml = `<!DOCTYPE html>
     </footer>
 
     <script>${landingJs}</script>
+    <script>${palmWebglJs}</script>
 </body>
 </html>`;

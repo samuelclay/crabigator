@@ -59,6 +59,85 @@ body::before {
     z-index: 9999;
 }
 
+/* Terminal texture patterns - subtle ~20% opacity */
+
+/* 1. Dot Grid - CTA section */
+.cta-section::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background-image: radial-gradient(circle, rgba(34, 211, 238, 0.2) 1px, transparent 1px);
+    background-size: 16px 16px;
+    pointer-events: none;
+}
+.cta-section > * { position: relative; z-index: 1; }
+
+/* 2. Scanlines - Showcase section */
+.showcase::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background: repeating-linear-gradient(
+        0deg,
+        transparent 0px,
+        transparent 2px,
+        rgba(34, 211, 238, 0.15) 2px,
+        rgba(34, 211, 238, 0.15) 4px
+    );
+    pointer-events: none;
+}
+.showcase > * { position: relative; z-index: 1; }
+
+/* 3. Neon Palm Tree - Interactive section (WebGL canvas created dynamically) */
+.interactive > * { position: relative; z-index: 2; }
+
+/* 4. ASCII grid - Pricing section - sparse terminal chars on monospace grid */
+.pricing::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='240'%3E%3Cstyle%3Etext%7Bfill:rgba(34,211,238,0.2);font-family:monospace;font-size:10px%7D%3C/style%3E%3Ctext x='40' y='30'%3E%24%3E%3C/text%3E%3Ctext x='160' y='30'%3E0x7F%3C/text%3E%3Ctext x='280' y='30'%3EEOF%3C/text%3E%3Ctext x='0' y='60'%3E::1%3C/text%3E%3Ctext x='120' y='60'%3E%26%26%3C/text%3E%3Ctext x='240' y='90'%3E%7C%7C%3C/text%3E%3Ctext x='80' y='90'%3ENULL%3C/text%3E%3Ctext x='200' y='120'%3E%23!%3C/text%3E%3Ctext x='40' y='150'%3Esudo%3C/text%3E%3Ctext x='280' y='150'%3E~/%3C/text%3E%3Ctext x='160' y='180'%3E0xFF%3C/text%3E%3Ctext x='0' y='180'%3Epipe%3C/text%3E%3Ctext x='120' y='210'%3E%24PATH%3C/text%3E%3Ctext x='240' y='210'%3Ebin%3C/text%3E%3Ctext x='80' y='240'%3E0x00%3C/text%3E%3C/svg%3E");
+    background-size: 320px 240px;
+    pointer-events: none;
+}
+.pricing > * { position: relative; z-index: 1; }
+
+/* 5. Vertical lines (RGB subpixel) - Open Source section */
+.open-source::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background: repeating-linear-gradient(
+        90deg,
+        rgba(248, 113, 113, 0.12) 0px,
+        rgba(248, 113, 113, 0.12) 1px,
+        rgba(74, 222, 128, 0.12) 1px,
+        rgba(74, 222, 128, 0.12) 2px,
+        rgba(59, 130, 246, 0.12) 2px,
+        rgba(59, 130, 246, 0.12) 3px,
+        transparent 3px,
+        transparent 6px
+    );
+    pointer-events: none;
+}
+.open-source > * { position: relative; z-index: 1; }
+
+/* 6. Binary/hex grid - Mobile Apps section - sparse hex on monospace grid */
+.mobile-apps::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='180'%3E%3Cstyle%3Etext%7Bfill:rgba(34,211,238,0.2);font-family:monospace;font-size:10px%7D%3C/style%3E%3Ctext x='24' y='18'%3E01%3C/text%3E%3Ctext x='120' y='18'%3EFF%3C/text%3E%3Ctext x='216' y='18'%3E10%3C/text%3E%3Ctext x='72' y='54'%3E7A%3C/text%3E%3Ctext x='168' y='54'%3EC2%3C/text%3E%3Ctext x='0' y='72'%3E00%3C/text%3E%3Ctext x='144' y='90'%3E3F%3C/text%3E%3Ctext x='48' y='90'%3E11%3C/text%3E%3Ctext x='192' y='108'%3EAB%3C/text%3E%3Ctext x='96' y='126'%3EE4%3C/text%3E%3Ctext x='24' y='144'%3E5D%3C/text%3E%3Ctext x='168' y='144'%3E8B%3C/text%3E%3Ctext x='72' y='162'%3E00%3C/text%3E%3Ctext x='216' y='180'%3E01%3C/text%3E%3C/svg%3E");
+    background-size: 240px 180px;
+    pointer-events: none;
+}
+.mobile-apps > * { position: relative; z-index: 1; }
+
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-abyss); }
@@ -226,6 +305,17 @@ code, .mono {
 @keyframes sonar {
     0% { transform: translate(-50%, -50%) scale(0.5); opacity: 1; }
     100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
+}
+
+/* Dot grid texture - same as cta-section for continuous background */
+.hero::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background-image: radial-gradient(circle, rgba(34, 211, 238, 0.2) 1px, transparent 1px);
+    background-size: 16px 16px;
+    pointer-events: none;
 }
 
 .hero-content {
@@ -581,6 +671,7 @@ code, .mono {
 .cta-section {
     padding: 24px 32px 48px;
     background: linear-gradient(180deg, var(--bg-abyss) 0%, var(--bg-deep) 100%);
+    position: relative;
 }
 .cta-content {
     display: flex;
@@ -590,7 +681,9 @@ code, .mono {
     max-width: 480px;
     width: 100%;
     padding: 32px 40px;
-    background: linear-gradient(135deg, rgba(6, 182, 212, 0.06) 0%, rgba(139, 92, 246, 0.04) 100%);
+    background: rgba(3, 7, 18, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border: 1px solid rgba(6, 182, 212, 0.2);
     border-radius: 16px;
     text-align: center;
@@ -1531,11 +1624,13 @@ code, .mono {
     font-family: 'JetBrains Mono', monospace;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
-.status-pill.thinking { background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); border: 1px solid var(--accent-blue); }
-.status-pill.complete { background: rgba(74, 222, 128, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green); }
-.status-pill.permission { background: rgba(251, 146, 60, 0.2); color: var(--accent-orange); border: 1px solid var(--accent-orange); }
-.status-pill.question { background: rgba(232, 121, 249, 0.2); color: var(--accent-magenta); border: 1px solid var(--accent-magenta); }
+.status-pill.thinking { background: rgba(10, 15, 26, 0.85); color: var(--accent-blue); border: 1px solid var(--accent-blue); }
+.status-pill.complete { background: rgba(10, 15, 26, 0.85); color: var(--accent-green); border: 1px solid var(--accent-green); }
+.status-pill.permission { background: rgba(10, 15, 26, 0.85); color: var(--accent-orange); border: 1px solid var(--accent-orange); }
+.status-pill.question { background: rgba(10, 15, 26, 0.85); color: var(--accent-magenta); border: 1px solid var(--accent-magenta); }
 
 .showcase-status {
     margin-top: 32px;
@@ -1699,9 +1794,16 @@ code, .mono {
 
 /* === INTERACTIVE SECTION === */
 .interactive {
-    background: var(--bg-abyss);
     border-top: 1px solid var(--border-dim);
     border-bottom: 1px solid var(--border-dim);
+}
+/* Background on pseudo-element so WebGL canvas can show through */
+.interactive::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--bg-abyss);
+    z-index: -1;
 }
 .interactive-content {
     max-width: 1200px;
