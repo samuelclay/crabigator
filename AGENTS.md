@@ -217,10 +217,11 @@ cd workers/crabigator-api && npm run dev      # Local dev
 - **Deploys break WebSockets**: Desktop auto-reconnects with exponential backoff (1s-30s)
 - **Session state**: Managed by Durable Objects (`SessionDO`)
 - **Auth**: Desktop device_id + HMAC-SHA256 signatures, no user accounts
-- **SVG Icons**: Keep raw SVG icons in dedicated `icons.ts` files rather than inline in HTML templates:
+- **SVG Icons**: NEVER inline SVG icons in TypeScript template files. Keep all SVG icons in dedicated `icons.ts` files:
   - `src/landing/icons.ts` - Icons for landing page
-  - `src/dashboard/icons.ts` - Icons for dashboard (favicon, etc.)
+  - `src/dashboard/icons.ts` - Icons for dashboard, staff dashboard (favicon, logo, gift icons, etc.)
   - Export icons as named string constants and import where needed
+  - For favicons, use URL-encoded versions (with `%23` for `#` in colors)
 
 ### Usage Analytics
 
