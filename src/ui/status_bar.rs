@@ -207,6 +207,10 @@ pub fn draw_status_bar(
         )?;
     }
 
+    // Re-establish scroll region after drawing outside it
+    // This prevents some terminals from resetting scroll context
+    write!(stdout, "{}", escape::scroll_region(1, layout.pty_rows))?;
+
     // Restore cursor position
     write!(stdout, "{}", escape::CURSOR_RESTORE)?;
     stdout.flush()?;
