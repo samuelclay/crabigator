@@ -33,7 +33,7 @@ export const sessionStateJs = `
                 btn.id = 'pin-' + sessionId;
                 btn.className = 'pin-btn';
                 btn.title = 'Click to pin to bottom';
-                btn.textContent = '⇣';
+                btn.textContent = 'pin scroll ⇣';
                 btn.onclick = () => togglePin(sessionId);
                 parent.replaceChild(btn, el);
             }

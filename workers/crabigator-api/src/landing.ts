@@ -144,15 +144,15 @@ export const landingHtml = `<!DOCTYPE html>
                             <div class="widget-card">
                                 <div class="widget-header">${iconChart} Session Stats <span class="widget-state thinking">thinking</span></div>
                                 <div class="widget-row">
-                                    <span class="widget-label">◆ Session</span>
+                                    <span class="widget-label">◉ Session</span>
                                     <span class="widget-value blue">12m 34s</span>
                                 </div>
                                 <div class="widget-row">
-                                    <span class="widget-label">▸ Prompts 7</span>
+                                    <span class="widget-label">⟩ Prompts 7</span>
                                     <span class="widget-value dim">2m ago</span>
                                 </div>
                                 <div class="widget-row">
-                                    <span class="widget-label">⚙ Tools</span>
+                                    <span class="widget-label">⚒ Tools</span>
                                     <span class="widget-sparkline">▁▂▄▅▇█▆▄▂▃▅▄</span>
                                 </div>
                                 <div class="widget-row">
@@ -246,15 +246,15 @@ export const landingHtml = `<!DOCTYPE html>
                         </div>
                         <div class="phone-widget">
                             <div class="phone-widget-header">
-                                <span class="pw-icon">◆</span> Session
+                                <span class="pw-icon">◉</span> Session
                                 <span class="pw-value">12m 34s</span>
                             </div>
                             <div class="phone-widget-row">
-                                <span>▸ Prompts 7</span>
+                                <span>⟩ Prompts 7</span>
                                 <span class="pw-dim">2m ago</span>
                             </div>
                             <div class="phone-widget-row">
-                                <span>⚙ Tools</span>
+                                <span>⚒ Tools</span>
                                 <span class="pw-sparkline">▁▂▄▃▅▇█▆▄▂▁▃▅▄</span>
                             </div>
                         </div>
@@ -684,7 +684,7 @@ export const landingHtml = `<!DOCTYPE html>
                     </button>
                 </div>
                 <div class="install-terminal-content">
-                    <span class="prompt">$</span> npm install -g crabigator
+                    <span class="prompt">$</span> npm i -g crabigator
                 </div>
             </div>
             <div class="install-steps">

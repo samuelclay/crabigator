@@ -99,7 +99,7 @@ export const changesWidgetJs = `
             }
 
             const newHtml = \`
-                <div class="widget-title"><span style="color:#db6d28">\${firstLang.language}</span> <span style="color:#8b949e">\${totalChanges} \${changeWord}</span></div>
+                <div class="widget-title"><span style="color:#db6d28">\${firstLang.language}</span> <span style="float:right;color:#8b949e">\${totalChanges} \${changeWord}</span></div>
                 <div class="changes-list">\${changesHtml}</div>
             \`;
 
@@ -111,52 +111,45 @@ export const changesWidgetJs = `
 
         function updateTitlesWidget(sessionId, titleHistory) {
             const widget = document.getElementById('titles-' + sessionId);
+            const widgetsContent = document.getElementById('widgets-content-' + sessionId);
             if (!widget) return;
 
-            // Hide widget if no titles
-            if (!titleHistory || titleHistory.length === 0) {
+            // Update widgets header with latest title
+            const titleSummaryEl = document.getElementById('widgets-title-' + sessionId);
+            if (titleSummaryEl && titleHistory && titleHistory.length > 0) {
+                titleSummaryEl.textContent = titleHistory[titleHistory.length - 1];
+            }
+
+            // Hide title history widget if no titles or only one title
+            if (!titleHistory || titleHistory.length <= 1) {
                 widget.style.display = 'none';
+                widgetsContent?.classList.add('no-titles');
                 return;
             }
 
-            // Show widget
+            // Show widget only when there are multiple titles (history)
             widget.style.display = '';
+            widgetsContent?.classList.remove('no-titles');
 
-            // Latest title is the widget title
+            // Latest title is already in the header, show previous titles as history
             const latestTitle = titleHistory[titleHistory.length - 1];
             const escapedLatest = latestTitle.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-            // Previous titles are the history content (all except the last one)
             const previousTitles = titleHistory.slice(0, -1);
 
-            let newHtml;
-            if (previousTitles.length === 0) {
-                // Just one title - show it as the module title, no content
-                newHtml = \`
-                    <div class="widget-title"><span style="color:#58a6ff">\${escapedLatest}</span></div>
-                \`;
-            } else {
-                // Multiple titles - latest as title, previous as history (newest first)
-                const historyHtml = previousTitles.slice().reverse().map(title => {
-                    const escaped = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                    return \`<div class="title-entry">\${escaped}</div>\`;
-                }).join('');
+            // Multiple titles - latest as title, previous as history (newest first)
+            const historyHtml = previousTitles.slice().reverse().map(title => {
+                const escaped = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                return \`<div class="title-entry">\${escaped}</div>\`;
+            }).join('');
 
-                newHtml = \`
-                    <div class="widget-title"><span style="color:#58a6ff">\${escapedLatest}</span></div>
-                    <div class="titles-list">\${historyHtml}</div>
-                \`;
-            }
+            const newHtml = \`
+                <div class="widget-title"><span style="color:#58a6ff">\${escapedLatest}</span> <span style="color:#8b949e">\${titleHistory.length} titles</span></div>
+                <div class="titles-list">\${historyHtml}</div>
+            \`;
 
             // Only update if content changed (prevents flicker)
             if (widget.innerHTML !== newHtml) {
                 widget.innerHTML = newHtml;
-            }
-
-            // Update widgets summary with latest title
-            const titleSummaryEl = document.getElementById('widgets-title-' + sessionId);
-            if (titleSummaryEl) {
-                titleSummaryEl.textContent = latestTitle;
             }
         }
 

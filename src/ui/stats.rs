@@ -247,7 +247,7 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
             // Row 3: Tools sparkline on left, compressions on right if any
             let compressions = stats.platform_stats.compressions;
 
-            let label = format!("{}⚙{} ", fg(color::GRAY), RESET);
+            let label = format!("{}⚒{} ", fg(color::GRAY), RESET);
             let label_len = strip_ansi_len(&label);
 
             if compressions > 0 {
@@ -310,7 +310,7 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
         }
         2 => {
             // Session/work time (right-aligned)
-            let label = format!("{}◆ Session{}", fg(color::GRAY), RESET);
+            let label = format!("{}◉ Session{}", fg(color::GRAY), RESET);
             let value = format!("{}{}{}", fg(color::BLUE), stats.format_work(), RESET);
             let label_len = strip_ansi_len(&label);
             let value_len = strip_ansi_len(&value);
@@ -319,7 +319,7 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
         }
         3 => {
             // Thinking time (always show, with dash when no thinking yet)
-            let label = format!("{}◇ Thinking{}", fg(color::GRAY), RESET);
+            let label = format!("{}◐ Thinking{}", fg(color::GRAY), RESET);
             let thinking_value = stats.format_thinking().unwrap_or_else(|| "—".to_string());
             let value = format!("{}{}{}", fg(color::GREEN), thinking_value, RESET);
             let label_len = strip_ansi_len(&label);
@@ -330,7 +330,7 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
         4 => {
             // Prompts: count left-aligned after label, timer right-aligned
             let label = format!(
-                "{}▸ Prompts{} {}{}{}",
+                "{}⟩ Prompts{} {}{}{}",
                 fg(color::GRAY), RESET,
                 fg(color::LIGHT_BLUE), stats.platform_stats.prompts, RESET
             );
@@ -344,7 +344,7 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
         5 => {
             // Completions: count left-aligned after label, timer right-aligned
             let label = format!(
-                "{}◂ Completions{} {}{}{}",
+                "{}⋗ Completions{} {}{}{}",
                 fg(color::GRAY), RESET,
                 fg(color::LIGHT_BLUE), stats.platform_stats.completions, RESET
             );
@@ -357,7 +357,7 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
         }
         6 => {
             // Tool usage sparkline (spans from after label to right edge)
-            let label = format!("{}⚙ Tools{} ", fg(color::GRAY), RESET);
+            let label = format!("{}⚒ Tools{} ", fg(color::GRAY), RESET);
             let label_len = strip_ansi_len(&label);
             let sparkline_width = (width as usize).saturating_sub(label_len);
             let bins = stats.tool_usage_bins(sparkline_width);
@@ -365,14 +365,14 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
             format!("{}{}", label, sparkline)
         }
         7 => {
-            // Compactions (only show if > 0)
+            // Compactions (always show, like prompts/completions)
             let compressions = stats.platform_stats.compressions;
+            let label = format!(
+                "{}⊜ Compactions{} {}{}{}",
+                fg(color::GRAY), RESET,
+                fg(color::PINK), compressions, RESET
+            );
             if compressions > 0 {
-                let label = format!(
-                    "{}⊜ Compactions{} {}{}{}",
-                    fg(color::GRAY), RESET,
-                    fg(color::PINK), compressions, RESET
-                );
                 let elapsed = format_elapsed(stats.compressions_changed_at);
                 let timer = format!("{}{}{}", fg(color::GRAY), elapsed, RESET);
                 let label_len = strip_ansi_len(&label);
@@ -380,7 +380,7 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
                 let gap = (width as usize).saturating_sub(label_len + timer_len);
                 format!("{}{:gap$}{}", label, "", timer, gap = gap)
             } else {
-                String::new()
+                label
             }
         }
         8 => {
@@ -392,7 +392,7 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
             if is_idle_state {
                 if let Some(secs) = idle_seconds(stats.platform_stats.idle_since) {
                     format!(
-                        "{}◇ Idle{} {}{}{}",
+                        "{}◌ Idle{} {}{}{}",
                         fg(color::GRAY), RESET,
                         fg(color::GRAY), format_duration_compact(secs), RESET
                     )

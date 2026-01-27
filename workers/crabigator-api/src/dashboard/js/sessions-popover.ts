@@ -61,7 +61,8 @@ export const sessionsPopoverJs = `
                     title: liveData?.title || session.title || 'Untitled',
                     branch: liveData?.git?.branch || '',
                     state: liveData?.state || session.state || 'ready',
-                    startedAt: session.started_at
+                    startedAt: session.started_at,
+                    stats: liveData?.stats || null
                 });
             }
 
@@ -79,17 +80,28 @@ export const sessionsPopoverJs = `
                 \`;
 
                 for (const session of sessionList) {
-                    const duration = session.startedAt ? formatSessionDuration(session.startedAt) : '';
                     const isFocused = singleSessionId && session.id === singleSessionId;
+                    const stats = session.stats;
+
+                    // Format stats for display
+                    const sessionTime = stats?.work_seconds ? formatDuration(stats.work_seconds) : '';
+                    const thinkingTime = stats?.thinking_seconds ? formatDuration(stats.thinking_seconds) : '';
+                    const promptsCount = stats?.prompts || 0;
+                    const promptsElapsed = stats?.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
+                    const completionsCount = stats?.completions || 0;
+                    const completionsElapsed = stats?.completions_changed_at ? formatElapsed(stats.completions_changed_at) : '';
+
                     html += \`
                         <div class="session-item\${isFocused ? ' focused' : ''}" onclick="selectSessionFromPopover('\${session.id}')">
                             <div class="session-item-row">
                                 <span class="session-item-title">\${escapeHtml(session.title)}</span>
                                 <span class="session-item-state \${session.state}">\${session.state}</span>
                             </div>
-                            <div class="session-item-meta">
-                                \${session.branch ? '<span class="session-item-branch">' + escapeHtml(session.branch) + '</span>' : ''}
-                                \${duration ? '<span class="session-item-duration" data-started="' + session.startedAt + '">' + duration + '</span>' : ''}
+                            <div class="session-item-stats">
+                                <span class="si-stat"><span style="color:#58a6ff">◉</span> \${sessionTime || '—'}</span>
+                                <span class="si-stat"><span style="color:#3fb950">◐</span> \${thinkingTime || '—'}</span>
+                                <span class="si-stat"><span style="color:#8b949e">⟩</span> \${promptsCount}\${promptsElapsed ? ' <span class="si-elapsed">' + promptsElapsed + '</span>' : ''}</span>
+                                <span class="si-stat"><span style="color:#8b949e">⋗</span> \${completionsCount}\${completionsElapsed ? ' <span class="si-elapsed">' + completionsElapsed + '</span>' : ''}</span>
                             </div>
                         </div>
                     \`;

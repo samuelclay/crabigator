@@ -182,38 +182,34 @@ export const sessionJs = `
                         </div>
                         <div class="widgets-panel" id="widgets-\${session.id}">
                             <div class="widgets-header" onclick="toggleWidgets('\${session.id}')">
-                                <div class="widgets-summary" id="widgets-summary-\${session.id}">
-                                    <span class="widgets-summary-title" id="widgets-title-\${session.id}"></span>
-                                    <span class="widgets-summary-stats">
-                                        <span id="widgets-session-\${session.id}">--</span>
-                                        <span class="sep">·</span>
-                                        <span id="widgets-thinking-\${session.id}">—</span>
-                                        <span class="sep">·</span>
-                                        <span id="widgets-idle-\${session.id}">—</span>
-                                    </span>
-                                    <span class="widgets-summary-git" id="widgets-git-\${session.id}"></span>
+                                <div class="widgets-header-row1">
+                                    <span class="widgets-title" id="widgets-title-\${session.id}">Session</span>
+                                    <span class="widgets-state" id="widgets-state-\${session.id}">○ Ready</span>
+                                    <span class="widgets-header-spacer"></span>
+                                    <button class="collapse-btn" id="widgets-btn-\${session.id}" title="Toggle Git & Changes widgets">▼</button>
                                 </div>
-                                <button class="collapse-btn" id="widgets-btn-\${session.id}" title="Toggle widgets">▼</button>
+                                <div class="widgets-header-row2">
+                                    <span class="wh-stat" data-tooltip="Session"><span class="wh-icon" style="color:#58a6ff">◉</span><span class="wh-value" id="widgets-session-\${session.id}">--</span></span>
+                                    <span class="wh-stat" data-tooltip="Thinking"><span class="wh-icon" style="color:#3fb950">◐</span><span class="wh-value" id="widgets-thinking-\${session.id}">—</span></span>
+                                    <span class="wh-stat" id="widgets-idle-wrapper-\${session.id}" style="display:none" data-tooltip="Idle"><span class="wh-icon" style="color:#8b949e">◌</span><span class="wh-value" id="widgets-idle-\${session.id}">—</span></span>
+                                    <span class="wh-stat" data-tooltip="Prompts"><span class="wh-icon" style="color:#8b949e">⟩</span><span class="wh-value" id="widgets-prompts-\${session.id}">0</span><span class="wh-elapsed" id="widgets-prompts-elapsed-\${session.id}"></span></span>
+                                    <span class="wh-stat" data-tooltip="Completions"><span class="wh-icon" style="color:#8b949e">⋗</span><span class="wh-value" id="widgets-completions-\${session.id}">0</span><span class="wh-elapsed" id="widgets-completions-elapsed-\${session.id}"></span></span>
+                                    <span class="wh-stat" data-tooltip="Tool calls"><span class="wh-icon" style="color:#f0883e">⚒</span><span class="wh-value" id="widgets-tools-\${session.id}">—</span></span>
+                                    <span class="wh-stat" data-tooltip="Compactions"><span class="wh-icon" style="color:#e879f9">⊜</span><span class="wh-value" id="widgets-compactions-\${session.id}">0</span><span class="wh-elapsed" id="widgets-compactions-elapsed-\${session.id}"></span></span>
+                                    <span class="wh-git" id="widgets-git-\${session.id}"></span>
+                                </div>
                             </div>
                             <div class="widgets-content" id="widgets-content-\${session.id}">
                             <div class="widget title-history-widget" id="titles-\${session.id}" style="display:none">
                                 <div class="widget-title"><span style="color:#58a6ff">—</span></div>
                                 <div class="titles-list"></div>
                             </div>
-                            <div class="widget" id="stats-\${session.id}">
-                                <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right;color:#8b949e">○ Ready</span></div>
-                                <div class="widget-row"><span class="widget-label">◆ Session</span><span class="widget-value">--</span></div>
-                                <div class="widget-row"><span class="widget-label">◇ Thinking</span><span class="widget-value">—</span></div>
-                                <div class="widget-row"><span class="widget-label">▸ Prompts 0</span><span class="widget-value"></span></div>
-                                <div class="widget-row"><span class="widget-label">◂ Completions 0</span><span class="widget-value"></span></div>
-                                <div class="widget-row"><span class="widget-label">⚙ Tools</span><span class="widget-value purple">0</span></div>
-                            </div>
                             <div class="widget" id="git-\${session.id}">
-                                <div class="widget-title"><span style="color:#7ee787">...</span> <span style="float:right;color:#8b949e">...</span></div>
+                                <div class="widget-title"><span style="color:#7ee787" id="git-branch-\${session.id}">...</span> <span style="float:right;color:#8b949e" id="git-filecount-\${session.id}">...</span></div>
                                 <div class="git-files" style="color:#8b949e">Waiting for data...</div>
                             </div>
                             <div class="widget" id="changes-\${session.id}">
-                                <div class="widget-title"><span style="color:#db6d28">Changes</span></div>
+                                <div class="widget-title"><span style="color:#db6d28">Changes</span> <span style="float:right;color:#8b949e" id="changes-count-\${session.id}"></span></div>
                                 <div class="changes-list" style="color:#8b949e">Waiting for data...</div>
                             </div>
                             </div>

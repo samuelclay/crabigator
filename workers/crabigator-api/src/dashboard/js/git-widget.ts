@@ -152,7 +152,7 @@ export const gitWidgetJs = `
 
             const totalFiles = files.length;
             if (totalFiles === 0) {
-                gitSummaryEl.innerHTML = '';
+                gitSummaryEl.innerHTML = '<span class="files">✓ clean</span>';
                 return;
             }
 
@@ -162,7 +162,7 @@ export const gitWidgetJs = `
             let parts = [];
             if (totalAdds > 0) parts.push('<span class="green">+' + totalAdds + '</span>');
             if (totalDels > 0) parts.push('<span class="red">-' + totalDels + '</span>');
-            parts.push(totalFiles + ' file' + (totalFiles !== 1 ? 's' : ''));
+            parts.push('<span class="files">' + totalFiles + ' file' + (totalFiles !== 1 ? 's' : '') + '</span>');
 
             gitSummaryEl.innerHTML = parts.join(' ');
         }

@@ -653,15 +653,16 @@ body {
 }
 .widgets-header {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
     padding: 10px 14px;
     background: var(--bg-card);
     cursor: pointer;
     user-select: none;
-    gap: 10px;
+    gap: 6px;
     border-bottom: 1px solid var(--border-dim);
     transition: background 0.2s;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
 }
 .widgets-header:hover { background: var(--bg-surface); }
 .widgets-header .collapse-btn {
@@ -669,45 +670,120 @@ body {
     font-size: 10px;
     flex-shrink: 0;
 }
-.widgets-summary {
+.widgets-header-row1 {
     display: flex;
     align-items: center;
-    gap: 14px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    min-width: 0;
-    flex: 1;
+    gap: 10px;
 }
-.widgets-summary-title {
+.widgets-title {
     color: var(--accent-cyan);
     font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-    flex-shrink: 1;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
-.widgets-summary-stats {
+.widgets-state {
     color: var(--text-mid);
+    flex-shrink: 0;
+}
+.widgets-header-spacer {
+    flex: 1;
+}
+.widgets-header-row2 {
+    display: flex;
+    align-items: center;
+    gap: 8px 12px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+}
+.wh-stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-mid);
+}
+.wh-icon {
+    font-size: 10px;
+}
+.wh-value {
+    color: var(--text-bright);
+}
+.wh-spacer {
+    flex: 1;
+}
+.wh-git {
     display: flex;
     gap: 8px;
     flex-shrink: 0;
+    margin-left: auto;
 }
-.widgets-summary-stats .sep { color: var(--border-dim); }
-.widgets-summary-git {
-    flex-shrink: 0;
-    display: flex;
-    gap: 8px;
+.wh-git .green { color: var(--accent-green); }
+.wh-git .red { color: var(--accent-red); }
+.wh-git .files { color: var(--text-mid); }
+.wh-elapsed {
+    color: var(--text-dim);
+    font-size: 9px;
+    margin-left: 2px;
 }
-.widgets-summary-git .green { color: var(--accent-green); }
-.widgets-summary-git .red { color: var(--accent-red); }
+.wh-elapsed:not(:empty)::before {
+    content: ' ';
+}
 
-/* Widgets content grid */
+/* Custom CSS tooltips */
+[data-tooltip] {
+    position: relative;
+}
+[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    padding: 4px 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-dim);
+    border-radius: 4px;
+    font-size: 10px;
+    color: var(--text-bright);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    transition-delay: 0s;
+    z-index: 1000;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+[data-tooltip]::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 2px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: var(--border-dim);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    transition-delay: 0s;
+    z-index: 1001;
+}
+[data-tooltip]:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    transition-delay: 0.5s;
+}
+[data-tooltip]:hover::before {
+    opacity: 1;
+    transition-delay: 0.5s;
+}
+
+/* Widgets content grid - now only Git and Changes */
 .widgets-content {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
     gap: 1px;
     background: var(--border-dim);
     max-height: 500px;
@@ -773,13 +849,16 @@ body {
 /* Hide empty changes widget */
 .widget.hidden-changes { display: none; }
 
-/* 2-column grid when changes hidden */
-.widgets-content.no-changes { grid-template-columns: repeat(2, 1fr); }
+/* Single column when changes hidden (Git spans full width) */
+.widgets-content.no-changes { grid-template-columns: 1fr; }
 
-/* Title history widget */
+/* Title history widget - spans full width */
 .title-history-widget {
     grid-column: 1 / -1;
 }
+
+/* Adjust grid when title history is hidden */
+.widgets-content.no-titles .title-history-widget { display: none; }
 .titles-list {
     display: flex;
     flex-direction: column;
@@ -1401,6 +1480,24 @@ body {
     content: '•';
     margin-right: 8px;
     color: var(--border-dim);
+}
+.session-item-stats {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+}
+.si-stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-bright);
+}
+.si-elapsed {
+    color: var(--text-dim);
+    font-size: 9px;
 }
 .sessions-empty {
     padding: 24px 16px;

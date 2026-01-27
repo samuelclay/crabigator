@@ -1,9 +1,6 @@
 // Dashboard JavaScript - stats-widget
 export const statsWidgetJs = `
         function updateStatsWidget(sessionId, stats) {
-            const widget = document.getElementById('stats-' + sessionId);
-            if (!widget) return;
-
             const session = sessions.get(sessionId);
             const state = session?.state || 'ready';
             const stateIndicator = formatStateIndicator(state);
@@ -34,54 +31,55 @@ export const statsWidgetJs = `
                 }
             }
 
-            const promptsElapsed = stats.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
-            const completionsElapsed = stats.completions_changed_at ? formatElapsed(stats.completions_changed_at) : '';
-            const compressionsElapsed = stats.compressions_changed_at ? formatElapsed(stats.compressions_changed_at) : '';
-
-            const compressionsRow = stats.compressions > 0
-                ? \`<div class="widget-row"><span class="widget-label">⊜ Compactions \${stats.compressions}</span><span class="widget-value" style="color:#8b949e">\${compressionsElapsed}</span></div>\`
-                : '';
-
-            // Show idle time when in complete/question state and idle > 60s
-            let idleRow = '';
-            const isIdleState = ['complete', 'question', 'interrupted'].includes(session?.state);
-            if (isIdleState && stats.idle_since) {
-                const idleSecs = Math.floor(Date.now() / 1000 - stats.idle_since);
-                if (idleSecs >= 60) {
-                    idleRow = \`<div class="widget-row"><span class="widget-label">◇ Idle</span><span class="widget-value" style="color:#8b949e">\${formatDuration(idleSecs)}</span></div>\`;
-                }
-            }
-
-            const newHtml = \`
-                <div class="widget-title"><span style="color:#bc8cff">Stats</span> <span style="float:right">\${stateIndicator}</span></div>
-                <div class="widget-row"><span class="widget-label">◆ Session</span><span class="widget-value" style="color:#58a6ff">\${formatDuration(stats.work_seconds || 0)}</span></div>
-                <div class="widget-row"><span class="widget-label">◇ Thinking</span><span class="widget-value" style="color:#3fb950">\${stats.thinking_seconds ? formatDuration(stats.thinking_seconds) : '—'}</span></div>
-                <div class="widget-row"><span class="widget-label">▸ Prompts \${stats.prompts || 0}</span><span class="widget-value" style="color:#8b949e">\${promptsElapsed}</span></div>
-                <div class="widget-row"><span class="widget-label">◂ Completions \${stats.completions || 0}</span><span class="widget-value" style="color:#8b949e">\${completionsElapsed}</span></div>
-                <div class="widget-row"><span class="widget-label">⚙ Tools</span><span class="widget-value">\${renderToolsSparkline(stats.tool_timestamps, stats.session_start, Date.now() / 1000)}</span></div>
-                \${compressionsRow}
-                \${idleRow}
-            \`;
-
-            // Only update if content changed (prevents flicker)
-            if (widget.innerHTML !== newHtml) {
-                widget.innerHTML = newHtml;
-            }
-
-            // Update widgets summary
+            // Update header stats (always visible)
+            const stateEl = document.getElementById('widgets-state-' + sessionId);
             const sessionEl = document.getElementById('widgets-session-' + sessionId);
             const thinkingEl = document.getElementById('widgets-thinking-' + sessionId);
             const idleEl = document.getElementById('widgets-idle-' + sessionId);
+            const idleWrapper = document.getElementById('widgets-idle-wrapper-' + sessionId);
+            const promptsEl = document.getElementById('widgets-prompts-' + sessionId);
+            const completionsEl = document.getElementById('widgets-completions-' + sessionId);
+            const toolsEl = document.getElementById('widgets-tools-' + sessionId);
+            const compactionsEl = document.getElementById('widgets-compactions-' + sessionId);
+
+            if (stateEl) stateEl.innerHTML = stateIndicator;
             if (sessionEl) sessionEl.textContent = formatDuration(stats.work_seconds || 0);
             if (thinkingEl) thinkingEl.textContent = stats.thinking_seconds ? formatDuration(stats.thinking_seconds) : '—';
-            if (idleEl) {
-                const isIdleState = ['complete', 'question', 'interrupted'].includes(session?.state);
+
+            // Show/hide idle based on state
+            const isIdleState = ['complete', 'question', 'interrupted'].includes(session?.state);
+            if (idleWrapper && idleEl) {
                 if (isIdleState && stats.idle_since) {
                     const idleSecs = Math.floor(Date.now() / 1000 - stats.idle_since);
-                    idleEl.textContent = idleSecs >= 60 ? formatDuration(idleSecs) : '—';
+                    if (idleSecs >= 60) {
+                        idleWrapper.style.display = '';
+                        idleEl.textContent = formatDuration(idleSecs);
+                    } else {
+                        idleWrapper.style.display = 'none';
+                    }
                 } else {
-                    idleEl.textContent = '—';
+                    idleWrapper.style.display = 'none';
                 }
+            }
+
+            if (promptsEl) promptsEl.textContent = stats.prompts || 0;
+            if (completionsEl) completionsEl.textContent = stats.completions || 0;
+            if (toolsEl) toolsEl.innerHTML = renderToolsSparkline(stats.tool_timestamps, stats.session_start, Date.now() / 1000);
+            if (compactionsEl) compactionsEl.textContent = stats.compressions || 0;
+
+            // Update elapsed times
+            const promptsElapsedEl = document.getElementById('widgets-prompts-elapsed-' + sessionId);
+            const completionsElapsedEl = document.getElementById('widgets-completions-elapsed-' + sessionId);
+            const compactionsElapsedEl = document.getElementById('widgets-compactions-elapsed-' + sessionId);
+
+            if (promptsElapsedEl) {
+                promptsElapsedEl.textContent = stats.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
+            }
+            if (completionsElapsedEl) {
+                completionsElapsedEl.textContent = stats.completions_changed_at ? formatElapsed(stats.completions_changed_at) : '';
+            }
+            if (compactionsElapsedEl) {
+                compactionsElapsedEl.textContent = stats.compressions_changed_at ? formatElapsed(stats.compressions_changed_at) : '';
             }
         }
 
