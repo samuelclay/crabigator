@@ -46,9 +46,12 @@ new_sqlite_classes = ["SessionListDO"]
 tag = "v5"
 new_sqlite_classes = ["UsageDO"]
 
-# Scheduled triggers for cleanup jobs
+# Scheduled triggers
 [triggers]
-crons = ["*/5 * * * *"]  # Every 5 minutes - zombie session cleanup
+crons = [
+    "*/5 * * * *",  # Every 5 minutes - zombie session cleanup
+    "0 6 * * *"     # Daily at 6 AM UTC - NPM stats & traffic alerts
+]
 
 # Production routes
 [[routes]]

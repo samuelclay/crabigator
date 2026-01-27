@@ -11,8 +11,10 @@ import { handleStripeWebhook } from './handlers/payments/stripe-webhook';
 import { createPayPalSubscription } from './handlers/payments/paypal';
 import { handlePayPalWebhook } from './handlers/payments/paypal-webhook';
 import { getSubscription, cancelSubscription, getSubscriptionPortal } from './handlers/payments/subscription';
-import { handleUpdateCheck, handleStaffDashboard, handleStaffTelemetry, handleStaffSyncUsage } from './handlers/telemetry';
+import { handleUpdateCheck, handleStaffDashboard, handleStaffTelemetry, handleStaffSyncUsage, handleStaffAnalytics } from './handlers/telemetry';
 import { handleCreateGift, handleListGifts, handleSendGiftEmail, handleGetGift, handleClaimGift, handleResolvePendingGift } from './handlers/gifts';
+import { handleAnalyticsBeacon, handleAnalyticsEvent } from './handlers/analytics';
+import { fetchNpmStats, checkTrafficAnomalies } from './handlers/npm-stats';
 import { cleanupZombieSessions } from './handlers/cleanup';
 
 // Build version - deterministic hash of dashboard content
@@ -587,11 +589,19 @@ router.post('/api/webhooks/paypal', handlePayPalWebhook);
 router.post('/api/update-check', handleUpdateCheck);
 
 // ============================================
+// Analytics (no auth - fire-and-forget tracking)
+// ============================================
+
+router.post('/api/analytics/beacon', handleAnalyticsBeacon);
+router.post('/api/analytics/event', handleAnalyticsEvent);
+
+// ============================================
 // Staff dashboard (no auth - obscurity is security for now)
 // ============================================
 
 router.get('/staff', handleStaffDashboard);
 router.get('/api/staff/telemetry', handleStaffTelemetry);
+router.get('/api/staff/analytics', handleStaffAnalytics);
 router.post('/api/staff/sync-usage', handleStaffSyncUsage);
 
 // Staff gift management
@@ -646,7 +656,16 @@ export default {
         return router.handle(request, env);
     },
 
-    async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+        // Every 5 minutes: zombie session cleanup
         ctx.waitUntil(cleanupZombieSessions(env));
+
+        // Daily at 6 AM UTC: NPM stats and traffic alerts
+        // Check if this is the 6 AM cron (cron expression: "0 6 * * *")
+        const date = new Date(controller.scheduledTime);
+        if (date.getUTCHours() === 6 && date.getUTCMinutes() === 0) {
+            ctx.waitUntil(fetchNpmStats(env));
+            ctx.waitUntil(checkTrafficAnomalies(env));
+        }
     },
 } satisfies ExportedHandler<Env>;

@@ -2,6 +2,7 @@
 import { landingCss } from './landing/css';
 import { landingJs } from './landing/js';
 import { palmWebglJs } from './landing/palm-webgl';
+import { analyticsJs } from './landing/analytics';
 import {
     iconCrabigator,
     iconCrabigatorEncoded,
@@ -83,7 +84,7 @@ export const landingHtml = `<!DOCTYPE html>
             <a href="#features" class="nav-link">Features</a>
             <a href="#pricing" class="nav-link">Pricing</a>
             <a href="#install" class="nav-link">Install</a>
-            <a href="/dashboard" class="nav-btn">Open Dashboard</a>
+            <a href="/dashboard" class="nav-btn" data-track="dashboard_nav" data-label="nav">Open Dashboard</a>
             <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener" class="nav-github">
                 ${iconGithubSmall}
             </a>
@@ -658,7 +659,7 @@ export const landingHtml = `<!DOCTYPE html>
                         <li><span class="check">${iconCheck}</span> Real-time sync</li>
                         <li><span class="check dim">${iconCheck}</span> <span class="dim">10 min/day remote access</span></li>
                     </ul>
-                    <a href="#install" class="btn-primary pricing-cta outline">Get Started</a>
+                    <a href="#install" class="btn-primary pricing-cta outline" data-track="pricing_cta" data-label="free">Get Started</a>
                 </div>
             </div>
             <div class="pricing-card featured">
@@ -672,7 +673,7 @@ export const landingHtml = `<!DOCTYPE html>
                         <li><span class="check">${iconCheck}</span> Real-time sync</li>
                         <li><span class="check">${iconCheck}</span> Unlimited remote access</li>
                     </ul>
-                    <a href="#install" class="btn-primary pricing-cta">Get Started</a>
+                    <a href="#install" class="btn-primary pricing-cta" data-track="pricing_cta" data-label="pro">Get Started</a>
                 </div>
             </div>
         </div>
@@ -742,19 +743,19 @@ export const landingHtml = `<!DOCTYPE html>
                 </span>
             </div>
             <div class="github-actions">
-                <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener" class="github-btn primary">
+                <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener" class="github-btn primary" data-track="github" data-label="star">
                     ${iconStar}
                     Star
                 </a>
-                <a href="https://github.com/samuelclay/crabigator/fork" target="_blank" rel="noopener" class="github-btn">
+                <a href="https://github.com/samuelclay/crabigator/fork" target="_blank" rel="noopener" class="github-btn" data-track="github" data-label="fork">
                     ${iconFork}
                     Fork
                 </a>
-                <a href="https://github.com/samuelclay/crabigator/issues" target="_blank" rel="noopener" class="github-btn">
+                <a href="https://github.com/samuelclay/crabigator/issues" target="_blank" rel="noopener" class="github-btn" data-track="github" data-label="issues">
                     ${iconIssues}
                     Issues
                 </a>
-                <a href="https://github.com/samuelclay/crabigator/pulls" target="_blank" rel="noopener" class="github-btn">
+                <a href="https://github.com/samuelclay/crabigator/pulls" target="_blank" rel="noopener" class="github-btn" data-track="github" data-label="prs">
                     ${iconPullRequest}
                     PRs
                 </a>
@@ -924,7 +925,7 @@ export const landingHtml = `<!DOCTYPE html>
         <div class="footer-content">
             <div class="footer-cta">
                 <span class="footer-cta-text">Ready to control Claude Code from anywhere?</span>
-                <a href="#install" class="btn-primary">Install Now</a>
+                <a href="#install" class="btn-primary" data-track="install_cta" data-label="footer">Install Now</a>
             </div>
             <div class="footer-links">
                 <a href="/dashboard" class="footer-link">Dashboard</a>
@@ -940,6 +941,7 @@ export const landingHtml = `<!DOCTYPE html>
         </div>
     </footer>
 
+    <script>${analyticsJs}</script>
     <script>${landingJs}</script>
     <script>${palmWebglJs}</script>
 </body>

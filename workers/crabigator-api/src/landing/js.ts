@@ -9,6 +9,11 @@ export const landingJs = `
             btn.innerHTML = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg> Copied!';
             btn.classList.add('copied');
 
+            // Track copy event
+            if (window.crabAnalytics) {
+                window.crabAnalytics.trackClick('copy_install', 'install_section');
+            }
+
             setTimeout(() => {
                 btn.innerHTML = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg> Copy';
                 btn.classList.remove('copied');
@@ -27,6 +32,11 @@ export const landingJs = `
             btn.innerHTML = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>';
             btn.classList.add('copied');
 
+            // Track copy event
+            if (window.crabAnalytics) {
+                window.crabAnalytics.trackClick('copy_install', 'hero');
+            }
+
             setTimeout(() => {
                 btn.innerHTML = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>';
                 btn.classList.remove('copied');
@@ -41,7 +51,8 @@ export const landingJs = `
         return function(event) {
             event.preventDefault();
             const form = event.target;
-            const email = form.querySelector('input[type="email"]').value;
+            const emailInput = form.querySelector('input[type="email"]');
+            const email = emailInput ? emailInput.value.trim() : '';
             const btn = form.querySelector('button');
             const successEl = document.getElementById(successId);
             const formEl = document.getElementById(formId);
@@ -51,7 +62,12 @@ export const landingJs = `
             btn.disabled = true;
             btn.textContent = 'Signing up...';
 
-            // Simulate API call (in production, this would POST to an actual endpoint)
+            // Track signup via analytics (which also stores email in database)
+            if (window.crabAnalytics) {
+                window.crabAnalytics.trackSignup(email);
+            }
+
+            // Show success state after brief delay for UX
             setTimeout(() => {
                 formEl.style.display = 'none';
                 successEl.classList.add('visible');
@@ -59,7 +75,7 @@ export const landingJs = `
                     const privacy = document.querySelector(privacySelector);
                     if (privacy) privacy.style.display = 'none';
                 }
-            }, 800);
+            }, 500);
         };
     }
 
