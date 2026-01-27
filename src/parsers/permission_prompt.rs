@@ -82,16 +82,16 @@ impl PermissionPrompt {
         // Look for numbered options pattern
         let option_re = Regex::new(r"(?m)^[\s❯>]*(\d+)\.\s+(.+)$").ok()?;
 
-        // Find the question - look for common question patterns
+        // Find the question line and its position
         // "Do you want to" - standard permission prompts
         // "Would you like to" - Exit Plan Mode and similar
-        let question = stripped
-            .lines()
-            .find(|line| {
-                let trimmed = line.trim();
-                trimmed.starts_with("Do you want to") || trimmed.starts_with("Would you like to")
-            })
-            .map(|line| line.trim().to_string());
+        let lines: Vec<&str> = stripped.lines().collect();
+        let question_idx = lines.iter().position(|line| {
+            let trimmed = line.trim();
+            trimmed.starts_with("Do you want to") || trimmed.starts_with("Would you like to")
+        });
+
+        let question = question_idx.map(|idx| lines[idx].trim().to_string());
 
         // Check for "Tab to add additional instructions" in footer
         let allows_tab_instructions = stripped
@@ -103,7 +103,11 @@ impl PermissionPrompt {
         let mut current_text = String::new();
         let mut current_selected = false;
 
-        for line in stripped.lines() {
+        // Only parse options AFTER the question line
+        // This prevents matching numbered lists in plan content above the question
+        let start_idx = question_idx.map(|idx| idx + 1).unwrap_or(0);
+
+        for line in lines.iter().skip(start_idx) {
             // Check if this line starts a new option
             if let Some(caps) = option_re.captures(line) {
                 // Save previous option if we have one
@@ -325,5 +329,55 @@ Esc to cancel · Tab to add additional instructions
         assert_eq!(prompt.options[1].text, "Yes, but let me provide more guidance first");
         assert_eq!(prompt.options[2].text, "No, let's discuss further");
         assert_eq!(prompt.options[3].text, "No, cancel this plan");
+    }
+
+    #[test]
+    fn test_parse_ignores_numbered_list_in_plan_content() {
+        // Real-world scenario: Plan content has numbered list above the permission options
+        // The parser should only match options AFTER the question line
+        let screen = r#"
+Ready to code?
+
+Here is Claude's plan:
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+Plan: Create hello.txt
+
+Task
+
+Create a file named hello.txt in the working directory.
+
+Implementation
+
+1. Create /private/tmp/test-plan-mode/hello.txt with content: Hello!
+2. Verify the file was created successfully
+
+Verification
+
+- Confirm file exists with ls hello.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+Would you like to proceed?
+
+❯ 1. Yes, clear context and auto-accept edits (shift+tab)
+  2. Yes, auto-accept edits
+  3. Yes, manually approve edits
+  4. Type here to tell Claude what to change
+
+ctrl-g to edit in VS Code
+"#;
+
+        let prompt = PermissionPrompt::parse(screen).unwrap();
+        // Should find the question
+        assert_eq!(prompt.question, Some("Would you like to proceed?".to_string()));
+        // Should have 4 options (not 6 - shouldn't include numbered list items from plan)
+        assert_eq!(prompt.options.len(), 4);
+        // First option should be the actual permission option, not plan content
+        assert_eq!(prompt.options[0].text, "Yes, clear context and auto-accept edits (shift+tab)");
+        assert!(prompt.options[0].selected);
+        assert_eq!(prompt.options[1].text, "Yes, auto-accept edits");
+        assert_eq!(prompt.options[2].text, "Yes, manually approve edits");
+        assert_eq!(prompt.options[3].text, "Type here to tell Claude what to change");
+        // Should be valid (has "Yes" option)
+        assert!(prompt.is_valid());
     }
 }

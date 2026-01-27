@@ -6,15 +6,26 @@ export const promptJs = `
             const optionsEl = document.getElementById('prompt-options-' + sessionId);
             const otherEl = document.getElementById('prompt-other-' + sessionId);
 
-            if (!panel) return;
+            console.log('[updatePromptPanel]', sessionId, 'prompt:', prompt?.prompt_type, 'options:', prompt?.options?.length);
+
+            if (!panel) {
+                console.warn('[updatePromptPanel] panel not found for session:', sessionId);
+                return;
+            }
 
             if (!prompt) {
                 // Clear/hide prompt panel
+                console.log('[updatePromptPanel] clearing prompt panel for:', sessionId);
                 panel.classList.remove('visible');
                 return;
             }
 
-            panel.classList.add('visible');
+            // Force visibility - remove then re-add to ensure CSS transition
+            panel.classList.remove('visible');
+            // Use requestAnimationFrame to ensure DOM update before re-adding
+            requestAnimationFrame(() => {
+                panel.classList.add('visible');
+            });
 
             // Store prompt data for key sequence navigation
             sessionPromptData.set(sessionId, prompt);
@@ -93,7 +104,14 @@ export const promptJs = `
                 questionEl.textContent = desc;
 
                 // Render options with tab instruction inputs
-                optionsEl.innerHTML = renderOptions(prompt.options, prompt);
+                const options = prompt.options || [];
+                console.log('[updatePromptPanel] permission options:', options.length, options.map(o => o.label));
+                if (options.length === 0) {
+                    console.warn('[updatePromptPanel] permission prompt has no options!');
+                    optionsEl.innerHTML = '<div class="prompt-option-error">No options available - check desktop</div>';
+                } else {
+                    optionsEl.innerHTML = renderOptions(options, prompt);
+                }
 
                 // Hide "Other" input when we have inline tab inputs
                 // Only show if no tab instructions available
@@ -105,7 +123,14 @@ export const promptJs = `
                 questionEl.textContent = 'Choose how to proceed:';
 
                 // Render options (no tab instructions for exit plan)
-                optionsEl.innerHTML = renderOptions(prompt.options, null);
+                const options = prompt.options || [];
+                console.log('[updatePromptPanel] exit_plan options:', options.length, options.map(o => o.label));
+                if (options.length === 0) {
+                    console.warn('[updatePromptPanel] exit_plan prompt has no options!');
+                    optionsEl.innerHTML = '<div class="prompt-option-error">No options available - check desktop</div>';
+                } else {
+                    optionsEl.innerHTML = renderOptions(options, null);
+                }
 
                 // Hide "Other" input for simple exit plan prompts
                 otherEl.style.display = 'none';
