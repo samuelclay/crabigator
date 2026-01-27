@@ -83,10 +83,24 @@ export const palmWebglJs = `
             currentContainer = newContainer;
             currentContainer.insertBefore(canvas, currentContainer.firstChild);
         }
-        const rect = currentContainer.getBoundingClientRect();
+
         const dpr = window.devicePixelRatio || 1;
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
+
+        if (isMobile() && textArea) {
+            // On mobile: canvas starts at textArea top but extends to section bottom
+            const textRect = textArea.getBoundingClientRect();
+            const sectionRect = section.getBoundingClientRect();
+            const height = sectionRect.bottom - textRect.top;
+            canvas.style.height = height + 'px';
+            canvas.width = textRect.width * dpr;
+            canvas.height = height * dpr;
+        } else {
+            // Desktop: fill the whole section
+            const rect = section.getBoundingClientRect();
+            canvas.style.height = '100%';
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+        }
     }
 
     // Render function
