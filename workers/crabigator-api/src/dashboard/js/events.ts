@@ -175,6 +175,12 @@ export const eventsJs = `
                             session.eventSource?.close();
                             sessions.delete(sessionId);
                         }
+                        // Also remove from allSessions for accurate count
+                        const allIdx = allSessions.findIndex(s => s.id === sessionId);
+                        if (allIdx !== -1) {
+                            allSessions.splice(allIdx, 1);
+                            updateSessionsCount();
+                        }
                         const cwd = card.querySelector('.cwd')?.textContent;
                         card.remove();
                         // Update project group count if in grouped mode

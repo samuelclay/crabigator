@@ -307,6 +307,8 @@ export class SessionListDO implements DurableObject {
             });
         }
 
+        // Validate sessions before returning - removes stale disconnected sessions
+        await this.validateSessions();
         await this.refreshMissingSessionMetadata();
 
         const sessions = Array.from(this.activeSessions.values())
