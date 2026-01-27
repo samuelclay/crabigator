@@ -24,7 +24,7 @@ use crate::platforms::{Platform, SessionState};
 use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
 use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty};
-use crate::ui::{draw_status_bar, Layout, PairingState};
+use crate::ui::{draw_status_bar, Layout, PairingState, throbber_frame_index};
 use crate::update::UpdateState;
 
 /// Result from background git refresh
@@ -685,6 +685,15 @@ impl App {
 
             // Update state
             self.update_state.banner_rows().hash(&mut hasher);
+
+            // Include throbber frame when animating to trigger redraws on frame change
+            let needs_animation = matches!(
+                self.session_stats.effective_state(),
+                crate::platforms::SessionState::Thinking | crate::platforms::SessionState::Permission
+            );
+            if needs_animation {
+                throbber_frame_index().hash(&mut hasher);
+            }
 
             hasher.finish()
         };

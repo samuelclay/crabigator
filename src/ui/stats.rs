@@ -18,14 +18,18 @@ use super::WidgetArea;
 /// Braille spinner frames for the thinking animation
 const THROBBER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-/// Get current throbber frame based on time (10 FPS)
-fn throbber_frame() -> char {
+/// Get current throbber frame index based on time (for hash comparison)
+pub fn throbber_frame_index() -> usize {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let frame = (millis / 100) as usize % THROBBER.len();
-    THROBBER[frame]
+    (millis / 100) as usize % THROBBER.len()
+}
+
+/// Get throbber character for the current time
+fn throbber_char() -> char {
+    THROBBER[throbber_frame_index()]
 }
 
 /// Calculate idle seconds from idle_since timestamp
@@ -89,7 +93,7 @@ fn format_state_indicator(state: SessionState) -> String {
             format!("{}○ Ready{}", fg(color::GRAY), RESET)
         }
         SessionState::Thinking => {
-            format!("{}{}{}", fg(color::GREEN), throbber_frame(), RESET)
+            format!("{}{}{}", fg(color::GREEN), throbber_char(), RESET)
         }
         SessionState::Permission => {
             format!("{}» ? «{} Perm", fg(color::YELLOW), RESET)
