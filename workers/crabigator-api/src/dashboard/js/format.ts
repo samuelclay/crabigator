@@ -40,7 +40,7 @@ export const formatJs = `
         function formatStateIndicator(state) {
             switch (state) {
                 case 'ready': return '<span style="color:#8b949e">○ Ready</span>';
-                case 'thinking': return '<span style="color:#3fb950">⠋</span>';
+                case 'thinking': return '<span class="thinking-spinner" style="color:#3fb950">⠋</span>';
                 case 'permission': return '<span style="color:#d29922">» ? « Perm</span>';
                 case 'question': return '<span style="color:#db6d28">» ? « Ask</span>';
                 case 'complete': return '<span style="color:#bc8cff">✓ Complete</span>';

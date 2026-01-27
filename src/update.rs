@@ -280,8 +280,18 @@ async fn check_via_github(client: &reqwest::Client) -> Result<(String, String)> 
 pub async fn check_for_update() -> Result<UpdateCheckResult> {
     let cache = VersionCache::load();
 
-    // If cache is fresh and we have version info, use it
-    if !cache.is_stale() && cache.latest_version.is_some() {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .user_agent("crabigator")
+        .build()?;
+
+    // Always try to send telemetry on startup (even if we have cached version info)
+    // This ensures every session is recorded for analytics
+    let cloud_result = check_via_cloud(&client).await;
+
+    // If cache is fresh and cloud check failed, use cached version info
+    // (but we still attempted to send telemetry above)
+    if !cache.is_stale() && cache.latest_version.is_some() && cloud_result.is_err() {
         let latest = cache.latest_version.as_ref().unwrap();
         let update_available = is_newer_version(latest, CURRENT_VERSION);
         let was_dismissed = cache.dismissed_version.as_ref() == Some(latest);
@@ -295,13 +305,8 @@ pub async fn check_for_update() -> Result<UpdateCheckResult> {
         });
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .user_agent("crabigator")
-        .build()?;
-
-    // Try cloud endpoint first (sends telemetry), fallback to direct GitHub
-    let (tag_name, html_url) = match check_via_cloud(&client).await {
+    // Use cloud result or fallback to GitHub
+    let (tag_name, html_url) = match cloud_result {
         Ok(result) => result,
         Err(_) => {
             // Fallback to direct GitHub API if cloud fails

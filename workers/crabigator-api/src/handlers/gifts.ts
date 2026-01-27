@@ -167,6 +167,8 @@ export async function handleListGifts(
     env: Env
 ): Promise<Response> {
     // Query gifts with usage stats
+    // Join on claimed_by_group_id directly (more reliable than subscription chain)
+    // Only count sessions that started AFTER the gift was claimed
     const result = await env.DB.prepare(`
         SELECT
             g.id,
@@ -179,18 +181,17 @@ export async function handleListGifts(
             g.claimed_by_group_id,
             g.claimed_by_cookie_id,
             g.subscription_id,
-            COUNT(DISTINCT s.id) as session_count,
+            COUNT(DISTINCT CASE WHEN s.started_at >= g.claimed_at THEN s.id END) as session_count,
             COALESCE(SUM(CASE
-                WHEN s.ended_at IS NOT NULL THEN s.ended_at - s.started_at
+                WHEN s.ended_at IS NOT NULL AND s.started_at >= g.claimed_at THEN s.ended_at - s.started_at
                 ELSE 0
             END), 0) as total_duration_seconds,
             AVG(CASE
-                WHEN s.ended_at IS NOT NULL THEN s.ended_at - s.started_at
+                WHEN s.ended_at IS NOT NULL AND s.started_at >= g.claimed_at THEN s.ended_at - s.started_at
                 ELSE NULL
             END) as avg_duration_seconds
         FROM gifts g
-        LEFT JOIN subscriptions sub ON g.subscription_id = sub.id
-        LEFT JOIN devices d ON d.group_id = sub.group_id
+        LEFT JOIN devices d ON d.group_id = g.claimed_by_group_id
         LEFT JOIN sessions s ON s.device_id = d.id
         GROUP BY g.id
         ORDER BY g.created_at DESC

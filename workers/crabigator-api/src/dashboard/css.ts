@@ -176,6 +176,9 @@ body {
 @keyframes blink {
     50% { opacity: 0; }
 }
+.thinking-spinner {
+    display: inline-block;
+}
 .header .status {
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
@@ -247,7 +250,7 @@ body {
     background: var(--bg-deep);
     border: 1px solid var(--border-dim);
     border-radius: 12px;
-    overflow: hidden;
+    overflow: visible;
     position: relative;
     break-inside: avoid;
     margin-bottom: 16px;
@@ -663,6 +666,7 @@ body {
     transition: background 0.2s;
     font-family: 'JetBrains Mono', monospace;
     font-size: 10px;
+    overflow: visible;
 }
 .widgets-header:hover { background: var(--bg-surface); }
 .widgets-header .collapse-btn {
@@ -674,6 +678,7 @@ body {
     display: flex;
     align-items: center;
     gap: 10px;
+    overflow: visible;
 }
 .widgets-title {
     color: var(--accent-cyan);
@@ -698,11 +703,13 @@ body {
     gap: 8px 12px;
     flex-wrap: wrap;
     justify-content: flex-start;
+    overflow: visible;
 }
 .wh-stat {
     display: flex;
     align-items: center;
     gap: 4px;
+    overflow: visible;
     color: var(--text-mid);
 }
 .wh-icon {
@@ -739,9 +746,9 @@ body {
 [data-tooltip]::after {
     content: attr(data-tooltip);
     position: absolute;
-    bottom: calc(100% + 6px);
+    bottom: calc(100% + 4px);
     left: 50%;
-    transform: translateX(-50%) translateY(4px);
+    transform: translateX(-50%);
     padding: 4px 8px;
     background: var(--bg-surface);
     border: 1px solid var(--border-dim);
@@ -751,31 +758,12 @@ body {
     white-space: nowrap;
     pointer-events: none;
     opacity: 0;
-    transition: opacity 0.15s ease, transform 0.15s ease;
-    transition-delay: 0s;
-    z-index: 1000;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-}
-[data-tooltip]::before {
-    content: '';
-    position: absolute;
-    bottom: calc(100% + 2px);
-    left: 50%;
-    transform: translateX(-50%);
-    border: 4px solid transparent;
-    border-top-color: var(--border-dim);
-    pointer-events: none;
-    opacity: 0;
     transition: opacity 0.15s ease;
     transition-delay: 0s;
-    z-index: 1001;
+    z-index: 9999;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 [data-tooltip]:hover::after {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-    transition-delay: 0.5s;
-}
-[data-tooltip]:hover::before {
     opacity: 1;
     transition-delay: 0.5s;
 }

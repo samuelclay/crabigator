@@ -43,4 +43,17 @@ export const constantsJs = `
 
         // Single session filter mode (from ?session=xxx URL parameter)
         const singleSessionId = new URLSearchParams(window.location.search).get('session');
+
+        // Spinner frames for thinking indicator
+        const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let spinnerFrameIndex = 0;
+
+        // Start the global spinner animation
+        setInterval(() => {
+            spinnerFrameIndex = (spinnerFrameIndex + 1) % SPINNER_FRAMES.length;
+            const frame = SPINNER_FRAMES[spinnerFrameIndex];
+            document.querySelectorAll('.thinking-spinner').forEach(el => {
+                el.textContent = frame;
+            });
+        }, 80);
 `;
