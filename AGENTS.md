@@ -406,3 +406,87 @@ The code simplifier will:
 - Clean up dead code and redundant logic
 - Simplify overly complex patterns
 - Preserve all functionality
+
+## Releasing a New Version
+
+When releasing a new version, follow these steps carefully. The CI enforces version sync between `Cargo.toml` and `npm/package.json`.
+
+### Pre-release Checklist
+
+1. **Update version in BOTH files:**
+   ```bash
+   # Cargo.toml - find and update the version line
+   version = "X.Y.Z"
+
+   # npm/package.json - update the version field
+   "version": "X.Y.Z"
+   ```
+
+2. **Commit the version bump:**
+   ```bash
+   git add Cargo.toml npm/package.json
+   git commit -m "Bump version to X.Y.Z"
+   git push origin main
+   ```
+
+3. **Create and push the tag:**
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+4. **Monitor the release workflow:**
+   ```bash
+   gh run list --limit 1
+   gh run watch <run-id>
+   ```
+
+### If the Release Fails
+
+Common failure: version mismatch between `Cargo.toml` and `npm/package.json`.
+
+**To fix and retry:**
+```bash
+# 1. Delete the tag locally and remotely
+git tag -d vX.Y.Z
+git push origin --delete vX.Y.Z
+
+# 2. Fix the version mismatch
+# Edit npm/package.json to match Cargo.toml
+
+# 3. Commit and push the fix
+git add npm/package.json
+git commit -m "Fix npm/package.json version sync for X.Y.Z release"
+git push origin main
+
+# 4. Re-tag and push
+git tag vX.Y.Z
+git push origin vX.Y.Z
+
+# 5. Watch the new workflow run
+gh run list --limit 1
+gh run watch <new-run-id>
+```
+
+### Verify the Release
+
+```bash
+# Check the release exists and has all assets
+gh release view vX.Y.Z
+
+# Expected assets (6 total):
+# - crabigator-vX.Y.Z-darwin-arm64.tar.gz
+# - crabigator-vX.Y.Z-darwin-x64.tar.gz
+# - crabigator-vX.Y.Z-linux-arm64.tar.gz
+# - crabigator-vX.Y.Z-linux-x64.tar.gz
+# - crabigator-vX.Y.Z-win32-arm64.zip
+# - crabigator-vX.Y.Z-win32-x64.zip
+```
+
+### Clean Up Draft Releases
+
+Failed workflows may leave draft releases. Clean them up:
+```bash
+gh release list  # Check for drafts
+gh release delete vX.Y.Z --yes  # Delete draft (won't affect published release)
+```
