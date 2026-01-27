@@ -25,6 +25,10 @@ pub struct Layout {
 }
 
 /// Draw the entire status bar area with all widgets
+///
+/// IMPORTANT: This function receives the cursor position from the caller
+/// to restore after drawing. We can't use CURSOR_SAVE/RESTORE because
+/// our vt100 parser doesn't track those, so DSR responses would be wrong.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_status_bar(
     stdout: &mut Stdout,
@@ -38,9 +42,11 @@ pub fn draw_status_bar(
     cloud_status: Option<&CloudStatus>,
     pairing_state: &PairingState,
     update_state: &UpdateState,
+    cursor_position: Option<(u16, u16)>,  // (row, col) from vt100 parser, 0-indexed
 ) -> Result<()> {
-    // Save cursor position
-    write!(stdout, "{}", escape::CURSOR_SAVE)?;
+    // Begin synchronized update - terminal batches all our drawing
+    // so cursor movements don't interfere with Claude's incremental updates
+    write!(stdout, "{}", escape::SYNC_BEGIN)?;
 
     // Clear the entire status bar area first to prevent artifacts
     // This is critical: without clearing, resizes or partial redraws leave old content
@@ -207,12 +213,17 @@ pub fn draw_status_bar(
         )?;
     }
 
-    // Re-establish scroll region after drawing outside it
-    // This prevents some terminals from resetting scroll context
-    write!(stdout, "{}", escape::scroll_region(1, layout.pty_rows))?;
+    // Restore cursor to position known by vt100 parser
+    // We use absolute positioning instead of CURSOR_SAVE/RESTORE because
+    // the vt100 parser doesn't track those, which would cause DSR responses
+    // to be wrong and corrupt Claude's incremental screen updates.
+    if let Some((row, col)) = cursor_position {
+        // Convert from 0-indexed (vt100) to 1-indexed (terminal)
+        write!(stdout, "{}", escape::cursor_to(row + 1, col + 1))?;
+    }
 
-    // Restore cursor position
-    write!(stdout, "{}", escape::CURSOR_RESTORE)?;
+    // End synchronized update - terminal renders all our drawing atomically
+    write!(stdout, "{}", escape::SYNC_END)?;
     stdout.flush()?;
 
     Ok(())

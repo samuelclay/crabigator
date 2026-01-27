@@ -177,6 +177,14 @@ pub fn hyperlink(url: &str, text: &str) -> String {
 
 // === Screen Control ===
 
+/// Begin synchronized update (DEC private mode 2026)
+/// Terminal batches all output until SYNC_END, preventing partial renders
+pub const SYNC_BEGIN: &str = "\x1b[?2026h";
+
+/// End synchronized update
+/// Terminal renders all batched output atomically
+pub const SYNC_END: &str = "\x1b[?2026l";
+
 /// Clear from cursor to end of screen (ED mode 0)
 pub const CLEAR_TO_END: &str = "\x1b[J";
 

@@ -23,7 +23,7 @@ use crate::ide::{self, IdeKind};
 use crate::platforms::{Platform, SessionState};
 use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
-use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, RedrawScanner};
+use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty};
 use crate::ui::{draw_status_bar, Layout, PairingState};
 use crate::update::UpdateState;
 
@@ -65,10 +65,6 @@ pub struct App {
     dsr_handler: DsrHandler,
     /// Scans for OSC title sequences from the CLI
     osc_scanner: OscScanner,
-    /// Scans for full screen redraw sequences from the CLI
-    redraw_scanner: RedrawScanner,
-    /// Last time we triggered a HUD redraw from detected redraw sequences
-    last_redraw_trigger: Instant,
     /// Terminal title extracted from OSC sequences (e.g., "Claude Code Ghostty Integration")
     terminal_title: Option<String>,
     /// History of all terminal titles during this session
@@ -111,6 +107,8 @@ pub struct App {
     last_cloud_changes_hash: Option<u64>,
     /// Hash of last screen sent to cloud (for deduplication)
     last_cloud_screen_hash: Option<u64>,
+    /// Hash of last status bar state (to avoid flickering redraws)
+    last_status_bar_hash: Option<u64>,
 }
 
 impl App {
@@ -195,8 +193,6 @@ impl App {
             capture_manager,
             dsr_handler: DsrHandler::new(),
             osc_scanner: OscScanner::new(),
-            redraw_scanner: RedrawScanner::new(pty_rows),
-            last_redraw_trigger: Instant::now(),
             terminal_title: None,
             title_history: Vec::new(),
             initial_git_time_ms: None,
@@ -217,6 +213,7 @@ impl App {
             last_cloud_git_hash: None,
             last_cloud_changes_hash: None,
             last_cloud_screen_hash: None,
+            last_status_bar_hash: None,
         })
     }
 
@@ -375,9 +372,6 @@ impl App {
         let mut sent_initial_screen = false;
         let session_start = std::time::Instant::now();
 
-        // Debounce interval for redraw detection (prevents excessive redraws during rapid updates)
-        let redraw_debounce = Duration::from_millis(50);
-
         // Initial screen send interval
         let mut initial_screen_interval = interval(Duration::from_millis(500));
 
@@ -393,15 +387,7 @@ impl App {
             tokio::select! {
                 // PTY output - highest priority, handle immediately
                 Some(data) = self.pty_rx.recv() => {
-                    let needs_hud_redraw = self.write_pty_output(&data)?;
-
-                    // Handle CLI-initiated full screen redraw with debouncing
-                    if needs_hud_redraw && self.last_redraw_trigger.elapsed() >= redraw_debounce {
-                        self.last_redraw_trigger = Instant::now();
-                        self.setup_scroll_region(false)?;
-                        self.draw_status_bar()?;
-                        last_status_draw = Instant::now();
-                    }
+                    self.write_pty_output(&data)?;
 
                     // Redraw status bar after PTY output (debounced)
                     if last_status_draw.elapsed() >= status_debounce {
@@ -585,12 +571,13 @@ impl App {
     }
 
     /// Write PTY output directly to stdout - transparent passthrough
-    /// Returns true if a full screen redraw was detected (requiring HUD refresh)
-    fn write_pty_output(&mut self, data: &[u8]) -> Result<bool> {
+    /// V2: DSR handling kept (Claude needs accurate cursor positions in PTY space)
+    ///     Scroll region injection removed (was causing visual glitches)
+    fn write_pty_output(&mut self, data: &[u8]) -> Result<()> {
         let mut stdout = stdout();
         let mut wrote_output = false;
-        let mut needs_redraw = false;
 
+        // Scan for DSR (cursor position) requests - Claude needs responses in PTY coordinates
         let chunks = self.dsr_handler.scan(data);
         for chunk in chunks {
             match chunk {
@@ -599,26 +586,15 @@ impl App {
                         continue;
                     }
 
-                    // Scan for full screen redraw sequences
-                    let redraw_result = self.redraw_scanner.scan(&bytes);
-                    if redraw_result.needs_redraw {
-                        needs_redraw = true;
-                    }
-
                     // Scan for OSC title sequences
-                    let (passthrough, title) = self.osc_scanner.scan(&redraw_result.output);
+                    let (passthrough, title) = self.osc_scanner.scan(&bytes);
                     if let Some(t) = title {
                         // Strip leading progress spinner characters for history
-                        // Includes: ASCII asterisk, dingbat asterisks, sparkles, rotation arrows,
-                        // circle quarters, and all braille patterns (U+2800-U+28FF)
                         let clean_title = t.trim_start_matches(|c: char| {
                             matches!(c, '*' | '✱' | '✲' | '✳' | '✴' | '✵' | '✶' | '✷' | '✸' | '✹' | '✺' | '✻' | '✼' | '✽' | '❇' | '❈' | '⟳' | '◐' | '◑' | '◒' | '◓' | ' ')
-                            || ('\u{2800}'..='\u{28FF}').contains(&c)  // All braille patterns
+                            || ('\u{2800}'..='\u{28FF}').contains(&c)
                         }).to_string();
 
-                        // Add to history if not already present (no duplicates)
-                        // Skip generic default titles like "Claude Code" - they can be the
-                        // current title but shouldn't clutter the history
                         let is_default_title = clean_title == "Claude Code" || clean_title == "Codex CLI";
                         if !clean_title.is_empty() && !is_default_title && !self.title_history.contains(&clean_title) {
                             self.title_history.push(clean_title.clone());
@@ -631,6 +607,7 @@ impl App {
                         continue;
                     }
                     wrote_output = true;
+
                     // Capture through our internal vt100 parser
                     if let Err(e) = self.capture_manager.capture_output(&passthrough) {
                         eprintln!("Capture error: {}", e);
@@ -639,6 +616,8 @@ impl App {
                     stdout.write_all(&passthrough)?;
                 }
                 DsrChunk::Request => {
+                    // Respond with cursor position from our vt100 parser
+                    // This gives Claude accurate coordinates in PTY space
                     let (row, col) = self.platform_pty.screen().cursor_position();
                     let response = escape::cursor_position_report(
                         row.saturating_add(1),
@@ -653,13 +632,68 @@ impl App {
             stdout.flush()?;
         }
 
-        Ok(needs_redraw)
+        Ok(())
     }
 
     /// Draw status bar using the widget system
+    /// Returns true if status bar was actually redrawn (content changed)
     fn draw_status_bar(&mut self) -> Result<()> {
         // Update stats each draw
         self.session_stats.tick();
+
+        // Compute hash of status bar inputs to detect changes
+        let current_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+            // Layout
+            self.pty_rows.hash(&mut hasher);
+            self.total_cols.hash(&mut hasher);
+            self.status_rows.hash(&mut hasher);
+
+            // Session stats (key fields that affect display)
+            // Use discriminant for enum since SessionState doesn't impl Hash
+            std::mem::discriminant(&self.session_stats.effective_state()).hash(&mut hasher);
+            self.session_stats.work_seconds.hash(&mut hasher);
+            self.session_stats.thinking_seconds().hash(&mut hasher);
+            self.session_stats.platform_stats.prompts.hash(&mut hasher);
+            self.session_stats.platform_stats.completions.hash(&mut hasher);
+            self.session_stats.platform_stats.compressions.hash(&mut hasher);
+            self.session_stats.platform_stats.tools.len().hash(&mut hasher);
+
+            // Git state
+            self.git_state.branch.hash(&mut hasher);
+            self.git_state.files.len().hash(&mut hasher);
+            self.git_state.loading.hash(&mut hasher);
+
+            // Diff summary
+            self.diff_summary.files.len().hash(&mut hasher);
+            self.diff_summary.loading.hash(&mut hasher);
+
+            // Terminal title
+            self.terminal_title.hash(&mut hasher);
+
+            // Cloud status
+            if let Some(client) = &self.cloud_client {
+                let status = client.status();
+                status.connected.hash(&mut hasher);
+            }
+
+            // Pairing state
+            self.pairing_state.has_linked_devices.hash(&mut hasher);
+            self.pairing_state.pairing_token.hash(&mut hasher);
+
+            // Update state
+            self.update_state.banner_rows().hash(&mut hasher);
+
+            hasher.finish()
+        };
+
+        // Skip redraw if nothing changed
+        if self.last_status_bar_hash == Some(current_hash) {
+            return Ok(());
+        }
+        self.last_status_bar_hash = Some(current_hash);
 
         // Banner space is reserved at startup (2 rows between PTY and status bar)
         // The layout uses the actual pty_rows which already accounts for this
@@ -670,6 +704,11 @@ impl App {
         };
 
         let mut stdout = stdout();
+
+        // Get cursor position from vt100 parser to restore after drawing
+        // This is critical: we must restore cursor to the position the parser knows,
+        // so that DSR responses match what Claude expects
+        let cursor_position = Some(self.platform_pty.screen().cursor_position());
 
         // Get cloud status if connected
         let cloud_status = self.cloud_client.as_ref().map(|c| c.status());
@@ -685,6 +724,7 @@ impl App {
             cloud_status.as_ref(),
             &self.pairing_state,
             &self.update_state,
+            cursor_position,
         )?;
 
         // Publish mirror state (throttled, only when --profile)
@@ -860,9 +900,6 @@ impl App {
         // Reserve 2 rows for banner space (same as in App::new)
         let banner_reserved = 2u16;
         self.pty_rows = height.saturating_sub(self.status_rows + banner_reserved).max(1);
-
-        // Update scroll region filter with new PTY size
-        self.redraw_scanner.set_pty_rows(self.pty_rows);
 
         // Re-setup scroll region for new size (not initial, don't scroll content)
         self.setup_scroll_region(false)?;
