@@ -9,6 +9,17 @@ export const dashboardHtml = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Crabigator Dashboard</title>
+    <meta name="description" content="Real-time monitoring dashboard for your Claude Code sessions.">
+    <meta property="og:title" content="Crabigator Dashboard">
+    <meta property="og:description" content="Real-time monitoring dashboard for your Claude Code sessions.">
+    <meta property="og:image" content="https://drinkcrabigator.com/assets/og-dashboard.png">
+    <meta property="og:url" content="https://drinkcrabigator.com/dashboard">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Crabigator">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Crabigator Dashboard">
+    <meta name="twitter:description" content="Real-time monitoring dashboard for your Claude Code sessions.">
+    <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-dashboard.png">
     <link rel="icon" href="data:image/svg+xml,${faviconSvg}">
     <style>${dashboardCss}</style>
 </head>

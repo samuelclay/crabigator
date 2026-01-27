@@ -101,6 +101,29 @@ router.get('/assets/icon-bolt.svg', async () => {
     });
 });
 
+// Open Graph preview images
+import { ogLandingBase64, ogDashboardBase64 } from './assets/og-images';
+
+router.get('/assets/og-landing.png', async () => {
+    const imageData = Uint8Array.from(atob(ogLandingBase64), c => c.charCodeAt(0));
+    return new Response(imageData, {
+        headers: {
+            'Content-Type': 'image/png',
+            'Cache-Control': 'public, max-age=31536000',
+        }
+    });
+});
+
+router.get('/assets/og-dashboard.png', async () => {
+    const imageData = Uint8Array.from(atob(ogDashboardBase64), c => c.charCodeAt(0));
+    return new Response(imageData, {
+        headers: {
+            'Content-Type': 'image/png',
+            'Cache-Control': 'public, max-age=31536000',
+        }
+    });
+});
+
 // ============================================
 // Device endpoints
 // ============================================

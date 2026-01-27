@@ -59,6 +59,16 @@ export const landingHtml = `<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Crabigator - control Claude Code from anywhere</title>
     <meta name="description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code sessions.">
+    <meta property="og:title" content="Crabigator - Control Claude Code from anywhere">
+    <meta property="og:description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code sessions.">
+    <meta property="og:image" content="https://drinkcrabigator.com/assets/og-landing.png">
+    <meta property="og:url" content="https://drinkcrabigator.com/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Crabigator">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Crabigator - Control Claude Code from anywhere">
+    <meta name="twitter:description" content="Answer permissions, approve plans, and respond to questions from your phone.">
+    <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-landing.png">
     <link rel="icon" href="data:image/svg+xml,${iconCrabigatorEncoded}">
     <style>${landingCss}</style>
 </head>
