@@ -479,8 +479,11 @@ impl App {
                 }
 
                 // Full refresh timer - prevent visual artifact buildup
+                // Note: No clear_status_area() call here - draw_status_bar() handles
+                // clearing internally within its sync block to prevent flickering
                 _ = full_refresh_interval.tick() => {
-                    self.clear_status_area()?;
+                    // Force redraw by clearing the hash
+                    self.last_status_bar_hash = None;
                     self.draw_status_bar()?;
                     last_status_draw = Instant::now();
                 }
@@ -560,12 +563,16 @@ impl App {
         // Clean up stats file before exit
         self.platform.cleanup_stats(&self.cwd.to_string_lossy());
 
-        // Clear status bar area before exiting to prevent artifacts
-        // from remaining on screen for the next session
-        self.clear_status_area()?;
-
-        // Reset scroll region before exit
+        // Reset scroll region before exit (don't clear status area - it will
+        // naturally scroll away, and clearing leaves ugly blank space)
         self.reset_scroll_region()?;
+
+        // Move cursor below the status bar so the next shell prompt
+        // appears after our content (pty_rows + banner_reserved + status_rows + 1)
+        let mut stdout = stdout();
+        let final_row = self.pty_rows + 2 + self.status_rows + 1;
+        write!(stdout, "{}", escape::cursor_to(final_row, 1))?;
+        stdout.flush()?;
 
         Ok(())
     }
@@ -919,8 +926,9 @@ impl App {
         // Keep capture manager in sync with PTY dimensions
         self.capture_manager.resize(width, self.pty_rows);
 
-        // Clear new status bar area and redraw
-        self.clear_status_area()?;
+        // Force redraw with new dimensions (draw_status_bar clears internally
+        // within its sync block to prevent flickering)
+        self.last_status_bar_hash = None;
         self.draw_status_bar()?;
 
         Ok(())
