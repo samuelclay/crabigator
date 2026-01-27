@@ -27,6 +27,9 @@ use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScann
 use crate::ui::{draw_status_bar, Layout, PairingState, throbber_frame_index};
 use crate::update::UpdateState;
 
+/// Time PTY must be quiet before drawing status bar (prevents mid-burst draws)
+const PTY_SETTLE_TIME: Duration = Duration::from_millis(30);
+
 /// Result from background git refresh
 struct GitRefreshResult {
     git_state: GitState,
@@ -314,6 +317,7 @@ impl App {
     pub async fn run(&mut self) -> Result<()> {
         let mut last_status_draw = Instant::now();
         let mut last_throbber_draw = Instant::now();
+        let mut last_pty_output = Instant::now();
         let status_debounce = Duration::from_millis(100);
 
         // Event-driven timers using tokio intervals (no polling!)
@@ -322,6 +326,7 @@ impl App {
         let mut throbber_interval_timer = interval(Duration::from_millis(100));
         let mut full_refresh_interval = interval(Duration::from_secs(5));
         let mut cloud_reconnect_interval = interval(Duration::from_secs(2));
+        let mut status_draw_interval = interval(Duration::from_millis(50));
 
         // Async terminal event stream (replaces polling)
         let mut event_stream = EventStream::new();
@@ -388,13 +393,10 @@ impl App {
                 // PTY output - highest priority, handle immediately
                 Some(data) = self.pty_rx.recv() => {
                     self.write_pty_output(&data)?;
+                    last_pty_output = Instant::now();
 
-                    // Redraw status bar after PTY output (debounced)
-                    if last_status_draw.elapsed() >= status_debounce {
-                        self.draw_status_bar()?;
-                        last_status_draw = Instant::now();
-                        last_throbber_draw = Instant::now();
-                    }
+                    // Don't draw status bar here - let status_draw_interval handle it
+                    // after PTY output settles. This prevents drawing mid-burst.
 
                     // Update captures and send to cloud
                     self.handle_pty_output_capture(&mut sent_initial_screen)?;
@@ -438,9 +440,11 @@ impl App {
                         self.initial_diff_time_ms = Some(result.diff_time_ms);
                     }
 
-                    // Redraw with new data
-                    self.draw_status_bar()?;
-                    last_status_draw = Instant::now();
+                    // Redraw with new data (if PTY quiet, otherwise status_draw_interval will handle)
+                    if last_pty_output.elapsed() >= PTY_SETTLE_TIME {
+                        self.draw_status_bar()?;
+                        last_status_draw = Instant::now();
+                    }
                 }
 
                 // Git refresh timer - only fires when not already pending
@@ -467,13 +471,29 @@ impl App {
 
                 // Hook/stats refresh timer
                 _ = hook_interval.tick() => {
-                    self.handle_hook_refresh(&mut last_status_draw)?;
+                    self.handle_hook_refresh(&mut last_status_draw, last_pty_output)?;
                 }
 
                 // Throbber animation timer - only active when in Thinking/Permission state
                 _ = throbber_interval_timer.tick(), if needs_throbber => {
-                    if last_throbber_draw.elapsed() >= Duration::from_millis(100) {
+                    // Only animate if PTY has been quiet (don't animate mid-burst)
+                    if last_pty_output.elapsed() >= PTY_SETTLE_TIME {
+                        if last_throbber_draw.elapsed() >= Duration::from_millis(100) {
+                            self.draw_status_bar()?;
+                            last_throbber_draw = Instant::now();
+                        }
+                    }
+                }
+
+                // Status bar draw timer - draws when PTY output has settled
+                _ = status_draw_interval.tick() => {
+                    let quiet_for = last_pty_output.elapsed();
+                    let since_draw = last_status_draw.elapsed();
+
+                    // Draw if quiet long enough AND debounce passed
+                    if quiet_for >= PTY_SETTLE_TIME && since_draw >= status_debounce {
                         self.draw_status_bar()?;
+                        last_status_draw = Instant::now();
                         last_throbber_draw = Instant::now();
                     }
                 }
@@ -822,7 +842,7 @@ impl App {
     }
 
     /// Handle hook/stats refresh
-    fn handle_hook_refresh(&mut self, last_status_draw: &mut Instant) -> Result<()> {
+    fn handle_hook_refresh(&mut self, last_status_draw: &mut Instant, last_pty_output: Instant) -> Result<()> {
         let old_effective_state = self.session_stats.effective_state();
         let old_last_updated = self.session_stats.platform_stats.last_updated;
         self.session_stats
@@ -836,10 +856,13 @@ impl App {
                 .set_transcript_path(Some(path.clone()));
         }
 
-        // Redraw immediately if effective state changed
+        // Redraw if effective state changed (and PTY is quiet)
         if old_effective_state != new_effective_state {
-            self.draw_status_bar()?;
-            *last_status_draw = Instant::now();
+            if last_pty_output.elapsed() >= PTY_SETTLE_TIME {
+                self.draw_status_bar()?;
+                *last_status_draw = Instant::now();
+            }
+            // If PTY is busy, status_draw_interval will catch this soon
         }
 
         // Send initial state once, then on changes
