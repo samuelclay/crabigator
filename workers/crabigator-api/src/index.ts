@@ -12,6 +12,7 @@ import { createPayPalSubscription } from './handlers/payments/paypal';
 import { handlePayPalWebhook } from './handlers/payments/paypal-webhook';
 import { getSubscription, cancelSubscription, getSubscriptionPortal } from './handlers/payments/subscription';
 import { handleUpdateCheck, handleStaffDashboard, handleStaffTelemetry, handleStaffSyncUsage } from './handlers/telemetry';
+import { handleCreateGift, handleListGifts, handleSendGiftEmail, handleGetGift, handleClaimGift, handleResolvePendingGift } from './handlers/gifts';
 
 // Build version - deterministic hash of dashboard content
 // This ensures all worker instances return the same version for the same code
@@ -57,6 +58,46 @@ router.get('/', async () => {
             'Cache-Control': 'public, max-age=3600',
             'ETag': await getBuildVersion()
         }
+    });
+});
+
+// ============================================
+// Static Assets (for emails, etc.)
+// ============================================
+
+import { iconCrabigator, iconPhone, iconCloud, iconBolt } from './landing/icons';
+
+// Crab logo
+router.get('/assets/logo.svg', async () => {
+    // Add xmlns for standalone SVG
+    const svg = iconCrabigator.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
+    return new Response(svg, {
+        headers: {
+            'Content-Type': 'image/svg+xml',
+            'Cache-Control': 'public, max-age=31536000',
+        }
+    });
+});
+
+// Feature icons for email
+router.get('/assets/icon-phone.svg', async () => {
+    const svg = iconPhone.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" fill="#58a6ff" ').replace('class="icon" ', '');
+    return new Response(svg, {
+        headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=31536000' }
+    });
+});
+
+router.get('/assets/icon-cloud.svg', async () => {
+    const svg = iconCloud.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" fill="#a371f7" ');
+    return new Response(svg, {
+        headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=31536000' }
+    });
+});
+
+router.get('/assets/icon-bolt.svg', async () => {
+    const svg = iconBolt.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" fill="#3fb950" ');
+    return new Response(svg, {
+        headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=31536000' }
     });
 });
 
@@ -528,6 +569,41 @@ router.post('/api/update-check', handleUpdateCheck);
 router.get('/staff', handleStaffDashboard);
 router.get('/api/staff/telemetry', handleStaffTelemetry);
 router.post('/api/staff/sync-usage', handleStaffSyncUsage);
+
+// Staff gift management
+router.post('/api/staff/gifts', handleCreateGift);
+router.get('/api/staff/gifts', handleListGifts);
+router.post('/api/staff/gifts/:id/send-email', handleSendGiftEmail);
+
+// ============================================
+// Gift claiming (public endpoints)
+// ============================================
+
+router.get('/api/gifts/:code', handleGetGift);
+
+// Claim gift - tries mobile auth but accepts unauthenticated
+router.post('/api/gifts/:code/claim', async (request, env, params) => {
+    // Try to get mobile auth for group_id (optional)
+    let auth: { group_id?: string } | undefined;
+    try {
+        const authResult = await requireMobileAuth(request, env);
+        if (!('error' in authResult)) {
+            auth = { group_id: authResult.auth.group_id };
+        }
+    } catch {
+        // No auth is OK
+    }
+    return handleClaimGift(request, env, params, auth);
+});
+
+// Resolve pending gift after pairing (requires mobile auth)
+router.post('/api/gifts/resolve-pending', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    return handleResolvePendingGift(request, env, { group_id: authResult.auth.group_id });
+});
 
 // ============================================
 // Health check

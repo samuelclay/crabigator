@@ -64,6 +64,10 @@ pattern = "drinkcrabigator.com/staff"
 zone_name = "drinkcrabigator.com"
 
 [[routes]]
+pattern = "drinkcrabigator.com/assets/*"
+zone_name = "drinkcrabigator.com"
+
+[[routes]]
 pattern = "drinkcrabigator.com/"
 zone_name = "drinkcrabigator.com"
 
@@ -73,3 +77,6 @@ API_VERSION = "v1"
 STRIPE_MODE = "live"
 # PayPal mode: "sandbox" or "live"
 PAYPAL_MODE = "live"
+# Mailgun settings (MAILGUN_API_KEY set via wrangler secret put)
+MAILGUN_DOMAIN = "email.drinkcrabigator.com"
+MAILGUN_FROM = "Crabigator <gifts@drinkcrabigator.com>"

@@ -36,4 +36,9 @@ export interface Env {
     PAYPAL_WEBHOOK_ID?: string;
     PAYPAL_PLAN_ID?: string;
     PAYPAL_MODE?: 'sandbox' | 'live';
+
+    // Mailgun email settings
+    MAILGUN_API_KEY?: string;
+    MAILGUN_DOMAIN?: string;
+    MAILGUN_FROM?: string;
 }

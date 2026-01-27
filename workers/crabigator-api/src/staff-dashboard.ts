@@ -247,6 +247,286 @@ export const staffDashboardHtml = `<!DOCTYPE html>
             padding: 40px;
             color: var(--red);
         }
+
+        /* Gift Management Section */
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-title span {
+            font-size: 22px;
+        }
+
+        .gifts-section {
+            margin-bottom: 32px;
+        }
+
+        .gift-create-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .gift-form {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .form-group label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+        }
+
+        .form-group select,
+        .form-group input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 14px;
+            color: var(--text);
+            font-size: 14px;
+            min-width: 160px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .form-group select:focus,
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+        }
+
+        .form-group input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background: #4393e6;
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.05);
+            border-color: var(--text-muted);
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .btn-icon {
+            padding: 6px 10px;
+        }
+
+        .gift-result {
+            margin-top: 16px;
+            padding: 16px;
+            background: rgba(63, 185, 80, 0.08);
+            border: 1px solid rgba(63, 185, 80, 0.3);
+            border-radius: 6px;
+            display: none;
+        }
+
+        .gift-result.visible {
+            display: block;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .gift-result-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            color: var(--green);
+            font-weight: 500;
+        }
+
+        .gift-url-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .gift-url {
+            flex: 1;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 10px 12px;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+            font-size: 13px;
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .copy-success {
+            color: var(--green);
+            font-size: 12px;
+            margin-left: 8px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .copy-success.visible {
+            opacity: 1;
+        }
+
+        /* Gift Status Badges */
+        .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-badge.unclaimed {
+            background: rgba(139, 148, 158, 0.15);
+            color: var(--text-muted);
+        }
+
+        .status-badge.pending {
+            background: rgba(210, 153, 34, 0.15);
+            color: var(--orange);
+        }
+
+        .status-badge.claimed {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--green);
+        }
+
+        .duration-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            background: rgba(163, 113, 247, 0.15);
+            color: #a371f7;
+        }
+
+        .gift-code {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .actions-cell {
+            display: flex;
+            gap: 6px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+
+        .empty-state span {
+            font-size: 32px;
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease-out;
+            z-index: 1000;
+        }
+
+        .toast.visible {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success {
+            border-color: var(--green);
+        }
+
+        .toast.error {
+            border-color: var(--red);
+        }
+
+        /* Loading spinner */
+        .spin {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -295,6 +575,86 @@ export const staffDashboardHtml = `<!DOCTYPE html>
             </div>
         </div>
 
+        <!-- Gift Management Section -->
+        <div class="gifts-section">
+            <div class="section-title"><span>🎁</span> Gift Subscriptions</div>
+
+            <div class="gift-create-card">
+                <form class="gift-form" id="gift-form">
+                    <div class="form-group">
+                        <label for="duration">Duration</label>
+                        <select id="duration" name="duration_type" required>
+                            <option value="day">Day</option>
+                            <option value="week">Week</option>
+                            <option value="month" selected>Month</option>
+                            <option value="year">Year</option>
+                            <option value="forever">Forever</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Recipient Email (optional)</label>
+                        <input type="email" id="email" name="recipient_email" placeholder="user@example.com">
+                    </div>
+                    <button type="submit" class="btn btn-primary" id="create-gift-btn">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                        </svg>
+                        Create Gift
+                    </button>
+                </form>
+
+                <div class="gift-result" id="gift-result">
+                    <div class="gift-result-header">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>
+                        </svg>
+                        Gift Created!
+                    </div>
+                    <div class="gift-url-row">
+                        <div class="gift-url" id="gift-url"></div>
+                        <button type="button" class="btn btn-secondary btn-small" id="copy-url-btn" onclick="copyGiftUrl()">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/>
+                                <path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/>
+                            </svg>
+                            Copy
+                        </button>
+                        <button type="button" class="btn btn-primary btn-small" id="send-email-btn" style="display:none" onclick="sendGiftEmail()">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M1.75 2h12.5c.966 0 1.75.784 1.75 1.75v8.5A1.75 1.75 0 0114.25 14H1.75A1.75 1.75 0 010 12.25v-8.5C0 2.784.784 2 1.75 2zM1.5 12.251c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V5.809L8.38 9.397a.75.75 0 01-.76 0L1.5 5.809v6.442zm13-8.181v-.32a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25v.32L8 7.88l6.5-3.81z"/>
+                            </svg>
+                            Send Email
+                        </button>
+                        <span class="copy-success" id="copy-success">Copied!</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <div class="table-header">
+                    <div class="table-title">All Gifts</div>
+                    <div class="table-count" id="gifts-count"></div>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Code</th>
+                            <th>Duration</th>
+                            <th>Created</th>
+                            <th>Status</th>
+                            <th>Sessions</th>
+                            <th>Total Time</th>
+                            <th>Avg Time</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="gifts-table">
+                        <tr><td colspan="8" class="loading">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <div class="table-container">
             <div class="table-header">
                 <div class="table-title">Recent Telemetry</div>
@@ -318,10 +678,27 @@ export const staffDashboardHtml = `<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- Toast notification -->
+    <div class="toast" id="toast"></div>
+
     <script>
         // Chart instances
         let checksChart = null;
         let versionChart = null;
+
+        // Current gift state
+        let currentGiftId = null;
+        let currentGiftEmail = null;
+
+        // Show toast notification
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast ' + type + ' visible';
+            setTimeout(() => {
+                toast.classList.remove('visible');
+            }, 3000);
+        }
 
         // Format relative time
         function timeAgo(timestamp) {
@@ -483,6 +860,170 @@ export const staffDashboardHtml = `<!DOCTYPE html>
         // Initial load and auto-refresh every 5 seconds
         fetchData();
         setInterval(fetchData, 5000);
+
+        // ============================================
+        // Gift Management
+        // ============================================
+
+        // Fetch and render gifts
+        async function fetchGifts() {
+            try {
+                const response = await fetch('/api/staff/gifts');
+                if (!response.ok) throw new Error('Failed to fetch gifts');
+                const data = await response.json();
+                renderGiftsTable(data.gifts || []);
+            } catch (err) {
+                console.error('Fetch gifts error:', err);
+            }
+        }
+
+        // Render gifts table
+        function renderGiftsTable(gifts) {
+            const tbody = document.getElementById('gifts-table');
+            const countEl = document.getElementById('gifts-count');
+            countEl.textContent = gifts.length + ' gift' + (gifts.length !== 1 ? 's' : '');
+
+            if (gifts.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><span>🎁</span>No gifts created yet</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = gifts.map(gift => {
+                const statusClass = gift.status;
+                const statusLabel = gift.status.charAt(0).toUpperCase() + gift.status.slice(1);
+
+                return \`
+                    <tr>
+                        <td><span class="gift-code">\${gift.id}</span></td>
+                        <td><span class="duration-badge">\${gift.duration_type}</span></td>
+                        <td class="time-ago">\${timeAgo(gift.created_at)}</td>
+                        <td><span class="status-badge \${statusClass}">\${statusLabel}</span></td>
+                        <td>\${gift.session_count || '-'}</td>
+                        <td>\${gift.total_duration_formatted || '-'}</td>
+                        <td>\${gift.avg_duration_formatted || '-'}</td>
+                        <td class="actions-cell">
+                            <button class="btn btn-secondary btn-icon" onclick="copyUrl('\${gift.url}')" title="Copy URL">
+                                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/>
+                                    <path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/>
+                                </svg>
+                            </button>
+                            \${gift.recipient_email && !gift.email_sent_at ? \`
+                                <button class="btn btn-secondary btn-icon" onclick="sendEmail('\${gift.id}')" title="Send Email">
+                                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                        <path d="M1.75 2h12.5c.966 0 1.75.784 1.75 1.75v8.5A1.75 1.75 0 0114.25 14H1.75A1.75 1.75 0 010 12.25v-8.5C0 2.784.784 2 1.75 2zM1.5 12.251c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V5.809L8.38 9.397a.75.75 0 01-.76 0L1.5 5.809v6.442zm13-8.181v-.32a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25v.32L8 7.88l6.5-3.81z"/>
+                                    </svg>
+                                </button>
+                            \` : ''}
+                        </td>
+                    </tr>
+                \`;
+            }).join('');
+        }
+
+        // Create gift form handler
+        document.getElementById('gift-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const btn = document.getElementById('create-gift-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" class="spin"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="30" stroke-linecap="round"/></svg> Creating...';
+
+            const formData = new FormData(e.target);
+            const data = {
+                duration_type: formData.get('duration_type'),
+                recipient_email: formData.get('recipient_email') || undefined
+            };
+
+            try {
+                const response = await fetch('/api/staff/gifts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to create gift');
+                }
+
+                const gift = await response.json();
+
+                // Show result
+                currentGiftId = gift.id;
+                currentGiftEmail = data.recipient_email;
+
+                document.getElementById('gift-url').textContent = gift.url;
+                document.getElementById('gift-result').classList.add('visible');
+
+                // Show send email button if email provided
+                const sendBtn = document.getElementById('send-email-btn');
+                sendBtn.style.display = data.recipient_email ? 'inline-flex' : 'none';
+
+                // Clear form
+                document.getElementById('email').value = '';
+
+                // Refresh gifts table
+                fetchGifts();
+
+                showToast('Gift created successfully!');
+            } catch (err) {
+                showToast(err.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg> Create Gift';
+            }
+        });
+
+        // Copy gift URL from result panel
+        function copyGiftUrl() {
+            const url = document.getElementById('gift-url').textContent;
+            copyUrl(url);
+            document.getElementById('copy-success').classList.add('visible');
+            setTimeout(() => {
+                document.getElementById('copy-success').classList.remove('visible');
+            }, 2000);
+        }
+
+        // Copy any URL
+        function copyUrl(url) {
+            navigator.clipboard.writeText(url).then(() => {
+                showToast('URL copied to clipboard!');
+            }).catch(() => {
+                showToast('Failed to copy URL', 'error');
+            });
+        }
+
+        // Send email for current gift
+        async function sendGiftEmail() {
+            if (!currentGiftId) return;
+            await sendEmail(currentGiftId);
+            document.getElementById('send-email-btn').style.display = 'none';
+        }
+
+        // Send email for a gift
+        async function sendEmail(giftId) {
+            try {
+                const response = await fetch('/api/staff/gifts/' + giftId + '/send-email', {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to send email');
+                }
+
+                const result = await response.json();
+                showToast('Email sent to ' + result.sent_to);
+                fetchGifts();
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        // Initial gifts load and refresh
+        fetchGifts();
+        setInterval(fetchGifts, 5000);
     </script>
 </body>
 </html>

@@ -137,6 +137,39 @@ export const dashboardHtml = `<!DOCTYPE html>
     </div>
     <div class="container" id="sessions" data-layout="1" data-grouping="all"></div>
 
+    <!-- Gift Claim Overlay -->
+    <div class="gift-overlay" id="gift-overlay">
+        <div class="gift-modal">
+            <div class="gift-content" id="gift-content">
+                <div class="gift-icon">🎁</div>
+                <h2 class="gift-title">You've Been Gifted!</h2>
+                <p class="gift-subtitle">Someone has sent you a gift subscription to Crabigator Pro.</p>
+                <div class="gift-duration">
+                    <div class="gift-duration-label">Gift Duration</div>
+                    <div class="gift-duration-value" id="gift-duration-text">Month</div>
+                </div>
+                <div class="gift-code-label">Gift Code: <span class="gift-code-value" id="gift-code-display">XXXXXXXX</span></div>
+                <button class="gift-claim-btn" id="gift-claim-btn" onclick="claimGift()">
+                    Claim Your Gift
+                </button>
+                <button class="gift-dismiss" onclick="dismissGift()">Maybe later</button>
+            </div>
+            <div class="gift-loading" id="gift-loading">
+                <div class="gift-loading-spinner"></div>
+                <div class="gift-loading-text">Loading gift...</div>
+            </div>
+            <div class="gift-success" id="gift-success">
+                <div class="gift-success-icon">✓</div>
+                <div class="gift-success-text" id="gift-success-text">Gift claimed successfully!</div>
+            </div>
+            <div class="gift-error" id="gift-error">
+                <div class="gift-error-icon">😢</div>
+                <div class="gift-error-text" id="gift-error-text">Something went wrong</div>
+                <button class="gift-retry-btn" onclick="closeGiftOverlay()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Paywall Overlay -->
     <div class="paywall-overlay" id="paywall-overlay">
         <div class="paywall-modal">

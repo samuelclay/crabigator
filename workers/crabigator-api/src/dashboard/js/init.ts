@@ -27,6 +27,11 @@ export const initJs = `
                 return;
             }
 
+            // Check for gift claim via URL parameter
+            const handledGift = await handleGiftParam();
+            // Note: Gift handling shows overlay but doesn't block normal init
+            // User can dismiss and still use the dashboard
+
             // Check pairing status - if not paired, show pairing gate
             if (!checkPairingStatus()) {
                 showPairingGate();
@@ -39,6 +44,8 @@ export const initJs = `
                 startViewerActivityTracking();
                 // Initialize usage tracking and paywall
                 initUsageTracking();
+                // Check for pending gift that was claimed before pairing
+                resolvePendingGift();
             }
         })();
 `;
