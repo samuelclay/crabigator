@@ -67,6 +67,8 @@ export class SessionDO implements DurableObject {
     private desktopNotifiedViewerActive: boolean = false;
     /** Last time we notified SessionListDO of activity (throttled) */
     private lastSeenNotifiedAt: number = 0;
+    /** Last time we updated D1 last_seen_at (throttled separately, 60s) */
+    private lastD1SeenUpdate: number = 0;
 
     constructor(state: DurableObjectState, env: Env) {
         this.state = state;
@@ -176,6 +178,9 @@ export class SessionDO implements DurableObject {
 
             // Notify SessionListDO that desktop connected
             await this.notifySessionList('connect', this.sessionInfo);
+
+            // Update D1 last_seen_at for zombie detection
+            this.updateD1LastSeen();
 
             // Notify desktop of current viewer status
             if (this.hasActiveViewers()) {
@@ -294,6 +299,32 @@ export class SessionDO implements DurableObject {
     }
 
     /**
+     * Check if enough time has passed to send another D1 last_seen_at update
+     * Throttles to every 60 seconds to minimize D1 writes
+     */
+    private shouldUpdateD1LastSeen(): boolean {
+        return Date.now() - this.lastD1SeenUpdate > 60_000; // 60s throttle
+    }
+
+    /**
+     * Update last_seen_at in D1 for zombie session detection
+     *
+     * This is used by the scheduled cleanup job to identify sessions that
+     * have stopped sending activity. Fire-and-forget to avoid blocking.
+     */
+    private updateD1LastSeen(): void {
+        if (!this.sessionInfo) return;
+        this.lastD1SeenUpdate = Date.now();
+        const now = Math.floor(Date.now() / 1000);
+
+        this.env.DB.prepare(`
+            UPDATE sessions SET last_seen_at = ? WHERE id = ?
+        `).bind(now, this.sessionInfo.id).run().catch((error) => {
+            console.error('Error updating last_seen_at:', error);
+        });
+    }
+
+    /**
      * Handle incoming event from desktop
      */
     private async handleEvent(event: SessionEvent): Promise<void> {
@@ -379,6 +410,11 @@ export class SessionDO implements DurableObject {
         // This keeps sessions alive during deploys via the grace period
         if (this.sessionInfo && this.shouldUpdateLastSeen()) {
             this.notifySessionLastSeen();
+        }
+
+        // Update D1 last_seen_at for zombie detection (throttled to every 60s)
+        if (this.sessionInfo && this.shouldUpdateD1LastSeen()) {
+            this.updateD1LastSeen();
         }
     }
 

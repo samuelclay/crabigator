@@ -161,7 +161,7 @@ export async function listSessions(
 
     let query = `
         SELECT sessions.id, sessions.client_session_id, sessions.cwd, sessions.platform, sessions.state,
-               sessions.started_at, sessions.ended_at, sessions.is_active,
+               sessions.started_at, sessions.ended_at, sessions.is_active, sessions.last_seen_at,
                sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds
         FROM sessions
     `;
@@ -191,28 +191,91 @@ export async function listSessions(
         started_at: number;
         ended_at: number | null;
         is_active: number;
+        last_seen_at: number | null;
         prompts: number;
         completions: number;
         tool_calls: number;
         thinking_seconds: number;
     }>();
 
-    const sessions: SessionInfo[] = (results.results || []).map(row => ({
-        id: row.id,
-        client_session_id: row.client_session_id,
-        cwd: row.cwd,
-        platform: row.platform,
-        state: row.state,
-        started_at: row.started_at,
-        ended_at: row.ended_at,
-        is_active: row.is_active === 1,
-        stats: {
-            prompts: row.prompts,
-            completions: row.completions,
-            tool_calls: row.tool_calls,
-            thinking_seconds: row.thinking_seconds,
-        },
-    }));
+    // Validate active sessions against SessionDO state (cleanup on read)
+    // This catches zombie sessions that D1 thinks are active but aren't
+    const staleSessionIds: string[] = [];
+    const now = Math.floor(Date.now() / 1000);
+    const staleThreshold = now - 120; // 2 minutes - allows for deploy reconnection
+
+    if (activeOnly && results.results) {
+        const activeSessions = results.results.filter(row => row.is_active === 1);
+
+        // Check each active session's actual state (parallel for performance)
+        const checks = activeSessions.map(async (row) => {
+            try {
+                const doId = env.SESSION.idFromName(row.id);
+                const stub = env.SESSION.get(doId);
+                const resp = await stub.fetch(new Request('https://internal/state'));
+                const state = (await resp.json()) as { desktop_connected?: boolean };
+
+                if (!state.desktop_connected) {
+                    // Desktop disconnected - check if stale
+                    const lastSeen = row.last_seen_at || row.started_at;
+                    if (lastSeen < staleThreshold) {
+                        staleSessionIds.push(row.id);
+                    }
+                }
+            } catch {
+                // Can't reach DO - check last_seen_at threshold
+                const lastSeen = row.last_seen_at || row.started_at;
+                if (lastSeen < staleThreshold) {
+                    staleSessionIds.push(row.id);
+                }
+            }
+        });
+
+        await Promise.all(checks);
+    }
+
+    // Clean up stale sessions in background (fire and forget)
+    if (staleSessionIds.length > 0) {
+        const endedAt = now;
+
+        // Batch update D1
+        const placeholders = staleSessionIds.map(() => '?').join(',');
+        env.DB.prepare(`
+            UPDATE sessions
+            SET is_active = 0, ended_at = ?
+            WHERE id IN (${placeholders}) AND is_active = 1
+        `).bind(endedAt, ...staleSessionIds).run().catch((error) => {
+            console.error('Error cleaning up stale sessions:', error);
+        });
+
+        // Notify SessionListDO (fire and forget)
+        for (const sessionId of staleSessionIds) {
+            notifySessionListChange(env, {
+                type: 'updated',
+                session: { id: sessionId, ended_at: endedAt, is_active: false },
+            });
+        }
+    }
+
+    // Filter out stale sessions from results
+    const sessions: SessionInfo[] = (results.results || [])
+        .filter(row => !staleSessionIds.includes(row.id))
+        .map(row => ({
+            id: row.id,
+            client_session_id: row.client_session_id,
+            cwd: row.cwd,
+            platform: row.platform,
+            state: row.state,
+            started_at: row.started_at,
+            ended_at: row.ended_at,
+            is_active: row.is_active === 1,
+            stats: {
+                prompts: row.prompts,
+                completions: row.completions,
+                tool_calls: row.tool_calls,
+                thinking_seconds: row.thinking_seconds,
+            },
+        }));
 
     const response: ListSessionsResponse = { sessions };
     return jsonResponse(response);

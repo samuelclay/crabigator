@@ -46,6 +46,10 @@ new_sqlite_classes = ["SessionListDO"]
 tag = "v5"
 new_sqlite_classes = ["UsageDO"]
 
+# Scheduled triggers for cleanup jobs
+[triggers]
+crons = ["*/5 * * * *"]  # Every 5 minutes - zombie session cleanup
+
 # Production routes
 [[routes]]
 pattern = "drinkcrabigator.com/api/*"

@@ -13,6 +13,7 @@ import { handlePayPalWebhook } from './handlers/payments/paypal-webhook';
 import { getSubscription, cancelSubscription, getSubscriptionPortal } from './handlers/payments/subscription';
 import { handleUpdateCheck, handleStaffDashboard, handleStaffTelemetry, handleStaffSyncUsage } from './handlers/telemetry';
 import { handleCreateGift, handleListGifts, handleSendGiftEmail, handleGetGift, handleClaimGift, handleResolvePendingGift } from './handlers/gifts';
+import { cleanupZombieSessions } from './handlers/cleanup';
 
 // Build version - deterministic hash of dashboard content
 // This ensures all worker instances return the same version for the same code
@@ -643,5 +644,9 @@ router.get('/api/health', async () => {
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
         return router.handle(request, env);
+    },
+
+    async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+        ctx.waitUntil(cleanupZombieSessions(env));
     },
 } satisfies ExportedHandler<Env>;
