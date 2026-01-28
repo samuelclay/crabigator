@@ -2,6 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Ask Questions Liberally
+
+**Use the AskUserQuestion tool frequently throughout development - not just during planning.**
+
+Asking questions is encouraged and appreciated because it:
+- Helps both of us think through problems more clearly
+- Surfaces edge cases and requirements that might be missed
+- Leads to better solutions through collaborative dialogue
+- Catches misunderstandings early before code is written
+
+Ask about:
+- Clarifying requirements and desired behavior
+- UI/UX preferences and design decisions
+- Trade-offs between different approaches
+- Edge cases and error handling
+- Whether a proposed solution matches expectations
+- Anything you're uncertain about
+
+Don't assume - ask. Multiple rounds of questions are better than one large batch. Even mid-implementation, if something feels unclear or you're choosing between options, ask. The interactive back-and-forth is valuable.
+
 ## Build Commands
 
 ```bash
@@ -425,6 +445,27 @@ The code simplifier will:
 - Clean up dead code and redundant logic
 - Simplify overly complex patterns
 - Preserve all functionality
+
+## Commit Practices
+
+When committing changes, split them into separate logical commits rather than one large commit. Each commit should represent a single coherent change:
+
+- **One feature/fix per commit**: If you added a debug display feature AND fixed a bug, those should be separate commits
+- **Separate by layer**: Rust changes vs Worker/TypeScript changes should generally be separate commits
+- **Group related files**: Files that work together for a single feature go in the same commit (e.g., `client.rs` + `stats.rs` for a status display change)
+
+Example of good commit splitting:
+```
+ad3b290 Show session ID next to Streaming status in debug builds
+6a4613b Add auto-retry for failed cloud registration
+a3e4927 Verify desktop connection before marking sessions as zombie
+deb5b0e Use D1 as source of truth for active sessions in dashboard
+```
+
+Each commit should:
+- Have a clear, descriptive message explaining the "why"
+- Be buildable/deployable on its own (no broken intermediate states)
+- Be easy to revert independently if needed
 
 ## Releasing a New Version
 
