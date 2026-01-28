@@ -863,6 +863,7 @@ body {
 /* Stack widgets for multi-column layouts */
 .container[data-layout="2"] .widgets-content,
 .container[data-layout="3"] .widgets-content,
+.container[data-layout="4"] .widgets-content,
 .container[data-layout="fit"] .widgets-content {
     grid-template-columns: 1fr;
 }
@@ -1555,15 +1556,18 @@ body {
 .container[data-layout="1"] { column-count: 1; }
 .container[data-layout="2"] { column-count: 2; }
 .container[data-layout="3"] { column-count: 3; }
+.container[data-layout="4"] { column-count: 4; }
 
 /* Adjust terminal heights */
 .container[data-layout="2"] .terminal { height: 250px; }
 .container[data-layout="3"] .terminal { height: 200px; }
+.container[data-layout="4"] .terminal { height: 150px; }
 .container[data-layout="fit"] .terminal { height: 150px; }
 
 /* Stack widgets in narrow layouts */
 .container[data-layout="2"] .widgets-content,
 .container[data-layout="3"] .widgets-content,
+.container[data-layout="4"] .widgets-content,
 .container[data-layout="fit"] .widgets-content {
     grid-template-columns: 1fr;
 }
@@ -2014,6 +2018,10 @@ body {
     column-count: 3;
     column-gap: 16px;
 }
+.container[data-grouping="project"][data-layout="4"] .project-sessions-content {
+    column-count: 4;
+    column-gap: 16px;
+}
 .container[data-grouping="project"][data-layout="fit"] .project-sessions-content {
     column-count: var(--group-fit-columns, 1);
     column-gap: 16px;
@@ -2021,6 +2029,7 @@ body {
 /* Restore card styling in multi-column project mode */
 .container[data-grouping="project"][data-layout="2"] .session-card,
 .container[data-grouping="project"][data-layout="3"] .session-card,
+.container[data-grouping="project"][data-layout="4"] .session-card,
 .container[data-grouping="project"][data-layout="fit"] .session-card {
     border: 1px solid var(--border-dim);
     border-radius: 12px;
@@ -2029,12 +2038,14 @@ body {
 }
 .container[data-grouping="project"][data-layout="2"] .project-sessions-inner,
 .container[data-grouping="project"][data-layout="3"] .project-sessions-inner,
+.container[data-grouping="project"][data-layout="4"] .project-sessions-inner,
 .container[data-grouping="project"][data-layout="fit"] .project-sessions-inner {
     border-left: none;
     margin-left: 0;
 }
 .container[data-grouping="project"][data-layout="2"] .project-sessions-content,
 .container[data-grouping="project"][data-layout="3"] .project-sessions-content,
+.container[data-grouping="project"][data-layout="4"] .project-sessions-content,
 .container[data-grouping="project"][data-layout="fit"] .project-sessions-content {
     padding: 16px;
     padding-top: 10px;

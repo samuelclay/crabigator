@@ -81,6 +81,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <button class="style-option active" data-layout="1" onclick="setLayout('1')">1</button>
                         <button class="style-option" data-layout="2" onclick="setLayout('2')">2</button>
                         <button class="style-option" data-layout="3" onclick="setLayout('3')">3</button>
+                        <button class="style-option" data-layout="4" onclick="setLayout('4')">4</button>
                         <button class="style-option" data-layout="fit" onclick="setLayout('fit')">Fit</button>
                     </div>
                 </div>

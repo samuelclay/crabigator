@@ -418,8 +418,8 @@ export const styleJs = `
 
             // Calculate columns based on available width
             const containerWidth = document.getElementById('sessions').offsetWidth || window.innerWidth - 32;
-            const minCardWidth = 450;  // Minimum comfortable card width
-            const maxCols = Math.max(Math.floor(containerWidth / minCardWidth), 1);
+            const minCardWidth = 550;  // Minimum card width before adding another column
+            const maxCols = Math.min(Math.max(Math.floor(containerWidth / minCardWidth), 1), 4);
             // Don't use more columns than we have sessions in this group
             const cols = Math.min(maxCols, count || 1);
             sessionsContent.style.setProperty('--group-fit-columns', cols);

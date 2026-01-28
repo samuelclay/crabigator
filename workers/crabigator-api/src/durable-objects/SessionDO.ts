@@ -318,7 +318,7 @@ export class SessionDO implements DurableObject {
         const now = Math.floor(Date.now() / 1000);
 
         this.env.DB.prepare(`
-            UPDATE sessions SET last_seen_at = ? WHERE id = ?
+            UPDATE sessions SET last_seen_at = ?, is_active = 1 WHERE id = ?
         `).bind(now, this.sessionInfo.id).run().catch((error) => {
             console.error('Error updating last_seen_at:', error);
         });

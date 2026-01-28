@@ -311,12 +311,61 @@ export class SessionListDO implements DurableObject {
         await this.validateSessions();
         await this.refreshMissingSessionMetadata();
 
-        const sessions = Array.from(this.activeSessions.values())
+        let sessions = Array.from(this.activeSessions.values())
             .filter(session => session.group_id === groupId)
             .map(session => this.sanitizeSession(session));
+
+        // If no sessions in memory, fall back to D1 for active sessions
+        // This handles the case where desktops haven't reconnected after a deploy
+        if (sessions.length === 0) {
+            const d1Sessions = await this.fetchActiveSessionsFromD1(groupId);
+            if (d1Sessions.length > 0) {
+                // Re-populate activeSessions from D1
+                for (const session of d1Sessions) {
+                    this.activeSessions.set(session.id, session);
+                }
+                await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
+                sessions = d1Sessions.map(session => this.sanitizeSession(session));
+            }
+        }
+
         return new Response(JSON.stringify({ sessions }), {
             headers: { 'Content-Type': 'application/json' },
         });
+    }
+
+    /**
+     * Fetch active sessions from D1 as a fallback
+     */
+    private async fetchActiveSessionsFromD1(groupId: string): Promise<ActiveSession[]> {
+        const results = await this.env.DB.prepare(`
+            SELECT sessions.id, sessions.cwd, sessions.platform, sessions.state, sessions.started_at,
+                   sessions.device_id, devices.group_id
+            FROM sessions
+            JOIN devices ON devices.id = sessions.device_id
+            WHERE devices.group_id = ? AND sessions.is_active = 1
+            ORDER BY sessions.started_at DESC
+            LIMIT 50
+        `).bind(groupId).all<{
+            id: string;
+            cwd: string;
+            platform: string;
+            state: string;
+            started_at: number;
+            device_id: string;
+            group_id: string | null;
+        }>();
+
+        return (results.results || []).map(row => ({
+            id: row.id,
+            cwd: row.cwd,
+            platform: row.platform,
+            state: row.state,
+            started_at: row.started_at,
+            device_id: row.device_id,
+            group_id: row.group_id,
+            last_seen: Date.now(),
+        }));
     }
 
     /**
