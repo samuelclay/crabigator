@@ -112,6 +112,14 @@ pub struct App {
     last_cloud_screen_hash: Option<u64>,
     /// Hash of last status bar state (to avoid flickering redraws)
     last_status_bar_hash: Option<u64>,
+    /// Session ID for cloud registration retry
+    session_id: String,
+    /// Number of cloud init retry attempts
+    cloud_init_retry_count: u32,
+    /// Last cloud init attempt time
+    last_cloud_init_attempt: Option<Instant>,
+    /// Pending cloud init result
+    pending_cloud_init: Option<std::sync::mpsc::Receiver<anyhow::Result<CloudClient>>>,
 }
 
 impl App {
@@ -217,6 +225,10 @@ impl App {
             last_cloud_changes_hash: None,
             last_cloud_screen_hash: None,
             last_status_bar_hash: None,
+            session_id,
+            cloud_init_retry_count: 0,
+            last_cloud_init_attempt: None,
+            pending_cloud_init: None,
         })
     }
 
@@ -512,6 +524,51 @@ impl App {
                 _ = cloud_reconnect_interval.tick() => {
                     // Check for commands from cloud
                     self.check_cloud_commands()?;
+
+                    // Retry cloud init if client is None and we haven't exceeded max retries
+                    // Retry every 30s, up to 10 times (5 minutes total)
+                    if self.cloud_client.is_none() && self.cloud_init_retry_count < 10 {
+                        let should_retry = match self.last_cloud_init_attempt {
+                            None => true,
+                            Some(last) => last.elapsed() > Duration::from_secs(30),
+                        };
+                        if should_retry {
+                            self.last_cloud_init_attempt = Some(Instant::now());
+                            self.cloud_init_retry_count += 1;
+                            let session_id = self.session_id.clone();
+                            let cwd_str = self.cwd.to_string_lossy().to_string();
+                            let platform_kind = self.platform.kind().as_str().to_string();
+
+                            // Spawn async cloud init in background thread (non-blocking)
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            std::thread::spawn(move || {
+                                let rt = tokio::runtime::Builder::new_current_thread()
+                                    .enable_all()
+                                    .build();
+                                if let Ok(rt) = rt {
+                                    let result = rt.block_on(async {
+                                        let mut client = crate::cloud::CloudClient::new()?;
+                                        client.register_session(&session_id, &cwd_str, &platform_kind).await?;
+                                        Ok::<_, anyhow::Error>(client)
+                                    });
+                                    let _ = tx.send(result);
+                                }
+                            });
+                            // Store the receiver to check on next tick
+                            self.pending_cloud_init = Some(rx);
+                        }
+                    }
+
+                    // Check for pending cloud init result
+                    if let Some(ref rx) = self.pending_cloud_init {
+                        if let Ok(result) = rx.try_recv() {
+                            self.pending_cloud_init = None;
+                            if let Ok(client) = result {
+                                self.cloud_client = Some(client);
+                                self.cloud_init_retry_count = 0; // Reset on success
+                            }
+                        }
+                    }
 
                     // Keep cloud WebSocket connected
                     if let Some(ref mut client) = self.cloud_client {
