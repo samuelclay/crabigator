@@ -82,6 +82,8 @@ export class SessionListDO implements DurableObject {
 
         if (stale.length > 0) {
             for (const id of stale) {
+                const session = this.activeSessions.get(id);
+                console.log(`validateSessions: removing stale session ${id.slice(0, 8)} cwd=${session?.cwd} last_seen=${session?.last_seen}`);
                 this.activeSessions.delete(id);
             }
             await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
@@ -311,23 +313,34 @@ export class SessionListDO implements DurableObject {
         await this.validateSessions();
         await this.refreshMissingSessionMetadata();
 
-        let sessions = Array.from(this.activeSessions.values())
-            .filter(session => session.group_id === groupId)
-            .map(session => this.sanitizeSession(session));
-
-        // If no sessions in memory, fall back to D1 for active sessions
-        // This handles the case where desktops haven't reconnected after a deploy
-        if (sessions.length === 0) {
-            const d1Sessions = await this.fetchActiveSessionsFromD1(groupId);
-            if (d1Sessions.length > 0) {
-                // Re-populate activeSessions from D1
-                for (const session of d1Sessions) {
-                    this.activeSessions.set(session.id, session);
-                }
-                await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
-                sessions = d1Sessions.map(session => this.sanitizeSession(session));
+        // Always reconcile with D1 to catch sessions that might have reconnected
+        // without notifying SessionListDO (e.g., after a deploy or DO migration)
+        // D1 is the source of truth for active sessions - merge into memory
+        const d1Sessions = await this.fetchActiveSessionsFromD1(groupId);
+        console.log(`handleGetSessions: D1 returned ${d1Sessions.length} sessions, memory has ${this.activeSessions.size} total`);
+        let updated = false;
+        for (const session of d1Sessions) {
+            const existing = this.activeSessions.get(session.id);
+            if (!existing) {
+                console.log(`handleGetSessions: adding missing session ${session.id.slice(0, 8)} from D1`);
+                this.activeSessions.set(session.id, session);
+                updated = true;
+            } else if (!existing.group_id && session.group_id) {
+                // Update existing session with missing group_id
+                existing.group_id = session.group_id;
+                existing.device_id = existing.device_id || session.device_id;
+                this.activeSessions.set(session.id, existing);
+                updated = true;
             }
         }
+        if (updated) {
+            await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
+        }
+
+        // Return D1 sessions directly - they are authoritative for is_active=1
+        // Memory state is used for real-time updates but D1 is source of truth
+        const sessions = d1Sessions.map(session => this.sanitizeSession(session));
+        console.log(`handleGetSessions: returning ${sessions.length} sessions for group ${groupId.slice(0, 8)}`);
 
         return new Response(JSON.stringify({ sessions }), {
             headers: { 'Content-Type': 'application/json' },
