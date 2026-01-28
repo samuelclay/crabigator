@@ -185,8 +185,10 @@ struct TelemetryRequest {
     device_id: String,
     machine_name: Option<String>,
     os: &'static str,
+    os_version: Option<String>,
     timezone_offset: i32,
     app_version: &'static str,
+    cli_version: Option<String>,
 }
 
 /// Response from cloud update check endpoint
@@ -209,13 +211,112 @@ fn get_os_name() -> &'static str {
     }
 }
 
+/// Get OS version string (e.g., "Darwin 25.2.0", "Linux 6.1.0", "Windows 10.0.19045")
+fn get_os_version() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        // Use sw_vers to get macOS version
+        std::process::Command::new("sw_vers")
+            .arg("-productVersion")
+            .output()
+            .ok()
+            .and_then(|output| {
+                if output.status.success() {
+                    String::from_utf8(output.stdout)
+                        .ok()
+                        .map(|s| format!("macOS {}", s.trim()))
+                } else {
+                    None
+                }
+            })
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Try /etc/os-release first for distro info
+        if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
+            let mut name = None;
+            let mut version = None;
+            for line in content.lines() {
+                if let Some(val) = line.strip_prefix("PRETTY_NAME=") {
+                    return Some(val.trim_matches('"').to_string());
+                }
+                if let Some(val) = line.strip_prefix("NAME=") {
+                    name = Some(val.trim_matches('"').to_string());
+                }
+                if let Some(val) = line.strip_prefix("VERSION_ID=") {
+                    version = Some(val.trim_matches('"').to_string());
+                }
+            }
+            if let (Some(n), Some(v)) = (name, version) {
+                return Some(format!("{} {}", n, v));
+            }
+        }
+        // Fallback to uname
+        std::process::Command::new("uname")
+            .arg("-r")
+            .output()
+            .ok()
+            .and_then(|output| {
+                if output.status.success() {
+                    String::from_utf8(output.stdout)
+                        .ok()
+                        .map(|s| format!("Linux {}", s.trim()))
+                } else {
+                    None
+                }
+            })
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Use ver command or read from registry
+        std::process::Command::new("cmd")
+            .args(["/C", "ver"])
+            .output()
+            .ok()
+            .and_then(|output| {
+                if output.status.success() {
+                    String::from_utf8(output.stdout)
+                        .ok()
+                        .map(|s| s.trim().to_string())
+                } else {
+                    None
+                }
+            })
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        None
+    }
+}
+
 /// Get local timezone offset in minutes (e.g., -480 for PST)
 fn get_timezone_offset() -> i32 {
     chrono::Local::now().offset().local_minus_utc() / 60
 }
 
+/// Get CLI version by running `<command> --version`
+/// Returns parsed version string (e.g., "2.1.21" for Claude, "0.91.0" for Codex)
+pub fn get_cli_version(command: &str) -> Option<String> {
+    std::process::Command::new(command)
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                String::from_utf8(output.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
 /// Check for updates via cloud endpoint (sends telemetry)
-async fn check_via_cloud(client: &reqwest::Client) -> Result<(String, String)> {
+async fn check_via_cloud(client: &reqwest::Client, cli_version: Option<String>) -> Result<(String, String)> {
     // Load device identity (creates one if doesn't exist)
     let identity = DeviceIdentity::load_or_create()?;
 
@@ -228,8 +329,10 @@ async fn check_via_cloud(client: &reqwest::Client) -> Result<(String, String)> {
         device_id: identity.device_id,
         machine_name,
         os: get_os_name(),
+        os_version: get_os_version(),
         timezone_offset: get_timezone_offset(),
         app_version: CURRENT_VERSION,
+        cli_version,
     };
 
     let response = client
@@ -277,7 +380,7 @@ async fn check_via_github(client: &reqwest::Client) -> Result<(String, String)> 
 }
 
 /// Check for updates by querying cloud API (with telemetry) or falling back to GitHub
-pub async fn check_for_update() -> Result<UpdateCheckResult> {
+pub async fn check_for_update(cli_version: Option<String>) -> Result<UpdateCheckResult> {
     let cache = VersionCache::load();
 
     let client = reqwest::Client::builder()
@@ -287,7 +390,7 @@ pub async fn check_for_update() -> Result<UpdateCheckResult> {
 
     // Always try to send telemetry on startup (even if we have cached version info)
     // This ensures every session is recorded for analytics
-    let cloud_result = check_via_cloud(&client).await;
+    let cloud_result = check_via_cloud(&client, cli_version).await;
 
     // If cache is fresh and cloud check failed, use cached version info
     // (but we still attempted to send telemetry above)

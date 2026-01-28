@@ -295,13 +295,15 @@ ${staffDashboardCss}
                         <th>Device ID</th>
                         <th>Machine</th>
                         <th>OS</th>
+                        <th>OS Version</th>
+                        <th>CLI Version</th>
                         <th>Version</th>
                         <th>Timezone</th>
                         <th>Time</th>
                     </tr>
                 </thead>
                 <tbody id="telemetry-table">
-                    <tr><td colspan="6" class="loading">Loading...</td></tr>
+                    <tr><td colspan="8" class="loading">Loading...</td></tr>
                 </tbody>
             </table>
         </div>

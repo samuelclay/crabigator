@@ -10,8 +10,10 @@ interface TelemetryRequest {
     device_id: string;
     machine_name?: string;
     os?: string;
+    os_version?: string;
     timezone_offset?: number;
     app_version: string;
+    cli_version?: string;
 }
 
 /**
@@ -42,7 +44,7 @@ export async function handleUpdateCheck(
         );
     }
 
-    const { device_id, machine_name, os, timezone_offset, app_version } = body;
+    const { device_id, machine_name, os, os_version, timezone_offset, app_version, cli_version } = body;
 
     if (!device_id || !app_version) {
         return new Response(
@@ -54,14 +56,16 @@ export async function handleUpdateCheck(
     // Store telemetry (best-effort, don't block on failure)
     try {
         await env.DB.prepare(`
-            INSERT INTO telemetry (device_id, machine_name, os, timezone_offset, app_version, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO telemetry (device_id, machine_name, os, os_version, timezone_offset, app_version, cli_version, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
             device_id,
             machine_name || null,
             os || null,
+            os_version || null,
             timezone_offset ?? null,
             app_version,
+            cli_version || null,
             Math.floor(Date.now() / 1000)
         ).run();
     } catch {
@@ -118,8 +122,10 @@ interface TelemetryRow {
     device_id: string;
     machine_name: string | null;
     os: string | null;
+    os_version: string | null;
     timezone_offset: number | null;
     app_version: string;
+    cli_version: string | null;
     created_at: number;
 }
 

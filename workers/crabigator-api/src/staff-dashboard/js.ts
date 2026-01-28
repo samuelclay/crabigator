@@ -46,7 +46,7 @@ export const staffDashboardJs = `
             document.getElementById('table-count').textContent = rows.length + ' entries';
 
             if (rows.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="loading">No telemetry data yet</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" class="loading">No telemetry data yet</td></tr>';
                 return;
             }
 
@@ -55,6 +55,8 @@ export const staffDashboardJs = `
                     <td class="device-id" title="\${row.device_id}">\${row.device_id.substring(0, 8)}...</td>
                     <td>\${row.machine_name || '-'}</td>
                     <td><span class="os-badge \${row.os || ''}">\${row.os || '-'}</span></td>
+                    <td class="os-version">\${row.os_version || '-'}</td>
+                    <td class="cli-version">\${row.cli_version || '-'}</td>
                     <td><span class="version-badge">\${row.app_version}</span></td>
                     <td>\${formatTimezone(row.timezone_offset)}</td>
                     <td class="time-ago">\${timeAgo(row.created_at)}</td>

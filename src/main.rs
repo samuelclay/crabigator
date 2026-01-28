@@ -37,7 +37,7 @@ use crate::app::App;
 use crate::banner::{print_session_banner, print_session_end_line};
 use crate::cli::{parse_args, resolve_platform, Command, DebugTimer};
 use crate::config::Config;
-use crate::update::{check_for_update, dismiss_version, detect_install_method, UpdateState};
+use crate::update::{check_for_update, dismiss_version, detect_install_method, get_cli_version, UpdateState};
 
 fn setup_terminal() -> Result<(u16, u16)> {
     let mut stdout = stdout();
@@ -190,8 +190,11 @@ async fn main() -> Result<()> {
     let (cols, _) = terminal_size()?;
     print_session_banner(&session_id, platform_kind, cols);
 
+    // Get CLI version for telemetry (quick, runs in ~10ms)
+    let cli_version = get_cli_version(platform_kind.command());
+
     // Check for updates before entering raw mode (non-blocking modal prompt)
-    let update_state = check_and_prompt_for_update().await;
+    let update_state = check_and_prompt_for_update(cli_version).await;
 
     let begin = Instant::now();
     let (cols, rows) = match setup_terminal() {
@@ -266,7 +269,7 @@ async fn main() -> Result<()> {
 
 /// Check for updates and show modal prompt if available
 /// Returns UpdateState to pass to the app for banner display
-async fn check_and_prompt_for_update() -> UpdateState {
+async fn check_and_prompt_for_update(cli_version: Option<String>) -> UpdateState {
     // Load config to check if updates are enabled
     let config = Config::load().unwrap_or_default();
     if !config.check_for_updates {
@@ -274,8 +277,8 @@ async fn check_and_prompt_for_update() -> UpdateState {
     }
 
     // Spawn background task to check for updates
-    let check_handle = tokio::spawn(async {
-        check_for_update().await
+    let check_handle = tokio::spawn(async move {
+        check_for_update(cli_version).await
     });
 
     // Wait briefly for result (don't block startup too long)
