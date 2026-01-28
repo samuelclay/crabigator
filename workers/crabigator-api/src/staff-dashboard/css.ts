@@ -781,6 +781,13 @@ export const staffDashboardCss = `
             overflow: hidden;
             max-height: 2000px;
             transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .collapsible-section.collapsed .section-content {
+            max-height: 0;
+        }
+
+        .section-content-inner {
             background: var(--surface);
             border: 1px solid var(--border);
             border-top: none;
@@ -788,10 +795,7 @@ export const staffDashboardCss = `
             padding: 16px;
         }
 
-        .collapsible-section.collapsed .section-content {
-            max-height: 0;
-            padding-top: 0;
-            padding-bottom: 0;
+        .collapsible-section.collapsed .section-content-inner {
             border-color: transparent;
         }
 

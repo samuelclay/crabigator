@@ -51,37 +51,39 @@ ${staffDashboardCss}
                 </div>
             </div>
             <div class="section-content">
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-label">Total Devices</div>
-                        <div class="stat-value" id="total-devices">-</div>
-                        <div class="stat-change" id="devices-change"></div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Update Checks (24h)</div>
-                        <div class="stat-value" id="checks-24h">-</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Update Checks (7d)</div>
-                        <div class="stat-value" id="checks-7d">-</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Latest Version</div>
-                        <div class="stat-value" id="latest-version">-</div>
-                    </div>
-                </div>
-
-                <div class="charts-grid">
-                    <div class="chart-card">
-                        <div class="chart-title">Update Checks Over Time</div>
-                        <div class="chart-container">
-                            <canvas id="checks-chart"></canvas>
+                <div class="section-content-inner">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Total Devices</div>
+                            <div class="stat-value" id="total-devices">-</div>
+                            <div class="stat-change" id="devices-change"></div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Update Checks (24h)</div>
+                            <div class="stat-value" id="checks-24h">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Update Checks (7d)</div>
+                            <div class="stat-value" id="checks-7d">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Latest Version</div>
+                            <div class="stat-value" id="latest-version">-</div>
                         </div>
                     </div>
-                    <div class="chart-card">
-                        <div class="chart-title">Version Distribution</div>
-                        <div class="chart-container">
-                            <canvas id="version-chart"></canvas>
+
+                    <div class="charts-grid">
+                        <div class="chart-card">
+                            <div class="chart-title">Update Checks Over Time</div>
+                            <div class="chart-container">
+                                <canvas id="checks-chart"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Version Distribution</div>
+                            <div class="chart-container">
+                                <canvas id="version-chart"></canvas>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -107,6 +109,7 @@ ${staffDashboardCss}
                 </div>
             </div>
             <div class="section-content">
+                <div class="section-content-inner">
                 <div class="analytics-section">
                     <div class="section-title">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -261,6 +264,7 @@ ${staffDashboardCss}
                 </div>
             </div>
                 </div>
+                </div>
             </div>
         </div>
 
@@ -281,6 +285,7 @@ ${staffDashboardCss}
                 </div>
             </div>
             <div class="section-content">
+                <div class="section-content-inner">
                 <div class="gifts-section">
             <div class="section-title"><span class="section-icon">${iconGift}</span> Gift Subscriptions</div>
 
@@ -360,6 +365,7 @@ ${staffDashboardCss}
                 </table>
             </div>
                 </div>
+                </div>
             </div>
         </div>
 
@@ -383,6 +389,7 @@ ${staffDashboardCss}
                 </div>
             </div>
             <div class="section-content">
+                <div class="section-content-inner">
                 <div class="table-container">
                     <div class="table-header">
                         <div class="table-title">Recent Telemetry</div>
@@ -405,6 +412,7 @@ ${staffDashboardCss}
                             <tr><td colspan="8" class="loading">Loading...</td></tr>
                         </tbody>
                     </table>
+                </div>
                 </div>
             </div>
         </div>
