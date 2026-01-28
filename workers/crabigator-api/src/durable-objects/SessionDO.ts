@@ -1,4 +1,4 @@
-import type { SessionEvent, SessionState, CloudToDesktopMessage, CloudPromptData, KeyStep } from '../types/session';
+import type { SessionEvent, SessionState, CloudToDesktopMessage, CloudPromptData, KeyStep, GitEvent, ChangesEvent } from '../types/session';
 import type { Env } from '../types/env';
 
 /**
@@ -22,6 +22,8 @@ interface EphemeralState {
     scrollbackContent: string;
     lastScreen: string | null;
     lastTitleHistory: string[] | null;
+    lastGit: GitEvent | null;
+    lastChanges: ChangesEvent | null;
     eventSequence: number;
 }
 
@@ -84,6 +86,8 @@ export class SessionDO implements DurableObject {
             scrollbackContent: '',
             lastScreen: null,
             lastTitleHistory: null,
+            lastGit: null,
+            lastChanges: null,
             eventSequence: 0,
         };
 
@@ -382,6 +386,14 @@ export class SessionDO implements DurableObject {
                 // Ephemeral state - no storage write
                 this.ephemeralState.lastTitleHistory = event.history;
                 break;
+            case 'git':
+                // Ephemeral state - no storage write
+                this.ephemeralState.lastGit = event as GitEvent;
+                break;
+            case 'changes':
+                // Ephemeral state - no storage write
+                this.ephemeralState.lastChanges = event as ChangesEvent;
+                break;
             case 'prompt':
                 // Compare prompts - this is critical for dashboard interaction
                 const currentPromptJson = JSON.stringify(this.persistentState.currentPrompt);
@@ -508,6 +520,16 @@ export class SessionDO implements DurableObject {
                 history: this.ephemeralState.lastTitleHistory,
             };
             await this.sendSSE(writer, titleHistoryEvent);
+        }
+
+        // Send git state if available (ephemeral)
+        if (this.ephemeralState.lastGit) {
+            await this.sendSSE(writer, this.ephemeralState.lastGit);
+        }
+
+        // Send changes state if available (ephemeral)
+        if (this.ephemeralState.lastChanges) {
+            await this.sendSSE(writer, this.ephemeralState.lastChanges);
         }
 
         // Send current prompt if any (persistent - for interactive dashboard)
