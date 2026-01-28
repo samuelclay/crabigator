@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1080, height=1350">
+    <title>Crabigator Ad - Vertical</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(160deg, #0a0f1a 0%, #131b2e 40%, #0d1321 100%);
+            color: #fff;
+            width: 1080px;
+            height: 1350px;
+            overflow: hidden;
+        }
+
+        .container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            padding: 70px 60px;
+        }
+
+        .top-section {
+            text-align: center;
+        }
+
+        .badge {
+            display: inline-block;
+            background: rgba(99, 179, 237, 0.15);
+            border: 1px solid rgba(99, 179, 237, 0.3);
+            color: #63b3ed;
+            padding: 10px 24px;
+            border-radius: 24px;
+            font-size: 16px;
+            font-weight: 600;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 28px;
+        }
+
+        h1 {
+            font-size: 74px;
+            font-weight: 800;
+            line-height: 1.05;
+            margin-bottom: 24px;
+        }
+
+        .highlight {
+            background: linear-gradient(135deg, #63b3ed 0%, #4fd1c5 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: 26px;
+            color: #a0aec0;
+            line-height: 1.5;
+            max-width: 800px;
+        }
+
+        .phone-mockup {
+            width: 320px;
+            height: 640px;
+            background: #1a1a2e;
+            border-radius: 44px;
+            border: 5px solid #2d3748;
+            padding: 14px;
+            box-shadow: 0 30px 100px rgba(0,0,0,0.6);
+        }
+
+        .phone-screen {
+            width: 100%;
+            height: 100%;
+            background: #0d1117;
+            border-radius: 32px;
+            padding: 24px 18px;
+            overflow: hidden;
+        }
+
+        .phone-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid #21262d;
+        }
+
+        .phone-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #238636;
+        }
+
+        .phone-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #e6edf3;
+        }
+
+        .phone-path {
+            font-size: 12px;
+            color: #7d8590;
+            margin-left: auto;
+        }
+
+        .thinking-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 14px;
+        }
+
+        .thinking-label {
+            font-size: 11px;
+            color: #58a6ff;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .thinking-label::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: #58a6ff;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .thinking-text {
+            font-size: 14px;
+            color: #7d8590;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .permission-card {
+            background: #161b22;
+            border: 1px solid #f0883e;
+            border-radius: 12px;
+            padding: 18px;
+            margin-bottom: 14px;
+        }
+
+        .permission-label {
+            font-size: 12px;
+            color: #f0883e;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+
+        .permission-text {
+            font-size: 14px;
+            color: #e6edf3;
+            margin-bottom: 10px;
+        }
+
+        .permission-code {
+            font-family: 'SF Mono', Monaco, monospace;
+            background: #0d1117;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #79c0ff;
+            margin-bottom: 14px;
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+        }
+
+        .btn-allow { background: #238636; color: white; }
+        .btn-deny { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
+
+        .stats-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .stat {
+            flex: 1;
+            background: #161b22;
+            border-radius: 10px;
+            padding: 14px 10px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 22px;
+            font-weight: 700;
+            color: #58a6ff;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #7d8590;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+
+        .bottom-section {
+            text-align: center;
+        }
+
+        .cta-box {
+            display: inline-flex;
+            align-items: center;
+            gap: 20px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 24px 40px;
+        }
+
+        .free-tag {
+            background: #238636;
+            color: white;
+            padding: 8px 18px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .cta-text {
+            font-size: 22px;
+            font-weight: 600;
+            color: #e6edf3;
+        }
+
+        .cta-price {
+            color: #4fd1c5;
+            font-size: 28px;
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="top-section">
+            <div class="badge">Claude Code + Mobile</div>
+            <h1>Control <span class="highlight">Claude Code</span><br>From Your Phone</h1>
+            <p class="subtitle">Answer permissions and approve plans—anywhere you are.</p>
+        </div>
+
+        <div class="phone-mockup">
+            <div class="phone-screen">
+                <div class="phone-header">
+                    <div class="phone-dot"></div>
+                    <span class="phone-title">Crabigator</span>
+                    <span class="phone-path">~/api</span>
+                </div>
+
+                <div class="thinking-card">
+                    <div class="thinking-label">Thinking</div>
+                    <div class="thinking-text">Analyzing codebase...</div>
+                </div>
+
+                <div class="permission-card">
+                    <div class="permission-label">Permission Request</div>
+                    <div class="permission-text">Claude wants to run:</div>
+                    <div class="permission-code">git commit -m "feat: auth"</div>
+                    <div class="btn-row">
+                        <button class="btn btn-allow">Allow</button>
+                        <button class="btn btn-deny">Deny</button>
+                    </div>
+                </div>
+
+                <div class="stats-row">
+                    <div class="stat">
+                        <div class="stat-value">18m</div>
+                        <div class="stat-label">Session</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value">12</div>
+                        <div class="stat-label">Prompts</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value">47</div>
+                        <div class="stat-label">Tools</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="bottom-section">
+            <div class="cta-box">
+                <span class="free-tag">Free Tier</span>
+                <span class="cta-text">Pro unlimited</span>
+                <span class="cta-price">$3/mo</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

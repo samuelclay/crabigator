@@ -257,6 +257,16 @@ export const paywallJs = `
             document.getElementById('paywall-success').classList.add('visible');
             document.getElementById('paywall-error').classList.remove('visible');
 
+            // Track conversion with Meta Pixel
+            if (typeof fbq === 'function') {
+                fbq('track', 'Purchase', {
+                    value: 3.00,
+                    currency: 'USD',
+                    content_name: 'Crabigator Pro',
+                    content_type: 'subscription'
+                });
+            }
+
             // Hide paywall after short delay
             setTimeout(() => {
                 hidePaywall();
@@ -280,6 +290,16 @@ export const paywallJs = `
         async function initiateStripePayment() {
             const btn = document.getElementById('paywall-stripe-btn');
             btn.disabled = true;
+
+            // Track checkout initiation with Meta Pixel
+            if (typeof fbq === 'function') {
+                fbq('track', 'InitiateCheckout', {
+                    value: 3.00,
+                    currency: 'USD',
+                    content_name: 'Crabigator Pro',
+                    payment_method: 'stripe'
+                });
+            }
 
             try {
                 const resp = await fetch(API_BASE + '/payments/stripe/checkout', {
@@ -315,6 +335,16 @@ export const paywallJs = `
         async function initiatePayPalPayment() {
             const btn = document.getElementById('paywall-paypal-btn');
             btn.disabled = true;
+
+            // Track checkout initiation with Meta Pixel
+            if (typeof fbq === 'function') {
+                fbq('track', 'InitiateCheckout', {
+                    value: 3.00,
+                    currency: 'USD',
+                    content_name: 'Crabigator Pro',
+                    payment_method: 'paypal'
+                });
+            }
 
             try {
                 const resp = await fetch(API_BASE + '/payments/paypal/subscribe', {
