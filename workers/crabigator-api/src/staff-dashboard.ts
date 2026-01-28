@@ -30,52 +30,93 @@ ${staffDashboardCss}
             </div>
         </header>
 
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">Total Devices</div>
-                <div class="stat-value" id="total-devices">-</div>
-                <div class="stat-change" id="devices-change"></div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Update Checks (24h)</div>
-                <div class="stat-value" id="checks-24h">-</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Update Checks (7d)</div>
-                <div class="stat-value" id="checks-7d">-</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Latest Version</div>
-                <div class="stat-value" id="latest-version">-</div>
-            </div>
-        </div>
-
-        <div class="charts-grid">
-            <div class="chart-card">
-                <div class="chart-title">Update Checks Over Time</div>
-                <div class="chart-container">
-                    <canvas id="checks-chart"></canvas>
+        <!-- App Telemetry Section -->
+        <div class="collapsible-section" id="section-telemetry" data-section="telemetry">
+            <div class="section-header" onclick="toggleSection('telemetry')">
+                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+                <div class="section-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2"/>
+                        <path d="M8 21h8M12 17v4"/>
+                    </svg>
+                    App Telemetry
+                </div>
+                <div class="section-summary">
+                    <span class="summary-item">24h: <span class="summary-value" id="sum-checks-24h">-</span> checks</span>
+                    <span class="summary-item">all: <span class="summary-value" id="sum-checks-all">-</span></span>
+                    <span class="summary-item"><span class="summary-value" id="sum-devices-all">-</span> devices</span>
+                    <span class="summary-item">v<span class="summary-value" id="sum-version">-</span></span>
                 </div>
             </div>
-            <div class="chart-card">
-                <div class="chart-title">Version Distribution</div>
-                <div class="chart-container">
-                    <canvas id="version-chart"></canvas>
+            <div class="section-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Devices</div>
+                        <div class="stat-value" id="total-devices">-</div>
+                        <div class="stat-change" id="devices-change"></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Update Checks (24h)</div>
+                        <div class="stat-value" id="checks-24h">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Update Checks (7d)</div>
+                        <div class="stat-value" id="checks-7d">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Latest Version</div>
+                        <div class="stat-value" id="latest-version">-</div>
+                    </div>
+                </div>
+
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <div class="chart-title">Update Checks Over Time</div>
+                        <div class="chart-container">
+                            <canvas id="checks-chart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-title">Version Distribution</div>
+                        <div class="chart-container">
+                            <canvas id="version-chart"></canvas>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Website Analytics Section -->
-        <div class="analytics-section">
-            <div class="section-title">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M18 20V10M12 20V4M6 20v-6"/>
+        <div class="collapsible-section" id="section-analytics" data-section="analytics">
+            <div class="section-header" onclick="toggleSection('analytics')">
+                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
                 </svg>
-                Website Analytics
-                <span id="analytics-update" class="status" style="font-size: 12px; margin-left: auto;"></span>
+                <div class="section-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 20V10M12 20V4M6 20v-6"/>
+                    </svg>
+                    Website Analytics
+                </div>
+                <div class="section-summary">
+                    <span class="summary-item">24h: <span class="summary-value" id="sum-visitors-24h">-</span> visitors</span>
+                    <span class="summary-item">all: <span class="summary-value" id="sum-visitors-all">-</span></span>
+                    <span class="summary-item"><span class="summary-value" id="sum-signups-all">-</span> signups</span>
+                </div>
             </div>
+            <div class="section-content">
+                <div class="analytics-section">
+                    <div class="section-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 20V10M12 20V4M6 20v-6"/>
+                        </svg>
+                        Website Analytics
+                        <span id="analytics-update" class="status" style="font-size: 12px; margin-left: auto;"></span>
+                    </div>
 
-            <!-- Summary Stats -->
+                    <!-- Summary Stats -->
             <div class="analytics-stats-grid">
                 <div class="stat-card">
                     <div class="stat-label">Visitors (24h)</div>
@@ -112,6 +153,24 @@ ${staffDashboardCss}
                     <div class="chart-container">
                         <canvas id="sources-chart"></canvas>
                     </div>
+                </div>
+            </div>
+
+            <!-- Referrer Details Table -->
+            <div class="table-container" style="margin-bottom: 24px;">
+                <div class="table-header">
+                    <div class="table-title">Referrer Details (30 days)</div>
+                    <div class="table-count" id="referrer-count">0 domains</div>
+                </div>
+                <div style="max-height: 300px; overflow-y: auto;">
+                    <table>
+                        <thead>
+                            <tr><th>Category</th><th>Domain</th><th style="text-align: right;">Visitors</th></tr>
+                        </thead>
+                        <tbody id="referrer-tbody">
+                            <tr><td colspan="3" class="loading">Loading...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
@@ -201,10 +260,28 @@ ${staffDashboardCss}
                     </table>
                 </div>
             </div>
+                </div>
+            </div>
         </div>
 
         <!-- Gift Management Section -->
-        <div class="gifts-section">
+        <div class="collapsible-section" id="section-gifts" data-section="gifts">
+            <div class="section-header" onclick="toggleSection('gifts')">
+                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+                <div class="section-name">
+                    <span class="section-icon">${iconGift}</span>
+                    Gift Subscriptions
+                </div>
+                <div class="section-summary">
+                    <span class="summary-item">24h: <span class="summary-value" id="sum-gifts-24h">-</span> gifts</span>
+                    <span class="summary-item">all: <span class="summary-value" id="sum-gifts-all">-</span></span>
+                    <span class="summary-item"><span class="summary-value" id="sum-claimed-all">-</span> claimed</span>
+                </div>
+            </div>
+            <div class="section-content">
+                <div class="gifts-section">
             <div class="section-title"><span class="section-icon">${iconGift}</span> Gift Subscriptions</div>
 
             <div class="gift-create-card">
@@ -282,30 +359,54 @@ ${staffDashboardCss}
                     </tbody>
                 </table>
             </div>
+                </div>
+            </div>
         </div>
 
-        <div class="table-container">
-            <div class="table-header">
-                <div class="table-title">Recent Telemetry</div>
-                <div class="table-count" id="table-count"></div>
+        <!-- Recent Telemetry Section -->
+        <div class="collapsible-section" id="section-devices" data-section="devices">
+            <div class="section-header" onclick="toggleSection('devices')">
+                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+                <div class="section-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="5" y="2" width="14" height="20" rx="2"/>
+                        <path d="M12 18h.01"/>
+                    </svg>
+                    Recent Telemetry
+                </div>
+                <div class="section-summary">
+                    <span class="summary-item">24h: <span class="summary-value" id="sum-machines-24h">-</span> machines</span>
+                    <span class="summary-item">all: <span class="summary-value" id="sum-machines-all">-</span></span>
+                    <span class="summary-item">last: <span class="summary-value" id="sum-telemetry-last">-</span></span>
+                </div>
             </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Device ID</th>
-                        <th>Machine</th>
-                        <th>OS</th>
-                        <th>OS Version</th>
-                        <th>CLI Version</th>
-                        <th>Version</th>
-                        <th>Timezone</th>
-                        <th>Time</th>
-                    </tr>
-                </thead>
-                <tbody id="telemetry-table">
-                    <tr><td colspan="8" class="loading">Loading...</td></tr>
-                </tbody>
-            </table>
+            <div class="section-content">
+                <div class="table-container">
+                    <div class="table-header">
+                        <div class="table-title">Recent Telemetry</div>
+                        <div class="table-count" id="table-count"></div>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Device ID</th>
+                                <th>Machine</th>
+                                <th>OS</th>
+                                <th>OS Version</th>
+                                <th>CLI Version</th>
+                                <th>Version</th>
+                                <th>Timezone</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="telemetry-table">
+                            <tr><td colspan="8" class="loading">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 

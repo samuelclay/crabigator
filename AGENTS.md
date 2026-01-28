@@ -231,6 +231,25 @@ make cf-usage    # Show Cloudflare usage stats and scaling capacity
 
 Queries Cloudflare GraphQL API for worker requests, Durable Objects, and D1 usage. Shows free tier consumption and estimates scaling headroom. Script at `scripts/cf-usage.sh` reads wrangler OAuth token automatically.
 
+### Querying the D1 Database
+
+The database name is `crabigator` (defined in `workers/crabigator-api/wrangler.toml`).
+
+```bash
+# Query production database
+npx wrangler d1 execute crabigator --remote --command "SELECT * FROM page_views LIMIT 5"
+
+# Example: Traffic sources by referrer domain
+npx wrangler d1 execute crabigator --remote --command "
+SELECT referrer_domain, COUNT(DISTINCT visitor_id) as visitors
+FROM page_views
+WHERE created_at > strftime('%s', 'now', '-30 days')
+GROUP BY referrer_domain
+ORDER BY visitors DESC"
+```
+
+Key tables: `page_views`, `analytics_events`, `funnel_events`, `email_signups`, `npm_downloads`.
+
 ## Browser Testing with PlayWriter MCP
 
 The PlayWriter MCP allows Claude Code to control Chrome for testing the dashboard and other web functionality.

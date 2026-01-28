@@ -2,6 +2,59 @@
 import { iconGift } from '../dashboard/icons';
 
 export const staffDashboardJs = `
+        // ============================================
+        // Collapsible Sections
+        // ============================================
+
+        // Get collapsed sections from cookie
+        function getCollapsedSections() {
+            const cookie = document.cookie.split('; ').find(c => c.startsWith('collapsed_sections='));
+            if (!cookie) return [];
+            try {
+                return JSON.parse(decodeURIComponent(cookie.split('=')[1]));
+            } catch (e) {
+                return [];
+            }
+        }
+
+        // Save collapsed sections to cookie
+        function saveCollapsedSections(sections) {
+            const expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toUTCString();
+            document.cookie = 'collapsed_sections=' + encodeURIComponent(JSON.stringify(sections)) + '; expires=' + expires + '; path=/';
+        }
+
+        // Toggle a section
+        function toggleSection(name) {
+            const section = document.getElementById('section-' + name);
+            if (!section) return;
+
+            const collapsed = getCollapsedSections();
+            const isCollapsed = section.classList.contains('collapsed');
+
+            if (isCollapsed) {
+                section.classList.remove('collapsed');
+                const idx = collapsed.indexOf(name);
+                if (idx > -1) collapsed.splice(idx, 1);
+            } else {
+                section.classList.add('collapsed');
+                if (!collapsed.includes(name)) collapsed.push(name);
+            }
+
+            saveCollapsedSections(collapsed);
+        }
+
+        // Initialize collapsed state from cookie
+        function initCollapsedSections() {
+            const collapsed = getCollapsedSections();
+            collapsed.forEach(name => {
+                const section = document.getElementById('section-' + name);
+                if (section) section.classList.add('collapsed');
+            });
+        }
+
+        // Initialize on load
+        initCollapsedSections();
+
         // Chart instances
         let checksChart = null;
         let versionChart = null;
@@ -41,9 +94,16 @@ export const staffDashboardJs = `
         }
 
         // Render telemetry table
-        function renderTable(rows) {
+        function renderTable(rows, stats) {
             const tbody = document.getElementById('telemetry-table');
             document.getElementById('table-count').textContent = rows.length + ' entries';
+
+            // Update section summary (unique machines 24h / all time)
+            document.getElementById('sum-machines-24h').textContent = (stats?.devices_24h || 0).toLocaleString();
+            document.getElementById('sum-machines-all').textContent = (stats?.total_devices || 0).toLocaleString();
+            if (rows.length > 0) {
+                document.getElementById('sum-telemetry-last').textContent = timeAgo(rows[0].created_at);
+            }
 
             if (rows.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="8" class="loading">No telemetry data yet</td></tr>';
@@ -70,6 +130,12 @@ export const staffDashboardJs = `
             document.getElementById('checks-24h').textContent = stats.checks_24h.toLocaleString();
             document.getElementById('checks-7d').textContent = stats.checks_7d.toLocaleString();
             document.getElementById('latest-version').textContent = stats.top_version || '-';
+
+            // Update section summary
+            document.getElementById('sum-checks-24h').textContent = stats.checks_24h.toLocaleString();
+            document.getElementById('sum-checks-all').textContent = stats.total_checks.toLocaleString();
+            document.getElementById('sum-devices-all').textContent = stats.total_devices.toLocaleString();
+            document.getElementById('sum-version').textContent = stats.top_version || '-';
 
             if (stats.new_devices_24h > 0) {
                 document.getElementById('devices-change').textContent = '+' + stats.new_devices_24h + ' today';
@@ -167,7 +233,7 @@ export const staffDashboardJs = `
                 if (!response.ok) throw new Error('Failed to fetch');
                 const data = await response.json();
 
-                renderTable(data.recent);
+                renderTable(data.recent, data.stats);
                 updateStats(data.stats);
                 updateChecksChart(data.checks_by_day);
                 updateVersionChart(data.version_distribution);
@@ -209,6 +275,11 @@ export const staffDashboardJs = `
             document.getElementById('analytics-avg-time').textContent = formatTime(summary.avg_time_on_page);
             document.getElementById('analytics-bounce-rate').textContent = summary.bounce_rate + '%';
             document.getElementById('analytics-scroll-depth').textContent = summary.avg_scroll_depth + '%';
+
+            // Update section summary
+            document.getElementById('sum-visitors-24h').textContent = summary.visitors_24h.toLocaleString();
+            document.getElementById('sum-visitors-all').textContent = summary.visitors_all.toLocaleString();
+            document.getElementById('sum-signups-all').textContent = summary.signups_all.toLocaleString();
         }
 
         // Update visitors chart (line)
@@ -243,6 +314,33 @@ export const staffDashboardJs = `
                     }
                 });
             }
+        }
+
+        // Update referrer details table
+        function updateReferrerTable(detail) {
+            const tbody = document.getElementById('referrer-tbody');
+            if (!tbody) return;
+
+            const rows = [];
+            for (const [category, domains] of Object.entries(detail)) {
+                for (const { domain, visitors } of domains) {
+                    rows.push({ category, domain: domain || '(direct)', visitors });
+                }
+            }
+
+            // Sort by visitors descending
+            rows.sort((a, b) => b.visitors - a.visitors);
+
+            if (rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: #8b949e;">No data</td></tr>';
+            } else {
+                tbody.innerHTML = rows.map(r =>
+                    '<tr><td>' + r.category + '</td><td>' + r.domain + '</td><td style="text-align: right;">' + r.visitors + '</td></tr>'
+                ).join('');
+            }
+
+            const countEl = document.getElementById('referrer-count');
+            if (countEl) countEl.textContent = rows.length + ' domains';
         }
 
         // Update traffic sources chart (doughnut)
@@ -457,6 +555,7 @@ export const staffDashboardJs = `
                 updateAnalyticsStats(data.summary);
                 updateVisitorsChart(data.visitors_by_day);
                 updateSourcesChart(data.traffic_sources);
+                updateReferrerTable(data.traffic_sources_detail || {});
                 updateDevicesChart(data.devices);
                 updateBrowsersChart(data.browsers);
                 updateCountriesChart(data.countries);
@@ -496,6 +595,14 @@ export const staffDashboardJs = `
             const tbody = document.getElementById('gifts-table');
             const countEl = document.getElementById('gifts-count');
             countEl.textContent = gifts.length + ' gift' + (gifts.length !== 1 ? 's' : '');
+
+            // Update section summary
+            const oneDayAgo = Math.floor(Date.now() / 1000) - 86400;
+            const gifts24h = gifts.filter(g => g.created_at > oneDayAgo).length;
+            const claimedAll = gifts.filter(g => g.status === 'claimed').length;
+            document.getElementById('sum-gifts-24h').textContent = gifts24h.toString();
+            document.getElementById('sum-gifts-all').textContent = gifts.length.toString();
+            document.getElementById('sum-claimed-all').textContent = claimedAll.toString();
 
             if (gifts.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="9" class="empty-state"><span class="empty-icon">${iconGift}</span>No gifts created yet</td></tr>';

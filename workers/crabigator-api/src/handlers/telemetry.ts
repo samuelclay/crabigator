@@ -191,6 +191,8 @@ export async function handleStaffTelemetry(
     const [
         recentResult,
         totalDevicesResult,
+        devices24hResult,
+        totalChecksResult,
         checks24hResult,
         checks7dResult,
         newDevices24hResult,
@@ -204,9 +206,20 @@ export async function handleStaffTelemetry(
             LIMIT 100
         `).all<TelemetryRow>(),
 
-        // Total unique devices
+        // Total unique devices (all time)
         env.DB.prepare(`
             SELECT COUNT(DISTINCT device_id) as count FROM telemetry
+        `).first<CountResult>(),
+
+        // Unique devices in last 24h
+        env.DB.prepare(`
+            SELECT COUNT(DISTINCT device_id) as count FROM telemetry
+            WHERE created_at > ?
+        `).bind(oneDayAgo).first<CountResult>(),
+
+        // Total checks (all time)
+        env.DB.prepare(`
+            SELECT COUNT(*) as count FROM telemetry
         `).first<CountResult>(),
 
         // Checks in last 24h
@@ -283,6 +296,8 @@ export async function handleStaffTelemetry(
         recent: recentResult.results || [],
         stats: {
             total_devices: totalDevicesResult?.count || 0,
+            devices_24h: devices24hResult?.count || 0,
+            total_checks: totalChecksResult?.count || 0,
             checks_24h: checks24hResult?.count || 0,
             checks_7d: checks7dResult?.count || 0,
             new_devices_24h: newDevices24hResult?.count || 0,
@@ -379,6 +394,7 @@ export async function handleStaffAnalytics(
     // Run all queries in parallel
     const [
         visitors24hResult,
+        visitorsAllResult,
         pageviews24hResult,
         avgEngagementResult,
         visitorsByDayResult,
@@ -390,13 +406,20 @@ export async function handleStaffAnalytics(
         npmDownloadsResult,
         funnelStatsResult,
         campaignPerfResult,
-        emailSignupsResult
+        emailSignupsResult,
+        signups24hResult,
+        signupsAllResult
     ] = await Promise.all([
         // Unique visitors (24h)
         env.DB.prepare(`
             SELECT COUNT(DISTINCT visitor_id) as count FROM page_views
             WHERE created_at > ?
         `).bind(oneDayAgo).first<CountResult>(),
+
+        // Unique visitors (all time)
+        env.DB.prepare(`
+            SELECT COUNT(DISTINCT visitor_id) as count FROM page_views
+        `).first<CountResult>(),
 
         // Page views (24h)
         env.DB.prepare(`
@@ -512,20 +535,39 @@ export async function handleStaffAnalytics(
             FROM email_signups
             ORDER BY created_at DESC
             LIMIT 50
-        `).all<EmailSignupRow>()
+        `).all<EmailSignupRow>(),
+
+        // Email signups (24h)
+        env.DB.prepare(`
+            SELECT COUNT(*) as count FROM email_signups
+            WHERE created_at > ?
+        `).bind(oneDayAgo).first<CountResult>(),
+
+        // Email signups (all time)
+        env.DB.prepare(`
+            SELECT COUNT(*) as count FROM email_signups
+        `).first<CountResult>()
     ]);
 
     // Categorize referrer domains into traffic sources
     const referrerDomains = referrerDomainsResult.results || [];
     const sourceCategories: Record<string, number> = {};
+    const sourceDetails: Record<string, Array<{ domain: string | null; visitors: number }>> = {};
     for (const row of referrerDomains) {
         const category = categorizeReferrer(row.referrer_domain);
         sourceCategories[category] = (sourceCategories[category] || 0) + row.count;
+        if (!sourceDetails[category]) sourceDetails[category] = [];
+        sourceDetails[category].push({ domain: row.referrer_domain, visitors: row.count });
     }
 
     // Sort sources by count
     const sortedSources = Object.entries(sourceCategories)
         .sort((a, b) => b[1] - a[1]);
+
+    // Sort domains within each category by visitors
+    for (const domains of Object.values(sourceDetails)) {
+        domains.sort((a, b) => b.visitors - a.visitors);
+    }
 
     // Format visitors by day for chart
     const visitorsByDay = visitorsByDayResult.results || [];
@@ -547,10 +589,13 @@ export async function handleStaffAnalytics(
     return jsonResponse({
         summary: {
             visitors_24h: visitors24hResult?.count || 0,
+            visitors_all: visitorsAllResult?.count || 0,
             pageviews_24h: pageviews24hResult?.count || 0,
             avg_time_on_page: Math.round(avgEngagementResult?.avg_time || 0),
             avg_scroll_depth: Math.round(avgEngagementResult?.avg_scroll || 0),
-            bounce_rate: Math.round(avgEngagementResult?.bounce_rate || 0)
+            bounce_rate: Math.round(avgEngagementResult?.bounce_rate || 0),
+            signups_24h: signups24hResult?.count || 0,
+            signups_all: signupsAllResult?.count || 0
         },
         visitors_by_day: {
             labels: dayLabels,
@@ -560,6 +605,7 @@ export async function handleStaffAnalytics(
             labels: sortedSources.map(([name]) => name),
             values: sortedSources.map(([, count]) => count)
         },
+        traffic_sources_detail: sourceDetails,
         campaigns: campaignsResult.results || [],
         devices: {
             labels: (devicesResult.results || []).map(r => r.device_type || 'Unknown'),

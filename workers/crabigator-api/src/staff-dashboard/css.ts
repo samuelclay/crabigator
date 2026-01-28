@@ -703,4 +703,135 @@ export const staffDashboardCss = `
             font-size: 11px;
             text-transform: uppercase;
         }
+
+        /* Collapsible Sections */
+        .collapsible-section {
+            margin-bottom: 24px;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.15s;
+        }
+
+        .section-header:hover {
+            background: rgba(255,255,255,0.03);
+        }
+
+        .section-header .chevron {
+            width: 16px;
+            height: 16px;
+            color: var(--text-muted);
+            transition: transform 0.2s;
+            flex-shrink: 0;
+        }
+
+        .collapsible-section.collapsed .section-header .chevron {
+            transform: rotate(-90deg);
+        }
+
+        .section-header .section-name {
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section-header .section-name svg {
+            width: 18px;
+            height: 18px;
+            color: var(--accent);
+        }
+
+        .section-header .section-name .section-icon svg {
+            width: 18px;
+            height: 18px;
+            fill: var(--accent);
+        }
+
+        .section-header .section-summary {
+            margin-left: auto;
+            font-size: 13px;
+            color: var(--text-muted);
+            display: flex;
+            gap: 16px;
+        }
+
+        .section-header .section-summary .summary-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .section-header .section-summary .summary-value {
+            color: var(--text);
+            font-weight: 500;
+        }
+
+        .section-content {
+            overflow: hidden;
+            max-height: 2000px;
+            transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            padding: 16px;
+        }
+
+        .collapsible-section.collapsed .section-content {
+            max-height: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+            border-color: transparent;
+        }
+
+        .collapsible-section.collapsed .section-header {
+            border-radius: 8px;
+            transition: border-radius 0.1s 0.25s;
+        }
+
+        .collapsible-section:not(.collapsed) .section-header {
+            border-bottom-left-radius: 0;
+            border-bottom-right-radius: 0;
+            border-bottom: 1px solid var(--border);
+            transition: border-radius 0s;
+        }
+
+        /* Adjust inner elements when in collapsible section */
+        .section-content .stats-grid,
+        .section-content .charts-grid,
+        .section-content .analytics-stats-grid,
+        .section-content .analytics-charts-row {
+            margin-bottom: 16px;
+        }
+
+        .section-content .stats-grid:last-child,
+        .section-content .charts-grid:last-child,
+        .section-content .table-container:last-child {
+            margin-bottom: 0;
+        }
+
+        .section-content .analytics-section {
+            margin-top: 0;
+            padding-top: 0;
+            border-top: none;
+        }
+
+        .section-content .gifts-section {
+            margin-bottom: 0;
+        }
+
+        .section-content .section-title {
+            display: none;
+        }
 `;

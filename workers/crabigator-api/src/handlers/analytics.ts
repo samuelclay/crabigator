@@ -64,9 +64,9 @@ export function categorizeReferrer(domain: string | null): string {
     }
 
     // Social media
-    if (d === 'twitter.com' || d === 'x.com' || d === 'linkedin.com' ||
-        d === 'reddit.com' || d === 'facebook.com' || d === 'instagram.com' ||
-        d === 'youtube.com' || d === 'tiktok.com') {
+    if (d === 'twitter.com' || d === 'x.com' || d === 't.co' ||
+        d === 'linkedin.com' || d === 'reddit.com' || d === 'facebook.com' ||
+        d === 'instagram.com' || d === 'youtube.com' || d === 'tiktok.com') {
         return 'Social';
     }
 
