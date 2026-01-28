@@ -51,6 +51,13 @@ import {
     iconBook,
     iconTag,
     iconChat,
+    iconShield,
+    iconLock,
+    iconKey,
+    iconTerminal,
+    iconGhost,
+    iconDesktop,
+    iconCloudEdge,
 } from './landing/icons';
 
 export const landingHtml = `<!DOCTYPE html>
@@ -72,6 +79,23 @@ export const landingHtml = `<!DOCTYPE html>
     <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-landing.png">
     <link rel="icon" href="data:image/svg+xml,${iconCrabigatorEncoded}">
     <style>${landingCss}</style>
+    <!-- Meta Pixel Code -->
+    <script>
+    !function(f,b,e,v,n,t,s)
+    {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+    n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];
+    s.parentNode.insertBefore(t,s)}(window, document,'script',
+    'https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', '386521575130337');
+    fbq('track', 'PageView');
+    </script>
+    <noscript><img height="1" width="1" style="display:none"
+    src="https://www.facebook.com/tr?id=386521575130337&ev=PageView&noscript=1"
+    /></noscript>
+    <!-- End Meta Pixel Code -->
 </head>
 <body>
     <!-- Navigation -->
@@ -82,6 +106,7 @@ export const landingHtml = `<!DOCTYPE html>
         </a>
         <div class="nav-links">
             <a href="#features" class="nav-link">Features</a>
+            <a href="#security" class="nav-link">Security</a>
             <a href="#pricing" class="nav-link">Pricing</a>
             <a href="#install" class="nav-link">Install</a>
             <a href="/dashboard" class="nav-btn" data-track="dashboard_nav" data-label="nav">Open Dashboard</a>
@@ -637,6 +662,101 @@ export const landingHtml = `<!DOCTYPE html>
                 <div class="bento-icon">${iconBolt}</div>
                 <h3 class="bento-title">Instant Pairing</h3>
                 <p class="bento-desc">Scan a QR code or enter a short code. Connected in seconds.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Security Section -->
+    <section class="section security" id="security">
+        <div class="section-header">
+            <p class="section-label">${iconShield} Security</p>
+            <h2 class="security-headline">Text-only streaming. Zero persistence.</h2>
+            <p class="security-subtitle">
+                Only terminal output is transmitted—no file access, no credentials, no system resources.
+                Nothing is retained after your session ends.
+            </p>
+        </div>
+
+        <!-- Data Flow Diagram -->
+        <div class="security-flow">
+            <div class="flow-node">
+                <div class="flow-node-icon">
+                    ${iconDesktop}
+                </div>
+                <span class="flow-node-title">Desktop</span>
+                <span class="flow-node-desc">Streams output</span>
+            </div>
+
+            <div class="flow-connector">
+                <span class="flow-label">TLS 1.3+</span>
+                <div class="flow-line"></div>
+                <div class="flow-lock">${iconLock}</div>
+            </div>
+
+            <div class="flow-node">
+                <div class="flow-node-icon cloud">
+                    ${iconCloudEdge}
+                </div>
+                <span class="flow-node-title">Cloudflare Edge</span>
+                <span class="flow-node-desc">Memory only</span>
+                <span class="flow-node-badge">Ephemeral</span>
+            </div>
+
+            <div class="flow-connector">
+                <span class="flow-label">TLS 1.3+</span>
+                <div class="flow-line"></div>
+                <div class="flow-lock">${iconLock}</div>
+            </div>
+
+            <div class="flow-node">
+                <div class="flow-node-icon">
+                    ${iconPhone}
+                </div>
+                <span class="flow-node-title">Phone / Web</span>
+                <span class="flow-node-desc">Views & responds</span>
+            </div>
+        </div>
+
+        <!-- Security Features Grid -->
+        <div class="security-features">
+            <div class="security-feature">
+                <div class="security-feature-icon">
+                    ${iconLock}
+                </div>
+                <div class="security-feature-content">
+                    <div class="security-feature-title">TLS 1.3+ Encryption</div>
+                    <div class="security-feature-desc">All traffic encrypted end-to-end via Cloudflare's edge network.</div>
+                </div>
+            </div>
+
+            <div class="security-feature">
+                <div class="security-feature-icon">
+                    ${iconTerminal}
+                </div>
+                <div class="security-feature-content">
+                    <div class="security-feature-title">Text-Only Streaming</div>
+                    <div class="security-feature-desc">Only terminal output is transmitted. No filesystem access, no credentials.</div>
+                </div>
+            </div>
+
+            <div class="security-feature">
+                <div class="security-feature-icon">
+                    ${iconGhost}
+                </div>
+                <div class="security-feature-content">
+                    <div class="security-feature-title">Ephemeral Data</div>
+                    <div class="security-feature-desc">Session data lives in memory only. When you disconnect, it's gone.</div>
+                </div>
+            </div>
+
+            <div class="security-feature">
+                <div class="security-feature-icon">
+                    ${iconKey}
+                </div>
+                <div class="security-feature-content">
+                    <div class="security-feature-title">HMAC-SHA256 Auth</div>
+                    <div class="security-feature-desc">Cryptographic device pairing. No passwords stored on servers.</div>
+                </div>
             </div>
         </div>
     </section>
