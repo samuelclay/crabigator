@@ -4,29 +4,30 @@ import type { Env } from '../types/env';
  * Scheduled cleanup job for zombie sessions.
  *
  * Runs every 5 minutes to find and clean up sessions that are marked as
- * active in D1 but are clearly stale:
+ * active in D1 but have stale timestamps. Before marking any session as
+ * inactive, we verify with the SessionDO that the desktop is actually
+ * disconnected - this prevents false positives from D1 update failures.
  *
- * 1. Sessions with last_seen_at > 5 minutes ago (desktop disconnected but cleanup failed)
- * 2. Sessions with no last_seen_at and started_at > 10 minutes ago (never connected)
+ * Candidates for cleanup:
+ * 1. Sessions with last_seen_at > 5 minutes ago
+ * 2. Sessions with no last_seen_at and started_at > 10 minutes ago
  *
- * For each stale session, we:
+ * For each confirmed zombie (desktop actually disconnected), we:
  * - Update D1 to mark as inactive
  * - Notify SessionListDO to remove from active list
  */
 export async function cleanupZombieSessions(env: Env): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
 
-    // Threshold: sessions not seen for 5 minutes are considered zombie
+    // Threshold: sessions not seen for 5 minutes are candidates for cleanup
     const staleThreshold = now - 300; // 5 minutes
 
     // For sessions that never connected (no last_seen_at), use longer threshold
     const neverConnectedThreshold = now - 600; // 10 minutes
 
     try {
-        // Find zombie sessions:
-        // 1. Active sessions with last_seen_at older than threshold
-        // 2. Active sessions with no last_seen_at and started_at older than threshold
-        const zombies = await env.DB.prepare(`
+        // Find candidate zombie sessions based on D1 timestamps
+        const candidates = await env.DB.prepare(`
             SELECT s.id, d.group_id
             FROM sessions s
             JOIN devices d ON d.id = s.device_id
@@ -41,13 +42,47 @@ export async function cleanupZombieSessions(env: Env): Promise<void> {
             group_id: string | null;
         }>();
 
-        if (!zombies.results || zombies.results.length === 0) {
+        if (!candidates.results || candidates.results.length === 0) {
             return;
         }
 
-        console.log(`Cleaning up ${zombies.results.length} zombie session(s)`);
+        console.log(`Found ${candidates.results.length} candidate zombie session(s), verifying...`);
 
-        const sessionIds = zombies.results.map(r => r.id);
+        // Verify each candidate by checking if desktop is actually disconnected
+        const confirmedZombies: Array<{ id: string; group_id: string | null }> = [];
+
+        for (const candidate of candidates.results) {
+            try {
+                const doId = env.SESSION.idFromName(candidate.id);
+                const stub = env.SESSION.get(doId);
+                const resp = await stub.fetch(new Request('https://internal/state'));
+                const state = await resp.json() as { desktop_connected?: boolean };
+
+                if (!state.desktop_connected) {
+                    // Desktop is actually disconnected - this is a real zombie
+                    confirmedZombies.push(candidate);
+                } else {
+                    // Desktop is connected but D1 is stale - update D1 timestamp
+                    console.log(`Session ${candidate.id.slice(0, 8)} has stale D1 but desktop is connected, updating timestamp`);
+                    await env.DB.prepare(`
+                        UPDATE sessions SET last_seen_at = ? WHERE id = ?
+                    `).bind(now, candidate.id).run();
+                }
+            } catch (error) {
+                // Can't reach SessionDO - assume it's a zombie
+                console.log(`Session ${candidate.id.slice(0, 8)} SessionDO unreachable, marking as zombie`);
+                confirmedZombies.push(candidate);
+            }
+        }
+
+        if (confirmedZombies.length === 0) {
+            console.log('No confirmed zombies after verification');
+            return;
+        }
+
+        console.log(`Cleaning up ${confirmedZombies.length} confirmed zombie session(s)`);
+
+        const sessionIds = confirmedZombies.map(r => r.id);
 
         // Batch update D1
         const placeholders = sessionIds.map(() => '?').join(',');
@@ -61,7 +96,7 @@ export async function cleanupZombieSessions(env: Env): Promise<void> {
         const doId = env.SESSION_LIST.idFromName('global');
         const stub = env.SESSION_LIST.get(doId);
 
-        for (const zombie of zombies.results) {
+        for (const zombie of confirmedZombies) {
             try {
                 await stub.fetch(new Request('https://internal/notify', {
                     method: 'POST',
