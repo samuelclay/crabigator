@@ -345,7 +345,7 @@ export async function handleSendGiftEmail(
                                 <tr>
                                     <td style="padding: 24px 28px;">
                                         <p style="margin: 0 0 12px 0; font-size: 14px; color: #8b949e; line-height: 1.6; font-style: italic;">
-                                            "I built Crabigator because I kept missing Claude's permission prompts while grabbing coffee. Now I can approve them from my phone and keep the momentum going. Hope you find it as useful as I do!"
+                                            "I built Crabigator because I kept missing Claude's permission prompts while walking my dog. Now I can approve them from my phone and keep the momentum going. Hope you find it as useful as I do!"
                                         </p>
                                         <p style="margin: 0; font-size: 14px;">
                                             <span style="color: #e6edf3; font-weight: 500;">&mdash;</span>
