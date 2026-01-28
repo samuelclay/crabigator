@@ -144,6 +144,18 @@ fn format_cloud_header(cloud_status: Option<&CloudStatus>, is_paired: bool) -> S
     match cloud_status {
         Some(status) if status.connected => {
             if is_paired {
+                // In debug builds, show first 8 chars of session ID
+                #[cfg(debug_assertions)]
+                if let Some(ref session_id) = status.session_id {
+                    let short_id = &session_id[..8.min(session_id.len())];
+                    return format!(
+                        "{} Streaming {}{}{}",
+                        fg(color::GREEN),
+                        fg(color::CYAN),
+                        short_id,
+                        RESET
+                    );
+                }
                 format!("{} Streaming{}", fg(color::GREEN), RESET)
             } else {
                 format!("{} Waiting to pair{}", fg(color::YELLOW), RESET)

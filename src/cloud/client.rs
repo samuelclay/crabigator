@@ -55,6 +55,8 @@ pub struct CloudStatus {
     pub _backoff_secs: u64,
     /// Number of queued events waiting to be sent
     pub _queue_len: usize,
+    /// Session ID (for debug display)
+    pub session_id: Option<String>,
 }
 
 /// Cloud client for session streaming
@@ -174,6 +176,7 @@ impl CloudClient {
             reconnect_attempts: self.reconnect_attempts,
             _backoff_secs: self.reconnect_backoff_secs,
             _queue_len: self.queue.len(),
+            session_id: self.session_id.clone(),
         }
     }
 
