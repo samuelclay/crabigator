@@ -138,7 +138,7 @@ impl CaptureManager {
 
     /// Resize the capture parser to match PTY dimensions.
     pub fn resize(&mut self, cols: u16, rows: u16) {
-        self.capture_parser.set_size(rows, cols);
+        self.capture_parser.screen_mut().set_size(rows, cols);
     }
 
     /// Set the transcript file path for scrollback reading.

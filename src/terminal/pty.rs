@@ -158,7 +158,7 @@ impl PlatformPty {
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        self.parser.set_size(rows, cols);
+        self.parser.screen_mut().set_size(rows, cols);
         Ok(())
     }
 
