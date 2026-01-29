@@ -1,6 +1,5 @@
 import type { Env } from '../../types/env';
 import { jsonResponse } from '../../router';
-import { getStripeConfig } from './stripe-config';
 
 interface StripeSubscription {
     id: string;
@@ -103,8 +102,12 @@ export async function handleStripeWebhook(
     request: Request,
     env: Env
 ): Promise<Response> {
-    const config = getStripeConfig(env);
-    if (!config) {
+    // Try both live and test webhook secrets since we don't know
+    // which mode the incoming webhook is from until after verification
+    const liveWebhookSecret = env.STRIPE_WEBHOOK_SECRET;
+    const testWebhookSecret = env.STRIPE_WEBHOOK_SECRET_TEST;
+
+    if (!liveWebhookSecret && !testWebhookSecret) {
         return jsonResponse({ error: 'Stripe not configured' }, 500);
     }
 
@@ -115,8 +118,14 @@ export async function handleStripeWebhook(
 
     const payload = await request.text();
 
-    // Verify signature
-    const isValid = await verifyStripeSignature(payload, signature, config.webhookSecret);
+    // Try live secret first, then test secret
+    let isValid = false;
+    if (liveWebhookSecret) {
+        isValid = await verifyStripeSignature(payload, signature, liveWebhookSecret);
+    }
+    if (!isValid && testWebhookSecret) {
+        isValid = await verifyStripeSignature(payload, signature, testWebhookSecret);
+    }
     if (!isValid) {
         return jsonResponse({ error: 'Invalid signature' }, 401);
     }
