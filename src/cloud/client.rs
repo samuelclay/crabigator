@@ -90,6 +90,9 @@ pub struct CloudClient {
     /// Whether there are active viewers watching via dashboard/phone
     /// When false, desktop can reduce streaming frequency to save costs
     viewer_active: bool,
+    /// Last time we received a viewer_status:true message from the cloud
+    /// Used to auto-timeout viewer_active after 15s of no heartbeats
+    last_viewer_active_at: Option<std::time::Instant>,
 }
 
 impl CloudClient {
@@ -119,6 +122,7 @@ impl CloudClient {
             pending_reconnect: None,
             just_connected: false,
             viewer_active: false, // Assume no viewers initially, will be notified when one connects
+            last_viewer_active_at: None,
         })
     }
 
@@ -355,6 +359,9 @@ impl CloudClient {
                     self.reconnect_attempts = 0;
                     self.pending_reconnect = None;
                     self.just_connected = true;
+                    // Reset viewer status - server will re-notify if viewers are still active
+                    self.viewer_active = false;
+                    self.last_viewer_active_at = None;
                     self.drain_queue();
                     return true;
                 }
@@ -496,8 +503,25 @@ impl CloudClient {
         if let Some(handle) = self.ws_handle.as_mut() {
             while let Some(active) = handle.try_recv_viewer_status() {
                 self.viewer_active = active;
+                if active {
+                    self.last_viewer_active_at = Some(std::time::Instant::now());
+                }
             }
         }
+
+        // Auto-timeout: if no viewer_status:true received in 15s, assume inactive.
+        // Viewer heartbeats arrive every 5s, so 15s = 3 missed heartbeats.
+        // Without this, viewer_active stays true forever since the server never
+        // sends viewer_status:false when viewers disconnect.
+        if self.viewer_active {
+            if let Some(last) = self.last_viewer_active_at {
+                if last.elapsed() > std::time::Duration::from_secs(15) {
+                    self.viewer_active = false;
+                    self.last_viewer_active_at = None;
+                }
+            }
+        }
+
         self.viewer_active
     }
 

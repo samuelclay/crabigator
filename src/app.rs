@@ -837,10 +837,12 @@ impl App {
     /// Handle PTY output capture and cloud streaming
     fn handle_pty_output_capture(&mut self, sent_initial_screen: &mut bool) -> Result<()> {
         let screen_to_send = if self.cloud_viewers_active {
-            // Bypass throttle - get screen immediately for real-time streaming
+            // Throttle to 100ms even with viewers — rendering the screen on every
+            // PTY chunk is too expensive and causes typing lag in the main loop
             self.capture_manager
-                .update_screen(self.platform_pty.screen())
+                .maybe_update_screen(self.platform_pty.screen())
                 .ok()
+                .flatten()
         } else if self.last_reduced_screen_send.elapsed() >= Duration::from_secs(1) {
             // No viewers: only capture/send once per second
             self.capture_manager
