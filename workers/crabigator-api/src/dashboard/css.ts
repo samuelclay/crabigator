@@ -571,7 +571,7 @@ body {
     overflow-x: hidden;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
-    line-height: 1.25;
+    line-height: 1;
     transition: height 0.25s ease-out;
     width: 100%;
     min-width: 0;
@@ -583,10 +583,6 @@ body {
     min-width: 0;
     max-width: 100%;
     display: block;
-    margin-bottom: -0.25em;
-}
-.terminal .line:last-child {
-    margin-bottom: 0;
 }
 /* Scroll mode */
 .terminal.scroll-mode {
@@ -901,7 +897,7 @@ body {
     }
     .terminal {
         font-size: 10px;
-        line-height: 15px;  /* Match desktop ratio for descender room */
+        line-height: 1;
         padding: 10px;
     }
     .widget {
