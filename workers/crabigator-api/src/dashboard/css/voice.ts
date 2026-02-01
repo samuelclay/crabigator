@@ -74,6 +74,5 @@ export const voiceCss = `
     height: 4px;
     background: var(--accent-cyan);
     border-radius: 1px;
-    transition: height 0.05s ease;
 }
 `;
