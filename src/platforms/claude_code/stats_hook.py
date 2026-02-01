@@ -244,6 +244,10 @@ def main():
         if "tool_timestamps" not in stats:
             stats["tool_timestamps"] = []
         stats["tool_timestamps"].append(time.time())
+        # Cap timestamps to prevent unbounded growth over long sessions
+        # 1000 entries is enough for sparkline visualization
+        if len(stats["tool_timestamps"]) > 1000:
+            stats["tool_timestamps"] = stats["tool_timestamps"][-1000:]
         # Mark if this was a question tool so Stop transitions to "question" state
         if tool_name in ("AskUserQuestion", "ExitPlanMode"):
             stats["pending_question"] = True

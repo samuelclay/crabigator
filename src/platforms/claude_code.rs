@@ -452,8 +452,15 @@ impl Platform for ClaudeCodePlatform {
         let content = fs::read_to_string(&stats_path)
             .context("Failed to read stats file")?;
 
-        let stats: PlatformStats = serde_json::from_str(&content)
+        let mut stats: PlatformStats = serde_json::from_str(&content)
             .unwrap_or_default();
+
+        // Cap tool_timestamps to prevent unbounded growth in long sessions.
+        // The Python hook caps at 1000, but existing stats files may be larger.
+        if stats.tool_timestamps.len() > 1000 {
+            let start = stats.tool_timestamps.len() - 1000;
+            stats.tool_timestamps = stats.tool_timestamps[start..].to_vec();
+        }
 
         Ok(stats)
     }
