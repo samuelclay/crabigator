@@ -30,6 +30,21 @@ use crate::update::UpdateState;
 /// Time PTY must be quiet before drawing status bar (prevents mid-burst draws)
 const PTY_SETTLE_TIME: Duration = Duration::from_millis(30);
 
+/// Git refresh interval when session is active (thinking, permission, etc.)
+const GIT_INTERVAL_ACTIVE: Duration = Duration::from_secs(1);
+/// Git refresh interval when session is idle (complete, ready)
+const GIT_INTERVAL_IDLE: Duration = Duration::from_secs(10);
+
+/// Hook/stats refresh interval when active
+const HOOK_INTERVAL_ACTIVE: Duration = Duration::from_millis(500);
+/// Hook/stats refresh interval when idle
+const HOOK_INTERVAL_IDLE: Duration = Duration::from_secs(2);
+
+/// Status draw interval when active (for smooth throbber animation)
+const STATUS_DRAW_INTERVAL_ACTIVE: Duration = Duration::from_millis(50);
+/// Status draw interval when idle (just needs occasional refresh)
+const STATUS_DRAW_INTERVAL_IDLE: Duration = Duration::from_secs(1);
+
 /// Result from background git refresh
 struct GitRefreshResult {
     git_state: GitState,
@@ -330,15 +345,19 @@ impl App {
         let mut last_status_draw = Instant::now();
         let mut last_throbber_draw = Instant::now();
         let mut last_pty_output = Instant::now();
+        let mut last_git_refresh = Instant::now();
+        let mut last_hook_refresh = Instant::now();
         let status_debounce = Duration::from_millis(100);
 
         // Event-driven timers using tokio intervals (no polling!)
-        let mut git_interval = interval(Duration::from_secs(1));
-        let mut hook_interval = interval(Duration::from_millis(500));
+        // These tick at the *active* rate; idle throttling is handled by
+        // timestamp checks inside each branch to avoid unnecessary work.
+        let mut git_interval = interval(GIT_INTERVAL_ACTIVE);
+        let mut hook_interval = interval(HOOK_INTERVAL_ACTIVE);
         let mut throbber_interval_timer = interval(Duration::from_millis(100));
         let mut full_refresh_interval = interval(Duration::from_secs(5));
         let mut cloud_reconnect_interval = interval(Duration::from_secs(2));
-        let mut status_draw_interval = interval(Duration::from_millis(50));
+        let mut status_draw_interval = interval(STATUS_DRAW_INTERVAL_ACTIVE);
 
         // Async terminal event stream (replaces polling)
         let mut event_stream = EventStream::new();
@@ -396,9 +415,15 @@ impl App {
         // This replaces the polling loop - we only wake up when something actually happens
         loop {
             // Check if throbber animation is needed (for conditional timer)
+            let effective_state = self.session_stats.effective_state();
             let needs_throbber = matches!(
-                self.session_stats.effective_state(),
+                effective_state,
                 SessionState::Thinking | SessionState::Permission
+            );
+            // Idle = session not actively working (no files changing, no animation needed)
+            let is_idle = matches!(
+                effective_state,
+                SessionState::Complete | SessionState::Ready
             );
 
             tokio::select! {
@@ -460,7 +485,13 @@ impl App {
                 }
 
                 // Git refresh timer - only fires when not already pending
+                // When idle, throttle from 1s to 10s to avoid spawning git processes needlessly
                 _ = git_interval.tick(), if !git_refresh_pending => {
+                    let git_throttle = if is_idle { GIT_INTERVAL_IDLE } else { GIT_INTERVAL_ACTIVE };
+                    if last_git_refresh.elapsed() < git_throttle {
+                        continue; // Skip this tick, check again on next interval
+                    }
+                    last_git_refresh = Instant::now();
                     git_refresh_pending = true;
                     let tx = git_tx.clone();
                     tokio::spawn(async move {
@@ -482,7 +513,13 @@ impl App {
                 }
 
                 // Hook/stats refresh timer
+                // When idle, throttle from 500ms to 2s
                 _ = hook_interval.tick() => {
+                    let hook_throttle = if is_idle { HOOK_INTERVAL_IDLE } else { HOOK_INTERVAL_ACTIVE };
+                    if last_hook_refresh.elapsed() < hook_throttle {
+                        continue;
+                    }
+                    last_hook_refresh = Instant::now();
                     self.handle_hook_refresh(&mut last_status_draw, last_pty_output)?;
                 }
 
@@ -498,12 +535,14 @@ impl App {
                 }
 
                 // Status bar draw timer - draws when PTY output has settled
+                // When idle, skip most ticks (1s vs 50ms) since nothing is animating
                 _ = status_draw_interval.tick() => {
                     let quiet_for = last_pty_output.elapsed();
                     let since_draw = last_status_draw.elapsed();
+                    let draw_throttle = if is_idle { STATUS_DRAW_INTERVAL_IDLE } else { status_debounce };
 
                     // Draw if quiet long enough AND debounce passed
-                    if quiet_for >= PTY_SETTLE_TIME && since_draw >= status_debounce {
+                    if quiet_for >= PTY_SETTLE_TIME && since_draw >= draw_throttle {
                         self.draw_status_bar()?;
                         last_status_draw = Instant::now();
                         last_throbber_draw = Instant::now();

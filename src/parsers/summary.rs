@@ -178,13 +178,17 @@ impl DiffSummary {
 /// Parse hunk headers and context lines to detect modifications inside existing functions
 fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser, filename: &str) -> Vec<ChangeNode> {
     use std::collections::HashMap;
+    use std::sync::LazyLock;
 
     let file_path = Some(filename.to_string());
 
     // Track changes with their line counts and line number: (additions, deletions, line_number)
     let mut change_map: HashMap<String, (usize, usize, Option<usize>)> = HashMap::new();
-    // Pattern captures: 1=new_line_start, 2=context
-    let hunk_re = Regex::new(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@\s*(.*)$").unwrap();
+    // Pattern captures: 1=new_line_start, 2=context (compiled once)
+    static HUNK_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@\s*(.*)$").unwrap()
+    });
+    let hunk_re = &*HUNK_RE;
 
     let mut in_hunk = false;
     let mut current_hunk_func: Option<String> = None;
