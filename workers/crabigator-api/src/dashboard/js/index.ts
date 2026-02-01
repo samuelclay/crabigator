@@ -5,6 +5,7 @@ import { styleJs } from './style';
 import { sessionsPopoverJs } from './sessions-popover';
 import { deployJs } from './deploy';
 import { inputJs } from './input';
+import { keyboardJs } from './keyboard';
 import { layoutJs } from './layout';
 import { ansiJs } from './ansi';
 import { utilsJs } from './utils';
@@ -31,6 +32,7 @@ export const dashboardJs = [
     sessionsPopoverJs,
     deployJs,
     inputJs,
+    keyboardJs,
     layoutJs,
     ansiJs,
     utilsJs,

@@ -1,5 +1,5 @@
 // Dashboard JavaScript - session
-import { iconMicrophone } from '../icons';
+import { iconMicrophone, iconKeyboard } from '../icons';
 
 export const sessionJs = `
         async function loadSessions() {
@@ -222,6 +222,23 @@ export const sessionJs = `
                                     title="Voice input">
                                 ${iconMicrophone}
                             </button>
+                            <div class="keyboard-container">
+                                <button type="button" class="keyboard-btn"
+                                        onclick="toggleKeyboardPopover('\${session.id}')"
+                                        title="Keyboard shortcuts">
+                                    ${iconKeyboard}
+                                </button>
+                                <div class="keyboard-popover">
+                                    <div class="keyboard-popover-title">Send Key</div>
+                                    <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'shift_tab')"><kbd>⇧Tab</kbd> Cycle mode</button>
+                                    <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'escape')"><kbd>Esc</kbd> Cancel / exit</button>
+                                    <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'up')"><kbd>↑</kbd> Navigate up</button>
+                                    <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'down')"><kbd>↓</kbd> Navigate down</button>
+                                    <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'ctrl_c')"><kbd>Ctrl+C</kbd> Interrupt</button>
+                                    <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'tab')"><kbd>Tab</kbd> Autocomplete</button>
+                                    <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'enter')"><kbd>Enter</kbd> Submit</button>
+                                </div>
+                            </div>
                             <input type="text" id="input-\${session.id}"
                                    placeholder="Type a command or answer..."
                                    oninput="handleInputChange('\${session.id}', this.value)"
