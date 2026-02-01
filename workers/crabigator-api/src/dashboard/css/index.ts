@@ -12,6 +12,7 @@ import { pairingCss } from './pairing';
 import { layoutCss } from './layout';
 import { paywallCss } from './paywall';
 import { giftCss } from './gift';
+import { voiceCss } from './voice';
 
 export const dashboardCss = [
     baseCss,
@@ -27,4 +28,5 @@ export const dashboardCss = [
     layoutCss,
     paywallCss,
     giftCss,
+    voiceCss,
 ].join('\n');

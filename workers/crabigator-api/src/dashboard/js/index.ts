@@ -16,6 +16,7 @@ import { gitWidgetJs } from './git-widget';
 import { changesWidgetJs } from './changes-widget';
 import { eventsJs } from './events';
 import { promptJs } from './prompt';
+import { voiceJs } from './voice';
 import { sseJs } from './sse';
 import { viewerActivityJs } from './viewer-activity';
 import { pairingJs } from './pairing';
@@ -42,6 +43,7 @@ export const dashboardJs = [
     viewerActivityJs,  // Must be before eventsJs (defines sendViewerHeartbeat)
     eventsJs,
     promptJs,
+    voiceJs,
     sseJs,
     pairingJs,
     giftClaimJs,  // Must be after pairingJs (uses isPaired and getAuthHeaders)

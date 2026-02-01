@@ -1,4 +1,6 @@
 // Dashboard JavaScript - session
+import { iconMicrophone } from '../icons';
+
 export const sessionJs = `
         async function loadSessions() {
             try {
@@ -215,6 +217,11 @@ export const sessionJs = `
                             </div>
                         </div>
                         <div class="input-area">
+                            <button type="button" class="voice-btn" id="voice-btn-\${session.id}"
+                                    onclick="toggleVoiceRecording('\${session.id}')"
+                                    title="Voice input">
+                                ${iconMicrophone}
+                            </button>
                             <input type="text" id="input-\${session.id}"
                                    placeholder="Type a command or answer..."
                                    oninput="handleInputChange('\${session.id}', this.value)"

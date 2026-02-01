@@ -37,6 +37,9 @@ export interface Env {
     PAYPAL_PLAN_ID?: string;
     PAYPAL_MODE?: 'sandbox' | 'live';
 
+    // OpenAI API key (for Whisper transcription)
+    OPENAI_API_KEY?: string;
+
     // Mailgun email settings
     MAILGUN_API_KEY?: string;
     MAILGUN_DOMAIN?: string;

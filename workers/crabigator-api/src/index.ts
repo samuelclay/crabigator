@@ -16,6 +16,7 @@ import { handleCreateGift, handleListGifts, handleSendGiftEmail, handleGetGift, 
 import { handleAnalyticsBeacon, handleAnalyticsEvent } from './handlers/analytics';
 import { fetchNpmStats, checkTrafficAnomalies } from './handlers/npm-stats';
 import { cleanupZombieSessions } from './handlers/cleanup';
+import { handleTranscribe } from './handlers/transcribe';
 
 // Build version - deterministic hash of dashboard content
 // This ensures all worker instances return the same version for the same code
@@ -638,6 +639,12 @@ router.post('/api/gifts/resolve-pending', async (request, env) => {
     }
     return handleResolvePendingGift(request, env, { group_id: authResult.auth.group_id });
 });
+
+// ============================================
+// Transcription (voice input)
+// ============================================
+
+router.post('/api/transcribe', handleTranscribe);
 
 // ============================================
 // Health check
