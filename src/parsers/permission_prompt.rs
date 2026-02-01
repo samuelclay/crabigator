@@ -85,13 +85,35 @@ impl PermissionPrompt {
         // Find the question line and its position
         // "Do you want to" - standard permission prompts
         // "Would you like to" - Exit Plan Mode and similar
+        // Use `contains` not `starts_with` because the question may be prefixed
+        // (e.g., "Claude has written up a plan and is ready to execute. Would you like to proceed?")
         let lines: Vec<&str> = stripped.lines().collect();
         let question_idx = lines.iter().position(|line| {
             let trimmed = line.trim();
-            trimmed.starts_with("Do you want to") || trimmed.starts_with("Would you like to")
+            trimmed.contains("Do you want to") || trimmed.contains("Would you like to")
         });
 
-        let question = question_idx.map(|idx| lines[idx].trim().to_string());
+        // Fallback: if no question found, use the ❯ cursor line as anchor
+        // The ❯ marker is unique to Claude Code's selection UI
+        let (start_idx, question) = if let Some(idx) = question_idx {
+            (idx + 1, Some(lines[idx].trim().to_string()))
+        } else {
+            // Find first ❯ line that also matches a numbered option
+            let cursor_idx = lines.iter().position(|line| {
+                line.contains('❯') && option_re.is_match(line)
+            });
+            if let Some(ci) = cursor_idx {
+                // Scan backwards for the nearest question line (ends with ?)
+                let q = lines[..ci]
+                    .iter()
+                    .rev()
+                    .find(|l| l.trim().ends_with('?'))
+                    .map(|l| l.trim().to_string());
+                (ci, q)
+            } else {
+                (0, None)
+            }
+        };
 
         // Check for "Tab to add additional instructions" in footer
         let allows_tab_instructions = stripped
@@ -102,10 +124,6 @@ impl PermissionPrompt {
         let mut current_number: Option<u32> = None;
         let mut current_text = String::new();
         let mut current_selected = false;
-
-        // Only parse options AFTER the question line
-        // This prevents matching numbered lists in plan content above the question
-        let start_idx = question_idx.map(|idx| idx + 1).unwrap_or(0);
 
         for line in lines.iter().skip(start_idx) {
             // Check if this line starts a new option
@@ -122,9 +140,15 @@ impl PermissionPrompt {
                     }
                 }
 
-                // Start new option
-                let num: u32 = caps.get(1)?.as_str().parse().ok()?;
-                let text = caps.get(2)?.as_str().to_string();
+                // Start new option (use continue instead of ? to avoid aborting entire parse)
+                let num: u32 = match caps.get(1).and_then(|m| m.as_str().parse().ok()) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                let text = match caps.get(2) {
+                    Some(m) => m.as_str().to_string(),
+                    None => continue,
+                };
                 let selected = line.contains('❯') || line.trim_start().starts_with('>');
 
                 current_number = Some(num);
@@ -137,6 +161,7 @@ impl PermissionPrompt {
                 // Stop at footer lines
                 if trimmed.starts_with("Esc to cancel")
                     || trimmed.starts_with("Tab to add")
+                    || trimmed.starts_with("ctrl-g")
                     || trimmed.is_empty()
                     || trimmed.starts_with('─')
                 {
@@ -378,6 +403,76 @@ ctrl-g to edit in VS Code
         assert_eq!(prompt.options[2].text, "Yes, manually approve edits");
         assert_eq!(prompt.options[3].text, "Type here to tell Claude what to change");
         // Should be valid (has "Yes" option)
+        assert!(prompt.is_valid());
+    }
+
+    #[test]
+    fn test_parse_prefixed_question_line() {
+        // Real-world: question is prefixed with descriptive text
+        // "Claude has written up a plan and is ready to execute. Would you like to proceed?"
+        let screen = r#"
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+Plan: Create world.txt
+
+Task
+
+Create a file called world.txt with the content "hello world".
+
+Steps
+
+1. Create /private/tmp/test-plan-mode/world.txt with content hello world
+
+Verification
+
+- Read the file to confirm it contains "hello world"
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+Claude has written up a plan and is ready to execute. Would you like to proceed?
+
+❯ 1. Yes, clear context and auto-accept edits (shift+tab)
+  2. Yes, auto-accept edits
+  3. Yes, manually approve edits
+  4. Type here to tell Claude what to change
+
+ctrl-g to edit in VS Code
+"#;
+
+        let prompt = PermissionPrompt::parse(screen).unwrap();
+        assert_eq!(
+            prompt.question,
+            Some("Claude has written up a plan and is ready to execute. Would you like to proceed?".to_string())
+        );
+        assert_eq!(prompt.options.len(), 4);
+        assert_eq!(prompt.options[0].text, "Yes, clear context and auto-accept edits (shift+tab)");
+        assert!(prompt.options[0].selected);
+        assert_eq!(prompt.options[3].text, "Type here to tell Claude what to change");
+        assert!(prompt.is_valid());
+    }
+
+    #[test]
+    fn test_parse_cursor_anchor_fallback() {
+        // Fallback: no known question text, but ❯ cursor anchors the options
+        let screen = r#"
+Some plan content here...
+
+1. Step one of the plan
+2. Step two of the plan
+
+Unrecognized prompt text here
+
+❯ 1. Yes, proceed
+  2. Yes, auto-accept
+  3. No, go back
+  4. Type feedback
+
+ctrl-g to edit
+"#;
+
+        let prompt = PermissionPrompt::parse(screen).unwrap();
+        // Should use ❯ anchor and find question by scanning backwards for ?
+        assert_eq!(prompt.options.len(), 4);
+        assert_eq!(prompt.options[0].text, "Yes, proceed");
+        assert!(prompt.options[0].selected);
         assert!(prompt.is_valid());
     }
 }

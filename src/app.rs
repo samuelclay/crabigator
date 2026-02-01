@@ -105,6 +105,8 @@ pub struct App {
     last_cloud_prompt_sent: bool,
     /// Number of options in last sent exit plan prompt (for re-sending when options appear)
     last_exit_plan_option_count: usize,
+    /// Retry counter for exit plan prompt parsing (limits fallback sends)
+    last_exit_plan_retry_count: usize,
     /// Pairing state for mobile device linking
     pairing_state: PairingState,
     /// Update state for version banner
@@ -230,6 +232,7 @@ impl App {
             cloud_stats_sent: false,
             last_cloud_prompt_sent: false,
             last_exit_plan_option_count: 0,
+            last_exit_plan_retry_count: 0,
             pairing_state: PairingState::default(),
             update_state,
             last_pairing_poll: Instant::now(),
@@ -981,11 +984,15 @@ impl App {
             }
         }
 
-        // For ExitPlan prompts, keep checking for options
+        // For ExitPlan prompts, keep checking for options until we find enough
+        // or exhaust retries (prevents infinite fallback sends)
         if matches!(
             self.session_stats.platform_stats.active_prompt.as_ref(),
             Some(crate::platforms::ActivePrompt::ExitPlan)
-        ) && self.last_exit_plan_option_count < 3 {
+        ) && self.last_exit_plan_option_count < 3
+            && self.last_exit_plan_retry_count < 30
+        {
+            self.last_exit_plan_retry_count += 1;
             self.send_cloud_prompt_event();
         }
 
@@ -1284,8 +1291,13 @@ impl App {
         if matches!(active_prompt, Some(crate::platforms::ActivePrompt::ExitPlan)) {
             let new_option_count = permission_prompt.as_ref().map(|p| p.options.len()).unwrap_or(0);
 
+            // If parse failed (0 options) and we haven't exhausted retries, don't send
+            // the fallback yet - give the screen time to render
+            if new_option_count == 0 && self.last_exit_plan_retry_count < 30 {
+                return;
+            }
+
             // Skip if option count hasn't changed (avoid duplicate sends)
-            // But always send if we have 0 options (fallback) and now have real options
             if new_option_count == self.last_exit_plan_option_count && new_option_count > 0 {
                 return;
             }
@@ -1302,9 +1314,10 @@ impl App {
         // Track whether we sent a prompt (for clearing later)
         self.last_cloud_prompt_sent = active_prompt.is_some();
 
-        // Reset exit plan option count when leaving exit plan state
+        // Reset exit plan counters when leaving exit plan state
         if !matches!(active_prompt, Some(crate::platforms::ActivePrompt::ExitPlan)) {
             self.last_exit_plan_option_count = 0;
+            self.last_exit_plan_retry_count = 0;
         }
     }
 
@@ -1354,6 +1367,24 @@ impl App {
                     "shift_tab" => {
                         // Shift+Tab: CSI Z (ESC [ Z) - cycles Claude Code modes
                         self.platform_pty.write(&[0x1b, b'[', b'Z'])?;
+                    }
+                    "escape" => {
+                        self.platform_pty.write(&[0x1b])?;
+                    }
+                    "up" => {
+                        self.platform_pty.write(&[0x1b, b'[', b'A'])?;
+                    }
+                    "down" => {
+                        self.platform_pty.write(&[0x1b, b'[', b'B'])?;
+                    }
+                    "ctrl_c" => {
+                        self.platform_pty.write(&[0x03])?;
+                    }
+                    "tab" => {
+                        self.platform_pty.write(&[0x09])?;
+                    }
+                    "enter" => {
+                        self.platform_pty.write(&[0x0D])?;
                     }
                     _ => {
                         // Unknown key command - ignore
