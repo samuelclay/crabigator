@@ -50,9 +50,11 @@ export const constantsJs = `
 
         // Start the global spinner animation
         setInterval(() => {
+            const spinners = document.querySelectorAll('.thinking-spinner');
+            if (spinners.length === 0) return;
             spinnerFrameIndex = (spinnerFrameIndex + 1) % SPINNER_FRAMES.length;
             const frame = SPINNER_FRAMES[spinnerFrameIndex];
-            document.querySelectorAll('.thinking-spinner').forEach(el => {
+            spinners.forEach(el => {
                 el.textContent = frame;
             });
         }, 80);
