@@ -24,7 +24,7 @@ export const terminalCss = `
 /* Scroll active - click to enable scrolling */
 .terminal.scroll-active {
     overflow-y: auto;
-    box-shadow: inset 0 0 10px 2px rgba(88, 166, 255, 0.3);
+    box-shadow: inset 0 0 20px var(--glow-cyan);
 }
 /* Scroll mode */
 .terminal.scroll-mode {
