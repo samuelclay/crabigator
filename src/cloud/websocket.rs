@@ -14,6 +14,12 @@ use tokio_tungstenite::{
 
 use super::events::{CloudEvent, CloudToDesktopMessage, KeyStep};
 
+/// Spawn request received from cloud
+pub struct SpawnRequest {
+    pub cwd: String,
+    pub platform: Option<String>,
+}
+
 /// WebSocket connection handle
 pub struct CloudWebSocket {
     /// Sender for outgoing events
@@ -26,6 +32,8 @@ pub struct CloudWebSocket {
     key_sequence_rx: mpsc::Receiver<Vec<KeyStep>>,
     /// Receiver for viewer status changes
     viewer_status_rx: mpsc::Receiver<bool>,
+    /// Receiver for spawn requests
+    spawn_rx: mpsc::Receiver<SpawnRequest>,
     /// Receiver that completes when the connection closes
     shutdown_rx: mpsc::Receiver<()>,
 }
@@ -75,6 +83,9 @@ impl CloudWebSocket {
         // Channel for viewer status changes (cloud -> desktop)
         let (viewer_status_tx, viewer_status_rx) = mpsc::channel::<bool>(4);
 
+        // Channel for spawn requests (cloud -> desktop)
+        let (spawn_tx, spawn_rx) = mpsc::channel::<SpawnRequest>(4);
+
         // Channel to signal when connection closes (read task will signal this)
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
@@ -114,6 +125,9 @@ impl CloudWebSocket {
                         Ok(CloudToDesktopMessage::ViewerStatus { active }) => {
                             let _ = viewer_status_tx.send(active).await;
                         }
+                        Ok(CloudToDesktopMessage::Spawn { cwd, platform }) => {
+                            let _ = spawn_tx.send(SpawnRequest { cwd, platform }).await;
+                        }
                         Ok(CloudToDesktopMessage::Ping) | Err(_) => {}
                     }
                 }
@@ -128,6 +142,7 @@ impl CloudWebSocket {
             key_rx,
             key_sequence_rx,
             viewer_status_rx,
+            spawn_rx,
             shutdown_rx,
         })
     }
@@ -140,6 +155,7 @@ pub struct WebSocketHandle {
     key_rx: mpsc::Receiver<String>,
     key_sequence_rx: mpsc::Receiver<Vec<KeyStep>>,
     viewer_status_rx: mpsc::Receiver<bool>,
+    spawn_rx: mpsc::Receiver<SpawnRequest>,
 }
 
 impl CloudWebSocket {
@@ -151,6 +167,7 @@ impl CloudWebSocket {
             key_rx: self.key_rx,
             key_sequence_rx: self.key_sequence_rx,
             viewer_status_rx: self.viewer_status_rx,
+            spawn_rx: self.spawn_rx,
         };
         (handle, self.shutdown_rx)
     }
@@ -180,6 +197,11 @@ impl WebSocketHandle {
     /// Try to receive a viewer status change (non-blocking)
     pub fn try_recv_viewer_status(&mut self) -> Option<bool> {
         self.viewer_status_rx.try_recv().ok()
+    }
+
+    /// Try to receive a spawn request (non-blocking)
+    pub fn try_recv_spawn(&mut self) -> Option<SpawnRequest> {
+        self.spawn_rx.try_recv().ok()
     }
 
     /// Check if the connection is still alive

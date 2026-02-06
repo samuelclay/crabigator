@@ -1461,6 +1461,19 @@ impl App {
                 }
             }
 
+            // Handle incoming spawn requests
+            while let Some(spawn_req) = client.try_recv_spawn() {
+                // Spawn in background thread to avoid blocking the event loop
+                std::thread::spawn(move || {
+                    if let Err(e) = crate::terminal_spawner::spawn_terminal(
+                        &spawn_req.cwd,
+                        spawn_req.platform.as_deref(),
+                    ) {
+                        eprintln!("Failed to spawn terminal: {}", e);
+                    }
+                });
+            }
+
             // Handle incoming key sequences (for Tab instructions)
             while let Some(steps) = client.try_recv_key_sequence() {
                 for step in steps {

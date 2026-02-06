@@ -4,10 +4,20 @@ import { iconMicrophone, iconKeyboard } from '../icons';
 export const sessionJs = `
         async function loadSessions() {
             try {
-                const resp = await fetch(API_BASE + '/sessions', { headers: getAuthHeaders() });
+                // Fetch sessions and projects in parallel
+                const [resp, projectsResp] = await Promise.all([
+                    fetch(API_BASE + '/sessions', { headers: getAuthHeaders() }),
+                    fetch(API_BASE + '/projects', { headers: getAuthHeaders() }).catch(() => null),
+                ]);
                 if (handleAuthFailure(resp)) return;
                 if (!resp.ok) throw new Error('Failed to fetch sessions');
                 const data = await resp.json();
+
+                // Store projects for history display
+                if (projectsResp && projectsResp.ok) {
+                    const projectsData = await projectsResp.json();
+                    allProjects = projectsData.projects || [];
+                }
 
                 // Store all sessions for popover
                 allSessions = data.sessions;

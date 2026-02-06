@@ -229,6 +229,92 @@ router.get('/api/sessions/:id', getSession);
 router.patch('/api/sessions/:id', updateSession);
 router.delete('/api/sessions/:id', deleteSession);
 
+// List all known projects (distinct cwds from session history)
+router.get('/api/projects', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+
+    const result = await env.DB.prepare(`
+        SELECT cwd,
+               MAX(started_at) as last_active,
+               COUNT(*) as total_sessions
+        FROM sessions
+        JOIN devices ON devices.id = sessions.device_id
+        WHERE devices.group_id = ?
+        GROUP BY cwd
+        ORDER BY last_active DESC
+    `).bind(group_id).all<{ cwd: string; last_active: number; total_sessions: number }>();
+
+    const projects = (result.results || []).map(row => ({
+        cwd: row.cwd,
+        last_active: row.last_active,
+        total_sessions: row.total_sessions,
+    }));
+
+    return jsonResponse({ projects });
+});
+
+// Spawn a new crabigator terminal via desktop relay
+router.post('/api/spawn', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+
+    let body: { cwd: string; platform?: string };
+    try {
+        body = await request.json();
+    } catch {
+        return router.errorResponse('Invalid JSON', 'INVALID_JSON', 400);
+    }
+
+    if (!body.cwd) {
+        return router.errorResponse('Missing cwd', 'MISSING_CWD', 400);
+    }
+
+    // Find any active session for this group to relay through
+    const doId = env.SESSION_LIST.idFromName('global');
+    const stub = env.SESSION_LIST.get(doId);
+    const url = new URL('https://internal/sessions');
+    url.searchParams.set('group_id', group_id);
+    const response = await stub.fetch(new Request(url.toString()));
+    const data = await response.json() as { sessions: Array<{ id: string }> };
+
+    if (!data.sessions || data.sessions.length === 0) {
+        // No active sessions - return URL scheme fallback
+        return jsonResponse({
+            ok: false,
+            fallback: 'url_scheme',
+            url: `crabigator://spawn?cwd=${encodeURIComponent(body.cwd)}${body.platform ? `&platform=${encodeURIComponent(body.platform)}` : ''}`,
+        });
+    }
+
+    // Try each active session until one has a connected desktop
+    const fallbackUrl = `crabigator://spawn?cwd=${encodeURIComponent(body.cwd)}${body.platform ? `&platform=${encodeURIComponent(body.platform)}` : ''}`;
+
+    for (const session of data.sessions) {
+        const sessionDoId = env.SESSION.idFromName(session.id);
+        const sessionStub = env.SESSION.get(sessionDoId);
+        const spawnResp = await sessionStub.fetch(new Request('https://internal/spawn', {
+            method: 'POST',
+            body: JSON.stringify({ cwd: body.cwd, platform: body.platform }),
+            headers: { 'Content-Type': 'application/json' },
+        }));
+
+        if (spawnResp.ok) {
+            return spawnResp;
+        }
+        // Desktop offline for this session - try next
+    }
+
+    // All sessions had disconnected desktops - fall back to URL scheme
+    return jsonResponse({ ok: false, fallback: 'url_scheme', url: fallbackUrl });
+});
+
 // ============================================
 // Session events (via Durable Object)
 // ============================================

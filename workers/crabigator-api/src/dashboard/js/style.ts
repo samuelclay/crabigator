@@ -275,6 +275,15 @@ export const styleJs = `
                     }
                 }
 
+                // Add empty groups for historical projects not represented by active sessions
+                if (allProjects && allProjects.length > 0) {
+                    for (const project of allProjects) {
+                        if (!groups.has(project.cwd)) {
+                            groups.set(project.cwd, { sessions: [], mostRecentTime: project.last_active || 0 });
+                        }
+                    }
+                }
+
                 // Sort sessions within each group by age (oldest first, newest last) for determinism
                 for (const [cwd, group] of groups) {
                     group.sessions.sort((a, b) => a.startedAt - b.startedAt);
@@ -305,7 +314,7 @@ export const styleJs = `
                     container.appendChild(group);
                 }
 
-                // Show empty state if no sessions
+                // Show empty state only if no projects at all
                 if (groups.size === 0) {
                     container.innerHTML = '<div class="no-sessions">No active sessions</div>';
                 }
@@ -347,6 +356,9 @@ export const styleJs = `
             if (isCollapsed) {
                 group.classList.add('collapsed');
             }
+            if (sessionCards.length === 0) {
+                group.classList.add('empty');
+            }
 
             // Get project name (last path component)
             const projectName = cwd.split('/').pop() || cwd;
@@ -358,6 +370,7 @@ export const styleJs = `
                         <span class="project-name">\${escapeHtml(projectName)}</span>
                         <span class="project-path">\${escapeHtml(cwd)}</span>
                         <span class="project-count">\${sessionCards.length} session\${sessionCards.length !== 1 ? 's' : ''}</span>
+                        <button class="project-add-btn" onclick="event.stopPropagation(); spawnSession('\${escapeHtml(cwd)}')" title="New terminal in \${escapeHtml(projectName)}">+</button>
                     </div>
                 </div>
                 <div class="project-sessions">
@@ -376,6 +389,27 @@ export const styleJs = `
             updateProjectFitColumns(group, sessionCards.length);
 
             return group;
+        }
+
+        async function spawnSession(cwd) {
+            try {
+                const resp = await fetch(API_BASE + '/spawn', {
+                    method: 'POST',
+                    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cwd }),
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (data.fallback === 'url_scheme' && data.url) {
+                    window.location.href = data.url;
+                    return;
+                }
+                if (!resp.ok) {
+                    console.error('Spawn failed:', data.error || resp.statusText);
+                }
+            } catch (err) {
+                console.error('Spawn error:', err);
+                window.location.href = 'crabigator://spawn?cwd=' + encodeURIComponent(cwd);
+            }
         }
 
         function toggleProjectGroup(cwd) {
@@ -406,9 +440,11 @@ export const styleJs = `
             // Update fit columns for this group
             updateProjectFitColumns(group, count);
 
-            // Remove empty groups
+            // Toggle empty state styling
             if (count === 0) {
-                group.remove();
+                group.classList.add('empty');
+            } else {
+                group.classList.remove('empty');
             }
         }
 

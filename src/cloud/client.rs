@@ -18,7 +18,6 @@ use super::websocket::{CloudWebSocket, WebSocketHandle};
 /// Default API URL
 const DEFAULT_API_URL: &str = "https://drinkcrabigator.com/api";
 
-
 /// Response from POST /api/sessions
 #[derive(Debug, Deserialize)]
 struct CreateSessionResponse {
@@ -494,6 +493,11 @@ impl CloudClient {
     /// Try to receive a key sequence from cloud (non-blocking)
     pub fn try_recv_key_sequence(&mut self) -> Option<Vec<super::events::KeyStep>> {
         self.ws_handle.as_mut()?.try_recv_key_sequence()
+    }
+
+    /// Try to receive a spawn request from cloud (non-blocking)
+    pub fn try_recv_spawn(&mut self) -> Option<super::websocket::SpawnRequest> {
+        self.ws_handle.as_mut()?.try_recv_spawn()
     }
 
     /// Poll for viewer status changes and update internal state

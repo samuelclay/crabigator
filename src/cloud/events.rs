@@ -454,6 +454,13 @@ pub enum CloudToDesktopMessage {
     /// Desktop can use this to adjust streaming frequency
     #[serde(rename = "viewer_status")]
     ViewerStatus { active: bool },
+    /// Request to spawn a new crabigator instance in a directory
+    #[serde(rename = "spawn")]
+    Spawn {
+        cwd: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        platform: Option<String>,
+    },
 }
 
 /// Helper for building events from crabigator's internal state

@@ -13,7 +13,9 @@ mod mode;
 mod pair;
 mod parsers;
 mod platforms;
+mod launcher;
 mod terminal;
+mod terminal_spawner;
 mod ui;
 mod update;
 
@@ -127,6 +129,12 @@ async fn main() -> Result<()> {
         Command::Pair => {
             return pair::run_pair().await;
         }
+        Command::InstallLauncher => {
+            return launcher::install_launcher().map(|()| {
+                println!("URL scheme handler installed.");
+                println!("crabigator:// URLs will now open in your terminal.");
+            });
+        }
         Command::Run => {}
     }
 
@@ -147,6 +155,10 @@ async fn main() -> Result<()> {
     timer.log("args parsed");
     timer.log(&format!("session_id={}", session_id));
     timer.log(&format!("platform={}", platform_kind.display_name()));
+
+    // Install/update URL scheme handler in background (macOS only, fire and forget)
+    #[cfg(target_os = "macos")]
+    std::thread::spawn(launcher::ensure_installed);
 
     // Install/update platform hooks in background thread (fire and forget)
     // Don't block startup - hooks will be ready by the time the CLI needs them

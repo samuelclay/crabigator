@@ -305,7 +305,16 @@ export interface ViewerStatusMessage {
     active: boolean;        // True if viewers are actively watching
 }
 
-export type CloudToDesktopMessage = AnswerMessage | PingMessage | KeyMessage | KeySequenceMessage | ViewerStatusMessage;
+/**
+ * Request to spawn a new crabigator instance in a directory
+ */
+export interface SpawnMessage {
+    type: 'spawn';
+    cwd: string;
+    platform?: string;
+}
+
+export type CloudToDesktopMessage = AnswerMessage | PingMessage | KeyMessage | KeySequenceMessage | ViewerStatusMessage | SpawnMessage;
 
 /**
  * Session info for listing

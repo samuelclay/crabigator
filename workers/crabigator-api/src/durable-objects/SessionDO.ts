@@ -135,6 +135,8 @@ export class SessionDO implements DurableObject {
                 return this.handleGetState();
             case '/viewer-active':
                 return this.handleViewerActive();
+            case '/spawn':
+                return this.handleSpawn(request);
             default:
                 return new Response('Not found', { status: 404 });
         }
@@ -744,6 +746,61 @@ export class SessionDO implements DurableObject {
             this.desktopWs.send(JSON.stringify(message));
         } catch (error) {
             console.error('Error sending key sequence to desktop:', error);
+            return new Response(
+                JSON.stringify({ error: 'Failed to send', code: 'SEND_FAILED' }),
+                { status: 500, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        return new Response(
+            JSON.stringify({ ok: true }),
+            { headers: { 'Content-Type': 'application/json' } }
+        );
+    }
+
+    /**
+     * Handle spawn request from dashboard, forward to desktop
+     * Desktop will open a new terminal window with crabigator
+     */
+    private async handleSpawn(request: Request): Promise<Response> {
+        if (request.method !== 'POST') {
+            return new Response('Method not allowed', { status: 405 });
+        }
+
+        let body: { cwd: string; platform?: string };
+        try {
+            body = await request.json();
+        } catch {
+            return new Response(
+                JSON.stringify({ error: 'Invalid JSON', code: 'INVALID_JSON' }),
+                { status: 400, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        if (!body.cwd) {
+            return new Response(
+                JSON.stringify({ error: 'Missing cwd', code: 'MISSING_CWD' }),
+                { status: 400, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        if (!this.desktopWs) {
+            return new Response(
+                JSON.stringify({ error: 'Desktop not connected', code: 'DESKTOP_OFFLINE' }),
+                { status: 503, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        const message: CloudToDesktopMessage = {
+            type: 'spawn',
+            cwd: body.cwd,
+            ...(body.platform ? { platform: body.platform } : {}),
+        };
+
+        try {
+            this.desktopWs.send(JSON.stringify(message));
+        } catch (error) {
+            console.error('Error sending spawn to desktop:', error);
             return new Response(
                 JSON.stringify({ error: 'Failed to send', code: 'SEND_FAILED' }),
                 { status: 500, headers: { 'Content-Type': 'application/json' } }

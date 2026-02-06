@@ -27,6 +27,8 @@ pub enum Command {
     },
     /// Generate a pairing code for Chrome MCP auto-login
     Pair,
+    /// Install the URL scheme handler for crabigator:// URLs
+    InstallLauncher,
 }
 
 /// Parsed command-line arguments
@@ -99,6 +101,11 @@ pub fn parse_args() -> Args {
             "pair" => {
                 iter.next(); // consume "pair"
                 args.command = Command::Pair;
+                return args;
+            }
+            "install-launcher" => {
+                iter.next(); // consume "install-launcher"
+                args.command = Command::InstallLauncher;
                 return args;
             }
             _ => {}

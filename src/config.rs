@@ -23,6 +23,11 @@ pub struct Config {
     /// Whether to check for updates on startup
     #[serde(default = "default_true")]
     pub check_for_updates: bool,
+
+    /// Terminal emulator override: "terminal" or "ghostty"
+    /// If not set, auto-detects from $TERM_PROGRAM
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -39,6 +44,7 @@ impl Default for Config {
             default_platform: default_platform(),
             ide: None,
             check_for_updates: true,
+            terminal: None,
         }
     }
 }

@@ -163,6 +163,34 @@ export const layoutCss = `
     border-radius: 10px;
     border: 1px solid var(--border-dim);
 }
+.project-add-btn {
+    font-family: 'JetBrains Mono', monospace;
+    background: transparent;
+    border: 1px solid var(--border-dim);
+    border-radius: 6px;
+    color: var(--text-dim);
+    font-size: 14px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+    margin-left: auto;
+}
+.project-add-btn:hover {
+    background: var(--bg-surface);
+    color: var(--accent-green);
+    border-color: var(--accent-green);
+}
+.project-group.empty {
+    opacity: 0.6;
+}
+.project-group.empty:hover {
+    opacity: 0.85;
+}
 
 /* Animated sessions container */
 .project-sessions {
@@ -243,6 +271,9 @@ export const layoutCss = `
     }
     .container[data-grouping="project"] .session-card:last-child {
         margin-bottom: 0;
+    }
+    .terminal {
+        line-height: 1.4;
     }
 }
 `;
