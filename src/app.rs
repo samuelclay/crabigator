@@ -609,8 +609,21 @@ impl App {
                         if let Ok(result) = rx.try_recv() {
                             self.pending_cloud_init = None;
                             if let Ok(client) = result {
+                                // Create symlink from cloud session ID to local stats file
+                                if let Some(cloud_id) = client.session_id() {
+                                    let stats_target = format!("/tmp/crabigator-stats-{}.json", self.session_id);
+                                    let stats_link = format!("/tmp/crabigator-stats-{}.json", cloud_id);
+                                    if stats_target != stats_link {
+                                        let _ = std::os::unix::fs::symlink(&stats_target, &stats_link);
+                                    }
+                                }
+
                                 self.cloud_client = Some(client);
                                 self.cloud_init_retry_count = 0; // Reset on success
+                                // Send current state immediately - state changes may have
+                                // occurred before the cloud client was ready
+                                let current_state = self.session_stats.effective_state();
+                                self.send_cloud_state_event(current_state);
                             }
                         }
                     }
@@ -1103,9 +1116,11 @@ impl App {
         if self.last_cloud_state == Some(state) {
             return;
         }
-        self.last_cloud_state = Some(state);
 
         if let Some(ref mut client) = self.cloud_client {
+            // Only mark as sent when client is available to actually send
+            self.last_cloud_state = Some(state);
+
             let event = SessionEventBuilder::state(state);
             client.send_event(event);
             client.spawn_update_state(session_state_label(state));
