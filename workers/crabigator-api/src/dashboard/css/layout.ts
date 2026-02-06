@@ -58,6 +58,18 @@ export const layoutCss = `
     margin-bottom: 16px;
     break-inside: avoid;
 }
+.container[data-grouping="project"][data-layout="2"] .session-header,
+.container[data-grouping="project"][data-layout="3"] .session-header,
+.container[data-grouping="project"][data-layout="4"] .session-header,
+.container[data-grouping="project"][data-layout="fit"] .session-header {
+    border-radius: 11px 11px 0 0;
+}
+.container[data-grouping="project"][data-layout="2"] .input-area,
+.container[data-grouping="project"][data-layout="3"] .input-area,
+.container[data-grouping="project"][data-layout="4"] .input-area,
+.container[data-grouping="project"][data-layout="fit"] .input-area {
+    border-radius: 0 0 11px 11px;
+}
 .container[data-grouping="project"][data-layout="2"] .project-sessions-inner,
 .container[data-grouping="project"][data-layout="3"] .project-sessions-inner,
 .container[data-grouping="project"][data-layout="4"] .project-sessions-inner,
@@ -183,6 +195,12 @@ export const layoutCss = `
     border-right: none;
     border-bottom: none;
 }
+.container[data-grouping="project"] .session-header {
+    border-radius: 0;
+}
+.container[data-grouping="project"] .input-area {
+    border-radius: 0;
+}
 .container[data-grouping="project"] .session-card:first-child {
     border-top: none;
 }
@@ -216,6 +234,12 @@ export const layoutCss = `
         margin-bottom: 8px;
         border-radius: 8px;
         border: 1px solid var(--border-dim);
+    }
+    .container[data-grouping="project"] .session-header {
+        border-radius: 7px 7px 0 0;
+    }
+    .container[data-grouping="project"] .input-area {
+        border-radius: 0 0 7px 7px;
     }
     .container[data-grouping="project"] .session-card:last-child {
         margin-bottom: 0;

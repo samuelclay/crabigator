@@ -87,6 +87,19 @@ export const inputJs = `
             updateSendButton(sessionId);
         }
 
+        function handleInputKeydown(event, sessionId) {
+            if (event.key === 'Enter') {
+                sendAnswer(sessionId);
+            } else if (event.key === 'Tab') {
+                const suggestion = inputSuggestions.get(sessionId);
+                if (suggestion && !event.target.value.trim()) {
+                    event.preventDefault();
+                    event.target.value = suggestion;
+                    handleInputChange(sessionId, suggestion);
+                }
+            }
+        }
+
         function updateSendButton(sessionId) {
             const input = document.getElementById('input-' + sessionId);
             const btn = document.getElementById('send-btn-' + sessionId);

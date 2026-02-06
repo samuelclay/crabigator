@@ -248,6 +248,10 @@ export const widgetsCss = `
     .session-header {
         padding: 12px 14px;
         gap: 10px;
+        border-radius: 7px 7px 0 0;
+    }
+    .input-area {
+        border-radius: 0 0 7px 7px;
     }
     .terminal {
         font-size: 10px;

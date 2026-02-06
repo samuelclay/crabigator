@@ -8,6 +8,7 @@ export const inputCss = `
     align-items: center;
     gap: 10px;
     background: var(--bg-card);
+    border-radius: 0 0 11px 11px;
 }
 .input-area input {
     flex: 1;

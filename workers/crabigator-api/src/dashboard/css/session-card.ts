@@ -38,6 +38,7 @@ export const sessionCardCss = `
     align-items: center;
     gap: 12px;
     background: var(--bg-card);
+    border-radius: 11px 11px 0 0;
 }
 .session-info {
     flex: 1;

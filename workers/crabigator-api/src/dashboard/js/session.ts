@@ -242,7 +242,7 @@ export const sessionJs = `
                             <input type="text" id="input-\${session.id}"
                                    placeholder="Type a command or answer..."
                                    oninput="handleInputChange('\${session.id}', this.value)"
-                                   onkeydown="if(event.key==='Enter')sendAnswer('\${session.id}')">
+                                   onkeydown="handleInputKeydown(event, '\${session.id}')">
                             <button type="button" id="send-btn-\${session.id}" onclick="sendAnswer('\${session.id}')" disabled>Send</button>
                         </div>
                     </div>
