@@ -940,6 +940,18 @@ impl App {
                 self.session_stats.set_screen_input_wait(shows_input_wait);
             }
 
+            // Sync suggestion state from screen (authoritative source).
+            // The raw PTY process() method can miss suggestions due to chunk boundaries
+            // and aggressive clearing on redraws. parse_screen() reads the vt100 buffer
+            // which always reflects the actual terminal state.
+            if matches!(
+                self.session_stats.effective_state(),
+                SessionState::Ready | SessionState::Complete
+            ) && self.suggestion_tracker.parse_screen(&screen)
+            {
+                self.send_cloud_stats_event();
+            }
+
             // Deduplicate: only send if content changed
             let hash = {
                 use std::hash::{Hash, Hasher};
@@ -1164,24 +1176,15 @@ impl App {
                 None
             };
 
-            // Get suggestion from tracker (populated by raw PTY byte scanning)
-            // Only send suggestion when the ❯ input prompt is visible (ready/complete)
-            // During thinking/question/permission, the prompt isn't shown so clear it
+            // Get suggestion from tracker. The tracker is kept in sync by
+            // handle_pty_output_capture() which calls parse_screen() on every
+            // screen update (~100ms). Only report suggestions when the ❯ input
+            // prompt is visible (ready/complete state).
             let suggestion = if matches!(
                 self.session_stats.effective_state(),
                 SessionState::Ready | SessionState::Complete
             ) {
-                // Try raw PTY tracker first, then fall back to vt100 screen parsing
-                // (vt100 combines SGR params differently from raw PTY bytes)
                 self.suggestion_tracker.current().map(|s| s.to_string())
-                    .or_else(|| {
-                        if let Ok(screen) = self.capture_manager.update_screen(self.platform_pty.screen()) {
-                            self.suggestion_tracker.parse_screen(&screen);
-                            self.suggestion_tracker.current().map(|s| s.to_string())
-                        } else {
-                            None
-                        }
-                    })
             } else {
                 None
             };

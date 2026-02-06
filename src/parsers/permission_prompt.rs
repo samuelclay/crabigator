@@ -214,9 +214,19 @@ impl PermissionPrompt {
 
 /// Strip ANSI escape codes from text
 fn strip_ansi_codes(text: &str) -> String {
-    // Match ANSI escape sequences: ESC [ ... m (SGR) and ESC [ ... other codes
+    // First, replace cursor-forward sequences (CUF) with spaces.
+    // The vt100 crate emits ESC[C (1 space) or ESC[nC (n spaces) for empty cells
+    // instead of literal space characters. Without this, words run together.
+    let cuf_re = Regex::new(r"\x1b\[(\d*)C").unwrap();
+    let with_spaces = cuf_re.replace_all(text, |caps: &regex::Captures| {
+        let n: usize = caps.get(1)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(1);
+        " ".repeat(n)
+    });
+    // Then strip remaining ANSI escape sequences (SGR and others)
     let ansi_re = Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap();
-    ansi_re.replace_all(text, "").to_string()
+    ansi_re.replace_all(&with_spaces, "").to_string()
 }
 
 /// Public wrapper for debug logging
@@ -473,6 +483,52 @@ ctrl-g to edit
         assert_eq!(prompt.options.len(), 4);
         assert_eq!(prompt.options[0].text, "Yes, proceed");
         assert!(prompt.options[0].selected);
+        assert!(prompt.is_valid());
+    }
+
+    #[test]
+    fn test_parse_vt100_cursor_forward_sequences() {
+        // Real vt100 output uses ESC[C (cursor-forward) instead of spaces.
+        // This is the actual format from screen.txt captured via E2E testing.
+        let screen = "\x1b[CDo\x1b[Cyou\x1b[Cwant\x1b[Cto\x1b[Ccreate\x1b[C\x1b[1mhello.txt\x1b[m?\n\
+                       \x1b[C\x1b[38;2;177;185;249m❯\x1b[C\x1b[38;2;153;153;153m1.\x1b[C\x1b[38;2;177;185;249mYes\n\
+                       \x1b[3C\x1b[38;2;153;153;153m2.\x1b[C\x1b[mYes,\x1b[Callow\x1b[Call\x1b[Cedits\x1b[Cduring\x1b[Cthis\x1b[Csession\x1b[C\x1b[1m(shift+tab)\n\
+                       \x1b[3C\x1b[38;2;153;153;153m3.\x1b[C\x1b[mNo\n\
+                       \n\
+                       \x1b[C\x1b[38;2;153;153;153mEsc\x1b[Cto\x1b[Ccancel\x1b[C·\x1b[CTab\x1b[Cto\x1b[Camend";
+
+        let prompt = PermissionPrompt::parse(screen).unwrap();
+        assert_eq!(prompt.question, Some("Do you want to create hello.txt?".to_string()));
+        assert_eq!(prompt.options.len(), 3);
+        assert_eq!(prompt.options[0].text, "Yes");
+        assert!(prompt.options[0].selected);
+        assert!(prompt.options[1].text.contains("allow all edits"));
+        assert_eq!(prompt.options[2].text, "No");
+        // "Tab to amend" doesn't trigger allows_tab_instructions (which looks for "Tab to add")
+        assert!(!prompt.allows_tab_instructions);
+        assert!(prompt.is_valid());
+    }
+
+    #[test]
+    fn test_parse_vt100_exit_plan_mode() {
+        // ExitPlanMode prompt with cursor-forward sequences and plan content above
+        let screen = "Claude\x1b[Chas\x1b[Cwritten\x1b[Cup\x1b[Ca\x1b[Cplan.\x1b[CWould\x1b[Cyou\x1b[Clike\x1b[Cto\x1b[Cproceed?\n\
+                       \n\
+                       ❯\x1b[C1.\x1b[CYes,\x1b[Cclear\x1b[Ccontext\x1b[Cand\x1b[Cauto-accept\x1b[Cedits\x1b[C(shift+tab)\n\
+                       \x1b[2C2.\x1b[CYes,\x1b[Cauto-accept\x1b[Cedits\n\
+                       \x1b[2C3.\x1b[CYes,\x1b[Cmanually\x1b[Capprove\x1b[Cedits\n\
+                       \x1b[2C4.\x1b[CType\x1b[Chere\x1b[Cto\x1b[Ctell\x1b[CClaude\x1b[Cwhat\x1b[Cto\x1b[Cchange\n\
+                       \n\
+                       ctrl-g\x1b[Cto\x1b[Cedit";
+
+        let prompt = PermissionPrompt::parse(screen).unwrap();
+        assert!(prompt.question.as_ref().unwrap().contains("Would you like to proceed?"));
+        assert_eq!(prompt.options.len(), 4);
+        assert!(prompt.options[0].text.contains("clear context"));
+        assert!(prompt.options[0].selected);
+        assert!(prompt.options[1].text.contains("auto-accept edits"));
+        assert!(prompt.options[2].text.contains("manually approve"));
+        assert!(prompt.options[3].text.contains("Type here"));
         assert!(prompt.is_valid());
     }
 }

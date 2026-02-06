@@ -137,12 +137,22 @@ impl SuggestionTracker {
     }
 
     /// Parse suggestion from vt100 screen content (rows_formatted output).
-    /// Used as a fallback when raw PTY byte scanning misses the suggestion.
+    /// This is the authoritative source for suggestion state — the vt100 screen
+    /// buffer always reflects what's actually visible on the terminal.
     ///
     /// The vt100 crate optimizes runs of spaces into cursor-forward sequences
     /// (`\x1b[C`), so we replace those back to spaces before matching.
+    ///
+    /// Returns true if the suggestion state changed (appeared, updated, or cleared).
     pub fn parse_screen(&mut self, screen: &str) -> bool {
-        let normalized = screen.replace("\x1b[C", " ");
+        // Replace cursor-forward sequences with spaces: ESC[C (1) and ESC[nC (n)
+        let cuf_re = regex::Regex::new(r"\x1b\[(\d*)C").unwrap();
+        let normalized = cuf_re.replace_all(screen, |caps: &regex::Captures| {
+            let n: usize = caps.get(1)
+                .and_then(|m| m.as_str().parse().ok())
+                .unwrap_or(1);
+            " ".repeat(n)
+        });
         if let Some(caps) = suggestion_regex().captures(&normalized) {
             let first_char = caps.get(1).map(|m| m.as_str()).unwrap_or("");
             let rest = caps.get(2).map(|m| m.as_str()).unwrap_or("");
@@ -152,6 +162,13 @@ impl SuggestionTracker {
                 self.current = Some(suggestion);
                 return changed;
             }
+        }
+        // No suggestion pattern found. If the ❯ prompt is on screen but without
+        // a suggestion, clear the tracked suggestion (user typed or prompt is empty).
+        // Don't clear if the prompt isn't visible at all (e.g., during thinking).
+        if self.current.is_some() && prompt_regex().is_match(&normalized) {
+            self.current = None;
+            return true;
         }
         false
     }
@@ -296,5 +313,34 @@ mod tests {
             tracker.current(),
             Some("Try \"refactor app.rs\"")
         );
+    }
+
+    #[test]
+    fn test_parse_screen_clears_when_prompt_has_no_suggestion() {
+        let mut tracker = SuggestionTracker::new();
+        // First set a suggestion
+        let screen_with = "❯\u{a0}\x1b[7mT\x1b[2;27mry something\x1b[m";
+        assert!(tracker.parse_screen(screen_with));
+        assert_eq!(tracker.current(), Some("Try something"));
+
+        // Screen now shows ❯ prompt without suggestion (user typed or empty prompt)
+        let screen_without = "❯ \x1b[38;2;255;255;255mhello world";
+        assert!(tracker.parse_screen(screen_without));
+        assert!(tracker.current().is_none());
+    }
+
+    #[test]
+    fn test_parse_screen_does_not_clear_when_no_prompt_visible() {
+        let mut tracker = SuggestionTracker::new();
+        // Set a suggestion
+        let screen_with = "❯\u{a0}\x1b[7mT\x1b[2;27mry something\x1b[m";
+        tracker.parse_screen(screen_with);
+        assert_eq!(tracker.current(), Some("Try something"));
+
+        // Screen shows thinking output with no ❯ prompt at all
+        let screen_thinking = "\x1b[38;2;78;186;101m⏺\x1b[m Working on it...\x1b[0m\n";
+        assert!(!tracker.parse_screen(screen_thinking));
+        // Suggestion should be preserved (prompt not visible, can't determine state)
+        assert_eq!(tracker.current(), Some("Try something"));
     }
 }
