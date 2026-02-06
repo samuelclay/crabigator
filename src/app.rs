@@ -610,6 +610,7 @@ impl App {
                             self.pending_cloud_init = None;
                             if let Ok(client) = result {
                                 // Create symlink from cloud session ID to local stats file
+                                #[cfg(unix)]
                                 if let Some(cloud_id) = client.session_id() {
                                     let stats_target = format!("/tmp/crabigator-stats-{}.json", self.session_id);
                                     let stats_link = format!("/tmp/crabigator-stats-{}.json", cloud_id);
