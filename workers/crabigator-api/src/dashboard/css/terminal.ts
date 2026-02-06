@@ -9,7 +9,8 @@ export const terminalCss = `
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
     line-height: 1.3;
-    transition: height 0.25s ease-out, box-shadow 0.2s ease;
+    border: 1px solid transparent;
+    transition: height 0.25s ease-out, box-shadow 0.2s ease, border-color 0.2s ease;
     width: 100%;
     min-width: 0;
 }
@@ -24,7 +25,8 @@ export const terminalCss = `
 /* Scroll active - click to enable scrolling */
 .terminal.scroll-active {
     overflow-y: auto;
-    box-shadow: inset 0 0 20px var(--glow-cyan);
+    border-color: var(--accent-cyan);
+    box-shadow: inset 0 0 30px 8px rgba(34, 211, 238, 0.25), inset 0 0 8px 2px rgba(34, 211, 238, 0.5);
 }
 /* Scroll mode */
 .terminal.scroll-mode {
