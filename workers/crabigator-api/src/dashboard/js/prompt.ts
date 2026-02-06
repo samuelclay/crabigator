@@ -391,7 +391,8 @@ export const promptJs = `
 
         async function sendAnswer(sessionId) {
             const input = document.getElementById('input-' + sessionId);
-            const text = input.value.trim();
+            // Use typed text, or fall back to suggestion placeholder
+            const text = input.value.trim() || (inputSuggestions.get(sessionId) || '');
             if (!text) return;
 
             // Cancel any pending debounced save

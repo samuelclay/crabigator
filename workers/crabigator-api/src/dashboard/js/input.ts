@@ -67,6 +67,24 @@ export const inputJs = `
             }
         }
 
+        // Track current suggestion per session
+        const inputSuggestions = new Map(); // sessionId -> suggestion text
+
+        function updateInputSuggestion(sessionId, suggestion) {
+            const input = document.getElementById('input-' + sessionId);
+            if (!input) return;
+
+            inputSuggestions.set(sessionId, suggestion || '');
+
+            if (suggestion) {
+                // Show suggestion as placeholder (gray ghost text)
+                input.placeholder = suggestion;
+            } else {
+                // Suggestion cleared — restore default placeholder
+                input.placeholder = 'Send a message...';
+            }
+        }
+
         // Debounce server saves
         const inputSaveTimers = new Map();
         function handleInputChange(sessionId, text) {

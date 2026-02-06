@@ -148,6 +148,10 @@ export const eventsJs = `
                         updateSessionSummary(sessionId, sessionData);
                     }
                     updateStatsWidget(sessionId, event);
+                    // Update suggestion in input field
+                    if (event.suggestion !== undefined) {
+                        updateInputSuggestion(sessionId, event.suggestion);
+                    }
                     break;
                 case 'title':
                     // Update title in header

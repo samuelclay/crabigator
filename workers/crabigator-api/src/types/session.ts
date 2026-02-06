@@ -143,6 +143,8 @@ export interface StatsEvent {
     session_start: number;
     /** Unix timestamp when session became idle (for idle time display) */
     idle_since?: number;
+    /** Autocomplete suggestion from Claude Code's input line */
+    suggestion?: string;
 }
 
 /**
