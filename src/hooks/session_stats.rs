@@ -32,6 +32,10 @@ pub struct SessionStats {
     /// Whether the user interrupted during thinking (ESC/Ctrl+C)
     /// Cleared when platform reports a new state
     interrupted: bool,
+    /// Terminal title currently has Braille spinner prefix (real-time from PTY)
+    title_has_spinner: bool,
+    /// Screen content shows "Esc to cancel" after last ❯ prompt
+    screen_shows_input_wait: bool,
 }
 
 impl SessionStats {
@@ -55,6 +59,8 @@ impl SessionStats {
             last_compressions: 0,
             compressions_changed_at: None,
             interrupted: false,
+            title_has_spinner: false,
+            screen_shows_input_wait: false,
         }
     }
 
@@ -63,13 +69,35 @@ impl SessionStats {
         self.interrupted = true;
     }
 
-    /// Get the effective session state (considering interrupt override)
+    /// Update title spinner state (called from write_pty_output on every title change)
+    pub fn set_title_spinner(&mut self, has_spinner: bool) {
+        self.title_has_spinner = has_spinner;
+    }
+
+    /// Update screen input-wait state (called from handle_pty_output_capture)
+    pub fn set_screen_input_wait(&mut self, waiting: bool) {
+        self.screen_shows_input_wait = waiting;
+    }
+
+    /// Get the effective session state (considering secondary signal overrides)
     pub fn effective_state(&self) -> SessionState {
         if self.interrupted {
-            SessionState::Interrupted
-        } else {
-            self.platform_stats.state
+            return SessionState::Interrupted;
         }
+
+        let hook_state = self.platform_stats.state;
+
+        // Spinner active but hooks don't say Thinking → override to Thinking
+        if self.title_has_spinner && hook_state != SessionState::Thinking {
+            return SessionState::Thinking;
+        }
+
+        // Screen shows "Esc to cancel" but hooks say Thinking → override to Permission
+        if self.screen_shows_input_wait && hook_state == SessionState::Thinking {
+            return SessionState::Permission;
+        }
+
+        hook_state
     }
 
     /// Called each tick to update session time and thinking time

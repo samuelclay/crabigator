@@ -718,6 +718,12 @@ impl App {
                     // Scan for OSC title sequences
                     let (passthrough, title) = self.osc_scanner.scan(&bytes);
                     if let Some(t) = title {
+                        // Check for Braille spinner prefix before stripping —
+                        // active spinner means Claude is thinking (secondary signal)
+                        let has_braille_spinner = t.chars().next()
+                            .is_some_and(|c| ('\u{2800}'..='\u{28FF}').contains(&c));
+                        self.session_stats.set_title_spinner(has_braille_spinner);
+
                         // Strip leading progress spinner characters for history
                         let clean_title = t.trim_start_matches(|c: char| {
                             matches!(c, '*' | '✱' | '✲' | '✳' | '✴' | '✵' | '✶' | '✷' | '✸' | '✹' | '✺' | '✻' | '✼' | '✽' | '❇' | '❈' | '⟳' | '◐' | '◑' | '◒' | '◓' | ' ')
@@ -920,6 +926,18 @@ impl App {
                     self.send_cloud_state_event(SessionState::Interrupted);
                     self.draw_status_bar().ok();
                 }
+            }
+
+            // Detect "Esc to cancel" as secondary input-wait signal
+            // Anchored to last ❯ prompt to avoid false positives from scrollback
+            {
+                let stripped = crate::parsers::strip_ansi_for_debug(&screen);
+                let shows_input_wait = if let Some(prompt_pos) = stripped.rfind('❯') {
+                    stripped[prompt_pos..].contains("Esc to cancel")
+                } else {
+                    stripped.lines().rev().take(10).any(|l| l.contains("Esc to cancel"))
+                };
+                self.session_stats.set_screen_input_wait(shows_input_wait);
             }
 
             // Deduplicate: only send if content changed
