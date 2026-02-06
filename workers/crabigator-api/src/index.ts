@@ -237,6 +237,9 @@ router.get('/api/projects', async (request, env) => {
     }
     const { group_id } = authResult.auth;
 
+    // Filter to projects active within the last 7 days
+    const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+
     const result = await env.DB.prepare(`
         SELECT cwd,
                MAX(started_at) as last_active,
@@ -245,16 +248,55 @@ router.get('/api/projects', async (request, env) => {
         JOIN devices ON devices.id = sessions.device_id
         WHERE devices.group_id = ?
         GROUP BY cwd
+        HAVING last_active > ?
         ORDER BY last_active DESC
-    `).bind(group_id).all<{ cwd: string; last_active: number; total_sessions: number }>();
+    `).bind(group_id, sevenDaysAgo).all<{ cwd: string; last_active: number; total_sessions: number }>();
 
-    const projects = (result.results || []).map(row => ({
-        cwd: row.cwd,
-        last_active: row.last_active,
-        total_sessions: row.total_sessions,
-    }));
+    // Filter out manually hidden projects
+    const hiddenJson = await env.TOKENS.get(`hidden-projects:${group_id}`);
+    const hiddenSet = new Set<string>(hiddenJson ? JSON.parse(hiddenJson) : []);
+
+    const projects = (result.results || [])
+        .filter(row => !hiddenSet.has(row.cwd))
+        .map(row => ({
+            cwd: row.cwd,
+            last_active: row.last_active,
+            total_sessions: row.total_sessions,
+        }));
 
     return jsonResponse({ projects });
+});
+
+// Hide a project from the dashboard
+router.delete('/api/projects', async (request, env) => {
+    const authResult = await requireMobileAuth(request, env);
+    if ('error' in authResult) {
+        return authResult.error;
+    }
+    const { group_id } = authResult.auth;
+
+    let body: { cwd: string };
+    try {
+        body = await request.json();
+    } catch {
+        return router.errorResponse('Invalid JSON', 'INVALID_JSON', 400);
+    }
+    if (!body.cwd) {
+        return router.errorResponse('Missing cwd', 'MISSING_CWD', 400);
+    }
+
+    // Add to hidden projects list in KV
+    const key = `hidden-projects:${group_id}`;
+    const existing = await env.TOKENS.get(key);
+    const hidden: string[] = existing ? JSON.parse(existing) : [];
+    if (!hidden.includes(body.cwd)) {
+        hidden.push(body.cwd);
+    }
+    await env.TOKENS.put(key, JSON.stringify(hidden), {
+        expirationTtl: 60 * 60 * 24 * 30 // 30 days (projects auto-expire from view after 7 days anyway)
+    });
+
+    return jsonResponse({ ok: true });
 });
 
 // Spawn a new crabigator terminal via desktop relay

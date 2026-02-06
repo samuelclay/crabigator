@@ -98,6 +98,24 @@ export async function createSession(
         VALUES (?, ?, ?, ?, ?, 'ready', ?, 1)
     `).bind(sessionId, device_id, client_session_id, cwd, platform, now).run();
 
+    // Unhide project if it was manually hidden
+    const device = await env.DB.prepare('SELECT group_id FROM devices WHERE id = ?').bind(device_id).first<{ group_id: string | null }>();
+    if (device?.group_id) {
+        const key = `hidden-projects:${device.group_id}`;
+        const hiddenJson = await env.TOKENS.get(key);
+        if (hiddenJson) {
+            const hidden: string[] = JSON.parse(hiddenJson);
+            const filtered = hidden.filter((p: string) => p !== cwd);
+            if (filtered.length !== hidden.length) {
+                if (filtered.length > 0) {
+                    await env.TOKENS.put(key, JSON.stringify(filtered), { expirationTtl: 60 * 60 * 24 * 30 });
+                } else {
+                    await env.TOKENS.delete(key);
+                }
+            }
+        }
+    }
+
     // Notify dashboard of new session (fire-and-forget)
     notifySessionListChange(env, {
         type: 'created',

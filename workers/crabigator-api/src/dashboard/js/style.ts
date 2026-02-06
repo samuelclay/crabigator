@@ -371,6 +371,7 @@ export const styleJs = `
                         <span class="project-path">\${escapeHtml(cwd)}</span>
                         <span class="project-count">\${sessionCards.length} session\${sessionCards.length !== 1 ? 's' : ''}</span>
                         <button class="project-add-btn" onclick="event.stopPropagation(); spawnSession('\${escapeHtml(cwd)}')" title="New terminal in \${escapeHtml(projectName)}">+</button>
+                        \${sessionCards.length === 0 ? \`<button class="project-close-btn" onclick="event.stopPropagation(); closeProject('\${escapeHtml(cwd)}')" title="Remove project">×</button>\` : ''}
                     </div>
                 </div>
                 <div class="project-sessions">
@@ -412,6 +413,27 @@ export const styleJs = `
             }
         }
 
+        async function closeProject(cwd) {
+            try {
+                await fetch(API_BASE + '/projects', {
+                    method: 'DELETE',
+                    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cwd }),
+                });
+            } catch (err) {
+                console.error('Close project error:', err);
+            }
+            // Remove from allProjects
+            if (allProjects) {
+                allProjects = allProjects.filter(p => p.cwd !== cwd);
+            }
+            // Remove the project group from DOM
+            const group = document.querySelector(\`.project-group[data-project="\${CSS.escape(cwd)}"]\`);
+            if (group) {
+                group.remove();
+            }
+        }
+
         function toggleProjectGroup(cwd) {
             const group = document.querySelector(\`.project-group[data-project="\${CSS.escape(cwd)}"]\`);
             if (!group) return;
@@ -440,11 +462,25 @@ export const styleJs = `
             // Update fit columns for this group
             updateProjectFitColumns(group, count);
 
-            // Toggle empty state styling
+            // Toggle empty state styling and close button
+            const cwd = group.dataset.project;
+            const separatorContent = group.querySelector('.project-separator-content');
             if (count === 0) {
                 group.classList.add('empty');
+                // Add close button if not already present
+                if (separatorContent && !separatorContent.querySelector('.project-close-btn')) {
+                    const closeBtn = document.createElement('button');
+                    closeBtn.className = 'project-close-btn';
+                    closeBtn.title = 'Remove project';
+                    closeBtn.textContent = '×';
+                    closeBtn.onclick = (e) => { e.stopPropagation(); closeProject(cwd); };
+                    separatorContent.appendChild(closeBtn);
+                }
             } else {
                 group.classList.remove('empty');
+                // Remove close button if present
+                const closeBtn = separatorContent?.querySelector('.project-close-btn');
+                if (closeBtn) closeBtn.remove();
             }
         }
 

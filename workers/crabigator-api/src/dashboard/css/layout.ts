@@ -185,6 +185,27 @@ export const layoutCss = `
     color: var(--accent-green);
     border-color: var(--accent-green);
 }
+.project-close-btn {
+    font-family: 'JetBrains Mono', monospace;
+    background: transparent;
+    border: 1px solid var(--border-dim);
+    border-radius: 6px;
+    color: var(--text-dim);
+    font-size: 14px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+.project-close-btn:hover {
+    background: var(--bg-surface);
+    color: var(--accent-red, #f85149);
+    border-color: var(--accent-red, #f85149);
+}
 .project-group.empty {
     opacity: 0.6;
 }
