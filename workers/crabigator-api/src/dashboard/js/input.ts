@@ -65,6 +65,7 @@ export const inputJs = `
                     input.value = text;
                 }
             }
+            updateSendButton(sessionId);
         }
 
         // Track current suggestion per session
@@ -83,6 +84,15 @@ export const inputJs = `
                 // Suggestion cleared — restore default placeholder
                 input.placeholder = 'Send a message...';
             }
+            updateSendButton(sessionId);
+        }
+
+        function updateSendButton(sessionId) {
+            const input = document.getElementById('input-' + sessionId);
+            const btn = document.getElementById('send-btn-' + sessionId);
+            if (!input || !btn) return;
+            const hasContent = input.value.trim().length > 0 || !!(inputSuggestions.get(sessionId));
+            btn.disabled = !hasContent;
         }
 
         // Debounce server saves
@@ -90,6 +100,7 @@ export const inputJs = `
         function handleInputChange(sessionId, text) {
             // Always save locally immediately
             saveInputLocally(sessionId, text);
+            updateSendButton(sessionId);
 
             // Debounce server save (500ms)
             if (inputSaveTimers.has(sessionId)) {

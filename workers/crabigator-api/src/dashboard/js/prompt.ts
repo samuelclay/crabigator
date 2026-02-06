@@ -407,6 +407,7 @@ export const promptJs = `
             input.blur();
             clearLocalInput(sessionId);
             saveInputToServer(sessionId, '');
+            updateSendButton(sessionId);
 
             try {
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
@@ -419,6 +420,7 @@ export const promptJs = `
                     // Auth failure - restore input so user can retry after re-auth
                     input.value = text;
                     saveInputLocally(sessionId, text);
+                    updateSendButton(sessionId);
                     return;
                 }
                 if (resp.ok) {
@@ -428,6 +430,7 @@ export const promptJs = `
                     // Server error - restore input so user can retry
                     input.value = text;
                     saveInputLocally(sessionId, text);
+                    updateSendButton(sessionId);
                     const err = await resp.json();
                     alert('Error: ' + (err.error || 'Failed to send'));
                 }
@@ -435,6 +438,7 @@ export const promptJs = `
                 // Network error - restore input so user can retry
                 input.value = text;
                 saveInputLocally(sessionId, text);
+                updateSendButton(sessionId);
                 console.error('Failed to send answer:', err);
                 alert('Failed to send: ' + err.message);
             }
