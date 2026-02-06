@@ -114,9 +114,15 @@ export const voiceJs = `
                 const formData = new FormData();
                 formData.append('file', blob, 'recording.' + ext);
 
+                // Don't use getAuthHeaders() here - it sets Content-Type: application/json
+                // which overrides the browser's automatic multipart/form-data boundary
+                const headers = {};
+                if (mobileToken) {
+                    headers['Authorization'] = 'Bearer ' + mobileToken;
+                }
                 const resp = await fetch(API_BASE + '/transcribe', {
                     method: 'POST',
-                    headers: getAuthHeaders(),
+                    headers,
                     body: formData
                 });
 
