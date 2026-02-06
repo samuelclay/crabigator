@@ -463,7 +463,6 @@ export const styleJs = `
             updateProjectFitColumns(group, count);
 
             // Toggle empty state styling and close button
-            const cwd = group.dataset.project;
             const separatorContent = group.querySelector('.project-separator-content');
             if (count === 0) {
                 group.classList.add('empty');
