@@ -44,6 +44,7 @@ export const sessionJs = `
                         session.eventSource?.close();
                     }
                     sessions.clear();
+                    activeTerminalId = null;
                     container.innerHTML = '<div class="no-sessions">No active sessions</div>';
 
                     // Use deploy reconnect if deploying, otherwise normal backoff
@@ -90,6 +91,7 @@ export const sessionJs = `
                     if (!filteredSessions.find(s => s.id === id)) {
                         session.eventSource?.close();
                         sessions.delete(id);
+                        if (activeTerminalId === id) activeTerminalId = null;
                     }
                 }
                 updateFitLayout();
@@ -318,6 +320,9 @@ export const sessionJs = `
                     // Skip scroll handling during font size changes to preserve pin state
                     if (isChangingFontSize) return;
 
+                    // Skip pin/unpin logic if this terminal isn't scroll-active
+                    if (activeTerminalId !== session.id) return;
+
                     const currentScrollTop = terminal.scrollTop;
                     const prevScrollTop = sessionData.lastScrollTop || 0;
                     const scrollDelta = currentScrollTop - prevScrollTop;
@@ -349,6 +354,11 @@ export const sessionJs = `
                     if (currentScrollTop < 100 && sessionData.scrollbackBuffer && sessionData.scrollbackRendered < sessionData.scrollbackBuffer.length) {
                         loadMoreScrollback(session.id);
                     }
+                });
+
+                // Click to activate terminal scrolling
+                terminal.addEventListener('click', () => {
+                    activateTerminalScroll(session.id);
                 });
             }
         }

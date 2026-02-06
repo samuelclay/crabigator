@@ -54,6 +54,7 @@ export const sessionStateJs = `
                 // Pin and scroll to bottom
                 sessionData.pinned = true;
                 updatePinButton(sessionId, true);
+                activateTerminalScroll(sessionId);
                 terminal.scrollTop = terminal.scrollHeight;
                 sessionData.lastScrollTop = terminal.scrollTop;
             }
@@ -246,6 +247,54 @@ export const sessionStateJs = `
                 activePopover.classList.remove('visible');
                 activePopover = null;
             }
+        });
+
+        // Terminal scroll activation - click to enable scrolling
+        function activateTerminalScroll(sessionId) {
+            if (activeTerminalId && activeTerminalId !== sessionId) {
+                deactivateTerminalScroll(activeTerminalId);
+            }
+
+            const terminal = document.getElementById('terminal-' + sessionId);
+            if (!terminal) return;
+
+            terminal.classList.add('scroll-active');
+            activeTerminalId = sessionId;
+
+            const sessionData = sessions.get(sessionId);
+            if (sessionData) {
+                if (sessionData.pinned) {
+                    terminal.scrollTop = terminal.scrollHeight;
+                } else {
+                    terminal.scrollTop = sessionData.lastScrollTop || 0;
+                }
+                sessionData.lastScrollTop = terminal.scrollTop;
+            }
+        }
+
+        function deactivateTerminalScroll(sessionId) {
+            const terminal = document.getElementById('terminal-' + sessionId);
+            if (!terminal) return;
+
+            const sessionData = sessions.get(sessionId);
+            if (sessionData) {
+                sessionData.lastScrollTop = terminal.scrollTop;
+            }
+
+            terminal.classList.remove('scroll-active');
+            if (activeTerminalId === sessionId) {
+                activeTerminalId = null;
+            }
+        }
+
+        // Deactivate terminal scroll when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!activeTerminalId) return;
+
+            if (e.target.closest('.terminal')) return;
+            if (e.target.closest('.pin-btn')) return;
+
+            deactivateTerminalScroll(activeTerminalId);
         });
 
 `;

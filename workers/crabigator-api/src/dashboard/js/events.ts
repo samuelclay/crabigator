@@ -49,6 +49,7 @@ export const eventsJs = `
                 if (session) {
                     session.eventSource?.close();
                     sessions.delete(sessionId);
+                    if (activeTerminalId === sessionId) activeTerminalId = null;
                 }
                 // Remove the card - it will be recreated if session is still active
                 const card = document.getElementById('session-' + sessionId);
@@ -178,6 +179,7 @@ export const eventsJs = `
                         if (session) {
                             session.eventSource?.close();
                             sessions.delete(sessionId);
+                            if (activeTerminalId === sessionId) activeTerminalId = null;
                         }
                         // Also remove from allSessions for accurate count
                         const allIdx = allSessions.findIndex(s => s.id === sessionId);
