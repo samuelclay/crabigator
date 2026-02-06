@@ -177,6 +177,13 @@ export const ansiJs = `
                         }
 
                         applyStyle();
+                    } else if (command === 'C') {
+                        // CUF - Cursor Forward: ESC[C (1) or ESC[nC (n spaces)
+                        // vt100 rows_formatted() emits these for empty cells instead of spaces
+                        const count = params ? parseInt(params, 10) || 1 : 1;
+                        for (let k = 0; k < count; k++) {
+                            result += ' ';
+                        }
                     }
                     // Skip other escape sequences (H, f, J, K, etc.) - they don't affect our line-based output
                     i = j;
