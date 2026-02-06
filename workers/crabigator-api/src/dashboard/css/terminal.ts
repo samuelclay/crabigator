@@ -8,7 +8,7 @@ export const terminalCss = `
     overflow-x: hidden;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
-    line-height: 1.4;
+    line-height: 1.3;
     transition: height 0.25s ease-out;
     width: 100%;
     min-width: 0;
@@ -77,7 +77,7 @@ export const terminalCss = `
     white-space: pre;
     overflow: hidden;
 }
-.terminal span { padding: 3px 0; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.terminal span { box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .terminal .ansi-bright { font-weight: bold; }
 .terminal .ansi-dim { opacity: 0.5; }
 .terminal .ansi-italic { font-style: italic; }

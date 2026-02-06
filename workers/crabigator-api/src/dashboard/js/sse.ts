@@ -32,7 +32,8 @@ export const sseJs = `
                     emptyPollTimeout = null;
                 }
                 emptyPollDelay = MIN_EMPTY_POLL_DELAY;
-                document.getElementById('status').textContent = 'Connected';
+                const statusEl = document.getElementById('status');
+                if (statusEl) statusEl.textContent = 'Connected';
             };
 
             sessionListSource.onmessage = (event) => {
@@ -62,12 +63,14 @@ export const sseJs = `
                     if (sseRetryCount >= MAX_SSE_RETRIES) {
                         // Fall back to polling after too many SSE failures
                         console.log('SSE failed, falling back to polling');
-                        document.getElementById('status').textContent = sessionCount(sessions.size);
+                        const statusEl = document.getElementById('status');
+                        if (statusEl) statusEl.textContent = sessionCount(sessions.size);
                         if (!pollingInterval) {
                             pollingInterval = setInterval(loadSessions, 10000);
                         }
                     } else {
-                        document.getElementById('status').textContent = 'Reconnecting...';
+                        const statusEl = document.getElementById('status');
+                        if (statusEl) statusEl.textContent = 'Reconnecting...';
                         // Retry SSE with exponential backoff
                         setTimeout(connectSessionListStream, Math.min(1000 * Math.pow(2, sseRetryCount), 10000));
                     }

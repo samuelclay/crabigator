@@ -35,7 +35,8 @@ export const initJs = `
             // Check pairing status - if not paired, show pairing gate
             if (!checkPairingStatus()) {
                 showPairingGate();
-                document.getElementById('status').textContent = 'Not paired';
+                const statusEl = document.getElementById('status');
+                if (statusEl) statusEl.textContent = 'Not paired';
             } else {
                 // Paired - load sessions normally
                 loadSessions();

@@ -6,16 +6,13 @@ export const promptJs = `
             const optionsEl = document.getElementById('prompt-options-' + sessionId);
             const otherEl = document.getElementById('prompt-other-' + sessionId);
 
-            console.log('[updatePromptPanel]', sessionId, 'prompt:', prompt?.prompt_type, 'options:', prompt?.options?.length);
+            const shortId = sessionId.split('-')[0];
 
-            if (!panel) {
-                console.warn('[updatePromptPanel] panel not found for session:', sessionId);
-                return;
-            }
+            if (!panel) return;
 
             if (!prompt) {
                 // Clear/hide prompt panel
-                console.log('[updatePromptPanel] clearing prompt panel for:', sessionId);
+                console.log('%c[' + shortId + '] prompt', 'color:#f97316;font-weight:bold', 'cleared');
                 panel.classList.remove('visible');
                 return;
             }
@@ -96,7 +93,6 @@ export const promptJs = `
                 }
 
                 const q = prompt.questions[qIdx];
-                console.log('[updatePromptPanel] question', qIdx + 1, 'of', prompt.questions.length, ':', q.header);
 
                 // Show question tabs if multiple questions
                 if (prompt.questions.length > 1) {
@@ -136,9 +132,7 @@ export const promptJs = `
 
                 // Render options with tab instruction inputs
                 const options = prompt.options || [];
-                console.log('[updatePromptPanel] permission options:', options.length, options.map(o => o.label));
                 if (options.length === 0) {
-                    console.warn('[updatePromptPanel] permission prompt has no options!');
                     optionsEl.innerHTML = '<div class="prompt-option-error">No options available - check desktop</div>';
                 } else {
                     optionsEl.innerHTML = renderOptions(options, prompt);
@@ -155,9 +149,7 @@ export const promptJs = `
 
                 // Render options (no tab instructions for exit plan)
                 const options = prompt.options || [];
-                console.log('[updatePromptPanel] exit_plan options:', options.length, options.map(o => o.label));
                 if (options.length === 0) {
-                    console.warn('[updatePromptPanel] exit_plan prompt has no options!');
                     optionsEl.innerHTML = '<div class="prompt-option-error">No options available - check desktop</div>';
                 } else {
                     optionsEl.innerHTML = renderOptions(options, null);
@@ -192,8 +184,6 @@ export const promptJs = `
 
         // Send answer for a multi-question prompt and advance to next question
         async function sendQuestionAnswer(sessionId, qIdx, value, totalQuestions) {
-            console.log('[sendQuestionAnswer] session:', sessionId, 'question:', qIdx + 1, 'of', totalQuestions, 'value:', value);
-
             try {
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
                     method: 'POST',
@@ -203,8 +193,6 @@ export const promptJs = `
 
                 if (handleAuthFailure(resp)) return;
                 if (resp.ok) {
-                    console.log('[sendQuestionAnswer] success');
-
                     // Advance to next question
                     const nextIdx = qIdx + 1;
                     if (nextIdx < totalQuestions) {
@@ -258,8 +246,6 @@ export const promptJs = `
 
         // Send option with additional instructions using key sequence
         async function sendWithInstructions(sessionId, targetOption, currentSelected, instructions) {
-            console.log('[sendWithInstructions]', { sessionId, targetOption, currentSelected, instructions });
-
             const steps = [];
 
             // Navigate to target option if needed
@@ -289,8 +275,6 @@ export const promptJs = `
             // Press enter to submit
             steps.push({ type: 'key', key: 'enter' });
 
-            console.log('[sendWithInstructions] sending steps:', steps);
-
             try {
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/key-sequence', {
                     method: 'POST',
@@ -300,7 +284,6 @@ export const promptJs = `
 
                 if (handleAuthFailure(resp)) return;
                 if (resp.ok) {
-                    console.log('[sendWithInstructions] success');
                     // Hide prompt panel immediately for responsive feel
                     const panel = document.getElementById('prompt-' + sessionId);
                     if (panel) panel.classList.remove('visible');
@@ -326,7 +309,6 @@ export const promptJs = `
         }
 
         async function sendPromptAnswer(sessionId, value) {
-            console.log('[sendPromptAnswer] called for session:', sessionId, 'value:', value);
             try {
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
                     method: 'POST',
@@ -336,7 +318,6 @@ export const promptJs = `
 
                 if (handleAuthFailure(resp)) return;
                 if (resp.ok) {
-                    console.log('[sendPromptAnswer] success');
                     // Hide prompt panel immediately for responsive feel
                     const panel = document.getElementById('prompt-' + sessionId);
                     if (panel) panel.classList.remove('visible');
@@ -352,18 +333,11 @@ export const promptJs = `
         }
 
         async function sendOtherAnswer(sessionId) {
-            console.log('[sendOtherAnswer] called for session:', sessionId);
             const input = document.getElementById('prompt-input-' + sessionId);
-            console.log('[sendOtherAnswer] input element:', input);
             const text = input?.value?.trim();
-            console.log('[sendOtherAnswer] text value:', text);
-            if (!text) {
-                console.log('[sendOtherAnswer] empty text, returning');
-                return;
-            }
+            if (!text) return;
 
             try {
-                console.log('[sendOtherAnswer] sending:', text);
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
                     method: 'POST',
                     headers: getAuthHeaders(),
@@ -372,7 +346,6 @@ export const promptJs = `
 
                 if (handleAuthFailure(resp)) return;
                 if (resp.ok) {
-                    console.log('[sendOtherAnswer] success');
                     input.value = '';
                     input.blur(); // Hide mobile keyboard
                     // Hide prompt panel

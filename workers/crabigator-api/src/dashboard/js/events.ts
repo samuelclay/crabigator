@@ -33,7 +33,9 @@ export const eventsJs = `
                         prompt: '#f97316',
                     };
                     const color = typeColors[data.type] || '#9ca3af';
-                    console.log('%c[' + shortId + '] ' + data.type, 'color:' + color + ';font-weight:bold', data);
+                    if (data.type !== 'screen') {
+                        console.log('%c[' + shortId + '] ' + data.type, 'color:' + color + ';font-weight:bold', data);
+                    }
                     handleSessionEvent(sessionId, data);
                 } catch (err) {
                     console.error('Failed to parse event:', err, event.data);
@@ -191,7 +193,8 @@ export const eventsJs = `
                         }
                         updateFitLayout();
                         // Update status
-                        document.getElementById('status').textContent = sessionCount(sessions.size);
+                        const statusEl = document.getElementById('status');
+                        if (statusEl) statusEl.textContent = sessionCount(sessions.size);
                     }
                     break;
                 case 'title_history':
