@@ -1007,6 +1007,13 @@ impl App {
 
         // Redraw if effective state changed (and PTY is quiet)
         if old_effective_state != new_effective_state {
+            // Clear stale suggestion when leaving ready/complete (prompt submitted)
+            if matches!(
+                old_effective_state,
+                SessionState::Ready | SessionState::Complete
+            ) {
+                self.suggestion_tracker.clear();
+            }
             if last_pty_output.elapsed() >= PTY_SETTLE_TIME {
                 self.draw_status_bar()?;
                 *last_status_draw = Instant::now();

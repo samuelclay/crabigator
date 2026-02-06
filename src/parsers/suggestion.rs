@@ -64,6 +64,11 @@ impl SuggestionTracker {
         }
     }
 
+    /// Clear the current suggestion (e.g., when state leaves ready/complete).
+    pub fn clear(&mut self) {
+        self.current = None;
+    }
+
     /// Process a chunk of raw PTY output bytes.
     /// Returns true if the suggestion changed.
     pub fn process(&mut self, data: &[u8]) -> bool {
