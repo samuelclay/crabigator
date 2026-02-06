@@ -127,6 +127,8 @@ pub struct App {
     last_cloud_changes_hash: Option<u64>,
     /// Hash of last screen sent to cloud (for deduplication)
     last_cloud_screen_hash: Option<u64>,
+    /// Tracks autocomplete suggestions from raw PTY output
+    suggestion_tracker: crate::parsers::SuggestionTracker,
     /// Hash of last status bar state (to avoid flickering redraws)
     last_status_bar_hash: Option<u64>,
     /// Session ID for cloud registration retry
@@ -242,6 +244,7 @@ impl App {
             last_cloud_git_hash: None,
             last_cloud_changes_hash: None,
             last_cloud_screen_hash: None,
+            suggestion_tracker: crate::parsers::SuggestionTracker::new(),
             last_status_bar_hash: None,
             session_id,
             cloud_init_retry_count: 0,
@@ -739,6 +742,8 @@ impl App {
                         eprintln!("Capture error: {}", e);
                     }
                     self.platform_pty.process_output(&passthrough);
+                    // Track autocomplete suggestions from raw PTY bytes
+                    self.suggestion_tracker.process(&passthrough);
                     stdout.write_all(&passthrough)?;
                 }
                 DsrChunk::Request => {
@@ -1131,9 +1136,7 @@ impl App {
         if let Some(ref mut client) = self.cloud_client {
             // Parse permission prompt from screen when in permission state
             let permission_prompt = if self.session_stats.effective_state() == SessionState::Permission {
-                // Get current screen content
                 if let Ok(screen_content) = self.capture_manager.update_screen(self.platform_pty.screen()) {
-                    // Parse permission prompt from screen
                     crate::parsers::PermissionPrompt::parse(&screen_content)
                         .filter(|p| p.is_valid())
                 } else {
@@ -1143,9 +1146,32 @@ impl App {
                 None
             };
 
+            // Get suggestion from tracker (populated by raw PTY byte scanning)
+            // Only send suggestion when the ❯ input prompt is visible (ready/complete)
+            // During thinking/question/permission, the prompt isn't shown so clear it
+            let suggestion = if matches!(
+                self.session_stats.effective_state(),
+                SessionState::Ready | SessionState::Complete
+            ) {
+                // Try raw PTY tracker first, then fall back to vt100 screen parsing
+                // (vt100 combines SGR params differently from raw PTY bytes)
+                self.suggestion_tracker.current().map(|s| s.to_string())
+                    .or_else(|| {
+                        if let Ok(screen) = self.capture_manager.update_screen(self.platform_pty.screen()) {
+                            self.suggestion_tracker.parse_screen(&screen);
+                            self.suggestion_tracker.current().map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+            } else {
+                None
+            };
+
             let event = SessionEventBuilder::stats(
                 &self.session_stats,
                 permission_prompt.as_ref(),
+                suggestion,
             );
             client.send_event(event);
         }

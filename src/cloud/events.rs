@@ -232,6 +232,9 @@ pub struct StatsEvent {
     /// Unix timestamp when session became idle (for idle time display)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idle_since: Option<f64>,
+    /// Autocomplete suggestion text from Claude Code input line
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
 }
 
 impl StatsEvent {
@@ -252,6 +255,7 @@ impl StatsEvent {
         tool_timestamps: Vec<f64>,
         session_start: f64,
         idle_since: Option<f64>,
+        suggestion: Option<String>,
     ) -> Self {
         Self {
             event_type: "stats".to_string(),
@@ -270,6 +274,7 @@ impl StatsEvent {
             tool_timestamps,
             session_start,
             idle_since,
+            suggestion,
         }
     }
 }
@@ -534,6 +539,7 @@ impl SessionEventBuilder {
     pub fn stats(
         session_stats: &crate::hooks::SessionStats,
         permission_prompt: Option<&crate::parsers::PermissionPrompt>,
+        suggestion: Option<String>,
     ) -> CloudEvent {
         let stats = &session_stats.platform_stats;
         let total_tools: u32 = stats.tools.values().sum();
@@ -598,6 +604,7 @@ impl SessionEventBuilder {
             stats.tool_timestamps.clone(),
             session_stats.session_start_unix(),
             stats.idle_since,
+            suggestion,
         ))
     }
 
