@@ -3,6 +3,7 @@ import { iconMicrophone } from '../icons';
 
 export const voiceJs = `
         // Voice recording state per session
+        const MAX_RECORDING_SECONDS = 120;
         const voiceRecorders = new Map(); // sessionId -> VoiceRecorder
 
         class VoiceRecorder {
@@ -14,6 +15,9 @@ export const voiceJs = `
                 this.chunks = [];
                 this.isRecording = false;
                 this.levelInterval = null;
+                this.timerInterval = null;
+                this.maxTimeout = null;
+                this.elapsedSeconds = 0;
             }
 
             static isSupported() {
@@ -100,6 +104,14 @@ export const voiceJs = `
 
             cleanup() {
                 this.cleanupMonitor();
+                if (this.timerInterval) {
+                    clearInterval(this.timerInterval);
+                    this.timerInterval = null;
+                }
+                if (this.maxTimeout) {
+                    clearTimeout(this.maxTimeout);
+                    this.maxTimeout = null;
+                }
                 if (this.stream) {
                     this.stream.getTracks().forEach(t => t.stop());
                     this.stream = null;
@@ -107,33 +119,56 @@ export const voiceJs = `
                 this.mediaRecorder = null;
                 this.chunks = [];
                 this.isRecording = false;
+                this.elapsedSeconds = 0;
             }
 
-            async transcribeAudio(blob) {
-                const ext = blob.type.includes('ogg') ? 'ogg' : 'webm';
-                const formData = new FormData();
-                formData.append('file', blob, 'recording.' + ext);
+            transcribeAudio(blob, onProgress) {
+                return new Promise((resolve, reject) => {
+                    const ext = blob.type.includes('ogg') ? 'ogg' : 'webm';
+                    const formData = new FormData();
+                    formData.append('file', blob, 'recording.' + ext);
 
-                // Don't use getAuthHeaders() here - it sets Content-Type: application/json
-                // which overrides the browser's automatic multipart/form-data boundary
-                const headers = {};
-                if (mobileToken) {
-                    headers['Authorization'] = 'Bearer ' + mobileToken;
-                }
-                const resp = await fetch(API_BASE + '/transcribe', {
-                    method: 'POST',
-                    headers,
-                    body: formData
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('POST', API_BASE + '/transcribe');
+
+                    if (mobileToken) {
+                        xhr.setRequestHeader('Authorization', 'Bearer ' + mobileToken);
+                    }
+
+                    xhr.upload.onprogress = (e) => {
+                        if (e.lengthComputable && onProgress) {
+                            onProgress(e.loaded / e.total);
+                        }
+                    };
+
+                    xhr.upload.onload = () => {
+                        if (onProgress) onProgress(1);
+                    };
+
+                    xhr.onload = () => {
+                        if (xhr.status === 200) {
+                            try {
+                                const data = JSON.parse(xhr.responseText);
+                                resolve(data.text);
+                            } catch(e) {
+                                reject(new Error('Invalid response'));
+                            }
+                        } else if (xhr.status === 401) {
+                            handleAuthFailure({ status: 401, ok: false });
+                            reject(new Error('Auth failed'));
+                        } else {
+                            try {
+                                const err = JSON.parse(xhr.responseText);
+                                reject(new Error(err.error || 'Transcription failed'));
+                            } catch(e) {
+                                reject(new Error('Transcription failed'));
+                            }
+                        }
+                    };
+
+                    xhr.onerror = () => reject(new Error('Network error'));
+                    xhr.send(formData);
                 });
-
-                if (handleAuthFailure(resp)) throw new Error('Auth failed');
-                if (!resp.ok) {
-                    const err = await resp.json();
-                    throw new Error(err.error || 'Transcription failed');
-                }
-
-                const data = await resp.json();
-                return data.text;
             }
         }
 
@@ -206,6 +241,98 @@ export const voiceJs = `
             }
         }
 
+        function formatRecordingTime(seconds) {
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            return m + ':' + String(s).padStart(2, '0');
+        }
+
+        function showVoiceOverlay(sessionId, mode, data) {
+            const overlay = document.getElementById('voice-overlay-' + sessionId);
+            const input = document.getElementById('input-' + sessionId);
+            const sendBtn = document.getElementById('send-btn-' + sessionId);
+            if (!overlay || !input) return;
+
+            input.style.display = 'none';
+            if (sendBtn) sendBtn.style.display = 'none';
+            overlay.style.display = 'flex';
+
+            if (mode === 'timer') {
+                const elapsed = data.elapsed || 0;
+                const max = data.max || MAX_RECORDING_SECONDS;
+                overlay.innerHTML = '<span class="voice-rec-dot"></span>' +
+                    '<span class="voice-timer-elapsed">' + formatRecordingTime(elapsed) + '</span>' +
+                    '<span class="voice-timer-sep"> / </span>' +
+                    '<span class="voice-timer-max">' + formatRecordingTime(max) + '</span>';
+                overlay.className = 'voice-overlay recording';
+            } else if (mode === 'progress') {
+                const pct = Math.round(data || 0);
+                const label = pct < 100 ? 'Uploading ' + pct + '%' : 'Transcribing...';
+                overlay.innerHTML = '<div class="voice-progress-fill" style="width:' + pct + '%"></div>' +
+                    '<span class="voice-progress-label">' + label + '</span>';
+                overlay.className = 'voice-overlay uploading';
+            }
+        }
+
+        function hideVoiceOverlay(sessionId) {
+            const overlay = document.getElementById('voice-overlay-' + sessionId);
+            const input = document.getElementById('input-' + sessionId);
+            const sendBtn = document.getElementById('send-btn-' + sessionId);
+            if (overlay) {
+                overlay.style.display = 'none';
+                overlay.className = 'voice-overlay';
+            }
+            if (input) input.style.display = '';
+            if (sendBtn) sendBtn.style.display = '';
+        }
+
+        async function stopAndTranscribe(sessionId) {
+            const recorder = voiceRecorders.get(sessionId);
+            if (!recorder || !recorder.isRecording) return;
+
+            if (recorder.timerInterval) {
+                clearInterval(recorder.timerInterval);
+                recorder.timerInterval = null;
+            }
+            if (recorder.maxTimeout) {
+                clearTimeout(recorder.maxTimeout);
+                recorder.maxTimeout = null;
+            }
+
+            setVoiceState(sessionId, 'transcribing');
+            showVoiceOverlay(sessionId, 'progress', 0);
+
+            try {
+                const blob = await recorder.stopRecording();
+                if (!blob || blob.size === 0) {
+                    hideVoiceOverlay(sessionId);
+                    setVoiceState(sessionId, 'idle');
+                    recorder.cleanup();
+                    return;
+                }
+
+                const text = await recorder.transcribeAudio(blob, (progress) => {
+                    showVoiceOverlay(sessionId, 'progress', progress * 100);
+                });
+
+                hideVoiceOverlay(sessionId);
+                if (text && text.trim()) {
+                    const input = document.getElementById('input-' + sessionId);
+                    if (input) {
+                        input.value = text.trim();
+                        sendAnswer(sessionId);
+                    }
+                }
+            } catch (err) {
+                console.error('Voice transcription error:', err);
+                hideVoiceOverlay(sessionId);
+                showVoiceError(sessionId, err.message || 'Failed');
+            } finally {
+                recorder.cleanup();
+                setVoiceState(sessionId, 'idle');
+            }
+        }
+
         async function toggleVoiceRecording(sessionId) {
             if (!VoiceRecorder.isSupported()) {
                 showVoiceError(sessionId, 'Not supported');
@@ -215,29 +342,7 @@ export const voiceJs = `
             let recorder = voiceRecorders.get(sessionId);
 
             if (recorder && recorder.isRecording) {
-                // Stop recording
-                setVoiceState(sessionId, 'transcribing');
-                try {
-                    const blob = await recorder.stopRecording();
-                    if (!blob || blob.size === 0) {
-                        setVoiceState(sessionId, 'idle');
-                        return;
-                    }
-                    const text = await recorder.transcribeAudio(blob);
-                    if (text && text.trim()) {
-                        const input = document.getElementById('input-' + sessionId);
-                        if (input) {
-                            input.value = text.trim();
-                            sendAnswer(sessionId);
-                        }
-                    }
-                } catch (err) {
-                    console.error('Voice transcription error:', err);
-                    showVoiceError(sessionId, err.message || 'Failed');
-                } finally {
-                    recorder.cleanup();
-                    setVoiceState(sessionId, 'idle');
-                }
+                await stopAndTranscribe(sessionId);
                 return;
             }
 
@@ -251,8 +356,20 @@ export const voiceJs = `
                 recorder.onAudioLevel = (level) => updateVoiceBars(sessionId, level);
                 await recorder.startRecording();
                 setVoiceState(sessionId, 'recording');
+
+                showVoiceOverlay(sessionId, 'timer', { elapsed: 0, max: MAX_RECORDING_SECONDS });
+
+                recorder.timerInterval = setInterval(() => {
+                    recorder.elapsedSeconds++;
+                    showVoiceOverlay(sessionId, 'timer', { elapsed: recorder.elapsedSeconds, max: MAX_RECORDING_SECONDS });
+                }, 1000);
+
+                recorder.maxTimeout = setTimeout(() => {
+                    stopAndTranscribe(sessionId);
+                }, MAX_RECORDING_SECONDS * 1000);
             } catch (err) {
                 console.error('Voice recording error:', err);
+                hideVoiceOverlay(sessionId);
                 showVoiceError(sessionId, 'Mic denied');
                 recorder.cleanup();
             }

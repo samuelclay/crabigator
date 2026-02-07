@@ -75,4 +75,72 @@ export const voiceCss = `
     background: var(--accent-cyan);
     border-radius: 1px;
 }
+
+/* Voice overlay - replaces input during recording/uploading */
+.voice-overlay {
+    flex: 1;
+    background: var(--bg-abyss);
+    border: 1px solid var(--border-dim);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: none;
+    align-items: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--text-bright);
+    position: relative;
+    overflow: hidden;
+}
+.voice-overlay.recording {
+    border-color: #f97316;
+}
+.voice-overlay.uploading {
+    border-color: var(--accent-cyan);
+}
+
+/* Recording dot */
+.voice-rec-dot {
+    width: 8px;
+    height: 8px;
+    background: #f87171;
+    border-radius: 50%;
+    margin-right: 10px;
+    flex-shrink: 0;
+    animation: voice-rec-pulse 1.5s ease-in-out infinite;
+}
+@keyframes voice-rec-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* Timer text */
+.voice-timer-elapsed {
+    color: var(--text-bright);
+}
+.voice-timer-sep, .voice-timer-max {
+    color: var(--text-dim);
+}
+
+/* Upload progress bar */
+.voice-progress-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(34, 211, 238, 0.15), rgba(59, 130, 246, 0.15));
+    border-radius: 8px;
+    transition: width 0.3s ease;
+}
+.voice-progress-label {
+    position: relative;
+    z-index: 1;
+    color: var(--text-mid);
+}
+
+@media (max-width: 768px) {
+    .voice-overlay {
+        padding: 8px 10px;
+        font-size: 12px;
+    }
+}
 `;

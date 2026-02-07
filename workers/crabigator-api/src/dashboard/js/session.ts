@@ -251,6 +251,7 @@ export const sessionJs = `
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'enter')"><kbd>Enter</kbd> Submit</button>
                                 </div>
                             </div>
+                            <div class="voice-overlay" id="voice-overlay-\${session.id}"></div>
                             <input type="text" id="input-\${session.id}"
                                    placeholder="Type a command or answer..."
                                    oninput="handleInputChange('\${session.id}', this.value)"
