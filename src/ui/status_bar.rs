@@ -114,11 +114,11 @@ pub fn draw_status_bar(
     let compact = layout.status_rows <= 5;
 
     let stats_width = if compact {
-        // Wider stats for two-column layout: ~30% of width, min 36 chars
-        ((layout.total_cols as f32) * 0.30).max(36.0) as u16
+        // Wider stats for two-column layout: ~35% of width, min 36 chars
+        ((layout.total_cols as f32) * 0.35).max(36.0) as u16
     } else {
-        // Normal: ~17% of width, min 24 chars
-        ((layout.total_cols as f32) * 0.17).max(24.0) as u16
+        // Normal: ~22% of width, min 24 chars
+        ((layout.total_cols as f32) * 0.22).max(24.0) as u16
     };
 
     // Account for separators: 2 separators between 3 columns
@@ -148,12 +148,8 @@ pub fn draw_status_bar(
         write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + row, 1))?;
 
         // Stats column (leftmost, fixed width)
-        // Pass pairing token for "Pair another device" link when already paired
-        let pairing_token = if is_paired {
-            pairing_state.pairing_token.as_deref()
-        } else {
-            None
-        };
+        // Always pass pairing code so the pair URL is visible
+        let pairing_code = pairing_state.pairing_code.as_deref();
         // Adjust widget row to be relative (starting from 1)
         let widget_row = row - BANNER_RESERVED;
         draw_stats_widget(
@@ -168,7 +164,7 @@ pub fn draw_status_bar(
             session_stats,
             cloud_status,
             is_paired,
-            pairing_token,
+            pairing_code,
         )?;
 
         // Separator
