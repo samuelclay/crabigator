@@ -24,9 +24,6 @@ export const promptJs = `
                 panel.classList.add('visible');
             });
 
-            // Store prompt data for key sequence navigation
-            sessionPromptData.set(sessionId, prompt);
-
             // Helper to render options as styled divs with numbers
             // For permissions with allows_tab_instructions, adds inline inputs on options 1 (Yes) and 3 (No)
             function renderOptions(options, promptData) {
@@ -158,6 +155,10 @@ export const promptJs = `
                 // Hide "Other" input for simple exit plan prompts
                 otherEl.style.display = 'none';
             }
+
+            // Store prompt data AFTER new-prompt comparison (so next call
+            // compares the incoming prompt against this one, not itself)
+            sessionPromptData.set(sessionId, prompt);
         }
 
         // Store prompt data for each session (for key sequence navigation)
@@ -182,13 +183,25 @@ export const promptJs = `
             }).join('');
         }
 
-        // Send answer for a multi-question prompt and advance to next question
+        // Send answer for a multi-question prompt and advance to next question.
+        // Uses key sequences (arrow navigation + Enter) instead of text values,
+        // because Claude Code auto-selects+submits on digit keys, which causes
+        // the trailing Enter to cascade into the next question.
         async function sendQuestionAnswer(sessionId, qIdx, value, totalQuestions) {
+            const optionIdx = parseInt(value);
+
+            // Build key sequence: navigate to the option, then enter to submit
+            const steps = [];
+            for (let i = 1; i < optionIdx; i++) {
+                steps.push({ type: 'key', key: 'down' });
+            }
+            steps.push({ type: 'key', key: 'enter' });
+
             try {
-                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/key-sequence', {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ text: value })
+                    body: JSON.stringify({ steps })
                 });
 
                 if (handleAuthFailure(resp)) return;
@@ -332,26 +345,58 @@ export const promptJs = `
             }
         }
 
+        // Send a custom "Other" / "Type something" answer for AskUserQuestion.
+        // Uses key sequences to navigate past all regular options to the
+        // "Type something" field, type the text, and submit.
+        // Also handles multi-question advancement (previously just hid the panel).
         async function sendOtherAnswer(sessionId) {
             const input = document.getElementById('prompt-input-' + sessionId);
             const text = input?.value?.trim();
             if (!text) return;
 
+            // Get current question to determine option count for navigation
+            const prompt = sessionPromptData.get(sessionId);
+            const qIdx = sessionQuestionIndex.get(sessionId) || 0;
+            const q = prompt?.questions?.[qIdx];
+            const numOptions = q?.options?.length || 3;
+
+            // Build key sequence: navigate past all options to "Type something",
+            // type the custom text, then enter to submit
+            const steps = [];
+            for (let i = 0; i < numOptions; i++) {
+                steps.push({ type: 'key', key: 'down' });
+            }
+            steps.push({ type: 'text', text: text });
+            steps.push({ type: 'delay', ms: 50 });
+            steps.push({ type: 'key', key: 'enter' });
+
             try {
-                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {
+                const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/key-sequence', {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ text: text })
+                    body: JSON.stringify({ steps })
                 });
 
                 if (handleAuthFailure(resp)) return;
                 if (resp.ok) {
                     input.value = '';
                     input.blur(); // Hide mobile keyboard
-                    // Hide prompt panel
+
+                    // Advance to next question if multi-question prompt
+                    if (prompt && prompt.prompt_type === 'question' && prompt.questions) {
+                        const nextIdx = qIdx + 1;
+                        if (nextIdx < prompt.questions.length) {
+                            sessionQuestionIndex.set(sessionId, nextIdx);
+                            updatePromptPanel(sessionId, prompt);
+                            scrollToSession(sessionId);
+                            return;
+                        }
+                    }
+
+                    // All questions answered or not a question prompt - hide panel
                     const panel = document.getElementById('prompt-' + sessionId);
                     if (panel) panel.classList.remove('visible');
-                    // Scroll to top of session so user can see what's happening
+                    sessionQuestionIndex.delete(sessionId);
                     scrollToSession(sessionId);
                 } else {
                     const err = await resp.json();
