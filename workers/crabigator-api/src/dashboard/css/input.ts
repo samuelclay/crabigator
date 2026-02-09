@@ -19,7 +19,7 @@ export const inputCss = `
     color: var(--text-bright);
     font-family: 'JetBrains Mono', monospace;
     font-size: 13px;
-    transition: all 0.2s;
+    transition: border-color 0.2s, box-shadow 0.2s;
 }
 .input-area input:focus {
     outline: none;
@@ -41,7 +41,7 @@ export const inputCss = `
     cursor: pointer;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    transition: all 0.2s;
+    transition: transform 0.2s, box-shadow 0.2s;
 }
 .input-area button:hover {
     transform: translateY(-1px);
@@ -70,7 +70,7 @@ export const inputCss = `
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: border-color 0.2s, color 0.2s, box-shadow 0.2s;
     padding: 0;
     color: var(--text-mid);
     font-size: 0;
@@ -159,7 +159,7 @@ export const inputCss = `
     border-radius: 8px;
     padding: 8px 12px;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: border-color 0.15s, color 0.15s, background 0.15s, box-shadow 0.15s;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
     color: var(--text-mid);
@@ -236,7 +236,7 @@ export const inputCss = `
     color: var(--text-mid);
     cursor: pointer;
     font-size: 12px;
-    transition: all 0.2s;
+    transition: border-color 0.2s, color 0.2s, background 0.2s;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }

@@ -1,5 +1,29 @@
 // Dashboard JavaScript - events
 export const eventsJs = `
+        // Coalesce screen updates to one render per animation frame
+        const pendingScreenUpdates = new Map();
+
+        function scheduleScreenUpdate(sessionId, content) {
+            const hadPending = pendingScreenUpdates.has(sessionId);
+            pendingScreenUpdates.set(sessionId, content);
+            if (!hadPending) {
+                requestAnimationFrame(() => {
+                    const latestContent = pendingScreenUpdates.get(sessionId);
+                    pendingScreenUpdates.delete(sessionId);
+                    if (latestContent !== undefined) {
+                        const screenEl = document.getElementById('screen-' + sessionId);
+                        if (screenEl) screenEl.innerHTML = ansiToHtml(latestContent);
+                        const sessionData = sessions.get(sessionId);
+                        const terminal = document.getElementById('terminal-' + sessionId);
+                        if (sessionData?.pinned && terminal) {
+                            terminal.scrollTop = terminal.scrollHeight;
+                            sessionData.lastScrollTop = terminal.scrollTop;
+                        }
+                    }
+                });
+            }
+        }
+
         function connectToSession(sessionId) {
             console.log('Connecting SSE for session:', sessionId);
             const eventSource = new EventSource(API_BASE + '/sessions/' + sessionId + '/events' + getAuthQueryParam());
@@ -88,14 +112,7 @@ export const eventsJs = `
 
             switch (event.type) {
                 case 'screen':
-                    // Full screen update - only update the screen section
-                    if (screenEl) {
-                        screenEl.innerHTML = ansiToHtml(event.content);
-                    }
-                    if (sessionData?.pinned) {
-                        terminal.scrollTop = terminal.scrollHeight;
-                        sessionData.lastScrollTop = terminal.scrollTop;
-                    }
+                    scheduleScreenUpdate(sessionId, event.content);
                     break;
                 case 'state':
                     // Update state badge

@@ -261,6 +261,9 @@ export const sessionStateJs = `
             terminal.classList.add('scroll-active');
             activeTerminalId = sessionId;
 
+            // Render buffered scrollback now that scroll is active
+            flushScrollback(sessionId);
+
             const sessionData = sessions.get(sessionId);
             if (sessionData) {
                 if (sessionData.pinned) {

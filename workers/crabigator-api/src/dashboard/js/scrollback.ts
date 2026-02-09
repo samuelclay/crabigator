@@ -28,7 +28,7 @@ export const scrollbackJs = `
             const prevScrollHeight = terminal.scrollHeight;
 
             // Prepend new content
-            scrollbackEl.innerHTML = newHtml + scrollbackEl.innerHTML;
+            scrollbackEl.insertAdjacentHTML('afterbegin', newHtml);
             scrollbackEl.classList.add('has-content');
             if (separatorEl) separatorEl.classList.add('visible');
 
@@ -44,20 +44,32 @@ export const scrollbackJs = `
             updateScrollbackIndicator(sessionId, sessionData.scrollbackRendered, totalLines);
         }
 
-        // Render initial scrollback (last CHUNK_SIZE lines)
+        // Render initial scrollback - buffer only, render lazily on scroll activate
         function renderScrollback(sessionId, lines) {
             const sessionData = sessions.get(sessionId);
             if (!sessionData) return;
+
+            // Store full buffer (rendered lazily when scroll is activated)
+            sessionData.scrollbackBuffer = lines;
+            sessionData.scrollbackRendered = 0;
+
+            // If scroll is already active on this terminal, render now
+            if (activeTerminalId === sessionId) {
+                flushScrollback(sessionId);
+            }
+        }
+
+        // Flush buffered scrollback to the DOM (called on scroll activate)
+        function flushScrollback(sessionId) {
+            const sessionData = sessions.get(sessionId);
+            if (!sessionData || !sessionData.scrollbackBuffer || sessionData.scrollbackRendered > 0) return;
 
             const scrollbackEl = document.getElementById('scrollback-' + sessionId);
             const separatorEl = document.getElementById('separator-' + sessionId);
             const terminal = document.getElementById('terminal-' + sessionId);
             if (!scrollbackEl) return;
 
-            // Store full buffer
-            sessionData.scrollbackBuffer = lines;
-
-            // Render only the last CHUNK_SIZE lines
+            const lines = sessionData.scrollbackBuffer;
             const linesToRender = Math.min(SCROLLBACK_CHUNK_SIZE, lines.length);
             const startIdx = lines.length - linesToRender;
             const visibleLines = lines.slice(startIdx);
@@ -69,31 +81,31 @@ export const scrollbackJs = `
             sessionData.scrollbackRendered = linesToRender;
             updateScrollbackIndicator(sessionId, linesToRender, lines.length);
 
-            // If pinned, scroll to bottom after adding scrollback content
-            // This handles reconnect after deploy when scrollback_history arrives
             if (sessionData.pinned && terminal) {
                 terminal.scrollTop = terminal.scrollHeight;
                 sessionData.lastScrollTop = terminal.scrollTop;
             }
         }
 
-        // Append new scrollback content
+        // Append new scrollback content - buffer only unless scroll is active
         function appendScrollback(sessionId, newContent) {
             const sessionData = sessions.get(sessionId);
             if (!sessionData) return;
+
+            // Always buffer
+            const newLines = newContent.split('\\n');
+            if (!sessionData.scrollbackBuffer) sessionData.scrollbackBuffer = [];
+            sessionData.scrollbackBuffer.push(...newLines);
+
+            // Only render to DOM if scroll is active on this terminal
+            if (activeTerminalId !== sessionId) return;
 
             const scrollbackEl = document.getElementById('scrollback-' + sessionId);
             const separatorEl = document.getElementById('separator-' + sessionId);
             const terminal = document.getElementById('terminal-' + sessionId);
             if (!scrollbackEl) return;
 
-            // Split into lines and add to buffer
-            const newLines = newContent.split('\\n');
-            if (!sessionData.scrollbackBuffer) sessionData.scrollbackBuffer = [];
-            sessionData.scrollbackBuffer.push(...newLines);
-
-            // Append to rendered content (new content always visible at bottom of scrollback)
-            scrollbackEl.innerHTML += ansiToHtml(newContent);
+            scrollbackEl.insertAdjacentHTML('beforeend', ansiToHtml(newContent));
             scrollbackEl.classList.add('has-content');
             if (separatorEl) separatorEl.classList.add('visible');
 

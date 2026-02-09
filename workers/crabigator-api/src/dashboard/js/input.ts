@@ -2,14 +2,19 @@
 export const inputJs = `
         // Input preservation - save to localStorage and server
         const inputCache = new Map(); // sessionId -> text
+        const localSaveTimers = new Map(); // sessionId -> timer
 
         function saveInputLocally(sessionId, text) {
             inputCache.set(sessionId, text);
-            try {
-                const stored = JSON.parse(localStorage.getItem('crabigator-inputs') || '{}');
-                stored[sessionId] = text;
-                localStorage.setItem('crabigator-inputs', JSON.stringify(stored));
-            } catch {}
+            if (localSaveTimers.has(sessionId)) clearTimeout(localSaveTimers.get(sessionId));
+            localSaveTimers.set(sessionId, setTimeout(() => {
+                try {
+                    const stored = JSON.parse(localStorage.getItem('crabigator-inputs') || '{}');
+                    stored[sessionId] = text;
+                    localStorage.setItem('crabigator-inputs', JSON.stringify(stored));
+                } catch {}
+                localSaveTimers.delete(sessionId);
+            }, 300));
         }
 
         function getLocalInput(sessionId) {
