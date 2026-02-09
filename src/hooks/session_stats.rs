@@ -139,6 +139,20 @@ impl SessionStats {
                 // This handles the case where state stays "thinking" after interrupt + new prompt
                 self.interrupted = false;
 
+                // When hooks report a state change, clear screen-based signal overrides.
+                // Hooks are the authoritative source — they fire synchronously with Claude
+                // Code's state machine. Screen content (title spinner, "Esc to cancel")
+                // lags behind by 0.5–2s, and the effective_state() overrides can mask real
+                // transitions, causing:
+                //   - New permission prompts to be invisible on the dashboard (eff stays
+                //     "permission" from the screen override through the real permission)
+                //   - Stale permission state after answering (screen still has "Esc to cancel")
+                //   - Delayed question detection (spinner override keeps eff as "thinking")
+                if stats.state != self.platform_stats.state {
+                    self.screen_shows_input_wait = false;
+                    self.title_has_spinner = false;
+                }
+
                 // Track when prompts/completions change
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
