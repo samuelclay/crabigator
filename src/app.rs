@@ -119,8 +119,11 @@ pub struct App {
     /// When false, we reduce screen send frequency to save DO costs
     cloud_viewers_active: bool,
     /// Last time we sent a screen event when no viewers are active
-    /// Used to throttle to 1s intervals instead of 100ms
+    /// Used to throttle to 15s intervals instead of 100ms
     last_reduced_screen_send: Instant,
+    /// Last time we flushed all state when no viewers are active
+    /// Used for periodic 15s flush to keep DO state somewhat fresh
+    last_no_viewer_flush: Instant,
     /// Hash of last git state sent to cloud (for deduplication)
     last_cloud_git_hash: Option<u64>,
     /// Hash of last changes sent to cloud (for deduplication)
@@ -241,6 +244,7 @@ impl App {
             pending_pairing_poll: None,
             cloud_viewers_active: false,
             last_reduced_screen_send: Instant::now(),
+            last_no_viewer_flush: Instant::now(),
             last_cloud_git_hash: None,
             last_cloud_changes_hash: None,
             last_cloud_screen_hash: None,
@@ -475,7 +479,13 @@ impl App {
                     git_refresh_pending = false;
 
                     // Stream git + changes snapshot to cloud
-                    self.send_cloud_git_changes_events();
+                    if self.cloud_viewers_active {
+                        self.send_cloud_git_changes_events();
+                    } else {
+                        // Reset hashes so next viewer-active flush triggers a send
+                        self.last_cloud_git_hash = None;
+                        self.last_cloud_changes_hash = None;
+                    }
 
                     // Capture initial timing (only set once, on first load)
                     if self.initial_git_time_ms.is_none() {
@@ -642,10 +652,29 @@ impl App {
                         self.cloud_viewers_active = client.poll_viewer_status();
 
                         if !was_active && self.cloud_viewers_active {
+                            // Viewer just connected — flush all latest state
                             if let Ok(contents) = self.capture_manager.update_screen(self.platform_pty.screen()) {
                                 self.send_cloud_screen_event(contents);
                             }
+                            self.send_cloud_stats_event();
+                            self.send_cloud_git_changes_events();
+                            // Scrollback history for late joiners
+                            if let Some(content) = self.capture_manager.get_full_scrollback() {
+                                if let Some(ref mut client) = self.cloud_client {
+                                    let event = SessionEventBuilder::scrollback_history(content);
+                                    client.send_event(event);
+                                }
+                            }
                         }
+                    }
+
+                    // Periodic no-viewer flush: send latest state every 15s even without viewers
+                    // This ensures viewers connecting get at most 15s stale data
+                    if !self.cloud_viewers_active && self.last_no_viewer_flush.elapsed() >= Duration::from_secs(15) {
+                        self.last_no_viewer_flush = Instant::now();
+                        self.send_cloud_stats_event();
+                        self.send_cloud_git_changes_events();
+                        // Screen is already handled by the 15s throttle in handle_pty_output_capture
                     }
 
                     // Poll pairing status
@@ -910,14 +939,14 @@ impl App {
                 .maybe_update_screen(self.platform_pty.screen())
                 .ok()
                 .flatten()
-        } else if self.last_reduced_screen_send.elapsed() >= Duration::from_secs(1) {
-            // No viewers: only capture/send once per second
+        } else if self.last_reduced_screen_send.elapsed() >= Duration::from_secs(15) {
+            // No viewers: only capture/send once per 15 seconds
             self.capture_manager
                 .maybe_update_screen(self.platform_pty.screen())
                 .ok()
                 .flatten()
         } else {
-            // No viewers and within 1s throttle: still update local file at 100ms
+            // No viewers and within 15s throttle: still update local file at 100ms
             let _ = self
                 .capture_manager
                 .maybe_update_screen(self.platform_pty.screen());
@@ -984,8 +1013,13 @@ impl App {
             *sent_initial_screen = true;
         }
 
-        if let Ok(Some(update)) = self.capture_manager.maybe_update_scrollback() {
-            self.send_cloud_scrollback_event(update);
+        if self.cloud_viewers_active {
+            if let Ok(Some(update)) = self.capture_manager.maybe_update_scrollback() {
+                self.send_cloud_scrollback_event(update);
+            }
+        } else {
+            // Still capture locally, just don't send to cloud
+            let _ = self.capture_manager.maybe_update_scrollback();
         }
 
         Ok(())
@@ -1056,8 +1090,10 @@ impl App {
         if new_last_updated != old_last_updated || !self.cloud_stats_sent {
             self.cloud_stats_sent = true;
             self.session_stats.tick();
-            self.send_cloud_stats_event();
-            self.send_cloud_stats_update();
+            if self.cloud_viewers_active {
+                self.send_cloud_stats_event();
+            }
+            self.send_cloud_stats_update(); // DB update — keep this for session records
         }
 
         Ok(())
