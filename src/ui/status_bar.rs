@@ -144,12 +144,22 @@ pub fn draw_status_bar(
     // Draw content rows (after reserved banner space + separator)
     let first_widget_row = 1 + BANNER_RESERVED;
     let widget_pty_rows = layout.pty_rows + BANNER_RESERVED;
-    for row in first_widget_row..layout.status_rows {
+
+    // Reserve footer rows for full-width pairing URL
+    let footer_rows: u16 = if pairing_state.pairing_code.is_some() {
+        let widget_rows_available = layout.status_rows.saturating_sub(first_widget_row);
+        if widget_rows_available >= 4 { 2 } // separator + URL, with at least 2 widget rows
+        else if widget_rows_available >= 2 { 1 } // just URL, with at least 1 widget row
+        else { 0 }
+    } else {
+        0
+    };
+    let widget_end = layout.status_rows - footer_rows;
+
+    for row in first_widget_row..widget_end {
         write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + row, 1))?;
 
         // Stats column (leftmost, fixed width)
-        // Always pass pairing code so the pair URL is visible
-        let pairing_code = pairing_state.pairing_code.as_deref();
         // Adjust widget row to be relative (starting from 1)
         let widget_row = row - BANNER_RESERVED;
         draw_stats_widget(
@@ -164,7 +174,6 @@ pub fn draw_status_bar(
             session_stats,
             cloud_status,
             is_paired,
-            pairing_code,
         )?;
 
         // Separator
@@ -207,6 +216,29 @@ pub fn draw_status_bar(
             ide,
             cwd,
         )?;
+    }
+
+    // Draw full-width pairing URL footer (spans all columns)
+    if footer_rows > 0 {
+        if let Some(code) = pairing_state.pairing_code.as_deref() {
+            if footer_rows == 2 {
+                // Separator line
+                let sep_row = widget_end;
+                write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + sep_row, 1))?;
+                let line = "─".repeat(layout.total_cols as usize);
+                write!(stdout, "{}{}{}", escape::fg(color::DARK_GRAY), line, RESET)?;
+            }
+
+            // Pair URL row
+            let url_row = layout.status_rows - 1;
+            write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + url_row, 1))?;
+            let url = format!("https://drinkcrabigator.com/dashboard?setup={}", code);
+            let url_display = format!("drinkcrabigator.com/dashboard?setup={}", code);
+            let label = format!("{}Pair: {}", escape::fg(color::DARK_GRAY), RESET);
+            let display = format!("{}{}{}{}", label, escape::fg(color::DARK_GRAY), url_display, RESET);
+            // OSC 8 hyperlink
+            write!(stdout, "\x1b]8;;{}\x07{}\x1b]8;;\x07", url, display)?;
+        }
     }
 
     // Restore cursor to position known by vt100 parser

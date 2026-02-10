@@ -117,7 +117,6 @@ pub fn draw_stats_widget(
     stats: &SessionStats,
     cloud_status: Option<&CloudStatus>,
     is_paired: bool,
-    pairing_code: Option<&str>,
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
 
@@ -125,13 +124,10 @@ pub fn draw_stats_widget(
     // Compact mode: header + 2 rows with abbreviated two-column layout
     let compact = area.height <= 5;
 
-    // Last widget row = height - banner_reserved(2) - 1
-    let max_row = area.height.saturating_sub(3);
-
     let content = if compact {
-        draw_compact_row(area.row, area.width, max_row, stats, cloud_status, is_paired, pairing_code)
+        draw_compact_row(area.row, area.width, stats, cloud_status, is_paired)
     } else {
-        draw_normal_row(area.row, area.width, max_row, stats, cloud_status, is_paired, pairing_code)
+        draw_normal_row(area.row, area.width, stats, cloud_status, is_paired)
     };
 
     write!(stdout, "{}", content)?;
@@ -176,42 +172,8 @@ fn format_cloud_header(cloud_status: Option<&CloudStatus>, is_paired: bool) -> S
     }
 }
 
-/// Format pairing URL as OSC 8 hyperlink: "Pair: <url…>"
-fn format_pair_link(pairing_code: Option<&str>, max_width: usize) -> Option<String> {
-    let code = pairing_code?;
-    let url = format!("https://drinkcrabigator.com/dashboard?setup={}", code);
-    // "Pair: " label in dim gray, URL in subtle cyan
-    let label = format!("{}Pair: {}", fg(color::DARK_GRAY), RESET);
-    let url_display = format!("drinkcrabigator.com/dashboard?setup={}", code);
-    // Truncate URL portion if needed (label is 6 chars visible)
-    let label_visible = 6; // "Pair: "
-    let url_max = max_width.saturating_sub(label_visible);
-    let url_truncated = if url_display.len() > url_max {
-        format!("{}…", &url_display[..url_max.saturating_sub(1)])
-    } else {
-        url_display
-    };
-    let display = format!("{}{}{}{}", label, fg(color::DARK_GRAY), url_truncated, RESET);
-    // Wrap in OSC 8 hyperlink
-    Some(format!(
-        "\x1b]8;;{}\x07{}\x1b]8;;\x07",
-        url, display
-    ))
-}
-
 /// Draw a row in compact mode (two-column layout with separator)
-fn draw_compact_row(row: u16, width: u16, max_row: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool, pairing_code: Option<&str>) -> String {
-    // Reserve last 2 rows for pair separator + link (need at least 3 rows total)
-    if pairing_code.is_some() && max_row >= 3 {
-        if row == max_row {
-            return format_pair_link(pairing_code, width as usize).unwrap_or_default();
-        }
-        if row == max_row - 1 {
-            let line = "─".repeat(width as usize);
-            return format!("{}{}{}", fg(color::DARK_GRAY), line, RESET);
-        }
-    }
-
+fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool) -> String {
     // Split width into two columns with a separator
     let half = (width as usize) / 2;
 
@@ -312,18 +274,7 @@ fn draw_compact_row(row: u16, width: u16, max_row: u16, stats: &SessionStats, cl
 }
 
 /// Draw a row in normal mode (full labels, single column)
-fn draw_normal_row(row: u16, width: u16, max_row: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool, pairing_code: Option<&str>) -> String {
-    // Reserve last 2 rows for pair separator + link (need at least 3 rows total)
-    if pairing_code.is_some() && max_row >= 3 {
-        if row == max_row {
-            return format_pair_link(pairing_code, width as usize).unwrap_or_default();
-        }
-        if row == max_row - 1 {
-            let line = "─".repeat(width as usize);
-            return format!("{}{}{}", fg(color::DARK_GRAY), line, RESET);
-        }
-    }
-
+fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool) -> String {
     match row {
         1 => {
             // Header: cloud status on left, state indicator on right
