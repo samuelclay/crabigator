@@ -1,6 +1,4 @@
 // Dashboard JavaScript - voice recording and transcription
-import { iconMicrophone } from '../icons';
-
 export const voiceJs = `
         // Voice recording state per session
         const MAX_RECORDING_SECONDS = 120;
@@ -175,9 +173,9 @@ export const voiceJs = `
         const voiceState = new Map();
 
         function updateVoiceBars(sessionId, level) {
-            const btn = document.getElementById('voice-btn-' + sessionId);
-            if (!btn) return;
-            const bars = btn.querySelectorAll('.voice-bar');
+            const overlay = document.getElementById('voice-overlay-' + sessionId);
+            if (!overlay) return;
+            const bars = overlay.querySelectorAll('.voice-bar');
 
             const now = performance.now();
             let s = voiceState.get(sessionId);
@@ -224,20 +222,41 @@ export const voiceJs = `
         }
 
         function setVoiceState(sessionId, state) {
-            const btn = document.getElementById('voice-btn-' + sessionId);
-            if (!btn) return;
-            btn.classList.remove('recording', 'transcribing');
+            var voiceBtn = document.getElementById('voice-btn-' + sessionId);
+            var cancelBtn = document.getElementById('voice-cancel-btn-' + sessionId);
+            var voiceActions = document.getElementById('voice-actions-' + sessionId);
+            var overlay = document.getElementById('voice-overlay-' + sessionId);
+            var input = document.getElementById('input-' + sessionId);
+            var sendBtn = document.getElementById('send-btn-' + sessionId);
+            var keyboardContainer = document.getElementById('keyboard-container-' + sessionId);
 
             if (state === 'idle') {
-                btn.innerHTML = '${iconMicrophone.replace(/'/g, "\\'")}';
+                if (voiceBtn) { voiceBtn.style.display = ''; voiceBtn.blur(); }
+                if (keyboardContainer) keyboardContainer.style.display = '';
+                if (input) input.style.display = '';
+                if (sendBtn) sendBtn.style.display = '';
+                if (cancelBtn) { cancelBtn.style.display = 'none'; cancelBtn.disabled = false; }
+                if (voiceActions) {
+                    voiceActions.style.display = 'none';
+                    voiceActions.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
+                }
+                if (overlay) { overlay.style.display = 'none'; overlay.className = 'voice-overlay'; overlay.innerHTML = ''; }
             } else if (state === 'recording') {
-                btn.classList.add('recording');
-                btn.innerHTML = '<div class="voice-bars">' +
-                    '<span class="voice-bar"></span>'.repeat(5) +
-                    '</div>';
+                if (voiceBtn) voiceBtn.style.display = 'none';
+                if (keyboardContainer) keyboardContainer.style.display = 'none';
+                if (input) input.style.display = 'none';
+                if (sendBtn) sendBtn.style.display = 'none';
+                if (cancelBtn) { cancelBtn.style.display = ''; cancelBtn.disabled = false; }
+                if (voiceActions) {
+                    voiceActions.style.display = '';
+                    voiceActions.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
+                }
+                if (overlay) overlay.style.display = 'flex';
             } else if (state === 'transcribing') {
-                btn.classList.add('transcribing');
-                btn.innerHTML = '${iconMicrophone.replace(/'/g, "\\'")}';
+                if (cancelBtn) cancelBtn.disabled = true;
+                if (voiceActions) {
+                    voiceActions.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
+                }
             }
         }
 
@@ -248,46 +267,33 @@ export const voiceJs = `
         }
 
         function showVoiceOverlay(sessionId, mode, data) {
-            const overlay = document.getElementById('voice-overlay-' + sessionId);
-            const input = document.getElementById('input-' + sessionId);
-            const sendBtn = document.getElementById('send-btn-' + sessionId);
-            if (!overlay || !input) return;
-
-            input.style.display = 'none';
-            if (sendBtn) sendBtn.style.display = 'none';
-            overlay.style.display = 'flex';
+            var overlay = document.getElementById('voice-overlay-' + sessionId);
+            if (!overlay) return;
 
             if (mode === 'timer') {
-                const elapsed = data.elapsed || 0;
-                const max = data.max || MAX_RECORDING_SECONDS;
-                overlay.innerHTML = '<span class="voice-rec-dot"></span>' +
-                    '<span class="voice-timer-elapsed">' + formatRecordingTime(elapsed) + '</span>' +
-                    '<span class="voice-timer-sep"> / </span>' +
-                    '<span class="voice-timer-max">' + formatRecordingTime(max) + '</span>';
-                overlay.className = 'voice-overlay recording';
+                if (!overlay.querySelector('.voice-timer-elapsed')) {
+                    var max = data.max || MAX_RECORDING_SECONDS;
+                    overlay.innerHTML = '<span class="voice-rec-dot"></span>' +
+                        '<span class="voice-timer-elapsed">' + formatRecordingTime(data.elapsed || 0) + '</span>' +
+                        '<span class="voice-timer-sep"> / </span>' +
+                        '<span class="voice-timer-max">' + formatRecordingTime(max) + '</span>' +
+                        '<div class="voice-bars">' + '<span class="voice-bar"></span>'.repeat(5) + '</div>';
+                    overlay.className = 'voice-overlay recording';
+                } else {
+                    var timerEl = overlay.querySelector('.voice-timer-elapsed');
+                    if (timerEl) timerEl.textContent = formatRecordingTime(data.elapsed || 0);
+                }
             } else if (mode === 'progress') {
-                const pct = Math.round(data || 0);
-                const label = pct < 100 ? 'Uploading ' + pct + '%' : 'Transcribing...';
+                var pct = Math.round(data || 0);
+                var label = pct < 100 ? 'Uploading ' + pct + '%' : 'Transcribing...';
                 overlay.innerHTML = '<div class="voice-progress-fill" style="width:' + pct + '%"></div>' +
                     '<span class="voice-progress-label">' + label + '</span>';
                 overlay.className = 'voice-overlay uploading';
             }
         }
 
-        function hideVoiceOverlay(sessionId) {
-            const overlay = document.getElementById('voice-overlay-' + sessionId);
-            const input = document.getElementById('input-' + sessionId);
-            const sendBtn = document.getElementById('send-btn-' + sessionId);
-            if (overlay) {
-                overlay.style.display = 'none';
-                overlay.className = 'voice-overlay';
-            }
-            if (input) input.style.display = '';
-            if (sendBtn) sendBtn.style.display = '';
-        }
-
-        async function stopAndTranscribe(sessionId) {
-            const recorder = voiceRecorders.get(sessionId);
+        async function stopAndProcess(sessionId, mode) {
+            var recorder = voiceRecorders.get(sessionId);
             if (!recorder || !recorder.isRecording) return;
 
             if (recorder.timerInterval) {
@@ -303,34 +309,61 @@ export const voiceJs = `
             showVoiceOverlay(sessionId, 'progress', 0);
 
             try {
-                const blob = await recorder.stopRecording();
+                var blob = await recorder.stopRecording();
                 if (!blob || blob.size === 0) {
-                    hideVoiceOverlay(sessionId);
-                    setVoiceState(sessionId, 'idle');
                     recorder.cleanup();
+                    voiceState.delete(sessionId);
+                    setVoiceState(sessionId, 'idle');
                     return;
                 }
 
-                const text = await recorder.transcribeAudio(blob, (progress) => {
+                var text = await recorder.transcribeAudio(blob, function(progress) {
                     showVoiceOverlay(sessionId, 'progress', progress * 100);
                 });
 
-                hideVoiceOverlay(sessionId);
                 if (text && text.trim()) {
-                    const input = document.getElementById('input-' + sessionId);
+                    var input = document.getElementById('input-' + sessionId);
                     if (input) {
                         input.value = text.trim();
-                        sendAnswer(sessionId);
+                        if (mode === 'send') {
+                            sendAnswer(sessionId);
+                        }
                     }
                 }
             } catch (err) {
                 console.error('Voice transcription error:', err);
-                hideVoiceOverlay(sessionId);
                 showVoiceError(sessionId, err.message || 'Failed');
             } finally {
                 recorder.cleanup();
+                voiceState.delete(sessionId);
                 setVoiceState(sessionId, 'idle');
+                if (mode === 'edit') {
+                    var editInput = document.getElementById('input-' + sessionId);
+                    if (editInput && editInput.value) {
+                        editInput.focus();
+                        handleInputChange(sessionId, editInput.value);
+                    }
+                }
             }
+        }
+
+        function stopAndSendVoice(sessionId) {
+            stopAndProcess(sessionId, 'send');
+        }
+
+        function stopAndEditVoice(sessionId) {
+            stopAndProcess(sessionId, 'edit');
+        }
+
+        function cancelVoiceRecording(sessionId) {
+            var recorder = voiceRecorders.get(sessionId);
+            if (recorder) {
+                if (recorder.timerInterval) clearInterval(recorder.timerInterval);
+                if (recorder.maxTimeout) clearTimeout(recorder.maxTimeout);
+                recorder.cleanup();
+            }
+            voiceState.delete(sessionId);
+            setVoiceState(sessionId, 'idle');
         }
 
         async function toggleVoiceRecording(sessionId) {
@@ -342,7 +375,7 @@ export const voiceJs = `
             let recorder = voiceRecorders.get(sessionId);
 
             if (recorder && recorder.isRecording) {
-                await stopAndTranscribe(sessionId);
+                await stopAndProcess(sessionId, 'send');
                 return;
             }
 
@@ -364,12 +397,12 @@ export const voiceJs = `
                     showVoiceOverlay(sessionId, 'timer', { elapsed: recorder.elapsedSeconds, max: MAX_RECORDING_SECONDS });
                 }, 1000);
 
-                recorder.maxTimeout = setTimeout(() => {
-                    stopAndTranscribe(sessionId);
+                recorder.maxTimeout = setTimeout(function() {
+                    stopAndProcess(sessionId, 'send');
                 }, MAX_RECORDING_SECONDS * 1000);
             } catch (err) {
                 console.error('Voice recording error:', err);
-                hideVoiceOverlay(sessionId);
+                setVoiceState(sessionId, 'idle');
                 showVoiceError(sessionId, 'Mic denied');
                 recorder.cleanup();
             }

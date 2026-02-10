@@ -32,28 +32,116 @@ export const voiceCss = `
     transform: none;
 }
 
-/* Recording state - pulsing red/orange ring */
-.input-area .voice-btn.recording {
-    border-color: #f97316;
-    animation: voice-pulse 1.5s ease-in-out infinite;
+/* Cancel button - replaces voice+keyboard during recording */
+.input-area .voice-cancel-btn {
+    background: transparent;
+    border: 1px solid var(--border-dim);
+    border-radius: 50%;
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s, box-shadow 0.2s;
+    padding: 0;
+    color: var(--text-dim);
+    font-size: 0;
+    letter-spacing: 0;
+    text-transform: none;
+    font-weight: normal;
 }
-@keyframes voice-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.4); }
-    50% { box-shadow: 0 0 0 6px rgba(249, 115, 22, 0); }
+.input-area .voice-cancel-btn svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+}
+.input-area .voice-cancel-btn:hover {
+    border-color: #f97316;
+    color: #f97316;
+    box-shadow: 0 0 12px rgba(249, 115, 22, 0.3);
+    transform: none;
+}
+.input-area .voice-cancel-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
 }
 
-/* Transcribing state - spinning cyan border */
-.input-area .voice-btn.transcribing {
+/* Voice action buttons container */
+.voice-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+/* Edit button - ghost/outline style */
+.input-area .voice-edit-btn {
+    background: transparent;
+    border: 1px solid var(--border-dim);
+    border-radius: 8px;
+    padding: 10px 16px;
+    color: var(--text-mid);
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    transition: border-color 0.2s, color 0.2s, box-shadow 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+.input-area .voice-edit-btn svg {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+}
+.input-area .voice-edit-btn:hover {
     border-color: var(--accent-cyan);
-    animation: voice-spin 1s linear infinite;
-    border-style: dashed;
+    color: var(--accent-cyan);
+    box-shadow: 0 0 12px var(--glow-cyan);
+    transform: none;
 }
-@keyframes voice-spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+.input-area .voice-edit-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+    border-color: var(--border-dim);
+    color: var(--text-dim);
 }
-.input-area .voice-btn.transcribing svg {
-    animation: voice-spin 1s linear infinite reverse;
+
+/* Voice send button - primary gradient */
+.input-area .voice-send-btn {
+    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    color: var(--bg-abyss);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 12px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: box-shadow 0.2s;
+    white-space: nowrap;
+}
+.input-area .voice-send-btn:hover {
+    box-shadow: 0 8px 24px var(--glow-cyan);
+    transform: none;
+}
+.input-area .voice-send-btn:disabled {
+    background: var(--bg-surface);
+    color: var(--text-dim);
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
 }
 
 /* Error flash */
@@ -74,6 +162,10 @@ export const voiceCss = `
     height: 4px;
     background: var(--accent-cyan);
     border-radius: 1px;
+}
+/* Waveform bars inside overlay - push to right */
+.voice-overlay .voice-bars {
+    margin-left: auto;
 }
 
 /* Voice overlay - replaces input during recording/uploading */
@@ -141,6 +233,23 @@ export const voiceCss = `
     .voice-overlay {
         padding: 8px 10px;
         font-size: 12px;
+    }
+    .input-area .voice-cancel-btn {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+    }
+    .input-area .voice-cancel-btn svg {
+        width: 14px;
+        height: 14px;
+    }
+    .input-area .voice-edit-btn {
+        padding: 8px 10px;
+        font-size: 11px;
+    }
+    .input-area .voice-send-btn {
+        padding: 8px 12px;
+        font-size: 11px;
     }
 }
 `;

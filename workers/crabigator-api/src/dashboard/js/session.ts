@@ -1,5 +1,5 @@
 // Dashboard JavaScript - session
-import { iconMicrophone, iconKeyboard } from '../icons';
+import { iconMicrophone, iconKeyboard, iconClose, iconPencil } from '../icons';
 
 export const sessionJs = `
         async function loadSessions() {
@@ -234,7 +234,7 @@ export const sessionJs = `
                                     title="Voice input">
                                 ${iconMicrophone}
                             </button>
-                            <div class="keyboard-container">
+                            <div class="keyboard-container" id="keyboard-container-\${session.id}">
                                 <button type="button" class="keyboard-btn"
                                         onclick="toggleKeyboardPopover('\${session.id}')"
                                         title="Keyboard shortcuts">
@@ -251,11 +251,29 @@ export const sessionJs = `
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'enter')"><kbd>Enter</kbd> Submit</button>
                                 </div>
                             </div>
+                            <button type="button" class="voice-cancel-btn" id="voice-cancel-btn-\${session.id}"
+                                    onclick="cancelVoiceRecording('\${session.id}')"
+                                    title="Cancel recording"
+                                    style="display:none">
+                                ${iconClose}
+                            </button>
                             <div class="voice-overlay" id="voice-overlay-\${session.id}"></div>
                             <input type="text" id="input-\${session.id}"
                                    placeholder="Type a command or answer..."
                                    oninput="handleInputChange('\${session.id}', this.value)"
                                    onkeydown="handleInputKeydown(event, '\${session.id}')">
+                            <div class="voice-actions" id="voice-actions-\${session.id}" style="display:none">
+                                <button type="button" class="voice-edit-btn"
+                                        onclick="stopAndEditVoice('\${session.id}')"
+                                        title="Edit before sending">
+                                    ${iconPencil}
+                                    Edit
+                                </button>
+                                <button type="button" class="voice-send-btn"
+                                        onclick="stopAndSendVoice('\${session.id}')">
+                                    Send
+                                </button>
+                            </div>
                             <button type="button" id="send-btn-\${session.id}" onclick="sendAnswer('\${session.id}')" disabled>Send</button>
                         </div>
                     </div>
