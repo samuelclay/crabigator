@@ -1,4 +1,4 @@
-.PHONY: run build check test test-update clean resume continue lint update release codex claude reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage
+.PHONY: run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux
 
 PROVIDER_FILE := .crabigator-provider
 DEFAULT_PROVIDER := claude
@@ -25,9 +25,17 @@ codex:
 	@echo "codex" > $(PROVIDER_FILE)
 	@$(MAKE) run
 
+codex-yolo:
+	@echo "codex" > $(PROVIDER_FILE)
+	RUST_BACKTRACE=1 cargo run -- codex --full-auto
+
 claude:
 	@echo "claude" > $(PROVIDER_FILE)
 	@$(MAKE) run
+
+claude-yolo:
+	@echo "claude" > $(PROVIDER_FILE)
+	RUST_BACKTRACE=1 cargo run -- claude --dangerously-skip-permissions
 
 build:
 	cargo build
@@ -80,6 +88,9 @@ typecheck:
 
 cf-usage:
 	@./scripts/cf-usage.sh
+
+e2e-codex-tmux:
+	@./scripts/e2e-codex-tmux.sh
 
 reset-usage:
 	@echo "Resetting all usage for today..."

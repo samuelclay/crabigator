@@ -368,6 +368,17 @@ cat /tmp/crabigator-*/scrollback.log
 tmux kill-session -t crab
 ```
 
+### Codex tmux Workflow (No Browser)
+
+When the user says "run end-to-end test with tmux", default to this Codex flow:
+
+1. Start Codex in tmux: `tmux new-session -d -s crab-e2e "cd /path/to/project && crabigator codex"`.
+2. Confirm the session directory from startup output (debug builds show `/tmp/crabigator-<id>/`) or by reading the newest `inspect.json`.
+3. Trigger a permission prompt by asking Codex to run a command that requires escalation; verify `inspect.json` state becomes `permission` and the pane shows the approval menu.
+4. Answer the permission prompt from tmux (approve or deny) and verify state transitions back out of `permission`.
+5. Trigger `request_user_input`; if it is available, verify `question` behavior and answer via tmux; if unavailable in Default mode, verify the attempted tool call and the "unavailable" tool output in the Codex JSONL log.
+6. Validate everything via local files only (`inspect.json`, `screen.txt`, `scrollback.log`, `~/.codex/sessions/...jsonl`) without opening a web browser.
+
 ### Special Keys
 
 ```bash
