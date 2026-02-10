@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use crate::platforms::{PlatformStats, SessionState};
+use crate::platforms::{ActivePrompt, PermissionDetails, PlatformStats, Question, SessionState};
 
 /// Source of a message count
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +60,7 @@ pub struct CodexState {
     pub prompt_counts: MessageCounters,
     pub completion_counts: MessageCounters,
     pub stats: PlatformStats,
+    active_prompt_call_id: Option<String>,
 }
 
 impl Default for CodexState {
@@ -73,6 +74,7 @@ impl Default for CodexState {
             prompt_counts: MessageCounters::default(),
             completion_counts: MessageCounters::default(),
             stats: PlatformStats::default(),
+            active_prompt_call_id: None,
         }
     }
 }
@@ -148,7 +150,14 @@ fn handle_response_item(state: &mut CodexState, value: &Value) {
         }
         Some("function_call") => {
             if let Some(name) = payload.get("name").and_then(|v| v.as_str()) {
-                record_tool_call(state, name);
+                let call_id = payload.get("call_id").and_then(|v| v.as_str());
+                let tool_input = parse_function_call_input(payload);
+                record_tool_call(state, name, call_id, tool_input);
+            }
+        }
+        Some("function_call_output") => {
+            if let Some(call_id) = payload.get("call_id").and_then(|v| v.as_str()) {
+                record_tool_output(state, call_id);
             }
         }
         _ => {}
@@ -193,6 +202,7 @@ fn record_prompt(state: &mut CodexState, source: MessageSource) {
         matches!(source, MessageSource::ResponseItem)
     };
     if should_set_state {
+        clear_active_prompt(state);
         set_state(state, SessionState::Thinking);
     }
 }
@@ -201,17 +211,37 @@ fn record_prompt(state: &mut CodexState, source: MessageSource) {
 fn record_completion(state: &mut CodexState, source: MessageSource) {
     state.completion_counts.record(source);
     state.stats.completions = state.completion_counts.effective();
+    clear_active_prompt(state);
     set_state(state, SessionState::Complete);
 }
 
 /// Record a tool call
-fn record_tool_call(state: &mut CodexState, name: &str) {
+fn record_tool_call(
+    state: &mut CodexState,
+    name: &str,
+    call_id: Option<&str>,
+    tool_input: Option<Value>,
+) {
     let entry = state.stats.tools.entry(name.to_string()).or_insert(0);
     *entry = entry.saturating_add(1);
     state.stats.tool_timestamps.push(now_unix());
+
     if is_question_tool(name) {
+        set_question_prompt(state, call_id, tool_input.as_ref());
         set_state(state, SessionState::Question);
+    } else if is_permission_tool_call(tool_input.as_ref()) {
+        set_permission_prompt(state, name, call_id, tool_input);
+        set_state(state, SessionState::Permission);
     } else {
+        clear_active_prompt(state);
+        set_state(state, SessionState::Thinking);
+    }
+}
+
+/// Record tool output and clear pending prompt state when the prompt is answered.
+fn record_tool_output(state: &mut CodexState, call_id: &str) {
+    if state.active_prompt_call_id.as_deref() == Some(call_id) {
+        clear_active_prompt(state);
         set_state(state, SessionState::Thinking);
     }
 }
@@ -219,6 +249,78 @@ fn record_tool_call(state: &mut CodexState, name: &str) {
 /// Check if a tool is a question tool
 fn is_question_tool(name: &str) -> bool {
     matches!(name, "AskUserQuestion" | "ask_user" | "request_user_input")
+}
+
+/// Parse function_call arguments from payload.
+fn parse_function_call_input(payload: &serde_json::Map<String, Value>) -> Option<Value> {
+    match payload.get("arguments") {
+        Some(Value::String(raw)) => serde_json::from_str(raw).ok(),
+        Some(value) => Some(value.clone()),
+        None => None,
+    }
+}
+
+/// Check if a tool call is requesting an escalated permission prompt.
+fn is_permission_tool_call(tool_input: Option<&Value>) -> bool {
+    let Some(input) = tool_input else {
+        return false;
+    };
+
+    if input
+        .get("sandbox_permissions")
+        .and_then(|v| v.as_str())
+        .is_some_and(|mode| mode == "require_escalated")
+    {
+        return true;
+    }
+
+    input
+        .get("with_escalated_permissions")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Set active prompt state for a question tool.
+fn set_question_prompt(state: &mut CodexState, call_id: Option<&str>, tool_input: Option<&Value>) {
+    clear_active_prompt(state);
+
+    let questions = tool_input
+        .and_then(|input| input.get("questions"))
+        .and_then(|questions| serde_json::from_value::<Vec<Question>>(questions.clone()).ok())
+        .unwrap_or_default();
+
+    state.stats.active_prompt = Some(ActivePrompt::Question { questions });
+    state.stats.permission = None;
+    state.active_prompt_call_id = call_id.map(|id| id.to_string());
+}
+
+/// Set active prompt state for an escalated permission tool.
+fn set_permission_prompt(
+    state: &mut CodexState,
+    name: &str,
+    call_id: Option<&str>,
+    tool_input: Option<Value>,
+) {
+    clear_active_prompt(state);
+
+    let permission_input = tool_input.unwrap_or(Value::Null);
+    state.stats.active_prompt = Some(ActivePrompt::Permission {
+        tool_name: name.to_string(),
+        tool_input: Some(permission_input.clone()),
+    });
+    state.stats.permission = Some(PermissionDetails {
+        tool: name.to_string(),
+        input: permission_input,
+        suggestions: vec![],
+    });
+    state.active_prompt_call_id = call_id.map(|id| id.to_string());
+}
+
+/// Clear active prompt and associated permission details.
+fn clear_active_prompt(state: &mut CodexState) {
+    state.active_prompt_call_id = None;
+    state.stats.active_prompt = None;
+    state.stats.permission = None;
 }
 
 /// Check if a message is a bootstrap message (should not count as user prompt)
@@ -266,5 +368,157 @@ pub fn reset_state(state: &mut CodexState, path: PathBuf, session_started_at: Op
     state.prompt_counts = MessageCounters::default();
     state.completion_counts = MessageCounters::default();
     state.stats = PlatformStats::default();
+    state.active_prompt_call_id = None;
     set_last_updated(state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn tracks_permission_prompt_for_escalated_tool_calls() {
+        let mut state = CodexState::default();
+
+        update_from_log(
+            &mut state,
+            &json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "call_id": "call_perm",
+                    "arguments": "{\"cmd\":\"tmux ls\",\"sandbox_permissions\":\"require_escalated\",\"justification\":\"Allow?\"}"
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(state.stats.state, SessionState::Permission);
+        assert_eq!(state.active_prompt_call_id.as_deref(), Some("call_perm"));
+        assert!(matches!(
+            state.stats.active_prompt.as_ref(),
+            Some(ActivePrompt::Permission { tool_name, .. }) if tool_name == "exec_command"
+        ));
+
+        let permission = state.stats.permission.as_ref().expect("permission details");
+        assert_eq!(permission.tool, "exec_command");
+        assert_eq!(
+            permission
+                .input
+                .get("sandbox_permissions")
+                .and_then(|v| v.as_str()),
+            Some("require_escalated")
+        );
+
+        update_from_log(
+            &mut state,
+            &json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call_perm",
+                    "output": "approved"
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(state.stats.state, SessionState::Thinking);
+        assert!(state.stats.active_prompt.is_none());
+        assert!(state.stats.permission.is_none());
+        assert!(state.active_prompt_call_id.is_none());
+    }
+
+    #[test]
+    fn keeps_permission_prompt_for_unrelated_tool_outputs() {
+        let mut state = CodexState::default();
+
+        update_from_log(
+            &mut state,
+            &json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "call_id": "call_perm",
+                    "arguments": "{\"cmd\":\"tmux ls\",\"sandbox_permissions\":\"require_escalated\"}"
+                }
+            })
+            .to_string(),
+        );
+
+        update_from_log(
+            &mut state,
+            &json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call_other",
+                    "output": "done"
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(state.stats.state, SessionState::Permission);
+        assert_eq!(state.active_prompt_call_id.as_deref(), Some("call_perm"));
+        assert!(matches!(
+            state.stats.active_prompt.as_ref(),
+            Some(ActivePrompt::Permission { .. })
+        ));
+    }
+
+    #[test]
+    fn tracks_question_prompt_for_request_user_input_calls() {
+        let mut state = CodexState::default();
+
+        update_from_log(
+            &mut state,
+            &json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "request_user_input",
+                    "call_id": "call_question",
+                    "arguments": "{\"questions\":[{\"header\":\"Scope\",\"id\":\"scope\",\"question\":\"Which scope?\",\"options\":[{\"label\":\"A\",\"description\":\"Option A\"},{\"label\":\"B\",\"description\":\"Option B\"}]}]}"
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(state.stats.state, SessionState::Question);
+        assert_eq!(
+            state.active_prompt_call_id.as_deref(),
+            Some("call_question")
+        );
+
+        match state.stats.active_prompt.as_ref() {
+            Some(ActivePrompt::Question { questions }) => {
+                assert_eq!(questions.len(), 1);
+                assert_eq!(questions[0].question, "Which scope?");
+                assert_eq!(questions[0].options.len(), 2);
+                assert_eq!(questions[0].options[0].label, "A");
+            }
+            other => panic!("expected question prompt, got {other:?}"),
+        }
+
+        update_from_log(
+            &mut state,
+            &json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call_question",
+                    "output": "1"
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(state.stats.state, SessionState::Thinking);
+        assert!(state.stats.active_prompt.is_none());
+        assert!(state.stats.permission.is_none());
+    }
 }
