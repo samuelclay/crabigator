@@ -27,7 +27,7 @@ codex:
 
 codex-yolo:
 	@echo "codex" > $(PROVIDER_FILE)
-	RUST_BACKTRACE=1 cargo run -- codex --full-auto
+	env -u CODEX_THREAD_ID -u CODEX_ROLLOUT_PATH RUST_BACKTRACE=1 cargo run -- codex --dangerously-bypass-approvals-and-sandbox
 
 claude:
 	@echo "claude" > $(PROVIDER_FILE)

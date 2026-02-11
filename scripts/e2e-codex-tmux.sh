@@ -13,8 +13,11 @@ Options:
   --session NAME      tmux session name (default: crab-e2e-codex)
   --project DIR       project directory to run crabigator from (default: current dir)
   --timeout SEC       max seconds to wait for state transitions (default: 180)
+  --full-auto         launch nested Codex with --full-auto
+  --strict-question   require a real question prompt (no unavailable fallback)
   --keep              keep tmux session running after test
   --no-approve        do not auto-approve permission prompt
+  --no-answer         do not auto-answer question prompt
   --help              show this help
 
 Exit code is non-zero if required transitions/signals are not observed.
@@ -34,6 +37,9 @@ PROJECT_DIR="$(pwd)"
 TIMEOUT_SECS=180
 KEEP_SESSION=0
 AUTO_APPROVE=1
+AUTO_ANSWER=1
+CODEX_FULL_AUTO=0
+STRICT_QUESTION=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -49,12 +55,24 @@ while [[ $# -gt 0 ]]; do
       TIMEOUT_SECS="${2:-}"
       shift 2
       ;;
+    --full-auto)
+      CODEX_FULL_AUTO=1
+      shift
+      ;;
+    --strict-question)
+      STRICT_QUESTION=1
+      shift
+      ;;
     --keep)
       KEEP_SESSION=1
       shift
       ;;
     --no-approve)
       AUTO_APPROVE=0
+      shift
+      ;;
+    --no-answer)
+      AUTO_ANSWER=0
       shift
       ;;
     --help|-h)
@@ -102,12 +120,18 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -x "$PROJECT_DIR/target/debug/crabigator" ]]; then
-  launch_cmd="target/debug/crabigator codex"
+  launch_cmd_parts=("target/debug/crabigator" "codex")
 else
-  launch_cmd="cargo run -- codex"
+  launch_cmd_parts=("cargo" "run" "--" "codex")
+fi
+
+if [[ "$CODEX_FULL_AUTO" -eq 1 ]]; then
+  launch_cmd_parts+=("--full-auto")
 fi
 
 printf -v q_project '%q' "$PROJECT_DIR"
+printf -v launch_base_cmd '%q ' "${launch_cmd_parts[@]}"
+launch_cmd="env -u CODEX_THREAD_ID -u CODEX_ROLLOUT_PATH ${launch_base_cmd% }"
 echo "Starting tmux session: $SESSION_NAME"
 tmux new-session -d -s "$SESSION_NAME" "cd $q_project && $launch_cmd"
 
@@ -143,13 +167,32 @@ if [[ ! -f "$inspect_json" ]]; then
   exit 1
 fi
 
-prompt="Run this E2E tmux test exactly: 1) Use exec_command to run: tmux send-keys -t $SESSION_NAME:0 C-m. 2) If sandbox denies, rerun with sandbox_permissions=require_escalated and stop at permission prompt. 3) Then call request_user_input with one question and two options. 4) Stop."
+codex_ready=0
+echo "Waiting for nested Codex prompt..."
+for _ in $(seq 1 40); do
+  pane="$(tmux capture-pane -pt "$SESSION_NAME:0" -S -220 || true)"
+  if printf '%s\n' "$pane" | rg -q 'context left'; then
+    codex_ready=1
+    break
+  fi
+  sleep 1
+done
+
+if [[ "$codex_ready" -ne 1 ]]; then
+  echo "Warning: did not detect nested Codex prompt before sending test input." >&2
+fi
+
+marker="CRAB_E2E_${RANDOM}_$(date +%s)"
+prompt="E2E marker: ${marker}. Run this exact test: 1) Use exec_command with cmd='open -a TextEdit', sandbox_permissions='require_escalated', and justification='Codex tmux E2E permission check'. 2) After that permission prompt is answered, call request_user_input with one question and two options. 3) Stop."
 echo "Sending E2E prompt to nested Codex session..."
-tmux send-keys -t "$SESSION_NAME:0" "$prompt" Enter
+tmux send-keys -t "$SESSION_NAME:0" "$prompt"
+sleep 1
+tmux send-keys -t "$SESSION_NAME:0" C-m
 
 seen_permission=0
 seen_question=0
 approved_permission=0
+answered_question=0
 last_state=""
 
 echo "Waiting for state transitions (timeout: ${TIMEOUT_SECS}s)..."
@@ -164,16 +207,27 @@ for _ in $(seq 1 "$TIMEOUT_SECS"); do
     seen_permission=1
     if [[ "$AUTO_APPROVE" -eq 1 && "$approved_permission" -eq 0 ]]; then
       echo "Permission prompt detected; approving option 1 (Enter)."
-      tmux send-keys -t "$SESSION_NAME:0" Enter
+      tmux send-keys -t "$SESSION_NAME:0" C-m
       approved_permission=1
     fi
   fi
 
   if [[ "$state" == "question" ]]; then
     seen_question=1
+    if [[ "$AUTO_ANSWER" -eq 1 && "$answered_question" -eq 0 ]]; then
+      echo "Question prompt detected; selecting option 1."
+      tmux send-keys -t "$SESSION_NAME:0" 1 C-m
+      answered_question=1
+    fi
   fi
 
-  if [[ "$approved_permission" -eq 1 && "$state" != "permission" && "$state" == "complete" ]]; then
+  if [[ "$approved_permission" -eq 1 && "$state" == "complete" ]]; then
+    if [[ "$AUTO_ANSWER" -eq 0 || "$seen_question" -eq 0 || "$answered_question" -eq 1 ]]; then
+      break
+    fi
+  fi
+
+  if [[ "$approved_permission" -eq 1 && "$answered_question" -eq 1 && "$state" != "permission" && "$state" != "question" ]]; then
     break
   fi
 
@@ -194,18 +248,40 @@ else
   done
 fi
 
+target_logs=("${candidate_logs[@]}")
+marker_logs=()
+if [[ "${#candidate_logs[@]}" -gt 0 ]]; then
+  for log in "${candidate_logs[@]}"; do
+    if rg -q "$marker" "$log"; then
+      marker_logs+=("$log")
+    fi
+  done
+fi
+
+if [[ "${#marker_logs[@]}" -gt 0 ]]; then
+  target_logs=("${marker_logs[@]}")
+  echo "Marker-matched Codex logs:"
+  for log in "${target_logs[@]}"; do
+    echo "  - $log"
+  done
+fi
+
 req_call_seen=0
+question_call_seen=0
 req_unavailable_seen=0
 escalated_call_seen=0
 
-if [[ "${#candidate_logs[@]}" -gt 0 ]]; then
-  if rg -q '"type":"function_call","name":"request_user_input"' "${candidate_logs[@]}"; then
+if [[ "${#target_logs[@]}" -gt 0 ]]; then
+  if rg -q '"type":"function_call","name":"request_user_input"' "${target_logs[@]}"; then
     req_call_seen=1
   fi
-  if rg -q 'request_user_input is unavailable in Default mode' "${candidate_logs[@]}"; then
+  if rg -q '"type":"function_call","name":"(request_user_input|AskUserQuestion|ask_user)"' "${target_logs[@]}"; then
+    question_call_seen=1
+  fi
+  if rg -q 'request_user_input is unavailable in Default mode' "${target_logs[@]}"; then
     req_unavailable_seen=1
   fi
-  if rg -q '"sandbox_permissions":"require_escalated"' "${candidate_logs[@]}"; then
+  if rg -q '"sandbox_permissions":"require_escalated"' "${target_logs[@]}"; then
     escalated_call_seen=1
   fi
 fi
@@ -213,6 +289,7 @@ fi
 echo
 echo "=== E2E Summary ==="
 echo "tmux session:            $SESSION_NAME"
+echo "launch mode:             $([[ "$CODEX_FULL_AUTO" -eq 1 ]] && echo full-auto || echo default)"
 echo "session directory:       $session_dir"
 echo "inspect.json:            $inspect_json"
 echo "screen.txt:              $screen_txt"
@@ -220,7 +297,9 @@ echo "scrollback.log:          $scrollback_log"
 echo "saw state=permission:    $seen_permission"
 echo "saw state=question:      $seen_question"
 echo "auto-approved permission:$approved_permission"
+echo "auto-answered question:  $answered_question"
 echo "saw request_user_input:  $req_call_seen"
+echo "saw any question tool:   $question_call_seen"
 echo "request unavailable msg: $req_unavailable_seen"
 echo "saw escalated call:      $escalated_call_seen"
 
@@ -233,13 +312,24 @@ if [[ "$escalated_call_seen" -ne 1 ]]; then
   echo "FAIL: did not observe an escalated tool call in Codex logs" >&2
   ok=0
 fi
-if [[ "$req_call_seen" -ne 1 ]]; then
-  echo "FAIL: did not observe request_user_input function call" >&2
+if [[ "$question_call_seen" -ne 1 ]]; then
+  echo "FAIL: did not observe a question tool call (AskUserQuestion/request_user_input)" >&2
   ok=0
 fi
-if [[ "$seen_question" -ne 1 && "$req_unavailable_seen" -ne 1 ]]; then
-  echo "FAIL: did not observe question state and no explicit unavailable message" >&2
-  ok=0
+if [[ "$STRICT_QUESTION" -eq 1 ]]; then
+  if [[ "$seen_question" -ne 1 ]]; then
+    echo "FAIL: strict question mode requires state=question" >&2
+    ok=0
+  fi
+  if [[ "$AUTO_ANSWER" -eq 1 && "$answered_question" -ne 1 ]]; then
+    echo "FAIL: strict question mode expected auto-answer to be sent" >&2
+    ok=0
+  fi
+else
+  if [[ "$seen_question" -ne 1 && "$req_unavailable_seen" -ne 1 ]]; then
+    echo "FAIL: did not observe question state and no explicit unavailable message" >&2
+    ok=0
+  fi
 fi
 
 if [[ "$ok" -ne 1 ]]; then
