@@ -1,8 +1,5 @@
 // Dashboard JavaScript - sessions popover
 export const sessionsPopoverJs = `
-        // Duration update interval for sessions popover
-        let sessionsPopoverDurationInterval = null;
-
         function toggleSessionsPopover() {
             const popover = document.getElementById('sessions-popover');
             const btn = document.getElementById('sessions-btn');
@@ -14,14 +11,6 @@ export const sessionsPopoverJs = `
                 closeStylePopover();
                 closeSettingsPopover();
                 updateSessionsPopover();
-                // Start duration update interval
-                sessionsPopoverDurationInterval = setInterval(updateSessionsPopoverDurations, 60000);
-            } else {
-                // Stop duration updates when closed
-                if (sessionsPopoverDurationInterval) {
-                    clearInterval(sessionsPopoverDurationInterval);
-                    sessionsPopoverDurationInterval = null;
-                }
             }
         }
 
@@ -30,10 +19,6 @@ export const sessionsPopoverJs = `
             const btn = document.getElementById('sessions-btn');
             if (popover) popover.classList.remove('visible');
             if (btn) btn.classList.remove('active');
-            if (sessionsPopoverDurationInterval) {
-                clearInterval(sessionsPopoverDurationInterval);
-                sessionsPopoverDurationInterval = null;
-            }
         }
 
         function updateSessionsPopover() {
@@ -43,6 +28,12 @@ export const sessionsPopoverJs = `
             if (allSessions.length === 0) {
                 content.innerHTML = '<div class="sessions-empty">No active sessions</div>';
                 return;
+            }
+
+            // Strip .local suffix from device names for display
+            function cleanDeviceName(name) {
+                if (!name) return '';
+                return name.replace(/\\.local$/, '');
             }
 
             // Group sessions by cwd
@@ -59,80 +50,104 @@ export const sessionsPopoverJs = `
                 groups.get(cwd).push({
                     id: session.id,
                     title: liveData?.title || session.title || 'Untitled',
-                    branch: liveData?.git?.branch || '',
                     state: liveData?.state || session.state || 'ready',
-                    startedAt: session.started_at,
-                    stats: liveData?.stats || null
+                    stats: liveData?.stats || session.stats || null,
+                    deviceName: session.device_name || liveData?.deviceName || null
                 });
             }
 
-            // Render groups
-            let html = '';
-            for (const [cwd, sessionList] of groups) {
-                const projectName = cwd.split('/').pop() || cwd;
-                html += \`
-                    <div class="sessions-group">
-                        <div class="sessions-group-header">
-                            <span class="sessions-group-name">\${escapeHtml(projectName)}</span>
-                            <span class="sessions-group-path">\${escapeHtml(cwd)}</span>
-                            <span class="sessions-group-count">\${sessionList.length}</span>
+            // Render a single session item
+            function renderSessionItem(session) {
+                const isFocused = singleSessionId && session.id === singleSessionId;
+                const stats = session.stats;
+                const sessionTime = stats?.work_seconds ? formatDuration(stats.work_seconds) : '';
+                const thinkingTime = stats?.thinking_seconds ? formatDuration(stats.thinking_seconds) : '';
+                const promptsCount = stats?.prompts || 0;
+                const promptsElapsed = stats?.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
+                const completionsCount = stats?.completions || 0;
+                const completionsElapsed = stats?.completions_changed_at ? formatElapsed(stats.completions_changed_at) : '';
+
+                // Dim the stats row when no meaningful data
+                const hasStats = sessionTime || thinkingTime || promptsCount > 0 || completionsCount > 0;
+
+                return \`
+                    <div class="session-item\${isFocused ? ' focused' : ''}" onclick="selectSessionFromPopover('\${session.id}')">
+                        <div class="session-item-row">
+                            <span class="session-item-title">\${escapeHtml(session.title)}</span>
+                            <span class="session-item-state \${session.state}">\${session.state}</span>
                         </div>
+                        <div class="session-item-stats\${hasStats ? '' : ' dim'}">
+                            <span class="si-stat"><span class="si-icon" style="color:#58a6ff">◉</span>\${sessionTime || '—'}</span>
+                            <span class="si-stat"><span class="si-icon" style="color:#3fb950">◐</span>\${thinkingTime || '—'}</span>
+                            <span class="si-stat"><span class="si-icon" style="color:#8b949e">⟩</span>\${promptsCount}\${promptsElapsed ? '<span class="si-elapsed">' + promptsElapsed + '</span>' : ''}</span>
+                            <span class="si-stat"><span class="si-icon" style="color:#8b949e">⋗</span>\${completionsCount}\${completionsElapsed ? '<span class="si-elapsed">' + completionsElapsed + '</span>' : ''}</span>
+                        </div>
+                    </div>
                 \`;
+            }
 
-                for (const session of sessionList) {
-                    const isFocused = singleSessionId && session.id === singleSessionId;
-                    const stats = session.stats;
+            // Check if there are multiple devices
+            const allDeviceNames = new Set(allSessions.map(s => s.device_name).filter(Boolean));
+            const multiDevice = allDeviceNames.size > 1;
 
-                    // Format stats for display
-                    const sessionTime = stats?.work_seconds ? formatDuration(stats.work_seconds) : '';
-                    const thinkingTime = stats?.thinking_seconds ? formatDuration(stats.thinking_seconds) : '';
-                    const promptsCount = stats?.prompts || 0;
-                    const promptsElapsed = stats?.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
-                    const completionsCount = stats?.completions || 0;
-                    const completionsElapsed = stats?.completions_changed_at ? formatElapsed(stats.completions_changed_at) : '';
+            let html = '';
 
-                    html += \`
-                        <div class="session-item\${isFocused ? ' focused' : ''}" onclick="selectSessionFromPopover('\${session.id}')">
-                            <div class="session-item-row">
-                                <span class="session-item-title">\${escapeHtml(session.title)}</span>
-                                <span class="session-item-state \${session.state}">\${session.state}</span>
-                            </div>
-                            <div class="session-item-stats">
-                                <span class="si-stat"><span style="color:#58a6ff">◉</span> \${sessionTime || '—'}</span>
-                                <span class="si-stat"><span style="color:#3fb950">◐</span> \${thinkingTime || '—'}</span>
-                                <span class="si-stat"><span style="color:#8b949e">⟩</span> \${promptsCount}\${promptsElapsed ? ' <span class="si-elapsed">' + promptsElapsed + '</span>' : ''}</span>
-                                <span class="si-stat"><span style="color:#8b949e">⋗</span> \${completionsCount}\${completionsElapsed ? ' <span class="si-elapsed">' + completionsElapsed + '</span>' : ''}</span>
-                            </div>
-                        </div>
-                    \`;
+            if (multiDevice) {
+                // Device > Project > Sessions
+                const deviceGroups = new Map();
+                for (const [cwd, sessionList] of groups) {
+                    for (const session of sessionList) {
+                        const device = session.deviceName || 'Unknown';
+                        if (!deviceGroups.has(device)) deviceGroups.set(device, new Map());
+                        const dg = deviceGroups.get(device);
+                        if (!dg.has(cwd)) dg.set(cwd, []);
+                        dg.get(cwd).push(session);
+                    }
                 }
-                html += '</div>';
+
+                for (const [device, projects] of deviceGroups) {
+                    html += \`
+                        <div class="sessions-device-section">
+                            <div class="sessions-device-header"><span class="sessions-device-dot">●</span> \${escapeHtml(cleanDeviceName(device))}</div>
+                            <div class="sessions-device-projects">
+                    \`;
+                    for (const [cwd, sessionList] of projects) {
+                        const projectName = cwd.split('/').pop() || cwd;
+                        html += \`
+                            <div class="sessions-group">
+                                <div class="sessions-group-header">
+                                    <span class="sessions-group-name">\${escapeHtml(projectName)}</span>
+                                    <span class="sessions-group-path">\${escapeHtml(cwd)}</span>
+                                    <span class="sessions-group-count">\${sessionList.length}</span>
+                                </div>
+                        \`;
+                        for (const session of sessionList) {
+                            html += renderSessionItem(session);
+                        }
+                        html += '</div>';
+                    }
+                    html += '</div></div>';
+                }
+            } else {
+                // Single device — project groups only
+                for (const [cwd, sessionList] of groups) {
+                    const projectName = cwd.split('/').pop() || cwd;
+                    html += \`
+                        <div class="sessions-group">
+                            <div class="sessions-group-header">
+                                <span class="sessions-group-name">\${escapeHtml(projectName)}</span>
+                                <span class="sessions-group-path">\${escapeHtml(cwd)}</span>
+                                <span class="sessions-group-count">\${sessionList.length}</span>
+                            </div>
+                    \`;
+                    for (const session of sessionList) {
+                        html += renderSessionItem(session);
+                    }
+                    html += '</div>';
+                }
             }
 
             content.innerHTML = html;
-        }
-
-        function formatSessionDuration(startedAt) {
-            if (!startedAt) return '';
-            const now = Math.floor(Date.now() / 1000);
-            const elapsed = now - startedAt;
-            if (elapsed < 60) return 'just now';
-            const mins = Math.floor(elapsed / 60);
-            if (mins < 60) return mins + 'm';
-            const hours = Math.floor(mins / 60);
-            const remainingMins = mins % 60;
-            if (hours < 24) return hours + 'h ' + remainingMins + 'm';
-            const days = Math.floor(hours / 24);
-            return days + 'd ' + (hours % 24) + 'h';
-        }
-
-        function updateSessionsPopoverDurations() {
-            document.querySelectorAll('.session-item-duration[data-started]').forEach(el => {
-                const startedAt = parseInt(el.dataset.started);
-                if (startedAt) {
-                    el.textContent = formatSessionDuration(startedAt);
-                }
-            });
         }
 
         function selectSessionFromPopover(sessionId) {

@@ -166,11 +166,7 @@ export const styleJs = `
 
             // Apply to all session cards
             document.querySelectorAll('.session-card').forEach(card => {
-                if (widgetsExpanded) {
-                    card.classList.remove('widgets-collapsed');
-                } else {
-                    card.classList.add('widgets-collapsed');
-                }
+                card.classList.toggle('widgets-collapsed', !widgetsExpanded);
             });
         }
 
@@ -257,66 +253,127 @@ export const styleJs = `
             if (!isPaired) return;
 
             if (groupingMode === 'project') {
-                // Group sessions by cwd, tracking most recent session per group
-                const groups = new Map();
-                for (const [id, sessionData] of sessions) {
-                    const card = document.getElementById('session-' + id);
-                    if (!card) continue;
-                    const cwd = sessionData.cwd || card.querySelector('.cwd')?.textContent || 'Unknown';
-                    if (!groups.has(cwd)) {
-                        groups.set(cwd, { sessions: [], mostRecentTime: 0 });
-                    }
-                    const group = groups.get(cwd);
-                    group.sessions.push({ id, card, startedAt: sessionData.startedAt || 0 });
-                    // Track most recent session time for this project
-                    const sessionTime = sessionData.startedAt || 0;
-                    if (sessionTime > group.mostRecentTime) {
-                        group.mostRecentTime = sessionTime;
-                    }
+                // Collect all device names across sessions
+                const allDevices = new Set();
+                for (const [, sessionData] of sessions) {
+                    if (sessionData.deviceName) allDevices.add(sessionData.deviceName);
                 }
+                const multiDevice = allDevices.size > 1;
 
-                // Add empty groups for historical projects not represented by active sessions
-                if (allProjects && allProjects.length > 0) {
-                    for (const project of allProjects) {
-                        if (!groups.has(project.cwd)) {
-                            groups.set(project.cwd, { sessions: [], mostRecentTime: project.last_active || 0 });
+                if (multiDevice) {
+                    // Device > Project > Sessions hierarchy
+                    // Build deviceGroups: deviceName -> Map<cwd, { sessions[], mostRecentTime }>
+                    const deviceGroups = new Map();
+                    for (const [id, sessionData] of sessions) {
+                        const card = document.getElementById('session-' + id);
+                        if (!card) continue;
+                        const cwd = sessionData.cwd || card.querySelector('.cwd')?.textContent || 'Unknown';
+                        const device = sessionData.deviceName || 'Unknown';
+                        if (!deviceGroups.has(device)) {
+                            deviceGroups.set(device, { projects: new Map(), mostRecentTime: 0 });
+                        }
+                        const dg = deviceGroups.get(device);
+                        if (!dg.projects.has(cwd)) {
+                            dg.projects.set(cwd, { sessions: [], mostRecentTime: 0 });
+                        }
+                        const pg = dg.projects.get(cwd);
+                        pg.sessions.push({ id, card, startedAt: sessionData.startedAt || 0 });
+                        const sessionTime = sessionData.startedAt || 0;
+                        if (sessionTime > pg.mostRecentTime) pg.mostRecentTime = sessionTime;
+                        if (sessionTime > dg.mostRecentTime) dg.mostRecentTime = sessionTime;
+                    }
+
+                    // Sort devices by most recent session
+                    const sortedDevices = [...deviceGroups.keys()].sort((a, b) => {
+                        return deviceGroups.get(b).mostRecentTime - deviceGroups.get(a).mostRecentTime;
+                    });
+
+                    // Clear container
+                    container.innerHTML = '';
+
+                    for (const device of sortedDevices) {
+                        const dg = deviceGroups.get(device);
+
+                        // Sort projects within this device
+                        for (const [, pg] of dg.projects) {
+                            pg.sessions.sort((a, b) => a.startedAt - b.startedAt);
+                        }
+                        let sortedCwds;
+                        if (projectOrderMode === 'alpha') {
+                            sortedCwds = [...dg.projects.keys()].sort((a, b) => {
+                                const nameA = a.split('/').pop()?.toLowerCase() || a;
+                                const nameB = b.split('/').pop()?.toLowerCase() || b;
+                                return nameA.localeCompare(nameB);
+                            });
+                        } else {
+                            sortedCwds = [...dg.projects.keys()].sort((a, b) => {
+                                return dg.projects.get(b).mostRecentTime - dg.projects.get(a).mostRecentTime;
+                            });
+                        }
+
+                        // Count total sessions for this device
+                        let deviceSessionCount = 0;
+                        for (const [, pg] of dg.projects) deviceSessionCount += pg.sessions.length;
+
+                        const deviceEl = createDeviceGroup(device, sortedCwds, dg.projects, deviceSessionCount);
+                        container.appendChild(deviceEl);
+                    }
+
+                    if (deviceGroups.size === 0) {
+                        container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                    }
+                } else {
+                    // Single device — flat project grouping (no device headers)
+                    const groups = new Map();
+                    for (const [id, sessionData] of sessions) {
+                        const card = document.getElementById('session-' + id);
+                        if (!card) continue;
+                        const cwd = sessionData.cwd || card.querySelector('.cwd')?.textContent || 'Unknown';
+                        if (!groups.has(cwd)) {
+                            groups.set(cwd, { sessions: [], mostRecentTime: 0 });
+                        }
+                        const group = groups.get(cwd);
+                        group.sessions.push({ id, card, startedAt: sessionData.startedAt || 0 });
+                        const sessionTime = sessionData.startedAt || 0;
+                        if (sessionTime > group.mostRecentTime) group.mostRecentTime = sessionTime;
+                    }
+
+                    // Add empty groups for historical projects (only in single-device mode)
+                    if (allProjects && allProjects.length > 0) {
+                        for (const project of allProjects) {
+                            if (!groups.has(project.cwd)) {
+                                groups.set(project.cwd, { sessions: [], mostRecentTime: project.last_active || 0 });
+                            }
                         }
                     }
-                }
 
-                // Sort sessions within each group by age (oldest first, newest last) for determinism
-                for (const [cwd, group] of groups) {
-                    group.sessions.sort((a, b) => a.startedAt - b.startedAt);
-                }
+                    for (const [, group] of groups) {
+                        group.sessions.sort((a, b) => a.startedAt - b.startedAt);
+                    }
 
-                // Sort projects based on projectOrderMode
-                let sortedCwds;
-                if (projectOrderMode === 'alpha') {
-                    // Alphabetical by project name (last path component)
-                    sortedCwds = [...groups.keys()].sort((a, b) => {
-                        const nameA = a.split('/').pop()?.toLowerCase() || a;
-                        const nameB = b.split('/').pop()?.toLowerCase() || b;
-                        return nameA.localeCompare(nameB);
-                    });
-                } else {
-                    // Most recent first (by most recent session in the project)
-                    sortedCwds = [...groups.keys()].sort((a, b) => {
-                        return groups.get(b).mostRecentTime - groups.get(a).mostRecentTime;
-                    });
-                }
+                    let sortedCwds;
+                    if (projectOrderMode === 'alpha') {
+                        sortedCwds = [...groups.keys()].sort((a, b) => {
+                            const nameA = a.split('/').pop()?.toLowerCase() || a;
+                            const nameB = b.split('/').pop()?.toLowerCase() || b;
+                            return nameA.localeCompare(nameB);
+                        });
+                    } else {
+                        sortedCwds = [...groups.keys()].sort((a, b) => {
+                            return groups.get(b).mostRecentTime - groups.get(a).mostRecentTime;
+                        });
+                    }
 
-                // Clear container
-                container.innerHTML = '';
+                    container.innerHTML = '';
+                    for (const cwd of sortedCwds) {
+                        const g = groups.get(cwd);
+                        const group = createProjectGroup(cwd, g.sessions);
+                        container.appendChild(group);
+                    }
 
-                // Create project groups in sorted order
-                for (const cwd of sortedCwds) {
-                    const group = createProjectGroup(cwd, groups.get(cwd).sessions);
-                    container.appendChild(group);
-                }
-
-                // Show empty state only if no projects at all
-                if (groups.size === 0) {
-                    container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                    if (groups.size === 0) {
+                        container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                    }
                 }
             } else {
                 // Flat mode - extract cards from groups if needed and append directly
@@ -330,8 +387,8 @@ export const styleJs = `
                 }
                 sessionList.sort((a, b) => a.startedAt - b.startedAt);
 
-                // Remove project groups
-                container.querySelectorAll('.project-group').forEach(g => g.remove());
+                // Remove project/device groups
+                container.querySelectorAll('.project-group, .device-group').forEach(g => g.remove());
 
                 // Re-add cards directly to container in sorted order
                 sessionList.forEach(({ card }) => {
@@ -446,6 +503,55 @@ export const styleJs = `
                 collapsedProjects.delete(cwd);
             }
             localStorage.setItem('crabigator-collapsed-projects', JSON.stringify([...collapsedProjects]));
+        }
+
+        function createDeviceGroup(deviceName, sortedCwds, projectsMap, sessionCount) {
+            const group = document.createElement('div');
+            group.className = 'device-group';
+            group.dataset.device = deviceName;
+
+            const isCollapsed = collapsedDevices.has(deviceName);
+            if (isCollapsed) {
+                group.classList.add('collapsed');
+            }
+
+            const cleanName = deviceName.replace(/\\.local$/, '');
+
+            group.innerHTML = \`
+                <div class="device-separator" onclick="toggleDeviceGroup('\${escapeHtml(deviceName)}')">
+                    <div class="device-separator-content">
+                        <span class="device-collapse-icon">●</span>
+                        <span class="device-name">\${escapeHtml(cleanName)}</span>
+                        <span class="device-count">\${sessionCount} session\${sessionCount !== 1 ? 's' : ''}</span>
+                    </div>
+                </div>
+                <div class="device-sessions">
+                    <div class="device-sessions-inner"></div>
+                </div>
+            \`;
+
+            const inner = group.querySelector('.device-sessions-inner');
+            for (const cwd of sortedCwds) {
+                const pg = projectsMap.get(cwd);
+                const projectEl = createProjectGroup(cwd, pg.sessions);
+                inner.appendChild(projectEl);
+            }
+
+            return group;
+        }
+
+        function toggleDeviceGroup(deviceName) {
+            const group = document.querySelector(\`.device-group[data-device="\${CSS.escape(deviceName)}"]\`);
+            if (!group) return;
+
+            const isNowCollapsed = group.classList.toggle('collapsed');
+
+            if (isNowCollapsed) {
+                collapsedDevices.add(deviceName);
+            } else {
+                collapsedDevices.delete(deviceName);
+            }
+            localStorage.setItem('crabigator-collapsed-devices', JSON.stringify([...collapsedDevices]));
         }
 
         function updateProjectGroupCount(cwd) {

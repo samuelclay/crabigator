@@ -316,15 +316,15 @@ export const popoversCss = `
     border-bottom: none;
 }
 .sessions-group-header {
-    padding: 12px 16px;
+    padding: 8px 12px;
     background: var(--bg-surface);
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 .sessions-group-name {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     color: var(--accent-cyan);
     text-transform: uppercase;
@@ -340,21 +340,57 @@ export const popoversCss = `
     white-space: nowrap;
     flex: 1;
     min-width: 0;
+    opacity: 0.6;
 }
 .sessions-group-count {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
+    font-size: 9px;
     color: var(--text-dim);
     background: var(--bg-abyss);
-    padding: 2px 8px;
-    border-radius: 10px;
+    padding: 1px 6px;
+    border-radius: 8px;
     flex-shrink: 0;
 }
+.sessions-device-header {
+    padding: 10px 12px 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent-purple);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-top: 1px solid var(--border-dim);
+}
+.sessions-device-header:first-child {
+    border-top: none;
+}
+.sessions-device-dot {
+    font-size: 7px;
+    color: var(--accent-purple);
+}
+.sessions-device-section {
+    border-bottom: 1px solid var(--border-dim);
+    padding-bottom: 4px;
+}
+.sessions-device-section:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+.sessions-device-projects {
+    margin-left: 12px;
+    border-left: 2px solid rgba(139, 92, 246, 0.12);
+}
+.sessions-device-projects .sessions-group {
+    border-bottom: none;
+}
 .session-item {
-    padding: 10px 16px;
+    padding: 6px 12px;
     cursor: pointer;
     transition: background 0.15s;
-    border-bottom: 1px solid var(--border-dim);
+    border-bottom: 1px solid rgba(255,255,255,0.03);
 }
 .session-item:last-child {
     border-bottom: none;
@@ -365,7 +401,7 @@ export const popoversCss = `
 .session-item.focused {
     background: rgba(74, 222, 128, 0.08);
     border-left: 2px solid var(--accent-green);
-    padding-left: 14px;
+    padding-left: 10px;
 }
 .session-item.focused:hover {
     background: rgba(74, 222, 128, 0.12);
@@ -373,12 +409,12 @@ export const popoversCss = `
 .session-item-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     min-width: 0;
 }
 .session-item-title {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-bright);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -388,54 +424,42 @@ export const popoversCss = `
 }
 .session-item-state {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 9px;
-    padding: 2px 6px;
+    font-size: 8px;
+    padding: 1px 5px;
     border-radius: 3px;
     text-transform: uppercase;
     flex-shrink: 0;
+    letter-spacing: 0.3px;
 }
 .session-item-state.ready { background: rgba(74, 222, 128, 0.2); color: var(--accent-green); }
 .session-item-state.thinking { background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); }
 .session-item-state.permission { background: rgba(251, 146, 60, 0.2); color: var(--accent-orange); }
 .session-item-state.question { background: rgba(167, 139, 250, 0.2); color: var(--accent-purple); }
-.session-item-state.complete { background: rgba(100, 116, 139, 0.2); color: var(--text-mid); }
-.session-item-meta {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 4px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    color: var(--text-dim);
-}
-.session-item-branch {
-    color: var(--accent-green);
-}
-.session-item-duration {
-    color: var(--text-dim);
-}
-.session-item-duration::before {
-    content: '•';
-    margin-right: 8px;
-    color: var(--border-dim);
-}
+.session-item-state.complete { background: rgba(100, 116, 139, 0.15); color: var(--text-dim); }
 .session-item-stats {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-top: 4px;
+    gap: 10px;
+    margin-top: 2px;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
+    font-size: 9px;
+}
+.session-item-stats.dim {
+    opacity: 0.3;
 }
 .si-stat {
     display: flex;
     align-items: center;
-    gap: 4px;
-    color: var(--text-bright);
+    gap: 3px;
+    color: var(--text-mid);
+}
+.si-icon {
+    font-size: 8px;
 }
 .si-elapsed {
     color: var(--text-dim);
-    font-size: 9px;
+    font-size: 8px;
+    margin-left: 1px;
 }
 .sessions-empty {
     padding: 24px 16px;

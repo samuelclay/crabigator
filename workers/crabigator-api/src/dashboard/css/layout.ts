@@ -262,6 +262,94 @@ export const layoutCss = `
     background: var(--bg-abyss);
 }
 
+/* Device grouping (wraps project groups when multiple devices) */
+.device-group {
+    margin-bottom: 20px;
+}
+.device-group:last-child {
+    margin-bottom: 0;
+}
+.device-separator {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 22px;
+    background: linear-gradient(180deg, var(--bg-abyss) 0%, rgba(139, 92, 246, 0.04) 50%, var(--bg-abyss) 100%);
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s;
+    border-top: 1px solid var(--border-dim);
+    border-bottom: 1px solid var(--border-dim);
+    position: relative;
+}
+.device-separator::before,
+.device-separator::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent-purple) 20%, var(--accent-purple) 80%, transparent);
+    opacity: 0.3;
+}
+.device-separator:hover {
+    background: linear-gradient(180deg, var(--bg-deep) 0%, rgba(139, 92, 246, 0.08) 50%, var(--bg-deep) 100%);
+}
+.device-separator-content {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+.device-collapse-icon {
+    font-size: 8px;
+    color: var(--accent-purple);
+    transition: opacity 0.3s;
+}
+.device-group.collapsed .device-collapse-icon {
+    opacity: 0.5;
+}
+.device-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    color: var(--accent-purple);
+    font-size: 11px;
+    flex-shrink: 0;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.device-count {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-dim);
+    font-size: 9px;
+    flex-shrink: 0;
+    background: var(--bg-surface);
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border-dim);
+}
+.device-sessions {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+}
+.device-sessions-inner {
+    min-height: 0;
+    overflow: hidden;
+    margin-left: 16px;
+    border-left: 2px solid rgba(139, 92, 246, 0.15);
+    padding-left: 0;
+}
+.device-group.collapsed .device-sessions {
+    grid-template-rows: 0fr;
+}
+/* Nested project separators inside device groups get subtler styling */
+.device-group .project-separator {
+    border-top: none;
+}
+.device-group .project-group:first-child .project-separator {
+    border-top: none;
+}
+
 /* Mobile adjustments for project groups */
 @media (max-width: 768px) {
     .project-separator {
