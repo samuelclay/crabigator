@@ -193,6 +193,8 @@ export const styleJs = `
             const settingsBtn = document.getElementById('settings-btn');
             const sessionsPopover = document.getElementById('sessions-popover');
             const sessionsBtn = document.getElementById('sessions-btn');
+            const sidebarSettingsPopover = document.getElementById('sidebar-settings-popover');
+            const sidebarSettingsBtn = document.querySelector('.sidebar-settings-btn');
 
             if (stylePopover && styleBtn && !stylePopover.contains(e.target) && !styleBtn.contains(e.target)) {
                 closeStylePopover();
@@ -202,6 +204,9 @@ export const styleJs = `
             }
             if (sessionsPopover && sessionsBtn && !sessionsPopover.contains(e.target) && !sessionsBtn.contains(e.target)) {
                 closeSessionsPopover();
+            }
+            if (sidebarSettingsPopover && sidebarSettingsBtn && !sidebarSettingsPopover.contains(e.target) && !sidebarSettingsBtn.contains(e.target)) {
+                closeSidebarSettings();
             }
         });
 

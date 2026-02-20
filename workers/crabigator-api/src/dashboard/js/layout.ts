@@ -14,7 +14,12 @@ export const layoutJs = `
             // For 'fit' mode, calculate columns based on available width
             if (layout === 'fit') {
                 const count = sessions.size || 1;
-                const containerWidth = container.offsetWidth || window.innerWidth - 32;
+                // Account for sidebar width when calculating available space
+                let availableWidth = window.innerWidth - 32;
+                if (sidebarOpen) {
+                    availableWidth -= sidebarWidth;
+                }
+                const containerWidth = container.offsetWidth || availableWidth;
                 const minCardWidth = 550;  // Minimum card width before adding another column
                 const maxCols = Math.min(Math.max(Math.floor(containerWidth / minCardWidth), 1), 4);
                 // Don't use more columns than we have sessions

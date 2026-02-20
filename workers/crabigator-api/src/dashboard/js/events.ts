@@ -133,6 +133,7 @@ export const eventsJs = `
                         updateStatsWidget(sessionId, sessionData.stats || {});
                         updateSessionSummary(sessionId, sessionData);
                     }
+                    scheduleSidebarUpdate();
                     break;
                 case 'scrollback':
                     // Append scrollback diff to scrollback section (chunked)
@@ -170,6 +171,7 @@ export const eventsJs = `
                     updateStatsWidget(sessionId, event);
                     // Update suggestion in input field (always sync — absent field means no suggestion)
                     updateInputSuggestion(sessionId, event.suggestion || null);
+                    scheduleSidebarUpdate();
                     break;
                 case 'title':
                     // Update title in header
@@ -183,6 +185,7 @@ export const eventsJs = `
                     }
                     // Update titles widget with single title if no history yet
                     updateTitlesWidget(sessionId, [event.title]);
+                    scheduleSidebarUpdate();
                     break;
                 case 'desktop_status':
                     // Desktop connected/disconnected

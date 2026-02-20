@@ -314,13 +314,6 @@ export const promptJs = `
             }
         }
 
-        function scrollToSession(sessionId) {
-            const card = document.getElementById('session-' + sessionId);
-            if (card) {
-                card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-        }
-
         async function sendPromptAnswer(sessionId, value) {
             try {
                 const resp = await fetch(API_BASE + '/sessions/' + sessionId + '/answer', {

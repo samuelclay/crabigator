@@ -152,7 +152,7 @@ export const sessionsPopoverJs = `
 
         function selectSessionFromPopover(sessionId) {
             closeSessionsPopover();
-            focusOnSession(sessionId);
+            handleSessionClick(sessionId);
         }
 
         function updateSessionsCount() {
@@ -169,6 +169,10 @@ export const sessionsPopoverJs = `
             const popover = document.getElementById('sessions-popover');
             if (popover && popover.classList.contains('visible')) {
                 updateSessionsPopover();
+            }
+            // Update sidebar content
+            if (typeof updateSidebarContent === 'function') {
+                updateSidebarContent();
             }
         }
 `;
