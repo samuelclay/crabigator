@@ -261,6 +261,14 @@ export const sessionStateJs = `
             terminal.classList.add('scroll-active');
             activeTerminalId = sessionId;
 
+            // Update sidebar to highlight the activated session
+            if (typeof sidebarActiveSessionId !== 'undefined') {
+                sidebarActiveSessionId = sessionId;
+                updateSidebarActiveState();
+                const sidebarItem = document.querySelector('.sidebar .session-item[data-session-id="' + sessionId + '"]');
+                if (sidebarItem) sidebarItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+
             // Render buffered scrollback now that scroll is active
             flushScrollback(sessionId);
 
