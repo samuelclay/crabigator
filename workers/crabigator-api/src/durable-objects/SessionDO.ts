@@ -1,4 +1,4 @@
-import type { SessionEvent, SessionState, CloudToDesktopMessage, CloudPromptData, KeyStep, GitEvent, ChangesEvent } from '../types/session';
+import type { SessionEvent, SessionState, CloudToDesktopMessage, CloudPromptData, KeyStep, GitEvent, ChangesEvent, StatsEvent } from '../types/session';
 import type { Env } from '../types/env';
 
 /**
@@ -24,6 +24,7 @@ interface EphemeralState {
     lastTitleHistory: string[] | null;
     lastGit: GitEvent | null;
     lastChanges: ChangesEvent | null;
+    lastStats: StatsEvent | null;
     eventSequence: number;
 }
 
@@ -88,6 +89,7 @@ export class SessionDO implements DurableObject {
             lastTitleHistory: null,
             lastGit: null,
             lastChanges: null,
+            lastStats: null,
             eventSequence: 0,
         };
 
@@ -396,6 +398,10 @@ export class SessionDO implements DurableObject {
                 // Ephemeral state - no storage write
                 this.ephemeralState.lastChanges = event as ChangesEvent;
                 break;
+            case 'stats':
+                // Ephemeral state - cache for late-joining viewers
+                this.ephemeralState.lastStats = event as StatsEvent;
+                break;
             case 'prompt':
                 // Compare prompts - this is critical for dashboard interaction
                 const currentPromptJson = JSON.stringify(this.persistentState.currentPrompt);
@@ -532,6 +538,11 @@ export class SessionDO implements DurableObject {
         // Send changes state if available (ephemeral)
         if (this.ephemeralState.lastChanges) {
             await this.sendSSE(writer, this.ephemeralState.lastChanges);
+        }
+
+        // Send stats if available (ephemeral - cached from last desktop push)
+        if (this.ephemeralState.lastStats) {
+            await this.sendSSE(writer, this.ephemeralState.lastStats);
         }
 
         // Send current prompt if any (persistent - for interactive dashboard)
