@@ -105,6 +105,11 @@ export const sessionJs = `
                         updateSessionHeader(session);
                     }
                 }
+
+                // Re-render project groups now that all session data (incl. device names) is loaded
+                if (groupingMode === 'project') {
+                    rerenderSessions();
+                }
             } catch (err) {
                 console.error('Failed to load sessions:', err);
                 updateSessionsCount();
@@ -319,6 +324,7 @@ export const sessionJs = `
                 lastScrollTop: 0,
                 startedAt: session.started_at,
                 cwd: session.cwd,
+                deviceName: session.device_name || null,
                 // Scrollback chunking: store full buffer, render only visible portion
                 scrollbackBuffer: [],      // Full scrollback lines
                 scrollbackRendered: 0,     // How many lines currently rendered

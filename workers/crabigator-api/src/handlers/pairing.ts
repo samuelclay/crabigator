@@ -130,6 +130,23 @@ export async function claimPairingToken(
     // Get or create device group for this desktop
     let groupId = await getOrCreateDeviceGroup(env, tokenData.device_id);
 
+    // Check if this mobile already has links to a different group — if so, merge
+    const existingLink = await env.DB.prepare(`
+        SELECT d.group_id FROM linked_devices ld
+        JOIN devices d ON ld.desktop_id = d.id
+        WHERE ld.mobile_id = ? AND ld.revoked_at IS NULL AND d.group_id IS NOT NULL AND d.group_id != ?
+        LIMIT 1
+    `).bind(mobileId, groupId).first<{ group_id: string }>();
+
+    if (existingLink) {
+        // Mobile already belongs to another group — merge this desktop into it
+        const existingGroupId = existingLink.group_id;
+        await env.DB.prepare(
+            `UPDATE devices SET group_id = ? WHERE group_id = ?`
+        ).bind(existingGroupId, groupId).run();
+        groupId = existingGroupId;
+    }
+
     // Store mobile token in KV (maps to group, not individual desktop)
     await env.TOKENS.put(
         `mobile:${mobileTokenHash}`,

@@ -180,13 +180,15 @@ export async function listSessions(
     let query = `
         SELECT sessions.id, sessions.client_session_id, sessions.cwd, sessions.platform, sessions.state,
                sessions.started_at, sessions.ended_at, sessions.is_active, sessions.last_seen_at,
-               sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds
+               sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds,
+               devices.name as device_name
         FROM sessions
+        JOIN devices ON devices.id = sessions.device_id
     `;
     const params: (string | number)[] = [];
 
     if (groupId) {
-        query += ' JOIN devices ON devices.id = sessions.device_id WHERE devices.group_id = ?';
+        query += ' WHERE devices.group_id = ?';
         params.push(groupId);
     } else if (deviceId) {
         query += ' WHERE sessions.device_id = ?';
@@ -214,6 +216,7 @@ export async function listSessions(
         completions: number;
         tool_calls: number;
         thinking_seconds: number;
+        device_name: string | null;
     }>();
 
     // Validate active sessions against SessionDO state (cleanup on read)
@@ -287,6 +290,7 @@ export async function listSessions(
             started_at: row.started_at,
             ended_at: row.ended_at,
             is_active: row.is_active === 1,
+            device_name: row.device_name || undefined,
             stats: {
                 prompts: row.prompts,
                 completions: row.completions,

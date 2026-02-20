@@ -328,6 +328,7 @@ export interface SessionInfo {
     started_at: number;
     ended_at: number | null;
     is_active: boolean;
+    device_name?: string;
     stats: {
         prompts: number;
         completions: number;

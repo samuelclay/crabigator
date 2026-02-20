@@ -7,6 +7,7 @@ interface ActiveSession {
     state: string;
     started_at: number;
     device_id?: string;
+    device_name?: string;
     group_id?: string | null;
     last_seen?: number;  // Timestamp of last desktop activity
 }
@@ -353,7 +354,7 @@ export class SessionListDO implements DurableObject {
     private async fetchActiveSessionsFromD1(groupId: string): Promise<ActiveSession[]> {
         const results = await this.env.DB.prepare(`
             SELECT sessions.id, sessions.cwd, sessions.platform, sessions.state, sessions.started_at,
-                   sessions.device_id, devices.group_id
+                   sessions.device_id, devices.group_id, devices.name as device_name
             FROM sessions
             JOIN devices ON devices.id = sessions.device_id
             WHERE devices.group_id = ? AND sessions.is_active = 1
@@ -367,6 +368,7 @@ export class SessionListDO implements DurableObject {
             started_at: number;
             device_id: string;
             group_id: string | null;
+            device_name: string | null;
         }>();
 
         return (results.results || []).map(row => ({
@@ -376,6 +378,7 @@ export class SessionListDO implements DurableObject {
             state: row.state,
             started_at: row.started_at,
             device_id: row.device_id,
+            device_name: row.device_name || undefined,
             group_id: row.group_id,
             last_seen: Date.now(),
         }));
@@ -497,13 +500,6 @@ export class SessionListDO implements DurableObject {
     }
 
     /**
-     * Update last_seen timestamp for a session (called periodically from SessionDO)
-     *
-     * This keeps sessions alive during deploys by updating the grace period timer.
-     * SessionDO calls this every ~10s during activity. We persist to storage so
-     * that after a deploy, the DO can reload and see the recent last_seen.
-     */
-    /**
      * Debug endpoint to inspect activeSessions state
      */
     private handleDebug(request: Request): Response {
@@ -513,15 +509,10 @@ export class SessionListDO implements DurableObject {
         const deviceFilter = url.searchParams.get('device_id');
         const now = Date.now();
 
-        const entries = Array.from(this.activeSessions.entries()).filter(([, session]) => {
-            if (groupFilter && session.group_id !== groupFilter) {
-                return false;
-            }
-            if (deviceFilter && session.device_id !== deviceFilter) {
-                return false;
-            }
-            return true;
-        });
+        const entries = Array.from(this.activeSessions.entries()).filter(([, session]) =>
+            (!groupFilter || session.group_id === groupFilter) &&
+            (!deviceFilter || session.device_id === deviceFilter)
+        );
 
         const sessions = entries.map(([id, s]) => {
             const lastSeen = s.last_seen ?? null;
@@ -555,6 +546,13 @@ export class SessionListDO implements DurableObject {
         });
     }
 
+    /**
+     * Update last_seen timestamp for a session (called periodically from SessionDO).
+     *
+     * This keeps sessions alive during deploys by updating the grace period timer.
+     * SessionDO calls this every ~10s during activity. We persist to storage so
+     * that after a deploy, the DO can reload and see the recent last_seen.
+     */
     private async handleTouch(request: Request): Promise<Response> {
         if (request.method !== 'POST') {
             return new Response('Method not allowed', { status: 405 });
