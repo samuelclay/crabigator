@@ -3,6 +3,7 @@ import { constantsJs } from './constants';
 import { scrollbackJs } from './scrollback';
 import { styleJs } from './style';
 import { sessionsPopoverJs } from './sessions-popover';
+import { sidebarJs } from './sidebar';
 import { deployJs } from './deploy';
 import { inputJs } from './input';
 import { keyboardJs } from './keyboard';
@@ -30,6 +31,7 @@ export const dashboardJs = [
     scrollbackJs,
     styleJs,
     sessionsPopoverJs,
+    sidebarJs,
     deployJs,
     inputJs,
     keyboardJs,

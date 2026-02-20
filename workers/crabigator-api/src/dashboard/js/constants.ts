@@ -49,6 +49,17 @@ export const constantsJs = `
         // Single session filter mode (from ?session=xxx URL parameter)
         const singleSessionId = new URLSearchParams(window.location.search).get('session');
 
+        // Sidebar state
+        let sidebarOpen = localStorage.getItem('crabigator-sidebar-open') !== 'false'; // default true
+        let sidebarPosition = localStorage.getItem('crabigator-sidebar-position') || 'left';
+        let sidebarDensity = localStorage.getItem('crabigator-sidebar-density') || 'comfortable';
+        let sidebarWidth = parseInt(localStorage.getItem('crabigator-sidebar-width') || '300', 10);
+        let sessionClickAction = localStorage.getItem('crabigator-click-action') || 'scroll';
+        let sidebarVisibleStats = JSON.parse(localStorage.getItem('crabigator-sidebar-stats') || JSON.stringify({
+            sessionTime: true, thinkingTime: true, prompts: true,
+            completions: true, tools: true, compactions: true
+        }));
+
         // Spinner frames for thinking indicator
         const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let spinnerFrameIndex = 0;

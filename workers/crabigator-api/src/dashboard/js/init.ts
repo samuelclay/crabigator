@@ -39,6 +39,7 @@ export const initJs = `
                 if (statusEl) statusEl.textContent = 'Not paired';
             } else {
                 // Paired - load sessions normally
+                initSidebar();
                 loadSessions();
                 connectSessionListStream();
                 // Start viewer activity tracking for streaming optimization

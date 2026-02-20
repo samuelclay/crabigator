@@ -1,0 +1,520 @@
+// Dashboard JavaScript - sidebar
+export const sidebarJs = `
+        let sidebarActiveSessionId = null;
+        let sidebarUpdateTimer = null;
+
+        // Throttled sidebar update - batches rapid SSE events into single re-renders
+        function scheduleSidebarUpdate() {
+            if (sidebarUpdateTimer) return;
+            sidebarUpdateTimer = setTimeout(() => {
+                sidebarUpdateTimer = null;
+                updateSidebarContent();
+            }, 500);
+        }
+
+        function initSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const layout = document.getElementById('dashboard-layout');
+            if (!sidebar || !layout) return;
+
+            // Measure actual header height and set CSS variable
+            const header = document.querySelector('.header');
+            if (header) {
+                const headerHeight = header.getBoundingClientRect().height;
+                document.documentElement.style.setProperty('--header-height', headerHeight + 'px');
+            }
+
+            // Apply saved position
+            layout.dataset.sidebarPosition = sidebarPosition;
+
+            // Apply saved width
+            document.documentElement.style.setProperty('--sidebar-width', sidebarWidth + 'px');
+
+            // Apply saved density
+            sidebar.classList.toggle('compact', sidebarDensity === 'compact');
+
+            // Apply saved open state
+            if (!sidebarOpen) {
+                sidebar.classList.add('collapsed');
+                layout.classList.add('sidebar-collapsed');
+            }
+            updateShowSidebarBtn();
+
+            // Init resize drag
+            initSidebarResize();
+
+            // Init scroll spy
+            initSidebarScrollSpy();
+
+            // Render content
+            updateSidebarContent();
+
+            // Update settings controls to match state
+            updateSidebarSettingsControls();
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const layout = document.getElementById('dashboard-layout');
+            if (!sidebar) return;
+
+            sidebarOpen = !sidebarOpen;
+            localStorage.setItem('crabigator-sidebar-open', sidebarOpen);
+
+            sidebar.classList.toggle('collapsed', !sidebarOpen);
+            if (layout) layout.classList.toggle('sidebar-collapsed', !sidebarOpen);
+            updateShowSidebarBtn();
+            updateSidebarBackdrop();
+
+            // Recalculate fit layout after sidebar toggle
+            requestAnimationFrame(() => {
+                if (typeof updateFitLayout === 'function') updateFitLayout();
+            });
+        }
+
+        function updateShowSidebarBtn() {
+            const btn = document.getElementById('show-sidebar-btn');
+            if (btn) {
+                btn.classList.toggle('visible', !sidebarOpen);
+            }
+        }
+
+        function updateSidebarBackdrop() {
+            const backdrop = document.getElementById('sidebar-backdrop');
+            if (backdrop) {
+                backdrop.classList.toggle('visible', sidebarOpen && window.innerWidth <= 768);
+            }
+        }
+
+        function toggleSidebarSettings() {
+            const popover = document.getElementById('sidebar-settings-popover');
+            const btn = document.querySelector('.sidebar-settings-btn');
+            if (!popover) return;
+
+            const isVisible = popover.classList.toggle('visible');
+            if (btn) btn.classList.toggle('active', isVisible);
+        }
+
+        function closeSidebarSettings() {
+            const popover = document.getElementById('sidebar-settings-popover');
+            const btn = document.querySelector('.sidebar-settings-btn');
+            if (popover) popover.classList.remove('visible');
+            if (btn) btn.classList.remove('active');
+        }
+
+        function setSidebarPosition(pos) {
+            sidebarPosition = pos;
+            localStorage.setItem('crabigator-sidebar-position', pos);
+            const layout = document.getElementById('dashboard-layout');
+            if (layout) layout.dataset.sidebarPosition = pos;
+            updateSidebarSettingsControls();
+        }
+
+        function setSidebarDensity(density) {
+            sidebarDensity = density;
+            localStorage.setItem('crabigator-sidebar-density', density);
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar) {
+                sidebar.classList.toggle('compact', density === 'compact');
+            }
+            updateSidebarSettingsControls();
+        }
+
+        function setSessionClickAction(action) {
+            sessionClickAction = action;
+            localStorage.setItem('crabigator-click-action', action);
+            updateSidebarSettingsControls();
+        }
+
+        function toggleSidebarStat(stat) {
+            sidebarVisibleStats[stat] = !sidebarVisibleStats[stat];
+            localStorage.setItem('crabigator-sidebar-stats', JSON.stringify(sidebarVisibleStats));
+            updateSidebarContent();
+            updateSidebarSettingsControls();
+        }
+
+        function updateSidebarSettingsControls() {
+            // Position
+            document.querySelectorAll('.sb-opt-position').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.position === sidebarPosition);
+            });
+            // Density
+            document.querySelectorAll('.sb-opt-density').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.density === sidebarDensity);
+            });
+            // Click action
+            document.querySelectorAll('.sb-opt-click').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.click === sessionClickAction);
+            });
+            // Stat checkboxes
+            for (const [stat, visible] of Object.entries(sidebarVisibleStats)) {
+                const cb = document.getElementById('sb-stat-' + stat);
+                if (cb) cb.checked = visible;
+            }
+        }
+
+        function handleSessionClick(sessionId) {
+            if (sessionClickAction === 'focus') {
+                focusOnSession(sessionId);
+            } else {
+                scrollToSession(sessionId);
+            }
+        }
+
+        function scrollToSession(sessionId) {
+            const card = document.getElementById('session-' + sessionId);
+            if (!card) return;
+
+            // If session's project group is collapsed, expand it first
+            const projectGroup = card.closest('.project-group');
+            if (projectGroup && projectGroup.classList.contains('collapsed')) {
+                projectGroup.classList.remove('collapsed');
+                const cwd = projectGroup.dataset.project;
+                if (cwd) {
+                    collapsedProjects.delete(cwd);
+                    localStorage.setItem('crabigator-collapsed-projects', JSON.stringify([...collapsedProjects]));
+                }
+            }
+
+            // Also expand device group if collapsed
+            const deviceGroup = card.closest('.device-group');
+            if (deviceGroup && deviceGroup.classList.contains('collapsed')) {
+                deviceGroup.classList.remove('collapsed');
+                const device = deviceGroup.dataset.device;
+                if (device) {
+                    collapsedDevices.delete(device);
+                    localStorage.setItem('crabigator-collapsed-devices', JSON.stringify([...collapsedDevices]));
+                }
+            }
+
+            // If session card body is collapsed, expand it
+            const body = document.getElementById('body-' + sessionId);
+            const collapseBtn = document.getElementById('collapse-btn-' + sessionId);
+            if (body && body.style.display === 'none') {
+                body.style.display = '';
+                if (collapseBtn) collapseBtn.textContent = '▼';
+                const sessionData = sessions.get(sessionId);
+                if (sessionData) {
+                    const collapsedSessions = new Set(JSON.parse(localStorage.getItem('crabigator-collapsed-sessions') || '[]'));
+                    collapsedSessions.delete(sessionId);
+                    localStorage.setItem('crabigator-collapsed-sessions', JSON.stringify([...collapsedSessions]));
+                }
+            }
+
+            // Smooth scroll to the card
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+            // Add highlight animation (remove first + reflow to retrigger if already highlighted)
+            card.classList.remove('highlight');
+            void card.offsetHeight;
+            card.classList.add('highlight');
+            card.addEventListener('animationend', () => {
+                card.classList.remove('highlight');
+            }, { once: true });
+
+            // Update active session in sidebar
+            sidebarActiveSessionId = sessionId;
+            updateSidebarActiveState();
+        }
+
+        function updateSidebarActiveState() {
+            // Remove previous active state
+            document.querySelectorAll('.sidebar .session-item.sidebar-active').forEach(el => {
+                el.classList.remove('sidebar-active');
+            });
+            // Add active state to current
+            if (sidebarActiveSessionId) {
+                const item = document.querySelector('.sidebar .session-item[data-session-id="' + sidebarActiveSessionId + '"]');
+                if (item) item.classList.add('sidebar-active');
+            }
+        }
+
+        function renderSidebarSessionItem(session) {
+            const isFocused = singleSessionId && session.id === singleSessionId;
+            const isActive = sidebarActiveSessionId === session.id;
+            const stats = session.stats;
+            const vs = sidebarVisibleStats;
+
+            const sessionTime = stats?.work_seconds ? formatDuration(stats.work_seconds) : '';
+            const thinkingTime = stats?.thinking_seconds ? formatDuration(stats.thinking_seconds) : '';
+            const promptsCount = stats?.prompts || 0;
+            const promptsElapsed = stats?.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
+            const completionsCount = stats?.completions || 0;
+            const completionsElapsed = stats?.completions_changed_at ? formatElapsed(stats.completions_changed_at) : '';
+
+            const hasStats = sessionTime || thinkingTime || promptsCount > 0 || completionsCount > 0;
+
+            let statsHtml = '';
+            if (vs.sessionTime) statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#58a6ff">◉</span>' + (sessionTime || '—') + '</span>';
+            if (vs.thinkingTime) statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#3fb950">◐</span>' + (thinkingTime || '—') + '</span>';
+            if (vs.prompts) statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">⟩</span>' + promptsCount + (promptsElapsed ? '<span class="si-elapsed">' + promptsElapsed + '</span>' : '') + '</span>';
+            if (vs.completions) statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">⋗</span>' + completionsCount + (completionsElapsed ? '<span class="si-elapsed">' + completionsElapsed + '</span>' : '') + '</span>';
+
+            // Tools and compactions don't have matching data in popover stats, show count if available
+            // (These stats are available in the session card widgets, but the popover format uses simpler stats)
+
+            const classes = ['session-item'];
+            if (isFocused) classes.push('focused');
+            if (isActive) classes.push('sidebar-active');
+
+            return \`
+                <div class="\${classes.join(' ')}" data-session-id="\${session.id}" onclick="handleSessionClick('\${session.id}')">
+                    <div class="session-item-row">
+                        <span class="session-item-title">\${escapeHtml(session.title)}</span>
+                        <span class="session-item-state \${session.state}">\${session.state}</span>
+                    </div>
+                    \${statsHtml ? '<div class="session-item-stats' + (hasStats ? '' : ' dim') + '">' + statsHtml + '</div>' : ''}
+                </div>
+            \`;
+        }
+
+        function updateSidebarContent() {
+            const content = document.getElementById('sidebar-content');
+            if (!content) return;
+
+            if (allSessions.length === 0) {
+                content.innerHTML = '<div class="sessions-empty">No active sessions</div>';
+                return;
+            }
+
+            function cleanDeviceName(name) {
+                if (!name) return '';
+                return name.replace(/\\.local$/, '');
+            }
+
+            // Group sessions by cwd, tracking timestamps for sorting
+            const groups = new Map();
+            for (const session of allSessions) {
+                const cwd = session.cwd || 'Unknown';
+                if (!groups.has(cwd)) groups.set(cwd, { sessions: [], mostRecentTime: 0 });
+
+                const liveData = sessions.get(session.id);
+                const startedAt = session.started_at ? new Date(session.started_at).getTime() / 1000 : 0;
+                const g = groups.get(cwd);
+                g.sessions.push({
+                    id: session.id,
+                    title: liveData?.title || session.title || 'Untitled',
+                    state: liveData?.state || session.state || 'ready',
+                    stats: liveData?.stats || session.stats || null,
+                    deviceName: session.device_name || liveData?.deviceName || null,
+                    startedAt
+                });
+                if (startedAt > g.mostRecentTime) g.mostRecentTime = startedAt;
+            }
+
+            // Sort sessions within each group by startedAt (oldest first, matching main content)
+            for (const [, g] of groups) {
+                g.sessions.sort((a, b) => a.startedAt - b.startedAt);
+            }
+
+            // Sort projects using same logic as main content
+            function sortedProjectKeys(projectMap) {
+                if (projectOrderMode === 'alpha') {
+                    return [...projectMap.keys()].sort((a, b) => {
+                        const nameA = a.split('/').pop()?.toLowerCase() || a;
+                        const nameB = b.split('/').pop()?.toLowerCase() || b;
+                        return nameA.localeCompare(nameB);
+                    });
+                }
+                return [...projectMap.keys()].sort((a, b) => {
+                    return projectMap.get(b).mostRecentTime - projectMap.get(a).mostRecentTime;
+                });
+            }
+
+            const allDeviceNames = new Set(allSessions.map(s => s.device_name).filter(Boolean));
+            const multiDevice = allDeviceNames.size > 1;
+
+            let html = '';
+
+            if (multiDevice) {
+                const deviceGroups = new Map();
+                for (const [cwd, g] of groups) {
+                    for (const session of g.sessions) {
+                        const device = session.deviceName || 'Unknown';
+                        if (!deviceGroups.has(device)) deviceGroups.set(device, { projects: new Map(), mostRecentTime: 0 });
+                        const dg = deviceGroups.get(device);
+                        if (!dg.projects.has(cwd)) dg.projects.set(cwd, { sessions: [], mostRecentTime: 0 });
+                        const pg = dg.projects.get(cwd);
+                        pg.sessions.push(session);
+                        if (session.startedAt > pg.mostRecentTime) pg.mostRecentTime = session.startedAt;
+                        if (session.startedAt > dg.mostRecentTime) dg.mostRecentTime = session.startedAt;
+                    }
+                }
+
+                // Sort devices by most recent session (matching main content)
+                const sortedDevices = [...deviceGroups.keys()].sort((a, b) => {
+                    return deviceGroups.get(b).mostRecentTime - deviceGroups.get(a).mostRecentTime;
+                });
+
+                for (const device of sortedDevices) {
+                    const dg = deviceGroups.get(device);
+                    const sortedCwds = sortedProjectKeys(dg.projects);
+                    html += \`
+                        <div class="sessions-device-section">
+                            <div class="sessions-device-header"><span class="sessions-device-dot">●</span> \${escapeHtml(cleanDeviceName(device))}</div>
+                            <div class="sessions-device-projects">
+                    \`;
+                    for (const cwd of sortedCwds) {
+                        const pg = dg.projects.get(cwd);
+                        const projectName = cwd.split('/').pop() || cwd;
+                        html += \`
+                            <div class="sessions-group">
+                                <div class="sessions-group-header">
+                                    <span class="sessions-group-name">\${escapeHtml(projectName)}</span>
+                                    <span class="sessions-group-path">\${escapeHtml(cwd)}</span>
+                                    <span class="sessions-group-count">\${pg.sessions.length}</span>
+                                </div>
+                        \`;
+                        for (const session of pg.sessions) {
+                            html += renderSidebarSessionItem(session);
+                        }
+                        html += '</div>';
+                    }
+                    html += '</div></div>';
+                }
+            } else {
+                const sortedCwds = sortedProjectKeys(groups);
+                for (const cwd of sortedCwds) {
+                    const g = groups.get(cwd);
+                    const projectName = cwd.split('/').pop() || cwd;
+                    html += \`
+                        <div class="sessions-group">
+                            <div class="sessions-group-header">
+                                <span class="sessions-group-name">\${escapeHtml(projectName)}</span>
+                                <span class="sessions-group-path">\${escapeHtml(cwd)}</span>
+                                <span class="sessions-group-count">\${g.sessions.length}</span>
+                            </div>
+                    \`;
+                    for (const session of g.sessions) {
+                        html += renderSidebarSessionItem(session);
+                    }
+                    html += '</div>';
+                }
+            }
+
+            content.innerHTML = html;
+            updateSidebarActiveState();
+
+            // Also update show-sidebar count
+            const countEl = document.getElementById('show-sidebar-count');
+            if (countEl) countEl.textContent = allSessions.length;
+        }
+
+        function initSidebarScrollSpy() {
+            let scrollSpyTimer = null;
+            let isUserScrolling = false;
+
+            // Track which session cards are visible using IntersectionObserver
+            const visibleCards = new Map(); // sessionId -> intersectionRatio
+
+            const observer = new IntersectionObserver((entries) => {
+                for (const entry of entries) {
+                    const id = entry.target.id.replace('session-', '');
+                    if (entry.isIntersecting) {
+                        visibleCards.set(id, entry.intersectionRatio);
+                    } else {
+                        visibleCards.delete(id);
+                    }
+                }
+                // Throttle updates while scrolling
+                if (scrollSpyTimer) return;
+                scrollSpyTimer = setTimeout(() => {
+                    scrollSpyTimer = null;
+                    updateScrollSpyActive();
+                }, 150);
+            }, {
+                rootMargin: '-' + (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--header-height')) || 67) + 'px 0px 0px 0px',
+                threshold: [0, 0.25, 0.5, 0.75, 1]
+            });
+
+            function updateScrollSpyActive() {
+                if (visibleCards.size === 0) return;
+                // Pick the card with highest intersection ratio
+                let bestId = null;
+                let bestRatio = 0;
+                for (const [id, ratio] of visibleCards) {
+                    if (ratio > bestRatio) {
+                        bestRatio = ratio;
+                        bestId = id;
+                    }
+                }
+                if (bestId && bestId !== sidebarActiveSessionId) {
+                    sidebarActiveSessionId = bestId;
+                    updateSidebarActiveState();
+                    // Scroll the sidebar item into view if needed
+                    const sidebarItem = document.querySelector('.sidebar .session-item[data-session-id="' + bestId + '"]');
+                    if (sidebarItem) {
+                        sidebarItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                }
+            }
+
+            // Observe all existing session cards
+            function observeAllCards() {
+                observer.disconnect();
+                visibleCards.clear();
+                document.querySelectorAll('.session-card[id^="session-"]').forEach(card => {
+                    observer.observe(card);
+                });
+            }
+
+            // Re-observe when sessions change (MutationObserver on the container)
+            const container = document.getElementById('sessions');
+            if (container) {
+                const mutObs = new MutationObserver(() => {
+                    // Debounce re-observation
+                    setTimeout(observeAllCards, 200);
+                });
+                mutObs.observe(container, { childList: true, subtree: true });
+            }
+
+            // Also observe on first load
+            observeAllCards();
+        }
+
+        function initSidebarResize() {
+            const handle = document.getElementById('sidebar-resize-handle');
+            if (!handle) return;
+
+            let isResizing = false;
+            let startX = 0;
+            let startWidth = 0;
+
+            handle.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                startX = e.clientX;
+                startWidth = sidebarWidth;
+                handle.classList.add('active');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing) return;
+
+                let delta;
+                if (sidebarPosition === 'left') {
+                    delta = e.clientX - startX;
+                } else {
+                    delta = startX - e.clientX;
+                }
+
+                const newWidth = Math.min(450, Math.max(220, startWidth + delta));
+                sidebarWidth = newWidth;
+                document.documentElement.style.setProperty('--sidebar-width', newWidth + 'px');
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (!isResizing) return;
+                isResizing = false;
+                handle.classList.remove('active');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                localStorage.setItem('crabigator-sidebar-width', sidebarWidth.toString());
+
+                // Recalculate fit layout after resize
+                if (typeof updateFitLayout === 'function') updateFitLayout();
+            });
+        }
+`;

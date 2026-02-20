@@ -53,6 +53,11 @@ export const dashboardHtml = `<!DOCTYPE html>
     <div class="header">
         <h1>🦀 Crabigator Dashboard</h1>
         <button class="refresh-btn" onclick="loadSessions()">↻ Refresh</button>
+        <button class="show-sidebar-btn" id="show-sidebar-btn" onclick="toggleSidebar()">
+            <svg viewBox="0 0 256 256" fill="currentColor" width="14" height="14"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z"/></svg>
+            <span class="show-sidebar-count" id="show-sidebar-count">0</span>
+            Sessions — Show Sidebar
+        </button>
         <div class="filter-indicator" id="filter-indicator">
             <span class="filter-text">Viewing 1 session</span>
             <button class="filter-clear" onclick="clearSessionFilter()" title="Show all sessions">✕</button>
@@ -174,7 +179,59 @@ export const dashboardHtml = `<!DOCTYPE html>
             </div>
         </div>
     </div>
-    <div class="container" id="sessions" data-layout="1" data-grouping="all"></div>
+    <div class="dashboard-layout" id="dashboard-layout" data-sidebar-position="left">
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <span class="sidebar-title">Sessions</span>
+                <button class="sidebar-settings-btn" onclick="toggleSidebarSettings()" title="Sidebar settings">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+                    </svg>
+                    Settings
+                </button>
+                <button class="sidebar-collapse-btn" onclick="toggleSidebar()" title="Hide sidebar">✕</button>
+            </div>
+            <div class="sidebar-settings-popover" id="sidebar-settings-popover">
+                <div class="sidebar-settings-section">
+                    <div class="sidebar-settings-label">Position</div>
+                    <div class="style-options">
+                        <button class="style-option sb-opt-position" data-position="left" onclick="setSidebarPosition('left')">Left</button>
+                        <button class="style-option sb-opt-position" data-position="right" onclick="setSidebarPosition('right')">Right</button>
+                    </div>
+                </div>
+                <div class="sidebar-settings-section">
+                    <div class="sidebar-settings-label">Density</div>
+                    <div class="style-options">
+                        <button class="style-option sb-opt-density" data-density="compact" onclick="setSidebarDensity('compact')">Compact</button>
+                        <button class="style-option sb-opt-density" data-density="comfortable" onclick="setSidebarDensity('comfortable')">Comfortable</button>
+                    </div>
+                </div>
+                <div class="sidebar-settings-section">
+                    <div class="sidebar-settings-label">Click Action</div>
+                    <div class="style-options">
+                        <button class="style-option sb-opt-click" data-click="focus" onclick="setSessionClickAction('focus')">Focus</button>
+                        <button class="style-option sb-opt-click" data-click="scroll" onclick="setSessionClickAction('scroll')">Scroll</button>
+                    </div>
+                </div>
+                <div class="sidebar-settings-section">
+                    <div class="sidebar-settings-label">Visible Stats</div>
+                    <div class="sidebar-checkbox-list">
+                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-sessionTime" onchange="toggleSidebarStat('sessionTime')"><span class="sidebar-checkbox-icon" style="color:#58a6ff">◉</span><span class="sidebar-checkbox-label">Session time</span></label>
+                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-thinkingTime" onchange="toggleSidebarStat('thinkingTime')"><span class="sidebar-checkbox-icon" style="color:#3fb950">◐</span><span class="sidebar-checkbox-label">Thinking time</span></label>
+                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-prompts" onchange="toggleSidebarStat('prompts')"><span class="sidebar-checkbox-icon" style="color:#8b949e">⟩</span><span class="sidebar-checkbox-label">Prompts</span></label>
+                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-completions" onchange="toggleSidebarStat('completions')"><span class="sidebar-checkbox-icon" style="color:#8b949e">⋗</span><span class="sidebar-checkbox-label">Completions</span></label>
+                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-tools" onchange="toggleSidebarStat('tools')"><span class="sidebar-checkbox-icon" style="color:#f0883e">⚒</span><span class="sidebar-checkbox-label">Tools</span></label>
+                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-compactions" onchange="toggleSidebarStat('compactions')"><span class="sidebar-checkbox-icon" style="color:#e879f9">⊜</span><span class="sidebar-checkbox-label">Compactions</span></label>
+                    </div>
+                </div>
+            </div>
+            <div class="sidebar-content" id="sidebar-content"></div>
+            <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
+        </div>
+        <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="toggleSidebar()"></div>
+        <div class="container" id="sessions" data-layout="1" data-grouping="all"></div>
+    </div>
 
     <!-- Gift Claim Overlay -->
     <div class="gift-overlay" id="gift-overlay">

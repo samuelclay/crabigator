@@ -10,6 +10,7 @@ import { popoversCss } from './popovers';
 import { promptCss } from './prompt';
 import { pairingCss } from './pairing';
 import { layoutCss } from './layout';
+import { sidebarCss } from './sidebar';
 import { paywallCss } from './paywall';
 import { giftCss } from './gift';
 import { voiceCss } from './voice';
@@ -26,6 +27,7 @@ export const dashboardCss = [
     promptCss,
     pairingCss,
     layoutCss,
+    sidebarCss,
     paywallCss,
     giftCss,
     voiceCss,
