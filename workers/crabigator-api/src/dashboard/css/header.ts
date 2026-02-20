@@ -9,8 +9,10 @@ export const headerCss = `
     display: flex;
     align-items: center;
     gap: 16px;
-    position: sticky;
+    position: fixed;
     top: 0;
+    left: 0;
+    right: 0;
     z-index: 100;
     max-width: 100%;
 }
