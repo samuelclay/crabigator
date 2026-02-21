@@ -335,9 +335,6 @@ export const layoutCss = `
 .device-sessions-inner {
     min-height: 0;
     overflow: hidden;
-    margin-left: 16px;
-    border-left: 2px solid rgba(139, 92, 246, 0.15);
-    padding-left: 0;
 }
 .device-group.collapsed .device-sessions {
     grid-template-rows: 0fr;
