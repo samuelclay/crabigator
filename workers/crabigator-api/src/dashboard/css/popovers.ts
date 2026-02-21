@@ -271,43 +271,19 @@ export const popoversCss = `
     letter-spacing: 0.5px;
 }
 .sessions-btn:hover {
-    border-color: var(--accent-green);
-    color: var(--accent-green);
-    background: rgba(74, 222, 128, 0.05);
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+    background: rgba(34, 211, 238, 0.05);
 }
 .sessions-btn.active {
-    border-color: var(--accent-green);
-    color: var(--accent-green);
-    background: rgba(74, 222, 128, 0.1);
-    box-shadow: 0 0 15px var(--glow-green);
-}
-.sessions-btn svg {
-    transition: transform 0.2s;
-}
-.sessions-btn.active svg {
-    transform: rotate(180deg);
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+    background: rgba(34, 211, 238, 0.1);
+    box-shadow: 0 0 15px var(--glow-cyan);
 }
 .sessions-count {
     font-weight: 700;
-    color: var(--accent-green);
-}
-.sessions-popover {
-    display: none;
-    position: absolute;
-    top: calc(100% + 10px);
-    right: 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border-dim);
-    border-radius: 12px;
-    min-width: 320px;
-    max-width: 400px;
-    max-height: 70vh;
-    overflow-y: auto;
-    box-shadow: 0 20px 48px rgba(0,0,0,0.5), 0 0 40px rgba(74, 222, 128, 0.1);
-    z-index: 200;
-}
-.sessions-popover.visible {
-    display: block;
+    color: var(--accent-cyan);
 }
 .sessions-group {
     border-bottom: 1px solid var(--border-dim);
@@ -469,14 +445,6 @@ export const popoversCss = `
     font-size: 11px;
 }
 @media (max-width: 768px) {
-    .sessions-popover {
-        position: fixed;
-        top: 95px;
-        left: 16px;
-        right: 16px;
-        min-width: auto;
-        max-width: none;
-    }
     .sessions-btn .sessions-label {
         display: none;
     }

@@ -191,8 +191,6 @@ export const styleJs = `
             const styleBtn = document.getElementById('style-btn');
             const settingsPopover = document.getElementById('settings-popover');
             const settingsBtn = document.getElementById('settings-btn');
-            const sessionsPopover = document.getElementById('sessions-popover');
-            const sessionsBtn = document.getElementById('sessions-btn');
             const sidebarSettingsPopover = document.getElementById('sidebar-settings-popover');
             const sidebarSettingsBtn = document.querySelector('.sidebar-settings-btn');
 
@@ -202,11 +200,19 @@ export const styleJs = `
             if (settingsPopover && settingsBtn && !settingsPopover.contains(e.target) && !settingsBtn.contains(e.target)) {
                 closeSettingsPopover();
             }
-            if (sessionsPopover && sessionsBtn && !sessionsPopover.contains(e.target) && !sessionsBtn.contains(e.target)) {
-                closeSessionsPopover();
-            }
             if (sidebarSettingsPopover && sidebarSettingsBtn && !sidebarSettingsPopover.contains(e.target) && !sidebarSettingsBtn.contains(e.target)) {
                 closeSidebarSettings();
+            }
+
+            // Close sidebar popover when clicking outside (only in popover mode)
+            const sidebar = document.getElementById('sidebar');
+            const sessionsBtn = document.getElementById('sessions-btn');
+            if (sidebar && !sidebarPinned && !sidebar.classList.contains('collapsed')) {
+                if (!sidebar.contains(e.target) && sessionsBtn && !sessionsBtn.contains(e.target)) {
+                    sidebar.classList.add('collapsed');
+                    updateSessionsButtonState();
+                    updateSidebarBackdrop();
+                }
             }
         });
 

@@ -33,12 +33,8 @@ export const sidebarJs = `
             // Apply saved density
             sidebar.classList.toggle('compact', sidebarDensity === 'compact');
 
-            // Apply saved open state
-            if (!sidebarOpen) {
-                sidebar.classList.add('collapsed');
-                layout.classList.add('sidebar-collapsed');
-            }
-            updateShowSidebarBtn();
+            // Apply mode
+            applySidebarMode();
 
             // Init resize drag
             initSidebarResize();
@@ -69,37 +65,93 @@ export const sidebarJs = `
             updateSidebarSettingsControls();
         }
 
-        function toggleSidebar() {
+        function applySidebarMode() {
             const sidebar = document.getElementById('sidebar');
             const layout = document.getElementById('dashboard-layout');
+            if (!sidebar || !layout) return;
+
+            if (sidebarPinned) {
+                // Pinned mode: persistent sidebar pushing content
+                sidebar.classList.remove('popover-mode');
+                sidebar.classList.remove('collapsed');
+                layout.classList.remove('sidebar-collapsed');
+                layout.classList.remove('sidebar-popover');
+            } else {
+                // Popover mode: sidebar starts hidden, toggled by sessions button
+                sidebar.classList.add('popover-mode');
+                sidebar.classList.add('collapsed');
+                layout.classList.add('sidebar-collapsed');
+                layout.classList.add('sidebar-popover');
+            }
+            updateSessionsButtonState();
+            updateSidebarBackdrop();
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
             if (!sidebar) return;
 
-            sidebarOpen = !sidebarOpen;
-            localStorage.setItem('crabigator-sidebar-open', sidebarOpen);
+            if (sidebarPinned) {
+                // If pinned, toggle acts as close/unpin
+                closeSidebar();
+                return;
+            }
 
-            sidebar.classList.toggle('collapsed', !sidebarOpen);
-            if (layout) layout.classList.toggle('sidebar-collapsed', !sidebarOpen);
-            updateShowSidebarBtn();
+            // Popover mode: toggle visibility
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            if (isCollapsed) {
+                // Open popover
+                sidebar.classList.remove('collapsed');
+                closeStylePopover();
+                closeSettingsPopover();
+                updateSidebarContent();
+            } else {
+                // Close popover
+                sidebar.classList.add('collapsed');
+                closeSidebarSettings();
+            }
+            updateSessionsButtonState();
             updateSidebarBackdrop();
+        }
 
-            // Recalculate fit layout after sidebar toggle
+        function pinSidebar() {
+            sidebarPinned = true;
+            localStorage.setItem('crabigator-sidebar-pinned', 'true');
+            applySidebarMode();
+            // Recalculate fit layout
             requestAnimationFrame(() => {
                 if (typeof updateFitLayout === 'function') updateFitLayout();
             });
         }
 
-        function updateShowSidebarBtn() {
-            const btn = document.getElementById('show-sidebar-btn');
-            if (btn) {
-                btn.classList.toggle('visible', !sidebarOpen);
-            }
+        function closeSidebar() {
+            sidebarPinned = false;
+            localStorage.setItem('crabigator-sidebar-pinned', 'false');
+            closeSidebarSettings();
+            applySidebarMode();
+            // Recalculate fit layout
+            requestAnimationFrame(() => {
+                if (typeof updateFitLayout === 'function') updateFitLayout();
+            });
+        }
+
+        function updateSessionsButtonState() {
+            const btn = document.getElementById('sessions-btn');
+            const container = btn?.closest('.sessions-container');
+            if (!btn) return;
+            const sidebar = document.getElementById('sidebar');
+            const isOpen = sidebar && !sidebar.classList.contains('collapsed');
+            btn.classList.toggle('active', isOpen && !sidebarPinned);
+            // Hide sessions button entirely when sidebar is pinned
+            if (container) container.classList.toggle('sidebar-pinned-hidden', sidebarPinned);
         }
 
         function updateSidebarBackdrop() {
             const backdrop = document.getElementById('sidebar-backdrop');
-            if (backdrop) {
-                backdrop.classList.toggle('visible', sidebarOpen && window.innerWidth <= 768);
-            }
+            if (!backdrop) return;
+            const sidebar = document.getElementById('sidebar');
+            const isVisible = sidebar && !sidebar.classList.contains('collapsed');
+            backdrop.classList.toggle('visible', isVisible && window.innerWidth <= 768);
         }
 
         function toggleSidebarSettings() {
@@ -419,9 +471,6 @@ export const sidebarJs = `
             content.innerHTML = html;
             updateSidebarActiveState();
 
-            // Also update show-sidebar count
-            const countEl = document.getElementById('show-sidebar-count');
-            if (countEl) countEl.textContent = allSessions.length;
         }
 
         function initSidebarScrollSpy() {

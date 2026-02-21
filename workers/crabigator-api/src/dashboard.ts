@@ -53,26 +53,15 @@ export const dashboardHtml = `<!DOCTYPE html>
     <div class="header">
         <h1>🦀 Crabigator Dashboard</h1>
         <button class="refresh-btn" onclick="loadSessions()">↻ Refresh</button>
-        <button class="show-sidebar-btn" id="show-sidebar-btn" onclick="toggleSidebar()">
-            <svg viewBox="0 0 256 256" fill="currentColor" width="14" height="14"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z"/></svg>
-            <span class="show-sidebar-count" id="show-sidebar-count">0</span>
-            Sessions — Show Sidebar
-        </button>
         <div class="filter-indicator" id="filter-indicator">
             <span class="filter-text">Viewing 1 session</span>
             <button class="filter-clear" onclick="clearSessionFilter()" title="Show all sessions">✕</button>
         </div>
         <div class="sessions-container">
-            <button class="sessions-btn" id="sessions-btn" onclick="toggleSessionsPopover()">
+            <button class="sessions-btn" id="sessions-btn" onclick="toggleSidebar()">
                 <span class="sessions-count" id="sessions-count">0</span>
                 <span class="sessions-label">sessions</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
-                    <path d="M6 9l6 6 6-6"/>
-                </svg>
             </button>
-            <div class="sessions-popover" id="sessions-popover">
-                <div class="sessions-popover-content" id="sessions-popover-content"></div>
-            </div>
         </div>
         <div class="style-container">
             <button class="style-btn" id="style-btn" onclick="toggleStylePopover()">
@@ -190,7 +179,11 @@ export const dashboardHtml = `<!DOCTYPE html>
                     </svg>
                     Settings
                 </button>
-                <button class="sidebar-collapse-btn" onclick="toggleSidebar()" title="Hide sidebar">✕</button>
+                <button class="sidebar-pin-btn" id="sidebar-pin-btn" onclick="pinSidebar()" title="Pin as sidebar">
+                    <svg viewBox="0 0 256 256" fill="currentColor" width="12" height="12"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z"/></svg>
+                    Sidebar
+                </button>
+                <button class="sidebar-close-btn" id="sidebar-close-btn" onclick="closeSidebar()" title="Hide sidebar">✕</button>
             </div>
             <div class="sidebar-settings-popover" id="sidebar-settings-popover">
                 <div class="sidebar-settings-section">

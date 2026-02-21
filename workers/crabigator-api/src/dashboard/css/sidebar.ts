@@ -47,9 +47,32 @@ export const sidebarCss = `
 .sidebar.collapsed {
     transform: translateX(-100%);
     pointer-events: none;
+    opacity: 0;
 }
-.dashboard-layout[data-sidebar-position="right"] .sidebar.collapsed {
+.sidebar.popover-mode.collapsed {
+    transform: translateY(-10px);
+}
+.dashboard-layout[data-sidebar-position="right"] .sidebar.collapsed:not(.popover-mode) {
     transform: translateX(100%);
+}
+
+/* Popover mode - dropdown from sessions button */
+.sidebar.popover-mode {
+    position: fixed;
+    top: calc(var(--header-height, 67px) + 10px);
+    right: 16px;
+    left: auto;
+    bottom: auto;
+    max-height: calc(100vh - var(--header-height, 67px) - 32px);
+    border: 1px solid var(--border-dim);
+    border-radius: 12px;
+    box-shadow: 0 20px 48px rgba(0,0,0,0.5), 0 0 40px rgba(34, 211, 238, 0.1);
+    z-index: 200;
+}
+/* Don't push content in popover mode */
+.dashboard-layout.sidebar-popover {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
 }
 
 /* Sidebar header - sticky */
@@ -90,22 +113,34 @@ export const sidebarCss = `
     font-size: 10px;
     flex-shrink: 0;
 }
-.sidebar-collapse-btn {
+.sidebar-pin-btn,
+.sidebar-close-btn {
     font-family: 'JetBrains Mono', monospace;
     background: transparent;
     border: 1px solid var(--border-dim);
-    width: 28px;
     height: 28px;
+    padding: 0 10px;
     border-radius: 6px;
     color: var(--text-dim);
     cursor: pointer;
     display: flex;
     align-items: center;
-    justify-content: center;
+    gap: 6px;
     transition: all 0.2s;
-    font-size: 12px;
+    font-size: 10px;
     flex-shrink: 0;
 }
+.sidebar-close-btn {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+    font-size: 12px;
+}
+/* Show pin button in popover mode, close button in pinned mode */
+.sidebar.popover-mode .sidebar-pin-btn { display: flex; }
+.sidebar.popover-mode .sidebar-close-btn { display: none; }
+.sidebar:not(.popover-mode) .sidebar-pin-btn { display: none; }
+.sidebar:not(.popover-mode) .sidebar-close-btn { display: flex; }
 .sidebar-settings-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
@@ -117,7 +152,12 @@ export const sidebarCss = `
     background: rgba(34, 211, 238, 0.1);
     box-shadow: 0 0 10px rgba(34, 211, 238, 0.2);
 }
-.sidebar-collapse-btn:hover {
+.sidebar-pin-btn:hover {
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+    background: rgba(34, 211, 238, 0.05);
+}
+.sidebar-close-btn:hover {
     border-color: var(--accent-red);
     color: var(--accent-red);
     background: rgba(248, 113, 113, 0.05);
@@ -250,6 +290,9 @@ export const sidebarCss = `
     right: auto;
     left: -3px;
 }
+.sidebar.popover-mode .sidebar-resize-handle {
+    display: none;
+}
 
 /* Indent session items from project group headers */
 .sidebar .sessions-group .session-item {
@@ -263,40 +306,9 @@ export const sidebarCss = `
     border-left: 2px solid var(--accent-cyan);
 }
 
-/* Show sidebar button in header */
-.show-sidebar-btn {
-    font-family: 'JetBrains Mono', monospace;
-    background: transparent;
-    border: 1px solid var(--border-dim);
-    padding: 8px 14px;
-    color: var(--text-dim);
-    cursor: pointer;
-    font-size: 11px;
-    border-radius: 6px;
+/* Sessions button hidden when sidebar is pinned (toggled via JS) */
+.sessions-container.sidebar-pinned-hidden {
     display: none;
-    align-items: center;
-    gap: 8px;
-    transition: all 0.2s;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    white-space: nowrap;
-}
-.show-sidebar-btn.visible {
-    display: flex;
-}
-.show-sidebar-btn:hover {
-    border-color: var(--accent-cyan);
-    color: var(--accent-cyan);
-    background: rgba(34, 211, 238, 0.05);
-}
-.show-sidebar-btn svg {
-    width: 14px;
-    height: 14px;
-    flex-shrink: 0;
-}
-.show-sidebar-count {
-    font-weight: 700;
-    color: var(--accent-cyan);
 }
 
 /* Session highlight animation when scrolled to */

@@ -16,7 +16,7 @@ export const layoutJs = `
                 const count = sessions.size || 1;
                 // Account for sidebar width when calculating available space
                 let availableWidth = window.innerWidth - 32;
-                if (sidebarOpen) {
+                if (sidebarPinned) {
                     availableWidth -= sidebarWidth;
                 }
                 const containerWidth = container.offsetWidth || availableWidth;
