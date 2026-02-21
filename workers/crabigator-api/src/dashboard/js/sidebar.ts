@@ -257,10 +257,15 @@ export const sidebarJs = `
             if (isFocused) classes.push('focused');
             if (isActive) classes.push('sidebar-active');
 
+            const isLoading = session.title === 'Untitled' && !sessions.has(session.id);
+            const titleHtml = isLoading
+                ? '<span class="session-item-title sidebar-shimmer"></span>'
+                : '<span class="session-item-title">' + escapeHtml(session.title) + '</span>';
+
             return \`
                 <div class="\${classes.join(' ')}" data-session-id="\${session.id}" onclick="handleSessionClick('\${session.id}')">
                     <div class="session-item-row">
-                        <span class="session-item-title">\${escapeHtml(session.title)}</span>
+                        \${titleHtml}
                         <span class="session-item-state \${session.state}">\${session.state}</span>
                     </div>
                     \${statsHtml ? '<div class="session-item-stats' + (hasStats ? '' : ' dim') + '">' + statsHtml + '</div>' : ''}

@@ -208,6 +208,21 @@ export const sidebarCss = `
     color: var(--text-mid);
 }
 
+/* Shimmer placeholder for loading titles */
+@keyframes sidebar-shimmer {
+    0% { background-position: -100px 0; }
+    100% { background-position: 200px 0; }
+}
+.sidebar-shimmer {
+    display: inline-block;
+    width: 80px;
+    height: 10px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--bg-surface) 0%, var(--border-dim) 50%, var(--bg-surface) 100%);
+    background-size: 200px 100%;
+    animation: sidebar-shimmer 1.5s ease-in-out infinite;
+}
+
 /* Sidebar scrollable content */
 .sidebar-content {
     flex: 1;
