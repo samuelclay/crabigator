@@ -162,6 +162,9 @@ export const sidebarJs = `
         }
 
         function scrollToSession(sessionId) {
+            // Suppress scroll spy so the programmatic scrollIntoView doesn't override our selection
+            if (typeof window.suppressScrollSpy === 'function') window.suppressScrollSpy();
+
             const card = document.getElementById('session-' + sessionId);
             if (!card) return;
 
@@ -407,10 +410,19 @@ export const sidebarJs = `
 
         function initSidebarScrollSpy() {
             let scrollSpyTimer = null;
-            let isUserScrolling = false;
+            let scrollSpyEnabled = true;
 
             // Track which session cards are visible using IntersectionObserver
             const visibleCards = new Map(); // sessionId -> intersectionRatio
+
+            // Only re-enable scroll spy on real user scrolling (wheel/touch), not programmatic scrollIntoView
+            window.addEventListener('wheel', () => { scrollSpyEnabled = true; }, { passive: true });
+            window.addEventListener('touchmove', () => { scrollSpyEnabled = true; }, { passive: true });
+
+            // Suppress scroll spy after clicks - stays suppressed until next wheel/touch
+            window.suppressScrollSpy = function() {
+                scrollSpyEnabled = false;
+            };
 
             const observer = new IntersectionObserver((entries) => {
                 for (const entry of entries) {
@@ -421,11 +433,13 @@ export const sidebarJs = `
                         visibleCards.delete(id);
                     }
                 }
-                // Throttle updates while scrolling
+                // Throttle updates
                 if (scrollSpyTimer) return;
                 scrollSpyTimer = setTimeout(() => {
                     scrollSpyTimer = null;
-                    updateScrollSpyActive();
+                    if (scrollSpyEnabled) {
+                        updateScrollSpyActive();
+                    }
                 }, 150);
             }, {
                 rootMargin: '-' + (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--header-height')) || 67) + 'px 0px 0px 0px',
