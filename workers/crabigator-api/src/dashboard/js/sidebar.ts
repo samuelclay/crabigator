@@ -46,6 +46,22 @@ export const sidebarJs = `
             // Init scroll spy
             initSidebarScrollSpy();
 
+            // Any click inside a session card highlights it in the sidebar
+            const sessionsContainer = document.getElementById('sessions');
+            if (sessionsContainer) {
+                sessionsContainer.addEventListener('click', (e) => {
+                    const card = e.target.closest('.session-card');
+                    if (!card) return;
+                    const sessionId = card.id.replace('session-', '');
+                    if (sessionId && sessionId !== sidebarActiveSessionId) {
+                        sidebarActiveSessionId = sessionId;
+                        updateSidebarActiveState();
+                        const sidebarItem = document.querySelector('.sidebar .session-item[data-session-id="' + sessionId + '"]');
+                        if (sidebarItem) sidebarItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                });
+            }
+
             // Render content
             updateSidebarContent();
 
