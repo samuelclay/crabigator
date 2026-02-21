@@ -251,11 +251,16 @@ export const sidebarCss = `
     left: -3px;
 }
 
+/* Indent session items from project group headers */
+.sidebar .sessions-group .session-item {
+    margin-left: 12px;
+    border-left: 2px solid rgba(34, 211, 238, 0.08);
+}
+
 /* Active sidebar session */
 .sidebar .session-item.sidebar-active {
     background: rgba(34, 211, 238, 0.08);
     border-left: 2px solid var(--accent-cyan);
-    padding-left: 10px;
 }
 
 /* Show sidebar button in header */
