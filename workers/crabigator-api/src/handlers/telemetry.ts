@@ -143,6 +143,12 @@ interface DayCount {
     count: number;
 }
 
+/** Format a date string like "2024-01-15" to "1/15" for chart labels */
+function formatDay(d: string): string {
+    const dt = new Date(d);
+    return (dt.getMonth() + 1) + '/' + dt.getDate();
+}
+
 /**
  * POST /api/staff/sync-usage - Force sync a group's usage DO
  */
@@ -286,10 +292,7 @@ export async function handleStaffTelemetry(
 
     // Format checks by day for chart
     const checksByDay = checksByDayResult.results || [];
-    const dayLabels = checksByDay.map(r => {
-        const d = new Date(r.day);
-        return (d.getMonth() + 1) + '/' + d.getDate();
-    });
+    const dayLabels = checksByDay.map(r => formatDay(r.day));
     const dayValues = checksByDay.map(r => r.count);
 
     return jsonResponse({
@@ -317,11 +320,6 @@ export async function handleStaffTelemetry(
 // ============================================
 // Website Analytics
 // ============================================
-
-interface VisitorsByDayRow {
-    day: string;
-    count: number;
-}
 
 interface ReferrerRow {
     referrer_domain: string | null;
@@ -444,7 +442,7 @@ export async function handleStaffAnalytics(
             WHERE created_at > ?
             GROUP BY day
             ORDER BY day ASC
-        `).bind(thirtyDaysAgo).all<VisitorsByDayRow>(),
+        `).bind(thirtyDaysAgo).all<DayCount>(),
 
         // Referrer domains (for categorization)
         env.DB.prepare(`
@@ -571,10 +569,7 @@ export async function handleStaffAnalytics(
 
     // Format visitors by day for chart
     const visitorsByDay = visitorsByDayResult.results || [];
-    const dayLabels = visitorsByDay.map(r => {
-        const d = new Date(r.day);
-        return (d.getMonth() + 1) + '/' + d.getDate();
-    });
+    const dayLabels = visitorsByDay.map(r => formatDay(r.day));
 
     // Format NPM downloads for chart (reverse to chronological order)
     const npmDownloads = (npmDownloadsResult.results || []).reverse();
@@ -626,5 +621,522 @@ export async function handleStaffAnalytics(
         funnel,
         campaign_performance: campaignPerfResult.results || [],
         email_signups: emailSignupsResult.results || []
+    });
+}
+
+// ============================================
+// Session Analytics
+// ============================================
+
+function parseRange(range: string | null): number {
+    const now = Math.floor(Date.now() / 1000);
+    switch (range) {
+        case '7d': return now - 7 * 86400;
+        case '90d': return now - 90 * 86400;
+        case 'all': return 0;
+        default: return now - 30 * 86400; // 30d default
+    }
+}
+
+function computePercentiles(sorted: number[]): Record<string, number> {
+    if (sorted.length === 0) return { p50: 0, p75: 0, p90: 0, p95: 0, p99: 0 };
+    const p = (pct: number) => sorted[Math.min(Math.floor(sorted.length * pct), sorted.length - 1)];
+    return { p50: p(0.50), p75: p(0.75), p90: p(0.90), p95: p(0.95), p99: p(0.99) };
+}
+
+interface WeeklyPercentiles {
+    labels: string[];
+    p50: number[];
+    p75: number[];
+    p90: number[];
+    p95: number[];
+    p99: number[];
+}
+
+function computeWeeklyPercentiles(
+    rows: Array<{ week: string; val: number }>,
+    roundTo: number = 0
+): WeeklyPercentiles {
+    const byWeek = new Map<string, number[]>();
+    for (const row of rows) {
+        if (row.val == null || row.val <= 0) continue;
+        if (!byWeek.has(row.week)) byWeek.set(row.week, []);
+        byWeek.get(row.week)!.push(row.val);
+    }
+    const result: WeeklyPercentiles = { labels: [], p50: [], p75: [], p90: [], p95: [], p99: [] };
+    for (const [week, values] of byWeek) {
+        values.sort((a, b) => a - b);
+        const pct = computePercentiles(values);
+        const r = roundTo > 0 ? (v: number) => Math.round(v * roundTo) / roundTo : Math.round;
+        result.labels.push(formatDay(week));
+        result.p50.push(r(pct.p50));
+        result.p75.push(r(pct.p75));
+        result.p90.push(r(pct.p90));
+        result.p95.push(r(pct.p95));
+        result.p99.push(r(pct.p99));
+    }
+    return result;
+}
+
+/**
+ * GET /api/staff/session-analytics?range=30d - Aggregate session analytics
+ */
+export async function handleStaffSessionAnalytics(
+    request: Request,
+    env: Env
+): Promise<Response> {
+    const url = new URL(request.url);
+    const since = parseRange(url.searchParams.get('range'));
+
+    const [
+        // Overview stats
+        totalSessionsResult,
+        activeUsersResult,
+        avgSessionTimeResult,
+        avgThinkingTimeResult,
+
+        // Behavior distributions
+        promptsPerSessionResult,
+        toolsPerSessionResult,
+        thinkingPerPromptResult,
+
+        // Distributions
+        thinkingValuesResult,
+        durationValuesResult,
+        toolUsageResult,
+        modelUsageResult,
+        modeUsageResult,
+
+        // Repo analytics
+        topReposResult,
+        repoLongTailResult,
+        reposPerUserResult,
+
+        // User patterns
+        toolsByUserResult,
+        sessionsPerUserResult,
+
+        // Event-level analytics
+        perPromptThinkingResult,
+        interPromptGapsResult,
+
+        // Weekly trends
+        weeklyBehaviorResult,
+        weeklyThinkingResult,
+
+        // Titles
+        titlesPerSessionResult,
+        weeklyTitlesResult,
+
+        // Weekly percentile trends
+        weeklySessionRawResult,
+        weeklyPerPromptThinkingRawResult,
+        weeklyInterPromptGapsRawResult,
+    ] = await Promise.all([
+        // --- OVERVIEW ---
+        env.DB.prepare(`
+            SELECT COUNT(*) as count FROM sessions WHERE started_at > ?
+        `).bind(since).first<{ count: number }>(),
+
+        env.DB.prepare(`
+            SELECT COUNT(DISTINCT device_id) as count FROM sessions WHERE started_at > ?
+        `).bind(since).first<{ count: number }>(),
+
+        env.DB.prepare(`
+            SELECT AVG(work_seconds) as avg_time FROM sessions
+            WHERE started_at > ? AND work_seconds IS NOT NULL AND work_seconds > 0
+        `).bind(since).first<{ avg_time: number | null }>(),
+
+        env.DB.prepare(`
+            SELECT AVG(thinking_seconds) as avg_time FROM sessions
+            WHERE started_at > ? AND thinking_seconds > 0
+        `).bind(since).first<{ avg_time: number | null }>(),
+
+        // --- BEHAVIOR DISTRIBUTIONS ---
+        env.DB.prepare(`
+            SELECT prompts as val FROM sessions
+            WHERE started_at > ? AND prompts > 0
+            ORDER BY prompts ASC
+        `).bind(since).all<{ val: number }>(),
+
+        env.DB.prepare(`
+            SELECT tool_calls as val FROM sessions
+            WHERE started_at > ? AND tool_calls > 0
+            ORDER BY tool_calls ASC
+        `).bind(since).all<{ val: number }>(),
+
+        env.DB.prepare(`
+            SELECT CAST(thinking_seconds AS REAL) / prompts as val FROM sessions
+            WHERE started_at > ? AND thinking_seconds > 0 AND prompts > 0
+            ORDER BY val ASC
+        `).bind(since).all<{ val: number }>(),
+
+        // --- DISTRIBUTIONS ---
+        env.DB.prepare(`
+            SELECT thinking_seconds as val FROM sessions
+            WHERE started_at > ? AND thinking_seconds > 0
+            ORDER BY thinking_seconds ASC
+        `).bind(since).all<{ val: number }>(),
+
+        env.DB.prepare(`
+            SELECT work_seconds as val FROM sessions
+            WHERE started_at > ? AND work_seconds IS NOT NULL AND work_seconds > 0
+            ORDER BY work_seconds ASC
+        `).bind(since).all<{ val: number }>(),
+
+        env.DB.prepare(`
+            SELECT tool_name, SUM(count) as total
+            FROM session_tool_usage
+            JOIN sessions ON sessions.id = session_tool_usage.session_id
+            WHERE sessions.started_at > ?
+            GROUP BY tool_name ORDER BY total DESC LIMIT 15
+        `).bind(since).all<{ tool_name: string; total: number }>(),
+
+        env.DB.prepare(`
+            SELECT model, COUNT(*) as count FROM sessions
+            WHERE started_at > ? AND model IS NOT NULL
+            GROUP BY model ORDER BY count DESC
+        `).bind(since).all<{ model: string; count: number }>(),
+
+        env.DB.prepare(`
+            SELECT mode, COUNT(*) as count FROM sessions
+            WHERE started_at > ? AND mode IS NOT NULL
+            GROUP BY mode ORDER BY count DESC
+        `).bind(since).all<{ mode: string; count: number }>(),
+
+        // --- REPO ANALYTICS ---
+        env.DB.prepare(`
+            SELECT cwd, COUNT(*) as session_count FROM sessions
+            WHERE started_at > ?
+            GROUP BY cwd ORDER BY session_count DESC LIMIT 10
+        `).bind(since).all<{ cwd: string; session_count: number }>(),
+
+        env.DB.prepare(`
+            SELECT
+                SUM(CASE WHEN cnt = 1 THEN 1 ELSE 0 END) as one_session,
+                SUM(CASE WHEN cnt BETWEEN 2 AND 5 THEN 1 ELSE 0 END) as two_to_five,
+                SUM(CASE WHEN cnt > 5 THEN 1 ELSE 0 END) as more_than_five
+            FROM (
+                SELECT cwd, COUNT(*) as cnt FROM sessions
+                WHERE started_at > ? GROUP BY cwd
+            )
+        `).bind(since).first<{ one_session: number; two_to_five: number; more_than_five: number }>(),
+
+        env.DB.prepare(`
+            SELECT repo_count, COUNT(*) as user_count FROM (
+                SELECT device_id, COUNT(DISTINCT cwd) as repo_count
+                FROM sessions WHERE started_at > ? GROUP BY device_id
+            ) GROUP BY repo_count ORDER BY repo_count ASC
+        `).bind(since).all<{ repo_count: number; user_count: number }>(),
+
+        // --- USER PATTERNS ---
+        // Tool usage by top 5 users (join telemetry for machine_name)
+        env.DB.prepare(`
+            SELECT
+                COALESCE(t.machine_name, SUBSTR(s.device_id, 1, 8)) as user_label,
+                stu.tool_name,
+                SUM(stu.count) as total
+            FROM session_tool_usage stu
+            JOIN sessions s ON s.id = stu.session_id
+            LEFT JOIN (
+                SELECT device_id, machine_name,
+                       ROW_NUMBER() OVER (PARTITION BY device_id ORDER BY created_at DESC) as rn
+                FROM telemetry WHERE machine_name IS NOT NULL
+            ) t ON t.device_id = s.device_id AND t.rn = 1
+            WHERE s.started_at > ?
+            AND s.device_id IN (
+                SELECT device_id FROM sessions
+                WHERE started_at > ? GROUP BY device_id
+                ORDER BY COUNT(*) DESC LIMIT 5
+            )
+            GROUP BY user_label, stu.tool_name
+            ORDER BY total DESC
+        `).bind(since, since).all<{ user_label: string; tool_name: string; total: number }>(),
+
+        // Sessions per user distribution
+        env.DB.prepare(`
+            SELECT session_count, COUNT(*) as user_count FROM (
+                SELECT device_id, COUNT(*) as session_count
+                FROM sessions WHERE started_at > ? GROUP BY device_id
+            ) GROUP BY session_count ORDER BY session_count ASC
+        `).bind(since).all<{ session_count: number; user_count: number }>(),
+
+        // --- EVENT-LEVEL ANALYTICS ---
+        // Per-prompt thinking time: consecutive UserPromptSubmit→Stop pairs
+        env.DB.prepare(`
+            SELECT (stop.timestamp_ms - start.timestamp_ms) / 1000 as thinking_sec
+            FROM session_events_log start
+            JOIN session_events_log stop ON stop.session_id = start.session_id
+                AND stop.event_type = 'Stop'
+                AND stop.timestamp_ms > start.timestamp_ms
+                AND stop.id = (
+                    SELECT MIN(id) FROM session_events_log
+                    WHERE session_id = start.session_id
+                    AND event_type = 'Stop'
+                    AND timestamp_ms > start.timestamp_ms
+                )
+            JOIN sessions s ON s.id = start.session_id
+            WHERE start.event_type = 'UserPromptSubmit'
+            AND s.started_at > ?
+            ORDER BY thinking_sec ASC
+        `).bind(since).all<{ thinking_sec: number }>(),
+
+        // Time between consecutive user prompts (inter-prompt gaps)
+        env.DB.prepare(`
+            SELECT (e2.timestamp_ms - e1.timestamp_ms) / 1000 as gap_sec
+            FROM session_events_log e1
+            JOIN session_events_log e2 ON e2.session_id = e1.session_id
+                AND e2.event_type = 'UserPromptSubmit'
+                AND e2.timestamp_ms > e1.timestamp_ms
+                AND e2.id = (
+                    SELECT MIN(id) FROM session_events_log
+                    WHERE session_id = e1.session_id
+                    AND event_type = 'UserPromptSubmit'
+                    AND timestamp_ms > e1.timestamp_ms
+                )
+            JOIN sessions s ON s.id = e1.session_id
+            WHERE e1.event_type = 'UserPromptSubmit'
+            AND s.started_at > ?
+            ORDER BY gap_sec ASC
+        `).bind(since).all<{ gap_sec: number }>(),
+
+        // --- WEEKLY TRENDS ---
+        // Prompts + tools per session (weekly avg)
+        env.DB.prepare(`
+            SELECT date(started_at, 'unixepoch', 'weekday 0', '-6 days') as week,
+                   AVG(prompts) as avg_prompts,
+                   AVG(tool_calls) as avg_tools
+            FROM sessions
+            WHERE started_at > ? AND prompts > 0
+            GROUP BY week ORDER BY week ASC
+        `).bind(since).all<{ week: string; avg_prompts: number; avg_tools: number }>(),
+
+        // Thinking per session + thinking per prompt (weekly avg)
+        env.DB.prepare(`
+            SELECT date(started_at, 'unixepoch', 'weekday 0', '-6 days') as week,
+                   AVG(thinking_seconds) as avg_thinking,
+                   AVG(CAST(thinking_seconds AS REAL) / prompts) as avg_thinking_per_prompt
+            FROM sessions
+            WHERE started_at > ? AND thinking_seconds > 0 AND prompts > 0
+            GROUP BY week ORDER BY week ASC
+        `).bind(since).all<{ week: string; avg_thinking: number; avg_thinking_per_prompt: number }>(),
+
+        // --- TITLES ---
+        // Unique titles per session (count from JSON array)
+        env.DB.prepare(`
+            SELECT json_array_length(titles) as val FROM sessions
+            WHERE started_at > ? AND titles IS NOT NULL AND titles != '[]'
+            ORDER BY val ASC
+        `).bind(since).all<{ val: number }>(),
+
+        // Weekly avg unique titles per session
+        env.DB.prepare(`
+            SELECT date(started_at, 'unixepoch', 'weekday 0', '-6 days') as week,
+                   AVG(json_array_length(titles)) as avg_titles
+            FROM sessions
+            WHERE started_at > ? AND titles IS NOT NULL AND titles != '[]'
+            GROUP BY week ORDER BY week ASC
+        `).bind(since).all<{ week: string; avg_titles: number }>(),
+
+        // --- WEEKLY PERCENTILE TRENDS ---
+        // All session-level values by week (for computing per-week percentiles)
+        env.DB.prepare(`
+            SELECT
+                date(started_at, 'unixepoch', 'weekday 0', '-6 days') as week,
+                prompts,
+                tool_calls,
+                thinking_seconds,
+                CASE WHEN prompts > 0 THEN CAST(thinking_seconds AS REAL) / prompts ELSE NULL END as thinking_per_prompt,
+                work_seconds,
+                CASE WHEN titles IS NOT NULL AND titles != '[]' THEN json_array_length(titles) ELSE NULL END as title_count
+            FROM sessions
+            WHERE started_at > ?
+            ORDER BY week ASC
+        `).bind(since).all<{
+            week: string; prompts: number; tool_calls: number;
+            thinking_seconds: number; thinking_per_prompt: number | null;
+            work_seconds: number | null; title_count: number | null;
+        }>(),
+
+        // Per-prompt thinking by week (event-level)
+        env.DB.prepare(`
+            SELECT
+                date(s.started_at, 'unixepoch', 'weekday 0', '-6 days') as week,
+                (stop.timestamp_ms - start.timestamp_ms) / 1000 as val
+            FROM session_events_log start
+            JOIN session_events_log stop ON stop.session_id = start.session_id
+                AND stop.event_type = 'Stop'
+                AND stop.timestamp_ms > start.timestamp_ms
+                AND stop.id = (
+                    SELECT MIN(id) FROM session_events_log
+                    WHERE session_id = start.session_id
+                    AND event_type = 'Stop'
+                    AND timestamp_ms > start.timestamp_ms
+                )
+            JOIN sessions s ON s.id = start.session_id
+            WHERE start.event_type = 'UserPromptSubmit'
+            AND s.started_at > ?
+            ORDER BY week ASC
+        `).bind(since).all<{ week: string; val: number }>(),
+
+        // Inter-prompt gap by week (event-level)
+        env.DB.prepare(`
+            SELECT
+                date(s.started_at, 'unixepoch', 'weekday 0', '-6 days') as week,
+                (e2.timestamp_ms - e1.timestamp_ms) / 1000 as val
+            FROM session_events_log e1
+            JOIN session_events_log e2 ON e2.session_id = e1.session_id
+                AND e2.event_type = 'UserPromptSubmit'
+                AND e2.timestamp_ms > e1.timestamp_ms
+                AND e2.id = (
+                    SELECT MIN(id) FROM session_events_log
+                    WHERE session_id = e1.session_id
+                    AND event_type = 'UserPromptSubmit'
+                    AND timestamp_ms > e1.timestamp_ms
+                )
+            JOIN sessions s ON s.id = e1.session_id
+            WHERE e1.event_type = 'UserPromptSubmit'
+            AND s.started_at > ?
+            ORDER BY week ASC
+        `).bind(since).all<{ week: string; val: number }>(),
+    ]);
+
+    // Compute percentiles
+    const thinkingValues = (thinkingValuesResult.results || []).map(r => r.val);
+    const durationValues = (durationValuesResult.results || []).map(r => r.val);
+    const perPromptValues = (perPromptThinkingResult.results || []).map(r => r.thinking_sec).filter(v => v > 0);
+    const interPromptValues = (interPromptGapsResult.results || []).map(r => r.gap_sec).filter(v => v > 0);
+
+    // Behavior distributions
+    const promptsPerSession = (promptsPerSessionResult.results || []).map(r => r.val);
+    const toolsPerSession = (toolsPerSessionResult.results || []).map(r => r.val);
+    const thinkingPerPrompt = (thinkingPerPromptResult.results || []).map(r => Math.round(r.val));
+
+    // Build tools-by-user pivot for stacked bar
+    const toolsByUser = toolsByUserResult.results || [];
+    const userToolPivot: Record<string, Record<string, number>> = {};
+    const allToolNames = new Set<string>();
+    for (const row of toolsByUser) {
+        if (!userToolPivot[row.user_label]) userToolPivot[row.user_label] = {};
+        userToolPivot[row.user_label][row.tool_name] = row.total;
+        allToolNames.add(row.tool_name);
+    }
+    // Top 5 tools by total usage across these users
+    const topToolNames = [...allToolNames]
+        .map(t => ({ name: t, total: toolsByUser.filter(r => r.tool_name === t).reduce((s, r) => s + r.total, 0) }))
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 5)
+        .map(t => t.name);
+
+    // Extract repo name from full path
+    const topRepos = (topReposResult.results || []).map(r => ({
+        name: r.cwd.split('/').pop() || r.cwd,
+        full_path: r.cwd,
+        count: r.session_count,
+    }));
+
+    // Weekly trends
+    const weeklyBehavior = weeklyBehaviorResult.results || [];
+    const weeklyThinking = weeklyThinkingResult.results || [];
+
+    // Titles
+    const titlesPerSession = (titlesPerSessionResult.results || []).map(r => r.val);
+    const weeklyTitles = weeklyTitlesResult.results || [];
+
+    // Weekly percentile trends from bulk session data
+    const sessionRaw = weeklySessionRawResult.results || [];
+    const weeklyPromptsPercentiles = computeWeeklyPercentiles(
+        sessionRaw.filter(r => r.prompts > 0).map(r => ({ week: r.week, val: r.prompts }))
+    );
+    const weeklyToolsPercentiles = computeWeeklyPercentiles(
+        sessionRaw.filter(r => r.tool_calls > 0).map(r => ({ week: r.week, val: r.tool_calls }))
+    );
+    const weeklyThinkingPerPromptPercentiles = computeWeeklyPercentiles(
+        sessionRaw.filter(r => r.thinking_per_prompt != null && r.thinking_per_prompt > 0)
+            .map(r => ({ week: r.week, val: r.thinking_per_prompt! })), 10
+    );
+    const weeklyThinkingPercentiles = computeWeeklyPercentiles(
+        sessionRaw.filter(r => r.thinking_seconds > 0).map(r => ({ week: r.week, val: r.thinking_seconds }))
+    );
+    const weeklyDurationPercentiles = computeWeeklyPercentiles(
+        sessionRaw.filter(r => r.work_seconds != null && r.work_seconds > 0)
+            .map(r => ({ week: r.week, val: r.work_seconds! }))
+    );
+    const weeklyTitlesPercentiles = computeWeeklyPercentiles(
+        sessionRaw.filter(r => r.title_count != null && r.title_count > 0)
+            .map(r => ({ week: r.week, val: r.title_count! }))
+    );
+    const weeklyPerPromptThinkingPercentiles = computeWeeklyPercentiles(
+        (weeklyPerPromptThinkingRawResult.results || []).filter(r => r.val > 0)
+    );
+    const weeklyInterPromptGapPercentiles = computeWeeklyPercentiles(
+        (weeklyInterPromptGapsRawResult.results || []).filter(r => r.val > 0)
+    );
+
+    return jsonResponse({
+        overview: {
+            total_sessions: totalSessionsResult?.count || 0,
+            active_users: activeUsersResult?.count || 0,
+            avg_session_time: Math.round(avgSessionTimeResult?.avg_time || 0),
+            avg_thinking_time: Math.round(avgThinkingTimeResult?.avg_time || 0),
+        },
+        prompts_per_session_percentiles: computePercentiles(promptsPerSession),
+        tools_per_session_percentiles: computePercentiles(toolsPerSession),
+        thinking_per_prompt_percentiles: computePercentiles(thinkingPerPrompt),
+        thinking_percentiles: computePercentiles(thinkingValues),
+        session_duration_percentiles: computePercentiles(durationValues),
+        per_prompt_thinking_percentiles: computePercentiles(perPromptValues),
+        inter_prompt_gap_percentiles: computePercentiles(interPromptValues),
+        tool_usage: {
+            labels: (toolUsageResult.results || []).map(r => r.tool_name),
+            values: (toolUsageResult.results || []).map(r => r.total),
+        },
+        model_usage: {
+            labels: (modelUsageResult.results || []).map(r => r.model),
+            values: (modelUsageResult.results || []).map(r => r.count),
+        },
+        mode_usage: {
+            labels: (modeUsageResult.results || []).map(r => r.mode),
+            values: (modeUsageResult.results || []).map(r => r.count),
+        },
+        top_repos: topRepos,
+        repo_long_tail: repoLongTailResult || { one_session: 0, two_to_five: 0, more_than_five: 0 },
+        repos_per_user: {
+            labels: (reposPerUserResult.results || []).map(r => String(r.repo_count)),
+            values: (reposPerUserResult.results || []).map(r => r.user_count),
+        },
+        tools_by_user: {
+            users: Object.keys(userToolPivot),
+            tools: topToolNames,
+            data: userToolPivot,
+        },
+        sessions_per_user: {
+            labels: (sessionsPerUserResult.results || []).map(r => String(r.session_count)),
+            values: (sessionsPerUserResult.results || []).map(r => r.user_count),
+        },
+        weekly_behavior: {
+            labels: weeklyBehavior.map(r => formatDay(r.week)),
+            avg_prompts: weeklyBehavior.map(r => Math.round(r.avg_prompts * 10) / 10),
+            avg_tools: weeklyBehavior.map(r => Math.round(r.avg_tools)),
+        },
+        weekly_thinking: {
+            labels: weeklyThinking.map(r => formatDay(r.week)),
+            avg_thinking: weeklyThinking.map(r => Math.round(r.avg_thinking)),
+            avg_thinking_per_prompt: weeklyThinking.map(r => Math.round(r.avg_thinking_per_prompt)),
+        },
+        titles_per_session_percentiles: computePercentiles(titlesPerSession),
+        weekly_titles: {
+            labels: weeklyTitles.map(r => formatDay(r.week)),
+            avg_titles: weeklyTitles.map(r => Math.round(r.avg_titles * 10) / 10),
+        },
+        // Weekly percentile trends
+        weekly_prompts_percentiles: weeklyPromptsPercentiles,
+        weekly_tools_percentiles: weeklyToolsPercentiles,
+        weekly_thinking_per_prompt_percentiles: weeklyThinkingPerPromptPercentiles,
+        weekly_thinking_percentiles: weeklyThinkingPercentiles,
+        weekly_duration_percentiles: weeklyDurationPercentiles,
+        weekly_titles_percentiles: weeklyTitlesPercentiles,
+        weekly_per_prompt_thinking_percentiles: weeklyPerPromptThinkingPercentiles,
+        weekly_inter_prompt_gap_percentiles: weeklyInterPromptGapPercentiles,
     });
 }

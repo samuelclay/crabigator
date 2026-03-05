@@ -11,7 +11,7 @@ import { handleStripeWebhook } from './handlers/payments/stripe-webhook';
 import { createPayPalSubscription } from './handlers/payments/paypal';
 import { handlePayPalWebhook } from './handlers/payments/paypal-webhook';
 import { getSubscription, cancelSubscription, getSubscriptionPortal } from './handlers/payments/subscription';
-import { handleUpdateCheck, handleStaffDashboard, handleStaffTelemetry, handleStaffSyncUsage, handleStaffAnalytics } from './handlers/telemetry';
+import { handleUpdateCheck, handleStaffDashboard, handleStaffTelemetry, handleStaffSyncUsage, handleStaffAnalytics, handleStaffSessionAnalytics } from './handlers/telemetry';
 import { handleCreateGift, handleListGifts, handleSendGiftEmail, handleGetGift, handleClaimGift, handleResolvePendingGift } from './handlers/gifts';
 import { handleAnalyticsBeacon, handleAnalyticsEvent } from './handlers/analytics';
 import { fetchNpmStats, checkTrafficAnomalies } from './handlers/npm-stats';
@@ -731,6 +731,7 @@ router.post('/api/analytics/event', handleAnalyticsEvent);
 router.get('/staff', handleStaffDashboard);
 router.get('/api/staff/telemetry', handleStaffTelemetry);
 router.get('/api/staff/analytics', handleStaffAnalytics);
+router.get('/api/staff/session-analytics', handleStaffSessionAnalytics);
 router.post('/api/staff/sync-usage', handleStaffSyncUsage);
 
 // Staff gift management

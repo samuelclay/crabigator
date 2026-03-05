@@ -10,6 +10,7 @@ interface PersistentState {
     state: SessionState;
     currentPrompt: CloudPromptData | null;
     lastTitle: string | null;
+    lastTitleHistory: string[] | null;
 }
 
 /**
@@ -21,7 +22,6 @@ interface EphemeralState {
     /** Accumulated scrollback content (capped at ~500KB) */
     scrollbackContent: string;
     lastScreen: string | null;
-    lastTitleHistory: string[] | null;
     lastGit: GitEvent | null;
     lastChanges: ChangesEvent | null;
     lastStats: StatsEvent | null;
@@ -81,12 +81,12 @@ export class SessionDO implements DurableObject {
             state: 'ready',
             currentPrompt: null,
             lastTitle: null,
+            lastTitleHistory: null,
         };
         this.ephemeralState = {
             lastScrollbackLine: 0,
             scrollbackContent: '',
             lastScreen: null,
-            lastTitleHistory: null,
             lastGit: null,
             lastChanges: null,
             lastStats: null,
@@ -102,6 +102,18 @@ export class SessionDO implements DurableObject {
             const storedInfo = await state.storage.get<SessionInfo>('sessionInfo');
             if (storedInfo) {
                 this.sessionInfo = storedInfo;
+            }
+            // Backfill title history from D1 if missing from DO storage
+            if (!this.persistentState.lastTitleHistory && this.persistentState.sessionId) {
+                const row = await this.env.DB.prepare(
+                    'SELECT titles FROM sessions WHERE id = ?'
+                ).bind(this.persistentState.sessionId).first<{ titles: string | null }>();
+                if (row?.titles) {
+                    try {
+                        this.persistentState.lastTitleHistory = JSON.parse(row.titles);
+                        await state.storage.put('persistentState', this.persistentState);
+                    } catch {}
+                }
             }
         });
     }
@@ -387,8 +399,15 @@ export class SessionDO implements DurableObject {
                 }
                 break;
             case 'title_history':
-                // Ephemeral state - no storage write
-                this.ephemeralState.lastTitleHistory = event.history;
+                this.persistentState.lastTitleHistory = event.history;
+                persistentChanged = true;
+                // Persist to D1 for analytics
+                if (event.history && event.history.length > 0 && this.persistentState.sessionId) {
+                    this.env.DB.prepare('UPDATE sessions SET titles = ? WHERE id = ?')
+                        .bind(JSON.stringify(event.history), this.persistentState.sessionId)
+                        .run()
+                        .catch(() => {});
+                }
                 break;
             case 'git':
                 // Ephemeral state - no storage write
@@ -521,11 +540,11 @@ export class SessionDO implements DurableObject {
             await this.sendSSE(writer, titleEvent);
         }
 
-        // Send title history if available (ephemeral)
-        if (this.ephemeralState.lastTitleHistory && this.ephemeralState.lastTitleHistory.length > 0) {
+        // Send title history if available (persistent)
+        if (this.persistentState.lastTitleHistory && this.persistentState.lastTitleHistory.length > 0) {
             const titleHistoryEvent: SessionEvent = {
                 type: 'title_history',
-                history: this.ephemeralState.lastTitleHistory,
+                history: this.persistentState.lastTitleHistory,
             };
             await this.sendSSE(writer, titleHistoryEvent);
         }

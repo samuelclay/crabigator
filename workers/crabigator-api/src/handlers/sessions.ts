@@ -453,21 +453,19 @@ export async function updateSession(
     }
 
     if (body.stats) {
-        if (body.stats.prompts !== undefined) {
-            updates.push('prompts = ?');
-            values.push(body.stats.prompts);
+        const statFields = [
+            'prompts', 'completions', 'tool_calls', 'thinking_seconds',
+            'work_seconds', 'model', 'compressions', 'mode',
+        ] as const;
+        for (const field of statFields) {
+            if (body.stats[field] !== undefined) {
+                updates.push(`${field} = ?`);
+                values.push(body.stats[field] as string | number);
+            }
         }
-        if (body.stats.completions !== undefined) {
-            updates.push('completions = ?');
-            values.push(body.stats.completions);
-        }
-        if (body.stats.tool_calls !== undefined) {
-            updates.push('tool_calls = ?');
-            values.push(body.stats.tool_calls);
-        }
-        if (body.stats.thinking_seconds !== undefined) {
-            updates.push('thinking_seconds = ?');
-            values.push(body.stats.thinking_seconds);
+        if (body.stats.titles && body.stats.titles.length > 0) {
+            updates.push('titles = ?');
+            values.push(JSON.stringify(body.stats.titles));
         }
     }
 
@@ -486,6 +484,33 @@ export async function updateSession(
                 ended_at: body.ended_at,
                 is_active: body.ended_at ? false : undefined,
             },
+        });
+    }
+
+    // Store per-tool breakdown (fire-and-forget)
+    if (body.stats?.tool_breakdown) {
+        const toolEntries = Object.entries(body.stats.tool_breakdown);
+        if (toolEntries.length > 0) {
+            const stmts = toolEntries.map(([toolName, count]) =>
+                env.DB.prepare(
+                    'INSERT OR REPLACE INTO session_tool_usage (session_id, tool_name, count) VALUES (?, ?, ?)'
+                ).bind(sessionId, toolName, count)
+            );
+            env.DB.batch(stmts).catch((error: unknown) => {
+                console.error('Error storing tool usage:', error);
+            });
+        }
+    }
+
+    // Store event history (fire-and-forget)
+    if (body.stats?.event_history && body.stats.event_history.length > 0) {
+        const stmts = body.stats.event_history.map((event) =>
+            env.DB.prepare(
+                'INSERT INTO session_events_log (session_id, event_type, timestamp_ms, state_before, state_after) VALUES (?, ?, ?, ?, ?)'
+            ).bind(sessionId, event.event_type, event.timestamp_ms, event.state_before || null, event.state_after || null)
+        );
+        env.DB.batch(stmts).catch((error: unknown) => {
+            console.error('Error storing event history:', error);
         });
     }
 

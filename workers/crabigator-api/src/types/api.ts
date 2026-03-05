@@ -83,6 +83,18 @@ export interface UpdateSessionRequest {
         completions?: number;
         tool_calls?: number;
         thinking_seconds?: number;
+        work_seconds?: number;
+        model?: string;
+        compressions?: number;
+        mode?: string;
+        tool_breakdown?: Record<string, number>;
+        event_history?: Array<{
+            event_type: string;
+            timestamp_ms: number;
+            state_before?: string;
+            state_after?: string;
+        }>;
+        titles?: string[];
     };
 }
 
