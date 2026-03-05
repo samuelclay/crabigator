@@ -36,6 +36,11 @@ pub struct SessionStats {
     title_has_spinner: bool,
     /// Screen content shows "Esc to cancel" after last ❯ prompt
     screen_shows_input_wait: bool,
+    /// Suppress screen→Permission override after hook transitions away from interactive.
+    /// Set when hooks go from Permission/Question → Thinking/Complete; cleared on next
+    /// PermissionRequest. Prevents PTY output from resurrecting a stale Permission state
+    /// after the user has already answered the prompt.
+    screen_override_cooldown: bool,
 }
 
 impl SessionStats {
@@ -61,6 +66,7 @@ impl SessionStats {
             interrupted: false,
             title_has_spinner: false,
             screen_shows_input_wait: false,
+            screen_override_cooldown: false,
         }
     }
 
@@ -92,8 +98,14 @@ impl SessionStats {
             return SessionState::Thinking;
         }
 
-        // Screen shows "Esc to cancel" but hooks say Thinking → override to Permission
-        if self.screen_shows_input_wait && hook_state == SessionState::Thinking {
+        // Screen shows "Esc to cancel" but hooks say Thinking → override to Permission.
+        // Skip this override during cooldown (after user answered a permission/question),
+        // because the screen lags 0.5-2s behind the hook state machine and would
+        // resurrect a stale Permission state.
+        if self.screen_shows_input_wait
+            && hook_state == SessionState::Thinking
+            && !self.screen_override_cooldown
+        {
             return SessionState::Permission;
         }
 
@@ -151,6 +163,24 @@ impl SessionStats {
                 if stats.state != self.platform_stats.state {
                     self.screen_shows_input_wait = false;
                     self.title_has_spinner = false;
+
+                    let was_interactive = matches!(
+                        self.platform_stats.state,
+                        SessionState::Permission | SessionState::Question
+                    );
+                    let is_interactive = matches!(
+                        stats.state,
+                        SessionState::Permission | SessionState::Question
+                    );
+
+                    if was_interactive && !is_interactive {
+                        // User answered a prompt — suppress screen override to prevent
+                        // "Esc to cancel" from resurrecting a stale Permission state
+                        self.screen_override_cooldown = true;
+                    } else if is_interactive {
+                        // New prompt arriving — allow screen override again
+                        self.screen_override_cooldown = false;
+                    }
                 }
 
                 // Track when prompts/completions change

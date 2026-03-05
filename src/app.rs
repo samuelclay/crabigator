@@ -103,6 +103,8 @@ pub struct App {
     cloud_stats_sent: bool,
     /// Whether we've sent a prompt event (to track clearing)
     last_cloud_prompt_sent: bool,
+    /// Whether the last prompt sent to cloud had active_prompt data (vs null/clearing)
+    last_cloud_active_prompt_was_some: bool,
     /// Number of options in last sent exit plan prompt (for re-sending when options appear)
     last_exit_plan_option_count: usize,
     /// Retry counter for exit plan prompt parsing (limits fallback sends)
@@ -236,6 +238,7 @@ impl App {
             last_cloud_title: None,
             cloud_stats_sent: false,
             last_cloud_prompt_sent: false,
+            last_cloud_active_prompt_was_some: false,
             last_exit_plan_option_count: 0,
             last_exit_plan_retry_count: 0,
             pairing_state: PairingState::default(),
@@ -1074,6 +1077,29 @@ impl App {
             }
         }
 
+        // When stats updated but effective state didn't change, check for:
+        // 1. Prompt changes (catches rapid question→thinking→question cycles)
+        // 2. Cloud state drift (catches screen override resurrection)
+        if new_last_updated != old_last_updated && old_effective_state == new_effective_state {
+            // Check if active_prompt presence changed
+            let prompt_is_some = self
+                .session_stats
+                .platform_stats
+                .active_prompt
+                .is_some();
+            if prompt_is_some != self.last_cloud_active_prompt_was_some {
+                self.send_cloud_prompt_event();
+            }
+
+            // Safety net: correct cloud state drift
+            if self.last_cloud_state.is_some()
+                && self.last_cloud_state != Some(new_effective_state)
+            {
+                self.send_cloud_state_event(new_effective_state);
+                self.send_cloud_prompt_event();
+            }
+        }
+
         // For ExitPlan prompts, keep checking for options until we find enough
         // or exhaust retries (prevents infinite fallback sends)
         if matches!(
@@ -1419,6 +1445,7 @@ impl App {
 
         // Track whether we sent a prompt (for clearing later)
         self.last_cloud_prompt_sent = active_prompt.is_some();
+        self.last_cloud_active_prompt_was_some = active_prompt.is_some();
 
         // Reset exit plan counters when leaving exit plan state
         if !matches!(active_prompt, Some(crate::platforms::ActivePrompt::ExitPlan)) {
