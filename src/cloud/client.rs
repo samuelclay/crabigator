@@ -6,6 +6,8 @@
 //! - Event streaming via WebSocket
 //! - Offline queuing
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
@@ -25,12 +27,36 @@ struct CreateSessionResponse {
     ws_url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 struct UpdateSessionStats {
     prompts: u32,
     completions: u32,
     tool_calls: u32,
     thinking_seconds: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    work_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compressions: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_breakdown: Option<HashMap<String, u32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_history: Option<Vec<UpdateEventHistoryItem>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    titles: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdateEventHistoryItem {
+    event_type: String,
+    timestamp_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state_after: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -302,6 +328,7 @@ impl CloudClient {
                 completions,
                 tool_calls,
                 thinking_seconds,
+                ..Default::default()
             }),
         });
     }
@@ -583,27 +610,48 @@ impl CloudClient {
                 completions,
                 tool_calls,
                 thinking_seconds,
+                ..Default::default()
             }),
         })
         .await
     }
 
-    /// Mark session as ended
+    /// Mark session as ended with full analytics data
     pub async fn end_session(
         &self,
-        prompts: u32,
-        completions: u32,
-        tool_calls: u32,
-        thinking_seconds: u64,
+        stats: &crate::hooks::SessionStats,
+        title_history: &[String],
     ) -> Result<()> {
+        let platform = &stats.platform_stats;
+        let tool_calls = platform.total_tool_calls();
+
+        // Convert event history to serializable format
+        let event_history: Vec<UpdateEventHistoryItem> = platform
+            .event_history
+            .iter()
+            .map(|e| UpdateEventHistoryItem {
+                event_type: e.event.clone(),
+                timestamp_ms: (e.ts * 1000.0) as u64,
+                state_before: (!e.state_before.is_empty()).then(|| e.state_before.clone()),
+                state_after: None,
+            })
+            .collect();
+
         self.send_session_update(UpdateSessionRequest {
             ended_at: Some(chrono::Utc::now().timestamp() as u64),
             state: None,
             stats: Some(UpdateSessionStats {
-                prompts,
-                completions,
+                prompts: platform.prompts,
+                completions: platform.completions,
                 tool_calls,
-                thinking_seconds,
+                thinking_seconds: stats.thinking_seconds(),
+                work_seconds: Some(stats.work_seconds),
+                model: platform.model.clone(),
+                compressions: Some(platform.compressions),
+                mode: Some(platform.mode.as_str().to_string()),
+                tool_breakdown: (!platform.tools.is_empty()).then(|| platform.tools.clone()),
+                event_history: (!event_history.is_empty()).then_some(event_history),
+                titles: (!title_history.is_empty()).then(|| title_history.to_vec()),
             }),
         })
         .await

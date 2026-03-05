@@ -709,16 +709,8 @@ impl App {
         if self.cloud_client.is_some() {
             self.session_stats.tick();
             self.send_cloud_stats_event();
-            let tool_calls = self.session_stats.platform_stats.total_tool_calls();
             if let Some(ref client) = self.cloud_client {
-                let _ = client
-                    .end_session(
-                        self.session_stats.platform_stats.prompts,
-                        self.session_stats.platform_stats.completions,
-                        tool_calls,
-                        self.session_stats.thinking_seconds(),
-                    )
-                    .await;
+                let _ = client.end_session(&self.session_stats, &self.title_history).await;
             }
         }
 
