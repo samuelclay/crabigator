@@ -779,7 +779,7 @@ export const staffDashboardCss = `
 
         .section-content {
             overflow: hidden;
-            max-height: 2000px;
+            max-height: 8000px;
             transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
@@ -837,5 +837,111 @@ export const staffDashboardCss = `
 
         .section-content .section-title {
             display: none;
+        }
+
+        /* Session Analytics - Time Range Picker */
+        .sa-range-bar {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 16px;
+        }
+
+        .sa-range-pills {
+            display: flex;
+            gap: 2px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 3px;
+        }
+
+        .sa-range-pill {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 13px;
+            font-weight: 500;
+            padding: 5px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .sa-range-pill:hover {
+            color: var(--text);
+            background: var(--surface);
+        }
+
+        .sa-range-pill.active {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        /* Session Analytics - Subsection headers */
+        .sa-subsection-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin: 20px 0 12px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .sa-subsection-title:first-of-type {
+            margin-top: 8px;
+        }
+
+        /* Taller chart container for horizontal bar charts */
+        .chart-container.sa-tall {
+            height: 350px;
+        }
+
+        /* Repo long-tail stat cards */
+        .sa-repo-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .sa-repo-stats .stat-card {
+            padding: 12px;
+        }
+
+        .sa-repo-stats .stat-value {
+            font-size: 22px;
+        }
+
+        @media (max-width: 600px) {
+            .sa-repo-stats {
+                grid-template-columns: 1fr;
+            }
+
+            .section-header .section-summary {
+                display: none;
+            }
+
+            .section-header .section-name {
+                font-size: 14px;
+            }
+
+            .section-content-inner {
+                padding: 12px 8px;
+            }
+
+            .chart-card {
+                padding: 12px 8px;
+            }
+
+            .stats-grid,
+            .sa-overview {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .chart-container.sa-tall {
+                height: 280px;
+            }
         }
 `;

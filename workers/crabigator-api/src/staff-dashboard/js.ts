@@ -749,4 +749,423 @@ export const staffDashboardJs = `
         // Initial gifts load and refresh
         fetchGifts();
         setInterval(fetchGifts, 5000);
+
+        // ============================================
+        // Session Analytics
+        // ============================================
+
+        // Percentile bar charts
+        let saPromptsPctChart = null;
+        let saToolsPctChart = null;
+        let saTitlesPctChart = null;
+        let saThinkingPerPromptChart = null;
+        let saThinkingPctChart = null;
+        let saPerPromptPctChart = null;
+        let saDurationPctChart = null;
+        let saInterPromptPctChart = null;
+        // Percentile trend charts
+        let saPromptsWeeklyChart = null;
+        let saToolsWeeklyChart = null;
+        let saTitlesWeeklyChart = null;
+        let saThinkingPerPromptWeeklyChart = null;
+        let saThinkingWeeklyChart = null;
+        let saPerPromptWeeklyChart = null;
+        let saDurationWeeklyChart = null;
+        let saInterPromptWeeklyChart = null;
+        // Other charts
+        let saToolsChart = null;
+        let saModelChart = null;
+        let saModeChart = null;
+        let saReposChart = null;
+        let saReposPerUserChart = null;
+        let saToolsByUserChart = null;
+        let saSessionsPerUserChart = null;
+        let saCurrentRange = '30d';
+
+        const saColors = ['#58a6ff', '#3fb950', '#d29922', '#f85149', '#a371f7', '#8b949e'];
+        const saBaseOpts = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } },
+                y: { beginAtZero: true, grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }
+            }
+        };
+        const saHorizOpts = {
+            ...saBaseOpts,
+            indexAxis: 'y',
+            scales: {
+                x: { beginAtZero: true, grid: { color: '#30363d' }, ticks: { color: '#8b949e' } },
+                y: { grid: { display: false }, ticks: { color: '#8b949e' } }
+            }
+        };
+        const saDoughnutOpts = {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'right', labels: { color: '#8b949e', boxWidth: 12, padding: 8 } } }
+        };
+
+        function saFormatSec(s) {
+            if (!s || s === 0) return '-';
+            if (s < 60) return s + 's';
+            if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+            return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+        }
+
+        function saUpdateOrCreate(existing, ctx, config) {
+            if (existing) {
+                existing.data = config.data;
+                existing.update();
+                return existing;
+            }
+            return new Chart(ctx, config);
+        }
+
+        function saPercentileColors() {
+            return ['#58a6ff', '#58a6ff', '#d29922', '#f85149', '#f85149'];
+        }
+
+        const saPctTrendOpts = {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: true, labels: { color: '#8b949e', boxWidth: 10, padding: 6, font: { size: 10 } } }
+            },
+            scales: {
+                x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', maxRotation: 45 } },
+                y: { beginAtZero: true, grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }
+            }
+        };
+
+        function saCreatePctTrend(existing, canvasId, pctData) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            const config = {
+                type: 'line',
+                data: {
+                    labels: pctData.labels,
+                    datasets: [
+                        { label: 'p50', data: pctData.p50, borderColor: '#3fb950', borderWidth: 2, tension: 0.3, pointRadius: 2, fill: false },
+                        { label: 'p75', data: pctData.p75, borderColor: '#58a6ff', borderWidth: 1.5, tension: 0.3, pointRadius: 1, borderDash: [4, 2], fill: false },
+                        { label: 'p90', data: pctData.p90, borderColor: '#d29922', borderWidth: 1.5, tension: 0.3, pointRadius: 1, borderDash: [4, 2], fill: false },
+                        { label: 'p95', data: pctData.p95, borderColor: '#f85149', borderWidth: 1, tension: 0.3, pointRadius: 1, borderDash: [2, 2], fill: false },
+                        { label: 'p99', data: pctData.p99, borderColor: '#a371f7', borderWidth: 1, tension: 0.3, pointRadius: 1, borderDash: [2, 2], fill: false },
+                    ]
+                },
+                options: saPctTrendOpts
+            };
+            return saUpdateOrCreate(existing, ctx, config);
+        }
+
+        function updateSessionAnalytics(data) {
+            // Overview stat cards
+            const el = (id) => document.getElementById(id);
+            el('sa-total-sessions').textContent = data.overview.total_sessions.toLocaleString();
+            el('sa-active-users').textContent = data.overview.active_users.toLocaleString();
+            el('sa-avg-session').textContent = saFormatSec(data.overview.avg_session_time);
+            el('sa-avg-thinking').textContent = saFormatSec(data.overview.avg_thinking_time);
+
+            // Section summary
+            el('sum-sa-sessions').textContent = data.overview.total_sessions.toLocaleString();
+            el('sum-sa-users').textContent = data.overview.active_users.toLocaleString();
+            el('sum-sa-thinking').textContent = Math.round(data.overview.avg_thinking_time);
+
+            // --- Percentile trend charts ---
+            saPromptsWeeklyChart = saCreatePctTrend(saPromptsWeeklyChart, 'sa-prompts-weekly-chart', data.weekly_prompts_percentiles);
+            saToolsWeeklyChart = saCreatePctTrend(saToolsWeeklyChart, 'sa-tools-weekly-chart', data.weekly_tools_percentiles);
+            saTitlesWeeklyChart = saCreatePctTrend(saTitlesWeeklyChart, 'sa-titles-weekly-chart', data.weekly_titles_percentiles);
+            saThinkingPerPromptWeeklyChart = saCreatePctTrend(saThinkingPerPromptWeeklyChart, 'sa-thinking-per-prompt-weekly-chart', data.weekly_thinking_per_prompt_percentiles);
+            saThinkingWeeklyChart = saCreatePctTrend(saThinkingWeeklyChart, 'sa-thinking-weekly-chart', data.weekly_thinking_percentiles);
+            saPerPromptWeeklyChart = saCreatePctTrend(saPerPromptWeeklyChart, 'sa-per-prompt-weekly-chart', data.weekly_per_prompt_thinking_percentiles);
+            saDurationWeeklyChart = saCreatePctTrend(saDurationWeeklyChart, 'sa-duration-weekly-chart', data.weekly_duration_percentiles);
+            saInterPromptWeeklyChart = saCreatePctTrend(saInterPromptWeeklyChart, 'sa-inter-prompt-weekly-chart', data.weekly_inter_prompt_gap_percentiles);
+
+            // --- Titles per session percentiles (bar) ---
+            const titlesPct = data.titles_per_session_percentiles;
+            saTitlesPctChart = saUpdateOrCreate(saTitlesPctChart,
+                el('sa-titles-pct-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: ['p50', 'p75', 'p90', 'p95', 'p99'],
+                    datasets: [{
+                        label: 'Titles',
+                        data: [titlesPct.p50, titlesPct.p75, titlesPct.p90, titlesPct.p95, titlesPct.p99],
+                        backgroundColor: saPercentileColors().map(c => c === '#58a6ff' ? '#d29922' : c),
+                        borderRadius: 4
+                    }]
+                },
+                options: saBaseOpts
+            });
+
+            // --- Prompts per session percentiles (bar) ---
+            const pps = data.prompts_per_session_percentiles;
+            saPromptsPctChart = saUpdateOrCreate(saPromptsPctChart,
+                el('sa-prompts-pct-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: ['p50', 'p75', 'p90', 'p95', 'p99'],
+                    datasets: [{
+                        label: 'Prompts',
+                        data: [pps.p50, pps.p75, pps.p90, pps.p95, pps.p99],
+                        backgroundColor: saPercentileColors(),
+                        borderRadius: 4
+                    }]
+                },
+                options: saBaseOpts
+            });
+
+            // --- Tools per session percentiles (bar) ---
+            const tps = data.tools_per_session_percentiles;
+            saToolsPctChart = saUpdateOrCreate(saToolsPctChart,
+                el('sa-tools-pct-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: ['p50', 'p75', 'p90', 'p95', 'p99'],
+                    datasets: [{
+                        label: 'Tool Calls',
+                        data: [tps.p50, tps.p75, tps.p90, tps.p95, tps.p99],
+                        backgroundColor: saPercentileColors().map(c => c === '#58a6ff' ? '#a371f7' : c),
+                        borderRadius: 4
+                    }]
+                },
+                options: saBaseOpts
+            });
+
+            // --- Thinking per prompt percentiles (bar) ---
+            const tpp = data.thinking_per_prompt_percentiles;
+            saThinkingPerPromptChart = saUpdateOrCreate(saThinkingPerPromptChart,
+                el('sa-thinking-per-prompt-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: ['p50', 'p75', 'p90', 'p95', 'p99'],
+                    datasets: [{
+                        label: 'Thinking/Prompt (s)',
+                        data: [tpp.p50, tpp.p75, tpp.p90, tpp.p95, tpp.p99],
+                        backgroundColor: saPercentileColors().map(c => c === '#58a6ff' ? '#3fb950' : c),
+                        borderRadius: 4
+                    }]
+                },
+                options: saBaseOpts
+            });
+
+            // --- Thinking percentiles (bar) ---
+            const tp = data.thinking_percentiles;
+            saThinkingPctChart = saUpdateOrCreate(saThinkingPctChart,
+                el('sa-thinking-pct-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: ['p50', 'p75', 'p90', 'p95', 'p99'],
+                    datasets: [{
+                        label: 'Thinking (s)',
+                        data: [tp.p50, tp.p75, tp.p90, tp.p95, tp.p99],
+                        backgroundColor: saPercentileColors(),
+                        borderRadius: 4
+                    }]
+                },
+                options: saBaseOpts
+            });
+
+            // --- Duration percentiles (bar) ---
+            const dp = data.session_duration_percentiles;
+            saDurationPctChart = saUpdateOrCreate(saDurationPctChart,
+                el('sa-duration-pct-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: ['p50', 'p75', 'p90', 'p95', 'p99'],
+                    datasets: [{
+                        label: 'Duration (s)',
+                        data: [dp.p50, dp.p75, dp.p90, dp.p95, dp.p99],
+                        backgroundColor: saPercentileColors().map(c => c === '#58a6ff' ? '#3fb950' : c),
+                        borderRadius: 4
+                    }]
+                },
+                options: saBaseOpts
+            });
+
+            // --- Tool usage (horizontal bar) ---
+            saToolsChart = saUpdateOrCreate(saToolsChart,
+                el('sa-tools-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: data.tool_usage.labels,
+                    datasets: [{
+                        label: 'Uses',
+                        data: data.tool_usage.values,
+                        backgroundColor: '#a371f7',
+                        borderRadius: 4
+                    }]
+                },
+                options: saHorizOpts
+            });
+
+            // --- Model usage (doughnut) ---
+            saModelChart = saUpdateOrCreate(saModelChart,
+                el('sa-model-chart').getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: data.model_usage.labels.map(m => m.replace('claude-', '').replace(/-\d{8}$/, '')),
+                    datasets: [{ data: data.model_usage.values, backgroundColor: saColors, borderWidth: 0 }]
+                },
+                options: saDoughnutOpts
+            });
+
+            // --- Mode usage (doughnut) ---
+            saModeChart = saUpdateOrCreate(saModeChart,
+                el('sa-mode-chart').getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: data.mode_usage.labels,
+                    datasets: [{ data: data.mode_usage.values, backgroundColor: saColors, borderWidth: 0 }]
+                },
+                options: saDoughnutOpts
+            });
+
+            // --- Top repos (horizontal bar) ---
+            saReposChart = saUpdateOrCreate(saReposChart,
+                el('sa-repos-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: data.top_repos.map(r => r.name),
+                    datasets: [{
+                        label: 'Sessions',
+                        data: data.top_repos.map(r => r.count),
+                        backgroundColor: '#58a6ff', borderRadius: 4
+                    }]
+                },
+                options: saHorizOpts
+            });
+
+            // Repo long tail
+            el('sa-repo-one').textContent = (data.repo_long_tail.one_session || 0).toLocaleString();
+            el('sa-repo-mid').textContent = (data.repo_long_tail.two_to_five || 0).toLocaleString();
+            el('sa-repo-many').textContent = (data.repo_long_tail.more_than_five || 0).toLocaleString();
+
+            // --- Repos per user (bar) ---
+            saReposPerUserChart = saUpdateOrCreate(saReposPerUserChart,
+                el('sa-repos-per-user-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: data.repos_per_user.labels,
+                    datasets: [{
+                        label: 'Users',
+                        data: data.repos_per_user.values,
+                        backgroundColor: '#d29922', borderRadius: 4
+                    }]
+                },
+                options: saBaseOpts
+            });
+
+            // --- Tools by user (stacked bar) ---
+            const tbu = data.tools_by_user;
+            const tbuDatasets = tbu.tools.map((tool, i) => ({
+                label: tool,
+                data: tbu.users.map(u => (tbu.data[u] || {})[tool] || 0),
+                backgroundColor: saColors[i % saColors.length],
+                borderRadius: 2
+            }));
+            saToolsByUserChart = saUpdateOrCreate(saToolsByUserChart,
+                el('sa-tools-by-user-chart').getContext('2d'), {
+                type: 'bar',
+                data: { labels: tbu.users, datasets: tbuDatasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: true, labels: { color: '#8b949e', boxWidth: 10 } } },
+                    scales: {
+                        x: { stacked: true, grid: { color: '#30363d' }, ticks: { color: '#8b949e' } },
+                        y: { stacked: true, beginAtZero: true, grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }
+                    }
+                }
+            });
+
+            // --- Sessions per user (histogram) ---
+            saSessionsPerUserChart = saUpdateOrCreate(saSessionsPerUserChart,
+                el('sa-sessions-per-user-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: data.sessions_per_user.labels,
+                    datasets: [{
+                        label: 'Users',
+                        data: data.sessions_per_user.values,
+                        backgroundColor: '#3fb950', borderRadius: 4
+                    }]
+                },
+                options: saBaseOpts
+            });
+
+            // --- Per-prompt thinking percentiles (bar) ---
+            const pp = data.per_prompt_thinking_percentiles;
+            saPerPromptPctChart = saUpdateOrCreate(saPerPromptPctChart,
+                el('sa-per-prompt-pct-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: ['p50', 'p75', 'p90', 'p95', 'p99'],
+                    datasets: [{
+                        label: 'Per-Prompt Thinking (s)',
+                        data: [pp.p50, pp.p75, pp.p90, pp.p95, pp.p99],
+                        backgroundColor: saPercentileColors(),
+                        borderRadius: 4
+                    }]
+                },
+                options: saBaseOpts
+            });
+
+            // --- Inter-prompt gap percentiles (bar) ---
+            const ig = data.inter_prompt_gap_percentiles;
+            saInterPromptPctChart = saUpdateOrCreate(saInterPromptPctChart,
+                el('sa-inter-prompt-pct-chart').getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: ['p50', 'p75', 'p90', 'p95', 'p99'],
+                    datasets: [{
+                        label: 'Inter-Prompt Gap (s)',
+                        data: [ig.p50, ig.p75, ig.p90, ig.p95, ig.p99],
+                        backgroundColor: saPercentileColors().map(c => c === '#58a6ff' ? '#a371f7' : c),
+                        borderRadius: 4
+                    }]
+                },
+                options: saBaseOpts
+            });
+        }
+
+        async function fetchSessionAnalytics() {
+            try {
+                const response = await fetch('/api/staff/session-analytics?range=' + saCurrentRange);
+                if (!response.ok) throw new Error('Failed to fetch');
+                const data = await response.json();
+                updateSessionAnalytics(data);
+            } catch (err) {
+                console.error('Session analytics error:', err);
+            }
+        }
+
+        // Time range pill click handler
+        document.querySelectorAll('.sa-range-pill').forEach(pill => {
+            pill.addEventListener('click', function() {
+                document.querySelectorAll('.sa-range-pill').forEach(p => p.classList.remove('active'));
+                this.classList.add('active');
+                saCurrentRange = this.dataset.range;
+                // Destroy existing charts so they get recreated with new data
+                [saPromptsPctChart, saToolsPctChart, saTitlesPctChart,
+                 saThinkingPerPromptChart, saThinkingPctChart, saPerPromptPctChart,
+                 saDurationPctChart, saInterPromptPctChart,
+                 saPromptsWeeklyChart, saToolsWeeklyChart, saTitlesWeeklyChart,
+                 saThinkingPerPromptWeeklyChart, saThinkingWeeklyChart, saPerPromptWeeklyChart,
+                 saDurationWeeklyChart, saInterPromptWeeklyChart,
+                 saToolsChart, saModelChart, saModeChart,
+                 saReposChart, saReposPerUserChart, saToolsByUserChart, saSessionsPerUserChart
+                ].forEach(c => { if (c) c.destroy(); });
+                saPromptsPctChart = saToolsPctChart = saTitlesPctChart = null;
+                saThinkingPerPromptChart = saThinkingPctChart = saPerPromptPctChart = null;
+                saDurationPctChart = saInterPromptPctChart = null;
+                saPromptsWeeklyChart = saToolsWeeklyChart = saTitlesWeeklyChart = null;
+                saThinkingPerPromptWeeklyChart = saThinkingWeeklyChart = saPerPromptWeeklyChart = null;
+                saDurationWeeklyChart = saInterPromptWeeklyChart = null;
+                saToolsChart = saModelChart = saModeChart = null;
+                saReposChart = saReposPerUserChart = saToolsByUserChart = saSessionsPerUserChart = null;
+                fetchSessionAnalytics();
+            });
+        });
+
+        // Initial load + auto-refresh every 60s
+        fetchSessionAnalytics();
+        setInterval(fetchSessionAnalytics, 60000);
 `;

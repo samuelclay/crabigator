@@ -369,6 +369,209 @@ ${staffDashboardCss}
             </div>
         </div>
 
+        <!-- Session Analytics Section -->
+        <div class="collapsible-section" id="section-session-analytics" data-section="session-analytics">
+            <div class="section-header" onclick="toggleSection('session-analytics')">
+                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+                <div class="section-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 20V10M18 20V4M6 20v-4"/>
+                    </svg>
+                    Session Analytics
+                </div>
+                <div class="section-summary">
+                    <span class="summary-item"><span class="summary-value" id="sum-sa-sessions">-</span> sessions</span>
+                    <span class="summary-item"><span class="summary-value" id="sum-sa-users">-</span> users</span>
+                    <span class="summary-item">avg <span class="summary-value" id="sum-sa-thinking">-</span>s thinking</span>
+                </div>
+            </div>
+            <div class="section-content">
+                <div class="section-content-inner">
+
+                    <!-- Time Range Picker -->
+                    <div class="sa-range-bar">
+                        <div class="sa-range-pills">
+                            <button class="sa-range-pill" data-range="7d">7d</button>
+                            <button class="sa-range-pill active" data-range="30d">30d</button>
+                            <button class="sa-range-pill" data-range="90d">90d</button>
+                            <button class="sa-range-pill" data-range="all">All</button>
+                        </div>
+                    </div>
+
+                    <!-- Overview Stat Cards -->
+                    <div class="stats-grid sa-overview">
+                        <div class="stat-card">
+                            <div class="stat-label">Total Sessions</div>
+                            <div class="stat-value" id="sa-total-sessions">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Active Users</div>
+                            <div class="stat-value" id="sa-active-users">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Avg Session Time</div>
+                            <div class="stat-value" id="sa-avg-session">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Avg Thinking Time</div>
+                            <div class="stat-value" id="sa-avg-thinking">-</div>
+                        </div>
+                    </div>
+
+                    <!-- ===== Session Behavior ===== -->
+                    <div class="sa-subsection-title">Session Behavior</div>
+
+                    <div class="analytics-charts-row equal">
+                        <div class="chart-card">
+                            <div class="chart-title">Prompts per Session</div>
+                            <div class="chart-container"><canvas id="sa-prompts-pct-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Prompts per Session Over Time</div>
+                            <div class="chart-container"><canvas id="sa-prompts-weekly-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="analytics-charts-row equal">
+                        <div class="chart-card">
+                            <div class="chart-title">Tools per Session</div>
+                            <div class="chart-container"><canvas id="sa-tools-pct-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Tools per Session Over Time</div>
+                            <div class="chart-container"><canvas id="sa-tools-weekly-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="analytics-charts-row equal">
+                        <div class="chart-card">
+                            <div class="chart-title">Titles per Session</div>
+                            <div class="chart-container"><canvas id="sa-titles-pct-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Titles per Session Over Time</div>
+                            <div class="chart-container"><canvas id="sa-titles-weekly-chart"></canvas></div>
+                        </div>
+                    </div>
+
+                    <!-- ===== Thinking Time ===== -->
+                    <div class="sa-subsection-title">Thinking Time</div>
+
+                    <div class="analytics-charts-row equal">
+                        <div class="chart-card">
+                            <div class="chart-title">Thinking per Prompt (s)</div>
+                            <div class="chart-container"><canvas id="sa-thinking-per-prompt-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Thinking per Prompt Over Time</div>
+                            <div class="chart-container"><canvas id="sa-thinking-per-prompt-weekly-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="analytics-charts-row equal">
+                        <div class="chart-card">
+                            <div class="chart-title">Thinking Time (total)</div>
+                            <div class="chart-container"><canvas id="sa-thinking-pct-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Thinking Time Over Time</div>
+                            <div class="chart-container"><canvas id="sa-thinking-weekly-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="analytics-charts-row equal">
+                        <div class="chart-card">
+                            <div class="chart-title">Per-Prompt Thinking (event)</div>
+                            <div class="chart-container"><canvas id="sa-per-prompt-pct-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Per-Prompt Thinking Over Time</div>
+                            <div class="chart-container"><canvas id="sa-per-prompt-weekly-chart"></canvas></div>
+                        </div>
+                    </div>
+
+                    <!-- ===== Session Timing ===== -->
+                    <div class="sa-subsection-title">Session Timing</div>
+
+                    <div class="analytics-charts-row equal">
+                        <div class="chart-card">
+                            <div class="chart-title">Session Duration</div>
+                            <div class="chart-container"><canvas id="sa-duration-pct-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Session Duration Over Time</div>
+                            <div class="chart-container"><canvas id="sa-duration-weekly-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="analytics-charts-row equal">
+                        <div class="chart-card">
+                            <div class="chart-title">Inter-Prompt Gap</div>
+                            <div class="chart-container"><canvas id="sa-inter-prompt-pct-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Inter-Prompt Gap Over Time</div>
+                            <div class="chart-container"><canvas id="sa-inter-prompt-weekly-chart"></canvas></div>
+                        </div>
+                    </div>
+
+                    <!-- ===== Usage & Repos ===== -->
+                    <div class="sa-subsection-title">Usage & Repos</div>
+
+                    <div class="analytics-charts-row equal">
+                        <div class="chart-card">
+                            <div class="chart-title">Tool Usage (top 15)</div>
+                            <div class="chart-container sa-tall"><canvas id="sa-tools-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Tool Usage by Top Users</div>
+                            <div class="chart-container sa-tall"><canvas id="sa-tools-by-user-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="analytics-charts-row equal">
+                        <div class="chart-card">
+                            <div class="chart-title">Model Usage</div>
+                            <div class="chart-container"><canvas id="sa-model-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Mode Usage</div>
+                            <div class="chart-container"><canvas id="sa-mode-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="analytics-charts-row">
+                        <div class="chart-card">
+                            <div class="chart-title">Top Repos by Session Count</div>
+                            <div class="chart-container sa-tall"><canvas id="sa-repos-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Repo Distribution</div>
+                            <div class="sa-repo-stats">
+                                <div class="stat-card">
+                                    <div class="stat-label">1 session</div>
+                                    <div class="stat-value" id="sa-repo-one">-</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-label">2-5 sessions</div>
+                                    <div class="stat-value" id="sa-repo-mid">-</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-label">5+ sessions</div>
+                                    <div class="stat-value" id="sa-repo-many">-</div>
+                                </div>
+                            </div>
+                            <div class="chart-title" style="margin-top: 16px;">Repos per User</div>
+                            <div class="chart-container"><canvas id="sa-repos-per-user-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="analytics-charts-row equal">
+                        <div class="chart-card">
+                            <div class="chart-title">Sessions per User</div>
+                            <div class="chart-container"><canvas id="sa-sessions-per-user-chart"></canvas></div>
+                        </div>
+                        <div class="chart-card"></div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
         <!-- Recent Telemetry Section -->
         <div class="collapsible-section" id="section-devices" data-section="devices">
             <div class="section-header" onclick="toggleSection('devices')">
