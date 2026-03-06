@@ -25,5 +25,8 @@ debug/
 prompts.md
 .crabigator-provider
 
+# Wrangler local cache
+.wrangler/
+
 # NPM vendor binaries (populated by CI)
 npm/vendor/
