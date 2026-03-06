@@ -1,5 +1,6 @@
 import type { Env } from '../../types/env';
 import { jsonResponse } from '../../router';
+import { getStripeConfig } from './stripe-config';
 
 interface StripeSubscription {
     id: string;
@@ -322,6 +323,8 @@ async function handleSubscriptionDeleted(
 
 /**
  * Handle invoice.payment_succeeded - confirm subscription is active
+ * Also fetches the subscription from Stripe to update period dates,
+ * since customer.subscription.updated events may not be configured.
  */
 async function handleInvoicePaymentSucceeded(
     env: Env,
@@ -331,12 +334,31 @@ async function handleInvoicePaymentSucceeded(
         return;
     }
 
-    await env.DB.prepare(`
-        UPDATE subscriptions SET
-            status = 'active',
-            updated_at = unixepoch()
-        WHERE provider = 'stripe' AND provider_subscription_id = ?
-    `).bind(invoice.subscription).run();
+    // Fetch subscription from Stripe to get current period dates
+    const subscription = await fetchStripeSubscription(env, invoice.subscription);
+
+    if (subscription) {
+        await env.DB.prepare(`
+            UPDATE subscriptions SET
+                status = 'active',
+                current_period_start = ?,
+                current_period_end = ?,
+                updated_at = unixepoch()
+            WHERE provider = 'stripe' AND provider_subscription_id = ?
+        `).bind(
+            subscription.current_period_start,
+            subscription.current_period_end,
+            invoice.subscription
+        ).run();
+    } else {
+        // Fallback: just update status if Stripe API call fails
+        await env.DB.prepare(`
+            UPDATE subscriptions SET
+                status = 'active',
+                updated_at = unixepoch()
+            WHERE provider = 'stripe' AND provider_subscription_id = ?
+        `).bind(invoice.subscription).run();
+    }
 
     // Get group_id and sync usage DO
     const row = await env.DB.prepare(
@@ -373,6 +395,38 @@ async function handleInvoicePaymentFailed(
 
     if (row) {
         await syncUsageDO(env, row.group_id);
+    }
+}
+
+/**
+ * Fetch a subscription from the Stripe API to get current period dates.
+ * Tries live key first, then test key.
+ */
+async function fetchStripeSubscription(
+    env: Env,
+    subscriptionId: string
+): Promise<StripeSubscription | null> {
+    const config = getStripeConfig(env);
+    if (!config) {
+        return null;
+    }
+
+    try {
+        const response = await fetch(`https://api.stripe.com/v1/subscriptions/${subscriptionId}`, {
+            headers: {
+                'Authorization': `Bearer ${config.secretKey}`,
+            },
+        });
+
+        if (!response.ok) {
+            console.error('Failed to fetch Stripe subscription:', response.status);
+            return null;
+        }
+
+        return await response.json() as StripeSubscription;
+    } catch (error) {
+        console.error('Error fetching Stripe subscription:', error);
+        return null;
     }
 }
 
