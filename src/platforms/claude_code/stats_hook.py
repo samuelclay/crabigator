@@ -269,8 +269,10 @@ def main():
             stats["pending_question"] = False
         else:
             stats["state"] = "complete"
-            # Clear active_prompt when completing (not when transitioning to question)
-            stats["active_prompt"] = None
+        # Always clear active_prompt - the turn is over, nothing is being prompted.
+        # If the question was answered, PostToolUse already cleared it (no-op here).
+        # If the question was rejected/escaped, this clears the stale prompt.
+        stats["active_prompt"] = None
         # Start idle timer
         stats["idle_since"] = time.time()
         # Clear permission data
