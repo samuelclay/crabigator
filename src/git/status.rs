@@ -48,6 +48,7 @@ impl GitState {
         // Check if we're in a git repo
         let status_output = Command::new("git")
             .args(["rev-parse", "--is-inside-work-tree"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
             .current_dir(dir)
             .output()
             .await;
@@ -64,6 +65,7 @@ impl GitState {
         // Get current branch
         if let Ok(output) = Command::new("git")
             .args(["branch", "--show-current"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
             .current_dir(dir)
             .output()
             .await
@@ -77,6 +79,7 @@ impl GitState {
         // -uall shows individual files in untracked directories instead of aggregating
         if let Ok(output) = Command::new("git")
             .args(["status", "--porcelain", "-uall"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
             .current_dir(dir)
             .output()
             .await
@@ -122,6 +125,7 @@ impl GitState {
         // Get diff --numstat for line counts
         if let Ok(output) = Command::new("git")
             .args(["diff", "--numstat"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
             .current_dir(dir)
             .output()
             .await
@@ -135,6 +139,7 @@ impl GitState {
         // Also get staged diff stats
         if let Ok(output) = Command::new("git")
             .args(["diff", "--cached", "--numstat"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
             .current_dir(dir)
             .output()
             .await

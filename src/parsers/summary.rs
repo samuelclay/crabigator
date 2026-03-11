@@ -100,6 +100,7 @@ impl DiffSummary {
         // Get the diff output
         let output = Command::new("git")
             .args(["diff", "--no-color"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
             .current_dir(dir)
             .output()
             .await?;
@@ -113,6 +114,7 @@ impl DiffSummary {
         // Also get staged changes
         let staged_output = Command::new("git")
             .args(["diff", "--cached", "--no-color"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
             .current_dir(dir)
             .output()
             .await?;
