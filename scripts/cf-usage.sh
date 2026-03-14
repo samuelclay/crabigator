@@ -127,7 +127,9 @@ if [ "$USAGE_MODEL" = "standard" ]; then
     echo "─────────────────────────────────────────"
     echo "Bottleneck:          $BOTTLENECK"
     echo "Included headroom:   ${HEADROOM}x current usage"
-    EST_USERS=$((${HEADROOM%.*} > 1 ? ${HEADROOM%.*} : 1))
+    HEADROOM_INT=${HEADROOM%.*}
+    HEADROOM_INT=${HEADROOM_INT:-0}
+    EST_USERS=$((HEADROOM_INT > 1 ? HEADROOM_INT : 1))
     echo "Est. max users:      ~$EST_USERS concurrent (within \$5/mo)"
     echo ""
 
@@ -136,14 +138,16 @@ if [ "$USAGE_MODEL" = "standard" ]; then
     echo "─────────────────────────────────────────"
     echo "Base cost:           \$5/month"
     if [ "$MONTHLY_WORKER" -gt "$WORKER_MONTHLY_LIMIT" ]; then
-        OVERAGE_WORKER=$(( (MONTHLY_WORKER - WORKER_MONTHLY_LIMIT) / 1000000 ))
-        WORKER_COST=$(echo "scale=2; $OVERAGE_WORKER * 0.30" | bc)
-        echo "Worker overage:      +\$$WORKER_COST ($OVERAGE_WORKER M extra @ \$0.30/M)"
+        OVERAGE_WORKER=$((MONTHLY_WORKER - WORKER_MONTHLY_LIMIT))
+        WORKER_COST=$(echo "scale=2; $OVERAGE_WORKER * 0.30 / 1000000" | bc)
+        OVERAGE_WORKER_M=$(echo "scale=1; $OVERAGE_WORKER / 1000000" | bc)
+        echo "Worker overage:      +\$$WORKER_COST (${OVERAGE_WORKER_M}M extra @ \$0.30/M)"
     fi
     if [ "$MONTHLY_DO" -gt "$DO_MONTHLY_LIMIT" ]; then
-        OVERAGE_DO=$(( (MONTHLY_DO - DO_MONTHLY_LIMIT) / 1000000 ))
-        DO_COST=$(echo "scale=2; $OVERAGE_DO * 0.15" | bc)
-        echo "DO overage:          +\$$DO_COST ($OVERAGE_DO M extra @ \$0.15/M)"
+        OVERAGE_DO=$((MONTHLY_DO - DO_MONTHLY_LIMIT))
+        DO_COST=$(echo "scale=2; $OVERAGE_DO * 0.15 / 1000000" | bc)
+        OVERAGE_DO_M=$(echo "scale=1; $OVERAGE_DO / 1000000" | bc)
+        echo "DO overage:          +\$$DO_COST (${OVERAGE_DO_M}M extra @ \$0.15/M)"
     fi
     if [ "$MONTHLY_WORKER" -le "$WORKER_MONTHLY_LIMIT" ] && [ "$MONTHLY_DO" -le "$DO_MONTHLY_LIMIT" ]; then
         echo "Current usage:       Within included limits"
@@ -156,6 +160,8 @@ else
     echo "─────────────────────────────────────────"
     echo "Bottleneck:          Durable Objects"
     echo "Free tier headroom:  ${HEADROOM}x current usage"
-    echo "Est. max users:      ~$((${HEADROOM%.*} > 1 ? ${HEADROOM%.*} : 1)) concurrent"
+    HEADROOM_INT=${HEADROOM%.*}
+    HEADROOM_INT=${HEADROOM_INT:-0}
+    echo "Est. max users:      ~$((HEADROOM_INT > 1 ? HEADROOM_INT : 1)) concurrent"
     echo "With \$5/mo paid:     50-100+ users"
 fi
