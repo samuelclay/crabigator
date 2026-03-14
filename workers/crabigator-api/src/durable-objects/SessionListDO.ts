@@ -380,7 +380,6 @@ export class SessionListDO implements DurableObject {
             device_id: row.device_id,
             device_name: row.device_name || undefined,
             group_id: row.group_id,
-            last_seen: Date.now(),
         }));
     }
 

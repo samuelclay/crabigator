@@ -115,6 +115,12 @@ export class SessionDO implements DurableObject {
                     } catch {}
                 }
             }
+
+            // Restore desktop WebSocket reference after hibernation wake-up
+            const existingDesktopWs = state.getWebSockets('desktop');
+            if (existingDesktopWs.length > 0) {
+                this.desktopWs = existingDesktopWs[0];
+            }
         });
     }
 
@@ -211,46 +217,12 @@ export class SessionDO implements DurableObject {
         const pair = new WebSocketPair();
         const [client, server] = [pair[0], pair[1]];
 
-        server.accept();
+        // Use Hibernation API - DO can sleep between messages, reducing billed duration
+        this.state.acceptWebSocket(server, ['desktop']);
         this.desktopWs = server;
 
-        server.addEventListener('message', async (event) => {
-            try {
-                const data = JSON.parse(event.data as string) as SessionEvent;
-                await this.handleEvent(data);
-            } catch (error) {
-                console.error('Error handling WebSocket message:', error);
-            }
-        });
-
-        server.addEventListener('close', () => {
-            if (this.desktopWs === server) {
-                this.desktopWs = null;
-                // Notify SSE clients that desktop disconnected
-                this.broadcastDesktopStatus(false);
-                // Notify SessionListDO that desktop disconnected
-                if (this.sessionInfo) {
-                    this.notifySessionList('disconnect', { id: this.sessionInfo.id });
-                }
-                // Schedule cleanup alarm - if desktop doesn't reconnect within 15s, clean up
-                // This handles force quits while allowing deploy reconnections
-                this.state.storage.setAlarm(Date.now() + 15_000);
-            }
-        });
-
-        server.addEventListener('error', (error) => {
-            console.error('WebSocket error:', error);
-            if (this.desktopWs === server) {
-                this.desktopWs = null;
-                this.broadcastDesktopStatus(false);
-                // Notify SessionListDO that desktop disconnected
-                if (this.sessionInfo) {
-                    this.notifySessionList('disconnect', { id: this.sessionInfo.id });
-                }
-                // Schedule cleanup alarm
-                this.state.storage.setAlarm(Date.now() + 15_000);
-            }
-        });
+        // Event handling is done via webSocketMessage/webSocketClose/webSocketError methods
+        // instead of addEventListener, enabling the DO to hibernate between messages
 
         return new Response(null, {
             status: 101,
@@ -338,7 +310,7 @@ export class SessionDO implements DurableObject {
         const now = Math.floor(Date.now() / 1000);
 
         this.env.DB.prepare(`
-            UPDATE sessions SET last_seen_at = ?, is_active = 1 WHERE id = ?
+            UPDATE sessions SET last_seen_at = ? WHERE id = ? AND is_active = 1
         `).bind(now, this.sessionInfo.id).run().catch((error) => {
             console.error('Error updating last_seen_at:', error);
         });
@@ -963,6 +935,49 @@ export class SessionDO implements DurableObject {
             this.desktopWs.send(JSON.stringify(message));
         } catch {
             // Connection may have failed, ignore
+        }
+    }
+
+    /**
+     * WebSocket Hibernation API - called when a message arrives on an accepted WebSocket.
+     * The DO wakes from hibernation if needed, allowing it to sleep between messages.
+     */
+    async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+        try {
+            const data = JSON.parse(message as string) as SessionEvent;
+            await this.handleEvent(data);
+        } catch (error) {
+            console.error('Error handling WebSocket message:', error);
+        }
+    }
+
+    /**
+     * WebSocket Hibernation API - called when an accepted WebSocket closes.
+     */
+    async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
+        if (this.desktopWs === ws || this.desktopWs === null) {
+            this.desktopWs = null;
+            this.broadcastDesktopStatus(false);
+            if (this.sessionInfo) {
+                this.notifySessionList('disconnect', { id: this.sessionInfo.id });
+            }
+            // Schedule cleanup alarm - if desktop doesn't reconnect within 15s, clean up
+            this.state.storage.setAlarm(Date.now() + 15_000);
+        }
+    }
+
+    /**
+     * WebSocket Hibernation API - called when an accepted WebSocket errors.
+     */
+    async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+        console.error('WebSocket error:', error);
+        if (this.desktopWs === ws || this.desktopWs === null) {
+            this.desktopWs = null;
+            this.broadcastDesktopStatus(false);
+            if (this.sessionInfo) {
+                this.notifySessionList('disconnect', { id: this.sessionInfo.id });
+            }
+            this.state.storage.setAlarm(Date.now() + 15_000);
         }
     }
 
