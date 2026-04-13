@@ -175,6 +175,7 @@ export const paywallJs = `
 
         // Show paywall overlay (limit reached mode)
         function showPaywall() {
+            return; // Free limit disabled - users can use the site without paying
             const overlay = document.getElementById('paywall-overlay');
             if (!overlay) return;
 
