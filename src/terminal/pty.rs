@@ -153,13 +153,7 @@ impl PlatformPty {
     }
 
     pub fn process_output(&mut self, data: &[u8]) {
-        // Wrap in catch_unwind to prevent vt100 parser panics from crashing the app
-        // The parser can panic on certain edge cases (e.g., cursor position out of bounds)
-        let parser_ptr = &mut self.parser as *mut vt100::Parser;
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // SAFETY: We're only accessing the parser within this closure
-            unsafe { (*parser_ptr).process(data) };
-        }));
+        crate::guarded_process(&mut self.parser, data, 1000);
     }
 
     pub fn write(&mut self, data: &[u8]) -> Result<()> {
@@ -177,7 +171,7 @@ impl PlatformPty {
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        self.parser.screen_mut().set_size(rows, cols);
+        crate::guarded_resize(&mut self.parser, cols, rows);
         Ok(())
     }
 

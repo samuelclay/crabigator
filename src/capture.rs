@@ -138,7 +138,7 @@ impl CaptureManager {
 
     /// Resize the capture parser to match PTY dimensions.
     pub fn resize(&mut self, cols: u16, rows: u16) {
-        self.capture_parser.screen_mut().set_size(rows, cols);
+        crate::guarded_resize(&mut self.capture_parser, cols, rows);
     }
 
     /// Set the transcript file path for scrollback reading.
@@ -185,8 +185,7 @@ impl CaptureManager {
             }
         }
 
-        // Process through our capture parser
-        self.capture_parser.process(data);
+        crate::guarded_process(&mut self.capture_parser, data, 0);
 
         Ok(())
     }
@@ -316,11 +315,13 @@ impl CaptureManager {
         // This is much smaller than our 10,000 row capture_parser (typically 40-60 rows)
         let (rows, cols) = screen.size();
 
-        // Collect all rows (small fixed size - typically 40-60 rows)
-        let formatted_rows: Vec<Vec<u8>> = screen
-            .rows_formatted(0, cols)
-            .take(rows as usize)
-            .collect();
+        // Collect all rows (small fixed size - typically 40-60 rows).
+        // vt100 can panic on edge cases (e.g. empty row with cols > 0); swallow
+        // those panics — a lost snapshot is cheap, a crashed session is not.
+        let formatted_rows: Vec<Vec<u8>> = crate::catch_quiet(|| {
+            screen.rows_formatted(0, cols).take(rows as usize).collect()
+        })
+        .unwrap_or_default();
 
         // Find last non-empty row
         let last_nonempty = formatted_rows

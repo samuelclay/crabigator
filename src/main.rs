@@ -81,9 +81,64 @@ fn restore_terminal(total_rows: u16) -> Result<()> {
     Ok(())
 }
 
+thread_local! {
+    /// When set, the installed panic hook becomes a no-op. Code paths that wrap
+    /// known-panic-prone calls (e.g. the vt100 parser) in `catch_unwind` toggle
+    /// this on to suppress the full-backtrace dump the default hook emits, which
+    /// otherwise floods the terminal.
+    static SUPPRESS_PANIC_HOOK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// RAII guard: restores SUPPRESS_PANIC_HOOK to false on drop so the flag can't
+/// leak if `catch_quiet`'s body is ever restructured.
+struct SuppressGuard;
+impl Drop for SuppressGuard {
+    fn drop(&mut self) {
+        SUPPRESS_PANIC_HOOK.with(|c| c.set(false));
+    }
+}
+
+/// Run `f` inside `catch_unwind`, suppressing the panic-hook output. Intended for
+/// guarding third-party code (vt100) that panics on malformed input; we treat
+/// those panics as recoverable and don't want the user's terminal flooded with
+/// backtraces.
+pub fn catch_quiet<F, R>(f: F) -> std::thread::Result<R>
+where
+    F: FnOnce() -> R,
+{
+    SUPPRESS_PANIC_HOOK.with(|c| c.set(true));
+    let _guard = SuppressGuard;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+}
+
+/// Run `parser.process(data)` with panic recovery. vt100 can panic on malformed
+/// byte sequences and leaves its internal state corrupted afterward, so on panic
+/// we replace the parser with a fresh instance preserving dimensions and the
+/// caller-supplied scrollback size.
+pub fn guarded_process(parser: &mut vt100::Parser, data: &[u8], scrollback: usize) {
+    let ptr = parser as *mut vt100::Parser;
+    // SAFETY: we only dereference `ptr` inside the closure; the borrow on `parser`
+    // is not live during the call, and catch_unwind returns before we resume it.
+    let result = catch_quiet(|| unsafe { (*ptr).process(data) });
+    if result.is_err() {
+        let (rows, cols) = parser.screen().size();
+        *parser = vt100::Parser::new(rows, cols, scrollback);
+    }
+}
+
+/// Run `parser.screen_mut().set_size(rows, cols)` with panic recovery.
+pub fn guarded_resize(parser: &mut vt100::Parser, cols: u16, rows: u16) {
+    let ptr = parser as *mut vt100::Parser;
+    // SAFETY: same reasoning as guarded_process.
+    let _ = catch_quiet(|| unsafe { (*ptr).screen_mut().set_size(rows, cols) });
+}
+
 fn setup_panic_handler() {
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
+        if SUPPRESS_PANIC_HOOK.with(|c| c.get()) {
+            return;
+        }
         // First disable raw mode to ensure newlines work
         let _ = disable_raw_mode();
         // Reset scroll region and flush
