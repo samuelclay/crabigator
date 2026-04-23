@@ -337,6 +337,24 @@ impl App {
         Ok(())
     }
 
+    /// One-time resize round-trip shortly after startup.
+    ///
+    /// Works around a Claude Code v2.1.117+ rendering regression where, under
+    /// a constrained scroll region, the welcome screen stays pinned at the top
+    /// and subsequent content overwrites itself once the PTY fills. Running
+    /// the full resize dance — clear the status area, re-emit the scroll
+    /// region, PTY ioctl — kicks Claude out of the bad state; a bare PTY
+    /// resize alone is not enough. The user sees a one-frame flicker at
+    /// startup, but the session renders correctly from that point on.
+    fn startup_resize_nudge(&mut self) -> Result<()> {
+        let orig_rows = self.total_rows;
+        if orig_rows >= 2 && self.pty_rows >= 2 {
+            self.handle_resize(self.total_cols, orig_rows - 1)?;
+            self.handle_resize(self.total_cols, orig_rows)?;
+        }
+        Ok(())
+    }
+
     /// Clear the status bar area (below scroll region) to remove artifacts
     fn clear_status_area(&self) -> Result<()> {
         let mut stdout = stdout();
@@ -424,6 +442,13 @@ impl App {
         // Initial screen send interval
         let mut initial_screen_interval = interval(Duration::from_millis(500));
 
+        // One-shot timer that fires the startup resize nudge (see
+        // `startup_resize_nudge`). Enough delay that Claude has completed its
+        // initial render; the SIGWINCH we trigger then forces a clean repaint.
+        let startup_nudge = tokio::time::sleep(Duration::from_millis(600));
+        tokio::pin!(startup_nudge);
+        let mut startup_nudged = false;
+
         // Event-driven main loop using tokio::select!
         // This replaces the polling loop - we only wake up when something actually happens
         loop {
@@ -440,6 +465,13 @@ impl App {
             );
 
             tokio::select! {
+                // One-shot startup resize nudge (works around Claude Code
+                // rendering regression; see startup_resize_nudge).
+                () = &mut startup_nudge, if !startup_nudged => {
+                    self.startup_resize_nudge()?;
+                    startup_nudged = true;
+                }
+
                 // PTY output - highest priority, handle immediately
                 Some(data) = self.pty_rx.recv() => {
                     self.write_pty_output(&data)?;
