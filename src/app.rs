@@ -494,7 +494,17 @@ impl App {
                             self.handle_resize(width, height)?;
                         }
                         Ok(Event::Paste(text)) => {
-                            self.platform_pty.write(text.as_bytes())?;
+                            // crossterm strips the paste markers when parsing Event::Paste,
+                            // so re-emit them before forwarding — Claude Code's image-drop
+                            // detection only fires on bracketed paste content.
+                            use crate::terminal::escape::{BRACKETED_PASTE_END, BRACKETED_PASTE_START};
+                            let mut buf = Vec::with_capacity(
+                                text.len() + BRACKETED_PASTE_START.len() + BRACKETED_PASTE_END.len(),
+                            );
+                            buf.extend_from_slice(BRACKETED_PASTE_START);
+                            buf.extend_from_slice(text.as_bytes());
+                            buf.extend_from_slice(BRACKETED_PASTE_END);
+                            self.platform_pty.write(&buf)?;
                         }
                         Ok(Event::Mouse(mouse)) => {
                             self.last_mouse_event = Some(mouse);

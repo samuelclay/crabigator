@@ -175,6 +175,17 @@ pub fn hyperlink(url: &str, text: &str) -> String {
     format!("\x1b]8;;{}\x07{}\x1b]8;;\x07", url, text)
 }
 
+// === Bracketed Paste ===
+
+/// Start-of-paste marker (DEC private mode 2004).
+/// crossterm strips these when parsing `Event::Paste`, so we must re-emit them
+/// when forwarding a paste to a child PTY whose app (e.g. Claude Code) relies
+/// on them to distinguish pasted content from typed input.
+pub const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
+
+/// End-of-paste marker (DEC private mode 2004).
+pub const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
+
 // === Screen Control ===
 
 /// Begin synchronized update (DEC private mode 2026)
