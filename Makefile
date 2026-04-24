@@ -7,19 +7,25 @@ run:
 	@provider=$$(cat $(PROVIDER_FILE) 2>/dev/null | head -n 1 | tr -d ' \t\r\n'); \
 	if [ -z "$$provider" ]; then provider=$(DEFAULT_PROVIDER); fi; \
 	echo "Using provider: $$provider"; \
-	RUST_BACKTRACE=1 cargo run -- $$provider
+	extra=""; \
+	if [ "$$provider" = "claude" ]; then extra="--dangerously-skip-permissions"; fi; \
+	RUST_BACKTRACE=1 cargo run -- $$provider $$extra
 
 resume:
 	@provider=$$(cat $(PROVIDER_FILE) 2>/dev/null | head -n 1 | tr -d ' \t\r\n'); \
 	if [ -z "$$provider" ]; then provider=$(DEFAULT_PROVIDER); fi; \
 	echo "Using provider: $$provider"; \
-	RUST_BACKTRACE=1 cargo run -- $$provider --resume
+	extra=""; \
+	if [ "$$provider" = "claude" ]; then extra="--dangerously-skip-permissions"; fi; \
+	RUST_BACKTRACE=1 cargo run -- $$provider --resume $$extra
 
 continue:
 	@provider=$$(cat $(PROVIDER_FILE) 2>/dev/null | head -n 1 | tr -d ' \t\r\n'); \
 	if [ -z "$$provider" ]; then provider=$(DEFAULT_PROVIDER); fi; \
 	echo "Using provider: $$provider"; \
-	RUST_BACKTRACE=1 cargo run -- $$provider --continue
+	extra=""; \
+	if [ "$$provider" = "claude" ]; then extra="--dangerously-skip-permissions"; fi; \
+	RUST_BACKTRACE=1 cargo run -- $$provider --continue $$extra
 
 codex:
 	@echo "codex" > $(PROVIDER_FILE)
