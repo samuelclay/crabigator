@@ -380,6 +380,12 @@ impl App {
         let mut last_hook_refresh = Instant::now();
         let status_debounce = Duration::from_millis(100);
 
+        // Listen for termination signals so we can run the normal cleanup path
+        // (reset scroll region, disable raw mode, etc.) instead of letting the
+        // OS terminate the process with the terminal still in raw mode — which
+        // leaves the user's shell unable to render newlines correctly.
+        let mut term_signals = TermSignals::new()?;
+
         // Event-driven timers using tokio intervals (no polling!)
         // These tick at the *active* rate; idle throttling is handled by
         // timestamp checks inside each branch to avoid unnecessary work.
@@ -738,6 +744,13 @@ impl App {
                             sent_initial_screen = true;
                         }
                     }
+                }
+
+                // Termination signals — break out of the loop so the cleanup
+                // path below (and main.rs::restore_terminal) restores the
+                // terminal before the process exits.
+                _ = term_signals.recv() => {
+                    self.running = false;
                 }
             }
 
@@ -1719,6 +1732,52 @@ impl App {
 
             let _ = tx.send(result);
         });
+    }
+}
+
+/// Listens for OS termination signals (SIGTERM/SIGHUP/SIGINT on Unix). The
+/// `recv()` future resolves when any one of them arrives, so the main loop can
+/// exit through the normal cleanup path. On non-Unix targets `recv()` is a
+/// future that never resolves — termination handling is best-effort.
+struct TermSignals {
+    #[cfg(unix)]
+    term: tokio::signal::unix::Signal,
+    #[cfg(unix)]
+    hup: tokio::signal::unix::Signal,
+    #[cfg(unix)]
+    int: tokio::signal::unix::Signal,
+}
+
+impl TermSignals {
+    fn new() -> Result<Self> {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            Ok(Self {
+                term: signal(SignalKind::terminate())?,
+                hup: signal(SignalKind::hangup())?,
+                int: signal(SignalKind::interrupt())?,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(Self {})
+        }
+    }
+
+    async fn recv(&mut self) {
+        #[cfg(unix)]
+        {
+            tokio::select! {
+                _ = self.term.recv() => {}
+                _ = self.hup.recv() => {}
+                _ = self.int.recv() => {}
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            std::future::pending::<()>().await;
+        }
     }
 }
 
