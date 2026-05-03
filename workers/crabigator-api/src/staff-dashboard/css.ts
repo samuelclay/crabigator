@@ -599,9 +599,14 @@ export const staffDashboardCss = `
             grid-template-columns: 1fr 1fr;
         }
 
+        .analytics-charts-row.thirds {
+            grid-template-columns: repeat(3, 1fr);
+        }
+
         @media (max-width: 900px) {
             .analytics-charts-row,
-            .analytics-charts-row.equal {
+            .analytics-charts-row.equal,
+            .analytics-charts-row.thirds {
                 grid-template-columns: 1fr;
             }
         }

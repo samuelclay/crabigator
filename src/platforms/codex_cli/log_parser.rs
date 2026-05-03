@@ -120,6 +120,7 @@ pub fn update_from_log(state: &mut CodexState, line: &str) {
     match entry_type {
         "response_item" => handle_response_item(state, &value),
         "event_msg" => handle_event_msg(state, &value),
+        "turn_context" => handle_turn_context(state, &value),
         "session_meta" => {
             set_state(state, SessionState::Ready);
         }
@@ -176,6 +177,21 @@ fn handle_event_msg(state: &mut CodexState, value: &Value) {
             record_completion(state, MessageSource::EventMsg);
         }
         _ => {}
+    }
+}
+
+/// Handle a turn_context log entry.
+fn handle_turn_context(state: &mut CodexState, value: &Value) {
+    let payload = value.get("payload").and_then(|v| v.as_object());
+    let Some(payload) = payload else {
+        return;
+    };
+    if let Some(model) = payload
+        .get("model")
+        .and_then(|v| v.as_str())
+        .filter(|model| !model.trim().is_empty())
+    {
+        state.stats.model = Some(model.to_string());
     }
 }
 
@@ -520,5 +536,24 @@ mod tests {
         assert_eq!(state.stats.state, SessionState::Thinking);
         assert!(state.stats.active_prompt.is_none());
         assert!(state.stats.permission.is_none());
+    }
+
+    #[test]
+    fn tracks_model_from_turn_context() {
+        let mut state = CodexState::default();
+
+        update_from_log(
+            &mut state,
+            &json!({
+                "type": "turn_context",
+                "payload": {
+                    "cwd": "/Users/example/project",
+                    "model": "gpt-5.5"
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(state.stats.model.as_deref(), Some("gpt-5.5"));
     }
 }

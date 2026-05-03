@@ -525,7 +525,11 @@ ${staffDashboardCss}
                             <div class="chart-container sa-tall"><canvas id="sa-tools-by-user-chart"></canvas></div>
                         </div>
                     </div>
-                    <div class="analytics-charts-row equal">
+                    <div class="analytics-charts-row thirds">
+                        <div class="chart-card">
+                            <div class="chart-title">Platform Usage</div>
+                            <div class="chart-container"><canvas id="sa-platform-chart"></canvas></div>
+                        </div>
                         <div class="chart-card">
                             <div class="chart-title">Model Usage</div>
                             <div class="chart-container"><canvas id="sa-model-chart"></canvas></div>

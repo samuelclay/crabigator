@@ -1357,6 +1357,7 @@ impl App {
                 self.session_stats.platform_stats.completions,
                 tool_calls,
                 self.session_stats.thinking_seconds(),
+                self.session_stats.platform_stats.model.clone(),
             );
         }
     }

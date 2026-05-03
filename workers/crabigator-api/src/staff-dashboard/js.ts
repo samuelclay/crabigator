@@ -774,6 +774,7 @@ export const staffDashboardJs = `
         let saInterPromptWeeklyChart = null;
         // Other charts
         let saToolsChart = null;
+        let saPlatformChart = null;
         let saModelChart = null;
         let saModeChart = null;
         let saReposChart = null;
@@ -997,6 +998,17 @@ export const staffDashboardJs = `
                 options: saHorizOpts
             });
 
+            // --- Platform usage (doughnut) ---
+            saPlatformChart = saUpdateOrCreate(saPlatformChart,
+                el('sa-platform-chart').getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: data.platform_usage.labels.map(p => p.charAt(0).toUpperCase() + p.slice(1)),
+                    datasets: [{ data: data.platform_usage.values, backgroundColor: saColors, borderWidth: 0 }]
+                },
+                options: saDoughnutOpts
+            });
+
             // --- Model usage (doughnut) ---
             saModelChart = saUpdateOrCreate(saModelChart,
                 el('sa-model-chart').getContext('2d'), {
@@ -1150,7 +1162,7 @@ export const staffDashboardJs = `
                  saPromptsWeeklyChart, saToolsWeeklyChart, saTitlesWeeklyChart,
                  saThinkingPerPromptWeeklyChart, saThinkingWeeklyChart, saPerPromptWeeklyChart,
                  saDurationWeeklyChart, saInterPromptWeeklyChart,
-                 saToolsChart, saModelChart, saModeChart,
+                 saToolsChart, saPlatformChart, saModelChart, saModeChart,
                  saReposChart, saReposPerUserChart, saToolsByUserChart, saSessionsPerUserChart
                 ].forEach(c => { if (c) c.destroy(); });
                 saPromptsPctChart = saToolsPctChart = saTitlesPctChart = null;
@@ -1159,7 +1171,7 @@ export const staffDashboardJs = `
                 saPromptsWeeklyChart = saToolsWeeklyChart = saTitlesWeeklyChart = null;
                 saThinkingPerPromptWeeklyChart = saThinkingWeeklyChart = saPerPromptWeeklyChart = null;
                 saDurationWeeklyChart = saInterPromptWeeklyChart = null;
-                saToolsChart = saModelChart = saModeChart = null;
+                saToolsChart = saPlatformChart = saModelChart = saModeChart = null;
                 saReposChart = saReposPerUserChart = saToolsByUserChart = saSessionsPerUserChart = null;
                 fetchSessionAnalytics();
             });

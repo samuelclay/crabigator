@@ -704,6 +704,7 @@ export async function handleStaffSessionAnalytics(
         thinkingValuesResult,
         durationValuesResult,
         toolUsageResult,
+        platformUsageResult,
         modelUsageResult,
         modeUsageResult,
 
@@ -791,6 +792,12 @@ export async function handleStaffSessionAnalytics(
             WHERE sessions.started_at > ?
             GROUP BY tool_name ORDER BY total DESC LIMIT 15
         `).bind(since).all<{ tool_name: string; total: number }>(),
+
+        env.DB.prepare(`
+            SELECT platform, COUNT(*) as count FROM sessions
+            WHERE started_at > ?
+            GROUP BY platform ORDER BY count DESC
+        `).bind(since).all<{ platform: string; count: number }>(),
 
         env.DB.prepare(`
             SELECT model, COUNT(*) as count FROM sessions
@@ -1090,6 +1097,10 @@ export async function handleStaffSessionAnalytics(
         tool_usage: {
             labels: (toolUsageResult.results || []).map(r => r.tool_name),
             values: (toolUsageResult.results || []).map(r => r.total),
+        },
+        platform_usage: {
+            labels: (platformUsageResult.results || []).map(r => r.platform),
+            values: (platformUsageResult.results || []).map(r => r.count),
         },
         model_usage: {
             labels: (modelUsageResult.results || []).map(r => r.model),

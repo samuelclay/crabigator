@@ -319,6 +319,7 @@ impl CloudClient {
         completions: u32,
         tool_calls: u32,
         thinking_seconds: u64,
+        model: Option<String>,
     ) {
         self.spawn_session_update(UpdateSessionRequest {
             ended_at: None,
@@ -328,6 +329,7 @@ impl CloudClient {
                 completions,
                 tool_calls,
                 thinking_seconds,
+                model,
                 ..Default::default()
             }),
         });
@@ -601,6 +603,7 @@ impl CloudClient {
         completions: u32,
         tool_calls: u32,
         thinking_seconds: u64,
+        model: Option<String>,
     ) -> Result<()> {
         self.send_session_update(UpdateSessionRequest {
             ended_at: None,
@@ -610,6 +613,7 @@ impl CloudClient {
                 completions,
                 tool_calls,
                 thinking_seconds,
+                model,
                 ..Default::default()
             }),
         })
