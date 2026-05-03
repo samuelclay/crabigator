@@ -309,7 +309,6 @@ export const pairingJs = `
 
         function clearPairing() {
             localStorage.removeItem('crabigator_mobile_token');
-            localStorage.removeItem('crabigator_mobile_id');
             mobileToken = null;
             isPaired = false;
             location.reload();

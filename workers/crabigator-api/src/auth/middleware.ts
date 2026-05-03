@@ -3,6 +3,13 @@ import type { AuthContext, DeviceAuth, MobileAuth, ShareAuth } from '../types/ap
 import { sha256, hmacVerify } from './tokens';
 
 const TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
+const MOBILE_TOKEN_TTL = 60 * 60 * 24 * 365; // 1 year
+
+interface MobileTokenData {
+    desktop_id: string;
+    mobile_id: string;
+    group_id?: string;
+}
 
 /**
  * Extract bearer token from header or query param (for SSE)
@@ -84,20 +91,20 @@ export async function verifyMobileToken(
     const tokenHash = await sha256(token);
 
     // Look up in KV
-    const data = await env.TOKENS.get(`mobile:${tokenHash}`, 'json') as {
-        desktop_id: string;
-        mobile_id: string;
-        group_id?: string;
-    } | null;
+    const data = await env.TOKENS.get(`mobile:${tokenHash}`, 'json') as MobileTokenData | null;
 
     if (!data) {
         return null;
     }
 
-    // Check if link is still valid (not revoked)
-    const link = await env.DB.prepare(
-        'SELECT id FROM linked_devices WHERE desktop_id = ? AND mobile_id = ? AND revoked_at IS NULL'
-    ).bind(data.desktop_id, data.mobile_id).first();
+    // Check if link is still valid and resolve the current group from D1.
+    // KV can contain stale group_id values after desktop groups are merged.
+    const link = await env.DB.prepare(`
+        SELECT ld.id, d.group_id
+        FROM linked_devices ld
+        JOIN devices d ON d.id = ld.desktop_id
+        WHERE ld.desktop_id = ? AND ld.mobile_id = ? AND ld.revoked_at IS NULL
+    `).bind(data.desktop_id, data.mobile_id).first<{ id: string; group_id: string | null }>();
 
     if (!link) {
         // Link was revoked, clean up KV
@@ -105,12 +112,13 @@ export async function verifyMobileToken(
         return null;
     }
 
-    let groupId = data.group_id || null;
-    if (!groupId) {
-        const device = await env.DB.prepare(
-            'SELECT group_id FROM devices WHERE id = ?'
-        ).bind(data.desktop_id).first<{ group_id: string | null }>();
-        groupId = device?.group_id || null;
+    const groupId = link.group_id || data.group_id || null;
+    if (link.group_id && data.group_id !== link.group_id) {
+        await env.TOKENS.put(
+            `mobile:${tokenHash}`,
+            JSON.stringify({ ...data, group_id: link.group_id }),
+            { expirationTtl: MOBILE_TOKEN_TTL }
+        );
     }
 
     return { type: 'mobile', desktop_id: data.desktop_id, mobile_id: data.mobile_id, group_id: groupId || undefined };

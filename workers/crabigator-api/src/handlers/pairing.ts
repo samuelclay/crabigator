@@ -10,6 +10,7 @@ import { requireDeviceAuth, verifyMobileToken } from '../auth/middleware';
 import { generateToken, generatePairingCode, generateUUID, sha256 } from '../auth/tokens';
 
 const PAIRING_TOKEN_TTL = 60 * 60 * 24 * 365; // 1 year (display only)
+const MOBILE_TOKEN_TTL = 60 * 60 * 24 * 365; // 1 year
 
 interface PairingTokenData {
     device_id: string;
@@ -155,7 +156,7 @@ export async function claimPairingToken(
             desktop_id: tokenData.device_id, // Keep for backwards compatibility
             mobile_id: mobileId,
         }),
-        { expirationTtl: 60 * 60 * 24 * 365 } // 1 year
+        { expirationTtl: MOBILE_TOKEN_TTL }
     );
 
     // Insert linked_devices record
