@@ -24,6 +24,27 @@ pub struct Layout {
     pub status_rows: u16,
 }
 
+const BANNER_RESERVED: u16 = 2;
+/// Minimum content rows reserved for widget data below the separator.
+pub const MIN_WIDGET_DATA_ROWS: u16 = 4;
+/// Status rows include the separator plus widget data rows.
+pub const MIN_STATUS_ROWS: u16 = MIN_WIDGET_DATA_ROWS + 1;
+
+/// Split terminal height into assistant PTY rows and status widget rows.
+///
+/// Banner rows are fixed between the two regions. Status rows include the
+/// widget separator, so MIN_STATUS_ROWS preserves four rows for widget content.
+pub fn split_terminal_rows(total_rows: u16) -> (u16, u16) {
+    let preferred_status_rows = ((total_rows as f32 * 0.2) as u16).max(MIN_STATUS_ROWS);
+    let max_status_rows = total_rows.saturating_sub(BANNER_RESERVED + 1).max(1);
+    let status_rows = preferred_status_rows.min(max_status_rows);
+    let pty_rows = total_rows
+        .saturating_sub(status_rows + BANNER_RESERVED)
+        .max(1);
+
+    (pty_rows, status_rows)
+}
+
 /// Draw the entire status bar area with all widgets
 ///
 /// IMPORTANT: This function receives the cursor position from the caller
@@ -53,10 +74,9 @@ pub fn draw_status_bar(
     write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1, 1))?;
     write!(stdout, "{}", escape::CLEAR_TO_END)?;
 
-    // Banner space is always reserved (2 rows between PTY and status bar)
+    // Banner space is always reserved between PTY and status bar
     // Draw banners if active, otherwise leave the space empty
     // Update banner takes first row, pairing banner takes remaining space
-    const BANNER_RESERVED: u16 = 2;
     let update_banner_rows = update_state.banner_rows();
     let pairing_compact = update_banner_rows > 0;
     let pairing_banner_rows = if pairing_compact {
@@ -108,10 +128,13 @@ pub fn draw_status_bar(
     }
     write!(stdout, "{}", RESET)?;
     let is_paired = pairing_state.has_linked_devices;
+    let footer_rows = pairing_footer_rows(layout.status_rows, pairing_state);
+    let widget_status_rows = layout.status_rows.saturating_sub(footer_rows).max(1);
+    let widget_data_rows = widget_status_rows.saturating_sub(1);
 
     // Calculate column widths based on available height
     // In compact mode (short terminal), stats gets more width for two-column layout
-    let compact = layout.status_rows <= 5;
+    let compact = widget_status_rows <= MIN_STATUS_ROWS;
 
     let stats_width = if compact {
         // Wider stats for two-column layout: ~35% of width, min 36 chars
@@ -126,8 +149,7 @@ pub fn draw_status_bar(
     let remaining = layout.total_cols.saturating_sub(stats_width + num_separators as u16);
 
     // Check if git needs multiple columns (files > available rows)
-    let widget_rows = layout.status_rows;
-    let git_available_rows = widget_rows.saturating_sub(2) as usize; // -2 for separator + header
+    let git_available_rows = widget_status_rows.saturating_sub(2) as usize; // -2 for separator + header
     let git_needs_multi_column = git_state.files.len() > git_available_rows;
 
     // Flex ratio: git gets 4/8 if multi-column, 3/8 if single-column
@@ -142,26 +164,10 @@ pub fn draw_status_bar(
     };
 
     // Draw content rows (after reserved banner space + separator)
-    let first_widget_row = 1 + BANNER_RESERVED;
     let widget_pty_rows = layout.pty_rows + BANNER_RESERVED;
 
-    // Reserve footer rows for full-width pairing URL
-    let footer_rows: u16 = if pairing_state.pairing_code.is_some() {
-        let widget_rows_available = layout.status_rows.saturating_sub(first_widget_row);
-        if widget_rows_available >= 4 { 2 } // separator + URL, with at least 2 widget rows
-        else if widget_rows_available >= 2 { 1 } // just URL, with at least 1 widget row
-        else { 0 }
-    } else {
-        0
-    };
-    let widget_end = layout.status_rows - footer_rows;
-
-    for row in first_widget_row..widget_end {
-        write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + row, 1))?;
-
+    for widget_row in 1..=widget_data_rows {
         // Stats column (leftmost, fixed width)
-        // Adjust widget row to be relative (starting from 1)
-        let widget_row = row - BANNER_RESERVED;
         draw_stats_widget(
             stdout,
             WidgetArea {
@@ -169,7 +175,7 @@ pub fn draw_status_bar(
                 col: 0,
                 row: widget_row,
                 width: stats_width,
-                height: layout.status_rows,
+                height: widget_status_rows,
             },
             session_stats,
             cloud_status,
@@ -190,7 +196,7 @@ pub fn draw_status_bar(
                 col: current_col,
                 row: widget_row,
                 width: git_width,
-                height: layout.status_rows,
+                height: widget_status_rows,
             },
             git_state,
             ide,
@@ -209,7 +215,7 @@ pub fn draw_status_bar(
                 col: current_col,
                 row: widget_row,
                 width: changes_width,
-                height: layout.status_rows,
+                height: widget_status_rows,
             },
             diff_summary,
             terminal_title,
@@ -223,15 +229,15 @@ pub fn draw_status_bar(
         if let Some(code) = pairing_state.pairing_code.as_deref() {
             if footer_rows == 2 {
                 // Separator line
-                let sep_row = widget_end;
-                write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + sep_row, 1))?;
+                let sep_row = layout.pty_rows + BANNER_RESERVED + widget_status_rows + 1;
+                write!(stdout, "{}", escape::cursor_to(sep_row, 1))?;
                 let line = "─".repeat(layout.total_cols as usize);
                 write!(stdout, "{}{}{}", escape::fg(color::DARK_GRAY), line, RESET)?;
             }
 
             // Pair URL row
-            let url_row = layout.status_rows - 1;
-            write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1 + url_row, 1))?;
+            let url_row = layout.pty_rows + BANNER_RESERVED + layout.status_rows;
+            write!(stdout, "{}", escape::cursor_to(url_row, 1))?;
             let url = format!("https://drinkcrabigator.com/dashboard?setup={}", code);
             let url_display = format!("drinkcrabigator.com/dashboard?setup={}", code);
             let label = format!("{}Pair: {}", escape::fg(color::DARK_GRAY), RESET);
@@ -255,4 +261,58 @@ pub fn draw_status_bar(
     stdout.flush()?;
 
     Ok(())
+}
+
+fn pairing_footer_rows(status_rows: u16, pairing_state: &PairingState) -> u16 {
+    if pairing_state.pairing_code.is_none() {
+        return 0;
+    }
+
+    let widget_data_rows = status_rows.saturating_sub(1);
+    widget_data_rows.saturating_sub(MIN_WIDGET_DATA_ROWS).min(2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pairing_state() -> PairingState {
+        PairingState {
+            pairing_code: Some("ABC-DEF-GHI".to_string()),
+            ..PairingState::default()
+        }
+    }
+
+    #[test]
+    fn split_terminal_rows_keeps_four_widget_rows_when_possible() {
+        let (pty_rows, status_rows) = split_terminal_rows(20);
+
+        assert_eq!(status_rows, MIN_STATUS_ROWS);
+        assert_eq!(pty_rows + BANNER_RESERVED + status_rows, 20);
+    }
+
+    #[test]
+    fn split_terminal_rows_uses_preferred_status_height_when_larger() {
+        let (pty_rows, status_rows) = split_terminal_rows(44);
+
+        assert_eq!(status_rows, 8);
+        assert_eq!(pty_rows + BANNER_RESERVED + status_rows, 44);
+    }
+
+    #[test]
+    fn split_terminal_rows_shrinks_status_area_only_when_terminal_is_too_short() {
+        let (pty_rows, status_rows) = split_terminal_rows(7);
+
+        assert_eq!(pty_rows, 1);
+        assert_eq!(status_rows, 4);
+    }
+
+    #[test]
+    fn pairing_footer_uses_only_surplus_widget_rows() {
+        let pairing = pairing_state();
+
+        assert_eq!(pairing_footer_rows(MIN_STATUS_ROWS, &pairing), 0);
+        assert_eq!(pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing), 1);
+        assert_eq!(pairing_footer_rows(MIN_STATUS_ROWS + 3, &pairing), 2);
+    }
 }

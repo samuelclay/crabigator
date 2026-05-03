@@ -24,7 +24,7 @@ use crate::platforms::{Platform, SessionState};
 use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
 use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty};
-use crate::ui::{draw_status_bar, Layout, PairingState, throbber_frame_index};
+use crate::ui::{draw_status_bar, split_terminal_rows, Layout, PairingState, throbber_frame_index};
 use crate::update::UpdateState;
 
 /// Time PTY must be quiet before drawing status bar (prevents mid-burst draws)
@@ -162,14 +162,9 @@ impl App {
     ) -> Result<Self> {
         let (pty_tx, pty_rx) = mpsc::channel(256);
 
-        // Reserve bottom 20% for our status widgets (minimum 2 rows: separator + header)
-        // Also ensure pty_rows is at least 1 to avoid PTY errors
-        // Guard: ensure max >= min for clamp (handles very short terminals)
-        let status_rows = ((rows as f32 * 0.2) as u16).clamp(2, rows.saturating_sub(1).max(2));
-        // Reserve 2 extra rows for the pairing banner (top border + content)
-        // These rows sit between the PTY and the status bar
-        let banner_reserved = 2u16;
-        let pty_rows = rows.saturating_sub(status_rows + banner_reserved).max(1);
+        // Reserve bottom rows for widgets, keeping at least four widget data rows
+        // when the terminal is tall enough and at least one PTY row in all cases.
+        let (pty_rows, status_rows) = split_terminal_rows(rows);
 
         // Give the assistant CLI only the top portion
         let platform_pty = PlatformPty::new(
@@ -1214,12 +1209,8 @@ impl App {
         self.total_cols = width;
         self.total_rows = height;
 
-        // Recalculate layout with same guards as App::new
-        // Guard: ensure max >= min for clamp (handles very short terminals)
-        self.status_rows = ((height as f32 * 0.2) as u16).clamp(2, height.saturating_sub(1).max(2));
-        // Reserve 2 rows for banner space (same as in App::new)
-        let banner_reserved = 2u16;
-        self.pty_rows = height.saturating_sub(self.status_rows + banner_reserved).max(1);
+        // Recalculate layout with same guards as App::new.
+        (self.pty_rows, self.status_rows) = split_terminal_rows(height);
 
         // Re-setup scroll region for new size (not initial, don't scroll content)
         self.setup_scroll_region(false)?;
