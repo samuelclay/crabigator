@@ -3,12 +3,17 @@ export const sessionStateJs = `
         function updateSessionHeader(session) {
             const card = document.getElementById('session-' + session.id);
             if (!card) return;
-            const stateEl = card.querySelector('.state');
-            stateEl.className = 'state ' + session.state;
-            stateEl.textContent = session.state;
             const sessionData = sessions.get(session.id);
+            if (session.state) {
+                const stateEl = card.querySelector('.state');
+                stateEl.className = 'state ' + session.state;
+                stateEl.textContent = session.state;
+            }
             if (sessionData) {
-                sessionData.state = session.state;
+                if (session.state) sessionData.state = session.state;
+                if (session.last_activity_at || session.last_seen_at || session.last_seen) {
+                    sessionData.lastActivityAt = getSessionActivityTime(session);
+                }
                 updateSessionSummary(session.id, sessionData);
             }
         }

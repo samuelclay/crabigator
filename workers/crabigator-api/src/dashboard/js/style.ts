@@ -289,7 +289,7 @@ export const styleJs = `
                         }
                         const pg = dg.projects.get(cwd);
                         pg.sessions.push({ id, card, startedAt: sessionData.startedAt || 0 });
-                        const sessionTime = sessionData.startedAt || 0;
+                        const sessionTime = sessionData.lastActivityAt || sessionData.startedAt || 0;
                         if (sessionTime > pg.mostRecentTime) pg.mostRecentTime = sessionTime;
                         if (sessionTime > dg.mostRecentTime) dg.mostRecentTime = sessionTime;
                     }
@@ -345,12 +345,12 @@ export const styleJs = `
                         }
                         const group = groups.get(cwd);
                         group.sessions.push({ id, card, startedAt: sessionData.startedAt || 0 });
-                        const sessionTime = sessionData.startedAt || 0;
+                        const sessionTime = sessionData.lastActivityAt || sessionData.startedAt || 0;
                         if (sessionTime > group.mostRecentTime) group.mostRecentTime = sessionTime;
                     }
 
                     // Add empty groups for historical projects (only in single-device mode)
-                    if (allProjects && allProjects.length > 0) {
+                    if (allProjects && allProjects.length > 0 && hiddenSessionCount === 0) {
                         for (const project of allProjects) {
                             if (!groups.has(project.cwd)) {
                                 groups.set(project.cwd, { sessions: [], mostRecentTime: project.last_active || 0 });

@@ -5,6 +5,10 @@ export const constantsJs = `
         const sessions = new Map(); // sessionId -> { eventSource, state, element, git, changes, stats }
         let allSessions = []; // All sessions from API (for popover)
         let allProjects = []; // All known projects from API (for history)
+        const FREE_VISIBLE_SESSION_LIMIT = 3;
+        let isProUser = false;
+        let hiddenSessionCount = 0;
+        let visibleSessionIds = new Set();
         let currentLayout = localStorage.getItem('crabigator-layout') || 'fit';
 
         function escapeHtml(text) {

@@ -40,6 +40,63 @@ export const paywallCss = `
 .usage-bar.critical {
     background: linear-gradient(90deg, var(--accent-red), var(--accent-orange));
 }
+.usage-note {
+    margin-top: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--text-dim);
+}
+.session-limit-banner {
+    margin: 16px 16px 0;
+    padding: 22px 24px;
+    border: 1px solid rgba(251, 146, 60, 0.42);
+    border-radius: 10px;
+    background:
+        linear-gradient(135deg, rgba(251, 146, 60, 0.13), rgba(34, 211, 238, 0.07)),
+        var(--bg-deep);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.session-limit-kicker {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent-orange);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 8px;
+}
+.session-limit-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-bright);
+    margin-bottom: 6px;
+}
+.session-limit-detail {
+    max-width: 780px;
+    color: var(--text-mid);
+    font-size: 14px;
+    line-height: 1.55;
+}
+.session-limit-upgrade {
+    margin-top: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 10px 14px;
+    border: none;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--accent-orange), var(--accent-yellow));
+    color: var(--bg-abyss);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+}
+.session-limit-upgrade:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 24px rgba(251, 146, 60, 0.25);
+}
 /* Pro subscriber card */
 .pro-status-card {
     background: linear-gradient(135deg, rgba(34, 211, 238, 0.08) 0%, rgba(59, 130, 246, 0.08) 100%);
@@ -86,7 +143,7 @@ export const paywallCss = `
 .pro-status-sublabel {
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
-    color: var(--text-muted);
+    color: var(--text-dim);
     margin-bottom: 12px;
 }
 .manage-subscription-link {
@@ -420,6 +477,16 @@ export const paywallCss = `
 }
 
 @media (max-width: 768px) {
+    .session-limit-banner {
+        margin: 12px 12px 0;
+        padding: 18px 16px;
+    }
+    .session-limit-title {
+        font-size: 20px;
+    }
+    .session-limit-detail {
+        font-size: 13px;
+    }
     .paywall-modal {
         padding: 28px 20px;
         border-radius: 16px;

@@ -140,6 +140,7 @@ export async function createSession(
             platform,
             state: 'ready',
             started_at: now,
+            last_activity_at: now,
             is_active: true,
             stats: { prompts: 0, completions: 0, tool_calls: 0, thinking_seconds: 0 },
         },
@@ -490,11 +491,13 @@ export async function updateSession(
         ).bind(...values).run();
 
         // Notify dashboard of session update (fire-and-forget)
+        const now = Math.floor(Date.now() / 1000);
         notifySessionListChange(env, {
             type: 'updated',
             session: {
                 id: sessionId,
                 state: body.state,
+                last_activity_at: now,
                 ended_at: body.ended_at,
                 is_active: body.ended_at ? false : undefined,
             },

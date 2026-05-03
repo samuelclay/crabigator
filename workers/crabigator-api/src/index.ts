@@ -172,7 +172,7 @@ router.get('/api/sessions', async (request, env) => {
     const url = new URL('https://internal/sessions');
     url.searchParams.set('group_id', group_id);
     const response = await stub.fetch(new Request(url.toString()));
-    const data = await response.json() as { sessions: Array<{ id: string; cwd: string; platform: string; state: string; started_at: number }> };
+    const data = await response.json() as { sessions: Array<{ id: string; cwd: string; platform: string; state: string; started_at: number; last_activity_at?: number }> };
 
     return jsonResponse({ sessions: data.sessions });
 });

@@ -2,6 +2,132 @@
 import { iconMicrophone, iconKeyboard, iconClose, iconPencil } from '../icons';
 
 export const sessionJs = `
+        function getSessionActivityTime(session) {
+            const raw = session?.last_activity_at || session?.lastActivityAt || session?.last_seen_at || session?.last_seen || session?.started_at || session?.startedAt || 0;
+            return raw > 1000000000000 ? raw / 1000 : raw;
+        }
+
+        function sortSessionsByRecentActivity(sessionList) {
+            return [...sessionList].sort((a, b) => {
+                const activityDelta = getSessionActivityTime(b) - getSessionActivityTime(a);
+                if (activityDelta !== 0) return activityDelta;
+                return (b.started_at || 0) - (a.started_at || 0);
+            });
+        }
+
+        function getSessionVisibilityLimit() {
+            return (isProUser || singleSessionId) ? Infinity : FREE_VISIBLE_SESSION_LIMIT;
+        }
+
+        function getRenderableSessions(sessionList) {
+            const candidates = singleSessionId
+                ? sessionList.filter(session => session.id === singleSessionId)
+                : [...sessionList];
+            const limit = getSessionVisibilityLimit();
+            const renderable = Number.isFinite(limit)
+                ? sortSessionsByRecentActivity(candidates).slice(0, limit)
+                : candidates;
+
+            hiddenSessionCount = Number.isFinite(limit)
+                ? Math.max(0, candidates.length - renderable.length)
+                : 0;
+            visibleSessionIds = new Set(renderable.map(session => session.id));
+            return renderable;
+        }
+
+        function mergeSessionListUpdate(sessionUpdate) {
+            if (!sessionUpdate?.id) return;
+
+            if (sessionUpdate.is_active === false || sessionUpdate.ended_at != null) {
+                allSessions = allSessions.filter(session => session.id !== sessionUpdate.id);
+                return;
+            }
+
+            const idx = allSessions.findIndex(session => session.id === sessionUpdate.id);
+            if (idx === -1) {
+                if (!sessionUpdate.cwd || !sessionUpdate.platform || !sessionUpdate.started_at) {
+                    loadSessions();
+                    return;
+                }
+                allSessions.push(sessionUpdate);
+            } else {
+                allSessions[idx] = { ...allSessions[idx], ...sessionUpdate };
+            }
+        }
+
+        function updateSessionLimitBanner() {
+            const banner = document.getElementById('session-limit-banner');
+            const countEl = document.getElementById('session-limit-hidden-count');
+            const detailEl = document.getElementById('session-limit-detail');
+            if (!banner) return;
+
+            if (isProUser || singleSessionId || hiddenSessionCount <= 0) {
+                banner.hidden = true;
+                return;
+            }
+
+            const total = allSessions.length;
+            banner.hidden = false;
+            if (countEl) {
+                countEl.textContent = hiddenSessionCount + ' active session' + (hiddenSessionCount === 1 ? '' : 's') + ' hidden';
+            }
+            if (detailEl) {
+                detailEl.textContent = 'Free accounts show the ' + FREE_VISIBLE_SESSION_LIMIT + ' most recently active sessions. Upgrade to Pro to see all ' + total + ' active sessions at once.';
+            }
+        }
+
+        function syncRenderedSessions() {
+            const container = document.getElementById('sessions');
+            if (!container) return;
+
+            const renderableSessions = getRenderableSessions(allSessions);
+            const renderableIds = new Set(renderableSessions.map(session => session.id));
+
+            updateSessionsCount();
+            updateSessionLimitBanner();
+            if (typeof updateUsageDisplay === 'function') {
+                updateUsageDisplay();
+            }
+
+            for (const [id, session] of sessions) {
+                if (!renderableIds.has(id)) {
+                    session.eventSource?.close();
+                    sessions.delete(id);
+                    if (activeTerminalId === id) activeTerminalId = null;
+                    const card = document.getElementById('session-' + id);
+                    if (card) card.remove();
+                }
+            }
+
+            if (renderableSessions.length === 0) {
+                if (sessions.size === 0) {
+                    container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                }
+                updateFitLayout();
+                return;
+            }
+
+            const emptyState = container.querySelector('.no-sessions');
+            if (emptyState) {
+                emptyState.remove();
+            }
+
+            for (const session of renderableSessions) {
+                if (!sessions.has(session.id)) {
+                    createSessionCard(session);
+                    connectToSession(session.id);
+                } else {
+                    updateSessionHeader(session);
+                    const sessionData = sessions.get(session.id);
+                    if (sessionData) {
+                        sessionData.lastActivityAt = getSessionActivityTime(session);
+                    }
+                }
+            }
+
+            rerenderSessions();
+        }
+
         async function loadSessions() {
             try {
                 // Fetch sessions and projects in parallel
@@ -19,18 +145,18 @@ export const sessionJs = `
                     allProjects = projectsData.projects || [];
                 }
 
-                // Store all sessions for popover
+                // Store all sessions for sidebar and visibility-limit accounting
                 allSessions = data.sessions;
 
-                // Filter to single session if specified via URL parameter
-                let filteredSessions = data.sessions;
+                // Filter to single session if specified, then apply Free visibility cap
+                const filteredSessions = getRenderableSessions(data.sessions);
                 if (singleSessionId) {
-                    filteredSessions = data.sessions.filter(s => s.id === singleSessionId);
                     // Force single-column layout for single session view
                     document.getElementById('sessions').dataset.layout = '1';
                 }
                 // Always update session count in sessions button
                 updateSessionsCount();
+                updateSessionLimitBanner();
 
                 const container = document.getElementById('sessions');
 
@@ -325,6 +451,7 @@ export const sessionJs = `
                 startedAt: session.started_at,
                 cwd: session.cwd,
                 deviceName: session.device_name || null,
+                lastActivityAt: getSessionActivityTime(session),
                 // Scrollback chunking: store full buffer, render only visible portion
                 scrollbackBuffer: [],      // Full scrollback lines
                 scrollbackRendered: 0,     // How many lines currently rendered

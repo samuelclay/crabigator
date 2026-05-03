@@ -10,6 +10,7 @@ interface ActiveSession {
     device_name?: string;
     group_id?: string | null;
     last_seen?: number;  // Timestamp of last desktop activity
+    last_activity_at?: number;  // Unix timestamp of recent session activity
 }
 
 /**
@@ -354,11 +355,11 @@ export class SessionListDO implements DurableObject {
     private async fetchActiveSessionsFromD1(groupId: string): Promise<ActiveSession[]> {
         const results = await this.env.DB.prepare(`
             SELECT sessions.id, sessions.cwd, sessions.platform, sessions.state, sessions.started_at,
-                   sessions.device_id, devices.group_id, devices.name as device_name
+                   sessions.last_seen_at, sessions.device_id, devices.group_id, devices.name as device_name
             FROM sessions
             JOIN devices ON devices.id = sessions.device_id
             WHERE devices.group_id = ? AND sessions.is_active = 1
-            ORDER BY sessions.started_at DESC
+            ORDER BY COALESCE(sessions.last_seen_at, sessions.started_at) DESC
             LIMIT 50
         `).bind(groupId).all<{
             id: string;
@@ -366,6 +367,7 @@ export class SessionListDO implements DurableObject {
             platform: string;
             state: string;
             started_at: number;
+            last_seen_at: number | null;
             device_id: string;
             group_id: string | null;
             device_name: string | null;
@@ -377,6 +379,7 @@ export class SessionListDO implements DurableObject {
             platform: row.platform,
             state: row.state,
             started_at: row.started_at,
+            last_activity_at: row.last_seen_at || row.started_at,
             device_id: row.device_id,
             device_name: row.device_name || undefined,
             group_id: row.group_id,
@@ -405,16 +408,18 @@ export class SessionListDO implements DurableObject {
                     session.group_id = session.group_id || row.group_id || null;
                 }
             }
+            const now = Date.now();
             const sessionWithLastSeen = {
                 ...session,
-                last_seen: Date.now(),
+                last_seen: now,
+                last_activity_at: Math.floor(now / 1000),
             };
             console.log(`handleConnect: storing session ${session.id} with state=${session.state}`);
             this.activeSessions.set(session.id, sessionWithLastSeen);
             await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
 
             // Broadcast to dashboard viewers
-            await this.broadcast({ type: 'created', session });
+            await this.broadcast({ type: 'created', session: sessionWithLastSeen });
 
             return new Response(JSON.stringify({ ok: true }), {
                 headers: { 'Content-Type': 'application/json' },
@@ -478,13 +483,15 @@ export class SessionListDO implements DurableObject {
             const session = this.activeSessions.get(id);
 
             if (session) {
+                const now = Date.now();
                 session.state = state;
-                session.last_seen = Date.now();  // Refresh on any update
+                session.last_seen = now;  // Refresh on any update
+                session.last_activity_at = Math.floor(now / 1000);
                 this.activeSessions.set(id, session);
                 await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
 
                 // Broadcast state update to dashboard viewers
-                await this.broadcast({ type: 'updated', session: { id, state, group_id: session.group_id } });
+                await this.broadcast({ type: 'updated', session: { id, state, last_activity_at: session.last_activity_at, group_id: session.group_id } });
             }
 
             return new Response(JSON.stringify({ ok: true }), {
@@ -522,6 +529,7 @@ export class SessionListDO implements DurableObject {
                 platform: s.platform,
                 state: s.state,
                 started_at: s.started_at,
+                last_activity_at: s.last_activity_at ?? null,
                 last_seen: lastSeen,
                 last_seen_age_ms: lastSeenAgeMs,
                 device_id: s.device_id ? (full ? s.device_id : s.device_id.slice(0, 8)) : undefined,
@@ -561,10 +569,13 @@ export class SessionListDO implements DurableObject {
             const { id } = await request.json() as { id: string };
             const session = this.activeSessions.get(id);
             if (session) {
-                session.last_seen = Date.now();
+                const now = Date.now();
+                session.last_seen = now;
+                session.last_activity_at = Math.floor(now / 1000);
                 this.activeSessions.set(id, session);
                 // Persist so deploys see the updated last_seen (10s writes are acceptable)
                 await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
+                await this.broadcast({ type: 'updated', session: { id, last_activity_at: session.last_activity_at, group_id: session.group_id } });
             }
             return new Response(JSON.stringify({ ok: true }), {
                 headers: { 'Content-Type': 'application/json' },

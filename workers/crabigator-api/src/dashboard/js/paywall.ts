@@ -1,42 +1,29 @@
 // Dashboard JavaScript - paywall and usage tracking
 export const paywallJs = `
-        // Usage tracking state
+        // Account and plan state
         let usageState = {
-            usedSeconds: 0,
-            limitSeconds: 600,  // 10 minutes
             isPro: false,
-            isLimited: false,
             lastUpdate: Date.now(),
             subscriptionProvider: null  // 'stripe' or 'paypal'
         };
         let usageCountdownInterval = null;
         let paywallDismissed = false;
 
-        // Format seconds to MM:SS
-        function formatTime(seconds) {
-            const mins = Math.floor(seconds / 60);
-            const secs = Math.floor(seconds % 60);
-            return mins.toString().padStart(2, '0') + ':' + secs.toString().padStart(2, '0');
-        }
-
         // Update usage display in settings popover
         function updateUsageDisplay() {
-            const usageBar = document.getElementById('usage-bar');
-            const usageTime = document.getElementById('usage-time');
             const usageDisplay = document.getElementById('usage-display');
-            const upgradeBtn = document.getElementById('upgrade-btn');
-
-            if (!usageBar || !usageTime) return;
+            if (!usageDisplay) return;
 
             if (usageState.isPro) {
                 // Pro user - show premium card with manage link
+                const total = allSessions.length;
                 usageDisplay.innerHTML =
                     '<div class="pro-status-card">' +
                         '<div class="pro-status-header">' +
                             '<div class="pro-status-icon">✓</div>' +
                             '<span class="pro-status-label">Pro Subscriber</span>' +
                         '</div>' +
-                        '<div class="pro-status-sublabel">Unlimited dashboard access</div>' +
+                        '<div class="pro-status-sublabel">All ' + total + ' active session' + (total === 1 ? '' : 's') + ' visible</div>' +
                         '<button class="manage-subscription-link" onclick="openSubscriptionPortal()">' +
                             'Manage subscription' +
                             '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l6 5-6 5"/></svg>' +
@@ -45,100 +32,51 @@ export const paywallJs = `
                 return;
             }
 
-            const remaining = Math.max(0, usageState.limitSeconds - usageState.usedSeconds);
-            const percent = Math.min(100, (usageState.usedSeconds / usageState.limitSeconds) * 100);
+            const renderableSessions = getRenderableSessions(allSessions);
+            const visible = renderableSessions.length;
+            const total = allSessions.length;
+            const hidden = hiddenSessionCount;
+            const percent = Math.min(100, (visible / FREE_VISIBLE_SESSION_LIMIT) * 100);
+            const barClass = hidden > 0 ? ' critical' : (percent >= 100 ? ' warning' : '');
+            const note = hidden > 0
+                ? hidden + ' active session' + (hidden === 1 ? ' is' : 's are') + ' hidden on Free.'
+                : 'Free accounts show the ' + FREE_VISIBLE_SESSION_LIMIT + ' most recently active sessions.';
 
-            usageBar.style.width = percent + '%';
-            usageTime.textContent = formatTime(remaining) + ' left';
-
-            // Update bar color based on usage
-            usageBar.classList.remove('warning', 'critical');
-            if (percent >= 90) {
-                usageBar.classList.add('critical');
-            } else if (percent >= 70) {
-                usageBar.classList.add('warning');
-            }
-
-            // Show upgrade button for free users
-            if (upgradeBtn) {
-                upgradeBtn.classList.remove('hidden');
-            }
+            usageDisplay.innerHTML =
+                '<div class="usage-header">' +
+                    '<span class="usage-label">Visible Sessions</span>' +
+                    '<span class="usage-time">' + visible + ' / ' + FREE_VISIBLE_SESSION_LIMIT + ' visible</span>' +
+                '</div>' +
+                '<div class="usage-bar-container">' +
+                    '<div class="usage-bar' + barClass + '" style="width: ' + percent + '%"></div>' +
+                '</div>' +
+                '<div class="usage-note">' + note + (total > 0 ? ' ' + total + ' active total.' : '') + '</div>' +
+                '<button class="upgrade-btn" id="upgrade-btn" onclick="showUpgradeModal()">Upgrade to Pro</button>';
         }
 
-        // Start local countdown timer for smooth updates
+        // Time-based usage is no longer counted. Keep this no-op for older callbacks.
         function startUsageCountdown() {
             if (usageCountdownInterval) {
                 clearInterval(usageCountdownInterval);
+                usageCountdownInterval = null;
             }
-
-            usageCountdownInterval = setInterval(() => {
-                if (usageState.isPro) return;
-
-                // Increment usage by 1 second locally
-                const now = Date.now();
-                const elapsed = (now - usageState.lastUpdate) / 1000;
-                if (elapsed >= 1) {
-                    usageState.usedSeconds = Math.min(
-                        usageState.limitSeconds,
-                        usageState.usedSeconds + Math.floor(elapsed)
-                    );
-                    usageState.lastUpdate = now;
-                    updateUsageDisplay();
-
-                    // Check if limit reached
-                    if (usageState.usedSeconds >= usageState.limitSeconds && !usageState.isLimited) {
-                        usageState.isLimited = true;
-                        if (!paywallDismissed) {
-                            showPaywall();
-                        }
-                    }
-                }
-            }, 1000);
         }
 
-        // Fetch usage from server
+        // Fetch account status from server
         async function fetchUsage() {
-            try {
-                const resp = await fetch(API_BASE + '/usage', {
-                    headers: getAuthHeaders()
-                });
-                if (!resp.ok) return;
-
-                const data = await resp.json();
-                usageState.usedSeconds = data.used_seconds || 0;
-                usageState.limitSeconds = data.limit_seconds || 600;
-                usageState.isPro = data.is_pro || false;
-                usageState.isLimited = data.is_limited || false;
-                usageState.lastUpdate = Date.now();
-
-                updateUsageDisplay();
-
-                // Show paywall if limited
-                if (usageState.isLimited && !usageState.isPro && !paywallDismissed) {
-                    showPaywall();
-                }
-            } catch (err) {
-                console.error('Error fetching usage:', err);
-            }
+            await fetchSubscription();
+            updateUsageDisplay();
         }
 
         // Handle usage_update SSE event
         function handleUsageUpdate(data) {
-            if (data.used_seconds !== undefined) {
-                usageState.usedSeconds = data.used_seconds;
-            }
             if (data.is_pro !== undefined) {
                 usageState.isPro = data.is_pro;
-            }
-            if (data.is_limited !== undefined) {
-                usageState.isLimited = data.is_limited;
+                isProUser = data.is_pro;
             }
             usageState.lastUpdate = Date.now();
+            syncRenderedSessions();
             updateUsageDisplay();
-
-            if (usageState.isLimited && !usageState.isPro && !paywallDismissed) {
-                showPaywall();
-            }
         }
 
         // Stop all sessions (close connections and clear UI)
@@ -160,13 +98,13 @@ export const paywallJs = `
             // Clear the sessions container
             const container = document.getElementById('sessions');
             if (container) {
-                container.innerHTML = '<div class="no-sessions">Sessions stopped - free limit reached</div>';
+                container.innerHTML = '<div class="no-sessions">Session visibility limited</div>';
             }
 
             // Update status
             const status = document.getElementById('status');
             if (status) {
-                status.textContent = 'Limit reached';
+                status.textContent = 'Visibility limited';
             }
 
             // Stop viewer activity tracking
@@ -175,26 +113,7 @@ export const paywallJs = `
 
         // Show paywall overlay (limit reached mode)
         function showPaywall() {
-            return; // Free limit disabled - users can use the site without paying
-            const overlay = document.getElementById('paywall-overlay');
-            if (!overlay) return;
-
-            // Stop all sessions when free limit is reached
-            stopAllSessions();
-
-            // Set limit-reached messaging
-            const title = document.getElementById('paywall-title');
-            const subtitle = document.getElementById('paywall-subtitle');
-            const usageSection = document.getElementById('paywall-usage-section');
-            const paywallUsage = document.getElementById('paywall-usage');
-
-            if (title) title.textContent = 'Free Limit Reached';
-            if (subtitle) subtitle.textContent = "You've used your 10 minutes of free dashboard access today. Upgrade to Pro for unlimited access.";
-            if (usageSection) usageSection.style.display = 'block';
-            if (paywallUsage) paywallUsage.textContent = formatTime(usageState.usedSeconds);
-
-            showPaywallContent();
-            overlay.classList.add('visible');
+            showUpgradeModal();
         }
 
         // Show upgrade modal (voluntary upgrade mode)
@@ -214,7 +133,7 @@ export const paywallJs = `
             const usageSection = document.getElementById('paywall-usage-section');
 
             if (title) title.textContent = 'Upgrade to Pro';
-            if (subtitle) subtitle.textContent = 'Get unlimited dashboard access and never worry about limits again.';
+            if (subtitle) subtitle.textContent = 'Show every active session at once. Free accounts show the ' + FREE_VISIBLE_SESSION_LIMIT + ' most recently active sessions.';
             if (usageSection) usageSection.style.display = 'none';
 
             showPaywallContent();
@@ -273,7 +192,8 @@ export const paywallJs = `
                 hidePaywall();
                 // Refresh usage state
                 usageState.isPro = true;
-                usageState.isLimited = false;
+                isProUser = true;
+                syncRenderedSessions();
                 updateUsageDisplay();
             }, 2000);
         }
@@ -440,7 +360,7 @@ export const paywallJs = `
 
         // Open subscription management portal
         async function openSubscriptionPortal() {
-            const btn = document.querySelector('.manage-subscription-btn');
+            const btn = document.querySelector('.manage-subscription-link');
             if (btn) {
                 btn.disabled = true;
                 btn.textContent = 'Loading...';
@@ -488,9 +408,13 @@ export const paywallJs = `
                 if (!resp.ok) return;
 
                 const data = await resp.json();
-                if (data.is_pro && data.subscription) {
-                    usageState.isPro = true;
-                    usageState.subscriptionProvider = data.subscription.provider;
+                const wasPro = usageState.isPro;
+                usageState.isPro = data.is_pro || false;
+                isProUser = usageState.isPro;
+                usageState.subscriptionProvider = data.subscription?.provider || null;
+                if (wasPro !== usageState.isPro) {
+                    syncRenderedSessions();
+                } else {
                     updateUsageDisplay();
                 }
             } catch (err) {
@@ -501,8 +425,6 @@ export const paywallJs = `
         // Initialize usage tracking
         function initUsageTracking() {
             fetchUsage();
-            fetchSubscription();
-            startUsageCountdown();
             handlePaymentCallback();
         }
 `;

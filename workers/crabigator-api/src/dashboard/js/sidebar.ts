@@ -348,7 +348,9 @@ export const sidebarJs = `
             const content = document.getElementById('sidebar-content');
             if (!content) return;
 
-            if (allSessions.length === 0) {
+            const sidebarSessions = getRenderableSessions(allSessions);
+
+            if (sidebarSessions.length === 0) {
                 content.innerHTML = '<div class="sessions-empty">No active sessions</div>';
                 return;
             }
@@ -360,12 +362,13 @@ export const sidebarJs = `
 
             // Group sessions by cwd, tracking timestamps for sorting
             const groups = new Map();
-            for (const session of allSessions) {
+            for (const session of sidebarSessions) {
                 const cwd = session.cwd || 'Unknown';
                 if (!groups.has(cwd)) groups.set(cwd, { sessions: [], mostRecentTime: 0 });
 
                 const liveData = sessions.get(session.id);
-                const startedAt = session.started_at ? new Date(session.started_at).getTime() / 1000 : 0;
+                const startedAt = session.started_at || 0;
+                const activityAt = getSessionActivityTime(session);
                 const g = groups.get(cwd);
                 g.sessions.push({
                     id: session.id,
@@ -373,9 +376,10 @@ export const sidebarJs = `
                     state: liveData?.state || session.state || 'ready',
                     stats: liveData?.stats || session.stats || null,
                     deviceName: session.device_name || liveData?.deviceName || null,
-                    startedAt
+                    startedAt,
+                    last_activity_at: activityAt
                 });
-                if (startedAt > g.mostRecentTime) g.mostRecentTime = startedAt;
+                if (activityAt > g.mostRecentTime) g.mostRecentTime = activityAt;
             }
 
             // Sort sessions within each group by startedAt (oldest first, matching main content)
@@ -397,7 +401,7 @@ export const sidebarJs = `
                 });
             }
 
-            const allDeviceNames = new Set(allSessions.map(s => s.device_name).filter(Boolean));
+            const allDeviceNames = new Set(sidebarSessions.map(s => s.device_name).filter(Boolean));
             const multiDevice = allDeviceNames.size > 1;
 
             let html = '';
@@ -412,8 +416,9 @@ export const sidebarJs = `
                         if (!dg.projects.has(cwd)) dg.projects.set(cwd, { sessions: [], mostRecentTime: 0 });
                         const pg = dg.projects.get(cwd);
                         pg.sessions.push(session);
-                        if (session.startedAt > pg.mostRecentTime) pg.mostRecentTime = session.startedAt;
-                        if (session.startedAt > dg.mostRecentTime) dg.mostRecentTime = session.startedAt;
+                        const activityAt = getSessionActivityTime(session);
+                        if (activityAt > pg.mostRecentTime) pg.mostRecentTime = activityAt;
+                        if (activityAt > dg.mostRecentTime) dg.mostRecentTime = activityAt;
                     }
                 }
 

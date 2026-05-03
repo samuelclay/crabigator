@@ -138,12 +138,13 @@ export const dashboardHtml = `<!DOCTYPE html>
             <div class="settings-popover" id="settings-popover">
                 <div class="settings-section usage-display" id="usage-display">
                     <div class="usage-header">
-                        <span class="usage-label">Usage Today</span>
-                        <span class="usage-time" id="usage-time">--:-- left</span>
+                        <span class="usage-label">Visible Sessions</span>
+                        <span class="usage-time" id="usage-time">0 / 3 visible</span>
                     </div>
                     <div class="usage-bar-container">
                         <div class="usage-bar" id="usage-bar" style="width: 0%"></div>
                     </div>
+                    <div class="usage-note">Free accounts show the 3 most recently active sessions.</div>
                     <button class="upgrade-btn" id="upgrade-btn" onclick="showUpgradeModal()">
                         Upgrade to Pro
                     </button>
@@ -223,6 +224,12 @@ export const dashboardHtml = `<!DOCTYPE html>
             <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
         </div>
         <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="toggleSidebar()"></div>
+        <div class="session-limit-banner" id="session-limit-banner" hidden>
+            <div class="session-limit-kicker">Free session limit</div>
+            <div class="session-limit-title" id="session-limit-hidden-count">0 active sessions hidden</div>
+            <div class="session-limit-detail" id="session-limit-detail">Free accounts show the 3 most recently active sessions.</div>
+            <button class="session-limit-upgrade" onclick="showUpgradeModal()">Upgrade to Pro</button>
+        </div>
         <div class="container" id="sessions" data-layout="1" data-grouping="all"></div>
     </div>
 
@@ -265,16 +272,16 @@ export const dashboardHtml = `<!DOCTYPE html>
             <div class="paywall-content" id="paywall-content">
                 <div class="paywall-icon">🦀</div>
                 <h2 class="paywall-title" id="paywall-title">Upgrade to Pro</h2>
-                <p class="paywall-subtitle" id="paywall-subtitle">Get unlimited dashboard access and never worry about limits again.</p>
+                <p class="paywall-subtitle" id="paywall-subtitle">Show every active session at once. Free accounts show the 3 most recently active sessions.</p>
                 <div class="paywall-usage" id="paywall-usage-section" style="display: none;">
-                    <span class="paywall-usage-text"><span class="used" id="paywall-usage">10:00</span> / 10:00 used today</span>
+                    <span class="paywall-usage-text"><span class="used" id="paywall-usage">3</span> visible sessions on Free</span>
                 </div>
                 <div class="paywall-price">$3</div>
                 <div class="paywall-price-period">per month</div>
                 <div class="paywall-features">
                     <div class="paywall-feature">
                         <span class="paywall-feature-icon">✓</span>
-                        <span>Unlimited dashboard viewing</span>
+                        <span>Unlimited visible sessions</span>
                     </div>
                     <div class="paywall-feature">
                         <span class="paywall-feature-icon">✓</span>

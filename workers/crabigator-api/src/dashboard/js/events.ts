@@ -109,6 +109,14 @@ export const eventsJs = `
             if (!terminal || !card) return;
 
             const sessionData = sessions.get(sessionId);
+            if (sessionData) {
+                const nowSeconds = Math.floor(Date.now() / 1000);
+                sessionData.lastActivityAt = nowSeconds;
+                const listSession = allSessions.find(session => session.id === sessionId);
+                if (listSession) {
+                    listSession.last_activity_at = nowSeconds;
+                }
+            }
 
             switch (event.type) {
                 case 'screen':
@@ -206,6 +214,10 @@ export const eventsJs = `
                         if (allIdx !== -1) {
                             allSessions.splice(allIdx, 1);
                             updateSessionsCount();
+                            updateSessionLimitBanner();
+                            if (typeof updateUsageDisplay === 'function') {
+                                updateUsageDisplay();
+                            }
                         }
                         const cwd = card.querySelector('.cwd')?.textContent;
                         card.remove();
@@ -214,6 +226,7 @@ export const eventsJs = `
                             updateProjectGroupCount(cwd);
                         }
                         updateFitLayout();
+                        syncRenderedSessions();
                         // Update status
                         const statusEl = document.getElementById('status');
                         if (statusEl) statusEl.textContent = sessionCount(sessions.size);

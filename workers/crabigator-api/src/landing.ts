@@ -777,7 +777,7 @@ export const landingHtml = `<!DOCTYPE html>
                         <li><span class="check">${iconCheck}</span> Answer permissions & questions</li>
                         <li><span class="check">${iconCheck}</span> Unlimited web and mobile access</li>
                         <li><span class="check">${iconCheck}</span> Real-time sync</li>
-                        <li><span class="check dim">${iconCheck}</span> <span class="dim">10 min/day remote access</span></li>
+                        <li><span class="check dim">${iconCheck}</span> <span class="dim">3 visible active sessions</span></li>
                     </ul>
                     <a href="#install" class="btn-primary pricing-cta outline" data-track="pricing_cta" data-label="free">Get Started</a>
                 </div>
@@ -791,7 +791,7 @@ export const landingHtml = `<!DOCTYPE html>
                         <li><span class="check">${iconCheck}</span> Answer permissions & questions</li>
                         <li><span class="check">${iconCheck}</span> Unlimited web and mobile access</li>
                         <li><span class="check">${iconCheck}</span> Real-time sync</li>
-                        <li><span class="check">${iconCheck}</span> Unlimited remote access</li>
+                        <li><span class="check">${iconCheck}</span> Unlimited visible active sessions</li>
                     </ul>
                     <a href="#install" class="btn-primary pricing-cta" data-track="pricing_cta" data-label="pro">Get Started</a>
                 </div>

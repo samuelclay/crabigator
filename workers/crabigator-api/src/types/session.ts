@@ -335,6 +335,7 @@ export interface SessionInfo {
     platform: 'claude' | 'codex';
     state: SessionState;
     started_at: number;
+    last_activity_at?: number;
     ended_at: number | null;
     is_active: boolean;
     device_name?: string;

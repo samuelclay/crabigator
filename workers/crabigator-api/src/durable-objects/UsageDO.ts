@@ -1,7 +1,7 @@
 import type { Env } from '../types/env';
 
-/** Free tier: 10 minutes per day */
-const FREE_LIMIT_SECONDS = 10 * 60;
+/** Legacy time usage is retained for older clients, but no time cap is enforced. */
+const FREE_LIMIT_SECONDS = Number.MAX_SAFE_INTEGER;
 
 /** How long between heartbeats to consider a viewer active (35s to allow for 5s intervals) */
 const HEARTBEAT_TIMEOUT_MS = 35_000;
@@ -24,13 +24,13 @@ interface UsageState {
 }
 
 /**
- * Durable Object for tracking dashboard viewing time per group.
+ * Durable Object for legacy dashboard viewing time per group.
  *
  * Usage is tracked via viewer heartbeats from SessionDO:
  * - Each heartbeat records 5 seconds of viewing time
  * - Multiple concurrent viewers accumulate time at 2x, 3x, etc.
  * - Usage resets at midnight UTC
- * - Pro users (active subscription) have unlimited usage
+ * - No Free/Pro time cap is enforced; current limits are based on visible sessions
  *
  * Writes to D1 are batched via alarm every 60 seconds to minimize costs.
  */
@@ -195,14 +195,11 @@ export class UsageDO implements DurableObject {
             await this.state.storage.setAlarm(Date.now() + FLUSH_INTERVAL_MS);
         }
 
-        // Check if limit exceeded
-        const isLimited = !this.usageState.isPro && this.usageState.usedSeconds >= FREE_LIMIT_SECONDS;
-
         return new Response(JSON.stringify({
             ok: true,
             used_seconds: this.usageState.usedSeconds,
             limit_seconds: FREE_LIMIT_SECONDS,
-            is_limited: isLimited,
+            is_limited: false,
             is_pro: this.usageState.isPro || false,
         }), {
             headers: { 'Content-Type': 'application/json' },
@@ -247,15 +244,14 @@ export class UsageDO implements DurableObject {
 
         // Check subscription status
         const isPro = await this.checkSubscription();
-        const isLimited = !isPro && this.usageState.usedSeconds >= FREE_LIMIT_SECONDS;
-        const remainingSeconds = isPro ? Infinity : Math.max(0, FREE_LIMIT_SECONDS - this.usageState.usedSeconds);
+        const remainingSeconds = isPro ? FREE_LIMIT_SECONDS : Math.max(0, FREE_LIMIT_SECONDS - this.usageState.usedSeconds);
 
         return new Response(JSON.stringify({
             date: today,
             used_seconds: this.usageState.usedSeconds,
             limit_seconds: FREE_LIMIT_SECONDS,
             remaining_seconds: remainingSeconds,
-            is_limited: isLimited,
+            is_limited: false,
             is_pro: isPro,
         }), {
             headers: { 'Content-Type': 'application/json' },

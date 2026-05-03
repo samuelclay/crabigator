@@ -111,80 +111,26 @@ export const sseJs = `
                     break;
 
                 case 'created':
-                    // New session - add to view at the bottom (newest last for deterministic ordering)
-                    // But skip if we're filtering to a specific session
-                    if (event.session && !sessions.has(event.session.id)) {
-                        // Always add to allSessions for popover
-                        if (!allSessions.find(s => s.id === event.session.id)) {
-                            allSessions.push(event.session);
-                            updateSessionsCount();
-                        }
-                        if (singleSessionId && event.session.id !== singleSessionId) {
-                            // Skip rendering - we're filtering to a different session
-                            break;
-                        }
-                        const emptyState = container.querySelector('.no-sessions');
-                        if (emptyState) emptyState.remove();
-                        // Insert at bottom (false) for deterministic ordering (oldest first, newest last)
-                        createSessionCard(event.session, false);
-                        connectToSession(event.session.id);
+                    // New session - keep the full list, then render only sessions allowed by plan.
+                    if (event.session) {
+                        mergeSessionListUpdate(event.session);
+                        syncRenderedSessions();
                     }
                     break;
 
                 case 'updated':
-                    // Session updated - update header
+                    // Session updated - merge activity/state changes, then recompute visibility.
                     if (event.session && event.session.id) {
-                        updateSessionHeader(event.session);
-                        // If session became inactive, remove it from view
-                        if (event.session.is_active === false) {
-                            const session = sessions.get(event.session.id);
-                            if (session) {
-                                session.eventSource?.close();
-                                sessions.delete(event.session.id);
-                                // Remove from allSessions for popover
-                                const allIdx = allSessions.findIndex(s => s.id === event.session.id);
-                                if (allIdx !== -1) {
-                                    allSessions.splice(allIdx, 1);
-                                    updateSessionsCount();
-                                }
-                                const card = document.getElementById('session-' + event.session.id);
-                                const cwd = event.session.cwd;
-                                if (card) card.remove();
-                                // Update project group count if in grouped mode
-                                if (groupingMode === 'project' && cwd) {
-                                    updateProjectGroupCount(cwd);
-                                }
-                                updateFitLayout();
-                                if (sessions.size === 0) {
-                                    container.innerHTML = '<div class="no-sessions">No active sessions</div>';
-                                }
-                            }
-                        }
+                        mergeSessionListUpdate(event.session);
+                        syncRenderedSessions();
                     }
                     break;
 
                 case 'deleted':
                     // Session deleted - remove from view
                     if (event.session && event.session.id) {
-                        const session = sessions.get(event.session.id);
-                        if (session) {
-                            session.eventSource?.close();
-                            sessions.delete(event.session.id);
-                        }
-                        // Remove from allSessions for popover
-                        const allIdx = allSessions.findIndex(s => s.id === event.session.id);
-                        if (allIdx !== -1) {
-                            allSessions.splice(allIdx, 1);
-                            updateSessionsCount();
-                        }
-                        const card = document.getElementById('session-' + event.session.id);
-                        const cwd = event.session.cwd;
-                        if (card) card.remove();
-                        // Update project group count if in grouped mode
-                        if (groupingMode === 'project' && cwd) {
-                            updateProjectGroupCount(cwd);
-                        }
-                        updateFitLayout();
+                        allSessions = allSessions.filter(s => s.id !== event.session.id);
+                        syncRenderedSessions();
                         if (sessions.size === 0) {
                             container.innerHTML = '<div class="no-sessions">No active sessions</div>';
                             // If all sessions gone and we had sessions before, likely a deploy
