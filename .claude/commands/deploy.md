@@ -1,4 +1,6 @@
 ---
+name: crabigator-deploy
+description: Use when the user asks to deploy Crabigator's Cloudflare Worker or dashboard without committing or releasing code.
 allowed-tools: Bash
 ---
 Deploy the Cloudflare Worker (no commit/push).

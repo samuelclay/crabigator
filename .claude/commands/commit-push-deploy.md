@@ -1,4 +1,6 @@
 ---
+name: crabigator-commit-push-deploy
+description: Use when the user asks to commit Crabigator changes, push them to origin/main, and deploy the Cloudflare Worker.
 allowed-tools: Bash
 ---
 Commit all changes (split into logical commits per CLAUDE.md), push to origin/main, and deploy the Cloudflare Worker.
