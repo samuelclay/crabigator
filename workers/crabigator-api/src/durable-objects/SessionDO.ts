@@ -30,6 +30,8 @@ interface EphemeralState {
 
 /** Viewer activity timeout - 35s to allow for 5s heartbeat intervals */
 const VIEWER_ACTIVITY_TIMEOUT_MS = 35_000;
+/** Desktop heartbeat cadence is 2h; allow multiple missed beats before culling. */
+const SESSION_HEARTBEAT_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 interface SessionInfo {
     id: string;
@@ -205,8 +207,9 @@ export class SessionDO implements DurableObject {
             // Notify SessionListDO that desktop connected
             await this.notifySessionList('connect', this.sessionInfo);
 
-            // Update D1 last_seen_at for zombie detection
-            this.updateD1LastSeen();
+            // Mark D1 active for zombie detection and recovery after transient
+            // disconnects or a prior stale cleanup.
+            this.updateD1LastSeen(true);
 
             // Notify desktop of current viewer status
             if (this.hasActiveViewers()) {
@@ -304,14 +307,16 @@ export class SessionDO implements DurableObject {
      * This is used by the scheduled cleanup job to identify sessions that
      * have stopped sending activity. Fire-and-forget to avoid blocking.
      */
-    private updateD1LastSeen(): void {
+    private updateD1LastSeen(reactivate = false): void {
         if (!this.sessionInfo) return;
         this.lastD1SeenUpdate = Date.now();
         const now = Math.floor(Date.now() / 1000);
 
-        this.env.DB.prepare(`
-            UPDATE sessions SET last_seen_at = ? WHERE id = ? AND is_active = 1
-        `).bind(now, this.sessionInfo.id).run().catch((error) => {
+        const query = reactivate
+            ? `UPDATE sessions SET last_seen_at = ?, is_active = 1, ended_at = NULL WHERE id = ?`
+            : `UPDATE sessions SET last_seen_at = ? WHERE id = ? AND is_active = 1`;
+
+        this.env.DB.prepare(query).bind(now, this.sessionInfo.id).run().catch((error) => {
             console.error('Error updating last_seen_at:', error);
         });
     }
@@ -320,6 +325,14 @@ export class SessionDO implements DurableObject {
      * Handle incoming event from desktop
      */
     private async handleEvent(event: SessionEvent): Promise<void> {
+        if (event.type === 'heartbeat') {
+            if (this.sessionInfo) {
+                await this.notifySessionList('connect', this.sessionInfo);
+                this.updateD1LastSeen(true);
+            }
+            return;
+        }
+
         // Track whether persistent state changed (requires storage write)
         let persistentChanged = false;
 
@@ -961,8 +974,9 @@ export class SessionDO implements DurableObject {
             if (this.sessionInfo) {
                 this.notifySessionList('disconnect', { id: this.sessionInfo.id });
             }
-            // Schedule cleanup alarm - if desktop doesn't reconnect within 15s, clean up
-            this.state.storage.setAlarm(Date.now() + 15_000);
+            // Schedule missed-heartbeat cleanup. Normal wrapper exits end the
+            // session via HTTP; disconnects alone can be transient.
+            this.state.storage.setAlarm(Date.now() + SESSION_HEARTBEAT_TIMEOUT_MS);
         }
     }
 
@@ -977,16 +991,16 @@ export class SessionDO implements DurableObject {
             if (this.sessionInfo) {
                 this.notifySessionList('disconnect', { id: this.sessionInfo.id });
             }
-            this.state.storage.setAlarm(Date.now() + 15_000);
+            this.state.storage.setAlarm(Date.now() + SESSION_HEARTBEAT_TIMEOUT_MS);
         }
     }
 
     /**
      * Alarm handler for cleaning up disconnected sessions.
      *
-     * Called 15 seconds after WebSocket disconnect. If desktop has reconnected
-     * (e.g., after a deploy), do nothing. If still disconnected, mark session
-     * as ended in D1 and notify SessionListDO to remove it.
+     * Called after the missed-heartbeat window. If desktop has reconnected
+     * (e.g., after a deploy), do nothing. If the session is still active but
+     * has not been seen recently, mark it ended and notify SessionListDO.
      */
     async alarm(): Promise<void> {
         // If desktop reconnected (e.g., after deploy), nothing to clean up
@@ -994,13 +1008,34 @@ export class SessionDO implements DurableObject {
             return;
         }
 
-        // Desktop is still disconnected - this is a real quit
+        // Desktop is still disconnected and has missed the heartbeat window.
         if (!this.sessionInfo) {
             return;
         }
 
         const sessionId = this.sessionInfo.id;
         const endedAt = Math.floor(Date.now() / 1000);
+
+        const row = await this.env.DB.prepare(`
+            SELECT started_at, last_seen_at, is_active
+            FROM sessions
+            WHERE id = ?
+        `).bind(sessionId).first<{
+            started_at: number;
+            last_seen_at: number | null;
+            is_active: number;
+        }>();
+
+        if (!row || row.is_active !== 1) {
+            return;
+        }
+
+        const lastSeen = row.last_seen_at || row.started_at;
+        const cleanupAt = (lastSeen * 1000) + SESSION_HEARTBEAT_TIMEOUT_MS;
+        if (Date.now() < cleanupAt) {
+            this.state.storage.setAlarm(cleanupAt);
+            return;
+        }
 
         // Update D1 to mark session as ended
         try {

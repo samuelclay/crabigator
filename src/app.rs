@@ -44,6 +44,11 @@ const HOOK_INTERVAL_IDLE: Duration = Duration::from_secs(2);
 const STATUS_DRAW_INTERVAL_ACTIVE: Duration = Duration::from_millis(50);
 /// Status draw interval when idle (just needs occasional refresh)
 const STATUS_DRAW_INTERVAL_IDLE: Duration = Duration::from_secs(1);
+/// Liveness ping for long-running idle wrappers.
+///
+/// The server uses a much larger missed-heartbeat window before culling, so a
+/// single missed send does not hide a valid session.
+const CLOUD_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 
 /// Result from background git refresh
 struct GitRefreshResult {
@@ -378,6 +383,7 @@ impl App {
         let mut last_pty_output = Instant::now();
         let mut last_git_refresh = Instant::now();
         let mut last_hook_refresh = Instant::now();
+        let mut last_cloud_heartbeat = Instant::now();
         let status_debounce = Duration::from_millis(100);
 
         // Listen for termination signals so we can run the normal cleanup path
@@ -726,6 +732,11 @@ impl App {
                         self.send_cloud_stats_event();
                         self.send_cloud_git_changes_events();
                         // Screen is already handled by the 15s throttle in handle_pty_output_capture
+                    }
+
+                    if last_cloud_heartbeat.elapsed() >= CLOUD_HEARTBEAT_INTERVAL {
+                        self.send_cloud_heartbeat_event();
+                        last_cloud_heartbeat = Instant::now();
                     }
 
                     // Poll pairing status
@@ -1248,6 +1259,13 @@ impl App {
                 let screen_event = SessionEventBuilder::screen(screen_content);
                 client.send_event(screen_event);
             }
+        }
+    }
+
+    /// Send a liveness-only heartbeat to cloud.
+    fn send_cloud_heartbeat_event(&mut self) {
+        if let Some(ref mut client) = self.cloud_client {
+            client.send_event(SessionEventBuilder::heartbeat());
         }
     }
 

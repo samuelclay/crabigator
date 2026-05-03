@@ -12,6 +12,9 @@ import { jsonResponse } from '../router';
 import { requireAuth, requireDeviceAuth } from '../auth/middleware';
 import { generateUUID } from '../auth/tokens';
 
+/** Desktop heartbeats are sent every 2h; wait for multiple misses before culling. */
+const SESSION_HEARTBEAT_TIMEOUT_SECONDS = 6 * 60 * 60;
+
 /**
  * Notify the SessionListDO about session changes for real-time dashboard updates.
  * Fire-and-forget - don't await, don't block the response.
@@ -80,6 +83,17 @@ export async function createSession(
     ).bind(device_id, client_session_id).first<{ id: string }>();
 
     if (existing) {
+        await env.DB.prepare(`
+            UPDATE sessions
+            SET cwd = ?,
+                platform = ?,
+                state = CASE WHEN is_active = 1 THEN state ELSE 'ready' END,
+                ended_at = NULL,
+                is_active = 1,
+                last_seen_at = ?
+            WHERE id = ?
+        `).bind(cwd, platform, now, existing.id).run();
+
         // Session already exists, return existing ID
         const url = new URL(request.url);
         const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -223,7 +237,7 @@ export async function listSessions(
     // This catches zombie sessions that D1 thinks are active but aren't
     const staleSessionIds: string[] = [];
     const now = Math.floor(Date.now() / 1000);
-    const staleThreshold = now - 120; // 2 minutes - allows for deploy reconnection
+    const staleThreshold = now - SESSION_HEARTBEAT_TIMEOUT_SECONDS;
 
     if (activeOnly && results.results) {
         const activeSessions = results.results.filter(row => row.is_active === 1);

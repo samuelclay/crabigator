@@ -91,6 +91,27 @@ impl StateEvent {
     }
 }
 
+/// Liveness-only event.
+///
+/// Heartbeats keep the cloud session active when the wrapper is still running
+/// but the underlying assistant has not produced output for a long time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    /// Unix timestamp (ms)
+    pub timestamp: u64,
+}
+
+impl HeartbeatEvent {
+    pub fn new() -> Self {
+        Self {
+            event_type: "heartbeat".to_string(),
+            timestamp: chrono::Utc::now().timestamp_millis() as u64,
+        }
+    }
+}
+
 /// Git file status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitFile {
@@ -415,6 +436,7 @@ pub enum CloudEvent {
     Scrollback(ScrollbackEvent),
     ScrollbackHistory(ScrollbackHistoryEvent),
     State(StateEvent),
+    Heartbeat(HeartbeatEvent),
     Git(GitEvent),
     Changes(ChangesEvent),
     Stats(StatsEvent),
@@ -480,6 +502,11 @@ impl SessionEventBuilder {
     /// Build a state event
     pub fn state(state: crate::platforms::SessionState) -> CloudEvent {
         CloudEvent::State(StateEvent::new(state.into()))
+    }
+
+    /// Build a liveness heartbeat event
+    pub fn heartbeat() -> CloudEvent {
+        CloudEvent::Heartbeat(HeartbeatEvent::new())
     }
 
     /// Build a screen event

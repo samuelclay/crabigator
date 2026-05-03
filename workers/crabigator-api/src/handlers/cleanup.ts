@@ -1,5 +1,8 @@
 import type { Env } from '../types/env';
 
+/** Desktop heartbeats are sent every 2h; wait for multiple misses before culling. */
+const SESSION_HEARTBEAT_TIMEOUT_SECONDS = 6 * 60 * 60;
+
 /**
  * Scheduled cleanup job for zombie sessions.
  *
@@ -9,7 +12,7 @@ import type { Env } from '../types/env';
  * disconnected - this prevents false positives from D1 update failures.
  *
  * Candidates for cleanup:
- * 1. Sessions with last_seen_at > 5 minutes ago
+ * 1. Sessions with last_seen_at older than the missed-heartbeat window
  * 2. Sessions with no last_seen_at and started_at > 10 minutes ago
  *
  * For each confirmed zombie (desktop actually disconnected), we:
@@ -19,8 +22,10 @@ import type { Env } from '../types/env';
 export async function cleanupZombieSessions(env: Env): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
 
-    // Threshold: sessions not seen for 5 minutes are candidates for cleanup
-    const staleThreshold = now - 300; // 5 minutes
+    // Threshold: sessions not seen for several hours are candidates for cleanup.
+    // Normal exits still mark sessions ended immediately; this only catches
+    // wrappers that vanished without the end-session update.
+    const staleThreshold = now - SESSION_HEARTBEAT_TIMEOUT_SECONDS;
 
     // For sessions that never connected (no last_seen_at), use longer threshold
     const neverConnectedThreshold = now - 600; // 10 minutes

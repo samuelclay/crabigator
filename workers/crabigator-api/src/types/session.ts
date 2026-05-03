@@ -30,6 +30,14 @@ export interface StateEvent {
 }
 
 /**
+ * Liveness-only heartbeat from desktop.
+ */
+export interface HeartbeatEvent {
+    type: 'heartbeat';
+    timestamp: number;      // Unix timestamp (ms)
+}
+
+/**
  * Git file status
  */
 export interface GitFile {
@@ -250,6 +258,7 @@ export type SessionEvent =
     | ScrollbackEvent
     | ScrollbackHistoryEvent
     | StateEvent
+    | HeartbeatEvent
     | GitEvent
     | ChangesEvent
     | StatsEvent
