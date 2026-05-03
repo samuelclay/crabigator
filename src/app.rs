@@ -20,11 +20,15 @@ use crate::config::Config;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::ide::{self, IdeKind};
-use crate::platforms::{Platform, SessionState};
 use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
+use crate::platforms::{Platform, SessionState};
+use crate::recap::RecapManager;
 use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty};
-use crate::ui::{draw_status_bar, split_terminal_rows, Layout, PairingState, throbber_frame_index};
+use crate::ui::{
+    draw_status_bar, split_terminal_rows, throbber_frame_index, Layout, PairingState,
+    HANDOFF_RESERVED_ROWS,
+};
 use crate::update::UpdateState;
 
 /// Time PTY must be quiet before drawing status bar (prevents mid-burst draws)
@@ -116,6 +120,8 @@ pub struct App {
     last_exit_plan_retry_count: usize,
     /// Pairing state for mobile device linking
     pairing_state: PairingState,
+    /// Automatic per-turn recap state
+    recap_manager: RecapManager,
     /// Update state for version banner
     update_state: UpdateState,
     /// Last time we polled pairing status
@@ -242,6 +248,7 @@ impl App {
             last_exit_plan_option_count: 0,
             last_exit_plan_retry_count: 0,
             pairing_state: PairingState::default(),
+            recap_manager: RecapManager::load(),
             update_state,
             last_pairing_poll: Instant::now(),
             pending_pairing_poll: None,
@@ -789,9 +796,9 @@ impl App {
         self.reset_scroll_region()?;
 
         // Move cursor below the status bar so the next shell prompt
-        // appears after our content (pty_rows + banner_reserved + status_rows + 1)
+        // appears after our content (pty_rows + handoff rows + status_rows + 1)
         let mut stdout = stdout();
-        let final_row = self.pty_rows + 2 + self.status_rows + 1;
+        let final_row = self.pty_rows + HANDOFF_RESERVED_ROWS + self.status_rows + 1;
         write!(stdout, "{}", escape::cursor_to(final_row, 1))?;
         stdout.flush()?;
 
@@ -922,6 +929,9 @@ impl App {
             // Update state
             self.update_state.banner_rows().hash(&mut hasher);
 
+            // Recap handoff
+            self.recap_manager.state_hash().hash(&mut hasher);
+
             // Include throbber frame when animating to trigger redraws on frame change
             let needs_animation = matches!(
                 self.session_stats.effective_state(),
@@ -969,6 +979,7 @@ impl App {
             cloud_status.as_ref(),
             &self.pairing_state,
             &self.update_state,
+            self.recap_manager.state(),
             cursor_position,
         )?;
 
@@ -1096,8 +1107,16 @@ impl App {
                 .set_transcript_path(Some(path.clone()));
         }
 
+        let recap_changed = self.recap_manager.handle_platform_update(
+            self.platform.kind(),
+            &self.session_stats.platform_stats,
+            new_effective_state,
+            &self.git_state,
+            &self.cwd,
+        );
+
         // Redraw if effective state changed (and PTY is quiet)
-        if old_effective_state != new_effective_state {
+        if old_effective_state != new_effective_state || recap_changed {
             // Clear stale suggestion when leaving ready/complete (prompt submitted)
             if matches!(
                 old_effective_state,

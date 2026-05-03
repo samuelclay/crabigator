@@ -13,6 +13,7 @@ mod mode;
 mod pair;
 mod parsers;
 mod platforms;
+mod recap;
 mod launcher;
 mod terminal;
 mod terminal_spawner;
@@ -189,6 +190,9 @@ async fn main() -> Result<()> {
                 println!("URL scheme handler installed.");
                 println!("crabigator:// URLs will now open in your terminal.");
             });
+        }
+        Command::Recap(command) => {
+            return recap::run_recap_command(command);
         }
         Command::Run => {}
     }

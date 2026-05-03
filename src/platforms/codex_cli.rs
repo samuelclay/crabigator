@@ -278,6 +278,7 @@ impl Platform for CodexPlatform {
             state.session_offset = reader.stream_position()?;
             set_last_updated(&mut state);
         }
+        state.stats.transcript_path = Some(session_path.to_string_lossy().to_string());
 
         Ok(state.stats.clone())
     }

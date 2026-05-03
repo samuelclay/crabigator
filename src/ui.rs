@@ -5,6 +5,7 @@
 
 mod changes;
 mod git;
+mod handoff;
 mod pairing;
 pub mod sparkline;
 mod stats;
@@ -13,6 +14,7 @@ pub mod utils;
 
 pub use changes::draw_changes_widget;
 pub use git::draw_git_widget;
+pub use handoff::{draw_recap_handoff, HANDOFF_RESERVED_ROWS};
 pub use pairing::{draw_pairing_banner, draw_update_banner, PairingState};
 pub use stats::{draw_stats_widget, throbber_frame_index};
 pub use status_bar::{draw_status_bar, split_terminal_rows, Layout};

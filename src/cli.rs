@@ -29,6 +29,22 @@ pub enum Command {
     Pair,
     /// Install the URL scheme handler for crabigator:// URLs
     InstallLauncher,
+    /// Manage automatic turn recaps
+    Recap(RecapCommand),
+}
+
+/// Recap configuration subcommands
+#[derive(Clone)]
+pub enum RecapCommand {
+    /// Enable automatic recap generation with an Anthropic API key
+    Enable {
+        api_key: Option<String>,
+        model: Option<String>,
+    },
+    /// Disable recap generation and remove the stored API key
+    Disable,
+    /// Print current recap configuration status
+    Status,
 }
 
 /// Parsed command-line arguments
@@ -108,6 +124,11 @@ pub fn parse_args() -> Args {
                 args.command = Command::InstallLauncher;
                 return args;
             }
+            "recap" => {
+                iter.next(); // consume "recap"
+                args.command = Command::Recap(parse_recap_command(iter.collect()));
+                return args;
+            }
             _ => {}
         }
     }
@@ -155,6 +176,40 @@ pub fn parse_args() -> Args {
     }
 
     args
+}
+
+fn parse_recap_command(args: Vec<String>) -> RecapCommand {
+    let mut iter = args.into_iter();
+    match iter.next().as_deref() {
+        Some("disable") => RecapCommand::Disable,
+        Some("status") | None => RecapCommand::Status,
+        Some("enable") => {
+            let mut api_key = None;
+            let mut model = None;
+            while let Some(arg) = iter.next() {
+                match arg.as_str() {
+                    "--model" => {
+                        model = iter.next();
+                    }
+                    "--key" => {
+                        api_key = iter.next();
+                    }
+                    value if !value.starts_with('-') && api_key.is_none() => {
+                        api_key = Some(value.to_string());
+                    }
+                    _ => {}
+                }
+            }
+            RecapCommand::Enable { api_key, model }
+        }
+        Some(other) => {
+            eprintln!(
+                "Unknown recap command: {}. Use enable, disable, or status.",
+                other
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Resolve platform from explicit arg, env var, config file, or default

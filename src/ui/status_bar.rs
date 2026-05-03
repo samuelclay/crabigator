@@ -12,10 +12,14 @@ use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::ide::IdeKind;
 use crate::parsers::DiffSummary;
+use crate::recap::RecapState;
 use crate::terminal::escape::{self, color, RESET};
 use crate::update::UpdateState;
 
-use super::{draw_changes_widget, draw_git_widget, draw_pairing_banner, draw_update_banner, draw_stats_widget, PairingState, WidgetArea};
+use super::{
+    draw_changes_widget, draw_git_widget, draw_pairing_banner, draw_recap_handoff,
+    draw_stats_widget, draw_update_banner, PairingState, WidgetArea, HANDOFF_RESERVED_ROWS,
+};
 
 /// Layout information needed for rendering widgets
 pub struct Layout {
@@ -24,7 +28,6 @@ pub struct Layout {
     pub status_rows: u16,
 }
 
-const BANNER_RESERVED: u16 = 2;
 /// Minimum content rows reserved for widget data below the separator.
 pub const MIN_WIDGET_DATA_ROWS: u16 = 4;
 /// Status rows include the separator plus widget data rows.
@@ -32,14 +35,14 @@ pub const MIN_STATUS_ROWS: u16 = MIN_WIDGET_DATA_ROWS + 1;
 
 /// Split terminal height into assistant PTY rows and status widget rows.
 ///
-/// Banner rows are fixed between the two regions. Status rows include the
+/// Handoff rows are fixed between the two regions. Status rows include the
 /// widget separator, so MIN_STATUS_ROWS preserves four rows for widget content.
 pub fn split_terminal_rows(total_rows: u16) -> (u16, u16) {
     let preferred_status_rows = ((total_rows as f32 * 0.2) as u16).max(MIN_STATUS_ROWS);
-    let max_status_rows = total_rows.saturating_sub(BANNER_RESERVED + 1).max(1);
+    let max_status_rows = total_rows.saturating_sub(HANDOFF_RESERVED_ROWS + 1).max(1);
     let status_rows = preferred_status_rows.min(max_status_rows);
     let pty_rows = total_rows
-        .saturating_sub(status_rows + BANNER_RESERVED)
+        .saturating_sub(status_rows + HANDOFF_RESERVED_ROWS)
         .max(1);
 
     (pty_rows, status_rows)
@@ -63,7 +66,8 @@ pub fn draw_status_bar(
     cloud_status: Option<&CloudStatus>,
     pairing_state: &PairingState,
     update_state: &UpdateState,
-    cursor_position: Option<(u16, u16)>,  // (row, col) from vt100 parser, 0-indexed
+    recap_state: &RecapState,
+    cursor_position: Option<(u16, u16)>, // (row, col) from vt100 parser, 0-indexed
 ) -> Result<()> {
     // Begin synchronized update - terminal batches all our drawing
     // so cursor movements don't interfere with Claude's incremental updates
@@ -74,9 +78,8 @@ pub fn draw_status_bar(
     write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1, 1))?;
     write!(stdout, "{}", escape::CLEAR_TO_END)?;
 
-    // Banner space is always reserved between PTY and status bar
-    // Draw banners if active, otherwise leave the space empty
-    // Update banner takes first row, pairing banner takes remaining space
+    // Handoff space is always reserved between PTY and status bar.
+    // Draw update/recap/pairing content if active, otherwise leave it empty.
     let update_banner_rows = update_state.banner_rows();
     let pairing_compact = update_banner_rows > 0;
     let pairing_banner_rows = if pairing_compact {
@@ -93,22 +96,29 @@ pub fn draw_status_bar(
 
     // Draw update banner first (if needed) - single row
     if update_banner_rows > 0 {
-        draw_update_banner(
-            stdout,
-            current_banner_row,
-            layout.total_cols,
-            update_state,
-        )?;
+        draw_update_banner(stdout, current_banner_row, layout.total_cols, update_state)?;
         current_banner_row += update_banner_rows;
     }
 
-    // Draw pairing banner if needed (and there's room)
-    if pairing_banner_rows > 0 {
-        let banner_limit = layout.pty_rows + BANNER_RESERVED;
+    let handoff_limit = layout.pty_rows + HANDOFF_RESERVED_ROWS;
+    let remaining_rows = handoff_limit
+        .saturating_sub(current_banner_row)
+        .saturating_add(1);
+    let recap_rows = draw_recap_handoff(
+        stdout,
+        current_banner_row,
+        layout.total_cols,
+        recap_state,
+        remaining_rows,
+    )?;
+    current_banner_row += recap_rows;
+
+    // Draw pairing banner if needed, there's room, and recap is not occupying the handoff.
+    if recap_rows == 0 && pairing_banner_rows > 0 {
         let end_row = current_banner_row
             .saturating_add(pairing_banner_rows)
             .saturating_sub(1);
-        if end_row <= banner_limit {
+        if end_row <= handoff_limit {
             draw_pairing_banner(
                 stdout,
                 current_banner_row,
@@ -120,20 +130,25 @@ pub fn draw_status_bar(
     }
 
     // Draw thick separator line (always after the reserved banner space)
-    let separator_row = layout.pty_rows + 1 + BANNER_RESERVED;
+    let separator_row = layout.pty_rows + 1 + HANDOFF_RESERVED_ROWS;
     write!(stdout, "{}", escape::cursor_to(separator_row, 1))?;
-    write!(stdout, "{}{}", escape::bg(color::BG_DARK), escape::fg(color::DARK_GRAY))?;
+    write!(
+        stdout,
+        "{}{}",
+        escape::bg(color::BG_DARK),
+        escape::fg(color::DARK_GRAY)
+    )?;
     for _ in 0..layout.total_cols {
         write!(stdout, "━")?;
     }
     write!(stdout, "{}", RESET)?;
     let is_paired = pairing_state.has_linked_devices;
-    let footer_rows = pairing_footer_rows(layout.status_rows, pairing_state);
+    let footer_rows = pairing_footer_rows(layout.status_rows, pairing_state, recap_state);
     let widget_status_rows = layout.status_rows.saturating_sub(footer_rows).max(1);
     let widget_data_rows = widget_status_rows.saturating_sub(1);
 
-    // Calculate column widths based on available height
-    // In compact mode (short terminal), stats gets more width for two-column layout
+    // Calculate column widths based on available height.
+    // In compact mode (short terminal), stats gets more width for two-column layout.
     let compact = widget_status_rows <= MIN_STATUS_ROWS;
 
     let stats_width = if compact {
@@ -146,7 +161,9 @@ pub fn draw_status_bar(
 
     // Account for separators: 2 separators between 3 columns
     let num_separators = 2;
-    let remaining = layout.total_cols.saturating_sub(stats_width + num_separators as u16);
+    let remaining = layout
+        .total_cols
+        .saturating_sub(stats_width + num_separators as u16);
 
     // Check if git needs multiple columns (files > available rows)
     let git_available_rows = widget_status_rows.saturating_sub(2) as usize; // -2 for separator + header
@@ -163,9 +180,8 @@ pub fn draw_status_bar(
         (git_w, remaining - git_w)
     };
 
-    // Draw content rows (after reserved banner space + separator)
-    let widget_pty_rows = layout.pty_rows + BANNER_RESERVED;
-
+    // Draw content rows (after reserved handoff space + separator).
+    let widget_pty_rows = layout.pty_rows + HANDOFF_RESERVED_ROWS;
     for widget_row in 1..=widget_data_rows {
         // Stats column (leftmost, fixed width)
         draw_stats_widget(
@@ -229,19 +245,25 @@ pub fn draw_status_bar(
         if let Some(code) = pairing_state.pairing_code.as_deref() {
             if footer_rows == 2 {
                 // Separator line
-                let sep_row = layout.pty_rows + BANNER_RESERVED + widget_status_rows + 1;
+                let sep_row = layout.pty_rows + HANDOFF_RESERVED_ROWS + widget_status_rows + 1;
                 write!(stdout, "{}", escape::cursor_to(sep_row, 1))?;
                 let line = "─".repeat(layout.total_cols as usize);
                 write!(stdout, "{}{}{}", escape::fg(color::DARK_GRAY), line, RESET)?;
             }
 
             // Pair URL row
-            let url_row = layout.pty_rows + BANNER_RESERVED + layout.status_rows;
+            let url_row = layout.pty_rows + HANDOFF_RESERVED_ROWS + layout.status_rows;
             write!(stdout, "{}", escape::cursor_to(url_row, 1))?;
             let url = format!("https://drinkcrabigator.com/dashboard?setup={}", code);
             let url_display = format!("drinkcrabigator.com/dashboard?setup={}", code);
             let label = format!("{}Pair: {}", escape::fg(color::DARK_GRAY), RESET);
-            let display = format!("{}{}{}{}", label, escape::fg(color::DARK_GRAY), url_display, RESET);
+            let display = format!(
+                "{}{}{}{}",
+                label,
+                escape::fg(color::DARK_GRAY),
+                url_display,
+                RESET
+            );
             // OSC 8 hyperlink
             write!(stdout, "\x1b]8;;{}\x07{}\x1b]8;;\x07", url, display)?;
         }
@@ -263,8 +285,12 @@ pub fn draw_status_bar(
     Ok(())
 }
 
-fn pairing_footer_rows(status_rows: u16, pairing_state: &PairingState) -> u16 {
-    if pairing_state.pairing_code.is_none() {
+fn pairing_footer_rows(
+    status_rows: u16,
+    pairing_state: &PairingState,
+    recap_state: &RecapState,
+) -> u16 {
+    if pairing_state.pairing_code.is_none() || recap_state.prefers_handoff() {
         return 0;
     }
 
@@ -288,7 +314,7 @@ mod tests {
         let (pty_rows, status_rows) = split_terminal_rows(20);
 
         assert_eq!(status_rows, MIN_STATUS_ROWS);
-        assert_eq!(pty_rows + BANNER_RESERVED + status_rows, 20);
+        assert_eq!(pty_rows + HANDOFF_RESERVED_ROWS + status_rows, 20);
     }
 
     #[test]
@@ -296,12 +322,12 @@ mod tests {
         let (pty_rows, status_rows) = split_terminal_rows(44);
 
         assert_eq!(status_rows, 8);
-        assert_eq!(pty_rows + BANNER_RESERVED + status_rows, 44);
+        assert_eq!(pty_rows + HANDOFF_RESERVED_ROWS + status_rows, 44);
     }
 
     #[test]
     fn split_terminal_rows_shrinks_status_area_only_when_terminal_is_too_short() {
-        let (pty_rows, status_rows) = split_terminal_rows(7);
+        let (pty_rows, status_rows) = split_terminal_rows(8);
 
         assert_eq!(pty_rows, 1);
         assert_eq!(status_rows, 4);
@@ -310,9 +336,16 @@ mod tests {
     #[test]
     fn pairing_footer_uses_only_surplus_widget_rows() {
         let pairing = pairing_state();
+        let recap = RecapState::default();
 
-        assert_eq!(pairing_footer_rows(MIN_STATUS_ROWS, &pairing), 0);
-        assert_eq!(pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing), 1);
-        assert_eq!(pairing_footer_rows(MIN_STATUS_ROWS + 3, &pairing), 2);
+        assert_eq!(pairing_footer_rows(MIN_STATUS_ROWS, &pairing, &recap), 0);
+        assert_eq!(
+            pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing, &recap),
+            1
+        );
+        assert_eq!(
+            pairing_footer_rows(MIN_STATUS_ROWS + 3, &pairing, &recap),
+            2
+        );
     }
 }
