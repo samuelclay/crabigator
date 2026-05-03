@@ -18,6 +18,9 @@ import { fetchNpmStats, checkTrafficAnomalies } from './handlers/npm-stats';
 import { cleanupZombieSessions } from './handlers/cleanup';
 import { handleTranscribe } from './handlers/transcribe';
 
+const PROJECT_HISTORY_RETENTION_DAYS = 14;
+const SECONDS_PER_DAY = 24 * 60 * 60;
+
 // Build version - deterministic hash of dashboard content
 // This ensures all worker instances return the same version for the same code
 let buildVersion: string | null = null;
@@ -237,12 +240,12 @@ router.get('/api/projects', async (request, env) => {
     }
     const { group_id } = authResult.auth;
 
-    // Filter to projects active within the last 7 days
-    const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+    // Keep recently-used projects visible even when they have no active sessions.
+    const projectHistoryCutoff = Math.floor(Date.now() / 1000) - PROJECT_HISTORY_RETENTION_DAYS * SECONDS_PER_DAY;
 
     const result = await env.DB.prepare(`
         SELECT cwd,
-               MAX(started_at) as last_active,
+               MAX(COALESCE(sessions.ended_at, sessions.last_seen_at, sessions.started_at)) as last_active,
                COUNT(*) as total_sessions
         FROM sessions
         JOIN devices ON devices.id = sessions.device_id
@@ -250,7 +253,7 @@ router.get('/api/projects', async (request, env) => {
         GROUP BY cwd
         HAVING last_active > ?
         ORDER BY last_active DESC
-    `).bind(group_id, sevenDaysAgo).all<{ cwd: string; last_active: number; total_sessions: number }>();
+    `).bind(group_id, projectHistoryCutoff).all<{ cwd: string; last_active: number; total_sessions: number }>();
 
     // Filter out manually hidden projects
     const hiddenJson = await env.TOKENS.get(`hidden-projects:${group_id}`);
@@ -293,7 +296,7 @@ router.delete('/api/projects', async (request, env) => {
         hidden.push(body.cwd);
     }
     await env.TOKENS.put(key, JSON.stringify(hidden), {
-        expirationTtl: 60 * 60 * 24 * 30 // 30 days (projects auto-expire from view after 7 days anyway)
+        expirationTtl: 60 * 60 * 24 * 30 // Manual hides can outlive the project history window.
     });
 
     return jsonResponse({ ok: true });
