@@ -88,7 +88,7 @@ pub struct RecapState {
 
 impl RecapState {
     pub fn prefers_handoff(&self) -> bool {
-        self.latest.is_some()
+        self.latest.is_some() || matches!(self.status, RecapStatus::Failed(_))
     }
 }
 
@@ -1086,6 +1086,23 @@ mod tests {
             model: DEFAULT_RECAP_MODEL.to_string(),
         };
 
+        assert!(!state.prefers_handoff());
+    }
+
+    #[test]
+    fn failed_status_takes_over_handoff_until_next_turn() {
+        // Failed status reserves the handoff strip even without a `latest`.
+        let mut state = RecapState {
+            enabled: true,
+            status: RecapStatus::Failed("Anthropic returned 400".to_string()),
+            latest: None,
+            line_delta: None,
+            model: DEFAULT_RECAP_MODEL.to_string(),
+        };
+        assert!(state.prefers_handoff());
+
+        // After the next prompt resets status, the strip releases.
+        state.status = RecapStatus::Updating;
         assert!(!state.prefers_handoff());
     }
 

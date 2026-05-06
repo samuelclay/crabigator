@@ -7,7 +7,7 @@ use std::io::{Stdout, Write};
 
 use anyhow::Result;
 
-use crate::recap::{RecapState, RecapVariant, TurnLineDelta};
+use crate::recap::{RecapState, RecapStatus, RecapVariant, TurnLineDelta};
 use crate::terminal::escape::{self, bg, color, fg, RESET, RESET_FG};
 
 /// Rows reserved between PTY output and the widget separator.
@@ -24,7 +24,13 @@ pub fn draw_recap_handoff(
         return Ok(0);
     }
 
-    draw_latest_recap(stdout, row, width, available_rows, recap)
+    if recap.latest.is_some() {
+        return draw_latest_recap(stdout, row, width, available_rows, recap);
+    }
+    if let RecapStatus::Failed(error) = &recap.status {
+        return draw_recap_failure(stdout, row, width, available_rows, error);
+    }
+    Ok(0)
 }
 
 fn draw_latest_recap(
@@ -100,6 +106,77 @@ fn draw_latest_recap(
     Ok(used)
 }
 
+fn draw_recap_failure(
+    stdout: &mut Stdout,
+    row: u16,
+    width: u16,
+    available_rows: u16,
+    error: &str,
+) -> Result<u16> {
+    fill_row(stdout, row, width)?;
+    write!(stdout, "{}", escape::cursor_to(row, 1))?;
+
+    // Warning glyph + label in amber, body in muted gray. Using YELLOW (220)
+    // rather than RED so a transient API hiccup doesn't read as a hard error.
+    let prefix = format!(
+        "{}{} ⚠{} {}Recap unavailable{}{}: ",
+        bg(color::BG_DARK),
+        fg(color::YELLOW),
+        RESET_FG,
+        fg(color::YELLOW),
+        RESET_FG,
+        bg(color::BG_DARK),
+    );
+    let body = extract_friendly_error(error);
+    write_failure_line(stdout, width, &prefix, &body)?;
+
+    let mut used = 1;
+    if available_rows > 1 {
+        let hint_row = row + used;
+        fill_row(stdout, hint_row, width)?;
+        write!(stdout, "{}", escape::cursor_to(hint_row, 1))?;
+        let hint_prefix = format!("{}{}   ", bg(color::BG_DARK), fg(color::DARK_GRAY));
+        let hint = "(clears on next prompt — `crabigator recap status` for details)";
+        write_failure_line(stdout, width, &hint_prefix, hint)?;
+        used += 1;
+    }
+
+    write!(stdout, "{}", RESET)?;
+    Ok(used)
+}
+
+/// Extract a human-friendly error string. When the raw error contains an
+/// embedded JSON object with `error.message` (Anthropic's standard error
+/// shape), surface just that message; otherwise return the cleaned raw text.
+fn extract_friendly_error(error: &str) -> String {
+    let cleaned = error.replace('\n', " ").trim().to_string();
+    if let Some(start) = cleaned.find('{') {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&cleaned[start..]) {
+            if let Some(msg) = value
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+            {
+                return msg.to_string();
+            }
+            if let Some(msg) = value.get("message").and_then(|m| m.as_str()) {
+                return msg.to_string();
+            }
+        }
+    }
+    cleaned
+}
+
+fn write_failure_line(stdout: &mut Stdout, width: u16, prefix: &str, body: &str) -> Result<()> {
+    let prefix_width = crate::ui::utils::strip_ansi_len(prefix);
+    let body_width = (width as usize).saturating_sub(prefix_width).max(1);
+    let body = truncate_display(body, body_width);
+    // Body text uses a slightly brighter gray than the dim hint so the
+    // message itself is what catches the eye.
+    write!(stdout, "{}{}{}", prefix, fg(color::GRAY), body)?;
+    Ok(())
+}
+
 fn format_line_delta(delta: TurnLineDelta) -> String {
     if delta.additions == 0 && delta.deletions == 0 {
         return format!("{}Δ ·{}", fg(color::DARK_GRAY), RESET_FG);
@@ -173,4 +250,31 @@ fn truncate_display(text: &str, max_width: usize) -> String {
         out.push(ch);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anthropic_credit_error_surfaces_just_the_message() {
+        let raw = r#"Anthropic returned 400 Bad Request: {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}"#;
+        let extracted = extract_friendly_error(raw);
+        assert_eq!(
+            extracted,
+            "Your credit balance is too low to access the Anthropic API."
+        );
+    }
+
+    #[test]
+    fn flat_message_field_is_also_extracted() {
+        let raw = r#"{"message":"timed out after 45s"}"#;
+        assert_eq!(extract_friendly_error(raw), "timed out after 45s");
+    }
+
+    #[test]
+    fn non_json_errors_pass_through_cleaned() {
+        let raw = "  recap worker stopped\n  ";
+        assert_eq!(extract_friendly_error(raw), "recap worker stopped");
+    }
 }
