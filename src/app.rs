@@ -980,6 +980,7 @@ impl App {
             &self.pairing_state,
             &self.update_state,
             self.recap_manager.state(),
+            self.recap_manager.enabled_toast_visible(),
             cursor_position,
         )?;
 

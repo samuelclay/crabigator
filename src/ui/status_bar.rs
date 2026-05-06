@@ -12,7 +12,7 @@ use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::ide::IdeKind;
 use crate::parsers::DiffSummary;
-use crate::recap::RecapState;
+use crate::recap::{RecapState, RecapStatus};
 use crate::terminal::escape::{self, color, RESET};
 use crate::update::UpdateState;
 
@@ -67,6 +67,7 @@ pub fn draw_status_bar(
     pairing_state: &PairingState,
     update_state: &UpdateState,
     recap_state: &RecapState,
+    recap_toast_visible: bool,
     cursor_position: Option<(u16, u16)>, // (row, col) from vt100 parser, 0-indexed
 ) -> Result<()> {
     // Begin synchronized update - terminal batches all our drawing
@@ -143,7 +144,12 @@ pub fn draw_status_bar(
     }
     write!(stdout, "{}", RESET)?;
     let is_paired = pairing_state.has_linked_devices;
-    let footer_rows = pairing_footer_rows(layout.status_rows, pairing_state, recap_state);
+    let footer_rows = pairing_footer_rows(
+        layout.status_rows,
+        pairing_state,
+        recap_state,
+        recap_toast_visible,
+    );
     let widget_status_rows = layout.status_rows.saturating_sub(footer_rows).max(1);
     let widget_data_rows = widget_status_rows.saturating_sub(1);
 
@@ -240,22 +246,26 @@ pub fn draw_status_bar(
         )?;
     }
 
-    // Draw full-width pairing URL footer (spans all columns)
+    // Draw full-width footer row: Pair URL on the left (when unpaired) and
+    // an optional recap message (hint or startup toast) on the right.
     if footer_rows > 0 {
-        if let Some(code) = pairing_state.pairing_code.as_deref() {
-            if footer_rows == 2 {
-                // Separator line
-                let sep_row = layout.pty_rows + HANDOFF_RESERVED_ROWS + widget_status_rows + 1;
-                write!(stdout, "{}", escape::cursor_to(sep_row, 1))?;
-                let line = "─".repeat(layout.total_cols as usize);
-                write!(stdout, "{}{}{}", escape::fg(color::DARK_GRAY), line, RESET)?;
-            }
+        if footer_rows == 2 {
+            // Separator line above the footer.
+            let sep_row = layout.pty_rows + HANDOFF_RESERVED_ROWS + widget_status_rows + 1;
+            write!(stdout, "{}", escape::cursor_to(sep_row, 1))?;
+            let line = "─".repeat(layout.total_cols as usize);
+            write!(stdout, "{}{}{}", escape::fg(color::DARK_GRAY), line, RESET)?;
+        }
 
-            // Pair URL row
-            let url_row = layout.pty_rows + HANDOFF_RESERVED_ROWS + layout.status_rows;
-            write!(stdout, "{}", escape::cursor_to(url_row, 1))?;
+        let footer_row = layout.pty_rows + HANDOFF_RESERVED_ROWS + layout.status_rows;
+        write!(stdout, "{}", escape::cursor_to(footer_row, 1))?;
+
+        // Left side: Pair URL hyperlink if we still need to pair.
+        let mut left_visible_width = 0usize;
+        if let Some(code) = pairing_state.pairing_code.as_deref() {
             let url = format!("https://drinkcrabigator.com/dashboard?setup={}", code);
             let url_display = format!("drinkcrabigator.com/dashboard?setup={}", code);
+            left_visible_width = "Pair: ".chars().count() + url_display.chars().count();
             let label = format!("{}Pair: {}", escape::fg(color::DARK_GRAY), RESET);
             let display = format!(
                 "{}{}{}{}",
@@ -264,8 +274,26 @@ pub fn draw_status_bar(
                 url_display,
                 RESET
             );
-            // OSC 8 hyperlink
             write!(stdout, "\x1b]8;;{}\x07{}\x1b]8;;\x07", url, display)?;
+        }
+
+        // Right side: pick the appropriate recap message.
+        // - MissingKey  → persistent "Recaps off" hint with both commands.
+        // - Toast       → transient "Recaps enabled" confirmation.
+        let recap_message = if matches!(recap_state.status, RecapStatus::MissingKey) {
+            let available = (layout.total_cols as usize).saturating_sub(left_visible_width);
+            build_recap_hint(available)
+        } else if recap_toast_visible {
+            let available = (layout.total_cols as usize).saturating_sub(left_visible_width);
+            build_recap_toast(available)
+        } else {
+            None
+        };
+        if let Some((padding, formatted)) = recap_message {
+            // Indent slightly when the line would otherwise start with the
+            // recap message — keeps it from hugging the left edge.
+            let leading = if left_visible_width == 0 { 2 } else { padding };
+            write!(stdout, "{}{}", " ".repeat(leading), formatted)?;
         }
     }
 
@@ -285,12 +313,108 @@ pub fn draw_status_bar(
     Ok(())
 }
 
+/// Build the "recaps are off — here's how" hint shown to the right of the
+/// Pair URL when recaps are enabled but no Anthropic API key is configured.
+///
+/// Three tiers degrade gracefully as the terminal narrows:
+/// - **Verbose** (≥78 cols): explains what recaps are and how to opt in/out.
+/// - **Full**   (≥64 cols): drops the "Per-turn AI" preface but keeps both commands.
+/// - **Compact** (≥47 cols): just the two commands, no state label.
+///
+/// Returns `(left_padding_cols, formatted_text)` for the chosen tier, or
+/// `None` if the available width can't fit even the compact tier.
+fn build_recap_hint(available_cols: usize) -> Option<(usize, String)> {
+    // Visible-column counts for each rendered tier (no ANSI escapes counted).
+    const VERBOSE_VISIBLE: usize = 74; // "✦ Per-turn AI recaps off — crabigator key <key> · crabigator recap disable"
+    const FULL_VISIBLE: usize = 62; // "✦ Recaps off — crabigator key <key> · crabigator recap disable"
+    const COMPACT_VISIBLE: usize = 45; // "✦ crabigator key  ·  crabigator recap disable"
+    const VERBOSE_GAP: usize = 4;
+    const FULL_GAP: usize = 2;
+    const COMPACT_GAP: usize = 2;
+
+    let sparkle = format!("{}✦{}", escape::fg(color::YELLOW), RESET);
+    let dash = format!("{}—{}", escape::fg(color::DARK_GRAY), RESET);
+    let dot = format!("{}·{}", escape::fg(color::DARK_GRAY), RESET);
+    let key_cmd = format!("{}crabigator key{}", escape::fg(color::CYAN), RESET);
+    let placeholder = format!("{}<key>{}", escape::fg(color::GRAY), RESET);
+    let disable_cmd = format!(
+        "{}crabigator recap disable{}",
+        escape::fg(color::DARK_GRAY),
+        RESET
+    );
+
+    if available_cols >= VERBOSE_VISIBLE + VERBOSE_GAP {
+        let label = format!("{}Per-turn AI recaps off{}", escape::fg(color::GRAY), RESET);
+        let formatted = format!(
+            "{} {} {} {} {} {} {}",
+            sparkle, label, dash, key_cmd, placeholder, dot, disable_cmd
+        );
+        Some((available_cols - VERBOSE_VISIBLE, formatted))
+    } else if available_cols >= FULL_VISIBLE + FULL_GAP {
+        let label = format!("{}Recaps off{}", escape::fg(color::GRAY), RESET);
+        let formatted = format!(
+            "{} {} {} {} {} {} {}",
+            sparkle, label, dash, key_cmd, placeholder, dot, disable_cmd
+        );
+        Some((available_cols - FULL_VISIBLE, formatted))
+    } else if available_cols >= COMPACT_VISIBLE + COMPACT_GAP {
+        let formatted = format!("{} {}  {}  {}", sparkle, key_cmd, dot, disable_cmd);
+        Some((available_cols - COMPACT_VISIBLE, formatted))
+    } else {
+        None
+    }
+}
+
+/// Build the transient "Recaps enabled" toast shown for the first ten seconds
+/// of a session when recaps are armed with a usable Anthropic API key.
+///
+/// Two tiers:
+/// - **Full**    (≥30 cols): "✓ Per-turn AI recaps enabled".
+/// - **Compact** (≥18 cols): "✓ Recaps enabled".
+fn build_recap_toast(available_cols: usize) -> Option<(usize, String)> {
+    const FULL_VISIBLE: usize = 28;
+    const COMPACT_VISIBLE: usize = 16;
+    const FULL_GAP: usize = 2;
+    const COMPACT_GAP: usize = 2;
+
+    let check = format!("{}✓{}", escape::fg(color::GREEN), RESET);
+
+    if available_cols >= FULL_VISIBLE + FULL_GAP {
+        let label = format!(
+            "{}Per-turn AI recaps enabled{}",
+            escape::fg(color::GRAY),
+            RESET
+        );
+        let formatted = format!("{} {}", check, label);
+        Some((available_cols - FULL_VISIBLE, formatted))
+    } else if available_cols >= COMPACT_VISIBLE + COMPACT_GAP {
+        let label = format!("{}Recaps enabled{}", escape::fg(color::GRAY), RESET);
+        let formatted = format!("{} {}", check, label);
+        Some((available_cols - COMPACT_VISIBLE, formatted))
+    } else {
+        None
+    }
+}
+
 fn pairing_footer_rows(
     status_rows: u16,
     pairing_state: &PairingState,
     recap_state: &RecapState,
+    recap_toast_visible: bool,
 ) -> u16 {
-    if pairing_state.pairing_code.is_none() || recap_state.prefers_handoff() {
+    if recap_state.prefers_handoff() {
+        return 0;
+    }
+
+    let needs_pair = pairing_state.pairing_code.is_some();
+    let needs_recap_message = matches!(recap_state.status, RecapStatus::MissingKey)
+        || (recap_toast_visible
+            && matches!(
+                recap_state.status,
+                RecapStatus::Waiting | RecapStatus::Updating | RecapStatus::Ready
+            ));
+
+    if !needs_pair && !needs_recap_message {
         return 0;
     }
 
@@ -333,19 +457,104 @@ mod tests {
         assert_eq!(status_rows, 4);
     }
 
+    fn visible_width(s: &str) -> usize {
+        crate::ui::utils::strip_ansi_len(s)
+    }
+
+    #[test]
+    fn recap_hint_hides_when_too_narrow() {
+        // Compact tier needs 45 visible cols + 2 gap = 47. Anything below hides.
+        assert!(build_recap_hint(46).is_none());
+        assert!(build_recap_hint(0).is_none());
+    }
+
+    #[test]
+    fn recap_hint_tiers_grow_with_available_width() {
+        // Compact tier (45 + 2 gap)
+        let (padding, formatted) = build_recap_hint(47).expect("compact tier should render");
+        assert_eq!(padding, 2);
+        assert_eq!(visible_width(&formatted), 45);
+
+        // Full tier (62 + 2 gap)
+        let (padding, formatted) = build_recap_hint(64).expect("full tier should render");
+        assert_eq!(padding, 2);
+        assert_eq!(visible_width(&formatted), 62);
+
+        // Verbose tier (74 + 4 gap)
+        let (padding, formatted) = build_recap_hint(78).expect("verbose tier should render");
+        assert_eq!(padding, 4);
+        assert_eq!(visible_width(&formatted), 74);
+
+        // Wider terminal grows the left padding (right-aligned hint).
+        let (padding, formatted) = build_recap_hint(120).expect("verbose tier should render");
+        assert_eq!(padding, 46);
+        assert_eq!(visible_width(&formatted), 74);
+    }
+
+    #[test]
+    fn recap_toast_tiers_grow_with_available_width() {
+        // Below the compact threshold the toast is hidden.
+        assert!(build_recap_toast(17).is_none());
+
+        // Compact tier (16 + 2 gap)
+        let (padding, formatted) = build_recap_toast(18).expect("compact tier should render");
+        assert_eq!(padding, 2);
+        assert_eq!(visible_width(&formatted), 16);
+
+        // Full tier (28 + 2 gap)
+        let (padding, formatted) = build_recap_toast(30).expect("full tier should render");
+        assert_eq!(padding, 2);
+        assert_eq!(visible_width(&formatted), 28);
+    }
+
     #[test]
     fn pairing_footer_uses_only_surplus_widget_rows() {
         let pairing = pairing_state();
         let recap = RecapState::default();
 
-        assert_eq!(pairing_footer_rows(MIN_STATUS_ROWS, &pairing, &recap), 0);
         assert_eq!(
-            pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing, &recap),
+            pairing_footer_rows(MIN_STATUS_ROWS, &pairing, &recap, false),
+            0
+        );
+        assert_eq!(
+            pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing, &recap, false),
             1
         );
         assert_eq!(
-            pairing_footer_rows(MIN_STATUS_ROWS + 3, &pairing, &recap),
+            pairing_footer_rows(MIN_STATUS_ROWS + 3, &pairing, &recap, false),
             2
+        );
+    }
+
+    #[test]
+    fn footer_row_allocated_for_recap_message_without_pairing() {
+        // Already paired (no pairing code) but recap toast wants to show.
+        let pairing = PairingState::default();
+        let recap = RecapState {
+            enabled: true,
+            status: RecapStatus::Waiting,
+            ..RecapState::default()
+        };
+        assert_eq!(
+            pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing, &recap, true),
+            1
+        );
+
+        // Same state but the toast already faded → no footer needed.
+        assert_eq!(
+            pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing, &recap, false),
+            0
+        );
+
+        // MissingKey hint also justifies the footer on its own.
+        let recap_missing = RecapState {
+            enabled: true,
+            status: RecapStatus::MissingKey,
+            ..RecapState::default()
+        };
+        assert_eq!(
+            pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing, &recap_missing, false),
+            1
         );
     }
 }

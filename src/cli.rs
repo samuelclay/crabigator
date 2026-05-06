@@ -31,6 +31,8 @@ pub enum Command {
     InstallLauncher,
     /// Manage automatic turn recaps
     Recap(RecapCommand),
+    /// Save an Anthropic API key for recap generation
+    Key { api_key: Option<String> },
 }
 
 /// Recap configuration subcommands
@@ -127,6 +129,12 @@ pub fn parse_args() -> Args {
             "recap" => {
                 iter.next(); // consume "recap"
                 args.command = Command::Recap(parse_recap_command(iter.collect()));
+                return args;
+            }
+            "key" => {
+                iter.next(); // consume "key"
+                let api_key = iter.next().filter(|v| !v.starts_with('-'));
+                args.command = Command::Key { api_key };
                 return args;
             }
             _ => {}

@@ -194,6 +194,9 @@ async fn main() -> Result<()> {
         Command::Recap(command) => {
             return recap::run_recap_command(command);
         }
+        Command::Key { api_key } => {
+            return recap::run_key_command(api_key);
+        }
         Command::Run => {}
     }
 

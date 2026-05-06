@@ -8,7 +8,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -25,6 +25,8 @@ const ANTHROPIC_MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const MAX_TRANSCRIPT_CHARS: usize = 28_000;
 const MAX_TOOL_RESULT_CHARS: usize = 1_200;
+/// How long the "Recaps enabled" startup toast remains visible.
+pub const ENABLED_TOAST_DURATION: Duration = Duration::from_secs(10);
 
 /// Current recap status shown in the terminal handoff strip.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,12 +145,17 @@ pub struct RecapManager {
     initialized: bool,
     active_turn: Option<TurnBaseline>,
     pending: Option<mpsc::Receiver<std::result::Result<TurnRecap, String>>>,
+    /// Wall-clock anchor used to fade the startup confirmation toast.
+    started_at: Instant,
 }
 
 impl RecapManager {
     pub fn load() -> Self {
         let config = Config::load().unwrap_or_default();
-        let api_key = Config::read_recap_api_key().ok().flatten();
+        let api_key = Config::read_recap_api_key()
+            .ok()
+            .flatten()
+            .or_else(read_anthropic_api_key_env);
         let model = config
             .recap_model
             .unwrap_or_else(|| DEFAULT_RECAP_MODEL.to_string());
@@ -176,11 +183,26 @@ impl RecapManager {
             initialized: false,
             active_turn: None,
             pending: None,
+            started_at: Instant::now(),
         }
     }
 
     pub fn state(&self) -> &RecapState {
         &self.state
+    }
+
+    /// Whether the transient "Recaps enabled" toast should be shown.
+    ///
+    /// True only while recaps are armed with a usable key (Waiting / Updating /
+    /// Ready) and within the first `ENABLED_TOAST_DURATION` of the session.
+    pub fn enabled_toast_visible(&self) -> bool {
+        if self.started_at.elapsed() >= ENABLED_TOAST_DURATION {
+            return false;
+        }
+        matches!(
+            self.state.status,
+            RecapStatus::Waiting | RecapStatus::Updating | RecapStatus::Ready
+        )
     }
 
     pub fn state_hash(&self) -> u64 {
@@ -192,6 +214,9 @@ impl RecapManager {
         self.state.model.hash(&mut hasher);
         self.state.line_delta.hash(&mut hasher);
         self.state.latest.hash(&mut hasher);
+        // Time-sensitive: included so the redraw tick clears the toast at
+        // the 10-second mark even when no other state has changed.
+        self.enabled_toast_visible().hash(&mut hasher);
         hasher.finish()
     }
 
@@ -346,6 +371,12 @@ pub fn run_recap_command(command: RecapCommand) -> Result<()> {
     }
 }
 
+/// Implements the top-level `crabigator key` shortcut: saves an Anthropic API
+/// key (from arg, env var, or prompt) and ensures recaps are enabled.
+pub fn run_key_command(api_key: Option<String>) -> Result<()> {
+    enable_recap(api_key, None)
+}
+
 fn enable_recap(api_key: Option<String>, model: Option<String>) -> Result<()> {
     let key = match api_key {
         Some(key) => key,
@@ -389,17 +420,29 @@ fn disable_recap() -> Result<()> {
 
 fn print_recap_status() -> Result<()> {
     let config = Config::load().unwrap_or_default();
-    let key_present = Config::read_recap_api_key()?.is_some();
+    let stored_key = Config::read_recap_api_key()?.is_some();
+    let env_key = read_anthropic_api_key_env().is_some();
     println!("enabled: {}", config.recap_enabled);
     println!(
         "model: {}",
         config.recap_model.as_deref().unwrap_or(DEFAULT_RECAP_MODEL)
     );
-    println!(
-        "api_key: {}",
-        if key_present { "stored" } else { "missing" }
-    );
+    let key_source = if stored_key {
+        "stored"
+    } else if env_key {
+        "env (ANTHROPIC_API_KEY)"
+    } else {
+        "missing"
+    };
+    println!("api_key: {}", key_source);
     Ok(())
+}
+
+fn read_anthropic_api_key_env() -> Option<String> {
+    std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 fn prompt_for_api_key() -> Result<String> {
@@ -1047,6 +1090,41 @@ mod tests {
     }
 
     #[test]
+    fn enabled_toast_visibility_obeys_status_and_clock() {
+        // Fresh manager with a working key → toast visible.
+        let mut manager = RecapManager {
+            state: RecapState {
+                enabled: true,
+                status: RecapStatus::Waiting,
+                latest: None,
+                line_delta: None,
+                model: DEFAULT_RECAP_MODEL.to_string(),
+            },
+            api_key: Some("test".to_string()),
+            last_prompt_count: 0,
+            last_completion_count: 0,
+            initialized: false,
+            active_turn: None,
+            pending: None,
+            started_at: Instant::now(),
+        };
+        assert!(manager.enabled_toast_visible());
+
+        // Disabled / MissingKey statuses suppress the toast.
+        manager.state.status = RecapStatus::Disabled;
+        assert!(!manager.enabled_toast_visible());
+        manager.state.status = RecapStatus::MissingKey;
+        assert!(!manager.enabled_toast_visible());
+
+        // After the toast window elapses, the toast is gone.
+        manager.state.status = RecapStatus::Ready;
+        manager.started_at = Instant::now()
+            .checked_sub(ENABLED_TOAST_DURATION + Duration::from_secs(1))
+            .expect("clock arithmetic");
+        assert!(!manager.enabled_toast_visible());
+    }
+
+    #[test]
     fn prompt_submission_dismisses_existing_recap() {
         let mut manager = RecapManager {
             state: RecapState {
@@ -1071,6 +1149,7 @@ mod tests {
             initialized: true,
             active_turn: None,
             pending: None,
+            started_at: Instant::now(),
         };
         let stats = PlatformStats {
             prompts: 2,

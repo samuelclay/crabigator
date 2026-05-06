@@ -30,7 +30,7 @@ pub struct Config {
     pub terminal: Option<String>,
 
     /// Whether automatic turn recaps are enabled.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub recap_enabled: bool,
 
     /// Anthropic model used for recap generation.
@@ -53,7 +53,7 @@ impl Default for Config {
             ide: None,
             check_for_updates: true,
             terminal: None,
-            recap_enabled: false,
+            recap_enabled: true,
             recap_model: None,
         }
     }
