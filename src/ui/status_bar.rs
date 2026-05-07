@@ -258,14 +258,17 @@ pub fn draw_status_bar(
         }
 
         let footer_row = layout.pty_rows + HANDOFF_RESERVED_ROWS + layout.status_rows;
-        write!(stdout, "{}", escape::cursor_to(footer_row, 1))?;
+        // Start at column 2 so "Pair: " has the same 1-col edge margin as
+        // the OSC'd terminal title gets on the changes-widget header.
+        write!(stdout, "{}", escape::cursor_to(footer_row, 2))?;
 
         // Left side: Pair URL hyperlink if we still need to pair.
-        let mut left_visible_width = 0usize;
+        // Account for the 1-col left margin (cursor starts at column 2).
+        let mut left_visible_width = 1usize;
         if let Some(code) = pairing_state.pairing_code.as_deref() {
             let url = format!("https://drinkcrabigator.com/dashboard?setup={}", code);
             let url_display = format!("drinkcrabigator.com/dashboard?setup={}", code);
-            left_visible_width = "Pair: ".chars().count() + url_display.chars().count();
+            left_visible_width += "Pair: ".chars().count() + url_display.chars().count();
             let label = format!("{}Pair: {}", escape::fg(color::DARK_GRAY), RESET);
             let display = format!(
                 "{}{}{}{}",
@@ -277,14 +280,18 @@ pub fn draw_status_bar(
             write!(stdout, "\x1b]8;;{}\x07{}\x1b]8;;\x07", url, display)?;
         }
 
+        // Reserve a 1-col right margin so the recap message doesn't sit
+        // flush against the terminal edge.
+        let usable_cols = (layout.total_cols as usize).saturating_sub(1);
+
         // Right side: pick the appropriate recap message.
         // - MissingKey  → persistent "Recaps off" hint with both commands.
         // - Toast       → transient "Recaps enabled" confirmation.
         let recap_message = if matches!(recap_state.status, RecapStatus::MissingKey) {
-            let available = (layout.total_cols as usize).saturating_sub(left_visible_width);
+            let available = usable_cols.saturating_sub(left_visible_width);
             build_recap_hint(available)
         } else if recap_toast_visible {
-            let available = (layout.total_cols as usize).saturating_sub(left_visible_width);
+            let available = usable_cols.saturating_sub(left_visible_width);
             build_recap_toast(available)
         } else {
             None
@@ -292,7 +299,7 @@ pub fn draw_status_bar(
         if let Some((padding, formatted)) = recap_message {
             // Indent slightly when the line would otherwise start with the
             // recap message — keeps it from hugging the left edge.
-            let leading = if left_visible_width == 0 { 2 } else { padding };
+            let leading = if left_visible_width == 1 { 2 } else { padding };
             write!(stdout, "{}{}", " ".repeat(leading), formatted)?;
         }
     }
