@@ -180,6 +180,40 @@ export interface TitleHistoryEvent {
 }
 
 /**
+ * A single recap entry generated after a completed turn.
+ */
+export interface TurnRecap {
+    prompt_count: number;
+    generated_at: number;
+    variant: 'brief' | 'bullets';
+    headline: string;
+    bullets: string[];
+    next_prompt_notes: string[];
+    artifacts: string[];
+    line_delta: { additions: number; deletions: number };
+}
+
+/**
+ * Latest recap state. status is one of: ready, updating, failed,
+ * missing_key, waiting, disabled. `latest` is present only when ready.
+ */
+export interface RecapEvent {
+    type: 'recap';
+    status: 'ready' | 'updating' | 'failed' | 'missing_key' | 'waiting' | 'disabled';
+    error?: string;
+    latest?: TurnRecap;
+    line_delta?: { additions: number; deletions: number };
+}
+
+/**
+ * All recaps from this session, oldest first.
+ */
+export interface RecapHistoryEvent {
+    type: 'recap_history';
+    history: TurnRecap[];
+}
+
+/**
  * Desktop connection status event (for dashboard)
  */
 export interface DesktopStatusEvent {
@@ -266,7 +300,9 @@ export type SessionEvent =
     | TitleEvent
     | TitleHistoryEvent
     | DesktopStatusEvent
-    | PromptEvent;
+    | PromptEvent
+    | RecapEvent
+    | RecapHistoryEvent;
 
 /**
  * Message from cloud to desktop (via WebSocket)

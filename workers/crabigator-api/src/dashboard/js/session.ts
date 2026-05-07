@@ -272,6 +272,14 @@ export const sessionJs = `
                         <button class="collapse-btn" id="collapse-btn-\${session.id}" onclick="toggleCollapse('\${session.id}')" title="Collapse/expand">▼</button>
                     </div>
                 </div>
+                <div class="session-recap empty" id="recap-\${session.id}"
+                     onclick="onRecapClick('\${session.id}', event)"
+                     title="Click to expand session • shift+click to view full history">
+                    <div class="session-recap-status" id="recap-status-\${session.id}"></div>
+                    <div class="session-recap-headline" id="recap-headline-\${session.id}"></div>
+                    <div class="session-recap-bullets" id="recap-bullets-\${session.id}"></div>
+                    <div class="session-recap-meta" id="recap-meta-\${session.id}"></div>
+                </div>
                 <div class="session-summary" id="summary-\${session.id}">
                     <span class="summary-item"><span class="label">Stats:</span> <span class="value" id="summary-stats-\${session.id}">—</span></span>
                     <span class="summary-item"><span class="label">Git:</span> <span class="value" id="summary-git-\${session.id}">—</span></span>
@@ -345,6 +353,10 @@ export const sessionJs = `
                                 </div>
                             </div>
                             <div class="widgets-content" id="widgets-content-\${session.id}">
+                            <div class="widget recap-history-widget" id="recaps-\${session.id}" style="display:none">
+                                <div class="widget-title"><span style="color:#22d3ee">Recap history</span> <span class="recap-history-count" id="recap-count-\${session.id}"></span></div>
+                                <div class="recaps-list"></div>
+                            </div>
                             <div class="widget title-history-widget" id="titles-\${session.id}" style="display:none">
                                 <div class="widget-title"><span style="color:#58a6ff">—</span></div>
                                 <div class="titles-list"></div>

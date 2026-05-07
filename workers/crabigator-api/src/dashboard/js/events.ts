@@ -55,6 +55,8 @@ export const eventsJs = `
                         title_history: '#06b6d4',
                         desktop_status: '#ef4444',
                         prompt: '#f97316',
+                        recap: '#22d3ee',
+                        recap_history: '#22d3ee',
                     };
                     const color = typeColors[data.type] || '#9ca3af';
                     if (data.type !== 'screen') {
@@ -238,6 +240,12 @@ export const eventsJs = `
                 case 'prompt':
                     // Interactive prompt (question or permission)
                     updatePromptPanel(sessionId, event.prompt);
+                    break;
+                case 'recap':
+                    updateRecapCard(sessionId, event);
+                    break;
+                case 'recap_history':
+                    updateRecapHistoryWidget(sessionId, event.history || []);
                     break;
             }
         }

@@ -153,4 +153,154 @@ export const changesWidgetJs = `
             }
         }
 
+        function escapeHtml(text) {
+            return String(text || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function recapStatusLabel(status) {
+            switch (status) {
+                case 'ready': return { label: 'Recap', color: '#22d3ee' };
+                case 'updating': return { label: 'Generating recap…', color: '#fbbf24' };
+                case 'failed': return { label: 'Recap unavailable', color: '#fbbf24' };
+                case 'missing_key': return { label: 'Recaps off', color: '#94a3b8' };
+                case 'waiting': return { label: 'Awaiting first turn…', color: '#94a3b8' };
+                case 'disabled': return { label: 'Recaps disabled', color: '#64748b' };
+                default: return { label: 'Recap', color: '#22d3ee' };
+            }
+        }
+
+        function formatLineDelta(delta) {
+            if (!delta || (delta.additions === 0 && delta.deletions === 0)) return '';
+            const parts = [];
+            if (delta.additions) parts.push('<span class="rd-add">+' + delta.additions + '</span>');
+            if (delta.deletions) parts.push('<span class="rd-del">-' + delta.deletions + '</span>');
+            return '<span class="rd-delta">Δ ' + parts.join(' ') + '</span>';
+        }
+
+        function updateRecapCard(sessionId, recap) {
+            const card = document.getElementById('recap-' + sessionId);
+            if (!card) return;
+            const statusEl = document.getElementById('recap-status-' + sessionId);
+            const headlineEl = document.getElementById('recap-headline-' + sessionId);
+            const bulletsEl = document.getElementById('recap-bullets-' + sessionId);
+            const metaEl = document.getElementById('recap-meta-' + sessionId);
+            if (!statusEl || !headlineEl || !bulletsEl || !metaEl) return;
+
+            // Reset state classes — set the freshest one below.
+            card.classList.remove('empty', 'ready', 'updating', 'failed', 'missing-key', 'waiting', 'disabled');
+
+            const status = recap.status || 'waiting';
+            const statusInfo = recapStatusLabel(status);
+            card.classList.add(status.replace('_', '-'));
+
+            statusEl.innerHTML = '<span class="rs-dot" style="background:' + statusInfo.color + '"></span>'
+                + '<span class="rs-label" style="color:' + statusInfo.color + '">' + escapeHtml(statusInfo.label) + '</span>';
+
+            if (status === 'ready' && recap.latest) {
+                const latest = recap.latest;
+                headlineEl.textContent = latest.headline || '';
+                const bullets = (latest.bullets || []).slice(0, 2);
+                bulletsEl.innerHTML = bullets.map(b => '<div class="rb-line">' + escapeHtml(b) + '</div>').join('');
+                metaEl.innerHTML = formatLineDelta(recap.line_delta || latest.line_delta);
+            } else if (status === 'failed') {
+                headlineEl.textContent = recap.error
+                    ? extractFriendlyRecapError(recap.error)
+                    : 'Recap call did not return.';
+                bulletsEl.innerHTML = '<div class="rb-line rb-hint">Clears on next prompt — \`crabigator recap status\` for details.</div>';
+                metaEl.innerHTML = '';
+            } else if (status === 'updating') {
+                headlineEl.textContent = 'Summarizing the latest turn…';
+                bulletsEl.innerHTML = '';
+                metaEl.innerHTML = '';
+            } else if (status === 'missing_key') {
+                headlineEl.textContent = 'Set ANTHROPIC_API_KEY (or run "crabigator key <key>") to enable per-turn recaps.';
+                bulletsEl.innerHTML = '';
+                metaEl.innerHTML = '';
+            } else if (status === 'waiting') {
+                headlineEl.textContent = 'Recaps will appear here after each completed turn.';
+                bulletsEl.innerHTML = '';
+                metaEl.innerHTML = '';
+            } else if (status === 'disabled') {
+                headlineEl.textContent = 'Per-turn recaps are disabled for this session.';
+                bulletsEl.innerHTML = '';
+                metaEl.innerHTML = '';
+            } else {
+                headlineEl.textContent = '';
+                bulletsEl.innerHTML = '';
+                metaEl.innerHTML = '';
+                card.classList.add('empty');
+            }
+        }
+
+        function extractFriendlyRecapError(raw) {
+            if (typeof raw !== 'string') return String(raw);
+            const cleaned = raw.replace(/\\n/g, ' ').trim();
+            const start = cleaned.indexOf('{');
+            if (start >= 0) {
+                try {
+                    const parsed = JSON.parse(cleaned.slice(start));
+                    if (parsed?.error?.message) return parsed.error.message;
+                    if (parsed?.message) return parsed.message;
+                } catch (e) { /* fall through */ }
+            }
+            return cleaned;
+        }
+
+        function onRecapClick(sessionId, ev) {
+            const card = document.getElementById('session-' + sessionId);
+            if (!card) return;
+            // Shift+Click jumps focus to the recap-history widget (full timeline);
+            // a normal click just expands the card so the user sees terminal + bullets.
+            const recapsWidget = document.getElementById('recaps-' + sessionId);
+            const widgetsCard = document.querySelector('#widgets-' + sessionId);
+            if (ev?.shiftKey && recapsWidget && recapsWidget.style.display !== 'none') {
+                card.classList.remove('collapsed');
+                if (widgetsCard) widgetsCard.classList.remove('collapsed');
+                recapsWidget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+            // Treat the recap card like the existing collapse toggle target.
+            if (typeof toggleCollapse === 'function') {
+                toggleCollapse(sessionId);
+            } else {
+                card.classList.toggle('collapsed');
+            }
+        }
+
+        function updateRecapHistoryWidget(sessionId, history) {
+            const widget = document.getElementById('recaps-' + sessionId);
+            const countEl = document.getElementById('recap-count-' + sessionId);
+            if (!widget) return;
+            if (!history || history.length === 0) {
+                widget.style.display = 'none';
+                if (countEl) countEl.textContent = '';
+                return;
+            }
+            widget.style.display = '';
+            if (countEl) {
+                countEl.textContent = history.length + ' recap' + (history.length === 1 ? '' : 's');
+            }
+
+            // Newest first. Each row mirrors the inline card layout but is more compact.
+            const rowsHtml = history.slice().reverse().map(entry => {
+                const headline = escapeHtml(entry.headline || '');
+                const bullets = (entry.bullets || []).slice(0, 2)
+                    .map(b => '<div class="rh-bullet">' + escapeHtml(b) + '</div>')
+                    .join('');
+                const delta = formatLineDelta(entry.line_delta);
+                return '<div class="recap-entry">' +
+                    '<div class="rh-headline">' + headline + '</div>' +
+                    bullets +
+                    (delta ? '<div class="rh-delta">' + delta + '</div>' : '') +
+                    '</div>';
+            }).join('');
+
+            const list = widget.querySelector('.recaps-list');
+            if (list) list.innerHTML = rowsHtml;
+        }
+
 `;

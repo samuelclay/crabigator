@@ -3,6 +3,7 @@ import { baseCss } from './base';
 import { deployCss } from './deploy';
 import { headerCss } from './header';
 import { sessionCardCss } from './session-card';
+import { recapCss } from './recap';
 import { terminalCss } from './terminal';
 import { widgetsCss } from './widgets';
 import { inputCss } from './input';
@@ -20,6 +21,7 @@ export const dashboardCss = [
     deployCss,
     headerCss,
     sessionCardCss,
+    recapCss,
     terminalCss,
     widgetsCss,
     inputCss,

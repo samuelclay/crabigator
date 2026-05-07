@@ -444,6 +444,64 @@ pub enum CloudEvent {
     Title(TitleEvent),
     TitleHistory(TitleHistoryEvent),
     Prompt(PromptEvent),
+    Recap(RecapEvent),
+    RecapHistory(RecapHistoryEvent),
+}
+
+/// Latest recap state for the dashboard.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecapEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    /// One of: "ready", "updating", "failed", "missing_key", "waiting", "disabled".
+    pub status: String,
+    /// Failure message when status is "failed".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Latest finished recap. None while updating, missing key, or failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest: Option<crate::recap::TurnRecap>,
+    /// Lines added/deleted across the latest turn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_delta: Option<crate::recap::TurnLineDelta>,
+}
+
+impl RecapEvent {
+    pub fn from_state(state: &crate::recap::RecapState) -> Self {
+        use crate::recap::RecapStatus;
+        let (status, error) = match &state.status {
+            RecapStatus::Disabled => ("disabled", None),
+            RecapStatus::MissingKey => ("missing_key", None),
+            RecapStatus::Waiting => ("waiting", None),
+            RecapStatus::Updating => ("updating", None),
+            RecapStatus::Ready => ("ready", None),
+            RecapStatus::Failed(error) => ("failed", Some(error.clone())),
+        };
+        Self {
+            event_type: "recap".to_string(),
+            status: status.to_string(),
+            error,
+            latest: state.latest.clone(),
+            line_delta: state.line_delta,
+        }
+    }
+}
+
+/// Full recap history (all completed recaps in this session, oldest first).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecapHistoryEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub history: Vec<crate::recap::TurnRecap>,
+}
+
+impl RecapHistoryEvent {
+    pub fn new(history: Vec<crate::recap::TurnRecap>) -> Self {
+        Self {
+            event_type: "recap_history".to_string(),
+            history,
+        }
+    }
 }
 
 /// A single step in a key sequence
@@ -522,6 +580,14 @@ impl SessionEventBuilder {
     /// Build a title history event
     pub fn title_history(history: Vec<String>) -> CloudEvent {
         CloudEvent::TitleHistory(TitleHistoryEvent::new(history))
+    }
+
+    pub fn recap(state: &crate::recap::RecapState) -> CloudEvent {
+        CloudEvent::Recap(RecapEvent::from_state(state))
+    }
+
+    pub fn recap_history(history: Vec<crate::recap::TurnRecap>) -> CloudEvent {
+        CloudEvent::RecapHistory(RecapHistoryEvent::new(history))
     }
 
     /// Build a git status event

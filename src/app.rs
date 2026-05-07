@@ -1110,6 +1110,7 @@ impl App {
                 .set_transcript_path(Some(path.clone()));
         }
 
+        let prev_recap_history_len = self.recap_manager.history().len();
         let recap_changed = self.recap_manager.handle_platform_update(
             self.platform.kind(),
             &self.session_stats.platform_stats,
@@ -1117,6 +1118,17 @@ impl App {
             &self.git_state,
             &self.cwd,
         );
+
+        // Push recap state to the cloud whenever something renderable changed.
+        if recap_changed {
+            if let Some(ref mut client) = self.cloud_client {
+                client.send_event(SessionEventBuilder::recap(self.recap_manager.state()));
+                if self.recap_manager.history().len() != prev_recap_history_len {
+                    let history = self.recap_manager.history().to_vec();
+                    client.send_event(SessionEventBuilder::recap_history(history));
+                }
+            }
+        }
 
         // Redraw if effective state changed (and PTY is quiet)
         if old_effective_state != new_effective_state || recap_changed {

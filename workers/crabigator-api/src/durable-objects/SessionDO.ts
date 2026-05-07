@@ -11,6 +11,10 @@ interface PersistentState {
     currentPrompt: CloudPromptData | null;
     lastTitle: string | null;
     lastTitleHistory: string[] | null;
+    /** Most recent recap event (status + latest finished recap). */
+    lastRecap: any | null;
+    /** Full recap history for this session, oldest first. */
+    lastRecapHistory: any[] | null;
 }
 
 /**
@@ -84,6 +88,8 @@ export class SessionDO implements DurableObject {
             currentPrompt: null,
             lastTitle: null,
             lastTitleHistory: null,
+            lastRecap: null,
+            lastRecapHistory: null,
         };
         this.ephemeralState = {
             lastScrollbackLine: 0,
@@ -394,6 +400,21 @@ export class SessionDO implements DurableObject {
                         .catch(() => {});
                 }
                 break;
+            case 'recap': {
+                // Store the most recent recap state for late-joining SSE viewers.
+                const incoming = JSON.stringify(event);
+                const stored = JSON.stringify(this.persistentState.lastRecap);
+                if (stored !== incoming) {
+                    this.persistentState.lastRecap = event;
+                    persistentChanged = true;
+                }
+                break;
+            }
+            case 'recap_history': {
+                this.persistentState.lastRecapHistory = (event as any).history || [];
+                persistentChanged = true;
+                break;
+            }
             case 'git':
                 // Ephemeral state - no storage write
                 this.ephemeralState.lastGit = event as GitEvent;
@@ -532,6 +553,19 @@ export class SessionDO implements DurableObject {
                 history: this.persistentState.lastTitleHistory,
             };
             await this.sendSSE(writer, titleHistoryEvent);
+        }
+
+        // Send the latest recap (and its full history) so a freshly-loaded
+        // dashboard tab paints the recap card without waiting for the next turn.
+        if (this.persistentState.lastRecap) {
+            await this.sendSSE(writer, this.persistentState.lastRecap as SessionEvent);
+        }
+        if (this.persistentState.lastRecapHistory && this.persistentState.lastRecapHistory.length > 0) {
+            const historyEvent = {
+                type: 'recap_history' as const,
+                history: this.persistentState.lastRecapHistory,
+            };
+            await this.sendSSE(writer, historyEvent as SessionEvent);
         }
 
         // Send git state if available (ephemeral)
