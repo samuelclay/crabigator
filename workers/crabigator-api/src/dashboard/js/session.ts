@@ -24,9 +24,33 @@ export const sessionJs = `
                 ? sessionList.filter(session => session.id === singleSessionId)
                 : [...sessionList];
             const limit = getSessionVisibilityLimit();
-            const renderable = Number.isFinite(limit)
-                ? sortSessionsByRecentActivity(candidates).slice(0, limit)
-                : candidates;
+
+            let renderable;
+            if (!Number.isFinite(limit)) {
+                // Pro / single-session view: no cap, no lock.
+                renderable = candidates;
+            } else if (lockedVisibleSessionIds) {
+                // Free tier with the lock already established at first render.
+                // Only show the originally-chosen IDs that still exist as
+                // active sessions. Don't promote hidden sessions just because
+                // their last_activity_at bumped — that's the churn we want
+                // to avoid. A page reload picks a fresh top-N.
+                renderable = candidates.filter(s => lockedVisibleSessionIds.has(s.id));
+            } else if (candidates.length > 0) {
+                // Free tier, first non-empty render: pick the top N by recent
+                // activity and freeze that selection for the lifetime of the page.
+                renderable = sortSessionsByRecentActivity(candidates).slice(0, limit);
+                lockedVisibleSessionIds = new Set(renderable.map(s => s.id));
+                console.info(
+                    '[crabigator] locked visible sessions (' + renderable.length + '/' +
+                    candidates.length + '):',
+                    renderable.map(s => s.id.split('-')[0] + ' @ ' + (s.cwd || '?'))
+                );
+            } else {
+                // No candidates yet — leave the lock null so a later non-empty
+                // render still has a chance to set it.
+                renderable = [];
+            }
 
             hiddenSessionCount = Number.isFinite(limit)
                 ? Math.max(0, candidates.length - renderable.length)
@@ -91,6 +115,13 @@ export const sessionJs = `
 
             for (const [id, session] of sessions) {
                 if (!renderableIds.has(id)) {
+                    console.info(
+                        '[crabigator] removing session card',
+                        id.split('-')[0],
+                        lockedVisibleSessionIds && !lockedVisibleSessionIds.has(id)
+                            ? '(not in locked set)'
+                            : '(no longer active)'
+                    );
                     session.eventSource?.close();
                     sessions.delete(id);
                     if (activeTerminalId === id) activeTerminalId = null;
@@ -114,6 +145,7 @@ export const sessionJs = `
 
             for (const session of renderableSessions) {
                 if (!sessions.has(session.id)) {
+                    console.info('[crabigator] creating session card', session.id.split('-')[0], session.cwd);
                     createSessionCard(session);
                     connectToSession(session.id);
                 } else {
@@ -272,15 +304,7 @@ export const sessionJs = `
                         <button class="collapse-btn" id="collapse-btn-\${session.id}" onclick="toggleCollapse('\${session.id}')" title="Collapse/expand">▼</button>
                     </div>
                 </div>
-                <div class="session-recap empty" id="recap-\${session.id}"
-                     onclick="onRecapClick('\${session.id}', event)"
-                     title="Click to expand session • shift+click to view full history">
-                    <div class="session-recap-status" id="recap-status-\${session.id}"></div>
-                    <div class="session-recap-headline" id="recap-headline-\${session.id}"></div>
-                    <div class="session-recap-bullets" id="recap-bullets-\${session.id}"></div>
-                    <div class="session-recap-meta" id="recap-meta-\${session.id}"></div>
-                </div>
-                <div class="session-summary" id="summary-\${session.id}">
+                <div class="session-summary" id="summary-\${session.id}"
                     <span class="summary-item"><span class="label">Stats:</span> <span class="value" id="summary-stats-\${session.id}">—</span></span>
                     <span class="summary-item"><span class="label">Git:</span> <span class="value" id="summary-git-\${session.id}">—</span></span>
                     <span class="summary-item"><span class="label">Changes:</span> <span class="value" id="summary-changes-\${session.id}">—</span></span>
@@ -322,6 +346,14 @@ export const sessionJs = `
                             <div class="terminal-scrollback" id="scrollback-\${session.id}"></div>
                             <div class="terminal-separator" id="separator-\${session.id}">─── scrollback ───</div>
                             <div class="terminal-screen" id="screen-\${session.id}">Connecting...</div>
+                        </div>
+                        <div class="session-recap empty" id="recap-\${session.id}"
+                             onclick="onRecapClick('\${session.id}', event)"
+                             title="Click to expand session • shift+click to view full history">
+                            <div class="session-recap-status" id="recap-status-\${session.id}"></div>
+                            <div class="session-recap-headline" id="recap-headline-\${session.id}"></div>
+                            <div class="session-recap-bullets" id="recap-bullets-\${session.id}"></div>
+                            <div class="session-recap-meta" id="recap-meta-\${session.id}"></div>
                         </div>
                         <div class="prompt-panel" id="prompt-\${session.id}">
                             <div class="prompt-header" id="prompt-header-\${session.id}"></div>

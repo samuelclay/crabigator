@@ -1,5 +1,6 @@
-// Recap card + history widget styling. Always visible above the summary so
-// it greets the user even when the card is collapsed.
+// Recap card + history widget styling. The recap card sits inside the
+// session body, directly under the terminal screen, so it reads as a
+// "what just happened" handoff for the live PTY view above it.
 export const recapCss = `
 .session-recap {
     display: grid;
@@ -15,11 +16,9 @@ export const recapCss = `
         linear-gradient(135deg, rgba(34, 211, 238, 0.06), rgba(34, 211, 238, 0) 60%),
         var(--bg-deep);
     border-top: 1px solid rgba(34, 211, 238, 0.18);
-    border-bottom: 1px solid var(--border-dim);
     cursor: pointer;
     position: relative;
     transition: background 0.15s ease;
-    /* Cap the visible area in the collapsed view; full content shows on expand. */
     max-height: 92px;
     overflow: hidden;
 }

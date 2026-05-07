@@ -9,6 +9,11 @@ export const constantsJs = `
         let isProUser = false;
         let hiddenSessionCount = 0;
         let visibleSessionIds = new Set();
+        // Frozen set of session IDs chosen at first render. Free-tier dashboards
+        // pick the top-N by recent activity once and keep them locked until the
+        // page reloads, so SSE activity on hidden sessions can't churn the cards.
+        // null = not yet picked; Set = locked.
+        let lockedVisibleSessionIds = null;
         let currentLayout = localStorage.getItem('crabigator-layout') || 'fit';
 
         function escapeHtml(text) {
