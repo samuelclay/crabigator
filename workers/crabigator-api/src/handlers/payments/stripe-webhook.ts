@@ -2,20 +2,50 @@ import type { Env } from '../../types/env';
 import { jsonResponse } from '../../router';
 import { getStripeConfig } from './stripe-config';
 
+interface StripeSubscriptionItem {
+    id: string;
+    current_period_start?: number;
+    current_period_end?: number;
+}
+
 interface StripeSubscription {
     id: string;
     customer: string;
     status: string;
-    current_period_start: number;
-    current_period_end: number;
+    current_period_start?: number;
+    current_period_end?: number;
     cancel_at_period_end: boolean;
     metadata?: { group_id?: string };
+    items?: { data: StripeSubscriptionItem[] };
 }
 
 interface StripeInvoice {
     id: string;
-    subscription: string;
+    subscription?: string;
     status: string;
+    parent?: { subscription_details?: { subscription?: string } };
+    lines?: { data: Array<{ subscription?: string }> };
+}
+
+// Stripe API 2024-09-30+ moved current_period_start/end off the subscription
+// onto subscription.items[].current_period_*. Read both for compatibility.
+function getSubscriptionPeriod(sub: StripeSubscription): {
+    start: number | null;
+    end: number | null;
+} {
+    const item = sub.items?.data?.[0];
+    return {
+        start: sub.current_period_start ?? item?.current_period_start ?? null,
+        end: sub.current_period_end ?? item?.current_period_end ?? null,
+    };
+}
+
+// Stripe API 2024-12-18+ removed invoice.subscription. The id now lives on
+// invoice.parent.subscription_details.subscription, with a per-line fallback.
+function getInvoiceSubscriptionId(invoice: StripeInvoice): string | undefined {
+    return invoice.subscription
+        ?? invoice.parent?.subscription_details?.subscription
+        ?? invoice.lines?.data?.[0]?.subscription;
 }
 
 interface StripeCheckoutSession {
@@ -243,6 +273,7 @@ async function handleSubscriptionUpdated(
     }
 
     const groupId = subscription.metadata?.group_id;
+    const period = getSubscriptionPeriod(subscription);
 
     // Use UPSERT to handle race condition where this arrives before checkout.session.completed
     if (groupId) {
@@ -262,8 +293,8 @@ async function handleSubscriptionUpdated(
             subscription.customer,
             subscription.id,
             status,
-            subscription.current_period_start,
-            subscription.current_period_end,
+            period.start,
+            period.end,
             subscription.cancel_at_period_end ? 1 : 0
         ).run();
 
@@ -280,8 +311,8 @@ async function handleSubscriptionUpdated(
             WHERE provider = 'stripe' AND provider_subscription_id = ?
         `).bind(
             status,
-            subscription.current_period_start,
-            subscription.current_period_end,
+            period.start,
+            period.end,
             subscription.cancel_at_period_end ? 1 : 0,
             subscription.id
         ).run();
@@ -330,14 +361,16 @@ async function handleInvoicePaymentSucceeded(
     env: Env,
     invoice: StripeInvoice
 ): Promise<void> {
-    if (!invoice.subscription) {
+    const subscriptionId = getInvoiceSubscriptionId(invoice);
+    if (!subscriptionId) {
         return;
     }
 
     // Fetch subscription from Stripe to get current period dates
-    const subscription = await fetchStripeSubscription(env, invoice.subscription);
+    const subscription = await fetchStripeSubscription(env, subscriptionId);
 
     if (subscription) {
+        const period = getSubscriptionPeriod(subscription);
         await env.DB.prepare(`
             UPDATE subscriptions SET
                 status = 'active',
@@ -346,9 +379,9 @@ async function handleInvoicePaymentSucceeded(
                 updated_at = unixepoch()
             WHERE provider = 'stripe' AND provider_subscription_id = ?
         `).bind(
-            subscription.current_period_start,
-            subscription.current_period_end,
-            invoice.subscription
+            period.start,
+            period.end,
+            subscriptionId
         ).run();
     } else {
         // Fallback: just update status if Stripe API call fails
@@ -357,13 +390,13 @@ async function handleInvoicePaymentSucceeded(
                 status = 'active',
                 updated_at = unixepoch()
             WHERE provider = 'stripe' AND provider_subscription_id = ?
-        `).bind(invoice.subscription).run();
+        `).bind(subscriptionId).run();
     }
 
     // Get group_id and sync usage DO
     const row = await env.DB.prepare(
         'SELECT group_id FROM subscriptions WHERE provider = ? AND provider_subscription_id = ?'
-    ).bind('stripe', invoice.subscription).first<{ group_id: string }>();
+    ).bind('stripe', subscriptionId).first<{ group_id: string }>();
 
     if (row) {
         await syncUsageDO(env, row.group_id);
@@ -377,7 +410,8 @@ async function handleInvoicePaymentFailed(
     env: Env,
     invoice: StripeInvoice
 ): Promise<void> {
-    if (!invoice.subscription) {
+    const subscriptionId = getInvoiceSubscriptionId(invoice);
+    if (!subscriptionId) {
         return;
     }
 
@@ -386,12 +420,12 @@ async function handleInvoicePaymentFailed(
             status = 'past_due',
             updated_at = unixepoch()
         WHERE provider = 'stripe' AND provider_subscription_id = ?
-    `).bind(invoice.subscription).run();
+    `).bind(subscriptionId).run();
 
     // Get group_id and sync usage DO
     const row = await env.DB.prepare(
         'SELECT group_id FROM subscriptions WHERE provider = ? AND provider_subscription_id = ?'
-    ).bind('stripe', invoice.subscription).first<{ group_id: string }>();
+    ).bind('stripe', subscriptionId).first<{ group_id: string }>();
 
     if (row) {
         await syncUsageDO(env, row.group_id);
