@@ -147,6 +147,9 @@ pub struct RecapManager {
     pending: Option<mpsc::Receiver<std::result::Result<TurnRecap, String>>>,
     /// Wall-clock anchor used to fade the startup confirmation toast.
     started_at: Instant,
+    /// All successful recaps generated in this session, oldest first. Mirrors
+    /// the title_history pattern so the dashboard can replay the full timeline.
+    history: Vec<TurnRecap>,
 }
 
 impl RecapManager {
@@ -184,11 +187,17 @@ impl RecapManager {
             active_turn: None,
             pending: None,
             started_at: Instant::now(),
+            history: Vec::new(),
         }
     }
 
     pub fn state(&self) -> &RecapState {
         &self.state
+    }
+
+    /// All successful recaps generated this session, oldest first.
+    pub fn history(&self) -> &[TurnRecap] {
+        &self.history
     }
 
     /// Whether the transient "Recaps enabled" toast should be shown.
@@ -343,6 +352,7 @@ impl RecapManager {
             Ok(Ok(recap)) => {
                 let _ = write_recap_cache(cwd, &recap);
                 self.state.line_delta = Some(recap.line_delta);
+                self.history.push(recap.clone());
                 self.state.latest = Some(recap);
                 self.state.status = RecapStatus::Ready;
                 self.pending = None;
@@ -1126,6 +1136,7 @@ mod tests {
             active_turn: None,
             pending: None,
             started_at: Instant::now(),
+            history: Vec::new(),
         };
         assert!(manager.enabled_toast_visible());
 
@@ -1169,6 +1180,7 @@ mod tests {
             active_turn: None,
             pending: None,
             started_at: Instant::now(),
+            history: Vec::new(),
         };
         let stats = PlatformStats {
             prompts: 2,

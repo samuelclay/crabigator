@@ -991,6 +991,8 @@ impl App {
             &self.diff_summary,
             self.terminal_title.as_deref(),
             &self.title_history,
+            Some(self.recap_manager.state()),
+            self.recap_manager.history(),
             self.initial_git_time_ms,
             self.initial_diff_time_ms,
         );

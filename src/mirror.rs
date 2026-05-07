@@ -15,6 +15,7 @@ use serde::Serialize;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::parsers::{ChangeType, DiffSummary};
+use crate::recap::{RecapState, TurnRecap};
 
 /// Minimum interval between publishes (1 second)
 const PUBLISH_INTERVAL: Duration = Duration::from_secs(1);
@@ -34,6 +35,12 @@ pub struct MirrorState {
     pub terminal_title: Option<String>,
     /// All terminal titles from this session (for history display)
     pub title_history: Vec<String>,
+    /// Current recap state (status, latest, line delta).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recap: Option<RecapState>,
+    /// Every recap generated this session, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recap_history: Vec<TurnRecap>,
     pub last_updated: f64,
     pub capture: CaptureMirror,
     pub launch_timing: LaunchTimingMirror,
@@ -171,6 +178,7 @@ impl MirrorPublisher {
 
     /// Attempt to publish if conditions are met (enabled, changed, throttle elapsed)
     /// Returns true if publish occurred
+    #[allow(clippy::too_many_arguments)]
     pub fn maybe_publish(
         &mut self,
         stats: &SessionStats,
@@ -178,6 +186,8 @@ impl MirrorPublisher {
         diff: &DiffSummary,
         terminal_title: Option<&str>,
         title_history: &[String],
+        recap: Option<&RecapState>,
+        recap_history: &[TurnRecap],
         initial_git_time_ms: Option<u64>,
         initial_diff_time_ms: Option<u64>,
     ) -> Result<bool> {
@@ -191,7 +201,7 @@ impl MirrorPublisher {
         }
 
         // Compute hash for change detection
-        let hash = self.compute_hash(stats, git, diff, terminal_title, title_history);
+        let hash = self.compute_hash(stats, git, diff, terminal_title, title_history, recap, recap_history);
         if hash == self.last_hash {
             return Ok(false);
         }
@@ -202,7 +212,7 @@ impl MirrorPublisher {
             git_time_ms: initial_git_time_ms,
             diff_time_ms: initial_diff_time_ms,
         };
-        let state = self.build_state(stats, git, diff, terminal_title, title_history, launch_timing);
+        let state = self.build_state(stats, git, diff, terminal_title, title_history, recap, recap_history, launch_timing);
         let json = serde_json::to_string_pretty(&state)?;
 
         // Ensure session directory exists
@@ -220,7 +230,8 @@ impl MirrorPublisher {
         Ok(true)
     }
 
-    fn compute_hash(&self, stats: &SessionStats, git: &GitState, diff: &DiffSummary, terminal_title: Option<&str>, title_history: &[String]) -> u64 {
+    #[allow(clippy::too_many_arguments)]
+    fn compute_hash(&self, stats: &SessionStats, git: &GitState, diff: &DiffSummary, terminal_title: Option<&str>, title_history: &[String], recap: Option<&RecapState>, recap_history: &[TurnRecap]) -> u64 {
         let mut hasher = DefaultHasher::new();
 
         // Hash terminal title and history
@@ -261,9 +272,20 @@ impl MirrorPublisher {
             }
         }
 
+        // Hash recap state — captures status changes and the latest headline
+        // identity. recap_history.len() is enough to detect new entries since
+        // older entries are immutable once written.
+        if let Some(state) = recap {
+            format!("{:?}", state.status).hash(&mut hasher);
+            state.line_delta.hash(&mut hasher);
+            state.latest.hash(&mut hasher);
+        }
+        recap_history.len().hash(&mut hasher);
+
         hasher.finish()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_state(
         &self,
         stats: &SessionStats,
@@ -271,6 +293,8 @@ impl MirrorPublisher {
         diff: &DiffSummary,
         terminal_title: Option<&str>,
         title_history: &[String],
+        recap: Option<&RecapState>,
+        recap_history: &[TurnRecap],
         launch_timing: LaunchTimingMirror,
     ) -> MirrorState {
         let timestamp = SystemTime::now()
@@ -283,6 +307,8 @@ impl MirrorPublisher {
             cwd: self.cwd.clone(),
             terminal_title: terminal_title.map(String::from),
             title_history: title_history.to_vec(),
+            recap: recap.cloned(),
+            recap_history: recap_history.to_vec(),
             last_updated: timestamp,
             capture: self.capture.clone(),
             launch_timing,
