@@ -119,26 +119,34 @@ pub fn draw_stats_widget(
     is_paired: bool,
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
+    // 1-col left margin so content doesn't sit flush against the separator/edge.
+    write!(stdout, " ")?;
 
     // Use compact mode when we have 4 or fewer content rows (status_rows <= 5)
     // Compact mode: header + 2 rows with abbreviated two-column layout
     let compact = area.height <= 5;
+    let inner_width = area.width.saturating_sub(2);
 
     let content = if compact {
-        draw_compact_row(area.row, area.width, stats, cloud_status, is_paired)
+        draw_compact_row(area.row, inner_width, stats, cloud_status, is_paired)
     } else {
-        draw_normal_row(area.row, area.width, stats, cloud_status, is_paired)
+        draw_normal_row(area.row, inner_width, stats, cloud_status, is_paired)
     };
 
     write!(stdout, "{}", content)?;
     let content_len = strip_ansi_len(&content);
-    let pad = (area.width as usize).saturating_sub(content_len);
+    let pad = (inner_width as usize).saturating_sub(content_len);
     write!(stdout, "{:pad$}", "", pad = pad)?;
+    // 1-col right margin.
+    write!(stdout, " ")?;
 
     Ok(())
 }
 
-/// Format cloud status as header text
+/// Format cloud status as header text.
+///
+/// No leading space — the widget wrapper applies a uniform 1-col left margin,
+/// so an extra space here would push the label in by 2 cols instead of 1.
 fn format_cloud_header(cloud_status: Option<&CloudStatus>, is_paired: bool) -> String {
     match cloud_status {
         Some(status) if status.connected => {
@@ -148,26 +156,26 @@ fn format_cloud_header(cloud_status: Option<&CloudStatus>, is_paired: bool) -> S
                 if let Some(ref session_id) = status.session_id {
                     let short_id = &session_id[..8.min(session_id.len())];
                     return format!(
-                        "{} Streaming {}{}{}",
+                        "{}Streaming {}{}{}",
                         fg(color::GREEN),
                         fg(color::CYAN),
                         short_id,
                         RESET
                     );
                 }
-                format!("{} Streaming{}", fg(color::GREEN), RESET)
+                format!("{}Streaming{}", fg(color::GREEN), RESET)
             } else {
-                format!("{} Waiting to pair{}", fg(color::YELLOW), RESET)
+                format!("{}Waiting to pair{}", fg(color::YELLOW), RESET)
             }
         }
         Some(status) if status.reconnect_attempts > 0 => {
-            format!("{} Retry{}", fg(color::ORANGE), RESET)
+            format!("{}Retry{}", fg(color::ORANGE), RESET)
         }
         Some(_) => {
-            format!("{} Offline{}", fg(color::RED), RESET)
+            format!("{}Offline{}", fg(color::RED), RESET)
         }
         None => {
-            format!("{} Local{}", fg(color::GRAY), RESET)
+            format!("{}Local{}", fg(color::GRAY), RESET)
         }
     }
 }

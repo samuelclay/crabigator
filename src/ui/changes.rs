@@ -97,6 +97,10 @@ pub fn draw_changes_widget(
     cwd: &Path,
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
+    // 1-col left margin so content doesn't sit flush against the separator/edge.
+    write!(stdout, " ")?;
+    let inner_width = area.width.saturating_sub(2);
+    let inner_width_usize = inner_width as usize;
 
     // Get changes grouped by language
     let by_language = diff_summary.by_language();
@@ -126,25 +130,25 @@ pub fn draw_changes_widget(
         let left_len = strip_ansi_len(&left);
 
         // Build right side: terminal title if available (light blue for subtle distinction).
-        // Reserve a trailing space so the title doesn't sit flush against the edge.
         let right = terminal_title
             .map(|t| format!("{}{}{}", fg(color::LIGHT_BLUE), t, RESET))
             .unwrap_or_default();
         let right_len = strip_ansi_len(&right);
-        let trailing_margin = if right_len > 0 { 1 } else { 0 };
 
-        let pad = (area.width as usize).saturating_sub(left_len + right_len + trailing_margin);
-        write!(stdout, "{}{:pad$}{}{:trailing_margin$}", left, "", right, "", pad = pad, trailing_margin = trailing_margin)?;
+        let pad = inner_width_usize.saturating_sub(left_len + right_len);
+        write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
+        write!(stdout, " ")?;
         return Ok(());
     }
 
     if by_language.is_empty() {
-        write!(stdout, "{:width$}", "", width = area.width as usize)?;
+        write!(stdout, "{:width$}", "", width = inner_width_usize)?;
+        write!(stdout, " ")?;
         return Ok(());
     }
 
     // Build rows to display
-    let rows_data = build_rows_for_display(&by_language, area.width, area.height, ide, cwd);
+    let rows_data = build_rows_for_display(&by_language, inner_width, area.height, ide, cwd);
 
     // Row index (0-based from row 1)
     let row_idx = (area.row - 1) as usize;
@@ -153,11 +157,14 @@ pub fn draw_changes_widget(
         let content = &rows_data[row_idx];
         write!(stdout, "{}", content)?;
         let content_len = strip_ansi_len(content);
-        let pad = (area.width as usize).saturating_sub(content_len);
+        let pad = inner_width_usize.saturating_sub(content_len);
         write!(stdout, "{:pad$}", "", pad = pad)?;
     } else {
-        write!(stdout, "{:width$}", "", width = area.width as usize)?;
+        write!(stdout, "{:width$}", "", width = inner_width_usize)?;
     }
+
+    // 1-col right margin.
+    write!(stdout, " ")?;
 
     Ok(())
 }

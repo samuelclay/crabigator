@@ -90,17 +90,22 @@ pub fn draw_git_widget(
     cwd: &Path,
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
+    // 1-col left margin so content doesn't sit flush against the separator/edge.
+    write!(stdout, " ")?;
+    let inner_width = area.width.saturating_sub(2) as usize;
 
     let files = &git_state.files;
 
     if area.row == 1 {
-        // Header with branch name on left, status on right
+        // Header with branch name on left, status on right.
+        // Drop the leading space from the format — the outer 1-col margin
+        // already provides it, and stacking would push the branch in by 2.
         let branch = if git_state.branch.is_empty() {
             "Git"
         } else {
             &git_state.branch
         };
-        let left = format!("{} {}{}", fg(color::LIGHT_GREEN), truncate_path(branch, 15), RESET);
+        let left = format!("{}{}{}", fg(color::LIGHT_GREEN), truncate_path(branch, 15), RESET);
         let left_len = strip_ansi_len(&left);
 
         // Right side: loading, "✓ Clean", or file count
@@ -115,14 +120,16 @@ pub fn draw_git_widget(
         };
         let right_len = strip_ansi_len(&right);
 
-        let pad = (area.width as usize).saturating_sub(left_len + right_len);
+        let pad = inner_width.saturating_sub(left_len + right_len);
         write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
+        write!(stdout, " ")?;
         return Ok(());
     }
 
     if files.is_empty() {
         // No files to display, just clear the row
-        write!(stdout, "{:width$}", "", width = area.width as usize)?;
+        write!(stdout, "{:width$}", "", width = inner_width)?;
+        write!(stdout, " ")?;
         return Ok(());
     }
 
@@ -154,13 +161,13 @@ pub fn draw_git_widget(
         if row_idx < num_files {
             let file = &files[row_idx];
             let display_name = &display_names[row_idx];
-            let item = format_file_entry(file, display_name, area.width as usize, max_changes, &stats_widths, ide, cwd);
+            let item = format_file_entry(file, display_name, inner_width, max_changes, &stats_widths, ide, cwd);
             write!(stdout, "{}", item)?;
             let content_len = strip_ansi_len(&item);
-            let pad = (area.width as usize).saturating_sub(content_len);
+            let pad = inner_width.saturating_sub(content_len);
             write!(stdout, "{:pad$}", "", pad = pad)?;
         } else {
-            write!(stdout, "{:width$}", "", width = area.width as usize)?;
+            write!(stdout, "{:width$}", "", width = inner_width)?;
         }
     } else if available_rows > 0 {
         // Multi-column layout
@@ -189,9 +196,9 @@ pub fn draw_git_widget(
 
         let total_width_needed: usize = col_widths.iter().sum();
 
-        if total_width_needed <= area.width as usize {
+        if total_width_needed <= inner_width {
             // Columns fit - distribute extra space proportionally to allow wider names
-            let extra_space = area.width as usize - total_width_needed;
+            let extra_space = inner_width - total_width_needed;
             let extra_per_col = extra_space / num_cols;
 
             // Apply extra space to column widths (cap name portion at 30 chars)
@@ -227,7 +234,7 @@ pub fn draw_git_widget(
             }
             write!(stdout, "{}", output)?;
             let content_len = strip_ansi_len(&output);
-            let pad = (area.width as usize).saturating_sub(content_len);
+            let pad = inner_width.saturating_sub(content_len);
             write!(stdout, "{:pad$}", "", pad = pad)?;
         } else {
             // Columns don't fit - wrap items across rows
@@ -251,7 +258,7 @@ pub fn draw_git_widget(
                     item_width + 1 // +1 for space separator
                 };
 
-                if current_width + needed <= area.width as usize {
+                if current_width + needed <= inner_width {
                     current_row.push(i);
                     current_width += needed;
                 } else {
@@ -277,15 +284,18 @@ pub fn draw_git_widget(
                 }
                 write!(stdout, "{}", output)?;
                 let content_len = strip_ansi_len(&output);
-                let pad = (area.width as usize).saturating_sub(content_len);
+                let pad = inner_width.saturating_sub(content_len);
                 write!(stdout, "{:pad$}", "", pad = pad)?;
             } else {
-                write!(stdout, "{:width$}", "", width = area.width as usize)?;
+                write!(stdout, "{:width$}", "", width = inner_width)?;
             }
         }
     } else {
-        write!(stdout, "{:width$}", "", width = area.width as usize)?;
+        write!(stdout, "{:width$}", "", width = inner_width)?;
     }
+
+    // 1-col right margin.
+    write!(stdout, " ")?;
 
     Ok(())
 }
