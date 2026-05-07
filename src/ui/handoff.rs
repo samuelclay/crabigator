@@ -53,15 +53,13 @@ fn draw_latest_recap(
     // available body width on row 1 (where the Δ delta lives).
     let headline = latest.headline.trim();
     let headline_prefix = format!(
-        "{}{} ●{} {}Recap{} ",
+        "{}{} ●{} ",
         bg(color::BG_DARK),
         fg(color::CYAN),
-        fg(color::WHITE),
-        fg(color::WHITE),
         RESET_FG
     );
     let headline_indent = format!(
-        "{}{}        {}",
+        "{}{}   {}",
         bg(color::BG_DARK),
         fg(color::DARK_GRAY),
         RESET_FG

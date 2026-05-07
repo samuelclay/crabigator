@@ -125,14 +125,16 @@ pub fn draw_changes_widget(
         };
         let left_len = strip_ansi_len(&left);
 
-        // Build right side: terminal title if available (light blue for subtle distinction)
+        // Build right side: terminal title if available (light blue for subtle distinction).
+        // Reserve a trailing space so the title doesn't sit flush against the edge.
         let right = terminal_title
             .map(|t| format!("{}{}{}", fg(color::LIGHT_BLUE), t, RESET))
             .unwrap_or_default();
         let right_len = strip_ansi_len(&right);
+        let trailing_margin = if right_len > 0 { 1 } else { 0 };
 
-        let pad = (area.width as usize).saturating_sub(left_len + right_len);
-        write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
+        let pad = (area.width as usize).saturating_sub(left_len + right_len + trailing_margin);
+        write!(stdout, "{}{:pad$}{}{:trailing_margin$}", left, "", right, "", pad = pad, trailing_margin = trailing_margin)?;
         return Ok(());
     }
 
