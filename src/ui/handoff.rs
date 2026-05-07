@@ -48,11 +48,11 @@ fn draw_latest_recap(
         .line_delta
         .or(Some(latest.line_delta))
         .map(format_line_delta);
-    let right = delta;
 
-    fill_row(stdout, row, width)?;
-    write!(stdout, "{}", escape::cursor_to(row, 1))?;
-    let prefix = format!(
+    // Headline first — wraps onto the next row only if it overflows the
+    // available body width on row 1 (where the Δ delta lives).
+    let headline = latest.headline.trim();
+    let headline_prefix = format!(
         "{}{} ●{} {}Recap{} ",
         bg(color::BG_DARK),
         fg(color::CYAN),
@@ -60,50 +60,147 @@ fn draw_latest_recap(
         fg(color::WHITE),
         RESET_FG
     );
-    let headline = latest.headline.trim();
-    write_truncated(stdout, width, &prefix, headline, right.as_deref())?;
+    let headline_indent = format!(
+        "{}{}        {}",
+        bg(color::BG_DARK),
+        fg(color::DARK_GRAY),
+        RESET_FG
+    );
 
-    let mut used = 1;
-    if available_rows <= 1 {
+    let mut used = 0u16;
+    used += draw_wrapped(
+        stdout,
+        row,
+        width,
+        available_rows,
+        &headline_prefix,
+        &headline_indent,
+        headline,
+        delta.as_deref(),
+        &fg(color::WHITE),
+    )?;
+
+    if used >= available_rows {
         write!(stdout, "{}", RESET)?;
         return Ok(used);
     }
 
-    let mut detail_lines = Vec::new();
+    // Build the detail items (bullets first when present, then next-prompt
+    // note, then artifact). Each item gets its own wrap pass so we never
+    // mix two ideas onto one visually crowded row.
+    let mut detail_items: Vec<(&'static str, String)> = Vec::new();
     if latest.variant == RecapVariant::Bullets {
-        detail_lines.extend(latest.bullets.iter().take(2).map(|b| format!("• {}", b)));
+        for bullet in latest.bullets.iter().take(2) {
+            detail_items.push(("• ", bullet.trim().to_string()));
+        }
     }
-    if detail_lines.is_empty() {
-        detail_lines.extend(
-            latest
-                .next_prompt_notes
-                .iter()
-                .take(1)
-                .map(|n| format!("Next: {}", n)),
-        );
+    if detail_items.is_empty() {
+        if let Some(note) = latest.next_prompt_notes.first() {
+            detail_items.push(("Next: ", note.trim().to_string()));
+        }
     } else if let Some(note) = latest.next_prompt_notes.first() {
-        detail_lines.push(format!("Next: {}", note));
+        detail_items.push(("Next: ", note.trim().to_string()));
     }
     if let Some(artifact) = latest.artifacts.first() {
-        detail_lines.push(format!("Artifact: {}", artifact));
+        detail_items.push(("Artifact: ", artifact.trim().to_string()));
     }
 
-    for detail in detail_lines.into_iter().take((available_rows - 1) as usize) {
-        let detail_row = row + used;
-        fill_row(stdout, detail_row, width)?;
-        write!(stdout, "{}", escape::cursor_to(detail_row, 1))?;
-        let prefix = format!(
-            "{}{}   {}",
+    for (label, body) in detail_items {
+        if used >= available_rows {
+            break;
+        }
+        let detail_prefix = format!(
+            "{}{}   {}{}{}",
             bg(color::BG_DARK),
             fg(color::DARK_GRAY),
+            RESET_FG,
+            fg(color::WHITE),
+            label,
+        );
+        // Continuation rows hang under the label so the eye tracks the bullet.
+        let pad = " ".repeat(3 + label.chars().count());
+        let detail_indent = format!(
+            "{}{}{}{}",
+            bg(color::BG_DARK),
+            fg(color::DARK_GRAY),
+            pad,
             RESET_FG
         );
-        write_truncated(stdout, width, &prefix, &detail, None)?;
-        used += 1;
+        used += draw_wrapped(
+            stdout,
+            row + used,
+            width,
+            available_rows.saturating_sub(used),
+            &detail_prefix,
+            &detail_indent,
+            &body,
+            None,
+            &fg(color::WHITE),
+        )?;
     }
 
     write!(stdout, "{}", RESET)?;
     Ok(used)
+}
+
+/// Render `body` starting at `row`, wrapping on word boundaries. The first
+/// row gets `first_prefix`; continuation rows get `cont_prefix` (use it for
+/// hanging indents). When `right` is supplied it paints right-aligned on
+/// the first row only and the wrap budget reserves space for it. Returns
+/// the number of rows actually consumed (capped at `available_rows`).
+#[allow(clippy::too_many_arguments)]
+fn draw_wrapped(
+    stdout: &mut Stdout,
+    row: u16,
+    width: u16,
+    available_rows: u16,
+    first_prefix: &str,
+    cont_prefix: &str,
+    body: &str,
+    right: Option<&str>,
+    body_fg: &str,
+) -> Result<u16> {
+    if available_rows == 0 {
+        return Ok(0);
+    }
+
+    let first_prefix_width = crate::ui::utils::strip_ansi_len(first_prefix);
+    let cont_prefix_width = crate::ui::utils::strip_ansi_len(cont_prefix);
+    let right_width = right.map(crate::ui::utils::strip_ansi_len).unwrap_or(0);
+    let right_gap = usize::from(right.is_some());
+
+    let first_body_budget = (width as usize)
+        .saturating_sub(first_prefix_width)
+        .saturating_sub(right_width)
+        .saturating_sub(right_gap)
+        .max(1);
+    let cont_body_budget = (width as usize).saturating_sub(cont_prefix_width).max(1);
+
+    let lines = wrap_to_widths(body, first_body_budget, cont_body_budget, available_rows as usize);
+
+    for (i, line) in lines.iter().enumerate() {
+        let line_row = row + i as u16;
+        fill_row(stdout, line_row, width)?;
+        write!(stdout, "{}", escape::cursor_to(line_row, 1))?;
+        let (prefix, used_prefix_width) = if i == 0 {
+            (first_prefix, first_prefix_width)
+        } else {
+            (cont_prefix, cont_prefix_width)
+        };
+        write!(stdout, "{}{}{}", prefix, body_fg, line)?;
+
+        if i == 0 {
+            if let Some(right) = right {
+                let used = used_prefix_width + crate::ui::utils::strip_ansi_len(line);
+                let padding = (width as usize)
+                    .saturating_sub(used)
+                    .saturating_sub(right_width);
+                write!(stdout, "{:padding$}{}", "", right, padding = padding)?;
+            }
+        }
+    }
+
+    Ok(lines.len() as u16)
 }
 
 fn draw_recap_failure(
@@ -207,49 +304,132 @@ fn fill_row(stdout: &mut Stdout, row: u16, width: u16) -> Result<()> {
     Ok(())
 }
 
-fn write_truncated(
-    stdout: &mut Stdout,
-    width: u16,
-    prefix: &str,
-    body: &str,
-    right: Option<&str>,
-) -> Result<()> {
-    let prefix_width = crate::ui::utils::strip_ansi_len(prefix);
-    let right_width = right.map(crate::ui::utils::strip_ansi_len).unwrap_or(0);
-    let gap = usize::from(right.is_some());
-    let body_width = (width as usize)
-        .saturating_sub(prefix_width)
-        .saturating_sub(right_width)
-        .saturating_sub(gap)
-        .max(1);
-    let body = truncate_display(body, body_width);
-    write!(stdout, "{}{}{}", prefix, fg(color::WHITE), body)?;
+/// Word-wrap `text` into at most `max_lines` lines, splitting on whitespace.
+/// The first line uses `first_budget` columns; continuations use `cont_budget`.
+/// A word longer than the budget is hard-broken with a trailing ellipsis so a
+/// single pathological URL or token can't blow up the layout.
+fn wrap_to_widths(
+    text: &str,
+    first_budget: usize,
+    cont_budget: usize,
+    max_lines: usize,
+) -> Vec<String> {
+    use unicode_width::UnicodeWidthStr;
 
-    if let Some(right) = right {
-        let used = prefix_width + crate::ui::utils::strip_ansi_len(&body);
-        let padding = (width as usize)
-            .saturating_sub(used)
-            .saturating_sub(right_width);
-        write!(stdout, "{:padding$}{}", "", right, padding = padding)?;
+    if max_lines == 0 {
+        return Vec::new();
     }
-    Ok(())
+
+    let budget_for = |idx: usize| if idx == 0 { first_budget } else { cont_budget };
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+    let mut budget = budget_for(0);
+
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut i = 0;
+    while i < words.len() {
+        // Last allowed line: dump everything remaining and ellipsize if needed.
+        if lines.len() + 1 == max_lines {
+            let mut tail = if current.is_empty() {
+                String::new()
+            } else {
+                current.clone()
+            };
+            for word in &words[i..] {
+                if tail.is_empty() {
+                    tail.push_str(word);
+                } else {
+                    tail.push(' ');
+                    tail.push_str(word);
+                }
+            }
+            lines.push(truncate_to_width(&tail, budget));
+            return lines;
+        }
+
+        let word = words[i];
+        let word_width = word.width();
+        let separator_width = if current.is_empty() { 0 } else { 1 };
+
+        if word_width > budget {
+            // Hard-break: flush current, then truncate the long word.
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
+                budget = budget_for(lines.len());
+                if lines.len() == max_lines {
+                    return lines;
+                }
+                continue; // re-evaluate the same word against the new budget
+            }
+            lines.push(truncate_to_width(word, budget));
+            i += 1;
+            if lines.len() == max_lines {
+                return lines;
+            }
+            budget = budget_for(lines.len());
+            continue;
+        }
+
+        if current_width + separator_width + word_width <= budget {
+            if !current.is_empty() {
+                current.push(' ');
+                current_width += 1;
+            }
+            current.push_str(word);
+            current_width += word_width;
+            i += 1;
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+            budget = budget_for(lines.len());
+            if lines.len() == max_lines {
+                return lines;
+            }
+            // Don't increment i — re-place the word on the new line.
+        }
+    }
+
+    if !current.is_empty() && lines.len() < max_lines {
+        lines.push(current);
+    }
+    lines
 }
 
-fn truncate_display(text: &str, max_width: usize) -> String {
+fn truncate_to_width(text: &str, max_width: usize) -> String {
     use unicode_width::UnicodeWidthChar;
 
+    if max_width == 0 {
+        return String::new();
+    }
     let mut width = 0;
     let mut out = String::new();
-    for ch in text.chars() {
+    let chars: Vec<char> = text.chars().collect();
+    let total = chars.len();
+    for (i, ch) in chars.iter().enumerate() {
         let ch_width = ch.width().unwrap_or(0);
-        if width + ch_width > max_width.saturating_sub(1) {
+        let last = i + 1 == total;
+        if width + ch_width > max_width {
+            if !out.is_empty() {
+                out.pop();
+            }
+            out.push('…');
+            return out;
+        }
+        if !last && width + ch_width == max_width {
+            // Reserve the final cell for the ellipsis when there's more text.
             out.push('…');
             return out;
         }
         width += ch_width;
-        out.push(ch);
+        out.push(*ch);
     }
     out
+}
+
+fn truncate_display(text: &str, max_width: usize) -> String {
+    truncate_to_width(text, max_width)
 }
 
 #[cfg(test)]
@@ -276,5 +456,58 @@ mod tests {
     fn non_json_errors_pass_through_cleaned() {
         let raw = "  recap worker stopped\n  ";
         assert_eq!(extract_friendly_error(raw), "recap worker stopped");
+    }
+
+    #[test]
+    fn wrap_keeps_short_text_on_one_line() {
+        let lines = wrap_to_widths("hello world", 40, 30, 3);
+        assert_eq!(lines, vec!["hello world"]);
+    }
+
+    #[test]
+    fn wrap_breaks_at_word_boundary_when_overflowing() {
+        let lines = wrap_to_widths("the quick brown fox jumps over the lazy dog", 20, 18, 4);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].chars().count() <= 20);
+        assert!(lines[1].chars().count() <= 18);
+        // No word should be split across lines.
+        assert!(!lines.iter().any(|line| line.ends_with(' ')));
+    }
+
+    #[test]
+    fn wrap_uses_narrower_continuation_budget() {
+        // First line gets 30 cols, continuations only 10.
+        let lines = wrap_to_widths(
+            "alpha beta gamma delta epsilon zeta eta theta",
+            30,
+            10,
+            5,
+        );
+        assert!(lines[0].chars().count() <= 30);
+        for line in &lines[1..] {
+            assert!(line.chars().count() <= 10);
+        }
+    }
+
+    #[test]
+    fn wrap_ellipsizes_overflow_on_last_allowed_line() {
+        let lines = wrap_to_widths("one two three four five six seven eight nine ten", 12, 12, 2);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].ends_with('…'));
+    }
+
+    #[test]
+    fn wrap_hard_breaks_a_pathologically_long_word() {
+        let lines = wrap_to_widths("verylongwordwithoutspaces", 10, 10, 2);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].ends_with('…'));
+        assert!(lines[0].chars().count() <= 10);
+    }
+
+    #[test]
+    fn truncate_to_width_keeps_room_for_ellipsis() {
+        assert_eq!(truncate_to_width("hello world", 11), "hello world");
+        assert_eq!(truncate_to_width("hello world!", 11), "hello worl…");
+        assert_eq!(truncate_to_width("hello", 0), "");
     }
 }

@@ -810,22 +810,24 @@ fn build_anthropic_request(job: &RecapJob, transcript: &TurnTranscript) -> Value
          Last user prompt, for context only:\n{user_prompt}\n\n\
          Agent activity:\n{}\n\n\
          Return JSON only with this exact shape:\n\
-         {{\"variant\":\"brief|bullets\",\"headline\":\"one compact sentence\",\
-         \"bullets\":[\"0-3 high-level bullets\"],\
-         \"next_prompt_notes\":[\"0-2 short notes\"],\
-         \"artifacts\":[\"0-3 non-code artifacts\"]}}\n\
+         {{\"variant\":\"brief|bullets\",\"headline\":\"\",\
+         \"bullets\":[],\"next_prompt_notes\":[],\"artifacts\":[]}}\n\
+         Hard length budget — terse > complete sentences:\n\
+         - headline: ≤72 chars, no trailing period.\n\
+         - bullets: 0-2 items, ≤80 chars each. brief: omit bullets.\n\
+         - next_prompt_notes: 0-1 items, ≤80 chars.\n\
+         - artifacts: 0-2 items, ≤50 chars each.\n\
          Rules:\n\
-         - Do not mention changed source file names, paths, or per-file code details; the Git and Changes widgets show those.\n\
-         - Artifacts means screenshots, generated images, logs, test reports, build outputs, PRs/issues, URLs, or command output that needs review.\n\
-         - The headline must fit in one terminal line.\n\
-         - Bullets should be abstract and useful for deciding the next prompt.\n\
-         - If nothing important happened, say that plainly.",
+         - Be terse. Cut filler words. Don't repeat the headline in bullets.\n\
+         - Skip code-level details (file names, line numbers, diffs); the Git and Changes widgets cover those.\n\
+         - Artifacts = non-code outputs to review (screenshots, logs, URLs, PRs, build reports).\n\
+         - If nothing important happened, headline says so plainly and bullets/notes/artifacts are empty.",
         transcript.activity
     );
 
     json!({
         "model": job.model,
-        "max_tokens": 700,
+        "max_tokens": 350,
         "temperature": 0.2,
         "messages": [
             {"role": "user", "content": prompt}
