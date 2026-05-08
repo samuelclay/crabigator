@@ -104,60 +104,88 @@ export const sessionJs = `
             const container = document.getElementById('sessions');
             if (!container) return;
 
-            const renderableSessions = getRenderableSessions(allSessions);
-            const renderableIds = new Set(renderableSessions.map(session => session.id));
+            preservePageScroll(() => {
+                const renderableSessions = getRenderableSessions(allSessions);
+                const renderableIds = new Set(renderableSessions.map(session => session.id));
+                let needsRerender = false;
 
-            updateSessionsCount();
-            updateSessionLimitBanner();
-            if (typeof updateUsageDisplay === 'function') {
-                updateUsageDisplay();
-            }
-
-            for (const [id, session] of sessions) {
-                if (!renderableIds.has(id)) {
-                    console.info(
-                        '[crabigator] removing session card',
-                        id.split('-')[0],
-                        lockedVisibleSessionIds && !lockedVisibleSessionIds.has(id)
-                            ? '(not in locked set)'
-                            : '(no longer active)'
-                    );
-                    session.eventSource?.close();
-                    sessions.delete(id);
-                    if (activeTerminalId === id) activeTerminalId = null;
-                    const card = document.getElementById('session-' + id);
-                    if (card) card.remove();
+                updateSessionsCount();
+                updateSessionLimitBanner();
+                if (typeof updateUsageDisplay === 'function') {
+                    updateUsageDisplay();
                 }
-            }
 
-            if (renderableSessions.length === 0) {
-                if (sessions.size === 0) {
-                    container.innerHTML = '<div class="no-sessions">No active sessions</div>';
-                }
-                updateFitLayout();
-                return;
-            }
-
-            const emptyState = container.querySelector('.no-sessions');
-            if (emptyState) {
-                emptyState.remove();
-            }
-
-            for (const session of renderableSessions) {
-                if (!sessions.has(session.id)) {
-                    console.info('[crabigator] creating session card', session.id.split('-')[0], session.cwd);
-                    createSessionCard(session);
-                    connectToSession(session.id);
-                } else {
-                    updateSessionHeader(session);
-                    const sessionData = sessions.get(session.id);
-                    if (sessionData) {
-                        sessionData.lastActivityAt = getSessionActivityTime(session);
+                for (const [id, session] of sessions) {
+                    if (!renderableIds.has(id)) {
+                        console.info(
+                            '[crabigator] removing session card',
+                            id.split('-')[0],
+                            lockedVisibleSessionIds && !lockedVisibleSessionIds.has(id)
+                                ? '(not in locked set)'
+                                : '(no longer active)'
+                        );
+                        session.eventSource?.close();
+                        sessions.delete(id);
+                        if (activeTerminalId === id) activeTerminalId = null;
+                        const card = document.getElementById('session-' + id);
+                        if (card) card.remove();
+                        needsRerender = true;
                     }
                 }
-            }
 
-            rerenderSessions();
+                if (renderableSessions.length === 0) {
+                    if (sessions.size === 0) {
+                        container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                    }
+                    updateFitLayout();
+                    return;
+                }
+
+                const emptyState = container.querySelector('.no-sessions');
+                if (emptyState) {
+                    emptyState.remove();
+                }
+
+                for (const session of renderableSessions) {
+                    if (!sessions.has(session.id)) {
+                        console.info('[crabigator] creating session card', session.id.split('-')[0], session.cwd);
+                        createSessionCard(session);
+                        connectToSession(session.id);
+                        needsRerender = true;
+                    } else {
+                        const sessionData = sessions.get(session.id);
+                        const previousCwd = sessionData?.cwd || null;
+                        const previousDeviceName = sessionData?.deviceName || null;
+
+                        updateSessionHeader(session);
+
+                        if (sessionData) {
+                            if (session.cwd) {
+                                sessionData.cwd = session.cwd;
+                            }
+                            if (session.started_at) {
+                                sessionData.startedAt = session.started_at;
+                            }
+                            if (session.device_name !== undefined) {
+                                sessionData.deviceName = session.device_name || null;
+                            }
+                            sessionData.lastActivityAt = getSessionActivityTime(session);
+
+                            if (
+                                groupingMode === 'project' &&
+                                ((session.cwd && session.cwd !== previousCwd) ||
+                                    (session.device_name !== undefined && (session.device_name || null) !== previousDeviceName))
+                            ) {
+                                needsRerender = true;
+                            }
+                        }
+                    }
+                }
+
+                if (needsRerender) {
+                    rerenderSessions();
+                }
+            });
         }
 
         async function loadSessions() {

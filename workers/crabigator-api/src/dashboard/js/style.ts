@@ -257,13 +257,33 @@ export const styleJs = `
             });
         }
 
+        function preservePageScroll(callback) {
+            const scrollEl = document.scrollingElement || document.documentElement;
+            const previousScrollTop = scrollEl ? scrollEl.scrollTop : 0;
+            const previousScrollLeft = scrollEl ? scrollEl.scrollLeft : 0;
+            const restorePageScroll = () => {
+                if (!scrollEl) return;
+                const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+                scrollEl.scrollTop = Math.min(previousScrollTop, maxScrollTop);
+                scrollEl.scrollLeft = previousScrollLeft;
+            };
+
+            try {
+                callback();
+            } finally {
+                restorePageScroll();
+                requestAnimationFrame(restorePageScroll);
+            }
+        }
+
         function rerenderSessions() {
             const container = document.getElementById('sessions');
 
             // Don't re-render if not paired (preserve pairing gate)
             if (!isPaired) return;
 
-            if (groupingMode === 'project') {
+            preservePageScroll(() => {
+                if (groupingMode === 'project') {
                 // Collect all device names across sessions
                 const allDevices = new Set();
                 for (const [, sessionData] of sessions) {
@@ -412,7 +432,8 @@ export const styleJs = `
                 }
             }
 
-            updateFitLayout();
+                updateFitLayout();
+            });
         }
 
         function createProjectGroup(cwd, sessionCards) {

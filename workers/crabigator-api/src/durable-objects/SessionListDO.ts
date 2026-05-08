@@ -557,8 +557,8 @@ export class SessionListDO implements DurableObject {
      * Update last_seen timestamp for a session (called periodically from SessionDO).
      *
      * This keeps sessions alive during deploys by updating the grace period timer.
-     * SessionDO calls this every ~10s during activity. We persist to storage so
-     * that after a deploy, the DO can reload and see the recent last_seen.
+     * It is only liveness metadata, so it should not broadcast dashboard updates or
+     * advance last_activity_at; otherwise heartbeats continuously reorder the UI.
      */
     private async handleTouch(request: Request): Promise<Response> {
         if (request.method !== 'POST') {
@@ -571,11 +571,9 @@ export class SessionListDO implements DurableObject {
             if (session) {
                 const now = Date.now();
                 session.last_seen = now;
-                session.last_activity_at = Math.floor(now / 1000);
                 this.activeSessions.set(id, session);
                 // Persist so deploys see the updated last_seen (10s writes are acceptable)
                 await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
-                await this.broadcast({ type: 'updated', session: { id, last_activity_at: session.last_activity_at, group_id: session.group_id } });
             }
             return new Response(JSON.stringify({ ok: true }), {
                 headers: { 'Content-Type': 'application/json' },

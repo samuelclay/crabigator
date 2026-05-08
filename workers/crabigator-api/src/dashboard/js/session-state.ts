@@ -9,6 +9,12 @@ export const sessionStateJs = `
                 stateEl.className = 'state ' + session.state;
                 stateEl.textContent = session.state;
             }
+            if (session.cwd) {
+                const cwdEl = card.querySelector('.cwd');
+                if (cwdEl && cwdEl.textContent !== session.cwd) {
+                    cwdEl.textContent = session.cwd;
+                }
+            }
             if (sessionData) {
                 if (session.state) sessionData.state = session.state;
                 if (session.last_activity_at || session.last_seen_at || session.last_seen) {
