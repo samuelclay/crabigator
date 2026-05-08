@@ -26,8 +26,8 @@ use crate::platforms::{Platform, SessionState};
 use crate::recap::RecapManager;
 use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty};
 use crate::ui::{
-    draw_status_bar, split_terminal_rows, throbber_frame_index, Layout, PairingState,
-    HANDOFF_RESERVED_ROWS,
+    compute_dynamic_status_rows, draw_status_bar, split_terminal_rows, throbber_frame_index,
+    Layout, PairingState, HANDOFF_RESERVED_ROWS,
 };
 use crate::update::UpdateState;
 
@@ -878,11 +878,54 @@ impl App {
         Ok(())
     }
 
+    /// Resize the widget area to fit the tallest widget's natural content,
+    /// capped at the historical 20% ceiling. Called before each status redraw
+    /// so the assistant CLI reclaims space when widgets are short.
+    fn maybe_apply_dynamic_layout(&mut self) -> Result<()> {
+        let desired_status_rows = compute_dynamic_status_rows(
+            self.total_rows,
+            self.total_cols,
+            &self.session_stats,
+            &self.git_state,
+            &self.diff_summary,
+            &self.pairing_state,
+            self.recap_manager.state(),
+            self.recap_manager.enabled_toast_visible(),
+        );
+
+        if desired_status_rows == self.status_rows {
+            return Ok(());
+        }
+
+        let new_pty_rows = self
+            .total_rows
+            .saturating_sub(desired_status_rows + HANDOFF_RESERVED_ROWS)
+            .max(1);
+
+        // Clear the old widget area before the layout shifts so stale rows
+        // don't linger in the PTY's newly-claimed space.
+        self.clear_status_area()?;
+
+        self.status_rows = desired_status_rows;
+        self.pty_rows = new_pty_rows;
+
+        self.setup_scroll_region(false)?;
+        self.platform_pty.resize(self.total_cols, self.pty_rows)?;
+        self.capture_manager.resize(self.total_cols, self.pty_rows);
+        self.last_status_bar_hash = None;
+
+        Ok(())
+    }
+
     /// Draw status bar using the widget system
     /// Returns true if status bar was actually redrawn (content changed)
     fn draw_status_bar(&mut self) -> Result<()> {
         // Update stats each draw
         self.session_stats.tick();
+
+        // Recompute the widget area height before drawing so it can shrink to
+        // the tallest widget's natural content (capped at the 20% ceiling).
+        self.maybe_apply_dynamic_layout()?;
 
         // Compute hash of status bar inputs to detect changes
         let current_hash = {
@@ -1243,8 +1286,24 @@ impl App {
         self.total_cols = width;
         self.total_rows = height;
 
-        // Recalculate layout with same guards as App::new.
-        (self.pty_rows, self.status_rows) = split_terminal_rows(height);
+        // Pick the natural status height for the new terminal size in one
+        // step — going through the preferred max first would briefly show a
+        // taller-than-needed widget area before the next draw shrinks it.
+        let new_status_rows = compute_dynamic_status_rows(
+            self.total_rows,
+            self.total_cols,
+            &self.session_stats,
+            &self.git_state,
+            &self.diff_summary,
+            &self.pairing_state,
+            self.recap_manager.state(),
+            self.recap_manager.enabled_toast_visible(),
+        );
+        self.status_rows = new_status_rows;
+        self.pty_rows = self
+            .total_rows
+            .saturating_sub(new_status_rows + HANDOFF_RESERVED_ROWS)
+            .max(1);
 
         // Re-setup scroll region for new size (not initial, don't scroll content)
         self.setup_scroll_region(false)?;

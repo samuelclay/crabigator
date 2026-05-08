@@ -87,6 +87,39 @@ impl StatsColumnWidths {
 }
 
 
+/// Number of content rows the changes widget actually renders for the given
+/// column width — accounting for the packed layout the widget falls back to
+/// when per-row display would not fit. The widget header at row 1 already
+/// carries the first language's name, so only later languages add a header
+/// row of their own.
+pub fn changes_natural_rows(diff_summary: &DiffSummary, available_width: u16) -> u16 {
+    let langs = diff_summary.by_language();
+    if langs.is_empty() {
+        return 1; // just the widget header (or "no changes")
+    }
+
+    // Average packed-item width: modifier + icon + truncated name (≤20) + " ±N".
+    // The packer separates items with a 2-col margin, so each slot consumes
+    // `avg + 2` columns. This is a coarse estimate but matches typical Rust
+    // changes within ~1 row.
+    const AVG_ITEM_WIDTH: u32 = 30;
+    let row_w = (available_width as u32).max(1);
+    let items_per_row = ((row_w + 2) / (AVG_ITEM_WIDTH + 2)).max(1) as u16;
+
+    let mut rows: u16 = langs.len() as u16; // 1 widget header + 1 per additional language
+    for lang in &langs {
+        let n = lang.changes.len() as u16;
+        if n == 0 {
+            continue;
+        }
+        let packed = n.div_ceil(items_per_row);
+        // Pick the smaller of one-per-row vs packed — both are valid layouts
+        // and the widget will honour whichever the area allows.
+        rows = rows.saturating_add(n.min(packed));
+    }
+    rows
+}
+
 /// Draw the changes widget at the given position
 pub fn draw_changes_widget(
     stdout: &mut Stdout,

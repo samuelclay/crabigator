@@ -86,6 +86,77 @@ fn format_elapsed(timestamp: Option<f64>) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn visible(s: &str) -> usize {
+        crate::ui::utils::strip_ansi_len(s)
+    }
+
+    fn osc_link_target(s: &str) -> Option<String> {
+        // OSC 8 hyperlink format: \x1b]8;;<url>\x07<text>\x1b]8;;\x07
+        let start = s.find("\x1b]8;;")? + "\x1b]8;;".len();
+        let end = s[start..].find('\x07')? + start;
+        Some(s[start..end].to_string())
+    }
+
+    #[test]
+    fn pair_suffix_full_tier_renders_with_label() {
+        let (width, ansi) = build_pair_suffix("ABC-DEF-GHI", 64).expect("full tier should render");
+        // " · Pair: ABC-DEF-GHI" = 3 + 6 + 11 = 20 cols
+        assert_eq!(width, 20);
+        assert_eq!(visible(&ansi), 20);
+        // The OSC link still points to the full code regardless of tier.
+        assert_eq!(
+            osc_link_target(&ansi).as_deref(),
+            Some("https://drinkcrabigator.com/dashboard?setup=ABC-DEF-GHI")
+        );
+    }
+
+    #[test]
+    fn pair_suffix_drops_label_when_tight() {
+        // 14 cols fits " · ABC-DEF-GHI" (3 + 11 = 14) but not the full tier (20).
+        let (width, ansi) = build_pair_suffix("ABC-DEF-GHI", 14).expect("no-label tier");
+        assert_eq!(width, 14);
+        assert!(!ansi.contains("Pair:"));
+    }
+
+    #[test]
+    fn pair_suffix_truncates_code_when_very_tight() {
+        // 8 cols → " · " + 5 visible code chars (4 + ellipsis).
+        let (width, ansi) = build_pair_suffix("ABC-DEF-GHI", 8).expect("truncated tier");
+        assert_eq!(width, 8);
+        assert!(ansi.contains('…'));
+        // URL still carries the full code.
+        assert_eq!(
+            osc_link_target(&ansi).as_deref(),
+            Some("https://drinkcrabigator.com/dashboard?setup=ABC-DEF-GHI")
+        );
+    }
+
+    #[test]
+    fn pair_suffix_returns_none_when_no_room() {
+        // " · " plus at least 2 code chars + ellipsis needs 6 cols. Below that, hide.
+        assert!(build_pair_suffix("ABC-DEF-GHI", 5).is_none());
+        assert!(build_pair_suffix("ABC-DEF-GHI", 0).is_none());
+    }
+
+    #[test]
+    fn pair_suffix_link_excludes_leading_separator() {
+        // The " · " before the link should sit OUTSIDE the OSC sequence so
+        // clicks only trigger on the meaningful pair text.
+        let (_, ansi) = build_pair_suffix("ABC-DEF-GHI", 64).unwrap();
+        let osc_open = ansi.find("\x1b]8;;").unwrap();
+        // Everything before the opening OSC must be just the prefix decoration:
+        // a single space, the dim middot (with its own SGR), space, RESET.
+        let before = &ansi[..osc_open];
+        assert!(before.starts_with(' '));
+        assert!(before.contains('·'));
+        assert!(!before.contains("Pair"));
+    }
+}
+
 /// Format the state indicator for the header row
 fn format_state_indicator(state: SessionState) -> String {
     match state {
@@ -110,6 +181,22 @@ fn format_state_indicator(state: SessionState) -> String {
     }
 }
 
+/// Number of content rows the stats widget would render in normal mode,
+/// including the header. The Idle row only appears when the session is in
+/// an idle state and the idle timer has crossed the 60-second threshold.
+pub fn stats_natural_rows(stats: &SessionStats) -> u16 {
+    let base = 7; // header + Session + Thinking + Prompts + Completions + Tools + Compactions
+    let is_idle_state = matches!(
+        stats.effective_state(),
+        SessionState::Complete | SessionState::Question | SessionState::Interrupted
+    );
+    if is_idle_state && idle_seconds(stats.platform_stats.idle_since).is_some() {
+        base + 1
+    } else {
+        base
+    }
+}
+
 /// Draw the stats widget at the given position
 pub fn draw_stats_widget(
     stdout: &mut Stdout,
@@ -117,20 +204,22 @@ pub fn draw_stats_widget(
     stats: &SessionStats,
     cloud_status: Option<&CloudStatus>,
     is_paired: bool,
+    pairing_code: Option<&str>,
 ) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
     // 1-col left margin so content doesn't sit flush against the separator/edge.
     write!(stdout, " ")?;
 
-    // Use compact mode when we have 4 or fewer content rows (status_rows <= 5)
-    // Compact mode: header + 2 rows with abbreviated two-column layout
-    let compact = area.height <= 5;
+    // Compact mode triggers when the widget area has 4 or fewer rows total
+    // (header + 3 content). On a typical paired session that maps to terminals
+    // ~30 rows tall and shorter — anything roomier renders in normal mode.
+    let compact = area.height <= 4;
     let inner_width = area.width.saturating_sub(2);
 
     let content = if compact {
-        draw_compact_row(area.row, inner_width, stats, cloud_status, is_paired)
+        draw_compact_row(area.row, inner_width, stats, cloud_status, is_paired, pairing_code)
     } else {
-        draw_normal_row(area.row, inner_width, stats, cloud_status, is_paired)
+        draw_normal_row(area.row, inner_width, stats, cloud_status, is_paired, pairing_code)
     };
 
     write!(stdout, "{}", content)?;
@@ -180,43 +269,144 @@ fn format_cloud_header(cloud_status: Option<&CloudStatus>, is_paired: bool) -> S
     }
 }
 
+/// Build the dim "· <pair-text>" suffix shown next to the streaming label.
+/// The leading " · " is rendered outside the OSC hyperlink (per design — the
+/// link should only cover the meaningful pair text), and three width tiers
+/// degrade gracefully:
+///   - **Full**:      ` · Pair: ABC-DEF-GHI` (preferred)
+///   - **No label**:  ` · ABC-DEF-GHI`        (drops the "Pair: " prefix)
+///   - **Truncated**: ` · ABC-DEF…`           (drops trailing characters,
+///     ellipsis on the last cell — the URL still carries the full code)
+///
+/// Returns `Some((visible_width, ansi_string))` for the widest tier that
+/// fits in `available`, or `None` if not even the truncated tier (with at
+/// least 2 visible code chars) can fit.
+fn build_pair_suffix(code: &str, available: usize) -> Option<(usize, String)> {
+    if code.is_empty() {
+        return None;
+    }
+    let url = format!("https://drinkcrabigator.com/dashboard?setup={}", code);
+    let dim = fg(color::DARK_GRAY);
+    // " · " is 3 visible columns and is rendered *outside* the hyperlink so
+    // clicking only triggers on the pair text itself.
+    let prefix_visible: usize = 3;
+    let prefix = format!(" {}·{} ", dim, RESET);
+
+    let code_chars: Vec<char> = code.chars().collect();
+    let code_len = code_chars.len();
+
+    let make = |link_text: String, visible_text_width: usize| -> (usize, String) {
+        let inner = format!("{}{}{}", dim, link_text, RESET);
+        let linked = escape::hyperlink(&url, &inner);
+        let visible_width = prefix_visible + visible_text_width;
+        let ansi = format!("{}{}", prefix, linked);
+        (visible_width, ansi)
+    };
+
+    // Tier 1: " · Pair: <code>"
+    let label = "Pair: ";
+    let full_text_width = label.chars().count() + code_len;
+    if prefix_visible + full_text_width <= available {
+        let link_text = format!("{}{}", label, code);
+        return Some(make(link_text, full_text_width));
+    }
+
+    // Tier 2: " · <code>"
+    if prefix_visible + code_len <= available {
+        return Some(make(code.to_string(), code_len));
+    }
+
+    // Tier 3: " · <truncated…>" — keep at least 2 code chars + ellipsis.
+    let max_visible_code = available.saturating_sub(prefix_visible);
+    if max_visible_code < 3 {
+        return None;
+    }
+    // Reserve the last cell for the ellipsis; the URL still carries the full
+    // code so a click takes the user to the right setup link.
+    let keep = max_visible_code - 1;
+    let truncated: String = code_chars.iter().take(keep).collect::<String>() + "…";
+    let truncated_width = truncated.chars().count();
+    Some(make(truncated, truncated_width))
+}
+
+/// Build the full left-side header content: cloud status + optional pair-code
+/// suffix sized to whatever room is left between the cloud label and the
+/// right-aligned state indicator (with 2 cols of breathing room reserved).
+fn build_header_left(
+    cloud_status: Option<&CloudStatus>,
+    is_paired: bool,
+    pairing_code: Option<&str>,
+    width: usize,
+    state_width: usize,
+) -> (usize, String) {
+    let cloud = format_cloud_header(cloud_status, is_paired);
+    let cloud_width = strip_ansi_len(&cloud);
+    let Some(code) = pairing_code else {
+        return (cloud_width, cloud);
+    };
+    let available_for_pair = width
+        .saturating_sub(cloud_width)
+        .saturating_sub(state_width)
+        .saturating_sub(2);
+    if let Some((pair_width, pair_text)) = build_pair_suffix(code, available_for_pair) {
+        (cloud_width + pair_width, format!("{}{}", cloud, pair_text))
+    } else {
+        (cloud_width, cloud)
+    }
+}
+
 /// Draw a row in compact mode (two-column layout with separator)
-fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool) -> String {
+fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool, pairing_code: Option<&str>) -> String {
     // Split width into two columns with a separator
     let half = (width as usize) / 2;
+    // Full labels need ~30 cols per half ("Prompts N  Completions N" worst case).
+    // Below that, fall back to the abbreviated 4-char labels so two stats still
+    // fit side-by-side without overlapping the centre divider.
+    let full_labels = half >= 30;
 
     match row {
         1 => {
-            // Header: cloud status on left, state indicator on right
-            let header = format_cloud_header(cloud_status, is_paired);
+            // Header: cloud status (+ optional pair code) on left, state on right
             let state = format_state_indicator(stats.effective_state());
-            let header_len = strip_ansi_len(&header);
             let state_len = strip_ansi_len(&state);
+            let (header_len, header) = build_header_left(
+                cloud_status,
+                is_paired,
+                pairing_code,
+                width as usize,
+                state_len,
+            );
             let gap = (width as usize).saturating_sub(header_len + state_len);
             format!("{}{:gap$}{}", header, "", state, gap = gap)
         }
         2 => {
             // Row 2: Left column = Session + Thinking, Right column = Prompts + Completions
+            let (sess_label, think_label, pmt_label, fin_label) = if full_labels {
+                ("Session", "Thinking", "Prompts", "Completions")
+            } else {
+                ("Sess", "Thnk", "Pmt", "Fin")
+            };
+
             let sess = format!(
-                "{}◆ Sess{} {}{}{}",
-                fg(color::GRAY), RESET,
+                "{}◆ {}{} {}{}{}",
+                fg(color::GRAY), sess_label, RESET,
                 fg(color::BLUE), stats.format_work(), RESET
             );
             let thinking_val = stats.format_thinking().unwrap_or_else(|| "—".to_string());
             let think = format!(
-                "{}◇ Thnk{} {}{}{}",
-                fg(color::GRAY), RESET,
+                "{}◇ {}{} {}{}{}",
+                fg(color::GRAY), think_label, RESET,
                 fg(color::GREEN), thinking_val, RESET
             );
 
             let prm = format!(
-                "{}▸ Pmt{} {}{}{}",
-                fg(color::GRAY), RESET,
+                "{}▸ {}{} {}{}{}",
+                fg(color::GRAY), pmt_label, RESET,
                 fg(color::LIGHT_BLUE), stats.platform_stats.prompts, RESET
             );
             let cmp = format!(
-                "{}◂ Fin{} {}{}{}",
-                fg(color::GRAY), RESET,
+                "{}◂ {}{} {}{}{}",
+                fg(color::GRAY), fin_label, RESET,
                 fg(color::LIGHT_BLUE), stats.platform_stats.completions, RESET
             );
 
@@ -255,9 +445,10 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
                 let sparkline = render_sparkline(&bins, sparkline_width);
 
                 let elapsed = format_elapsed(stats.compressions_changed_at);
+                let comp_label_text = if full_labels { "Compactions" } else { "Cmp" };
                 let comp_label = format!(
-                    "{}⊜ Cmp{} {}{}{}{}{}{}",
-                    fg(color::GRAY), RESET,
+                    "{}⊜ {}{} {}{}{}{}{}{}",
+                    fg(color::GRAY), comp_label_text, RESET,
                     fg(color::PINK), compressions, RESET,
                     fg(color::GRAY), elapsed, RESET
                 );
@@ -282,14 +473,19 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
 }
 
 /// Draw a row in normal mode (full labels, single column)
-fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool) -> String {
+fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool, pairing_code: Option<&str>) -> String {
     match row {
         1 => {
-            // Header: cloud status on left, state indicator on right
-            let header = format_cloud_header(cloud_status, is_paired);
+            // Header: cloud status (+ optional pair code) on left, state on right
             let state = format_state_indicator(stats.effective_state());
-            let header_len = strip_ansi_len(&header);
             let state_len = strip_ansi_len(&state);
+            let (header_len, header) = build_header_left(
+                cloud_status,
+                is_paired,
+                pairing_code,
+                width as usize,
+                state_len,
+            );
             let gap = (width as usize).saturating_sub(header_len + state_len);
             format!("{}{:gap$}{}", header, "", state, gap = gap)
         }

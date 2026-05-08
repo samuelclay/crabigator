@@ -81,6 +81,26 @@ impl StatsColumnWidths {
 }
 
 
+/// Number of content rows the git widget actually renders for the given
+/// column width — accounting for the multi-column layout that kicks in when
+/// there are more files than rows. Returns the smaller of single-column and
+/// estimated multi-column row counts so the widget area can shrink instead of
+/// padding empty rows.
+pub fn git_natural_rows(git_state: &GitState, available_width: u16) -> u16 {
+    let n = git_state.files.len() as u16;
+    if n == 0 {
+        return 1;
+    }
+
+    // Average column slot: status icon + space + truncated name + space + stats.
+    const AVG_FILE_WIDTH: u32 = 35;
+    let row_w = (available_width as u32).max(1);
+    let cols = ((row_w + 2) / (AVG_FILE_WIDTH + 2)).max(1) as u16;
+    let multi_col_rows = n.div_ceil(cols);
+
+    1 + n.min(multi_col_rows)
+}
+
 /// Draw the git widget at the given position
 pub fn draw_git_widget(
     stdout: &mut Stdout,

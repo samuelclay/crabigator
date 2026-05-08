@@ -21,5 +21,6 @@ pub use rust::RustParser;
 pub use suggestion::SuggestionTracker;
 pub use summary::{DiffParser, DiffSummary};
 pub use swift::SwiftParser;
-pub use types::{ChangeNode, ChangeType, LanguageChanges, NodeKind};
+#[allow(unused_imports)]
+pub use types::{ChangeNode, ChangeType, FileChanges, LanguageChanges, NodeKind};
 pub use typescript::TypeScriptParser;

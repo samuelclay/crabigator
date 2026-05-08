@@ -12,13 +12,14 @@ use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::ide::IdeKind;
 use crate::parsers::DiffSummary;
-use crate::recap::{RecapState, RecapStatus};
+use crate::recap::RecapState;
 use crate::terminal::escape::{self, color, RESET};
 use crate::update::UpdateState;
 
 use super::{
-    draw_changes_widget, draw_git_widget, draw_pairing_banner, draw_recap_handoff,
-    draw_stats_widget, draw_update_banner, PairingState, WidgetArea, HANDOFF_RESERVED_ROWS,
+    changes_natural_rows, draw_changes_widget, draw_git_widget, draw_pairing_banner,
+    draw_recap_handoff, draw_stats_widget, draw_update_banner, git_natural_rows,
+    stats_natural_rows, PairingState, WidgetArea, HANDOFF_RESERVED_ROWS,
 };
 
 /// Layout information needed for rendering widgets
@@ -38,14 +39,70 @@ pub const MIN_STATUS_ROWS: u16 = MIN_WIDGET_DATA_ROWS + 1;
 /// Handoff rows are fixed between the two regions. Status rows include the
 /// widget separator, so MIN_STATUS_ROWS preserves four rows for widget content.
 pub fn split_terminal_rows(total_rows: u16) -> (u16, u16) {
-    let preferred_status_rows = ((total_rows as f32 * 0.2) as u16).max(MIN_STATUS_ROWS);
-    let max_status_rows = total_rows.saturating_sub(HANDOFF_RESERVED_ROWS + 1).max(1);
-    let status_rows = preferred_status_rows.min(max_status_rows);
+    let status_rows = preferred_status_rows_max(total_rows);
     let pty_rows = total_rows
         .saturating_sub(status_rows + HANDOFF_RESERVED_ROWS)
         .max(1);
 
     (pty_rows, status_rows)
+}
+
+/// Upper bound on status rows for the current terminal height — the historical
+/// "20% of screen, never less than MIN_STATUS_ROWS, never more than fits."
+pub fn preferred_status_rows_max(total_rows: u16) -> u16 {
+    let preferred_status_rows = ((total_rows as f32 * 0.2) as u16).max(MIN_STATUS_ROWS);
+    let max_status_rows = total_rows.saturating_sub(HANDOFF_RESERVED_ROWS + 1).max(1);
+    preferred_status_rows.min(max_status_rows)
+}
+
+/// No bottom-edge footer is rendered any more — the pair code lives in the
+/// stats header and the recap toast/hint live in the handoff strip — so no
+/// row is ever claimed below the widgets.
+fn desired_footer_rows(
+    _pairing_state: &PairingState,
+    _recap_state: &RecapState,
+    _recap_toast_visible: bool,
+) -> u16 {
+    0
+}
+
+/// Estimate the column widths the renderer will assign to git and changes,
+/// using the same proportions as `draw_status_bar`. Returned as
+/// `(git_width, changes_width)`. The estimate ignores the multi-column flex
+/// path because that decision depends on how many rows we ultimately give git
+/// — a rough split is enough for the natural-row heuristics.
+fn estimate_column_widths(total_cols: u16) -> (u16, u16) {
+    let stats_width = ((total_cols as f32) * 0.22).max(24.0) as u16;
+    let separators: u16 = 2;
+    let remaining = total_cols.saturating_sub(stats_width + separators);
+    let git_w = (remaining * 3) / 8;
+    let changes_w = remaining.saturating_sub(git_w);
+    (git_w, changes_w)
+}
+
+/// Compute the status row count needed to show every widget's natural content
+/// (plus the separator and any active footer), clamped between MIN_STATUS_ROWS
+/// and the historical 20% ceiling. The result lets the widget area shrink when
+/// content is shorter than the cap — including when git or changes use packed
+/// layouts that consume far fewer rows than there are items.
+pub fn compute_dynamic_status_rows(
+    total_rows: u16,
+    total_cols: u16,
+    session_stats: &SessionStats,
+    git_state: &GitState,
+    diff_summary: &DiffSummary,
+    pairing_state: &PairingState,
+    recap_state: &RecapState,
+    recap_toast_visible: bool,
+) -> u16 {
+    let (git_w, changes_w) = estimate_column_widths(total_cols);
+    let natural = stats_natural_rows(session_stats)
+        .max(git_natural_rows(git_state, git_w))
+        .max(changes_natural_rows(diff_summary, changes_w));
+    let footer = desired_footer_rows(pairing_state, recap_state, recap_toast_visible);
+    let desired = natural.saturating_add(1).saturating_add(footer); // +1 separator
+    let preferred_max = preferred_status_rows_max(total_rows);
+    desired.clamp(MIN_STATUS_ROWS, preferred_max)
 }
 
 /// Draw the entire status bar area with all widgets
@@ -111,6 +168,7 @@ pub fn draw_status_bar(
         layout.total_cols,
         recap_state,
         remaining_rows,
+        recap_toast_visible,
     )?;
     current_banner_row += recap_rows;
 
@@ -144,13 +202,9 @@ pub fn draw_status_bar(
     }
     write!(stdout, "{}", RESET)?;
     let is_paired = pairing_state.has_linked_devices;
-    let footer_rows = pairing_footer_rows(
-        layout.status_rows,
-        pairing_state,
-        recap_state,
-        recap_toast_visible,
-    );
-    let widget_status_rows = layout.status_rows.saturating_sub(footer_rows).max(1);
+    // No bottom footer any more — the entire status_rows budget goes to the
+    // widget separator and widget content.
+    let widget_status_rows = layout.status_rows.max(1);
     let widget_data_rows = widget_status_rows.saturating_sub(1);
 
     // Calculate column widths based on available height.
@@ -202,6 +256,7 @@ pub fn draw_status_bar(
             session_stats,
             cloud_status,
             is_paired,
+            pairing_state.pairing_code.as_deref(),
         )?;
 
         // Separator
@@ -246,63 +301,9 @@ pub fn draw_status_bar(
         )?;
     }
 
-    // Draw full-width footer row: Pair URL on the left (when unpaired) and
-    // an optional recap message (hint or startup toast) on the right.
-    if footer_rows > 0 {
-        if footer_rows == 2 {
-            // Separator line above the footer.
-            let sep_row = layout.pty_rows + HANDOFF_RESERVED_ROWS + widget_status_rows + 1;
-            write!(stdout, "{}", escape::cursor_to(sep_row, 1))?;
-            let line = "─".repeat(layout.total_cols as usize);
-            write!(stdout, "{}{}{}", escape::fg(color::DARK_GRAY), line, RESET)?;
-        }
-
-        let footer_row = layout.pty_rows + HANDOFF_RESERVED_ROWS + layout.status_rows;
-        // Start at column 2 so "Pair: " has the same 1-col edge margin as
-        // the OSC'd terminal title gets on the changes-widget header.
-        write!(stdout, "{}", escape::cursor_to(footer_row, 2))?;
-
-        // Left side: Pair URL hyperlink if we still need to pair.
-        // Account for the 1-col left margin (cursor starts at column 2).
-        let mut left_visible_width = 1usize;
-        if let Some(code) = pairing_state.pairing_code.as_deref() {
-            let url = format!("https://drinkcrabigator.com/dashboard?setup={}", code);
-            let url_display = format!("drinkcrabigator.com/dashboard?setup={}", code);
-            left_visible_width += "Pair: ".chars().count() + url_display.chars().count();
-            let label = format!("{}Pair: {}", escape::fg(color::DARK_GRAY), RESET);
-            let display = format!(
-                "{}{}{}{}",
-                label,
-                escape::fg(color::DARK_GRAY),
-                url_display,
-                RESET
-            );
-            write!(stdout, "\x1b]8;;{}\x07{}\x1b]8;;\x07", url, display)?;
-        }
-
-        // Reserve a 1-col right margin so the recap message doesn't sit
-        // flush against the terminal edge.
-        let usable_cols = (layout.total_cols as usize).saturating_sub(1);
-
-        // Right side: pick the appropriate recap message.
-        // - MissingKey  → persistent "Recaps off" hint with both commands.
-        // - Toast       → transient "Recaps enabled" confirmation.
-        let recap_message = if matches!(recap_state.status, RecapStatus::MissingKey) {
-            let available = usable_cols.saturating_sub(left_visible_width);
-            build_recap_hint(available)
-        } else if recap_toast_visible {
-            let available = usable_cols.saturating_sub(left_visible_width);
-            build_recap_toast(available)
-        } else {
-            None
-        };
-        if let Some((padding, formatted)) = recap_message {
-            // Indent slightly when the line would otherwise start with the
-            // recap message — keeps it from hugging the left edge.
-            let leading = if left_visible_width == 1 { 2 } else { padding };
-            write!(stdout, "{}{}", " ".repeat(leading), formatted)?;
-        }
-    }
+    // The Pair code lives in the stats header and the recap toast/hint live
+    // in the handoff strip above the PTY, so there's no longer a bottom
+    // footer row to render here.
 
     // Restore cursor to position known by vt100 parser
     // We use absolute positioning instead of CURSOR_SAVE/RESTORE because
@@ -320,124 +321,149 @@ pub fn draw_status_bar(
     Ok(())
 }
 
-/// Build the "recaps are off — here's how" hint shown to the right of the
-/// Pair URL when recaps are enabled but no Anthropic API key is configured.
-///
-/// Three tiers degrade gracefully as the terminal narrows:
-/// - **Verbose** (≥78 cols): explains what recaps are and how to opt in/out.
-/// - **Full**   (≥64 cols): drops the "Per-turn AI" preface but keeps both commands.
-/// - **Compact** (≥47 cols): just the two commands, no state label.
-///
-/// Returns `(left_padding_cols, formatted_text)` for the chosen tier, or
-/// `None` if the available width can't fit even the compact tier.
-fn build_recap_hint(available_cols: usize) -> Option<(usize, String)> {
-    // Visible-column counts for each rendered tier (no ANSI escapes counted).
-    const VERBOSE_VISIBLE: usize = 74; // "✦ Per-turn AI recaps off — crabigator key <key> · crabigator recap disable"
-    const FULL_VISIBLE: usize = 62; // "✦ Recaps off — crabigator key <key> · crabigator recap disable"
-    const COMPACT_VISIBLE: usize = 45; // "✦ crabigator key  ·  crabigator recap disable"
-    const VERBOSE_GAP: usize = 4;
-    const FULL_GAP: usize = 2;
-    const COMPACT_GAP: usize = 2;
-
-    let sparkle = format!("{}✦{}", escape::fg(color::YELLOW), RESET);
-    let dash = format!("{}—{}", escape::fg(color::DARK_GRAY), RESET);
-    let dot = format!("{}·{}", escape::fg(color::DARK_GRAY), RESET);
-    let key_cmd = format!("{}crabigator key{}", escape::fg(color::CYAN), RESET);
-    let placeholder = format!("{}<key>{}", escape::fg(color::GRAY), RESET);
-    let disable_cmd = format!(
-        "{}crabigator recap disable{}",
-        escape::fg(color::DARK_GRAY),
-        RESET
-    );
-
-    if available_cols >= VERBOSE_VISIBLE + VERBOSE_GAP {
-        let label = format!("{}Per-turn AI recaps off{}", escape::fg(color::GRAY), RESET);
-        let formatted = format!(
-            "{} {} {} {} {} {} {}",
-            sparkle, label, dash, key_cmd, placeholder, dot, disable_cmd
-        );
-        Some((available_cols - VERBOSE_VISIBLE, formatted))
-    } else if available_cols >= FULL_VISIBLE + FULL_GAP {
-        let label = format!("{}Recaps off{}", escape::fg(color::GRAY), RESET);
-        let formatted = format!(
-            "{} {} {} {} {} {} {}",
-            sparkle, label, dash, key_cmd, placeholder, dot, disable_cmd
-        );
-        Some((available_cols - FULL_VISIBLE, formatted))
-    } else if available_cols >= COMPACT_VISIBLE + COMPACT_GAP {
-        let formatted = format!("{} {}  {}  {}", sparkle, key_cmd, dot, disable_cmd);
-        Some((available_cols - COMPACT_VISIBLE, formatted))
-    } else {
-        None
-    }
-}
-
-/// Build the transient "Recaps enabled" toast shown for the first ten seconds
-/// of a session when recaps are armed with a usable Anthropic API key.
-///
-/// Two tiers:
-/// - **Full**    (≥30 cols): "✓ Per-turn AI recaps enabled".
-/// - **Compact** (≥18 cols): "✓ Recaps enabled".
-fn build_recap_toast(available_cols: usize) -> Option<(usize, String)> {
-    const FULL_VISIBLE: usize = 28;
-    const COMPACT_VISIBLE: usize = 16;
-    const FULL_GAP: usize = 2;
-    const COMPACT_GAP: usize = 2;
-
-    let check = format!("{}✓{}", escape::fg(color::GREEN), RESET);
-
-    if available_cols >= FULL_VISIBLE + FULL_GAP {
-        let label = format!(
-            "{}Per-turn AI recaps enabled{}",
-            escape::fg(color::GRAY),
-            RESET
-        );
-        let formatted = format!("{} {}", check, label);
-        Some((available_cols - FULL_VISIBLE, formatted))
-    } else if available_cols >= COMPACT_VISIBLE + COMPACT_GAP {
-        let label = format!("{}Recaps enabled{}", escape::fg(color::GRAY), RESET);
-        let formatted = format!("{} {}", check, label);
-        Some((available_cols - COMPACT_VISIBLE, formatted))
-    } else {
-        None
-    }
-}
-
-fn pairing_footer_rows(
-    status_rows: u16,
-    pairing_state: &PairingState,
-    recap_state: &RecapState,
-    recap_toast_visible: bool,
-) -> u16 {
-    if recap_state.prefers_handoff() {
-        return 0;
-    }
-
-    let needs_pair = pairing_state.pairing_code.is_some();
-    let needs_recap_message = matches!(recap_state.status, RecapStatus::MissingKey)
-        || (recap_toast_visible
-            && matches!(
-                recap_state.status,
-                RecapStatus::Waiting | RecapStatus::Updating | RecapStatus::Ready
-            ));
-
-    if !needs_pair && !needs_recap_message {
-        return 0;
-    }
-
-    let widget_data_rows = status_rows.saturating_sub(1);
-    widget_data_rows.saturating_sub(MIN_WIDGET_DATA_ROWS).min(2)
-}
+// Pair URL and recap messages now render in the stats header and handoff
+// strip respectively, so no functions are needed for footer-row sizing —
+// `desired_footer_rows` always returns 0.
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::GitState;
+    use crate::parsers::DiffSummary;
+    use crate::recap::RecapStatus;
 
     fn pairing_state() -> PairingState {
         PairingState {
             pairing_code: Some("ABC-DEF-GHI".to_string()),
             ..PairingState::default()
         }
+    }
+
+    #[test]
+    fn dynamic_status_rows_shrinks_when_widgets_have_minimal_content() {
+        // Stats always wants 7 rows (header + 6 body rows). Git/changes are
+        // empty defaults, so 7 + 1 separator = 8 status rows — comfortably
+        // under the 20% ceiling for a 60-row terminal.
+        let stats = SessionStats::default();
+        let git = GitState::default();
+        let diff = DiffSummary::default();
+        let pairing = PairingState::default();
+        let recap = RecapState::default();
+
+        let rows =
+            compute_dynamic_status_rows(60, 200, &stats, &git, &diff, &pairing, &recap, false);
+        assert_eq!(rows, 8);
+    }
+
+    #[test]
+    fn dynamic_status_rows_caps_at_preferred_max() {
+        // 200 git files want many rows. Even with a multi-column estimate we
+        // exceed the 20% ceiling on a 60-row terminal. Must not go past it.
+        let stats = SessionStats::default();
+        let mut git = GitState::default();
+        git.files = (0..200)
+            .map(|i| crate::git::FileStatus {
+                status: "M".to_string(),
+                path: format!("file_{i}.rs"),
+                additions: 1,
+                deletions: 0,
+                is_folder: false,
+                file_count: 0,
+            })
+            .collect();
+        let diff = DiffSummary::default();
+        let pairing = PairingState::default();
+        let recap = RecapState::default();
+
+        let rows =
+            compute_dynamic_status_rows(60, 120, &stats, &git, &diff, &pairing, &recap, false);
+        assert_eq!(rows, preferred_status_rows_max(60));
+    }
+
+    #[test]
+    fn dynamic_status_rows_reserves_room_for_pair_footer() {
+        // Pair code now lives in the stats header, not the footer — so an
+        // active pairing code on its own no longer claims any footer rows.
+        // Stats natural 7 + 1 separator = 8 status rows.
+        let stats = SessionStats::default();
+        let git = GitState::default();
+        let diff = DiffSummary::default();
+        let recap = RecapState::default();
+
+        let rows = compute_dynamic_status_rows(
+            80,
+            200,
+            &stats,
+            &git,
+            &diff,
+            &pairing_state(),
+            &recap,
+            false,
+        );
+        assert_eq!(rows, 8);
+    }
+
+    #[test]
+    fn dynamic_status_rows_floors_at_min_status_rows() {
+        // If the terminal is so short that the preferred max equals
+        // MIN_STATUS_ROWS, the dynamic value can't drop below it.
+        let stats = SessionStats::default();
+        let git = GitState::default();
+        let diff = DiffSummary::default();
+        let pairing = PairingState::default();
+        let recap = RecapState::default();
+
+        let rows =
+            compute_dynamic_status_rows(15, 100, &stats, &git, &diff, &pairing, &recap, false);
+        assert!(rows >= MIN_STATUS_ROWS);
+        assert!(rows <= preferred_status_rows_max(15));
+    }
+
+    #[test]
+    fn dynamic_status_rows_collapses_when_changes_pack_into_few_rows() {
+        // 18 Rust changes pack into ~6 rows on a wide terminal — far less than
+        // the 20-row total a one-per-row layout would need. The widget area
+        // should size to the packed estimate, leaving more room for the CLI.
+        use crate::parsers::{ChangeNode, ChangeType, FileChanges, NodeKind};
+
+        let stats = SessionStats::default();
+        let git = GitState::default();
+
+        let changes: Vec<ChangeNode> = (0..18)
+            .map(|i| ChangeNode {
+                kind: NodeKind::Function,
+                name: format!("symbol_{i}"),
+                additions: 5,
+                deletions: 1,
+                change_type: ChangeType::Added,
+                file_path: Some(format!("src/file_{i}.rs")),
+                line_number: None,
+                children: Vec::new(),
+            })
+            .collect();
+        let diff = DiffSummary {
+            files: vec![FileChanges {
+                path: "src/lib.rs".to_string(),
+                language: "Rust".to_string(),
+                changes,
+            }],
+            loading: false,
+        };
+        let pairing = PairingState::default();
+        let recap = RecapState::default();
+
+        // Wide terminal (250 cols): preferred ceiling is 20, but the natural
+        // packed layout for stats(7) and changes(~7) plus separator should
+        // come in well under that — typical of the user's bottom-screenshot
+        // resize complaint.
+        let rows =
+            compute_dynamic_status_rows(100, 250, &stats, &git, &diff, &pairing, &recap, false);
+        assert!(
+            rows < 12,
+            "expected packed layout to keep status_rows under 12, got {}",
+            rows
+        );
+        assert!(rows >= MIN_STATUS_ROWS);
     }
 
     #[test]
@@ -469,99 +495,31 @@ mod tests {
     }
 
     #[test]
-    fn recap_hint_hides_when_too_narrow() {
-        // Compact tier needs 45 visible cols + 2 gap = 47. Anything below hides.
-        assert!(build_recap_hint(46).is_none());
-        assert!(build_recap_hint(0).is_none());
-    }
-
-    #[test]
-    fn recap_hint_tiers_grow_with_available_width() {
-        // Compact tier (45 + 2 gap)
-        let (padding, formatted) = build_recap_hint(47).expect("compact tier should render");
-        assert_eq!(padding, 2);
-        assert_eq!(visible_width(&formatted), 45);
-
-        // Full tier (62 + 2 gap)
-        let (padding, formatted) = build_recap_hint(64).expect("full tier should render");
-        assert_eq!(padding, 2);
-        assert_eq!(visible_width(&formatted), 62);
-
-        // Verbose tier (74 + 4 gap)
-        let (padding, formatted) = build_recap_hint(78).expect("verbose tier should render");
-        assert_eq!(padding, 4);
-        assert_eq!(visible_width(&formatted), 74);
-
-        // Wider terminal grows the left padding (right-aligned hint).
-        let (padding, formatted) = build_recap_hint(120).expect("verbose tier should render");
-        assert_eq!(padding, 46);
-        assert_eq!(visible_width(&formatted), 74);
-    }
-
-    #[test]
-    fn recap_toast_tiers_grow_with_available_width() {
-        // Below the compact threshold the toast is hidden.
-        assert!(build_recap_toast(17).is_none());
-
-        // Compact tier (16 + 2 gap)
-        let (padding, formatted) = build_recap_toast(18).expect("compact tier should render");
-        assert_eq!(padding, 2);
-        assert_eq!(visible_width(&formatted), 16);
-
-        // Full tier (28 + 2 gap)
-        let (padding, formatted) = build_recap_toast(30).expect("full tier should render");
-        assert_eq!(padding, 2);
-        assert_eq!(visible_width(&formatted), 28);
-    }
-
-    #[test]
-    fn pairing_footer_uses_only_surplus_widget_rows() {
-        let pairing = pairing_state();
-        let recap = RecapState::default();
-
-        assert_eq!(
-            pairing_footer_rows(MIN_STATUS_ROWS, &pairing, &recap, false),
-            0
-        );
-        assert_eq!(
-            pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing, &recap, false),
-            1
-        );
-        assert_eq!(
-            pairing_footer_rows(MIN_STATUS_ROWS + 3, &pairing, &recap, false),
-            2
-        );
-    }
-
-    #[test]
-    fn footer_row_allocated_for_recap_message_without_pairing() {
-        // Already paired (no pairing code) but recap toast wants to show.
-        let pairing = PairingState::default();
-        let recap = RecapState {
-            enabled: true,
-            status: RecapStatus::Waiting,
-            ..RecapState::default()
-        };
-        assert_eq!(
-            pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing, &recap, true),
-            1
-        );
-
-        // Same state but the toast already faded → no footer needed.
-        assert_eq!(
-            pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing, &recap, false),
-            0
-        );
-
-        // MissingKey hint also justifies the footer on its own.
+    fn footer_helper_always_returns_zero() {
+        // The bottom-edge footer is gone — pair code lives in the stats
+        // header and recap messages live in the handoff strip — so the
+        // footer-row helper should never claim a row regardless of inputs.
         let recap_missing = RecapState {
             enabled: true,
             status: RecapStatus::MissingKey,
             ..RecapState::default()
         };
+        let recap_waiting = RecapState {
+            enabled: true,
+            status: RecapStatus::Waiting,
+            ..RecapState::default()
+        };
         assert_eq!(
-            pairing_footer_rows(MIN_STATUS_ROWS + 1, &pairing, &recap_missing, false),
-            1
+            desired_footer_rows(&pairing_state(), &recap_missing, false),
+            0
+        );
+        assert_eq!(
+            desired_footer_rows(&PairingState::default(), &recap_waiting, true),
+            0
+        );
+        assert_eq!(
+            desired_footer_rows(&PairingState::default(), &RecapState::default(), false),
+            0
         );
     }
 }

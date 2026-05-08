@@ -19,8 +19,9 @@ pub fn draw_recap_handoff(
     width: u16,
     recap: &RecapState,
     available_rows: u16,
+    toast_visible: bool,
 ) -> Result<u16> {
-    if available_rows == 0 || !recap.prefers_handoff() {
+    if available_rows == 0 {
         return Ok(0);
     }
 
@@ -30,7 +31,98 @@ pub fn draw_recap_handoff(
     if let RecapStatus::Failed(error) = &recap.status {
         return draw_recap_failure(stdout, row, width, available_rows, error);
     }
+    if matches!(recap.status, RecapStatus::MissingKey) {
+        return draw_recap_hint(stdout, row, width);
+    }
+    if toast_visible
+        && matches!(
+            recap.status,
+            RecapStatus::Waiting | RecapStatus::Updating | RecapStatus::Ready
+        )
+    {
+        return draw_recap_toast(stdout, row, width);
+    }
     Ok(0)
+}
+
+/// One-line "✦ Per-turn AI recaps off — crabigator key <key> · crabigator
+/// recap disable" hint, painted on the dark recap background. Three width
+/// tiers degrade gracefully:
+/// - **Verbose** (≥78 cols): full label + both commands.
+/// - **Full**    (≥64 cols): drops the "Per-turn AI" preface.
+/// - **Compact** (≥47 cols): just the two commands.
+/// Returns 1 row consumed when rendered, 0 if even the compact tier won't fit.
+fn draw_recap_hint(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
+    const VERBOSE_VISIBLE: usize = 74;
+    const FULL_VISIBLE: usize = 62;
+    const COMPACT_VISIBLE: usize = 45;
+
+    let usable = width as usize;
+    let dim = fg(color::DARK_GRAY);
+    let sparkle = format!("{}✦{}", fg(color::YELLOW), RESET_FG);
+    let dash = format!("{}—{}", fg(color::DARK_GRAY), RESET_FG);
+    let dot = format!("{}·{}", fg(color::DARK_GRAY), RESET_FG);
+    let key_cmd = format!("{}crabigator key{}", fg(color::CYAN), RESET_FG);
+    let placeholder = format!("{}<key>{}", fg(color::GRAY), RESET_FG);
+    let disable_cmd = format!(
+        "{}crabigator recap disable{}",
+        fg(color::DARK_GRAY),
+        RESET_FG
+    );
+
+    let body = if usable >= VERBOSE_VISIBLE + 4 {
+        let label = format!("{}Per-turn AI recaps off{}", fg(color::GRAY), RESET_FG);
+        format!(
+            "{} {} {} {} {} {} {}",
+            sparkle, label, dash, key_cmd, placeholder, dot, disable_cmd
+        )
+    } else if usable >= FULL_VISIBLE + 2 {
+        let label = format!("{}Recaps off{}", fg(color::GRAY), RESET_FG);
+        format!(
+            "{} {} {} {} {} {} {}",
+            sparkle, label, dash, key_cmd, placeholder, dot, disable_cmd
+        )
+    } else if usable >= COMPACT_VISIBLE + 2 {
+        format!("{} {}  {}  {}", sparkle, key_cmd, dot, disable_cmd)
+    } else {
+        return Ok(0);
+    };
+
+    fill_row(stdout, row, width)?;
+    write!(stdout, "{}", escape::cursor_to(row, 1))?;
+    // The dim-grey background on the row (from fill_row) reads as muted, so
+    // the colored sparkle/cmd accents pop without shouting.
+    write!(stdout, "{}{} {}{}", bg(color::BG_DARK), dim, body, RESET)?;
+    Ok(1)
+}
+
+/// One-line "✓ Per-turn AI recaps enabled" toast, painted on the dark recap
+/// background. Two width tiers; returns 0 if even the compact tier won't fit.
+fn draw_recap_toast(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
+    const FULL_VISIBLE: usize = 28;
+    const COMPACT_VISIBLE: usize = 16;
+
+    let usable = width as usize;
+    let check = format!("{}✓{}", fg(color::GREEN), RESET_FG);
+
+    let body = if usable >= FULL_VISIBLE + 2 {
+        let label = format!(
+            "{}Per-turn AI recaps enabled{}",
+            fg(color::GRAY),
+            RESET_FG
+        );
+        format!("{} {}", check, label)
+    } else if usable >= COMPACT_VISIBLE + 2 {
+        let label = format!("{}Recaps enabled{}", fg(color::GRAY), RESET_FG);
+        format!("{} {}", check, label)
+    } else {
+        return Ok(0);
+    };
+
+    fill_row(stdout, row, width)?;
+    write!(stdout, "{}", escape::cursor_to(row, 1))?;
+    write!(stdout, "{}{} {}{}", bg(color::BG_DARK), fg(color::DARK_GRAY), body, RESET)?;
+    Ok(1)
 }
 
 fn draw_latest_recap(

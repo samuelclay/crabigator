@@ -87,6 +87,11 @@ pub struct RecapState {
 }
 
 impl RecapState {
+    /// Whether the handoff strip is hosting a real recap (rather than the
+    /// toast or hint paths). Kept as a small helper for tests and future
+    /// callers that want to distinguish "actual recap content" from the
+    /// transient enable/disable messaging.
+    #[allow(dead_code)]
     pub fn prefers_handoff(&self) -> bool {
         self.latest.is_some() || matches!(self.status, RecapStatus::Failed(_))
     }
