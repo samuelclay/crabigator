@@ -12,7 +12,7 @@ use crate::ide::IdeKind;
 use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges, NodeKind};
 use crate::terminal::escape::{self, color, fg, hyperlink, RESET};
 
-use super::utils::{digit_count, strip_ansi_len, truncate_middle};
+use super::utils::{digit_count, strip_ansi_len, truncate_middle, truncate_path};
 use super::WidgetArea;
 
 /// Priority order for node kinds (lower = higher priority, appears first)
@@ -163,12 +163,28 @@ pub fn draw_changes_widget(
         let left_len = strip_ansi_len(&left);
 
         // Build right side: terminal title if available (light blue for subtle distinction).
+        // Reserve at least 1 col of gap between the language label and the
+        // title — without this, "Rust 61 changes" and the title can render
+        // glued together (the OSC link text starts immediately after).
+        const TITLE_MIN_GAP: usize = 1;
+        let max_title_chars = inner_width_usize
+            .saturating_sub(left_len + TITLE_MIN_GAP);
         let right = terminal_title
-            .map(|t| format!("{}{}{}", fg(color::LIGHT_BLUE), t, RESET))
+            .filter(|_| max_title_chars > 0)
+            .map(|t| {
+                let trimmed = if t.chars().count() > max_title_chars {
+                    truncate_path(t, max_title_chars)
+                } else {
+                    t.to_string()
+                };
+                format!("{}{}{}", fg(color::LIGHT_BLUE), trimmed, RESET)
+            })
             .unwrap_or_default();
         let right_len = strip_ansi_len(&right);
 
-        let pad = inner_width_usize.saturating_sub(left_len + right_len);
+        let pad = inner_width_usize
+            .saturating_sub(left_len + right_len)
+            .max(if right_len > 0 { TITLE_MIN_GAP } else { 0 });
         write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
         write!(stdout, " ")?;
         return Ok(());

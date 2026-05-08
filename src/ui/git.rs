@@ -203,7 +203,10 @@ pub fn draw_git_widget(
             })
             .collect();
 
-        // Calculate column widths based on actual content
+        // Calculate column widths based on actual content. Inter-column
+        // margin is tracked separately so it's not eaten by the per-column
+        // padding inside `format_file_entry` (which right-aligns the stats).
+        const COL_GAP: usize = 2;
         let mut col_widths: Vec<usize> = vec![0; num_cols];
         for (col_idx, col_width) in col_widths.iter_mut().enumerate() {
             let start = col_idx * available_rows;
@@ -211,10 +214,10 @@ pub fn draw_git_widget(
             for nw in natural_widths.iter().take(end).skip(start) {
                 *col_width = (*col_width).max(*nw);
             }
-            *col_width += 2; // Add margin between columns
         }
 
-        let total_width_needed: usize = col_widths.iter().sum();
+        let gap_total = COL_GAP * num_cols.saturating_sub(1);
+        let total_width_needed: usize = col_widths.iter().sum::<usize>() + gap_total;
 
         if total_width_needed <= inner_width {
             // Columns fit - distribute extra space proportionally to allow wider names
@@ -237,9 +240,14 @@ pub fn draw_git_widget(
                 }
             }
 
-            // Render with proper alignment
+            // Render with proper alignment, inserting a 2-col gap between
+            // adjacent columns so stats from the previous column don't run
+            // into the next column's status icon.
             let mut output = String::new();
             for (col_idx, col_width) in col_widths.iter().enumerate() {
+                if col_idx > 0 {
+                    output.push_str(&" ".repeat(COL_GAP));
+                }
                 let file_idx = col_idx * available_rows + row_idx;
                 if file_idx < num_files {
                     let file = &files[file_idx];
@@ -247,9 +255,10 @@ pub fn draw_git_widget(
                     let item = format_file_entry(file, display_name, *col_width, max_changes, &stats_widths, ide, cwd);
                     let item_len = strip_ansi_len(&item);
                     output.push_str(&item);
-                    // Pad to column width
                     let pad = col_width.saturating_sub(item_len);
                     output.push_str(&" ".repeat(pad));
+                } else {
+                    output.push_str(&" ".repeat(*col_width));
                 }
             }
             write!(stdout, "{}", output)?;
