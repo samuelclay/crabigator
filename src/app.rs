@@ -1274,6 +1274,22 @@ impl App {
             self.draw_status_bar()?;
         }
 
+        // Preempt the recap card on Enter when we're between turns. Without
+        // this, the previous turn's recap lingers under "Thinking" until the
+        // assistant CLI flushes user_message to its log and the next poll
+        // cycle observes prompts++. By that point it's already visually stale.
+        if key.code == KeyCode::Enter && !key.modifiers.contains(KeyModifiers::SHIFT) {
+            let effective = self.session_stats.effective_state();
+            if matches!(effective, SessionState::Ready | SessionState::Complete)
+                && self.recap_manager.note_user_submitted_prompt()
+            {
+                if let Some(ref mut client) = self.cloud_client {
+                    client.send_event(SessionEventBuilder::recap(self.recap_manager.state()));
+                }
+                self.draw_status_bar()?;
+            }
+        }
+
         forward_key_to_pty(key, &mut self.platform_pty)?;
         Ok(())
     }

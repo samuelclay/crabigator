@@ -234,6 +234,37 @@ impl RecapManager {
         hasher.finish()
     }
 
+    /// Optimistically clear the recap card when we know a new prompt was just
+    /// submitted, without waiting for the platform's prompts counter to tick.
+    ///
+    /// Called from the keyboard input path when Enter fires in Ready/Complete
+    /// state, before Codex/Claude has flushed its log line. Mirrors the
+    /// `stats.prompts > last_prompt_count` branch in `handle_platform_update`,
+    /// so when the real platform update lands it's a no-op.
+    ///
+    /// Returns true if the visible recap state changed.
+    pub fn note_user_submitted_prompt(&mut self) -> bool {
+        // Nothing to clear if the card was already empty or in an updating /
+        // disabled state.
+        if self.state.latest.is_none() && !matches!(self.state.status, RecapStatus::Ready) {
+            return false;
+        }
+        self.state.latest = None;
+        self.state.line_delta = Some(TurnLineDelta::default());
+        self.pending = None;
+        self.active_turn = None;
+        self.state.status = if self.state.enabled {
+            if self.api_key.is_some() {
+                RecapStatus::Updating
+            } else {
+                RecapStatus::MissingKey
+            }
+        } else {
+            RecapStatus::Disabled
+        };
+        true
+    }
+
     /// Update turn tracking from the latest platform stats.
     ///
     /// Returns true when renderable recap state changed.
