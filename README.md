@@ -7,7 +7,7 @@ Control Claude Code from anywhere. Answer prompts from your phone while Claude r
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 <p align="center">
-  <img src="https://drinkcrabigator.com/hero-screenshot.png" alt="Crabigator running Claude Code with status widgets" width="800">
+  <img src="assets/hero-screenshot.png" alt="Crabigator running Claude Code with status widgets" width="800">
 </p>
 
 ## What is Crabigator?
