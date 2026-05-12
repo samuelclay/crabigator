@@ -131,6 +131,16 @@ export const eventsJs = `
                         stateEl.className = 'state ' + event.state;
                         stateEl.textContent = event.state;
                     }
+                    // Optimistically clear the recap card the instant a new
+                    // turn starts. Complete/Ready → Thinking is a reliable
+                    // new-prompt signal — mid-turn tool calls don't pass
+                    // through Complete first. The real recap=updating event
+                    // arrives a moment later from the desktop and confirms.
+                    if (sessionData
+                        && event.state === 'thinking'
+                        && (sessionData.state === 'complete' || sessionData.state === 'ready')) {
+                        updateRecapCard(sessionId, { status: 'updating' });
+                    }
                     // Update session state for stats widget
                     if (sessionData) {
                         sessionData.state = event.state;
