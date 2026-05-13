@@ -113,7 +113,9 @@ export async function createSession(
     `).bind(sessionId, device_id, client_session_id, cwd, platform, now).run();
 
     // Unhide project if it was manually hidden
-    const device = await env.DB.prepare('SELECT group_id FROM devices WHERE id = ?').bind(device_id).first<{ group_id: string | null }>();
+    const device = await env.DB.prepare('SELECT group_id, name as device_name FROM devices WHERE id = ?')
+        .bind(device_id)
+        .first<{ group_id: string | null; device_name: string | null }>();
     if (device?.group_id) {
         const key = `hidden-projects:${device.group_id}`;
         const hiddenJson = await env.TOKENS.get(key);
@@ -142,6 +144,7 @@ export async function createSession(
             started_at: now,
             last_activity_at: now,
             is_active: true,
+            device_name: device?.device_name || undefined,
             stats: { prompts: 0, completions: 0, tool_calls: 0, thinking_seconds: 0 },
         },
     });

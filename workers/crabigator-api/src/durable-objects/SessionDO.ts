@@ -84,6 +84,7 @@ interface SessionInfo {
     state: string;
     started_at: number;
     device_id?: string;
+    device_name?: string;
     group_id?: string | null;
 }
 
@@ -254,6 +255,7 @@ export class SessionDO implements DurableObject {
         const platform = url.searchParams.get('platform') || 'claude';
         const startedAt = parseInt(url.searchParams.get('started_at') || '0', 10);
         const deviceId = url.searchParams.get('device_id') || undefined;
+        const deviceName = url.searchParams.get('device_name') || undefined;
         const groupId = url.searchParams.get('group_id') || undefined;
 
         // Store session info for disconnect notification
@@ -265,6 +267,7 @@ export class SessionDO implements DurableObject {
                 state: this.persistentState.state,
                 started_at: startedAt || Math.floor(Date.now() / 1000),
                 device_id: deviceId,
+                device_name: deviceName,
                 group_id: groupId || null,
             };
             await this.state.storage.put('sessionInfo', this.sessionInfo);

@@ -101,18 +101,19 @@ export class SessionListDO implements DurableObject {
     private async refreshMissingSessionMetadata(): Promise<void> {
         let updated = false;
         for (const [id, session] of this.activeSessions) {
-            if (session.device_id && session.group_id) {
+            if (session.device_id && session.group_id && session.device_name) {
                 continue;
             }
             const row = await this.env.DB.prepare(`
-                SELECT sessions.device_id as device_id, devices.group_id as group_id
+                SELECT sessions.device_id as device_id, devices.group_id as group_id, devices.name as device_name
                 FROM sessions
                 JOIN devices ON devices.id = sessions.device_id
                 WHERE sessions.id = ?
-            `).bind(id).first<{ device_id: string; group_id: string | null }>();
+            `).bind(id).first<{ device_id: string; group_id: string | null; device_name: string | null }>();
             if (row) {
                 session.device_id = session.device_id || row.device_id;
                 session.group_id = session.group_id || row.group_id || null;
+                session.device_name = session.device_name || row.device_name || undefined;
                 this.activeSessions.set(id, session);
                 updated = true;
             }
@@ -250,22 +251,35 @@ export class SessionListDO implements DurableObject {
     private async broadcast(event: unknown): Promise<void> {
         const eventObj = event as { type?: string; session?: ActiveSession | Partial<ActiveSession> };
         let groupId: string | null = null;
+        let deviceName: string | undefined;
 
         if (eventObj.session?.group_id) {
             groupId = eventObj.session.group_id;
+            deviceName = eventObj.session.device_name;
         } else if (eventObj.session?.id) {
             const existing = this.activeSessions.get(eventObj.session.id);
             if (existing?.group_id) {
                 groupId = existing.group_id;
+                deviceName = existing.device_name;
             } else if (eventObj.session.id) {
                 const row = await this.env.DB.prepare(`
-                    SELECT devices.group_id as group_id
+                    SELECT devices.group_id as group_id, devices.name as device_name
                     FROM sessions
                     JOIN devices ON devices.id = sessions.device_id
                     WHERE sessions.id = ?
-                `).bind(eventObj.session.id).first<{ group_id: string | null }>();
+                `).bind(eventObj.session.id).first<{ group_id: string | null; device_name: string | null }>();
                 groupId = row?.group_id || null;
+                deviceName = row?.device_name || undefined;
             }
+        }
+        if (groupId && !deviceName && eventObj.session?.id) {
+            const row = await this.env.DB.prepare(`
+                SELECT devices.name as device_name
+                FROM sessions
+                JOIN devices ON devices.id = sessions.device_id
+                WHERE sessions.id = ?
+            `).bind(eventObj.session.id).first<{ device_name: string | null }>();
+            deviceName = row?.device_name || undefined;
         }
 
         if (!groupId) {
@@ -276,6 +290,9 @@ export class SessionListDO implements DurableObject {
         let payload = eventObj;
         if (eventObj.session && typeof eventObj.session === 'object') {
             const { group_id: _groupId, device_id: _deviceId, ...rest } = eventObj.session as Record<string, unknown>;
+            if (deviceName && rest.device_name === undefined) {
+                rest.device_name = deviceName;
+            }
             payload = { ...eventObj, session: rest };
         }
 
@@ -414,16 +431,17 @@ export class SessionListDO implements DurableObject {
 
         try {
             const session = await request.json() as ActiveSession;
-            if (!session.group_id || !session.device_id) {
+            if (!session.group_id || !session.device_id || !session.device_name) {
                 const row = await this.env.DB.prepare(`
-                    SELECT sessions.device_id as device_id, devices.group_id as group_id
+                    SELECT sessions.device_id as device_id, devices.group_id as group_id, devices.name as device_name
                     FROM sessions
                     JOIN devices ON devices.id = sessions.device_id
                     WHERE sessions.id = ?
-                `).bind(session.id).first<{ device_id: string; group_id: string | null }>();
+                `).bind(session.id).first<{ device_id: string; group_id: string | null; device_name: string | null }>();
                 if (row) {
                     session.device_id = session.device_id || row.device_id;
                     session.group_id = session.group_id || row.group_id || null;
+                    session.device_name = session.device_name || row.device_name || undefined;
                 }
             }
             const now = Date.now();
@@ -551,6 +569,7 @@ export class SessionListDO implements DurableObject {
                 last_seen: lastSeen,
                 last_seen_age_ms: lastSeenAgeMs,
                 device_id: s.device_id ? (full ? s.device_id : s.device_id.slice(0, 8)) : undefined,
+                device_name: s.device_name ?? null,
                 group_id: s.group_id ? (full ? s.group_id : s.group_id.slice(0, 8)) : null,
             };
         });

@@ -391,11 +391,19 @@ router.get('/api/sessions/:id/connect', async (request, env, params) => {
 
     // Verify session belongs to device and get session info
     const session = await env.DB.prepare(
-        `SELECT sessions.id, sessions.cwd, sessions.platform, sessions.started_at, devices.group_id as group_id
+        `SELECT sessions.id, sessions.cwd, sessions.platform, sessions.started_at,
+                devices.group_id as group_id, devices.name as device_name
          FROM sessions
          JOIN devices ON devices.id = sessions.device_id
          WHERE sessions.id = ? AND sessions.device_id = ?`
-    ).bind(sessionId, device_id).first<{ id: string; cwd: string; platform: string; started_at: number; group_id: string | null }>();
+    ).bind(sessionId, device_id).first<{
+        id: string;
+        cwd: string;
+        platform: string;
+        started_at: number;
+        group_id: string | null;
+        device_name: string | null;
+    }>();
 
     if (!session) {
         return router.errorResponse('Session not found', 'NOT_FOUND', 404);
@@ -413,6 +421,9 @@ router.get('/api/sessions/:id/connect', async (request, env, params) => {
     url.searchParams.set('device_id', device_id);
     if (session.group_id) {
         url.searchParams.set('group_id', session.group_id);
+    }
+    if (session.device_name) {
+        url.searchParams.set('device_name', session.device_name);
     }
     return stub.fetch(new Request(url.toString(), request));
 });
