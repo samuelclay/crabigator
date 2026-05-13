@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cli::RecapCommand;
 use crate::config::Config;
@@ -655,8 +655,15 @@ fn collect_claude_latest_turn(content: &str) -> TurnTranscript {
                 else {
                     continue;
                 };
-                if let Some(prompt) = message_content.as_str() {
-                    user_prompt = Some(prompt.trim().to_string());
+                if let Some(prompt) = claude_user_prompt_text(message_content) {
+                    if is_claude_image_source_note(&prompt)
+                        && after_user_prompt
+                        && activity.is_empty()
+                        && user_prompt.is_some()
+                    {
+                        continue;
+                    }
+                    user_prompt = Some(prompt);
                     activity.clear();
                     after_user_prompt = true;
                 } else if after_user_prompt {
@@ -676,6 +683,50 @@ fn collect_claude_latest_turn(content: &str) -> TurnTranscript {
         user_prompt,
         activity,
     }
+}
+
+fn claude_user_prompt_text(content: &Value) -> Option<String> {
+    if let Some(text) = content.as_str() {
+        let trimmed = text.trim();
+        return (!trimmed.is_empty()).then(|| trimmed.to_string());
+    }
+
+    let blocks = content.as_array()?;
+    if blocks.iter().any(|block| {
+        block.get("type").and_then(|v| v.as_str()) == Some("tool_result")
+            || block.get("tool_use_id").is_some()
+    }) {
+        return None;
+    }
+
+    let text = blocks
+        .iter()
+        .filter_map(|block| match block.get("type").and_then(|v| v.as_str()) {
+            Some("text") => block.get("text").and_then(|v| v.as_str()),
+            _ => None,
+        })
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if !text.is_empty() {
+        Some(text)
+    } else if blocks
+        .iter()
+        .any(|block| block.get("type").and_then(|v| v.as_str()) == Some("image"))
+    {
+        Some("[image]".to_string())
+    } else {
+        None
+    }
+}
+
+fn is_claude_image_source_note(text: &str) -> bool {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .all(|line| line.starts_with("[Image: source:"))
 }
 
 fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
@@ -1403,6 +1454,27 @@ mod tests {
         assert!(turn.activity.contains("new answer"));
         assert!(turn.activity.contains("cargo test"));
         assert!(!turn.activity.contains("old answer"));
+    }
+
+    #[test]
+    fn claude_collector_starts_turn_for_multimodal_prompt() {
+        let transcript = r#"{"type":"user","message":{"content":[{"type":"text","text":"[Image #1] fix this layout"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"abc"}}]}}
+{"type":"attachment","message":{"content":"ignored"}}
+{"type":"user","message":{"content":[{"type":"text","text":"[Image: source: /tmp/layout.png]"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I found the layout issue."},{"type":"tool_use","name":"Read","input":{"file_path":"view.js"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"view.js contents"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Fixed it."}]}}"#;
+
+        let turn = collect_claude_latest_turn(transcript);
+        assert_eq!(
+            turn.user_prompt.as_deref(),
+            Some("[Image #1] fix this layout")
+        );
+        assert!(turn.activity.contains("I found the layout issue."));
+        assert!(turn.activity.contains("Read"));
+        assert!(turn.activity.contains("view.js contents"));
+        assert!(turn.activity.contains("Fixed it."));
+        assert!(!turn.activity.contains("[Image: source: /tmp/layout.png]"));
     }
 
     #[test]
