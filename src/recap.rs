@@ -134,7 +134,6 @@ struct TurnBaseline {
 struct RecapJob {
     platform: PlatformKind,
     transcript_path: Option<PathBuf>,
-    cwd: PathBuf,
     prompt_count: u32,
     model: String,
     api_key: String,
@@ -323,7 +322,7 @@ impl RecapManager {
             && effective_state == SessionState::Complete;
         if completed_turn {
             self.last_completion_count = stats.completions;
-            changed |= self.start_recap_if_ready(platform, stats, git_state, cwd);
+            changed |= self.start_recap_if_ready(platform, stats, git_state);
         }
 
         changed
@@ -334,7 +333,6 @@ impl RecapManager {
         platform: PlatformKind,
         stats: &PlatformStats,
         git_state: &GitState,
-        cwd: &Path,
     ) -> bool {
         if !self.state.enabled {
             self.active_turn = None;
@@ -363,7 +361,6 @@ impl RecapManager {
         let job = RecapJob {
             platform,
             transcript_path: stats.transcript_path.as_ref().map(PathBuf::from),
-            cwd: cwd.to_path_buf(),
             prompt_count: turn.prompt_count,
             model: self.state.model.clone(),
             api_key,
@@ -525,10 +522,7 @@ struct TurnTranscript {
 }
 
 fn collect_latest_turn(job: &RecapJob) -> Result<TurnTranscript> {
-    let path = job
-        .transcript_path
-        .clone()
-        .or_else(|| latest_codex_session_for_cwd(&job.cwd).ok().flatten());
+    let path = job.transcript_path.clone();
     let Some(path) = path else {
         return Ok(TurnTranscript {
             user_prompt: None,
@@ -772,72 +766,6 @@ fn format_json_preview(value: &Value) -> String {
     }
 }
 
-fn latest_codex_session_for_cwd(cwd: &Path) -> Result<Option<PathBuf>> {
-    let Some(home) = dirs::home_dir() else {
-        return Ok(None);
-    };
-    let sessions_dir = home.join(".codex").join("sessions");
-    if !sessions_dir.exists() {
-        return Ok(None);
-    }
-
-    let mut best: Option<(PathBuf, SystemTime)> = None;
-    collect_jsonl_files(&sessions_dir, &mut |path| {
-        if codex_session_matches_cwd(path, cwd).unwrap_or(false) {
-            if let Ok(metadata) = fs::metadata(path) {
-                if let Ok(modified) = metadata.modified() {
-                    let replace = best
-                        .as_ref()
-                        .map(|(_, best_modified)| modified > *best_modified)
-                        .unwrap_or(true);
-                    if replace {
-                        best = Some((path.to_path_buf(), modified));
-                    }
-                }
-            }
-        }
-    })?;
-    Ok(best.map(|(path, _)| path))
-}
-
-fn collect_jsonl_files(dir: &Path, visit: &mut dyn FnMut(&Path)) -> Result<()> {
-    for entry in fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_jsonl_files(&path, visit)?;
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
-            visit(&path);
-        }
-    }
-    Ok(())
-}
-
-fn codex_session_matches_cwd(path: &Path, cwd: &Path) -> Result<bool> {
-    let content = fs::read_to_string(path)?;
-    let cwd = cwd.to_string_lossy();
-    for line in content.lines().take(8) {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        if !matches!(
-            value.get("type").and_then(|v| v.as_str()),
-            Some("session_meta" | "turn_context")
-        ) {
-            continue;
-        }
-        if value
-            .get("payload")
-            .and_then(|p| p.get("cwd"))
-            .and_then(|v| v.as_str())
-            .is_some_and(|entry_cwd| entry_cwd == cwd)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 fn build_anthropic_request(job: &RecapJob, transcript: &TurnTranscript) -> Value {
     let size_hint = transcript.activity.chars().count();
     let preferred_variant = if size_hint < 3_500 {
@@ -1076,7 +1004,6 @@ mod tests {
         let job = RecapJob {
             platform: PlatformKind::Claude,
             transcript_path: None,
-            cwd: PathBuf::from("/tmp"),
             prompt_count: 2,
             model: DEFAULT_RECAP_MODEL.to_string(),
             api_key: "key".to_string(),
@@ -1112,6 +1039,37 @@ mod tests {
         assert!(turn.activity.contains("new answer"));
         assert!(turn.activity.contains("cargo test"));
         assert!(!turn.activity.contains("old answer"));
+    }
+
+    #[test]
+    fn codex_collector_resets_at_latest_user_prompt() {
+        let transcript = r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"old prompt"}]}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"old answer","phase":"final"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"new prompt"}]}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"new answer","phase":"final"}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cargo test\"}"}}"#;
+
+        let turn = collect_codex_latest_turn(transcript);
+        assert_eq!(turn.user_prompt.as_deref(), Some("new prompt"));
+        assert!(turn.activity.contains("new answer"));
+        assert!(turn.activity.contains("cargo test"));
+        assert!(!turn.activity.contains("old answer"));
+    }
+
+    #[test]
+    fn collect_latest_turn_without_transcript_path_is_empty() {
+        let job = RecapJob {
+            platform: PlatformKind::Codex,
+            transcript_path: None,
+            prompt_count: 1,
+            model: DEFAULT_RECAP_MODEL.to_string(),
+            api_key: "key".to_string(),
+            line_delta: TurnLineDelta::default(),
+        };
+
+        let turn = collect_latest_turn(&job).unwrap();
+        assert!(turn.user_prompt.is_none());
+        assert!(turn.activity.is_empty());
     }
 
     #[test]

@@ -207,15 +207,7 @@ impl CodexPlatform {
         if let Some((path, session_time, _)) = best {
             return Some((path, session_time));
         }
-        candidates
-            .iter()
-            .max_by_key(|candidate| candidate.modified)
-            .map(|candidate| {
-                (
-                    candidate.path.clone(),
-                    candidate.session_start.unwrap_or(candidate.modified),
-                )
-            })
+        None
     }
 }
 
@@ -281,5 +273,41 @@ impl Platform for CodexPlatform {
         state.stats.transcript_path = Some(session_path.to_string_lossy().to_string());
 
         Ok(state.stats.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ignores_stale_same_cwd_sessions_when_start_time_is_known() {
+        let app_start = SystemTime::UNIX_EPOCH + Duration::from_secs(10_000);
+        let stale_started = app_start - Duration::from_secs(60);
+        let threshold = app_start - Duration::from_secs(2);
+        let candidates = vec![SessionCandidate {
+            path: PathBuf::from("/tmp/outer-codex.jsonl"),
+            modified: app_start + Duration::from_secs(5),
+            session_start: Some(stale_started),
+        }];
+
+        assert!(CodexPlatform::choose_candidate(&candidates, threshold, app_start).is_none());
+    }
+
+    #[test]
+    fn accepts_current_session_candidate() {
+        let app_start = SystemTime::UNIX_EPOCH + Duration::from_secs(10_000);
+        let threshold = app_start - Duration::from_secs(2);
+        let path = PathBuf::from("/tmp/current-codex.jsonl");
+        let candidates = vec![SessionCandidate {
+            path: path.clone(),
+            modified: app_start + Duration::from_secs(1),
+            session_start: Some(app_start),
+        }];
+
+        let selected = CodexPlatform::choose_candidate(&candidates, threshold, app_start)
+            .expect("current session should be selected");
+        assert_eq!(selected.0, path);
+        assert_eq!(selected.1, app_start);
     }
 }
