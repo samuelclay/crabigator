@@ -1,0 +1,28 @@
+{
+  "name": "crabigator-commands",
+  "version": "0.1.0",
+  "description": "Project-local Crabigator release, deploy, and commit workflow slash commands shared with Claude Code.",
+  "author": {
+    "name": "Samuel Clay"
+  },
+  "license": "MIT",
+  "keywords": [
+    "crabigator",
+    "deploy",
+    "release",
+    "commands"
+  ],
+  "interface": {
+    "displayName": "Crabigator Commands",
+    "shortDescription": "Crabigator deploy and release commands",
+    "longDescription": "Project-local slash commands for Crabigator commit, deploy, and release workflows. Command bodies are symlinked from .claude/commands so Claude Code and Codex stay in sync.",
+    "developerName": "Samuel Clay",
+    "category": "Coding",
+    "capabilities": [
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Commit, push, and deploy Crabigator"
+    ]
+  }
+}
