@@ -283,6 +283,7 @@ export const sessionJs = `
                 updateSessionLimitBanner();
 
                 const container = document.getElementById('sessions');
+                const restorePagePosition = capturePageScrollRestorer();
 
                 if (filteredSessions.length === 0) {
                     const hasAnyActiveSession = data.sessions.length > 0;
@@ -326,6 +327,7 @@ export const sessionJs = `
                             emptyPollDelay = Math.min(emptyPollDelay * 2, MAX_EMPTY_POLL_DELAY);
                         }, emptyPollDelay);
                     }
+                    restorePagePosition();
                     return;
                 }
 
@@ -376,6 +378,7 @@ export const sessionJs = `
                 if (groupingMode === 'project') {
                     rerenderSessions();
                 }
+                restorePagePosition();
             } catch (err) {
                 sessionsLoadInFlight = false;
                 console.error('Failed to load sessions:', err);

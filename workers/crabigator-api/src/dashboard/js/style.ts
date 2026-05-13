@@ -289,22 +289,87 @@ export const styleJs = `
             });
         }
 
-        function preservePageScroll(callback) {
+        function getScrollAnchorReferenceY() {
+            const headerHeight = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--header-height'), 10);
+            return (Number.isFinite(headerHeight) ? headerHeight : 67) + 12;
+        }
+
+        function capturePageScrollAnchor() {
             const scrollEl = document.scrollingElement || document.documentElement;
-            const previousScrollTop = scrollEl ? scrollEl.scrollTop : 0;
-            const previousScrollLeft = scrollEl ? scrollEl.scrollLeft : 0;
-            const restorePageScroll = () => {
-                if (!scrollEl) return;
-                const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
-                scrollEl.scrollTop = Math.min(previousScrollTop, maxScrollTop);
-                scrollEl.scrollLeft = previousScrollLeft;
+            const fallbackTop = scrollEl ? scrollEl.scrollTop : 0;
+            const fallbackLeft = scrollEl ? scrollEl.scrollLeft : 0;
+            const referenceY = getScrollAnchorReferenceY();
+            const cards = Array.from(document.querySelectorAll('.session-card[id^="session-"]'));
+            let best = null;
+            let bestDistance = Number.POSITIVE_INFINITY;
+
+            for (const card of cards) {
+                const rect = card.getBoundingClientRect();
+                if (rect.bottom <= referenceY) {
+                    continue;
+                }
+
+                const intersectsReference = rect.top <= referenceY && rect.bottom >= referenceY;
+                const distance = intersectsReference ? 0 : Math.abs(rect.top - referenceY);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = {
+                        sessionId: card.id.replace('session-', ''),
+                        offsetFromCardTop: referenceY - rect.top,
+                    };
+                }
+
+                if (intersectsReference) {
+                    break;
+                }
+            }
+
+            return {
+                sessionId: best?.sessionId || null,
+                offsetFromCardTop: best?.offsetFromCardTop || 0,
+                fallbackTop,
+                fallbackLeft,
+                referenceY,
             };
+        }
+
+        function restorePageScrollAnchor(anchor) {
+            const scrollEl = document.scrollingElement || document.documentElement;
+            if (!scrollEl || !anchor) return;
+
+            const restorePageScroll = () => {
+                const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+                let targetTop = anchor.fallbackTop;
+
+                if (anchor.sessionId) {
+                    const card = document.getElementById('session-' + anchor.sessionId);
+                    if (card) {
+                        const cardTop = card.getBoundingClientRect().top + scrollEl.scrollTop;
+                        targetTop = cardTop + anchor.offsetFromCardTop - anchor.referenceY;
+                    }
+                }
+
+                scrollEl.scrollTop = Math.min(Math.max(0, targetTop), maxScrollTop);
+                scrollEl.scrollLeft = anchor.fallbackLeft;
+            };
+
+            restorePageScroll();
+            requestAnimationFrame(restorePageScroll);
+            requestAnimationFrame(() => requestAnimationFrame(restorePageScroll));
+        }
+
+        function capturePageScrollRestorer() {
+            const anchor = capturePageScrollAnchor();
+            return () => restorePageScrollAnchor(anchor);
+        }
+
+        function preservePageScroll(callback) {
+            const restorePageScroll = capturePageScrollRestorer();
 
             try {
                 callback();
             } finally {
                 restorePageScroll();
-                requestAnimationFrame(restorePageScroll);
             }
         }
 
