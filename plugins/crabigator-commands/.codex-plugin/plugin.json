@@ -12,10 +12,11 @@
     "release",
     "commands"
   ],
+  "skills": "./skills/",
   "interface": {
     "displayName": "Crabigator Commands",
     "shortDescription": "Crabigator deploy and release commands",
-    "longDescription": "Project-local slash commands for Crabigator commit, deploy, and release workflows. Command bodies are symlinked from .claude/commands so Claude Code and Codex stay in sync.",
+    "longDescription": "Project-local commands and skills for Crabigator commit, deploy, and release workflows. Command wrappers defer to .claude/commands so Claude Code and Codex stay in sync.",
     "developerName": "Samuel Clay",
     "category": "Coding",
     "capabilities": [
