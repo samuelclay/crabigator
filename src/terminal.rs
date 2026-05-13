@@ -13,12 +13,10 @@ pub mod input;
 pub mod osc;
 pub mod pty;
 
-// V2: Scroll region injection removed (was causing visual glitches)
-// DSR handling kept - Claude needs accurate cursor positions in PTY coordinate space
-#[allow(dead_code)]
-mod redraw;
+pub mod redraw;
 
 pub use dsr::{DsrChunk, DsrHandler};
 pub use input::forward_key_to_pty;
 pub use osc::OscScanner;
 pub use pty::PlatformPty;
+pub use redraw::ScrollRegionFilter;

@@ -24,7 +24,7 @@ use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
 use crate::platforms::{Platform, PlatformKind, SessionState};
 use crate::recap::RecapManager;
-use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty};
+use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, ScrollRegionFilter};
 use crate::ui::{
     compute_dynamic_status_rows, draw_status_bar, split_terminal_rows, throbber_frame_index,
     Layout, PairingState, HANDOFF_RESERVED_ROWS,
@@ -104,6 +104,8 @@ pub struct App {
     dsr_handler: DsrHandler,
     /// Scans for OSC title sequences from the CLI
     osc_scanner: OscScanner,
+    /// Keeps child PTY scroll-region resets constrained to Crabigator's PTY area
+    scroll_region_filter: ScrollRegionFilter,
     /// Terminal title extracted from OSC sequences (e.g., "Claude Code Ghostty Integration")
     terminal_title: Option<String>,
     /// History of all terminal titles during this session
@@ -246,6 +248,7 @@ impl App {
             capture_manager,
             dsr_handler: DsrHandler::new(),
             osc_scanner: OscScanner::new(),
+            scroll_region_filter: ScrollRegionFilter::new(pty_rows),
             terminal_title: None,
             title_history: Vec::new(),
             initial_git_time_ms: None,
@@ -859,16 +862,27 @@ impl App {
                     if passthrough.is_empty() {
                         continue;
                     }
-                    wrote_output = true;
 
-                    // Capture through our internal vt100 parser
+                    // Keep debug capture tied to the real PTY stream, then
+                    // render/process the virtualized stream that the user's
+                    // terminal actually sees.
                     if let Err(e) = self.capture_manager.capture_output(&passthrough) {
                         eprintln!("Capture error: {}", e);
                     }
-                    self.platform_pty.process_output(&passthrough);
+                    let scroll_region_result = self.scroll_region_filter.scan(&passthrough);
+                    if scroll_region_result.needs_redraw {
+                        self.last_status_bar_hash = None;
+                    }
+                    let terminal_output = scroll_region_result.output;
+                    if terminal_output.is_empty() {
+                        continue;
+                    }
+                    wrote_output = true;
+
+                    self.platform_pty.process_output(&terminal_output);
                     // Track autocomplete suggestions from raw PTY bytes
                     self.suggestion_tracker.process(&passthrough);
-                    stdout.write_all(&passthrough)?;
+                    stdout.write_all(&terminal_output)?;
                 }
                 DsrChunk::Request => {
                     // Respond with cursor position from our vt100 parser
@@ -920,6 +934,7 @@ impl App {
 
         self.status_rows = desired_status_rows;
         self.pty_rows = new_pty_rows;
+        self.scroll_region_filter.set_pty_rows(self.pty_rows);
 
         self.setup_scroll_region(false)?;
         self.platform_pty.resize(self.total_cols, self.pty_rows)?;
@@ -1332,6 +1347,7 @@ impl App {
             .total_rows
             .saturating_sub(new_status_rows + HANDOFF_RESERVED_ROWS)
             .max(1);
+        self.scroll_region_filter.set_pty_rows(self.pty_rows);
 
         // Re-setup scroll region for new size (not initial, don't scroll content)
         self.setup_scroll_region(false)?;
