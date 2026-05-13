@@ -22,7 +22,7 @@ use crate::hooks::SessionStats;
 use crate::ide::{self, IdeKind};
 use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
-use crate::platforms::{Platform, SessionState};
+use crate::platforms::{Platform, PlatformKind, SessionState};
 use crate::recap::RecapManager;
 use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty};
 use crate::ui::{
@@ -53,6 +53,18 @@ const STATUS_DRAW_INTERVAL_IDLE: Duration = Duration::from_secs(1);
 /// The server uses a much larger missed-heartbeat window before culling, so a
 /// single missed send does not hide a valid session.
 const CLOUD_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
+/// Gap between remote text injection and submit for most CLIs.
+const DEFAULT_REMOTE_ANSWER_SUBMIT_DELAY: Duration = Duration::from_millis(10);
+/// Codex treats a fast text+Enter burst as pasted multiline content, so keep
+/// the submit key outside its paste-burst window.
+const CODEX_REMOTE_ANSWER_SUBMIT_DELAY: Duration = Duration::from_millis(75);
+
+fn remote_answer_submit_delay(platform: PlatformKind) -> Duration {
+    match platform {
+        PlatformKind::Codex => CODEX_REMOTE_ANSWER_SUBMIT_DELAY,
+        PlatformKind::Claude => DEFAULT_REMOTE_ANSWER_SUBMIT_DELAY,
+    }
+}
 
 /// Result from background git refresh
 struct GitRefreshResult {
@@ -1648,6 +1660,7 @@ impl App {
 
     /// Check for answers and key commands from cloud and inject into PTY
     fn check_cloud_commands(&mut self) -> Result<()> {
+        let platform_kind = self.platform.kind();
         if let Some(ref mut client) = self.cloud_client {
             // Handle incoming text answers
             while let Some(answer) = client.try_recv_answer() {
@@ -1655,7 +1668,7 @@ impl App {
                 // Write text as a single block
                 self.platform_pty.write(text.as_bytes())?;
                 // Small delay to ensure text is processed before Enter
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                std::thread::sleep(remote_answer_submit_delay(platform_kind));
                 // Send Enter key (CR = 0x0D)
                 self.platform_pty.write(&[0x0D])?;
             }

@@ -94,6 +94,7 @@ export const inputJs = `
 
         function handleInputKeydown(event, sessionId) {
             if (event.key === 'Enter') {
+                event.preventDefault();
                 sendAnswer(sessionId);
             } else if (event.key === 'Tab') {
                 const suggestion = inputSuggestions.get(sessionId);
