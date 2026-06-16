@@ -125,8 +125,6 @@ pub fn draw_git_widget(
         } else {
             &git_state.branch
         };
-        let left = format!("{}{}{}", fg(color::LIGHT_GREEN), truncate_path(branch, 15), RESET);
-        let left_len = strip_ansi_len(&left);
 
         // Right side: loading, "✓ Clean", or file count
         let right = if git_state.loading {
@@ -140,7 +138,18 @@ pub fn draw_git_widget(
         };
         let right_len = strip_ansi_len(&right);
 
-        let pad = inner_width.saturating_sub(left_len + right_len);
+        // Let the branch name grow to fill the room left of the status, keeping
+        // at least one column of gap so it never collides with the file count.
+        // (Previously this was a fixed 15-char cap, which clipped branches that
+        // had plenty of room.)
+        const BRANCH_MIN_GAP: usize = 1;
+        let max_branch_chars = inner_width.saturating_sub(right_len + BRANCH_MIN_GAP);
+        let left = format!("{}{}{}", fg(color::LIGHT_GREEN), truncate_path(branch, max_branch_chars), RESET);
+        let left_len = strip_ansi_len(&left);
+
+        let pad = inner_width
+            .saturating_sub(left_len + right_len)
+            .max(BRANCH_MIN_GAP);
         write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
         write!(stdout, " ")?;
         return Ok(());
