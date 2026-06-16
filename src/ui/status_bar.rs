@@ -85,20 +85,23 @@ fn estimate_column_widths(total_cols: u16) -> (u16, u16) {
 /// and the historical 20% ceiling. The result lets the widget area shrink when
 /// content is shorter than the cap — including when git or changes use packed
 /// layouts that consume far fewer rows than there are items.
+#[allow(clippy::too_many_arguments)]
 pub fn compute_dynamic_status_rows(
     total_rows: u16,
     total_cols: u16,
     session_stats: &SessionStats,
     git_state: &GitState,
     diff_summary: &DiffSummary,
+    terminal_title: Option<&str>,
     pairing_state: &PairingState,
     recap_state: &RecapState,
     recap_toast_visible: bool,
 ) -> u16 {
     let (git_w, changes_w) = estimate_column_widths(total_cols);
+    let has_title = terminal_title.is_some_and(|t| !t.is_empty());
     let natural = stats_natural_rows(session_stats)
         .max(git_natural_rows(git_state, git_w))
-        .max(changes_natural_rows(diff_summary, changes_w));
+        .max(changes_natural_rows(diff_summary, changes_w, has_title));
     let footer = desired_footer_rows(pairing_state, recap_state, recap_toast_visible);
     let desired = natural.saturating_add(1).saturating_add(footer); // +1 separator
     let preferred_max = preferred_status_rows_max(total_rows);
@@ -351,7 +354,7 @@ mod tests {
         let recap = RecapState::default();
 
         let rows =
-            compute_dynamic_status_rows(60, 200, &stats, &git, &diff, &pairing, &recap, false);
+            compute_dynamic_status_rows(60, 200, &stats, &git, &diff, None, &pairing, &recap, false);
         assert_eq!(rows, 8);
     }
 
@@ -376,7 +379,7 @@ mod tests {
         let recap = RecapState::default();
 
         let rows =
-            compute_dynamic_status_rows(60, 120, &stats, &git, &diff, &pairing, &recap, false);
+            compute_dynamic_status_rows(60, 120, &stats, &git, &diff, None, &pairing, &recap, false);
         assert_eq!(rows, preferred_status_rows_max(60));
     }
 
@@ -396,6 +399,7 @@ mod tests {
             &stats,
             &git,
             &diff,
+            None,
             &pairing_state(),
             &recap,
             false,
@@ -414,7 +418,7 @@ mod tests {
         let recap = RecapState::default();
 
         let rows =
-            compute_dynamic_status_rows(15, 100, &stats, &git, &diff, &pairing, &recap, false);
+            compute_dynamic_status_rows(15, 100, &stats, &git, &diff, None, &pairing, &recap, false);
         assert!(rows >= MIN_STATUS_ROWS);
         assert!(rows <= preferred_status_rows_max(15));
     }
@@ -457,7 +461,7 @@ mod tests {
         // come in well under that — typical of the user's bottom-screenshot
         // resize complaint.
         let rows =
-            compute_dynamic_status_rows(100, 250, &stats, &git, &diff, &pairing, &recap, false);
+            compute_dynamic_status_rows(100, 250, &stats, &git, &diff, None, &pairing, &recap, false);
         assert!(
             rows < 12,
             "expected packed layout to keep status_rows under 12, got {}",

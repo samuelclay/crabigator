@@ -92,7 +92,11 @@ impl StatsColumnWidths {
 /// when per-row display would not fit. The widget header at row 1 already
 /// carries the first language's name, so only later languages add a header
 /// row of their own.
-pub fn changes_natural_rows(diff_summary: &DiffSummary, available_width: u16) -> u16 {
+pub fn changes_natural_rows(
+    diff_summary: &DiffSummary,
+    available_width: u16,
+    has_title: bool,
+) -> u16 {
     let langs = diff_summary.by_language();
     if langs.is_empty() {
         return 1; // just the widget header (or "no changes")
@@ -106,7 +110,7 @@ pub fn changes_natural_rows(diff_summary: &DiffSummary, available_width: u16) ->
     let row_w = (available_width as u32).max(1);
     let items_per_row = ((row_w + 2) / (AVG_ITEM_WIDTH + 2)).max(1) as u16;
 
-    let mut rows: u16 = langs.len() as u16; // 1 widget header + 1 per additional language
+    let mut rows: u16 = langs.len() as u16; // one header row per language
     for lang in &langs {
         let n = lang.changes.len() as u16;
         if n == 0 {
@@ -116,6 +120,11 @@ pub fn changes_natural_rows(diff_summary: &DiffSummary, available_width: u16) ->
         // Pick the smaller of one-per-row vs packed — both are valid layouts
         // and the widget will honour whichever the area allows.
         rows = rows.saturating_add(n.min(packed));
+    }
+    // The title claims its own top row. Without it the first language header
+    // doubles as the top row, so no extra row is needed.
+    if has_title {
+        rows = rows.saturating_add(1);
     }
     rows
 }
@@ -138,10 +147,22 @@ pub fn draw_changes_widget(
     // Get changes grouped by language
     let by_language = diff_summary.by_language();
 
-    // For row == 1, show header: "Language, N changes" on left, terminal title on right
+    let has_title = terminal_title.is_some_and(|t| !t.is_empty());
+
+    // The top row carries the terminal (OSC8) title across the full width when
+    // we have one — the language label ("JavaScript 16 changes") then drops to
+    // the row below as the first body row. Without a title, fall back to
+    // showing that language header on the top row so it isn't left blank.
     if area.row == 1 {
-        // Build left side: language + count or loading indicator
-        let left = if diff_summary.loading {
+        let header = if has_title {
+            let title = terminal_title.unwrap();
+            let trimmed = if title.chars().count() > inner_width_usize {
+                truncate_path(title, inner_width_usize)
+            } else {
+                title.to_string()
+            };
+            format!("{}{}{}", fg(color::LIGHT_BLUE), trimmed, RESET)
+        } else if diff_summary.loading {
             format!("{}Changes{} {}...{}", fg(color::ORANGE), RESET, fg(color::GRAY), RESET)
         } else if let Some(first_lang) = by_language.first() {
             let total: usize = by_language.iter().map(|l| l.changes.len()).sum();
@@ -160,32 +181,9 @@ pub fn draw_changes_widget(
             // No changes
             String::new()
         };
-        let left_len = strip_ansi_len(&left);
-
-        // Build right side: terminal title if available (light blue for subtle distinction).
-        // Reserve at least 1 col of gap between the language label and the
-        // title — without this, "Rust 61 changes" and the title can render
-        // glued together (the OSC link text starts immediately after).
-        const TITLE_MIN_GAP: usize = 1;
-        let max_title_chars = inner_width_usize
-            .saturating_sub(left_len + TITLE_MIN_GAP);
-        let right = terminal_title
-            .filter(|_| max_title_chars > 0)
-            .map(|t| {
-                let trimmed = if t.chars().count() > max_title_chars {
-                    truncate_path(t, max_title_chars)
-                } else {
-                    t.to_string()
-                };
-                format!("{}{}{}", fg(color::LIGHT_BLUE), trimmed, RESET)
-            })
-            .unwrap_or_default();
-        let right_len = strip_ansi_len(&right);
-
-        let pad = inner_width_usize
-            .saturating_sub(left_len + right_len)
-            .max(if right_len > 0 { TITLE_MIN_GAP } else { 0 });
-        write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
+        let header_len = strip_ansi_len(&header);
+        let pad = inner_width_usize.saturating_sub(header_len);
+        write!(stdout, "{}{:pad$}", header, "", pad = pad)?;
         write!(stdout, " ")?;
         return Ok(());
     }
@@ -199,8 +197,14 @@ pub fn draw_changes_widget(
     // Build rows to display
     let rows_data = build_rows_for_display(&by_language, inner_width, area.height, ide, cwd);
 
-    // Row index (0-based from row 1)
-    let row_idx = (area.row - 1) as usize;
+    // Map the terminal row to a built row. When the title occupies the top row,
+    // the first language header (rows_data[0]) shows on the row just below it;
+    // otherwise that header already lives on the top row, so we skip it here.
+    let row_idx = if has_title {
+        (area.row - 2) as usize
+    } else {
+        (area.row - 1) as usize
+    };
 
     if row_idx < rows_data.len() {
         let content = &rows_data[row_idx];
