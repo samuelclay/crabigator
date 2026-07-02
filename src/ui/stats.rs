@@ -7,13 +7,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 
-use crate::cloud::CloudStatus;
-use crate::terminal::escape::{self, color, fg, RESET};
-use crate::hooks::SessionStats;
-use crate::platforms::SessionState;
 use super::sparkline::render_sparkline;
+use super::time::{format_duration_compact, format_elapsed_age};
 use super::utils::strip_ansi_len;
 use super::WidgetArea;
+use crate::cloud::CloudStatus;
+use crate::hooks::SessionStats;
+use crate::platforms::SessionState;
+use crate::terminal::escape::{self, color, fg, RESET};
 
 /// Braille spinner frames for the thinking animation
 const THROBBER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -47,43 +48,11 @@ fn idle_seconds(idle_since: Option<f64>) -> Option<u64> {
     }
 }
 
-/// Format duration as compact string (e.g., "1m", "2h3m")
-fn format_duration_compact(secs: u64) -> String {
-    if secs >= 3600 {
-        let h = secs / 3600;
-        let m = (secs % 3600) / 60;
-        if m > 0 {
-            format!("{}h{}m", h, m)
-        } else {
-            format!("{}h", h)
-        }
-    } else {
-        let m = secs / 60;
-        format!("{}m", m)
-    }
-}
-
-/// Calculate elapsed seconds since a timestamp
-fn elapsed_since(timestamp: Option<f64>) -> Option<u64> {
-    let since = timestamp?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64();
-    Some((now - since) as u64)
-}
-
 /// Format elapsed time since a timestamp
 fn format_elapsed(timestamp: Option<f64>) -> String {
-    if let Some(secs) = elapsed_since(timestamp) {
-        if secs >= 60 {
-            format!(" {} ago", format_duration_compact(secs))
-        } else {
-            " just now".to_string()
-        }
-    } else {
-        String::new()
-    }
+    format_elapsed_age(timestamp)
+        .map(|age| format!(" {}", age))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -206,7 +175,11 @@ pub fn draw_stats_widget(
     is_paired: bool,
     pairing_code: Option<&str>,
 ) -> Result<()> {
-    write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
+    write!(
+        stdout,
+        "{}",
+        escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1)
+    )?;
     // 1-col left margin so content doesn't sit flush against the separator/edge.
     write!(stdout, " ")?;
 
@@ -217,9 +190,23 @@ pub fn draw_stats_widget(
     let inner_width = area.width.saturating_sub(2);
 
     let content = if compact {
-        draw_compact_row(area.row, inner_width, stats, cloud_status, is_paired, pairing_code)
+        draw_compact_row(
+            area.row,
+            inner_width,
+            stats,
+            cloud_status,
+            is_paired,
+            pairing_code,
+        )
     } else {
-        draw_normal_row(area.row, inner_width, stats, cloud_status, is_paired, pairing_code)
+        draw_normal_row(
+            area.row,
+            inner_width,
+            stats,
+            cloud_status,
+            is_paired,
+            pairing_code,
+        )
     };
 
     write!(stdout, "{}", content)?;
@@ -356,7 +343,14 @@ fn build_header_left(
 }
 
 /// Draw a row in compact mode (two-column layout with separator)
-fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool, pairing_code: Option<&str>) -> String {
+fn draw_compact_row(
+    row: u16,
+    width: u16,
+    stats: &SessionStats,
+    cloud_status: Option<&CloudStatus>,
+    is_paired: bool,
+    pairing_code: Option<&str>,
+) -> String {
     // Split width into two columns with a separator
     let half = (width as usize) / 2;
     // Full labels need ~30 cols per half ("Prompts N  Completions N" worst case).
@@ -389,25 +383,41 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
 
             let sess = format!(
                 "{}◆ {}{} {}{}{}",
-                fg(color::GRAY), sess_label, RESET,
-                fg(color::BLUE), stats.format_work(), RESET
+                fg(color::GRAY),
+                sess_label,
+                RESET,
+                fg(color::BLUE),
+                stats.format_work(),
+                RESET
             );
             let thinking_val = stats.format_thinking().unwrap_or_else(|| "—".to_string());
             let think = format!(
                 "{}◇ {}{} {}{}{}",
-                fg(color::GRAY), think_label, RESET,
-                fg(color::GREEN), thinking_val, RESET
+                fg(color::GRAY),
+                think_label,
+                RESET,
+                fg(color::GREEN),
+                thinking_val,
+                RESET
             );
 
             let prm = format!(
                 "{}▸ {}{} {}{}{}",
-                fg(color::GRAY), pmt_label, RESET,
-                fg(color::LIGHT_BLUE), stats.platform_stats.prompts, RESET
+                fg(color::GRAY),
+                pmt_label,
+                RESET,
+                fg(color::LIGHT_BLUE),
+                stats.platform_stats.prompts,
+                RESET
             );
             let cmp = format!(
                 "{}◂ {}{} {}{}{}",
-                fg(color::GRAY), fin_label, RESET,
-                fg(color::LIGHT_BLUE), stats.platform_stats.completions, RESET
+                fg(color::GRAY),
+                fin_label,
+                RESET,
+                fg(color::LIGHT_BLUE),
+                stats.platform_stats.completions,
+                RESET
             );
 
             // Left side: Session and Thinking with gap between
@@ -423,13 +433,7 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
             let right = format!("{}{:gap$}{}", prm, "", cmp, gap = right_gap.max(1));
 
             // Combine with separator
-            format!(
-                "{}{}│{}{}",
-                left,
-                fg(color::DARK_GRAY),
-                RESET,
-                right
-            )
+            format!("{}{}│{}{}", left, fg(color::DARK_GRAY), RESET, right)
         }
         3 => {
             // Row 3: Tools sparkline on left, compressions on right if any
@@ -448,14 +452,21 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
                 let comp_label_text = if full_labels { "Compactions" } else { "Cmp" };
                 let comp_label = format!(
                     "{}⊜ {}{} {}{}{}{}{}{}",
-                    fg(color::GRAY), comp_label_text, RESET,
-                    fg(color::PINK), compressions, RESET,
-                    fg(color::GRAY), elapsed, RESET
+                    fg(color::GRAY),
+                    comp_label_text,
+                    RESET,
+                    fg(color::PINK),
+                    compressions,
+                    RESET,
+                    fg(color::GRAY),
+                    elapsed,
+                    RESET
                 );
 
                 format!(
                     "{}{}{}│{}{}",
-                    label, sparkline,
+                    label,
+                    sparkline,
                     fg(color::DARK_GRAY),
                     RESET,
                     comp_label
@@ -473,7 +484,14 @@ fn draw_compact_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Op
 }
 
 /// Draw a row in normal mode (full labels, single column)
-fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Option<&CloudStatus>, is_paired: bool, pairing_code: Option<&str>) -> String {
+fn draw_normal_row(
+    row: u16,
+    width: u16,
+    stats: &SessionStats,
+    cloud_status: Option<&CloudStatus>,
+    is_paired: bool,
+    pairing_code: Option<&str>,
+) -> String {
     match row {
         1 => {
             // Header: cloud status (+ optional pair code) on left, state on right
@@ -512,8 +530,11 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
             // Prompts: count left-aligned after label, timer right-aligned
             let label = format!(
                 "{}⟩ Prompts{} {}{}{}",
-                fg(color::GRAY), RESET,
-                fg(color::LIGHT_BLUE), stats.platform_stats.prompts, RESET
+                fg(color::GRAY),
+                RESET,
+                fg(color::LIGHT_BLUE),
+                stats.platform_stats.prompts,
+                RESET
             );
             let elapsed = format_elapsed(stats.prompts_changed_at);
             let timer = format!("{}{}{}", fg(color::GRAY), elapsed, RESET);
@@ -526,8 +547,11 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
             // Completions: count left-aligned after label, timer right-aligned
             let label = format!(
                 "{}⋗ Completions{} {}{}{}",
-                fg(color::GRAY), RESET,
-                fg(color::LIGHT_BLUE), stats.platform_stats.completions, RESET
+                fg(color::GRAY),
+                RESET,
+                fg(color::LIGHT_BLUE),
+                stats.platform_stats.completions,
+                RESET
             );
             let elapsed = format_elapsed(stats.completions_changed_at);
             let timer = format!("{}{}{}", fg(color::GRAY), elapsed, RESET);
@@ -550,8 +574,11 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
             let compressions = stats.platform_stats.compressions;
             let label = format!(
                 "{}⊜ Compactions{} {}{}{}",
-                fg(color::GRAY), RESET,
-                fg(color::PINK), compressions, RESET
+                fg(color::GRAY),
+                RESET,
+                fg(color::PINK),
+                compressions,
+                RESET
             );
             if compressions > 0 {
                 let elapsed = format_elapsed(stats.compressions_changed_at);
@@ -574,8 +601,11 @@ fn draw_normal_row(row: u16, width: u16, stats: &SessionStats, cloud_status: Opt
                 if let Some(secs) = idle_seconds(stats.platform_stats.idle_since) {
                     format!(
                         "{}◌ Idle{} {}{}{}",
-                        fg(color::GRAY), RESET,
-                        fg(color::GRAY), format_duration_compact(secs), RESET
+                        fg(color::GRAY),
+                        RESET,
+                        fg(color::GRAY),
+                        format_duration_compact(secs),
+                        RESET
                     )
                 } else {
                     String::new()

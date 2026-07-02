@@ -139,7 +139,9 @@ export const eventsJs = `
                     if (sessionData
                         && event.state === 'thinking'
                         && (sessionData.state === 'complete' || sessionData.state === 'ready')) {
-                        updateRecapCard(sessionId, { status: 'updating' });
+                        const updatingRecap = { status: 'updating' };
+                        sessionData.recap = updatingRecap;
+                        updateRecapCard(sessionId, updatingRecap);
                     }
                     // Update session state for stats widget
                     if (sessionData) {
@@ -252,6 +254,9 @@ export const eventsJs = `
                     updatePromptPanel(sessionId, event.prompt);
                     break;
                 case 'recap':
+                    if (sessionData) {
+                        sessionData.recap = event;
+                    }
                     updateRecapCard(sessionId, event);
                     break;
                 case 'recap_history':

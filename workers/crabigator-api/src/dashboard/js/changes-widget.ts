@@ -181,6 +181,18 @@ export const changesWidgetJs = `
             return '<span class="rd-delta">Δ ' + parts.join(' ') + '</span>';
         }
 
+        function formatRecapMeta(recap, latest) {
+            const generatedAtMs = latest?.generated_at;
+            const age = generatedAtMs ? formatElapsed(generatedAtMs / 1000) : '';
+            const delta = formatLineDelta(recap.line_delta || latest?.line_delta);
+
+            if (age && delta) {
+                return '<span class="rd-age">' + escapeHtml(age) + '</span>&nbsp;&nbsp;' + delta;
+            }
+            if (age) return '<span class="rd-age">' + escapeHtml(age) + '</span>';
+            return delta;
+        }
+
         function updateRecapCard(sessionId, recap) {
             const card = document.getElementById('recap-' + sessionId);
             if (!card) return;
@@ -205,7 +217,7 @@ export const changesWidgetJs = `
                 headlineEl.textContent = latest.headline || '';
                 const bullets = (latest.bullets || []).slice(0, 2);
                 bulletsEl.innerHTML = bullets.map(b => '<div class="rb-line">' + escapeHtml(b) + '</div>').join('');
-                metaEl.innerHTML = formatLineDelta(recap.line_delta || latest.line_delta);
+                metaEl.innerHTML = formatRecapMeta(recap, latest);
             } else if (status === 'failed') {
                 headlineEl.textContent = recap.error
                     ? extractFriendlyRecapError(recap.error)
@@ -302,5 +314,13 @@ export const changesWidgetJs = `
             const list = widget.querySelector('.recaps-list');
             if (list) list.innerHTML = rowsHtml;
         }
+
+        setInterval(() => {
+            for (const [sessionId, sessionData] of sessions.entries()) {
+                if (sessionData?.recap?.status === 'ready' && sessionData.recap.latest?.generated_at) {
+                    updateRecapCard(sessionId, sessionData.recap);
+                }
+            }
+        }, 30000);
 
 `;

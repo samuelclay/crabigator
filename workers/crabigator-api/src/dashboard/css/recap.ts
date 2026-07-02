@@ -117,6 +117,7 @@ export const recapCss = `
     color: var(--text-dim);
     white-space: nowrap;
 }
+.session-recap-meta .rd-age { color: var(--text-dim); }
 .session-recap-meta .rd-delta { letter-spacing: 0.3px; }
 .session-recap-meta .rd-add { color: var(--accent-green); }
 .session-recap-meta .rd-del { color: var(--accent-red); }

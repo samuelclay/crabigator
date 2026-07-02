@@ -10,6 +10,8 @@ use anyhow::Result;
 use crate::recap::{RecapState, RecapStatus, RecapVariant, TurnLineDelta};
 use crate::terminal::escape::{self, bg, color, fg, RESET, RESET_FG};
 
+use super::time::format_elapsed_age;
+
 /// Rows reserved between PTY output and the widget separator.
 pub const HANDOFF_RESERVED_ROWS: u16 = 3;
 
@@ -106,11 +108,7 @@ fn draw_recap_toast(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
     let check = format!("{}✓{}", fg(color::GREEN), RESET_FG);
 
     let body = if usable >= FULL_VISIBLE + 2 {
-        let label = format!(
-            "{}Per-turn AI recaps enabled{}",
-            fg(color::GRAY),
-            RESET_FG
-        );
+        let label = format!("{}Per-turn AI recaps enabled{}", fg(color::GRAY), RESET_FG);
         format!("{} {}", check, label)
     } else if usable >= COMPACT_VISIBLE + 2 {
         let label = format!("{}Recaps enabled{}", fg(color::GRAY), RESET_FG);
@@ -121,7 +119,14 @@ fn draw_recap_toast(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
 
     fill_row(stdout, row, width)?;
     write!(stdout, "{}", escape::cursor_to(row, 1))?;
-    write!(stdout, "{}{} {}{}", bg(color::BG_DARK), fg(color::DARK_GRAY), body, RESET)?;
+    write!(
+        stdout,
+        "{}{} {}{}",
+        bg(color::BG_DARK),
+        fg(color::DARK_GRAY),
+        body,
+        RESET
+    )?;
     Ok(1)
 }
 
@@ -140,16 +145,12 @@ fn draw_latest_recap(
         .line_delta
         .or(Some(latest.line_delta))
         .map(format_line_delta);
+    let meta = format_recap_meta(latest.generated_at, delta);
 
     // Headline first — wraps onto the next row only if it overflows the
     // available body width on row 1 (where the Δ delta lives).
     let headline = latest.headline.trim();
-    let headline_prefix = format!(
-        "{}{} ●{} ",
-        bg(color::BG_DARK),
-        fg(color::CYAN),
-        RESET_FG
-    );
+    let headline_prefix = format!("{}{} ●{} ", bg(color::BG_DARK), fg(color::CYAN), RESET_FG);
     let headline_indent = format!(
         "{}{}   {}",
         bg(color::BG_DARK),
@@ -166,7 +167,7 @@ fn draw_latest_recap(
         &headline_prefix,
         &headline_indent,
         headline,
-        delta.as_deref(),
+        meta.as_deref(),
         &fg(color::WHITE),
     )?;
 
@@ -266,7 +267,12 @@ fn draw_wrapped(
         .max(1);
     let cont_body_budget = (width as usize).saturating_sub(cont_prefix_width).max(1);
 
-    let lines = wrap_to_widths(body, first_body_budget, cont_body_budget, available_rows as usize);
+    let lines = wrap_to_widths(
+        body,
+        first_body_budget,
+        cont_body_budget,
+        available_rows as usize,
+    );
 
     for (i, line) in lines.iter().enumerate() {
         let line_row = row + i as u16;
@@ -382,6 +388,17 @@ fn format_line_delta(delta: TurnLineDelta) -> String {
     let net = delta.additions - delta.deletions;
     let sign = if net >= 0 { "+" } else { "" };
     format!("{}Δ net {}{}{}", fg(color::DARK_GRAY), sign, net, RESET_FG)
+}
+
+fn format_recap_meta(generated_at_ms: u64, delta: Option<String>) -> Option<String> {
+    let age = format_elapsed_age(Some(generated_at_ms as f64 / 1000.0))
+        .map(|age| format!("{}{}{}", fg(color::GRAY), age, RESET_FG));
+
+    match (age, delta) {
+        (Some(age), Some(delta)) => Some(format!("{}  {}", age, delta)),
+        (Some(age), None) => Some(age),
+        (None, delta) => delta,
+    }
 }
 
 fn fill_row(stdout: &mut Stdout, row: u16, width: u16) -> Result<()> {
@@ -567,12 +584,7 @@ mod tests {
     #[test]
     fn wrap_uses_narrower_continuation_budget() {
         // First line gets 30 cols, continuations only 10.
-        let lines = wrap_to_widths(
-            "alpha beta gamma delta epsilon zeta eta theta",
-            30,
-            10,
-            5,
-        );
+        let lines = wrap_to_widths("alpha beta gamma delta epsilon zeta eta theta", 30, 10, 5);
         assert!(lines[0].chars().count() <= 30);
         for line in &lines[1..] {
             assert!(line.chars().count() <= 10);
@@ -581,7 +593,12 @@ mod tests {
 
     #[test]
     fn wrap_ellipsizes_overflow_on_last_allowed_line() {
-        let lines = wrap_to_widths("one two three four five six seven eight nine ten", 12, 12, 2);
+        let lines = wrap_to_widths(
+            "one two three four five six seven eight nine ten",
+            12,
+            12,
+            2,
+        );
         assert_eq!(lines.len(), 2);
         assert!(lines[1].ends_with('…'));
     }

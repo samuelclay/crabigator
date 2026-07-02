@@ -227,6 +227,9 @@ impl RecapManager {
         self.state.model.hash(&mut hasher);
         self.state.line_delta.hash(&mut hasher);
         self.state.latest.hash(&mut hasher);
+        if let Some(latest) = &self.state.latest {
+            recap_age_bucket(latest.generated_at).hash(&mut hasher);
+        }
         // Time-sensitive: included so the redraw tick clears the toast at
         // the 10-second mark even when no other state has changed.
         self.enabled_toast_visible().hash(&mut hasher);
@@ -984,6 +987,15 @@ fn now_unix_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn recap_age_bucket(generated_at_ms: u64) -> u64 {
+    let elapsed_secs = now_unix_ms().saturating_sub(generated_at_ms) / 1000;
+    if elapsed_secs < 60 {
+        0
+    } else {
+        elapsed_secs / 60
+    }
 }
 
 fn write_recap_cache(cwd: &Path, recap: &TurnRecap) -> Result<()> {
