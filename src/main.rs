@@ -17,6 +17,7 @@ mod recap;
 mod launcher;
 mod terminal;
 mod terminal_spawner;
+mod title;
 mod ui;
 mod update;
 

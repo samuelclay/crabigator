@@ -481,7 +481,7 @@ fn print_recap_status() -> Result<()> {
     Ok(())
 }
 
-fn read_anthropic_api_key_env() -> Option<String> {
+pub(crate) fn read_anthropic_api_key_env() -> Option<String> {
     std::env::var("ANTHROPIC_API_KEY")
         .ok()
         .map(|v| v.trim().to_string())
@@ -516,23 +516,32 @@ fn generate_turn_recap(job: RecapJob) -> Result<TurnRecap> {
 }
 
 #[derive(Debug)]
-struct TurnTranscript {
-    user_prompt: Option<String>,
-    activity: String,
+pub(crate) struct TurnTranscript {
+    pub(crate) user_prompt: Option<String>,
+    pub(crate) activity: String,
 }
 
 fn collect_latest_turn(job: &RecapJob) -> Result<TurnTranscript> {
-    let path = job.transcript_path.clone();
-    let Some(path) = path else {
+    collect_latest_turn_text(job.platform, job.transcript_path.as_deref())
+}
+
+/// Read and condense the most recent turn from a platform transcript log.
+/// Shared with the title generator, which summarizes the same activity into a
+/// short window title.
+pub(crate) fn collect_latest_turn_text(
+    platform: PlatformKind,
+    transcript_path: Option<&Path>,
+) -> Result<TurnTranscript> {
+    let Some(path) = transcript_path else {
         return Ok(TurnTranscript {
             user_prompt: None,
             activity: String::new(),
         });
     };
 
-    let content = fs::read_to_string(&path)
+    let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read transcript {}", path.display()))?;
-    let mut transcript = match job.platform {
+    let mut transcript = match platform {
         PlatformKind::Claude => collect_claude_latest_turn(&content),
         PlatformKind::Codex => collect_codex_latest_turn(&content),
     };
@@ -809,7 +818,7 @@ fn build_anthropic_request(job: &RecapJob, transcript: &TurnTranscript) -> Value
     })
 }
 
-fn call_anthropic(api_key: &str, body: Value) -> Result<String> {
+pub(crate) fn call_anthropic(api_key: &str, body: Value) -> Result<String> {
     let api_url = std::env::var("CRABIGATOR_RECAP_API_URL")
         .unwrap_or_else(|_| ANTHROPIC_MESSAGES_URL.to_string());
     let runtime = tokio::runtime::Builder::new_current_thread()

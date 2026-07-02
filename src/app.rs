@@ -24,6 +24,7 @@ use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
 use crate::platforms::{Platform, PlatformKind, SessionState};
 use crate::recap::RecapManager;
+use crate::title::TitleManager;
 use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, ScrollRegionFilter};
 use crate::ui::{
     compute_dynamic_status_rows, draw_status_bar, split_terminal_rows, throbber_frame_index,
@@ -106,8 +107,13 @@ pub struct App {
     osc_scanner: OscScanner,
     /// Keeps child PTY scroll-region resets constrained to Crabigator's PTY area
     scroll_region_filter: ScrollRegionFilter,
-    /// Terminal title extracted from OSC sequences (e.g., "Claude Code Ghostty Integration")
+    /// Native terminal title extracted from OSC sequences (e.g., "Claude Code Ghostty Integration")
     terminal_title: Option<String>,
+    /// Title actually shown in the changes widget / dashboard: the native title
+    /// when fresh, otherwise a Crabigator-generated one (marked with a glyph).
+    display_title: Option<String>,
+    /// Generates a short title when the agent publishes none (e.g. Codex)
+    title_manager: TitleManager,
     /// History of all terminal titles during this session
     title_history: Vec<String>,
     /// Time taken for initial git refresh (set once on first load)
@@ -250,6 +256,8 @@ impl App {
             osc_scanner: OscScanner::new(),
             scroll_region_filter: ScrollRegionFilter::new(pty_rows),
             terminal_title: None,
+            display_title: None,
+            title_manager: TitleManager::load(),
             title_history: Vec::new(),
             initial_git_time_ms: None,
             initial_diff_time_ms: None,
@@ -852,11 +860,14 @@ impl App {
                         }).to_string();
 
                         let is_default_title = clean_title == "Claude Code" || clean_title == "Codex CLI";
-                        if !clean_title.is_empty() && !is_default_title && !self.title_history.contains(&clean_title) {
-                            self.title_history.push(clean_title.clone());
-                        }
                         self.terminal_title = Some(clean_title.clone());
-                        self.send_cloud_title_event(clean_title);
+                        // A real (non-default) native title means the agent is
+                        // labeling its own work — defer to it and reset our
+                        // generated-title staleness clock.
+                        if !clean_title.is_empty() && !is_default_title {
+                            self.title_manager.note_native_title();
+                        }
+                        self.refresh_display_title();
                     }
 
                     if passthrough.is_empty() {
@@ -914,7 +925,7 @@ impl App {
             &self.session_stats,
             &self.git_state,
             &self.diff_summary,
-            self.terminal_title.as_deref(),
+            self.display_title.as_deref(),
             &self.pairing_state,
             self.recap_manager.state(),
             self.recap_manager.enabled_toast_visible(),
@@ -984,8 +995,8 @@ impl App {
             self.diff_summary.files.len().hash(&mut hasher);
             self.diff_summary.loading.hash(&mut hasher);
 
-            // Terminal title
-            self.terminal_title.hash(&mut hasher);
+            // Terminal title (the displayed one — native or generated)
+            self.display_title.hash(&mut hasher);
 
             // Cloud status
             if let Some(client) = &self.cloud_client {
@@ -1044,7 +1055,7 @@ impl App {
             &self.session_stats,
             &self.git_state,
             &self.diff_summary,
-            self.terminal_title.as_deref(),
+            self.display_title.as_deref(),
             self.ide,
             &self.cwd,
             cloud_status.as_ref(),
@@ -1060,7 +1071,7 @@ impl App {
             &self.session_stats,
             &self.git_state,
             &self.diff_summary,
-            self.terminal_title.as_deref(),
+            self.display_title.as_deref(),
             &self.title_history,
             Some(self.recap_manager.state()),
             self.recap_manager.history(),
@@ -1201,6 +1212,16 @@ impl App {
             }
         }
 
+        // Advance the generated-title state on the same tick. This also polls
+        // the background worker, so a finished title surfaces within one hook
+        // interval even when no further hook events arrive.
+        self.title_manager.update(
+            self.platform.kind(),
+            &self.session_stats.platform_stats,
+            new_effective_state,
+        );
+        self.refresh_display_title();
+
         // Redraw if effective state changed (and PTY is quiet)
         if old_effective_state != new_effective_state || recap_changed {
             // Clear stale suggestion when leaving ready/complete (prompt submitted)
@@ -1339,7 +1360,7 @@ impl App {
             &self.session_stats,
             &self.git_state,
             &self.diff_summary,
-            self.terminal_title.as_deref(),
+            self.display_title.as_deref(),
             &self.pairing_state,
             self.recap_manager.state(),
             self.recap_manager.enabled_toast_visible(),
@@ -1417,6 +1438,38 @@ impl App {
         if let Some(ref mut client) = self.cloud_client {
             let event = SessionEventBuilder::screen(content);
             client.send_event(event);
+        }
+    }
+
+    /// Decide which title to display: the native one while it's fresh,
+    /// otherwise our generated one (marked), falling back to the last native
+    /// title if we have nothing generated yet.
+    fn compute_display_title(&self) -> Option<String> {
+        if self.title_manager.native_is_fresh() {
+            return self.terminal_title.clone();
+        }
+        if let Some(generated) = self.title_manager.generated_title() {
+            return Some(format!("{}{}", crate::title::GENERATED_TITLE_MARKER, generated));
+        }
+        self.terminal_title.clone()
+    }
+
+    /// Recompute the displayed title and, when it changes, force a redraw,
+    /// record it in the title history, and publish it to the cloud/dashboard.
+    fn refresh_display_title(&mut self) {
+        let next = self.compute_display_title();
+        if next == self.display_title {
+            return;
+        }
+        self.display_title = next.clone();
+        self.last_status_bar_hash = None;
+
+        if let Some(title) = next {
+            let is_default = title == "Claude Code" || title == "Codex CLI";
+            if !title.is_empty() && !is_default && !self.title_history.contains(&title) {
+                self.title_history.push(title.clone());
+            }
+            self.send_cloud_title_event(title);
         }
     }
 
