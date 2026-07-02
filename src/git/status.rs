@@ -35,6 +35,7 @@ impl GitState {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn refresh(&self) -> Result<Self> {
         let cwd = std::env::current_dir()?;
         self.refresh_in_dir(&cwd).await

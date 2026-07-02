@@ -126,10 +126,11 @@ pub fn draw_git_widget(
         // Header with branch name on left, status on right.
         // Drop the leading space from the format — the outer 1-col margin
         // already provides it, and stacking would push the branch in by 2.
-        let branch = if git_state.branch.is_empty() {
-            "Git"
+        let cwd_label = format_cwd_for_header(cwd);
+        let left_label = if git_state.branch.is_empty() {
+            cwd_label
         } else {
-            &git_state.branch
+            format!("{} ‹{}›", cwd_label, git_state.branch)
         };
 
         // Right side: loading, "✓ Clean", or file count
@@ -153,7 +154,7 @@ pub fn draw_git_widget(
         let left = format!(
             "{}{}{}",
             fg(color::LIGHT_GREEN),
-            truncate_path(branch, max_branch_chars),
+            truncate_path(&left_label, max_branch_chars),
             RESET
         );
         let left_len = strip_ansi_len(&left);
@@ -373,6 +374,19 @@ pub fn draw_git_widget(
     write!(stdout, " ")?;
 
     Ok(())
+}
+
+fn format_cwd_for_header(cwd: &Path) -> String {
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(stripped) = cwd.strip_prefix(&home) {
+            if stripped.as_os_str().is_empty() {
+                return "~".to_string();
+            }
+            return format!("~/{}", stripped.to_string_lossy());
+        }
+    }
+
+    cwd.to_string_lossy().to_string()
 }
 
 /// Format a file entry compactly (icon + name + stats) for wrapped mode

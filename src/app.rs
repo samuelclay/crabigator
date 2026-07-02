@@ -10,11 +10,12 @@ use anyhow::Result;
 use crossterm::event::{Event, EventStream, MouseEvent};
 use futures_util::StreamExt;
 use std::io::{stdout, Write};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
-use crate::capture::{CaptureConfig, CaptureManager, ScrollbackUpdate};
+use crate::capture::{screen_to_string, CaptureConfig, CaptureManager, ScrollbackUpdate};
 use crate::cloud::{CloudClient, PairingStatusResponse, SessionEventBuilder};
 use crate::config::Config;
 use crate::git::GitState;
@@ -51,6 +52,8 @@ const HOOK_INTERVAL_IDLE: Duration = Duration::from_secs(2);
 const STATUS_DRAW_INTERVAL_ACTIVE: Duration = Duration::from_millis(50);
 /// Status draw interval when idle (just needs occasional refresh)
 const STATUS_DRAW_INTERVAL_IDLE: Duration = Duration::from_secs(1);
+/// Minimum gap between scans of the assistant-rendered status line for cwd.
+const CWD_DETECTION_INTERVAL: Duration = Duration::from_millis(100);
 /// Liveness ping for long-running idle wrappers.
 ///
 /// The server uses a much larger missed-heartbeat window before culling, so a
@@ -71,12 +74,55 @@ fn remote_answer_submit_delay(platform: PlatformKind) -> Duration {
 
 /// Result from background git refresh
 struct GitRefreshResult {
+    cwd: PathBuf,
+    generation: u64,
     git_state: GitState,
     diff_summary: DiffSummary,
     /// Time taken for git status refresh (ms)
     git_time_ms: u64,
     /// Time taken for diff summary parsing (ms)
     diff_time_ms: u64,
+}
+
+fn spawn_git_refresh(
+    tx: mpsc::Sender<GitRefreshResult>,
+    cwd: PathBuf,
+    generation: u64,
+    capture_timing: bool,
+) {
+    tokio::spawn(async move {
+        let git_state_tmp = GitState::new();
+        let diff_summary_tmp = DiffSummary::new();
+
+        let git_start = Instant::now();
+        let git_result = git_state_tmp.refresh_in_dir(&cwd).await;
+        let git_time_ms = if capture_timing {
+            git_start.elapsed().as_millis() as u64
+        } else {
+            0
+        };
+
+        let diff_start = Instant::now();
+        let diff_result = diff_summary_tmp.refresh_in_dir(&cwd).await;
+        let diff_time_ms = if capture_timing {
+            diff_start.elapsed().as_millis() as u64
+        } else {
+            0
+        };
+
+        let git_state = git_result.unwrap_or_default();
+        let diff_summary = diff_result.unwrap_or_default();
+        let _ = tx
+            .send(GitRefreshResult {
+                cwd,
+                generation,
+                git_state,
+                diff_summary,
+                git_time_ms,
+                diff_time_ms,
+            })
+            .await;
+    });
 }
 
 pub struct App {
@@ -96,6 +142,9 @@ pub struct App {
 
     /// Current working directory for platform stats
     cwd: std::path::PathBuf,
+    /// Launch cwd used to identify platform stats/log files. This stays stable
+    /// even when the assistant moves its shell into another worktree.
+    stats_cwd: std::path::PathBuf,
     /// Detected IDE for clickable hyperlinks
     ide: IdeKind,
     pty_rx: mpsc::Receiver<Vec<u8>>,
@@ -177,6 +226,8 @@ pub struct App {
     last_cloud_init_attempt: Option<Instant>,
     /// Pending cloud init result
     pending_cloud_init: Option<std::sync::mpsc::Receiver<anyhow::Result<CloudClient>>>,
+    /// Last time the PTY screen was scanned for a cwd status-line update
+    last_cwd_detection: Instant,
 }
 
 impl App {
@@ -244,7 +295,8 @@ impl App {
             total_cols: cols,
             pty_rows,
             status_rows,
-            cwd,
+            cwd: cwd.clone(),
+            stats_cwd: cwd,
             ide,
             pty_rx,
             mirror_publisher,
@@ -284,6 +336,7 @@ impl App {
             cloud_init_retry_count: 0,
             last_cloud_init_attempt: None,
             pending_cloud_init: None,
+            last_cwd_detection: Instant::now() - CWD_DETECTION_INTERVAL,
         })
     }
 
@@ -443,36 +496,16 @@ impl App {
         // Channel for receiving background git refresh results
         let (git_tx, mut git_rx) = mpsc::channel::<GitRefreshResult>(1);
         let mut git_refresh_pending = true; // Start with refresh pending
+        let mut git_refresh_generation = 1u64;
 
         // Spawn initial git refresh in background (non-blocking)
         // This allows the PTY to be visible immediately while git loads
-        {
-            let tx = git_tx.clone();
-            tokio::spawn(async move {
-                let git_state_tmp = GitState::new();
-                let diff_summary_tmp = DiffSummary::new();
-
-                // Time each refresh separately
-                let git_start = Instant::now();
-                let git_result = git_state_tmp.refresh().await;
-                let git_time_ms = git_start.elapsed().as_millis() as u64;
-
-                let diff_start = Instant::now();
-                let diff_result = diff_summary_tmp.refresh().await;
-                let diff_time_ms = diff_start.elapsed().as_millis() as u64;
-
-                let git_state = git_result.unwrap_or_default();
-                let diff_summary = diff_result.unwrap_or_default();
-                let _ = tx
-                    .send(GitRefreshResult {
-                        git_state,
-                        diff_summary,
-                        git_time_ms,
-                        diff_time_ms,
-                    })
-                    .await;
-            });
-        }
+        spawn_git_refresh(
+            git_tx.clone(),
+            self.cwd.clone(),
+            git_refresh_generation,
+            true,
+        );
 
         // Track whether we've sent an initial screen capture (after PTY has rendered)
         let mut sent_initial_screen = false;
@@ -520,7 +553,17 @@ impl App {
                     // after PTY output settles. This prevents drawing mid-burst.
 
                     // Update captures and send to cloud
-                    self.handle_pty_output_capture(&mut sent_initial_screen)?;
+                    let cwd_changed = self.handle_pty_output_capture(&mut sent_initial_screen)?;
+                    if cwd_changed {
+                        git_refresh_generation = git_refresh_generation.saturating_add(1);
+                        git_refresh_pending = true;
+                        spawn_git_refresh(
+                            git_tx.clone(),
+                            self.cwd.clone(),
+                            git_refresh_generation,
+                            false,
+                        );
+                    }
                 }
 
                 // Terminal events (keyboard, resize, paste) - async stream, no polling!
@@ -558,6 +601,9 @@ impl App {
 
                 // Git refresh results
                 Some(result) = git_rx.recv() => {
+                    if result.generation != git_refresh_generation || result.cwd != self.cwd {
+                        continue;
+                    }
                     self.git_state = result.git_state;
                     self.diff_summary = result.diff_summary;
                     git_refresh_pending = false;
@@ -593,23 +639,13 @@ impl App {
                     }
                     last_git_refresh = Instant::now();
                     git_refresh_pending = true;
-                    let tx = git_tx.clone();
-                    tokio::spawn(async move {
-                        let git_state_tmp = GitState::new();
-                        let diff_summary_tmp = DiffSummary::new();
-                        let (git_result, diff_result) = tokio::join!(
-                            git_state_tmp.refresh(),
-                            diff_summary_tmp.refresh()
-                        );
-                        let git_state = git_result.unwrap_or_default();
-                        let diff_summary = diff_result.unwrap_or_default();
-                        let _ = tx.send(GitRefreshResult {
-                            git_state,
-                            diff_summary,
-                            git_time_ms: 0,
-                            diff_time_ms: 0,
-                        }).await;
-                    });
+                    git_refresh_generation = git_refresh_generation.saturating_add(1);
+                    spawn_git_refresh(
+                        git_tx.clone(),
+                        self.cwd.clone(),
+                        git_refresh_generation,
+                        false,
+                    );
                 }
 
                 // Hook/stats refresh timer
@@ -643,6 +679,17 @@ impl App {
 
                     // Draw if quiet long enough AND debounce passed
                     if quiet_for >= PTY_SETTLE_TIME && since_draw >= draw_throttle {
+                        let cwd_changed = self.maybe_update_cwd_from_status_line(true);
+                        if cwd_changed {
+                            git_refresh_generation = git_refresh_generation.saturating_add(1);
+                            git_refresh_pending = true;
+                            spawn_git_refresh(
+                                git_tx.clone(),
+                                self.cwd.clone(),
+                                git_refresh_generation,
+                                false,
+                            );
+                        }
                         self.draw_status_bar()?;
                         last_status_draw = Instant::now();
                         last_throbber_draw = Instant::now();
@@ -816,7 +863,8 @@ impl App {
         self.mirror_publisher.cleanup();
 
         // Clean up stats file before exit
-        self.platform.cleanup_stats(&self.cwd.to_string_lossy());
+        self.platform
+            .cleanup_stats(&self.stats_cwd.to_string_lossy());
 
         // Reset scroll region before exit (don't clear status area - it will
         // naturally scroll away, and clearing leaves ugly blank space)
@@ -1031,6 +1079,7 @@ impl App {
             self.git_state.branch.hash(&mut hasher);
             self.git_state.files.len().hash(&mut hasher);
             self.git_state.loading.hash(&mut hasher);
+            self.cwd.hash(&mut hasher);
 
             // Diff summary
             self.diff_summary.files.len().hash(&mut hasher);
@@ -1125,7 +1174,9 @@ impl App {
     }
 
     /// Handle PTY output capture and cloud streaming
-    fn handle_pty_output_capture(&mut self, sent_initial_screen: &mut bool) -> Result<()> {
+    fn handle_pty_output_capture(&mut self, sent_initial_screen: &mut bool) -> Result<bool> {
+        let cwd_changed = self.maybe_update_cwd_from_status_line(false);
+
         let screen_to_send = if self.cloud_viewers_active {
             // Throttle to 100ms even with viewers — rendering the screen on every
             // PTY chunk is too expensive and causes typing lag in the main loop
@@ -1220,7 +1271,36 @@ impl App {
             let _ = self.capture_manager.maybe_update_scrollback();
         }
 
-        Ok(())
+        Ok(cwd_changed)
+    }
+
+    fn maybe_update_cwd_from_status_line(&mut self, force: bool) -> bool {
+        if !force && self.last_cwd_detection.elapsed() < CWD_DETECTION_INTERVAL {
+            return false;
+        }
+        self.last_cwd_detection = Instant::now();
+
+        let screen = screen_to_string(self.platform_pty.screen());
+        let Some(next_cwd) = crate::parsers::detect_status_line_cwd(&screen) else {
+            return false;
+        };
+        self.apply_detected_cwd(next_cwd)
+    }
+
+    fn apply_detected_cwd(&mut self, next_cwd: PathBuf) -> bool {
+        if next_cwd == self.cwd {
+            return false;
+        }
+
+        self.cwd = next_cwd;
+        self.git_state = GitState::new();
+        self.diff_summary = DiffSummary::new();
+        self.mirror_publisher
+            .set_cwd(self.cwd.to_string_lossy().to_string());
+        self.last_status_bar_hash = None;
+        self.last_cloud_git_hash = None;
+        self.last_cloud_changes_hash = None;
+        true
     }
 
     /// Handle hook/stats refresh
@@ -1232,7 +1312,7 @@ impl App {
         let old_effective_state = self.session_stats.effective_state();
         let old_last_updated = self.session_stats.platform_stats.last_updated;
         self.session_stats
-            .refresh_platform_stats(self.platform.as_ref(), &self.cwd.to_string_lossy());
+            .refresh_platform_stats(self.platform.as_ref(), &self.stats_cwd.to_string_lossy());
         let new_effective_state = self.session_stats.effective_state();
         let new_last_updated = self.session_stats.platform_stats.last_updated;
 

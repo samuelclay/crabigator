@@ -176,6 +176,15 @@ impl MirrorPublisher {
         self.session_dir().join("inspect.json")
     }
 
+    /// Update the mirrored working directory when Crabigator detects that the
+    /// assistant has moved to another project/worktree.
+    pub fn set_cwd(&mut self, cwd: String) {
+        if self.cwd != cwd {
+            self.cwd = cwd;
+            self.last_hash = 0;
+        }
+    }
+
     /// Attempt to publish if conditions are met (enabled, changed, throttle elapsed)
     /// Returns true if publish occurred
     #[allow(clippy::too_many_arguments)]
@@ -261,6 +270,7 @@ impl MirrorPublisher {
         let mut hasher = DefaultHasher::new();
 
         // Hash terminal title and history
+        self.cwd.hash(&mut hasher);
         terminal_title.hash(&mut hasher);
         title_history.hash(&mut hasher);
 

@@ -68,6 +68,35 @@ pub struct CaptureManager {
     raw_log_size: u64,
 }
 
+/// Render a vt100 screen into the same string format used for screen.txt.
+///
+/// This is intentionally independent from CaptureManager so callers can inspect
+/// the live PTY screen even when file capture is disabled.
+pub fn screen_to_string(screen: &vt100::Screen) -> String {
+    let (rows, cols) = screen.size();
+
+    let formatted_rows: Vec<Vec<u8>> =
+        crate::catch_quiet(|| screen.rows_formatted(0, cols).take(rows as usize).collect())
+            .unwrap_or_default();
+
+    let last_nonempty = formatted_rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.iter().any(|&b| !b.is_ascii_whitespace()))
+        .map(|(idx, _)| idx)
+        .next_back()
+        .unwrap_or(0);
+
+    let mut content = Vec::new();
+    for row_bytes in formatted_rows.into_iter().take(last_nonempty + 1) {
+        content.extend_from_slice(&row_bytes);
+        content.extend_from_slice(b"\x1b[0m");
+        content.push(b'\n');
+    }
+
+    String::from_utf8_lossy(&content).to_string()
+}
+
 impl CaptureManager {
     /// Create a new CaptureManager.
     ///
@@ -310,43 +339,16 @@ impl CaptureManager {
             return Ok(String::new());
         }
 
-        // Use the passed-in screen (platform_pty.screen()) which has proper terminal dimensions
-        // This is much smaller than our 10,000 row capture_parser (typically 40-60 rows)
-        let (rows, cols) = screen.size();
-
-        // Collect all rows (small fixed size - typically 40-60 rows).
-        // vt100 can panic on edge cases (e.g. empty row with cols > 0); swallow
-        // those panics — a lost snapshot is cheap, a crashed session is not.
-        let formatted_rows: Vec<Vec<u8>> =
-            crate::catch_quiet(|| screen.rows_formatted(0, cols).take(rows as usize).collect())
-                .unwrap_or_default();
-
-        // Find last non-empty row
-        let last_nonempty = formatted_rows
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| row.iter().any(|&b| !b.is_ascii_whitespace()))
-            .map(|(idx, _)| idx)
-            .next_back()
-            .unwrap_or(0);
-
-        // Build content up to last non-empty row
-        let mut content = Vec::new();
-        for row_bytes in formatted_rows.into_iter().take(last_nonempty + 1) {
-            content.extend_from_slice(&row_bytes);
-            // Reset ANSI attributes at end of row to prevent color leakage
-            // The vt100 crate's rows_formatted() doesn't emit reset codes
-            content.extend_from_slice(b"\x1b[0m");
-            content.push(b'\n');
-        }
+        let contents = screen_to_string(screen);
+        let content = contents.as_bytes();
 
         let screen_path = self.capture_dir.join("screen.txt");
         let tmp_path = self.capture_dir.join("screen.txt.tmp");
-        fs::write(&tmp_path, &content)?;
+        fs::write(&tmp_path, content)?;
         fs::rename(&tmp_path, &screen_path)?;
 
         self.last_screen_update = Instant::now();
-        Ok(String::from_utf8_lossy(&content).to_string())
+        Ok(contents)
     }
 
     /// Get the capture directory path.

@@ -2,6 +2,7 @@
 //!
 //! Parses git diffs to extract semantic information about code changes.
 
+mod cwd;
 mod generic;
 mod objc;
 pub mod permission_prompt;
@@ -13,6 +14,7 @@ mod swift;
 mod types;
 mod typescript;
 
+pub use cwd::detect_status_line_cwd;
 pub use generic::GenericParser;
 pub use objc::ObjCParser;
 pub use permission_prompt::{is_interrupted, strip_ansi_for_debug, PermissionPrompt};
