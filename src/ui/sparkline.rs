@@ -27,7 +27,12 @@ pub fn render_sparkline(bins: &[u32], width: usize) -> String {
     let has_activity = bins.iter().any(|&c| c > 0);
     if !has_activity {
         // No activity - show empty sparkline
-        return format!("{}{}{}", fg(color::GRAY), " ".repeat(width.min(bins.len())), RESET);
+        return format!(
+            "{}{}{}",
+            fg(color::GRAY),
+            " ".repeat(width.min(bins.len())),
+            RESET
+        );
     }
 
     // Build the sparkline string

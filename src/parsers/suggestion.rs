@@ -102,10 +102,7 @@ impl SuggestionTracker {
             .last()
             .map(|m| (m.start(), m));
 
-        let last_prompt = prompt_regex()
-            .find_iter(&text)
-            .last()
-            .map(|m| m.start());
+        let last_prompt = prompt_regex().find_iter(&text).last().map(|m| m.start());
 
         // If we found a suggestion, check if it's the last ❯ in the chunk
         if let Some((suggestion_pos, _)) = &last_suggestion {
@@ -153,7 +150,8 @@ impl SuggestionTracker {
         // Replace cursor-forward sequences with spaces: ESC[C (1) and ESC[nC (n)
         let cuf_re = regex::Regex::new(r"\x1b\[(\d*)C").unwrap();
         let normalized = cuf_re.replace_all(screen, |caps: &regex::Captures| {
-            let n: usize = caps.get(1)
+            let n: usize = caps
+                .get(1)
                 .and_then(|m| m.as_str().parse().ok())
                 .unwrap_or(1);
             " ".repeat(n)
@@ -189,10 +187,7 @@ mod tests {
         // Real raw PTY format from E2E testing
         let data = "❯ \x1b[7mT\x1b[27m\x1b[2mry \"how do I log an error?\"\x1b[22m";
         assert!(tracker.process(data.as_bytes()));
-        assert_eq!(
-            tracker.current(),
-            Some("Try \"how do I log an error?\"")
-        );
+        assert_eq!(tracker.current(), Some("Try \"how do I log an error?\""));
     }
 
     #[test]
@@ -314,10 +309,7 @@ mod tests {
         // Real output: ❯\xa0\x1b[7mT\x1b[2;27mry\x1b[C"refactor\x1b[Capp.rs"\x1b[0m
         let screen = "❯\u{a0}\x1b[7mT\x1b[2;27mry\x1b[C\"refactor\x1b[Capp.rs\"\x1b[0m";
         assert!(tracker.parse_screen(screen));
-        assert_eq!(
-            tracker.current(),
-            Some("Try \"refactor app.rs\"")
-        );
+        assert_eq!(tracker.current(), Some("Try \"refactor app.rs\""));
     }
 
     #[test]

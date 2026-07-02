@@ -316,14 +316,15 @@ pub fn get_cli_version(command: &str) -> Option<String> {
 }
 
 /// Check for updates via cloud endpoint (sends telemetry)
-async fn check_via_cloud(client: &reqwest::Client, cli_version: Option<String>) -> Result<(String, String)> {
+async fn check_via_cloud(
+    client: &reqwest::Client,
+    cli_version: Option<String>,
+) -> Result<(String, String)> {
     // Load device identity (creates one if doesn't exist)
     let identity = DeviceIdentity::load_or_create()?;
 
     // Get machine name
-    let machine_name = hostname::get()
-        .ok()
-        .and_then(|h| h.into_string().ok());
+    let machine_name = hostname::get().ok().and_then(|h| h.into_string().ok());
 
     let telemetry = TelemetryRequest {
         device_id: identity.device_id,

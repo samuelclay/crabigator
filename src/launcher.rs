@@ -144,17 +144,14 @@ pub fn install_launcher() -> Result<()> {
     let contents_dir = app.join("Contents");
     let macos_dir = contents_dir.join("MacOS");
 
-    fs::create_dir_all(&macos_dir)
-        .context("Failed to create launcher app bundle directories")?;
+    fs::create_dir_all(&macos_dir).context("Failed to create launcher app bundle directories")?;
 
     // Write Info.plist
-    fs::write(contents_dir.join("Info.plist"), INFO_PLIST)
-        .context("Failed to write Info.plist")?;
+    fs::write(contents_dir.join("Info.plist"), INFO_PLIST).context("Failed to write Info.plist")?;
 
     // Write launcher script
     let launcher_path = macos_dir.join("launcher");
-    fs::write(&launcher_path, launcher_script())
-        .context("Failed to write launcher script")?;
+    fs::write(&launcher_path, launcher_script()).context("Failed to write launcher script")?;
 
     // Make executable
     #[cfg(unix)]
@@ -178,8 +175,7 @@ pub fn install_launcher() -> Result<()> {
     }
 
     // Write version file
-    fs::write(version_file(), LAUNCHER_VERSION)
-        .context("Failed to write launcher version")?;
+    fs::write(version_file(), LAUNCHER_VERSION).context("Failed to write launcher version")?;
 
     Ok(())
 }

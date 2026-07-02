@@ -110,7 +110,17 @@ mod fixtures {
             false,
         );
 
-        let published = publisher.maybe_publish(&stats, &git_state, &diff_summary, None, &[], None, &[], Some(42), Some(10))?;
+        let published = publisher.maybe_publish(
+            &stats,
+            &git_state,
+            &diff_summary,
+            None,
+            &[],
+            None,
+            &[],
+            Some(42),
+            Some(10),
+        )?;
         if !published {
             bail!("mirror publish throttled or unchanged");
         }
@@ -206,8 +216,7 @@ mod fixtures {
             return Ok(());
         }
 
-        fs::create_dir_all(dest)
-            .with_context(|| format!("create dir {}", dest.display()))?;
+        fs::create_dir_all(dest).with_context(|| format!("create dir {}", dest.display()))?;
 
         for entry in fs::read_dir(src).with_context(|| format!("read dir {}", src.display()))? {
             let entry = entry?;

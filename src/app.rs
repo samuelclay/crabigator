@@ -24,8 +24,10 @@ use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
 use crate::platforms::{Platform, PlatformKind, SessionState};
 use crate::recap::RecapManager;
+use crate::terminal::{
+    escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, ScrollRegionFilter,
+};
 use crate::title::TitleManager;
-use crate::terminal::{escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, ScrollRegionFilter};
 use crate::ui::{
     compute_dynamic_status_rows, draw_status_bar, split_terminal_rows, throbber_frame_index,
     Layout, PairingState, HANDOFF_RESERVED_ROWS,
@@ -193,14 +195,8 @@ impl App {
         let (pty_rows, status_rows) = split_terminal_rows(rows);
 
         // Give the assistant CLI only the top portion
-        let platform_pty = PlatformPty::new(
-            pty_tx,
-            cols,
-            pty_rows,
-            platform.command(),
-            platform_args,
-        )
-        .await?;
+        let platform_pty =
+            PlatformPty::new(pty_tx, cols, pty_rows, platform.command(), platform_args).await?;
         let git_state = GitState::new();
         let diff_summary = DiffSummary::new();
         let session_stats = SessionStats::new();
@@ -218,7 +214,8 @@ impl App {
 
         // Create mirror publisher (always enabled for inspection by other instances)
         let session_id = std::env::var("CRABIGATOR_SESSION_ID").unwrap_or_default();
-        let mirror_publisher = MirrorPublisher::new(true, session_id.clone(), cwd_str.clone(), capture_enabled);
+        let mirror_publisher =
+            MirrorPublisher::new(true, session_id.clone(), cwd_str.clone(), capture_enabled);
 
         // Create capture manager for output streaming
         // Must match PTY dimensions for escape sequences to work correctly
@@ -310,7 +307,10 @@ impl App {
         };
 
         // Try to register session with cloud
-        match client.register_session(session_id, cwd, platform.kind().as_str()).await {
+        match client
+            .register_session(session_id, cwd, platform.kind().as_str())
+            .await
+        {
             Ok(cloud_session_id) => {
                 // Style: dim gray label, green checkmark, dim session ID
                 eprintln!(
@@ -463,12 +463,14 @@ impl App {
 
                 let git_state = git_result.unwrap_or_default();
                 let diff_summary = diff_result.unwrap_or_default();
-                let _ = tx.send(GitRefreshResult {
-                    git_state,
-                    diff_summary,
-                    git_time_ms,
-                    diff_time_ms,
-                }).await;
+                let _ = tx
+                    .send(GitRefreshResult {
+                        git_state,
+                        diff_summary,
+                        git_time_ms,
+                        diff_time_ms,
+                    })
+                    .await;
             });
         }
 
@@ -801,7 +803,9 @@ impl App {
             self.session_stats.tick();
             self.send_cloud_stats_event();
             if let Some(ref client) = self.cloud_client {
-                let _ = client.end_session(&self.session_stats, &self.title_history).await;
+                let _ = client
+                    .end_session(&self.session_stats, &self.title_history)
+                    .await;
             }
         }
 
@@ -849,17 +853,44 @@ impl App {
                     if let Some(t) = title {
                         // Check for Braille spinner prefix before stripping —
                         // active spinner means Claude is thinking (secondary signal)
-                        let has_braille_spinner = t.chars().next()
+                        let has_braille_spinner = t
+                            .chars()
+                            .next()
                             .is_some_and(|c| ('\u{2800}'..='\u{28FF}').contains(&c));
                         self.session_stats.set_title_spinner(has_braille_spinner);
 
                         // Strip leading progress spinner characters for history
-                        let clean_title = t.trim_start_matches(|c: char| {
-                            matches!(c, '*' | '✱' | '✲' | '✳' | '✴' | '✵' | '✶' | '✷' | '✸' | '✹' | '✺' | '✻' | '✼' | '✽' | '❇' | '❈' | '⟳' | '◐' | '◑' | '◒' | '◓' | ' ')
-                            || ('\u{2800}'..='\u{28FF}').contains(&c)
-                        }).to_string();
+                        let clean_title = t
+                            .trim_start_matches(|c: char| {
+                                matches!(
+                                    c,
+                                    '*' | '✱'
+                                        | '✲'
+                                        | '✳'
+                                        | '✴'
+                                        | '✵'
+                                        | '✶'
+                                        | '✷'
+                                        | '✸'
+                                        | '✹'
+                                        | '✺'
+                                        | '✻'
+                                        | '✼'
+                                        | '✽'
+                                        | '❇'
+                                        | '❈'
+                                        | '⟳'
+                                        | '◐'
+                                        | '◑'
+                                        | '◒'
+                                        | '◓'
+                                        | ' '
+                                ) || ('\u{2800}'..='\u{28FF}').contains(&c)
+                            })
+                            .to_string();
 
-                        let is_default_title = clean_title == "Claude Code" || clean_title == "Codex CLI";
+                        let is_default_title =
+                            clean_title == "Claude Code" || clean_title == "Codex CLI";
                         self.terminal_title = Some(clean_title.clone());
                         // A real (non-default) native title means the agent is
                         // labeling its own work — defer to it and reset our
@@ -982,9 +1013,19 @@ impl App {
             self.session_stats.work_seconds.hash(&mut hasher);
             self.session_stats.thinking_seconds().hash(&mut hasher);
             self.session_stats.platform_stats.prompts.hash(&mut hasher);
-            self.session_stats.platform_stats.completions.hash(&mut hasher);
-            self.session_stats.platform_stats.compressions.hash(&mut hasher);
-            self.session_stats.platform_stats.tools.len().hash(&mut hasher);
+            self.session_stats
+                .platform_stats
+                .completions
+                .hash(&mut hasher);
+            self.session_stats
+                .platform_stats
+                .compressions
+                .hash(&mut hasher);
+            self.session_stats
+                .platform_stats
+                .tools
+                .len()
+                .hash(&mut hasher);
 
             // Git state
             self.git_state.branch.hash(&mut hasher);
@@ -1017,7 +1058,8 @@ impl App {
             // Include throbber frame when animating to trigger redraws on frame change
             let needs_animation = matches!(
                 self.session_stats.effective_state(),
-                crate::platforms::SessionState::Thinking | crate::platforms::SessionState::Permission
+                crate::platforms::SessionState::Thinking
+                    | crate::platforms::SessionState::Permission
             );
             if needs_animation {
                 throbber_frame_index().hash(&mut hasher);
@@ -1130,7 +1172,11 @@ impl App {
                 let shows_input_wait = if let Some(prompt_pos) = stripped.rfind('❯') {
                     stripped[prompt_pos..].contains("Esc to cancel")
                 } else {
-                    stripped.lines().rev().take(10).any(|l| l.contains("Esc to cancel"))
+                    stripped
+                        .lines()
+                        .rev()
+                        .take(10)
+                        .any(|l| l.contains("Esc to cancel"))
                 };
                 self.session_stats.set_screen_input_wait(shows_input_wait);
             }
@@ -1178,7 +1224,11 @@ impl App {
     }
 
     /// Handle hook/stats refresh
-    fn handle_hook_refresh(&mut self, last_status_draw: &mut Instant, last_pty_output: Instant) -> Result<()> {
+    fn handle_hook_refresh(
+        &mut self,
+        last_status_draw: &mut Instant,
+        last_pty_output: Instant,
+    ) -> Result<()> {
         let old_effective_state = self.session_stats.effective_state();
         let old_last_updated = self.session_stats.platform_stats.last_updated;
         self.session_stats
@@ -1188,8 +1238,7 @@ impl App {
 
         // Update transcript path for scrollback capture
         if let Some(ref path) = self.session_stats.platform_stats.transcript_path {
-            self.capture_manager
-                .set_transcript_path(Some(path.clone()));
+            self.capture_manager.set_transcript_path(Some(path.clone()));
         }
 
         let prev_recap_history_len = self.recap_manager.history().len();
@@ -1261,18 +1310,13 @@ impl App {
         // 2. Cloud state drift (catches screen override resurrection)
         if new_last_updated != old_last_updated && old_effective_state == new_effective_state {
             // Check if active_prompt presence changed
-            let prompt_is_some = self
-                .session_stats
-                .platform_stats
-                .active_prompt
-                .is_some();
+            let prompt_is_some = self.session_stats.platform_stats.active_prompt.is_some();
             if prompt_is_some != self.last_cloud_active_prompt_was_some {
                 self.send_cloud_prompt_event();
             }
 
             // Safety net: correct cloud state drift
-            if self.last_cloud_state.is_some()
-                && self.last_cloud_state != Some(new_effective_state)
+            if self.last_cloud_state.is_some() && self.last_cloud_state != Some(new_effective_state)
             {
                 self.send_cloud_state_event(new_effective_state);
                 self.send_cloud_prompt_event();
@@ -1406,7 +1450,10 @@ impl App {
 
             // Also send current screen so dashboard shows latest content
             // This is important when state changes without new PTY output (e.g., Stop event)
-            if let Ok(screen_content) = self.capture_manager.update_screen(self.platform_pty.screen()) {
+            if let Ok(screen_content) = self
+                .capture_manager
+                .update_screen(self.platform_pty.screen())
+            {
                 let screen_event = SessionEventBuilder::screen(screen_content);
                 client.send_event(screen_event);
             }
@@ -1449,7 +1496,11 @@ impl App {
             return self.terminal_title.clone();
         }
         if let Some(generated) = self.title_manager.generated_title() {
-            return Some(format!("{}{}", crate::title::GENERATED_TITLE_MARKER, generated));
+            return Some(format!(
+                "{}{}",
+                crate::title::GENERATED_TITLE_MARKER,
+                generated
+            ));
         }
         self.terminal_title.clone()
     }
@@ -1487,8 +1538,7 @@ impl App {
 
             // Also send the full title history
             if !self.title_history.is_empty() {
-                let history_event =
-                    SessionEventBuilder::title_history(self.title_history.clone());
+                let history_event = SessionEventBuilder::title_history(self.title_history.clone());
                 client.send_event(history_event);
             }
         }
@@ -1498,16 +1548,20 @@ impl App {
     fn send_cloud_stats_event(&mut self) {
         if let Some(ref mut client) = self.cloud_client {
             // Parse permission prompt from screen when in permission state
-            let permission_prompt = if self.session_stats.effective_state() == SessionState::Permission {
-                if let Ok(screen_content) = self.capture_manager.update_screen(self.platform_pty.screen()) {
-                    crate::parsers::PermissionPrompt::parse(&screen_content)
-                        .filter(|p| p.is_valid())
+            let permission_prompt =
+                if self.session_stats.effective_state() == SessionState::Permission {
+                    if let Ok(screen_content) = self
+                        .capture_manager
+                        .update_screen(self.platform_pty.screen())
+                    {
+                        crate::parsers::PermissionPrompt::parse(&screen_content)
+                            .filter(|p| p.is_valid())
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
             // Get suggestion from tracker. The tracker is kept in sync by
             // handle_pty_output_capture() which calls parse_screen() on every
@@ -1633,14 +1687,18 @@ impl App {
             Some(crate::platforms::ActivePrompt::Permission { .. })
             | Some(crate::platforms::ActivePrompt::ExitPlan) => {
                 // Get current screen content for parsing
-                if let Ok(screen_content) =
-                    self.capture_manager.update_screen(self.platform_pty.screen())
+                if let Ok(screen_content) = self
+                    .capture_manager
+                    .update_screen(self.platform_pty.screen())
                 {
                     let parsed = crate::parsers::PermissionPrompt::parse(&screen_content);
 
                     // Debug logging for exit plan mode
                     #[cfg(debug_assertions)]
-                    if matches!(active_prompt, Some(crate::platforms::ActivePrompt::ExitPlan)) {
+                    if matches!(
+                        active_prompt,
+                        Some(crate::platforms::ActivePrompt::ExitPlan)
+                    ) {
                         let debug_path = self.capture_manager.capture_dir().join("parse_debug.txt");
                         let valid = parsed.as_ref().map(|p| p.is_valid()).unwrap_or(false);
                         let debug_info = format!(
@@ -1669,8 +1727,14 @@ impl App {
 
         // For exit plan prompts, track option count and only send if changed
         // This handles the timing issue where screen isn't ready when hook fires
-        if matches!(active_prompt, Some(crate::platforms::ActivePrompt::ExitPlan)) {
-            let new_option_count = permission_prompt.as_ref().map(|p| p.options.len()).unwrap_or(0);
+        if matches!(
+            active_prompt,
+            Some(crate::platforms::ActivePrompt::ExitPlan)
+        ) {
+            let new_option_count = permission_prompt
+                .as_ref()
+                .map(|p| p.options.len())
+                .unwrap_or(0);
 
             // If parse failed (0 options) and we haven't exhausted retries, don't send
             // the fallback yet - give the screen time to render
@@ -1697,7 +1761,10 @@ impl App {
         self.last_cloud_active_prompt_was_some = active_prompt.is_some();
 
         // Reset exit plan counters when leaving exit plan state
-        if !matches!(active_prompt, Some(crate::platforms::ActivePrompt::ExitPlan)) {
+        if !matches!(
+            active_prompt,
+            Some(crate::platforms::ActivePrompt::ExitPlan)
+        ) {
             self.last_exit_plan_option_count = 0;
             self.last_exit_plan_retry_count = 0;
         }
@@ -1722,7 +1789,10 @@ impl App {
                 }
 
                 // Send current screen immediately (don't wait for viewer heartbeat)
-                if let Ok(contents) = self.capture_manager.update_screen(self.platform_pty.screen()) {
+                if let Ok(contents) = self
+                    .capture_manager
+                    .update_screen(self.platform_pty.screen())
+                {
                     self.send_cloud_screen_event(contents);
                 }
             }
@@ -1794,10 +1864,10 @@ impl App {
                     match step {
                         crate::cloud::KeyStep::Key { key } => {
                             let bytes: &[u8] = match key.as_str() {
-                                "up" => &[0x1b, b'[', b'A'],      // CSI A - cursor up
-                                "down" => &[0x1b, b'[', b'B'],    // CSI B - cursor down
-                                "tab" => &[0x09],                  // Tab
-                                "enter" => &[0x0D],                // Carriage return
+                                "up" => &[0x1b, b'[', b'A'],        // CSI A - cursor up
+                                "down" => &[0x1b, b'[', b'B'],      // CSI B - cursor down
+                                "tab" => &[0x09],                   // Tab
+                                "enter" => &[0x0D],                 // Carriage return
                                 "shift_tab" => &[0x1b, b'[', b'Z'], // CSI Z - shift+tab
                                 _ => continue,
                             };
@@ -1862,7 +1932,8 @@ impl App {
                 Ok(Ok(response)) => {
                     if response.paired {
                         // Pairing complete!
-                        let device_name = response.mobile_name.unwrap_or_else(|| "device".to_string());
+                        let device_name =
+                            response.mobile_name.unwrap_or_else(|| "device".to_string());
                         self.pairing_state.set_just_paired(device_name);
                     } else if response.expired {
                         // Token expired - need to regenerate
@@ -1917,7 +1988,8 @@ impl App {
 
             let result = rt.block_on(async {
                 let url = format!("{}/pairing/{}/status", api_url, token);
-                let headers = device.auth_headers("GET", &format!("/api/pairing/{}/status", token))?;
+                let headers =
+                    device.auth_headers("GET", &format!("/api/pairing/{}/status", token))?;
 
                 let mut req = http.get(&url);
                 for (key, value) in headers {

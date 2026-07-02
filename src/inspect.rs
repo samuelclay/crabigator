@@ -42,7 +42,12 @@ fn format_size(bytes: u64) -> String {
 }
 
 /// Run the inspect command
-pub fn run_inspect(dir_filter: Option<String>, watch: bool, raw: bool, history: bool) -> Result<()> {
+pub fn run_inspect(
+    dir_filter: Option<String>,
+    watch: bool,
+    raw: bool,
+    history: bool,
+) -> Result<()> {
     loop {
         let instances = discover_instances(&dir_filter)?;
 
@@ -102,7 +107,10 @@ fn print_history(instances: &[(PathBuf, Value)]) -> Result<()> {
             .get("session_id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let cwd = data.get("cwd").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let cwd = data
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
         println!("\n=== Session {} ===", session_id);
         println!("Directory: {}", cwd);
@@ -137,10 +145,7 @@ fn print_history(instances: &[(PathBuf, Value)]) -> Result<()> {
 
                     println!(
                         "  {:<15} {:<20} {:<12} {}",
-                        time_str,
-                        event.event,
-                        event.state_before,
-                        details_str
+                        time_str, event.event, event.state_before, details_str
                     );
                 }
             }
@@ -158,7 +163,11 @@ fn print_history(instances: &[(PathBuf, Value)]) -> Result<()> {
                 &lines[..]
             };
 
-            println!("\n[Hooks Log] (last {} of {} lines)", recent.len(), lines.len());
+            println!(
+                "\n[Hooks Log] (last {} of {} lines)",
+                recent.len(),
+                lines.len()
+            );
             for line in recent {
                 println!("  {}", line);
             }
@@ -205,7 +214,10 @@ fn print_pretty(instances: &[(PathBuf, Value)]) -> Result<()> {
             .get("session_id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let cwd = data.get("cwd").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let cwd = data
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
         println!("\n=== Session {} ===", session_id);
         println!("Directory: {}", cwd);
@@ -213,7 +225,10 @@ fn print_pretty(instances: &[(PathBuf, Value)]) -> Result<()> {
 
         // Show launch timing
         if let Some(timing) = data.get("launch_timing") {
-            let uptime = timing.get("uptime_secs").and_then(|v| v.as_u64()).unwrap_or(0);
+            let uptime = timing
+                .get("uptime_secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             let git_ms = timing.get("git_time_ms").and_then(|v| v.as_u64());
             let diff_ms = timing.get("diff_time_ms").and_then(|v| v.as_u64());
 
@@ -227,7 +242,10 @@ fn print_pretty(instances: &[(PathBuf, Value)]) -> Result<()> {
                     } else {
                         ansi::GREEN
                     };
-                    println!(" | Initial load: {color}{}ms{RESET} (git: {}ms, diff: {}ms)", total, g, d);
+                    println!(
+                        " | Initial load: {color}{}ms{RESET} (git: {}ms, diff: {}ms)",
+                        total, g, d
+                    );
                 }
                 _ => println!(" | Initial load: {DIM}pending...{RESET}"),
             }
@@ -235,7 +253,10 @@ fn print_pretty(instances: &[(PathBuf, Value)]) -> Result<()> {
 
         // Show capture info
         if let Some(capture) = data.get("capture") {
-            let enabled = capture.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            let enabled = capture
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             if enabled {
                 println!("\n[Capture]");

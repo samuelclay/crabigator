@@ -75,7 +75,12 @@ impl DiffParser for RustParser {
                         current_context = Some((NodeKind::Function, fn_name.to_string()));
                         // Pre-register as modified (will be updated with line counts)
                         let key = (NodeKind::Function, fn_name.to_string());
-                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0, Some(current_line)));
+                        change_map.entry(key).or_insert((
+                            ChangeType::Modified,
+                            0,
+                            0,
+                            Some(current_line),
+                        ));
                     }
                     // Check for impl block in context
                     else if let Some(impl_caps) = impl_re.captures(context_str) {
@@ -88,7 +93,12 @@ impl DiffParser for RustParser {
                         };
                         current_context = Some((NodeKind::Impl, name.clone()));
                         let key = (NodeKind::Impl, name);
-                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0, Some(current_line)));
+                        change_map.entry(key).or_insert((
+                            ChangeType::Modified,
+                            0,
+                            0,
+                            Some(current_line),
+                        ));
                     } else {
                         // No function context in hunk header
                         current_context = None;
@@ -166,12 +176,20 @@ impl DiffParser for RustParser {
                 };
                 let key = (NodeKind::Impl, name);
                 let entry = change_map.entry(key.clone()).or_insert((
-                    if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                    if is_added {
+                        ChangeType::Added
+                    } else {
+                        ChangeType::Deleted
+                    },
                     0,
                     0,
                     if is_added { Some(current_line) } else { None },
                 ));
-                if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                if is_added {
+                    entry.1 += 1;
+                } else {
+                    entry.2 += 1;
+                }
                 current_context = Some(key);
                 found_definition = true;
             }
@@ -182,12 +200,20 @@ impl DiffParser for RustParser {
                     let fn_name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Function, fn_name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
                         0,
                         0,
                         if is_added { Some(current_line) } else { None },
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -199,12 +225,20 @@ impl DiffParser for RustParser {
                     let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Struct, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
                         0,
                         0,
                         if is_added { Some(current_line) } else { None },
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -216,12 +250,20 @@ impl DiffParser for RustParser {
                     let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Enum, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
                         0,
                         0,
                         if is_added { Some(current_line) } else { None },
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -233,12 +275,20 @@ impl DiffParser for RustParser {
                     let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Trait, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
                         0,
                         0,
                         if is_added { Some(current_line) } else { None },
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -250,12 +300,20 @@ impl DiffParser for RustParser {
                     let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Module, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
                         0,
                         0,
                         if is_added { Some(current_line) } else { None },
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -267,12 +325,20 @@ impl DiffParser for RustParser {
                     let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Const, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
                         0,
                         0,
                         if is_added { Some(current_line) } else { None },
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     found_definition = true;
                 }
             }
@@ -280,9 +346,10 @@ impl DiffParser for RustParser {
             // If not a definition line, add to current context
             if !found_definition {
                 if let Some(ref key) = current_context {
-                    let entry = change_map
-                        .entry(key.clone())
-                        .or_insert((ChangeType::Modified, 0, 0, None));
+                    let entry =
+                        change_map
+                            .entry(key.clone())
+                            .or_insert((ChangeType::Modified, 0, 0, None));
                     if is_added {
                         entry.1 += 1;
                     } else {
@@ -295,16 +362,18 @@ impl DiffParser for RustParser {
         // Convert map to vec of ChangeNodes
         change_map
             .into_iter()
-            .map(|((kind, name), (change_type, additions, deletions, line_number))| ChangeNode {
-                kind,
-                name,
-                change_type,
-                additions,
-                deletions,
-                file_path: file_path.clone(),
-                line_number,
-                children: Vec::new(),
-            })
+            .map(
+                |((kind, name), (change_type, additions, deletions, line_number))| ChangeNode {
+                    kind,
+                    name,
+                    change_type,
+                    additions,
+                    deletions,
+                    file_path: file_path.clone(),
+                    line_number,
+                    children: Vec::new(),
+                },
+            )
             .collect()
     }
 }

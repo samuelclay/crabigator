@@ -10,7 +10,7 @@ use std::io::{Stdout, Write};
 
 use anyhow::Result;
 
-use crate::terminal::escape::{self, color, bg, fg, hyperlink, RESET, RESET_FG};
+use crate::terminal::escape::{self, bg, color, fg, hyperlink, RESET, RESET_FG};
 use crate::update::UpdateState;
 
 /// Pairing state for the banner
@@ -103,11 +103,23 @@ fn draw_pairing_top_border(stdout: &mut Stdout, row: u16, width: u16) -> Result<
     Ok(())
 }
 
-fn draw_pairing_toast_row(stdout: &mut Stdout, row: u16, width: u16, device_name: &str) -> Result<()> {
+fn draw_pairing_toast_row(
+    stdout: &mut Stdout,
+    row: u16,
+    width: u16,
+    device_name: &str,
+) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(row, 1))?;
     write!(stdout, "{}", bg(color::BG_DARK))?;
     write!(stdout, " {}✓{} ", fg(color::GREEN), RESET_FG)?;
-    write!(stdout, "{}{}Paired with {}{}", bg(color::BG_DARK), fg(color::GREEN), device_name, RESET)?;
+    write!(
+        stdout,
+        "{}{}Paired with {}{}",
+        bg(color::BG_DARK),
+        fg(color::GREEN),
+        device_name,
+        RESET
+    )?;
 
     let used = 4 + 12 + device_name.len();
     let remaining = (width as usize).saturating_sub(used);
@@ -143,11 +155,11 @@ fn draw_pairing_content_row(stdout: &mut Stdout, row: u16, width: u16, code: &st
     // URL in white, code highlighted in bright yellow
     let link_text = format!(
         "{}{} drinkcrabigator.com/dashboard?setup={}{}{} {}",
-        bg(30),              // Dark teal background (color 30)
-        fg(color::WHITE),    // White text for URL
-        fg(color::YELLOW),   // Bright yellow for the code
+        bg(30),            // Dark teal background (color 30)
+        fg(color::WHITE),  // White text for URL
+        fg(color::YELLOW), // Bright yellow for the code
         code,
-        fg(color::WHITE),    // Back to white after code
+        fg(color::WHITE), // Back to white after code
         RESET,
     );
     let clickable = hyperlink(&url, &link_text);
@@ -238,7 +250,7 @@ pub fn draw_update_banner(
         fg(231), // White
         current_version,
         fg(color::DARK_GRAY), // Arrow in dark gray
-        fg(231), // New version in white
+        fg(231),              // New version in white
         new_version,
         RESET_FG
     )?;

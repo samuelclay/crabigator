@@ -73,8 +73,13 @@ impl ClaudeCodePlatform {
             .with_context(|| format!("Failed to write temp file {}", tmp_path.display()))?;
         file.sync_all()
             .with_context(|| format!("Failed to flush temp file {}", tmp_path.display()))?;
-        fs::rename(&tmp_path, path)
-            .with_context(|| format!("Failed to rename {} to {}", tmp_path.display(), path.display()))?;
+        fs::rename(&tmp_path, path).with_context(|| {
+            format!(
+                "Failed to rename {} to {}",
+                tmp_path.display(),
+                path.display()
+            )
+        })?;
         Ok(())
     }
 
@@ -131,13 +136,16 @@ impl ClaudeCodePlatform {
         let events_with_matcher = ["PermissionRequest", "PostToolUse"];
         if events_with_matcher.contains(&event) {
             event_arr.iter().any(|entry| {
-                entry.get("matcher")
+                entry
+                    .get("matcher")
                     .and_then(|m| m.as_str())
                     .is_some_and(|m| m == "*")
                     && entry.get("hooks").is_some_and(hooks_contains_cmd)
             })
         } else {
-            event_arr.iter().any(|entry| entry.get("hooks").is_some_and(hooks_contains_cmd))
+            event_arr
+                .iter()
+                .any(|entry| entry.get("hooks").is_some_and(hooks_contains_cmd))
         }
     }
 
@@ -157,7 +165,14 @@ impl ClaudeCodePlatform {
         })?;
 
         let script_path_str = self.script_path().to_string_lossy().to_string();
-        let hook_events = ["PermissionRequest", "PostToolUse", "Stop", "SubagentStop", "PreCompact", "UserPromptSubmit"];
+        let hook_events = [
+            "PermissionRequest",
+            "PostToolUse",
+            "Stop",
+            "SubagentStop",
+            "PreCompact",
+            "UserPromptSubmit",
+        ];
 
         Ok(hook_events
             .iter()
@@ -172,8 +187,7 @@ impl ClaudeCodePlatform {
 
         // Write hook script with version embedded
         let script_path = self.script_path();
-        fs::write(&script_path, script_with_version())
-            .context("Failed to write hook script")?;
+        fs::write(&script_path, script_with_version()).context("Failed to write hook script")?;
 
         // Make script executable on Unix
         #[cfg(unix)]
@@ -195,8 +209,7 @@ impl ClaudeCodePlatform {
             script_path: script_path.to_string_lossy().to_string(),
         };
         let meta_content = serde_json::to_string_pretty(&meta)?;
-        fs::write(self.meta_path(), meta_content)
-            .context("Failed to write hooks metadata")?;
+        fs::write(self.meta_path(), meta_content).context("Failed to write hooks metadata")?;
 
         Ok(())
     }
@@ -238,7 +251,14 @@ impl ClaudeCodePlatform {
         }
 
         // Hook events we need to register
-        let hook_events = ["PermissionRequest", "PostToolUse", "Stop", "SubagentStop", "PreCompact", "UserPromptSubmit"];
+        let hook_events = [
+            "PermissionRequest",
+            "PostToolUse",
+            "Stop",
+            "SubagentStop",
+            "PreCompact",
+            "UserPromptSubmit",
+        ];
         // Events that require matcher="*" to catch all tool types
         let events_with_matcher = ["PermissionRequest", "PostToolUse"];
 
@@ -270,7 +290,8 @@ impl ClaudeCodePlatform {
             if events_with_matcher.contains(&event) {
                 // For tool-related events, we need matcher="*" to catch all tool types.
                 let mut star_idx = arr.iter().position(|entry| {
-                    entry.get("matcher")
+                    entry
+                        .get("matcher")
                         .and_then(|m| m.as_str())
                         .is_some_and(|m| m == "*")
                 });
@@ -302,8 +323,12 @@ impl ClaudeCodePlatform {
                 // Remove our hook from any other entries (or duplicates in the matcher="*" entry), without touching other hooks.
                 let primary_idx = star_idx.expect("star_idx must exist after placement");
                 for (entry_idx, entry) in arr.iter_mut().enumerate() {
-                    let Some(hooks_value) = entry.get_mut("hooks") else { continue };
-                    let Some(hooks_arr) = hooks_value.as_array_mut() else { continue };
+                    let Some(hooks_value) = entry.get_mut("hooks") else {
+                        continue;
+                    };
+                    let Some(hooks_arr) = hooks_value.as_array_mut() else {
+                        continue;
+                    };
                     let mut kept_primary = 0u32;
                     let before = hooks_arr.len();
                     hooks_arr.retain(|hook| {
@@ -326,7 +351,9 @@ impl ClaudeCodePlatform {
                 // Other events: ensure our hook exists in at least one entry.
                 let mut found_at: Option<(usize, usize)> = None;
                 for (entry_idx, entry) in arr.iter().enumerate() {
-                    let Some(hooks_arr) = entry.get("hooks").and_then(|h| h.as_array()) else { continue };
+                    let Some(hooks_arr) = entry.get("hooks").and_then(|h| h.as_array()) else {
+                        continue;
+                    };
                     for (hook_idx, hook) in hooks_arr.iter().enumerate() {
                         if is_our_hook(hook) {
                             found_at = Some((entry_idx, hook_idx));
@@ -348,8 +375,12 @@ impl ClaudeCodePlatform {
                 // Deduplicate: keep the first occurrence and remove the rest, without touching other hooks.
                 let mut kept_one = false;
                 for entry in arr.iter_mut() {
-                    let Some(hooks_value) = entry.get_mut("hooks") else { continue };
-                    let Some(hooks_arr) = hooks_value.as_array_mut() else { continue };
+                    let Some(hooks_value) = entry.get_mut("hooks") else {
+                        continue;
+                    };
+                    let Some(hooks_arr) = hooks_value.as_array_mut() else {
+                        continue;
+                    };
                     let before = hooks_arr.len();
                     hooks_arr.retain(|hook| {
                         if is_our_hook(hook) {
@@ -372,7 +403,8 @@ impl ClaudeCodePlatform {
             // Drop any entries whose hooks array became empty (these were our-only entries).
             let before_len = arr.len();
             arr.retain(|entry| {
-                entry.get("hooks")
+                entry
+                    .get("hooks")
                     .and_then(|h| h.as_array())
                     .map(|hooks_arr| !hooks_arr.is_empty())
                     .unwrap_or(true)
@@ -449,11 +481,9 @@ impl Platform for ClaudeCodePlatform {
             return Ok(PlatformStats::default());
         }
 
-        let content = fs::read_to_string(&stats_path)
-            .context("Failed to read stats file")?;
+        let content = fs::read_to_string(&stats_path).context("Failed to read stats file")?;
 
-        let mut stats: PlatformStats = serde_json::from_str(&content)
-            .unwrap_or_default();
+        let mut stats: PlatformStats = serde_json::from_str(&content).unwrap_or_default();
 
         // Cap tool_timestamps to prevent unbounded growth in long sessions.
         // The Python hook caps at 1000, but existing stats files may be larger.

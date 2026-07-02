@@ -55,10 +55,8 @@ pub fn compute_unique_display_names(paths: &[&str]) -> Vec<String> {
     use std::collections::HashMap;
 
     // Start with just filenames
-    let mut display_names: Vec<String> = paths
-        .iter()
-        .map(|p| get_filename(p).to_string())
-        .collect();
+    let mut display_names: Vec<String> =
+        paths.iter().map(|p| get_filename(p).to_string()).collect();
 
     // Track how many path components we've used for each (0 = just filename)
     let mut depths: Vec<usize> = vec![0; paths.len()];
@@ -145,10 +143,20 @@ pub fn format_diff_stats(
             result.push(' ');
         }
         if del_bar > 0 {
-            result.push_str(&format!("{}{}{}", fg(color::RED), "▓".repeat(del_bar), RESET));
+            result.push_str(&format!(
+                "{}{}{}",
+                fg(color::RED),
+                "▓".repeat(del_bar),
+                RESET
+            ));
         }
         if add_bar > 0 {
-            result.push_str(&format!("{}{}{}", fg(color::GREEN), "█".repeat(add_bar), RESET));
+            result.push_str(&format!(
+                "{}{}{}",
+                fg(color::GREEN),
+                "█".repeat(add_bar),
+                RESET
+            ));
         }
         if additions > 0 {
             result.push(' ');
@@ -173,17 +181,24 @@ pub fn format_diff_stats_aligned(
     additions: usize,
     deletions: usize,
     show_bar: bool,
-    del_num_width: usize,   // width for deletion number column (including −)
-    del_bar_width: usize,   // width for left bar column (deletions)
-    add_bar_width: usize,   // width for right bar column (additions)
-    add_num_width: usize,   // width for addition number column (including +)
+    del_num_width: usize, // width for deletion number column (including −)
+    del_bar_width: usize, // width for left bar column (deletions)
+    add_bar_width: usize, // width for right bar column (additions)
+    add_num_width: usize, // width for addition number column (including +)
 ) -> String {
     let total = additions + deletions;
     if total == 0 {
         // Center a dot in the total width
         let total_width = del_num_width + 1 + del_bar_width + add_bar_width + 1 + add_num_width;
         let pad = total_width / 2;
-        return format!("{:>pad$}{}·{}{:pad$}", "", fg(color::DARK_GRAY), RESET, "", pad = pad);
+        return format!(
+            "{:>pad$}{}·{}{:pad$}",
+            "",
+            fg(color::DARK_GRAY),
+            RESET,
+            "",
+            pad = pad
+        );
     }
 
     let mut result = String::new();
@@ -207,7 +222,11 @@ pub fn format_diff_stats_aligned(
         let pad = del_num_width.saturating_sub(actual_width);
         result.push_str(&format!("{:pad$}{}", "", del_str, pad = pad));
     } else {
-        result.push_str(&format!("{:del_num_width$}", "", del_num_width = del_num_width));
+        result.push_str(&format!(
+            "{:del_num_width$}",
+            "",
+            del_num_width = del_num_width
+        ));
     }
 
     result.push(' ');
@@ -218,12 +237,22 @@ pub fn format_diff_stats_aligned(
         let left_pad = del_bar_width.saturating_sub(del_bar);
         result.push_str(&format!("{:left_pad$}", "", left_pad = left_pad));
         if del_bar > 0 {
-            result.push_str(&format!("{}{}{}", fg(color::RED), "▓".repeat(del_bar.min(del_bar_width)), RESET));
+            result.push_str(&format!(
+                "{}{}{}",
+                fg(color::RED),
+                "▓".repeat(del_bar.min(del_bar_width)),
+                RESET
+            ));
         }
 
         // Right bar: green left-aligned (grows rightward from center)
         if add_bar > 0 {
-            result.push_str(&format!("{}{}{}", fg(color::GREEN), "█".repeat(add_bar.min(add_bar_width)), RESET));
+            result.push_str(&format!(
+                "{}{}{}",
+                fg(color::GREEN),
+                "█".repeat(add_bar.min(add_bar_width)),
+                RESET
+            ));
         }
         let right_pad = add_bar_width.saturating_sub(add_bar);
         result.push_str(&format!("{:right_pad$}", "", right_pad = right_pad));
@@ -242,7 +271,11 @@ pub fn format_diff_stats_aligned(
         let pad = add_num_width.saturating_sub(actual_width);
         result.push_str(&format!("{:pad$}", "", pad = pad));
     } else {
-        result.push_str(&format!("{:add_num_width$}", "", add_num_width = add_num_width));
+        result.push_str(&format!(
+            "{:add_num_width$}",
+            "",
+            add_num_width = add_num_width
+        ));
     }
 
     result
@@ -261,7 +294,12 @@ pub fn digit_count(n: usize) -> usize {
 /// Scaled relative to max_count (which could be file changes or file counts)
 pub fn create_folder_bar(file_count: usize, max_count: usize, max_width: usize) -> String {
     if file_count == 0 {
-        return format!("{}{}{}", fg(color::DARK_GRAY), "·".repeat(max_width.min(2)), RESET);
+        return format!(
+            "{}{}{}",
+            fg(color::DARK_GRAY),
+            "·".repeat(max_width.min(2)),
+            RESET
+        );
     }
 
     let max_count = max_count.max(1);
@@ -368,9 +406,15 @@ mod tests {
         assert_eq!(strip_ansi_len("\x1b[31mhello\x1b[0m"), 5);
         assert_eq!(strip_ansi_len("\x1b[38;5;141mtest\x1b[0m"), 4);
         // OSC 8 hyperlinks
-        assert_eq!(strip_ansi_len("\x1b]8;;http://example.com\x07link\x1b]8;;\x07"), 4);
+        assert_eq!(
+            strip_ansi_len("\x1b]8;;http://example.com\x07link\x1b]8;;\x07"),
+            4
+        );
         // Mixed CSI and OSC
-        assert_eq!(strip_ansi_len("\x1b[32m\x1b]8;;url\x07text\x1b]8;;\x07\x1b[0m"), 4);
+        assert_eq!(
+            strip_ansi_len("\x1b[32m\x1b]8;;url\x07text\x1b]8;;\x07\x1b[0m"),
+            4
+        );
     }
 
     #[test]
@@ -382,9 +426,17 @@ mod tests {
 
     #[test]
     fn test_compute_unique_display_names_with_duplicates() {
-        let paths = vec!["src/git/mod.rs", "src/parsers/mod.rs", "src/widgets/mod.rs", "src/app.rs"];
+        let paths = vec![
+            "src/git/mod.rs",
+            "src/parsers/mod.rs",
+            "src/widgets/mod.rs",
+            "src/app.rs",
+        ];
         let names = compute_unique_display_names(&paths);
-        assert_eq!(names, vec!["git/mod.rs", "parsers/mod.rs", "widgets/mod.rs", "app.rs"]);
+        assert_eq!(
+            names,
+            vec!["git/mod.rs", "parsers/mod.rs", "widgets/mod.rs", "app.rs"]
+        );
     }
 
     #[test]

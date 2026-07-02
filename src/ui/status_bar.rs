@@ -353,8 +353,9 @@ mod tests {
         let pairing = PairingState::default();
         let recap = RecapState::default();
 
-        let rows =
-            compute_dynamic_status_rows(60, 200, &stats, &git, &diff, None, &pairing, &recap, false);
+        let rows = compute_dynamic_status_rows(
+            60, 200, &stats, &git, &diff, None, &pairing, &recap, false,
+        );
         assert_eq!(rows, 8);
     }
 
@@ -378,8 +379,9 @@ mod tests {
         let pairing = PairingState::default();
         let recap = RecapState::default();
 
-        let rows =
-            compute_dynamic_status_rows(60, 120, &stats, &git, &diff, None, &pairing, &recap, false);
+        let rows = compute_dynamic_status_rows(
+            60, 120, &stats, &git, &diff, None, &pairing, &recap, false,
+        );
         assert_eq!(rows, preferred_status_rows_max(60));
     }
 
@@ -417,8 +419,9 @@ mod tests {
         let pairing = PairingState::default();
         let recap = RecapState::default();
 
-        let rows =
-            compute_dynamic_status_rows(15, 100, &stats, &git, &diff, None, &pairing, &recap, false);
+        let rows = compute_dynamic_status_rows(
+            15, 100, &stats, &git, &diff, None, &pairing, &recap, false,
+        );
         assert!(rows >= MIN_STATUS_ROWS);
         assert!(rows <= preferred_status_rows_max(15));
     }
@@ -460,8 +463,9 @@ mod tests {
         // packed layout for stats(7) and changes(~7) plus separator should
         // come in well under that — typical of the user's bottom-screenshot
         // resize complaint.
-        let rows =
-            compute_dynamic_status_rows(100, 250, &stats, &git, &diff, None, &pairing, &recap, false);
+        let rows = compute_dynamic_status_rows(
+            100, 250, &stats, &git, &diff, None, &pairing, &recap, false,
+        );
         assert!(
             rows < 12,
             "expected packed layout to keep status_rows under 12, got {}",

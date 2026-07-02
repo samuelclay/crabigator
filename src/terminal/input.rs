@@ -47,7 +47,9 @@ fn encode_key(key: KeyEvent) -> Vec<u8> {
         KeyCode::End => encode_home_end(b'F', has_modifiers, modifier_code),
         KeyCode::PageUp => encode_page(5, has_modifiers, modifier_code),
         KeyCode::PageDown => encode_page(6, has_modifiers, modifier_code),
-        KeyCode::Delete => encode_delete(has_alt, has_ctrl, has_shift, has_modifiers, modifier_code),
+        KeyCode::Delete => {
+            encode_delete(has_alt, has_ctrl, has_shift, has_modifiers, modifier_code)
+        }
         KeyCode::Insert => encode_insert(has_modifiers, modifier_code),
         KeyCode::F(n) => encode_function_key(n, has_modifiers, modifier_code),
         KeyCode::Null => vec![key::NUL],

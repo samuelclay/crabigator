@@ -16,8 +16,8 @@ use serde_json::Value;
 
 use super::{Platform, PlatformKind, PlatformStats};
 use log_parser::{
-    parse_timestamp, reset_state, set_last_updated, update_from_log,
-    CodexState, SessionCandidate, SessionMetaInfo,
+    parse_timestamp, reset_state, set_last_updated, update_from_log, CodexState, SessionCandidate,
+    SessionMetaInfo,
 };
 
 pub struct CodexPlatform {
@@ -75,7 +75,10 @@ impl CodexPlatform {
         }
 
         if !Self::should_rescan(state) {
-            return Ok(state.session_path.clone().map(|path| (path, state.session_started_at)));
+            return Ok(state
+                .session_path
+                .clone()
+                .map(|path| (path, state.session_started_at)));
         }
 
         state.last_scan = Some(SystemTime::now());
@@ -166,8 +169,10 @@ impl CodexPlatform {
                 .and_then(|v| v.as_str())
                 .is_some_and(|entry_cwd| entry_cwd == cwd)
             {
-                let session_start =
-                    payload.get("timestamp").and_then(|v| v.as_str()).and_then(parse_timestamp);
+                let session_start = payload
+                    .get("timestamp")
+                    .and_then(|v| v.as_str())
+                    .and_then(parse_timestamp);
                 return Ok(SessionMetaInfo {
                     matches: true,
                     session_start,

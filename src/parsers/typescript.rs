@@ -63,8 +63,12 @@ impl DiffParser for TypeScriptParser {
         if let Some(caps) = method_call_re.captures(context) {
             let name = caps.get(1).map(|m| m.as_str())?;
             // Skip common keywords and short names that are likely variables
-            if !["if", "for", "while", "switch", "catch", "return", "var", "let", "const"].contains(&name)
-                && name.len() > 2 {
+            if ![
+                "if", "for", "while", "switch", "catch", "return", "var", "let", "const",
+            ]
+            .contains(&name)
+                && name.len() > 2
+            {
                 return Some(name.to_string());
             }
         }
@@ -75,7 +79,8 @@ impl DiffParser for TypeScriptParser {
         let file_path = Some(filename.to_string());
         // Track changes with their line counts
         // Key: (kind, name), Value: (change_type, additions, deletions)
-        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> = HashMap::new();
+        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> =
+            HashMap::new();
 
         // Regex patterns for TypeScript/JavaScript constructs
         let class_re = Regex::new(r"^\s*(export\s+)?(abstract\s+)?class\s+(\w+)").unwrap();
@@ -86,9 +91,10 @@ impl DiffParser for TypeScriptParser {
         let method_re =
             Regex::new(r"^\s*(public|private|protected|static|async|\s)*(\w+)\s*\([^)]*\)\s*[:{]")
                 .unwrap();
-        let arrow_fn_re =
-            Regex::new(r"^\s*(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(async\s+)?(\([^)]*\)|[^=])\s*=>")
-                .unwrap();
+        let arrow_fn_re = Regex::new(
+            r"^\s*(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(async\s+)?(\([^)]*\)|[^=])\s*=>",
+        )
+        .unwrap();
         let interface_re = Regex::new(r"^\s*(export\s+)?interface\s+(\w+)").unwrap();
         let type_re = Regex::new(r"^\s*(export\s+)?type\s+(\w+)").unwrap();
         let hunk_re = Regex::new(r"^@@[^@]+@@\s*(.*)$").unwrap();
@@ -103,7 +109,9 @@ impl DiffParser for TypeScriptParser {
                     let context_str = context.as_str();
                     if let Some(fn_name) = self.extract_function_from_context(context_str) {
                         let key = (NodeKind::Function, fn_name.clone());
-                        change_map.entry(key.clone()).or_insert((ChangeType::Modified, 0, 0));
+                        change_map
+                            .entry(key.clone())
+                            .or_insert((ChangeType::Modified, 0, 0));
                         current_context = Some(key);
                     } else {
                         current_context = None;
@@ -167,11 +175,19 @@ impl DiffParser for TypeScriptParser {
                 let name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
                 let key = (NodeKind::Class, name.to_string());
                 let entry = change_map.entry(key.clone()).or_insert((
-                    if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                    if is_added {
+                        ChangeType::Added
+                    } else {
+                        ChangeType::Deleted
+                    },
                     0,
                     0,
                 ));
-                if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                if is_added {
+                    entry.1 += 1;
+                } else {
+                    entry.2 += 1;
+                }
                 current_context = Some(key);
                 found_definition = true;
             }
@@ -182,11 +198,19 @@ impl DiffParser for TypeScriptParser {
                     let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Trait, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
                         0,
                         0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -198,11 +222,19 @@ impl DiffParser for TypeScriptParser {
                     let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Other, format!("type {}", name));
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
                         0,
                         0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     found_definition = true;
                 }
             }
@@ -217,11 +249,19 @@ impl DiffParser for TypeScriptParser {
                         .unwrap_or("unknown");
                     let key = (NodeKind::Function, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
                         0,
                         0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -233,11 +273,19 @@ impl DiffParser for TypeScriptParser {
                     let name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Function, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
                         0,
                         0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -256,11 +304,19 @@ impl DiffParser for TypeScriptParser {
                     {
                         let key = (NodeKind::Method, name.to_string());
                         let entry = change_map.entry(key.clone()).or_insert((
-                            if is_added { ChangeType::Added } else { ChangeType::Deleted },
+                            if is_added {
+                                ChangeType::Added
+                            } else {
+                                ChangeType::Deleted
+                            },
                             0,
                             0,
                         ));
-                        if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                        if is_added {
+                            entry.1 += 1;
+                        } else {
+                            entry.2 += 1;
+                        }
                         current_context = Some(key);
                         found_definition = true;
                     }
@@ -270,9 +326,10 @@ impl DiffParser for TypeScriptParser {
             // If not a definition line, add to current context
             if !found_definition {
                 if let Some(ref key) = current_context {
-                    let entry = change_map
-                        .entry(key.clone())
-                        .or_insert((ChangeType::Modified, 0, 0));
+                    let entry =
+                        change_map
+                            .entry(key.clone())
+                            .or_insert((ChangeType::Modified, 0, 0));
                     if is_added {
                         entry.1 += 1;
                     } else {
@@ -285,16 +342,18 @@ impl DiffParser for TypeScriptParser {
         // Convert map to vec of ChangeNodes
         change_map
             .into_iter()
-            .map(|((kind, name), (change_type, additions, deletions))| ChangeNode {
-                kind,
-                name,
-                change_type,
-                additions,
-                deletions,
-                file_path: file_path.clone(),
-                line_number: None, // TODO: extract from hunk headers
-                children: Vec::new(),
-            })
+            .map(
+                |((kind, name), (change_type, additions, deletions))| ChangeNode {
+                    kind,
+                    name,
+                    change_type,
+                    additions,
+                    deletions,
+                    file_path: file_path.clone(),
+                    line_number: None, // TODO: extract from hunk headers
+                    children: Vec::new(),
+                },
+            )
             .collect()
     }
 }

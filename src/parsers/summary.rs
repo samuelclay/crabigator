@@ -61,7 +61,8 @@ impl DiffSummary {
                 let mut changes: Vec<ChangeNode> = changes_map.into_values().collect();
                 // Sort changes by name, then file_path for consistent ordering
                 changes.sort_by(|a, b| {
-                    a.name.cmp(&b.name)
+                    a.name
+                        .cmp(&b.name)
                         .then_with(|| a.file_path.cmp(&b.file_path))
                 });
                 LanguageChanges { language, changes }
@@ -167,9 +168,17 @@ impl DiffSummary {
         }
 
         if profile && start.elapsed().as_millis() > 100 {
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/crabigator-profile.log") {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/crabigator-profile.log")
+            {
                 use std::io::Write;
-                let _ = writeln!(f, "[profile] DiffSummary::refresh took {:?}", start.elapsed());
+                let _ = writeln!(
+                    f,
+                    "[profile] DiffSummary::refresh took {:?}",
+                    start.elapsed()
+                );
             }
         }
 
@@ -178,7 +187,11 @@ impl DiffSummary {
 }
 
 /// Parse hunk headers and context lines to detect modifications inside existing functions
-fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser, filename: &str) -> Vec<ChangeNode> {
+fn parse_hunk_modifications(
+    diff: &str,
+    parser: &dyn DiffParser,
+    filename: &str,
+) -> Vec<ChangeNode> {
     use std::collections::HashMap;
     use std::sync::LazyLock;
 
@@ -187,9 +200,8 @@ fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser, filename: &str)
     // Track changes with their line counts and line number: (additions, deletions, line_number)
     let mut change_map: HashMap<String, (usize, usize, Option<usize>)> = HashMap::new();
     // Pattern captures: 1=new_line_start, 2=context (compiled once)
-    static HUNK_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@\s*(.*)$").unwrap()
-    });
+    static HUNK_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@\s*(.*)$").unwrap());
     let hunk_re = &*HUNK_RE;
 
     let mut in_hunk = false;
@@ -232,8 +244,15 @@ fn parse_hunk_modifications(diff: &str, parser: &dyn DiffParser, filename: &str)
 
             if is_added || is_removed {
                 if let Some(ref func_name) = current_hunk_func {
-                    let entry = change_map.entry(func_name.clone()).or_insert((0, 0, current_hunk_line));
-                    if is_added { entry.0 += 1; } else { entry.1 += 1; }
+                    let entry =
+                        change_map
+                            .entry(func_name.clone())
+                            .or_insert((0, 0, current_hunk_line));
+                    if is_added {
+                        entry.0 += 1;
+                    } else {
+                        entry.1 += 1;
+                    }
                 }
             }
         }

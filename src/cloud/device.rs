@@ -52,15 +52,11 @@ impl DeviceIdentity {
 
         let mut secret_bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut secret_bytes);
-        let device_secret = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            secret_bytes,
-        );
+        let device_secret =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, secret_bytes);
 
         // Get hostname as default device name
-        let name = hostname::get()
-            .ok()
-            .and_then(|h| h.into_string().ok());
+        let name = hostname::get().ok().and_then(|h| h.into_string().ok());
 
         Ok(Self {
             device_id,

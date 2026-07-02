@@ -51,7 +51,15 @@ impl CloudWebSocket {
 
         let request = Request::builder()
             .uri(ws_url)
-            .header("Host", ws_url.trim_start_matches("wss://").trim_start_matches("ws://").split('/').next().unwrap_or(""))
+            .header(
+                "Host",
+                ws_url
+                    .trim_start_matches("wss://")
+                    .trim_start_matches("ws://")
+                    .split('/')
+                    .next()
+                    .unwrap_or(""),
+            )
             .header("Connection", "Upgrade")
             .header("Upgrade", "websocket")
             .header("Sec-WebSocket-Version", "13")

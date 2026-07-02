@@ -8,9 +8,9 @@
 //! which provides clean conversation history without status bar noise.
 
 use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
 #[cfg(debug_assertions)]
 use std::fs::File;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -97,10 +97,7 @@ impl CaptureManager {
             });
         }
 
-        let capture_dir = PathBuf::from(format!(
-            "/tmp/crabigator-{}",
-            config.session_id
-        ));
+        let capture_dir = PathBuf::from(format!("/tmp/crabigator-{}", config.session_id));
 
         // Create directory
         fs::create_dir_all(&capture_dir)?;
@@ -110,10 +107,7 @@ impl CaptureManager {
         let (raw_log, raw_log_size) = {
             let path = capture_dir.join("pty_raw.log");
             let size = path.metadata().map(|m| m.len()).unwrap_or(0);
-            let file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)?;
+            let file = OpenOptions::new().create(true).append(true).open(&path)?;
             (Some(file), size)
         };
 
@@ -239,8 +233,11 @@ impl CaptureManager {
         }
 
         // Read new content from transcript (pending_tools persisted across reads)
-        let (new_content, new_offset) =
-            transcript::read_transcript(transcript_path, self.transcript_offset, &mut self.pending_tools)?;
+        let (new_content, new_offset) = transcript::read_transcript(
+            transcript_path,
+            self.transcript_offset,
+            &mut self.pending_tools,
+        )?;
 
         if new_content.is_empty() {
             self.last_scrollback_update = Instant::now();
@@ -289,9 +286,11 @@ impl CaptureManager {
         }
     }
 
-
     /// Update screen.txt if the throttle interval has elapsed.
-    pub fn maybe_update_screen(&mut self, screen: &vt100::Screen) -> std::io::Result<Option<String>> {
+    pub fn maybe_update_screen(
+        &mut self,
+        screen: &vt100::Screen,
+    ) -> std::io::Result<Option<String>> {
         if !self.config.enabled {
             return Ok(None);
         }
@@ -318,10 +317,9 @@ impl CaptureManager {
         // Collect all rows (small fixed size - typically 40-60 rows).
         // vt100 can panic on edge cases (e.g. empty row with cols > 0); swallow
         // those panics — a lost snapshot is cheap, a crashed session is not.
-        let formatted_rows: Vec<Vec<u8>> = crate::catch_quiet(|| {
-            screen.rows_formatted(0, cols).take(rows as usize).collect()
-        })
-        .unwrap_or_default();
+        let formatted_rows: Vec<Vec<u8>> =
+            crate::catch_quiet(|| screen.rows_formatted(0, cols).take(rows as usize).collect())
+                .unwrap_or_default();
 
         // Find last non-empty row
         let last_nonempty = formatted_rows

@@ -72,7 +72,10 @@ impl OfflineQueue {
     /// ephemeral. Queuing them causes O(n) serialization overhead.
     pub fn enqueue(&mut self, event: CloudEvent) {
         // Skip large ephemeral events - they're not worth queuing
-        if matches!(event, CloudEvent::Screen { .. } | CloudEvent::Scrollback { .. }) {
+        if matches!(
+            event,
+            CloudEvent::Screen { .. } | CloudEvent::Scrollback { .. }
+        ) {
             return;
         }
 

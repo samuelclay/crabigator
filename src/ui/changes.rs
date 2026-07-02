@@ -49,8 +49,8 @@ fn get_kind_icon(kind: &NodeKind) -> (&'static str, u8) {
 /// Dynamic column widths computed from actual change data
 #[derive(Clone, Copy)]
 struct StatsColumnWidths {
-    del_num: usize,   // width for "−N" column
-    add_num: usize,   // width for "+N" column
+    del_num: usize, // width for "−N" column
+    add_num: usize, // width for "+N" column
 }
 
 impl StatsColumnWidths {
@@ -68,12 +68,12 @@ impl StatsColumnWidths {
         let del_num = if max_del > 0 {
             1 + digit_count(max_del)
         } else {
-            1  // just a space placeholder
+            1 // just a space placeholder
         };
         let add_num = if max_add > 0 {
             1 + digit_count(max_add)
         } else {
-            1  // just a space placeholder
+            1 // just a space placeholder
         };
 
         Self { del_num, add_num }
@@ -85,7 +85,6 @@ impl StatsColumnWidths {
         1 + self.del_num + 1 + self.add_num
     }
 }
-
 
 /// Number of content rows the changes widget actually renders for the given
 /// column width — accounting for the packed layout the widget falls back to
@@ -138,7 +137,11 @@ pub fn draw_changes_widget(
     ide: IdeKind,
     cwd: &Path,
 ) -> Result<()> {
-    write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
+    write!(
+        stdout,
+        "{}",
+        escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1)
+    )?;
     // 1-col left margin so content doesn't sit flush against the separator/edge.
     write!(stdout, " ")?;
     let inner_width = area.width.saturating_sub(2);
@@ -163,7 +166,13 @@ pub fn draw_changes_widget(
             };
             format!("{}{}{}", fg(color::LIGHT_BLUE), trimmed, RESET)
         } else if diff_summary.loading {
-            format!("{}Changes{} {}...{}", fg(color::ORANGE), RESET, fg(color::GRAY), RESET)
+            format!(
+                "{}Changes{} {}...{}",
+                fg(color::ORANGE),
+                RESET,
+                fg(color::GRAY),
+                RESET
+            )
         } else if let Some(first_lang) = by_language.first() {
             let total: usize = by_language.iter().map(|l| l.changes.len()).sum();
             let change_word = if total == 1 { "change" } else { "changes" };
@@ -248,7 +257,8 @@ fn build_rows_for_display(
         // then by name and file_path for deterministic ordering
         let mut sorted_changes: Vec<&ChangeNode> = lang_changes.changes.iter().collect();
         sorted_changes.sort_by(|a, b| {
-            kind_priority(&a.kind).cmp(&kind_priority(&b.kind))
+            kind_priority(&a.kind)
+                .cmp(&kind_priority(&b.kind))
                 .then_with(|| {
                     let a_total = a.additions + a.deletions;
                     let b_total = b.additions + b.deletions;
@@ -377,9 +387,15 @@ fn format_change_entry(
 
     format!(
         "{}{}{}{}{}{} {}{:pad$}{}",
-        fg(modifier_color), modifier, RESET,
-        fg(icon_color), icon, RESET,
-        linked_name, "", stats,
+        fg(modifier_color),
+        modifier,
+        RESET,
+        fg(icon_color),
+        icon,
+        RESET,
+        linked_name,
+        "",
+        stats,
         pad = name_padding
     )
 }
@@ -425,15 +441,27 @@ fn format_change_compact(change: &ChangeNode, ide: IdeKind, cwd: &Path) -> Forma
 
     let text = format!(
         "{}{}{}{}{}{}{}{}",
-        fg(modifier_color), modifier, RESET,
-        fg(icon_color), icon, RESET,
-        linked_name, stats
+        fg(modifier_color),
+        modifier,
+        RESET,
+        fg(icon_color),
+        icon,
+        RESET,
+        linked_name,
+        stats
     );
 
     // Calculate display width (hyperlink escape sequences don't contribute to visual width)
     let stats_width = if change.additions > 0 || change.deletions > 0 {
-        1 + (if change.deletions > 0 { 1 + digit_count(change.deletions) } else { 0 })
-          + (if change.additions > 0 { 1 + digit_count(change.additions) } else { 0 })
+        1 + (if change.deletions > 0 {
+            1 + digit_count(change.deletions)
+        } else {
+            0
+        }) + (if change.additions > 0 {
+            1 + digit_count(change.additions)
+        } else {
+            0
+        })
     } else {
         0
     };
@@ -456,10 +484,18 @@ fn format_change_stats(
 
     // For right-aligned columns: padding goes on the left, number on the right
     // When a value is 0, we just use padding (no number string)
-    let del_num_width = if deletions > 0 { 1 + digit_count(deletions) } else { 0 };
+    let del_num_width = if deletions > 0 {
+        1 + digit_count(deletions)
+    } else {
+        0
+    };
     let del_padding = del_width.saturating_sub(del_num_width);
 
-    let add_num_width = if additions > 0 { 1 + digit_count(additions) } else { 0 };
+    let add_num_width = if additions > 0 {
+        1 + digit_count(additions)
+    } else {
+        0
+    };
     let add_padding = add_width.saturating_sub(add_num_width);
 
     let del_str = if deletions > 0 {
@@ -476,8 +512,12 @@ fn format_change_stats(
 
     format!(
         " {:del_pad$}{} {:add_pad$}{}",
-        "", del_str, "", add_str,
-        del_pad = del_padding, add_pad = add_padding
+        "",
+        del_str,
+        "",
+        add_str,
+        del_pad = del_padding,
+        add_pad = add_padding
     )
 }
 

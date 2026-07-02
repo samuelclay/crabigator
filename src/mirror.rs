@@ -201,7 +201,15 @@ impl MirrorPublisher {
         }
 
         // Compute hash for change detection
-        let hash = self.compute_hash(stats, git, diff, terminal_title, title_history, recap, recap_history);
+        let hash = self.compute_hash(
+            stats,
+            git,
+            diff,
+            terminal_title,
+            title_history,
+            recap,
+            recap_history,
+        );
         if hash == self.last_hash {
             return Ok(false);
         }
@@ -212,7 +220,16 @@ impl MirrorPublisher {
             git_time_ms: initial_git_time_ms,
             diff_time_ms: initial_diff_time_ms,
         };
-        let state = self.build_state(stats, git, diff, terminal_title, title_history, recap, recap_history, launch_timing);
+        let state = self.build_state(
+            stats,
+            git,
+            diff,
+            terminal_title,
+            title_history,
+            recap,
+            recap_history,
+            launch_timing,
+        );
         let json = serde_json::to_string_pretty(&state)?;
 
         // Ensure session directory exists
@@ -231,7 +248,16 @@ impl MirrorPublisher {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn compute_hash(&self, stats: &SessionStats, git: &GitState, diff: &DiffSummary, terminal_title: Option<&str>, title_history: &[String], recap: Option<&RecapState>, recap_history: &[TurnRecap]) -> u64 {
+    fn compute_hash(
+        &self,
+        stats: &SessionStats,
+        git: &GitState,
+        diff: &DiffSummary,
+        terminal_title: Option<&str>,
+        title_history: &[String],
+        recap: Option<&RecapState>,
+        recap_history: &[TurnRecap],
+    ) -> u64 {
         let mut hasher = DefaultHasher::new();
 
         // Hash terminal title and history
@@ -398,7 +424,10 @@ fn render_stats_preview(stats: &SessionStats) -> Vec<String> {
         format!("Tools: {}", stats.platform_stats.total_tool_calls()),
     ]);
     if stats.platform_stats.compressions > 0 {
-        lines.push(format!("Compressions: {}", stats.platform_stats.compressions));
+        lines.push(format!(
+            "Compressions: {}",
+            stats.platform_stats.compressions
+        ));
     }
     // Show idle time if >= 60 seconds
     if let Some(idle_since) = stats.platform_stats.idle_since {

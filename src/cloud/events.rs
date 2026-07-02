@@ -389,9 +389,7 @@ pub struct CloudQuestion {
 #[serde(tag = "prompt_type", rename_all = "snake_case")]
 pub enum CloudPromptData {
     /// AskUserQuestion prompt
-    Question {
-        questions: Vec<CloudQuestion>,
-    },
+    Question { questions: Vec<CloudQuestion> },
     /// Permission request for a tool
     Permission {
         tool_name: String,
@@ -406,9 +404,7 @@ pub enum CloudPromptData {
         selected_option: Option<u32>,
     },
     /// ExitPlanMode (plan approval)
-    ExitPlan {
-        options: Vec<PromptOption>,
-    },
+    ExitPlan { options: Vec<PromptOption> },
 }
 
 /// Prompt event - sent when entering/leaving interactive states
@@ -774,12 +770,8 @@ impl SessionEventBuilder {
 
                 // Extract allows_tab_instructions and selected_option from parsed prompt
                 let allows_tab_instructions = permission_prompt.map(|p| p.allows_tab_instructions);
-                let selected_option = permission_prompt.and_then(|p| {
-                    p.options
-                        .iter()
-                        .find(|o| o.selected)
-                        .map(|o| o.number)
-                });
+                let selected_option = permission_prompt
+                    .and_then(|p| p.options.iter().find(|o| o.selected).map(|o| o.number));
 
                 CloudPromptData::Permission {
                     tool_name: tool_name.clone(),

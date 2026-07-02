@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::env;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -190,16 +190,16 @@ fn resolve_command(command: &str) -> Result<(String, Option<PathBuf>)> {
     if looks_like_path(command) {
         let path = PathBuf::from(command);
         if path.is_file() {
-            return Ok((path.to_string_lossy().into_owned(), path.parent().map(Path::to_path_buf)));
+            return Ok((
+                path.to_string_lossy().into_owned(),
+                path.parent().map(Path::to_path_buf),
+            ));
         }
         bail!("Command path not found: {command}");
     }
 
     if let Some(found) = find_in_path(command) {
-        return Ok((
-            found.to_string_lossy().into_owned(),
-            None,
-        ));
+        return Ok((found.to_string_lossy().into_owned(), None));
     }
 
     if let Some(found) = find_in_fallbacks(command) {
@@ -260,5 +260,7 @@ fn build_path_override(prefix: Option<&PathBuf>) -> Option<String> {
     if !paths.iter().any(|p| p == prefix) {
         paths.insert(0, prefix.to_path_buf());
     }
-    env::join_paths(paths).ok().and_then(|p| p.into_string().ok())
+    env::join_paths(paths)
+        .ok()
+        .and_then(|p| p.into_string().ok())
 }

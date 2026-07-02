@@ -18,10 +18,20 @@ impl DiffParser for SwiftParser {
         // Swift hunk context patterns:
         // "func name(" or "private func name(" or "public func name("
         // "class Name" or "struct Name" or "enum Name"
-        let fn_re = Regex::new(r"(?:(?:public|private|internal|fileprivate|open)\s+)?(?:static\s+)?func\s+(\w+)").unwrap();
-        let class_re = Regex::new(r"(?:(?:public|private|internal|fileprivate|open)\s+)?(?:final\s+)?class\s+(\w+)").unwrap();
-        let struct_re = Regex::new(r"(?:(?:public|private|internal|fileprivate|open)\s+)?struct\s+(\w+)").unwrap();
-        let enum_re = Regex::new(r"(?:(?:public|private|internal|fileprivate|open)\s+)?enum\s+(\w+)").unwrap();
+        let fn_re = Regex::new(
+            r"(?:(?:public|private|internal|fileprivate|open)\s+)?(?:static\s+)?func\s+(\w+)",
+        )
+        .unwrap();
+        let class_re = Regex::new(
+            r"(?:(?:public|private|internal|fileprivate|open)\s+)?(?:final\s+)?class\s+(\w+)",
+        )
+        .unwrap();
+        let struct_re =
+            Regex::new(r"(?:(?:public|private|internal|fileprivate|open)\s+)?struct\s+(\w+)")
+                .unwrap();
+        let enum_re =
+            Regex::new(r"(?:(?:public|private|internal|fileprivate|open)\s+)?enum\s+(\w+)")
+                .unwrap();
         let extension_re = Regex::new(r"extension\s+(\w+)").unwrap();
 
         if let Some(caps) = fn_re.captures(context) {
@@ -44,14 +54,24 @@ impl DiffParser for SwiftParser {
 
     fn parse(&self, diff: &str, filename: &str) -> Vec<ChangeNode> {
         let file_path = Some(filename.to_string());
-        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> = HashMap::new();
+        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> =
+            HashMap::new();
 
         // Regex patterns for Swift constructs
         let fn_re = Regex::new(r"^\s*(?:(?:public|private|internal|fileprivate|open)\s+)?(?:static\s+)?(?:override\s+)?func\s+(\w+)").unwrap();
-        let class_re = Regex::new(r"^\s*(?:(?:public|private|internal|fileprivate|open)\s+)?(?:final\s+)?class\s+(\w+)").unwrap();
-        let struct_re = Regex::new(r"^\s*(?:(?:public|private|internal|fileprivate|open)\s+)?struct\s+(\w+)").unwrap();
-        let enum_re = Regex::new(r"^\s*(?:(?:public|private|internal|fileprivate|open)\s+)?enum\s+(\w+)").unwrap();
-        let protocol_re = Regex::new(r"^\s*(?:(?:public|private|internal|fileprivate|open)\s+)?protocol\s+(\w+)").unwrap();
+        let class_re = Regex::new(
+            r"^\s*(?:(?:public|private|internal|fileprivate|open)\s+)?(?:final\s+)?class\s+(\w+)",
+        )
+        .unwrap();
+        let struct_re =
+            Regex::new(r"^\s*(?:(?:public|private|internal|fileprivate|open)\s+)?struct\s+(\w+)")
+                .unwrap();
+        let enum_re =
+            Regex::new(r"^\s*(?:(?:public|private|internal|fileprivate|open)\s+)?enum\s+(\w+)")
+                .unwrap();
+        let protocol_re =
+            Regex::new(r"^\s*(?:(?:public|private|internal|fileprivate|open)\s+)?protocol\s+(\w+)")
+                .unwrap();
         let extension_re = Regex::new(r"^\s*extension\s+(\w+)").unwrap();
         let hunk_re = Regex::new(r"^@@[^@]+@@\s*(.*)$").unwrap();
 
@@ -66,17 +86,23 @@ impl DiffParser for SwiftParser {
                         let fn_name = fn_caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                         current_context = Some((NodeKind::Function, fn_name.to_string()));
                         let key = (NodeKind::Function, fn_name.to_string());
-                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0));
+                        change_map
+                            .entry(key)
+                            .or_insert((ChangeType::Modified, 0, 0));
                     } else if let Some(class_caps) = class_re.captures(context_str) {
                         let name = class_caps.get(1).map(|m| m.as_str()).unwrap_or("Unknown");
                         current_context = Some((NodeKind::Class, name.to_string()));
                         let key = (NodeKind::Class, name.to_string());
-                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0));
+                        change_map
+                            .entry(key)
+                            .or_insert((ChangeType::Modified, 0, 0));
                     } else if let Some(ext_caps) = extension_re.captures(context_str) {
                         let name = ext_caps.get(1).map(|m| m.as_str()).unwrap_or("Unknown");
                         current_context = Some((NodeKind::Impl, name.to_string()));
                         let key = (NodeKind::Impl, name.to_string());
-                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0));
+                        change_map
+                            .entry(key)
+                            .or_insert((ChangeType::Modified, 0, 0));
                     } else {
                         current_context = None;
                     }
@@ -127,10 +153,19 @@ impl DiffParser for SwiftParser {
                 let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                 let key = (NodeKind::Class, name.to_string());
                 let entry = change_map.entry(key.clone()).or_insert((
-                    if is_added { ChangeType::Added } else { ChangeType::Deleted },
-                    0, 0,
+                    if is_added {
+                        ChangeType::Added
+                    } else {
+                        ChangeType::Deleted
+                    },
+                    0,
+                    0,
                 ));
-                if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                if is_added {
+                    entry.1 += 1;
+                } else {
+                    entry.2 += 1;
+                }
                 current_context = Some(key);
                 found_definition = true;
             }
@@ -141,10 +176,19 @@ impl DiffParser for SwiftParser {
                     let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Struct, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
-                        0, 0,
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
+                        0,
+                        0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -156,10 +200,19 @@ impl DiffParser for SwiftParser {
                     let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Enum, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
-                        0, 0,
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
+                        0,
+                        0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -171,10 +224,19 @@ impl DiffParser for SwiftParser {
                     let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Trait, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
-                        0, 0,
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
+                        0,
+                        0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -186,10 +248,19 @@ impl DiffParser for SwiftParser {
                     let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Impl, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
-                        0, 0,
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
+                        0,
+                        0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -201,10 +272,19 @@ impl DiffParser for SwiftParser {
                     let fn_name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Function, fn_name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
-                        0, 0,
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
+                        0,
+                        0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -213,9 +293,10 @@ impl DiffParser for SwiftParser {
             // If not a definition line, add to current context
             if !found_definition {
                 if let Some(ref key) = current_context {
-                    let entry = change_map
-                        .entry(key.clone())
-                        .or_insert((ChangeType::Modified, 0, 0));
+                    let entry =
+                        change_map
+                            .entry(key.clone())
+                            .or_insert((ChangeType::Modified, 0, 0));
                     if is_added {
                         entry.1 += 1;
                     } else {
@@ -227,16 +308,18 @@ impl DiffParser for SwiftParser {
 
         change_map
             .into_iter()
-            .map(|((kind, name), (change_type, additions, deletions))| ChangeNode {
-                kind,
-                name,
-                change_type,
-                additions,
-                deletions,
-                file_path: file_path.clone(),
-                line_number: None, // TODO: extract from hunk headers
-                children: Vec::new(),
-            })
+            .map(
+                |((kind, name), (change_type, additions, deletions))| ChangeNode {
+                    kind,
+                    name,
+                    change_type,
+                    additions,
+                    deletions,
+                    file_path: file_path.clone(),
+                    line_number: None, // TODO: extract from hunk headers
+                    children: Vec::new(),
+                },
+            )
             .collect()
     }
 }

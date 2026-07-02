@@ -8,19 +8,22 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use super::utils::{
+    compute_unique_display_names, create_folder_bar, digit_count, format_diff_stats,
+    format_diff_stats_aligned, get_filename, strip_ansi_len, truncate_path,
+};
+use super::WidgetArea;
+use crate::git::{FileStatus, GitState};
 use crate::ide::IdeKind;
 use crate::terminal::escape::{self, color, fg, hyperlink, RESET};
-use crate::git::{FileStatus, GitState};
-use super::utils::{compute_unique_display_names, create_folder_bar, digit_count, format_diff_stats, format_diff_stats_aligned, get_filename, strip_ansi_len, truncate_path};
-use super::WidgetArea;
 
 /// Dynamic column widths computed from actual file data
 #[derive(Clone, Copy)]
 struct StatsColumnWidths {
-    del_num: usize,   // width for "−N" column
-    del_bar: usize,   // width for deletion bar (left half)
-    add_bar: usize,   // width for addition bar (right half)
-    add_num: usize,   // width for "+N" column
+    del_num: usize, // width for "−N" column
+    del_bar: usize, // width for deletion bar (left half)
+    add_bar: usize, // width for addition bar (right half)
+    add_num: usize, // width for "+N" column
 }
 
 impl StatsColumnWidths {
@@ -41,24 +44,24 @@ impl StatsColumnWidths {
         let del_num_raw = if max_del > 0 {
             1 + digit_count(max_del)
         } else {
-            1  // just a space placeholder
+            1 // just a space placeholder
         };
         let add_num_raw = if max_add > 0 {
             1 + digit_count(max_add)
         } else {
-            1  // just a space placeholder
+            1 // just a space placeholder
         };
 
         // Bar widths: based on magnitude (log10), minimum 1 if there are any
         let del_bar_raw = if max_del > 0 {
             digit_count(max_del)
         } else {
-            1  // minimum space
+            1 // minimum space
         };
         let add_bar_raw = if max_add > 0 {
             digit_count(max_add)
         } else {
-            1  // minimum space
+            1 // minimum space
         };
 
         // Make symmetric: use max of each pair so left and right sides are equal width
@@ -79,7 +82,6 @@ impl StatsColumnWidths {
         self.del_num + 1 + self.del_bar + self.add_bar + 1 + self.add_num
     }
 }
-
 
 /// Number of content rows the git widget actually renders for the given
 /// column width — accounting for the multi-column layout that kicks in when
@@ -109,7 +111,11 @@ pub fn draw_git_widget(
     ide: IdeKind,
     cwd: &Path,
 ) -> Result<()> {
-    write!(stdout, "{}", escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1))?;
+    write!(
+        stdout,
+        "{}",
+        escape::cursor_to(area.pty_rows + 1 + area.row, area.col + 1)
+    )?;
     // 1-col left margin so content doesn't sit flush against the separator/edge.
     write!(stdout, " ")?;
     let inner_width = area.width.saturating_sub(2) as usize;
@@ -144,7 +150,12 @@ pub fn draw_git_widget(
         // had plenty of room.)
         const BRANCH_MIN_GAP: usize = 1;
         let max_branch_chars = inner_width.saturating_sub(right_len + BRANCH_MIN_GAP);
-        let left = format!("{}{}{}", fg(color::LIGHT_GREEN), truncate_path(branch, max_branch_chars), RESET);
+        let left = format!(
+            "{}{}{}",
+            fg(color::LIGHT_GREEN),
+            truncate_path(branch, max_branch_chars),
+            RESET
+        );
         let left_len = strip_ansi_len(&left);
 
         let pad = inner_width
@@ -169,7 +180,13 @@ pub fn draw_git_widget(
     // Calculate max changes for scaling the bar graph
     let max_changes = files
         .iter()
-        .map(|f| if f.is_folder { f.file_count } else { f.total_changes() })
+        .map(|f| {
+            if f.is_folder {
+                f.file_count
+            } else {
+                f.total_changes()
+            }
+        })
         .max()
         .unwrap_or(1)
         .max(1);
@@ -190,7 +207,15 @@ pub fn draw_git_widget(
         if row_idx < num_files {
             let file = &files[row_idx];
             let display_name = &display_names[row_idx];
-            let item = format_file_entry(file, display_name, inner_width, max_changes, &stats_widths, ide, cwd);
+            let item = format_file_entry(
+                file,
+                display_name,
+                inner_width,
+                max_changes,
+                &stats_widths,
+                ide,
+                cwd,
+            );
             write!(stdout, "{}", item)?;
             let content_len = strip_ansi_len(&item);
             let pad = inner_width.saturating_sub(content_len);
@@ -207,7 +232,8 @@ pub fn draw_git_widget(
             .iter()
             .enumerate()
             .map(|(i, file)| {
-                let entry = format_file_entry_natural(file, &display_names[i], max_changes, &stats_widths);
+                let entry =
+                    format_file_entry_natural(file, &display_names[i], max_changes, &stats_widths);
                 strip_ansi_len(&entry)
             })
             .collect();
@@ -235,7 +261,8 @@ pub fn draw_git_widget(
 
             // Apply extra space to column widths (cap name portion at 30 chars)
             for (col_idx, col_width) in col_widths.iter_mut().enumerate() {
-                let max_name_in_col = (col_idx * available_rows..((col_idx + 1) * available_rows).min(num_files))
+                let max_name_in_col = (col_idx * available_rows
+                    ..((col_idx + 1) * available_rows).min(num_files))
                     .map(|i| display_names[i].chars().count())
                     .max()
                     .unwrap_or(0);
@@ -261,7 +288,15 @@ pub fn draw_git_widget(
                 if file_idx < num_files {
                     let file = &files[file_idx];
                     let display_name = &display_names[file_idx];
-                    let item = format_file_entry(file, display_name, *col_width, max_changes, &stats_widths, ide, cwd);
+                    let item = format_file_entry(
+                        file,
+                        display_name,
+                        *col_width,
+                        max_changes,
+                        &stats_widths,
+                        ide,
+                        cwd,
+                    );
                     let item_len = strip_ansi_len(&item);
                     output.push_str(&item);
                     let pad = col_width.saturating_sub(item_len);
@@ -280,7 +315,9 @@ pub fn draw_git_widget(
             let items: Vec<String> = files
                 .iter()
                 .enumerate()
-                .map(|(i, file)| format_file_compact(file, &display_names[i], max_changes, ide, cwd))
+                .map(|(i, file)| {
+                    format_file_compact(file, &display_names[i], max_changes, ide, cwd)
+                })
                 .collect();
             let item_widths: Vec<usize> = items.iter().map(|s| strip_ansi_len(s)).collect();
 
@@ -339,13 +376,26 @@ pub fn draw_git_widget(
 }
 
 /// Format a file entry compactly (icon + name + stats) for wrapped mode
-fn format_file_compact(file: &FileStatus, display_name: &str, max_changes: usize, ide: IdeKind, cwd: &Path) -> String {
+fn format_file_compact(
+    file: &FileStatus,
+    display_name: &str,
+    max_changes: usize,
+    ide: IdeKind,
+    cwd: &Path,
+) -> String {
     let (icon, icon_color) = get_status_icon_color(&file.status);
 
     if file.is_folder {
         let folder_name = get_filename(file.path.trim_end_matches('/'));
         let bar = create_folder_bar(file.file_count, max_changes, 4);
-        format!("{}{}{}{}/ {}", fg(icon_color), icon, RESET, folder_name, bar)
+        format!(
+            "{}{}{}{}/ {}",
+            fg(icon_color),
+            icon,
+            RESET,
+            folder_name,
+            bar
+        )
     } else {
         // Compact: just numbers, no bar
         let stats = format_diff_stats(file.additions, file.deletions, max_changes, 0);
@@ -353,7 +403,14 @@ fn format_file_compact(file: &FileStatus, display_name: &str, max_changes: usize
         let abs_path = cwd.join(&file.path).to_string_lossy().to_string();
         let url = ide.file_url(&abs_path, None);
         let linked_name = hyperlink(&url, display_name);
-        format!("{}{}{}{} {}", fg(icon_color), icon, RESET, linked_name, stats)
+        format!(
+            "{}{}{}{} {}",
+            fg(icon_color),
+            icon,
+            RESET,
+            linked_name,
+            stats
+        )
     }
 }
 
@@ -370,7 +427,12 @@ fn get_status_icon_color(status: &str) -> (&'static str, u8) {
 
 /// Format a file entry at its natural width (no truncation) to measure actual size
 #[allow(unused_variables)]
-fn format_file_entry_natural(file: &FileStatus, display_name: &str, max_changes: usize, stats_widths: &StatsColumnWidths) -> String {
+fn format_file_entry_natural(
+    file: &FileStatus,
+    display_name: &str,
+    max_changes: usize,
+    stats_widths: &StatsColumnWidths,
+) -> String {
     let (icon, icon_color) = get_status_icon_color(&file.status);
 
     if file.is_folder {
@@ -383,7 +445,12 @@ fn format_file_entry_natural(file: &FileStatus, display_name: &str, max_changes:
         let bar = create_folder_bar(file.file_count, max_changes, 8);
         format!(
             "{}{}{} {}/ {} {}",
-            fg(icon_color), icon, RESET, folder_name, count_display, bar
+            fg(icon_color),
+            icon,
+            RESET,
+            folder_name,
+            count_display,
+            bar
         )
     } else {
         // Natural width with aligned stats columns
@@ -398,14 +465,26 @@ fn format_file_entry_natural(file: &FileStatus, display_name: &str, max_changes:
         );
         format!(
             "{}{}{} {} {}",
-            fg(icon_color), icon, RESET, display_name, stats
+            fg(icon_color),
+            icon,
+            RESET,
+            display_name,
+            stats
         )
     }
 }
 
 /// Format a single file entry for display
 #[allow(unused_variables)]
-fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, max_changes: usize, stats_widths: &StatsColumnWidths, ide: IdeKind, cwd: &Path) -> String {
+fn format_file_entry(
+    file: &FileStatus,
+    display_name: &str,
+    col_width: usize,
+    max_changes: usize,
+    stats_widths: &StatsColumnWidths,
+    ide: IdeKind,
+    cwd: &Path,
+) -> String {
     // Status icon
     let (icon, icon_color) = get_status_icon_color(&file.status);
 
@@ -425,13 +504,22 @@ fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, ma
         let bar = create_folder_bar(file.file_count, max_changes, 8);
 
         // Calculate available width for folder name
-        let count_len = if file.file_count == 0 { 7 } else { format!("{} files", file.file_count).len() };
+        let count_len = if file.file_count == 0 {
+            7
+        } else {
+            format!("{} files", file.file_count).len()
+        };
         let name_width = col_width.saturating_sub(12 + count_len);
         let truncated_folder = truncate_path(&folder_display, name_width);
 
         format!(
             "{}{}{} {} {} {}",
-            fg(icon_color), icon, RESET, truncated_folder, count_display, bar
+            fg(icon_color),
+            icon,
+            RESET,
+            truncated_folder,
+            count_display,
+            bar
         )
     } else {
         // Regular file display with aligned stats columns
@@ -454,7 +542,7 @@ fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, ma
         let stats = format_diff_stats_aligned(
             file.additions,
             file.deletions,
-            true,  // show bar
+            true, // show bar
             stats_widths.del_num,
             stats_widths.del_bar,
             stats_widths.add_bar,
@@ -463,7 +551,13 @@ fn format_file_entry(file: &FileStatus, display_name: &str, col_width: usize, ma
 
         format!(
             "{}{}{} {}{:pad$} {}",
-            fg(icon_color), icon, RESET, linked_name, "", stats, pad = name_padding
+            fg(icon_color),
+            icon,
+            RESET,
+            linked_name,
+            "",
+            stats,
+            pad = name_padding
         )
     }
 }

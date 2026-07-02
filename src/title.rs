@@ -279,8 +279,14 @@ mod tests {
             clean_title("\"Refactor The Title Rendering Path Now Please\"."),
             "Refactor The Title Rendering Path Now"
         );
-        assert_eq!(clean_title("```\nFix Branch Truncation\n```"), "Fix Branch Truncation");
-        assert_eq!(clean_title("Add Dashboard Auth Flow"), "Add Dashboard Auth Flow");
+        assert_eq!(
+            clean_title("```\nFix Branch Truncation\n```"),
+            "Fix Branch Truncation"
+        );
+        assert_eq!(
+            clean_title("Add Dashboard Auth Flow"),
+            "Add Dashboard Auth Flow"
+        );
     }
 
     #[test]

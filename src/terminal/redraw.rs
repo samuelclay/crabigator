@@ -17,11 +17,11 @@
 #[derive(Clone, Copy, Debug)]
 enum ParseState {
     Idle,
-    Esc,                              // Saw ESC
-    EscBracket,                       // Saw ESC [
-    Param1(u16),                      // Parsing first numeric param
-    AfterSemicolon(u16),              // Saw semicolon after first param
-    Param2(u16, u16),                 // Parsing second numeric param
+    Esc,                 // Saw ESC
+    EscBracket,          // Saw ESC [
+    Param1(u16),         // Parsing first numeric param
+    AfterSemicolon(u16), // Saw semicolon after first param
+    Param2(u16, u16),    // Parsing second numeric param
 }
 
 /// Result from filtering PTY output
@@ -174,7 +174,10 @@ impl ScrollRegionFilter {
             }
         }
 
-        ScrollRegionFilterResult { output, needs_redraw }
+        ScrollRegionFilterResult {
+            output,
+            needs_redraw,
+        }
     }
 }
 

@@ -187,7 +187,10 @@ impl CloudClient {
 
     /// Check if connected to cloud
     pub fn is_connected(&self) -> bool {
-        self.ws_handle.as_ref().map(|h| h.is_alive()).unwrap_or(false)
+        self.ws_handle
+            .as_ref()
+            .map(|h| h.is_alive())
+            .unwrap_or(false)
     }
 
     /// Check if we just (re)connected and need to send initial state.
@@ -341,16 +344,15 @@ impl CloudClient {
         self.ws_url = Some(ws_url.to_string());
 
         let timestamp = chrono::Utc::now().timestamp_millis().to_string();
-        let message = format!("GET:/api/sessions/{}/connect:{}", self.session_id.as_ref().unwrap(), timestamp);
+        let message = format!(
+            "GET:/api/sessions/{}/connect:{}",
+            self.session_id.as_ref().unwrap(),
+            timestamp
+        );
         let signature = self.device.sign(&message)?;
 
-        let ws = CloudWebSocket::connect(
-            ws_url,
-            &self.device.device_id,
-            &signature,
-            &timestamp,
-        )
-        .await?;
+        let ws =
+            CloudWebSocket::connect(ws_url, &self.device.device_id, &signature, &timestamp).await?;
 
         // Split into handle and shutdown receiver
         // For initial connection, we're in the main runtime so tasks stay alive
@@ -714,7 +716,9 @@ impl CloudClient {
             req = req.header(&key, &value);
         }
 
-        let response = req.send().await
+        let response = req
+            .send()
+            .await
             .with_context(|| "Failed to generate pairing token")?;
 
         if !response.status().is_success() {
@@ -731,14 +735,18 @@ impl CloudClient {
     #[allow(dead_code)]
     pub async fn poll_pairing_status(&self, token: &str) -> Result<PairingStatusResponse> {
         let url = format!("{}/pairing/{}/status", self.api_url, token);
-        let headers = self.device.auth_headers("GET", &format!("/api/pairing/{}/status", token))?;
+        let headers = self
+            .device
+            .auth_headers("GET", &format!("/api/pairing/{}/status", token))?;
 
         let mut req = self.http.get(&url);
         for (key, value) in headers {
             req = req.header(&key, &value);
         }
 
-        let response = req.send().await
+        let response = req
+            .send()
+            .await
             .with_context(|| "Failed to poll pairing status")?;
 
         if !response.status().is_success() {
@@ -761,7 +769,9 @@ impl CloudClient {
             req = req.header(&key, &value);
         }
 
-        let response = req.send().await
+        let response = req
+            .send()
+            .await
             .with_context(|| "Failed to get linked devices")?;
 
         if !response.status().is_success() {
@@ -778,14 +788,18 @@ impl CloudClient {
     #[allow(dead_code)]
     pub async fn revoke_linked_device(&self, mobile_id: &str) -> Result<()> {
         let url = format!("{}/devices/linked/{}", self.api_url, mobile_id);
-        let headers = self.device.auth_headers("DELETE", &format!("/api/devices/linked/{}", mobile_id))?;
+        let headers = self
+            .device
+            .auth_headers("DELETE", &format!("/api/devices/linked/{}", mobile_id))?;
 
         let mut req = self.http.delete(&url);
         for (key, value) in headers {
             req = req.header(&key, &value);
         }
 
-        let response = req.send().await
+        let response = req
+            .send()
+            .await
             .with_context(|| "Failed to revoke linked device")?;
 
         if !response.status().is_success() {

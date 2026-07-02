@@ -120,9 +120,7 @@ pub struct Question {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActivePrompt {
     /// AskUserQuestion prompt with structured options
-    Question {
-        questions: Vec<Question>,
-    },
+    Question { questions: Vec<Question> },
     /// Permission request for a tool
     Permission {
         tool_name: String,

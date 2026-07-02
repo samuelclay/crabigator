@@ -11,9 +11,7 @@ impl DiffParser for ObjCParser {
     }
 
     fn supports(&self, filename: &str) -> bool {
-        filename.ends_with(".m")
-            || filename.ends_with(".mm")
-            || filename.ends_with(".h")
+        filename.ends_with(".m") || filename.ends_with(".mm") || filename.ends_with(".h")
     }
 
     fn extract_function_from_context(&self, context: &str) -> Option<String> {
@@ -42,7 +40,8 @@ impl DiffParser for ObjCParser {
 
     fn parse(&self, diff: &str, filename: &str) -> Vec<ChangeNode> {
         let file_path = Some(filename.to_string());
-        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> = HashMap::new();
+        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> =
+            HashMap::new();
 
         // Regex patterns for Objective-C constructs
         // Method: - (returnType)methodName or + (returnType)methodName
@@ -63,17 +62,23 @@ impl DiffParser for ObjCParser {
                         let name = method_caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                         current_context = Some((NodeKind::Method, name.to_string()));
                         let key = (NodeKind::Method, name.to_string());
-                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0));
+                        change_map
+                            .entry(key)
+                            .or_insert((ChangeType::Modified, 0, 0));
                     } else if let Some(impl_caps) = impl_re.captures(context_str) {
                         let name = impl_caps.get(1).map(|m| m.as_str()).unwrap_or("Unknown");
                         current_context = Some((NodeKind::Impl, name.to_string()));
                         let key = (NodeKind::Impl, name.to_string());
-                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0));
+                        change_map
+                            .entry(key)
+                            .or_insert((ChangeType::Modified, 0, 0));
                     } else if let Some(iface_caps) = interface_re.captures(context_str) {
                         let name = iface_caps.get(1).map(|m| m.as_str()).unwrap_or("Unknown");
                         current_context = Some((NodeKind::Class, name.to_string()));
                         let key = (NodeKind::Class, name.to_string());
-                        change_map.entry(key).or_insert((ChangeType::Modified, 0, 0));
+                        change_map
+                            .entry(key)
+                            .or_insert((ChangeType::Modified, 0, 0));
                     } else {
                         current_context = None;
                     }
@@ -118,10 +123,19 @@ impl DiffParser for ObjCParser {
                 let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                 let key = (NodeKind::Class, name.to_string());
                 let entry = change_map.entry(key.clone()).or_insert((
-                    if is_added { ChangeType::Added } else { ChangeType::Deleted },
-                    0, 0,
+                    if is_added {
+                        ChangeType::Added
+                    } else {
+                        ChangeType::Deleted
+                    },
+                    0,
+                    0,
                 ));
-                if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                if is_added {
+                    entry.1 += 1;
+                } else {
+                    entry.2 += 1;
+                }
                 current_context = Some(key);
                 found_definition = true;
             }
@@ -132,10 +146,19 @@ impl DiffParser for ObjCParser {
                     let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Impl, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
-                        0, 0,
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
+                        0,
+                        0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -147,10 +170,19 @@ impl DiffParser for ObjCParser {
                     let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Trait, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
-                        0, 0,
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
+                        0,
+                        0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -162,10 +194,19 @@ impl DiffParser for ObjCParser {
                     let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
                     let key = (NodeKind::Method, name.to_string());
                     let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added { ChangeType::Added } else { ChangeType::Deleted },
-                        0, 0,
+                        if is_added {
+                            ChangeType::Added
+                        } else {
+                            ChangeType::Deleted
+                        },
+                        0,
+                        0,
                     ));
-                    if is_added { entry.1 += 1; } else { entry.2 += 1; }
+                    if is_added {
+                        entry.1 += 1;
+                    } else {
+                        entry.2 += 1;
+                    }
                     current_context = Some(key);
                     found_definition = true;
                 }
@@ -174,9 +215,10 @@ impl DiffParser for ObjCParser {
             // If not a definition line, add to current context
             if !found_definition {
                 if let Some(ref key) = current_context {
-                    let entry = change_map
-                        .entry(key.clone())
-                        .or_insert((ChangeType::Modified, 0, 0));
+                    let entry =
+                        change_map
+                            .entry(key.clone())
+                            .or_insert((ChangeType::Modified, 0, 0));
                     if is_added {
                         entry.1 += 1;
                     } else {
@@ -188,16 +230,18 @@ impl DiffParser for ObjCParser {
 
         change_map
             .into_iter()
-            .map(|((kind, name), (change_type, additions, deletions))| ChangeNode {
-                kind,
-                name,
-                change_type,
-                additions,
-                deletions,
-                file_path: file_path.clone(),
-                line_number: None, // TODO: extract from hunk headers
-                children: Vec::new(),
-            })
+            .map(
+                |((kind, name), (change_type, additions, deletions))| ChangeNode {
+                    kind,
+                    name,
+                    change_type,
+                    additions,
+                    deletions,
+                    file_path: file_path.clone(),
+                    line_number: None, // TODO: extract from hunk headers
+                    children: Vec::new(),
+                },
+            )
             .collect()
     }
 }

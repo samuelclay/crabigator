@@ -141,7 +141,10 @@ fn format_user_message(content: &str) -> String {
 }
 
 /// Format an assistant message, storing tool calls for later pairing
-fn format_assistant_message(content: &Value, pending_tools: &mut HashMap<String, PendingToolUse>) -> String {
+fn format_assistant_message(
+    content: &Value,
+    pending_tools: &mut HashMap<String, PendingToolUse>,
+) -> String {
     let mut out = String::new();
 
     let blocks: Vec<ContentBlock> = match content {
@@ -175,12 +178,11 @@ fn format_assistant_message(content: &Value, pending_tools: &mut HashMap<String,
             ContentBlock::ToolUse { name, input, id } => {
                 // Store tool call for pairing with result
                 let formatted = format_tool_use(&name, &input);
-                pending_tools.insert(id, PendingToolUse {
-                    name,
-                    formatted,
-                });
+                pending_tools.insert(id, PendingToolUse { name, formatted });
             }
-            ContentBlock::ToolResult { .. } | ContentBlock::Thinking { .. } | ContentBlock::Other => {
+            ContentBlock::ToolResult { .. }
+            | ContentBlock::Thinking { .. }
+            | ContentBlock::Other => {
                 // Skip - results handled separately, thinking/other ignored
             }
         }
@@ -190,7 +192,10 @@ fn format_assistant_message(content: &Value, pending_tools: &mut HashMap<String,
 }
 
 /// Format tool results, pairing with their corresponding tool calls
-fn format_tool_results(results: &[Value], pending_tools: &mut HashMap<String, PendingToolUse>) -> String {
+fn format_tool_results(
+    results: &[Value],
+    pending_tools: &mut HashMap<String, PendingToolUse>,
+) -> String {
     let mut out = String::new();
 
     for result in results {
@@ -254,7 +259,10 @@ fn format_tool_use(name: &str, input: &Value) -> String {
                     out.push('\n');
                 }
                 if lines.len() > preview_lines {
-                    out.push_str(&format!("  ... ({} more lines)\n", lines.len() - preview_lines));
+                    out.push_str(&format!(
+                        "  ... ({} more lines)\n",
+                        lines.len() - preview_lines
+                    ));
                 }
             }
             return out;
@@ -332,18 +340,17 @@ fn format_tool_result_summary(tool_name: &str, content: &Value) -> String {
     // Extract text from tool result
     let text = match content {
         Value::String(s) => s.clone(),
-        Value::Array(arr) => {
-            arr.iter()
-                .filter_map(|v| {
-                    if v.get("type").and_then(|t| t.as_str()) == Some("text") {
-                        v.get("text").and_then(|t| t.as_str()).map(String::from)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| {
+                if v.get("type").and_then(|t| t.as_str()) == Some("text") {
+                    v.get("text").and_then(|t| t.as_str()).map(String::from)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => String::new(),
     };
 

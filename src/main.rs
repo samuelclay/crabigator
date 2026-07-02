@@ -8,13 +8,13 @@ mod git;
 mod hooks;
 mod ide;
 mod inspect;
+mod launcher;
 mod mirror;
 mod mode;
 mod pair;
 mod parsers;
 mod platforms;
 mod recap;
-mod launcher;
 mod terminal;
 mod terminal_spawner;
 mod title;
@@ -41,7 +41,9 @@ use crate::app::App;
 use crate::banner::{print_session_banner, print_session_end_line};
 use crate::cli::{parse_args, resolve_platform, Command, DebugTimer};
 use crate::config::Config;
-use crate::update::{check_for_update, dismiss_version, detect_install_method, get_cli_version, UpdateState};
+use crate::update::{
+    check_for_update, detect_install_method, dismiss_version, get_cli_version, UpdateState,
+};
 
 fn setup_terminal() -> Result<(u16, u16)> {
     let mut stdout = stdout();
@@ -56,10 +58,7 @@ fn setup_terminal() -> Result<(u16, u16)> {
     // Enable bracketed paste
     // Primary screen buffer (no alternate screen) - allows native scrollback
     // Disable mouse capture to allow native text selection
-    execute!(
-        stdout,
-        EnableBracketedPaste
-    )?;
+    execute!(stdout, EnableBracketedPaste)?;
 
     Ok((cols, rows))
 }
@@ -74,11 +73,7 @@ fn restore_terminal(total_rows: u16) -> Result<()> {
     stdout.flush()?;
 
     disable_raw_mode()?;
-    execute!(
-        stdout,
-        DisableBracketedPaste,
-        Show
-    )?;
+    execute!(stdout, DisableBracketedPaste, Show)?;
     stdout.flush()?;
     Ok(())
 }
@@ -147,11 +142,7 @@ fn setup_panic_handler() {
         let mut stdout = stdout();
         let _ = write!(stdout, "{}", terminal::escape::SCROLL_REGION_RESET);
         let _ = stdout.flush();
-        let _ = execute!(
-            stdout,
-            DisableBracketedPaste,
-            Show
-        );
+        let _ = execute!(stdout, DisableBracketedPaste, Show);
         // Ensure we're on a fresh line
         println!();
         original_hook(panic_info);
@@ -285,7 +276,15 @@ async fn main() -> Result<()> {
     let (result, final_rows) = {
         let begin = Instant::now();
         let platform = platforms::platform_for(platform_kind);
-        let app_result = App::new(cols, rows, platform, args.platform_args, args.capture, update_state).await;
+        let app_result = App::new(
+            cols,
+            rows,
+            platform,
+            args.platform_args,
+            args.capture,
+            update_state,
+        )
+        .await;
         timer.duration("App::new", begin.elapsed());
 
         match app_result {
@@ -325,7 +324,12 @@ async fn main() -> Result<()> {
         1 => println!("Warning: Hook installation still running in background."),
         2 => {}
         3 => {
-            if let Some(err) = timer.hook_error.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            if let Some(err) = timer
+                .hook_error
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take()
+            {
                 println!("Warning: Failed to install hooks: {}", err);
             } else {
                 println!("Warning: Failed to install hooks.");
@@ -352,9 +356,7 @@ async fn check_and_prompt_for_update(cli_version: Option<String>) -> UpdateState
     }
 
     // Spawn background task to check for updates
-    let check_handle = tokio::spawn(async move {
-        check_for_update(cli_version).await
-    });
+    let check_handle = tokio::spawn(async move { check_for_update(cli_version).await });
 
     // Wait briefly for result (don't block startup too long)
     let result = tokio::time::timeout(Duration::from_millis(500), check_handle).await;

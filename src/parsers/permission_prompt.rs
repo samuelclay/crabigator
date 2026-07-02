@@ -99,9 +99,9 @@ impl PermissionPrompt {
             (idx + 1, Some(lines[idx].trim().to_string()))
         } else {
             // Find first ❯ line that also matches a numbered option
-            let cursor_idx = lines.iter().position(|line| {
-                line.contains('❯') && option_re.is_match(line)
-            });
+            let cursor_idx = lines
+                .iter()
+                .position(|line| line.contains('❯') && option_re.is_match(line));
             if let Some(ci) = cursor_idx {
                 // Scan backwards for the nearest question line (ends with ?)
                 let q = lines[..ci]
@@ -116,9 +116,7 @@ impl PermissionPrompt {
         };
 
         // Check for "Tab to add additional instructions" in footer
-        let allows_tab_instructions = stripped
-            .lines()
-            .any(|line| line.contains("Tab to add"));
+        let allows_tab_instructions = stripped.lines().any(|line| line.contains("Tab to add"));
 
         let mut options = Vec::new();
         let mut current_number: Option<u32> = None;
@@ -169,7 +167,12 @@ impl PermissionPrompt {
                 }
 
                 // Check if this looks like a continuation (not a new option number)
-                if !trimmed.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                if !trimmed
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+                {
                     // Append to current option
                     if !current_text.is_empty() {
                         current_text.push(' ');
@@ -208,7 +211,10 @@ impl PermissionPrompt {
     /// (should have at least 2 options including a "Yes" and something else)
     pub fn is_valid(&self) -> bool {
         self.options.len() >= 2
-            && self.options.iter().any(|o| o.text.to_lowercase().starts_with("yes"))
+            && self
+                .options
+                .iter()
+                .any(|o| o.text.to_lowercase().starts_with("yes"))
     }
 }
 
@@ -219,7 +225,8 @@ fn strip_ansi_codes(text: &str) -> String {
     // instead of literal space characters. Without this, words run together.
     let cuf_re = Regex::new(r"\x1b\[(\d*)C").unwrap();
     let with_spaces = cuf_re.replace_all(text, |caps: &regex::Captures| {
-        let n: usize = caps.get(1)
+        let n: usize = caps
+            .get(1)
             .and_then(|m| m.as_str().parse().ok())
             .unwrap_or(1);
         " ".repeat(n)
@@ -233,7 +240,6 @@ fn strip_ansi_codes(text: &str) -> String {
 pub fn strip_ansi_for_debug(text: &str) -> String {
     strip_ansi_codes(text)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -291,8 +297,16 @@ Esc to cancel
         let valid = PermissionPrompt {
             question: Some("Do you want to proceed?".to_string()),
             options: vec![
-                PermissionOption { number: 1, text: "Yes".to_string(), selected: true },
-                PermissionOption { number: 2, text: "No".to_string(), selected: false },
+                PermissionOption {
+                    number: 1,
+                    text: "Yes".to_string(),
+                    selected: true,
+                },
+                PermissionOption {
+                    number: 2,
+                    text: "No".to_string(),
+                    selected: false,
+                },
             ],
             allows_tab_instructions: false,
         };
@@ -300,9 +314,11 @@ Esc to cancel
 
         let invalid = PermissionPrompt {
             question: None,
-            options: vec![
-                PermissionOption { number: 1, text: "Something".to_string(), selected: true },
-            ],
+            options: vec![PermissionOption {
+                number: 1,
+                text: "Something".to_string(),
+                selected: true,
+            }],
             allows_tab_instructions: false,
         };
         assert!(!invalid.is_valid());
@@ -340,7 +356,10 @@ Do you want to create test-file.txt?
 "#;
 
         let prompt = PermissionPrompt::parse(screen).unwrap();
-        assert_eq!(prompt.question, Some("Do you want to create test-file.txt?".to_string()));
+        assert_eq!(
+            prompt.question,
+            Some("Do you want to create test-file.txt?".to_string())
+        );
     }
 
     #[test]
@@ -357,11 +376,20 @@ Esc to cancel · Tab to add additional instructions
 "#;
 
         let prompt = PermissionPrompt::parse(screen).unwrap();
-        assert_eq!(prompt.question, Some("Would you like to proceed?".to_string()));
+        assert_eq!(
+            prompt.question,
+            Some("Would you like to proceed?".to_string())
+        );
         assert_eq!(prompt.options.len(), 4);
-        assert_eq!(prompt.options[0].text, "Yes, and continue with the planned work");
+        assert_eq!(
+            prompt.options[0].text,
+            "Yes, and continue with the planned work"
+        );
         assert!(prompt.options[0].selected);
-        assert_eq!(prompt.options[1].text, "Yes, but let me provide more guidance first");
+        assert_eq!(
+            prompt.options[1].text,
+            "Yes, but let me provide more guidance first"
+        );
         assert_eq!(prompt.options[2].text, "No, let's discuss further");
         assert_eq!(prompt.options[3].text, "No, cancel this plan");
     }
@@ -403,15 +431,24 @@ ctrl-g to edit in VS Code
 
         let prompt = PermissionPrompt::parse(screen).unwrap();
         // Should find the question
-        assert_eq!(prompt.question, Some("Would you like to proceed?".to_string()));
+        assert_eq!(
+            prompt.question,
+            Some("Would you like to proceed?".to_string())
+        );
         // Should have 4 options (not 6 - shouldn't include numbered list items from plan)
         assert_eq!(prompt.options.len(), 4);
         // First option should be the actual permission option, not plan content
-        assert_eq!(prompt.options[0].text, "Yes, clear context and auto-accept edits (shift+tab)");
+        assert_eq!(
+            prompt.options[0].text,
+            "Yes, clear context and auto-accept edits (shift+tab)"
+        );
         assert!(prompt.options[0].selected);
         assert_eq!(prompt.options[1].text, "Yes, auto-accept edits");
         assert_eq!(prompt.options[2].text, "Yes, manually approve edits");
-        assert_eq!(prompt.options[3].text, "Type here to tell Claude what to change");
+        assert_eq!(
+            prompt.options[3].text,
+            "Type here to tell Claude what to change"
+        );
         // Should be valid (has "Yes" option)
         assert!(prompt.is_valid());
     }
@@ -450,12 +487,21 @@ ctrl-g to edit in VS Code
         let prompt = PermissionPrompt::parse(screen).unwrap();
         assert_eq!(
             prompt.question,
-            Some("Claude has written up a plan and is ready to execute. Would you like to proceed?".to_string())
+            Some(
+                "Claude has written up a plan and is ready to execute. Would you like to proceed?"
+                    .to_string()
+            )
         );
         assert_eq!(prompt.options.len(), 4);
-        assert_eq!(prompt.options[0].text, "Yes, clear context and auto-accept edits (shift+tab)");
+        assert_eq!(
+            prompt.options[0].text,
+            "Yes, clear context and auto-accept edits (shift+tab)"
+        );
         assert!(prompt.options[0].selected);
-        assert_eq!(prompt.options[3].text, "Type here to tell Claude what to change");
+        assert_eq!(
+            prompt.options[3].text,
+            "Type here to tell Claude what to change"
+        );
         assert!(prompt.is_valid());
     }
 
@@ -498,7 +544,10 @@ ctrl-g to edit
                        \x1b[C\x1b[38;2;153;153;153mEsc\x1b[Cto\x1b[Ccancel\x1b[C·\x1b[CTab\x1b[Cto\x1b[Camend";
 
         let prompt = PermissionPrompt::parse(screen).unwrap();
-        assert_eq!(prompt.question, Some("Do you want to create hello.txt?".to_string()));
+        assert_eq!(
+            prompt.question,
+            Some("Do you want to create hello.txt?".to_string())
+        );
         assert_eq!(prompt.options.len(), 3);
         assert_eq!(prompt.options[0].text, "Yes");
         assert!(prompt.options[0].selected);
@@ -522,7 +571,11 @@ ctrl-g to edit
                        ctrl-g\x1b[Cto\x1b[Cedit";
 
         let prompt = PermissionPrompt::parse(screen).unwrap();
-        assert!(prompt.question.as_ref().unwrap().contains("Would you like to proceed?"));
+        assert!(prompt
+            .question
+            .as_ref()
+            .unwrap()
+            .contains("Would you like to proceed?"));
         assert_eq!(prompt.options.len(), 4);
         assert!(prompt.options[0].text.contains("clear context"));
         assert!(prompt.options[0].selected);

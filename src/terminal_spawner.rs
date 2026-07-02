@@ -22,7 +22,11 @@ fn detect_terminal(config_override: Option<&str>) -> TerminalApp {
     let term_program = std::env::var("TERM_PROGRAM").ok();
     let bundle_id = std::env::var("__CFBundleIdentifier").ok();
 
-    let candidates = [config_override, term_program.as_deref(), bundle_id.as_deref()];
+    let candidates = [
+        config_override,
+        term_program.as_deref(),
+        bundle_id.as_deref(),
+    ];
 
     for candidate in candidates.into_iter().flatten() {
         match candidate {
