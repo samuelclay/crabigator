@@ -305,6 +305,13 @@ export const sidebarCss = `
     background: rgba(34, 211, 238, 0.08);
     border-left: 2px solid var(--accent-cyan);
 }
+.sidebar .session-item.focused {
+    background: rgba(74, 222, 128, 0.08);
+    border-left: 2px solid var(--accent-green);
+}
+.sidebar .session-item.focused.sidebar-active {
+    background: linear-gradient(90deg, rgba(74, 222, 128, 0.12), rgba(34, 211, 238, 0.06));
+}
 
 /* Sessions button hidden when sidebar is pinned (toggled via JS) */
 .sessions-container.sidebar-pinned-hidden {

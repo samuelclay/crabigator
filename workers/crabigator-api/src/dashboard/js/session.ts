@@ -7,6 +7,11 @@ export const sessionJs = `
             return raw > 1000000000000 ? raw / 1000 : raw;
         }
 
+        function getSessionStartedTime(session) {
+            const raw = session?.started_at || session?.startedAt || 0;
+            return raw > 1000000000000 ? raw / 1000 : raw;
+        }
+
         function sortSessionsByRecentActivity(sessionList) {
             return [...sessionList].sort((a, b) => {
                 const activityDelta = getSessionActivityTime(b) - getSessionActivityTime(a);
@@ -15,13 +20,21 @@ export const sessionJs = `
             });
         }
 
+        function sortSessionsByNewestStart(sessionList) {
+            return [...sessionList].sort((a, b) => {
+                const startedDelta = getSessionStartedTime(b) - getSessionStartedTime(a);
+                if (startedDelta !== 0) return startedDelta;
+                return getSessionActivityTime(b) - getSessionActivityTime(a);
+            });
+        }
+
         function getSessionVisibilityLimit() {
-            return (isProUser || singleSessionId) ? Infinity : FREE_VISIBLE_SESSION_LIMIT;
+            return isProUser ? Infinity : FREE_VISIBLE_SESSION_LIMIT;
         }
 
         function getRenderableSessions(sessionList) {
             const candidates = singleSessionId
-                ? sessionList.filter(session => session.id === singleSessionId)
+                ? sessionList.filter(session => sessionMatchesFocus(session))
                 : [...sessionList];
             const limit = getSessionVisibilityLimit();
 
@@ -59,6 +72,13 @@ export const sessionJs = `
             return renderable;
         }
 
+        function getSidebarSessions(sessionList) {
+            const candidates = isFocusedMode()
+                ? [...sessionList]
+                : getRenderableSessions(sessionList);
+            return sortSessionsByNewestStart(candidates);
+        }
+
         function mergeSessionListUpdate(sessionUpdate) {
             if (!sessionUpdate?.id) return;
 
@@ -85,7 +105,7 @@ export const sessionJs = `
             const detailEl = document.getElementById('session-limit-detail');
             if (!banner) return;
 
-            if (isProUser || singleSessionId || hiddenSessionCount <= 0) {
+            if (isProUser || isFocusedMode() || hiddenSessionCount <= 0) {
                 banner.hidden = true;
                 return;
             }
@@ -135,7 +155,10 @@ export const sessionJs = `
 
                 if (renderableSessions.length === 0) {
                     if (sessions.size === 0) {
-                        container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                        const message = isFocusedMode() && allSessions.length > 0
+                            ? 'Focused session is not active'
+                            : 'No active sessions';
+                        container.innerHTML = '<div class="no-sessions">' + message + '</div>';
                     }
                     updateFitLayout();
                     return;
@@ -208,11 +231,10 @@ export const sessionJs = `
                 // Store all sessions for sidebar and visibility-limit accounting
                 allSessions = data.sessions;
 
-                // Filter to single session if specified, then apply Free visibility cap
+                // Filter the main content to the focused session if specified, then apply the Free visibility cap.
                 const filteredSessions = getRenderableSessions(data.sessions);
-                if (singleSessionId) {
-                    // Force single-column layout for single session view
-                    document.getElementById('sessions').dataset.layout = '1';
+                if (isFocusedMode()) {
+                    applyFocusMode();
                 }
                 // Always update session count in sessions button
                 updateSessionsCount();
@@ -221,8 +243,10 @@ export const sessionJs = `
                 const container = document.getElementById('sessions');
 
                 if (filteredSessions.length === 0) {
+                    const hasAnyActiveSession = data.sessions.length > 0;
+
                     // If we had sessions recently and now have none, likely a deploy
-                    if (hadSessionsBefore && wasRecentlyConnected() && !isDeploying) {
+                    if (!hasAnyActiveSession && hadSessionsBefore && wasRecentlyConnected() && !isDeploying) {
                         showDeployOverlay();
                     }
 
@@ -231,7 +255,24 @@ export const sessionJs = `
                     }
                     sessions.clear();
                     activeTerminalId = null;
-                    container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                    container.innerHTML = '<div class="no-sessions">' + (
+                        isFocusedMode() && hasAnyActiveSession
+                            ? 'Focused session is not active'
+                            : 'No active sessions'
+                    ) + '</div>';
+
+                    if (hasAnyActiveSession) {
+                        hadSessionsBefore = true;
+                        lastSuccessfulConnection = Date.now();
+                        emptyPollDelay = MIN_EMPTY_POLL_DELAY;
+                        if (emptyPollTimeout) {
+                            clearTimeout(emptyPollTimeout);
+                            emptyPollTimeout = null;
+                        }
+                        updateSessionsCount();
+                        updateFitLayout();
+                        return;
+                    }
 
                     // Use deploy reconnect if deploying, otherwise normal backoff
                     if (isDeploying) {
@@ -483,7 +524,7 @@ export const sessionJs = `
                 </div>
             \`;
             // Insert card into the correct location based on grouping mode
-            if (groupingMode === 'project') {
+            if (getMainGroupingMode() === 'project') {
                 // Find or create project group for this cwd
                 let group = container.querySelector(\`.project-group[data-project="\${CSS.escape(session.cwd)}"]\`);
                 if (!group) {

@@ -3,7 +3,9 @@ export const sessionsPopoverJs = `
         function updateSessionsCount() {
             const countEl = document.getElementById('sessions-count');
             const labelEl = document.querySelector('.sessions-label');
-            const count = visibleSessionIds.size || getRenderableSessions(allSessions).length;
+            const count = isFocusedMode()
+                ? allSessions.length
+                : (visibleSessionIds.size || getRenderableSessions(allSessions).length);
             if (countEl) {
                 countEl.textContent = count;
             }

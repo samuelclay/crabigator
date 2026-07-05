@@ -222,7 +222,7 @@ export const sidebarJs = `
         }
 
         function handleSessionClick(sessionId) {
-            if (sessionClickAction === 'focus') {
+            if (isFocusedMode() || sessionClickAction === 'focus') {
                 focusOnSession(sessionId);
             } else {
                 scrollToSession(sessionId);
@@ -301,7 +301,7 @@ export const sidebarJs = `
         }
 
         function renderSidebarSessionItem(session) {
-            const isFocused = singleSessionId && session.id === singleSessionId;
+            const isFocused = sessionMatchesFocus(session);
             const isActive = sidebarActiveSessionId === session.id;
             const stats = session.stats;
             const vs = sidebarVisibleStats;
@@ -348,7 +348,7 @@ export const sidebarJs = `
             const content = document.getElementById('sidebar-content');
             if (!content) return;
 
-            const sidebarSessions = getRenderableSessions(allSessions);
+            const sidebarSessions = getSidebarSessions(allSessions);
 
             if (sidebarSessions.length === 0) {
                 content.innerHTML = '<div class="sessions-empty">No active sessions</div>';
@@ -367,11 +367,12 @@ export const sidebarJs = `
                 if (!groups.has(cwd)) groups.set(cwd, { sessions: [], mostRecentTime: 0 });
 
                 const liveData = sessions.get(session.id);
-                const startedAt = session.started_at || 0;
+                const startedAt = getSessionStartedTime(session);
                 const activityAt = getSessionActivityTime(session);
                 const g = groups.get(cwd);
                 g.sessions.push({
                     id: session.id,
+                    client_session_id: session.client_session_id,
                     title: liveData?.title || session.title || 'Untitled',
                     state: liveData?.state || session.state || 'ready',
                     stats: liveData?.stats || session.stats || null,
@@ -379,12 +380,12 @@ export const sidebarJs = `
                     startedAt,
                     last_activity_at: activityAt
                 });
-                if (activityAt > g.mostRecentTime) g.mostRecentTime = activityAt;
+                if (startedAt > g.mostRecentTime) g.mostRecentTime = startedAt;
             }
 
-            // Sort sessions within each group by startedAt (oldest first, matching main content)
+            // Sort sessions within each group by startedAt, newest first for quick switching.
             for (const [, g] of groups) {
-                g.sessions.sort((a, b) => a.startedAt - b.startedAt);
+                g.sessions.sort((a, b) => b.startedAt - a.startedAt);
             }
 
             // Sort projects using same logic as main content
@@ -416,9 +417,8 @@ export const sidebarJs = `
                         if (!dg.projects.has(cwd)) dg.projects.set(cwd, { sessions: [], mostRecentTime: 0 });
                         const pg = dg.projects.get(cwd);
                         pg.sessions.push(session);
-                        const activityAt = getSessionActivityTime(session);
-                        if (activityAt > pg.mostRecentTime) pg.mostRecentTime = activityAt;
-                        if (activityAt > dg.mostRecentTime) dg.mostRecentTime = activityAt;
+                        if (session.startedAt > pg.mostRecentTime) pg.mostRecentTime = session.startedAt;
+                        if (session.startedAt > dg.mostRecentTime) dg.mostRecentTime = session.startedAt;
                     }
                 }
 

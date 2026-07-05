@@ -2,22 +2,14 @@
 export const initJs = `
         // Initial load (wrapped in async IIFE for await support)
         (async function() {
-            // Single session mode - show filter indicator
-            if (singleSessionId) {
-                document.getElementById('sessions').dataset.layout = '1';
-                // Show filter indicator
-                const filterIndicator = document.getElementById('filter-indicator');
-                if (filterIndicator) {
-                    filterIndicator.classList.add('visible');
-                    const filterText = filterIndicator.querySelector('.filter-text');
-                    if (filterText) {
-                        filterText.textContent = 'Filtered: ' + singleSessionId.slice(0, 8);
-                    }
-                }
+            // Single session focus mode renders only the focused card in the main view.
+            if (isFocusedMode()) {
+                applyFocusMode();
             } else {
                 setLayout(currentLayout);  // Apply saved layout preference
             }
             applyGrouping();           // Apply saved grouping preference
+            updateFilterIndicator();
             loadSettingsFromServer();  // Load style preferences
 
             // Check for auto-setup via URL parameter (for Chrome MCP)

@@ -227,7 +227,8 @@ export const styleJs = `
 
         function applyGrouping() {
             const container = document.getElementById('sessions');
-            container.dataset.grouping = groupingMode;
+            const effectiveGroupingMode = getMainGroupingMode();
+            container.dataset.grouping = effectiveGroupingMode;
 
             // Update button states
             document.querySelectorAll('[data-grouping]').forEach(btn => {
@@ -237,7 +238,7 @@ export const styleJs = `
             // Show/hide project order section based on grouping mode
             const projectOrderSection = document.getElementById('project-order-section');
             if (projectOrderSection) {
-                projectOrderSection.style.display = groupingMode === 'project' ? '' : 'none';
+                projectOrderSection.style.display = effectiveGroupingMode === 'project' ? '' : 'none';
             }
         }
 
@@ -283,7 +284,7 @@ export const styleJs = `
             if (!isPaired) return;
 
             preservePageScroll(() => {
-                if (groupingMode === 'project') {
+                if (getMainGroupingMode() === 'project') {
                 // Collect all device names across sessions
                 const allDevices = new Set();
                 for (const [, sessionData] of sessions) {
@@ -308,7 +309,7 @@ export const styleJs = `
                             dg.projects.set(cwd, { sessions: [], mostRecentTime: 0 });
                         }
                         const pg = dg.projects.get(cwd);
-                        pg.sessions.push({ id, card, startedAt: sessionData.startedAt || 0 });
+                        pg.sessions.push({ id, card, startedAt: getSessionStartedTime(sessionData) });
                         const sessionTime = sessionData.lastActivityAt || sessionData.startedAt || 0;
                         if (sessionTime > pg.mostRecentTime) pg.mostRecentTime = sessionTime;
                         if (sessionTime > dg.mostRecentTime) dg.mostRecentTime = sessionTime;
@@ -364,13 +365,13 @@ export const styleJs = `
                             groups.set(cwd, { sessions: [], mostRecentTime: 0 });
                         }
                         const group = groups.get(cwd);
-                        group.sessions.push({ id, card, startedAt: sessionData.startedAt || 0 });
+                        group.sessions.push({ id, card, startedAt: getSessionStartedTime(sessionData) });
                         const sessionTime = sessionData.lastActivityAt || sessionData.startedAt || 0;
                         if (sessionTime > group.mostRecentTime) group.mostRecentTime = sessionTime;
                     }
 
                     // Add empty groups for historical projects (only in single-device mode)
-                    if (allProjects && allProjects.length > 0 && hiddenSessionCount === 0) {
+                    if (!isFocusedMode() && allProjects && allProjects.length > 0 && hiddenSessionCount === 0) {
                         for (const project of allProjects) {
                             if (!groups.has(project.cwd)) {
                                 groups.set(project.cwd, { sessions: [], mostRecentTime: project.last_active || 0 });

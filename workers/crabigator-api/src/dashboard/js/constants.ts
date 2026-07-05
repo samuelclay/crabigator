@@ -55,8 +55,31 @@ export const constantsJs = `
         // Track collapsed state for device groups
         const collapsedDevices = new Set(JSON.parse(localStorage.getItem('crabigator-collapsed-devices') || '[]'));
 
-        // Single session filter mode (from ?session=xxx URL parameter)
-        const singleSessionId = new URLSearchParams(window.location.search).get('session');
+        // Single session focus mode (from ?session=xxx URL parameter)
+        function readFocusedSessionId() {
+            return new URLSearchParams(window.location.search).get('session');
+        }
+
+        let singleSessionId = readFocusedSessionId();
+
+        function isFocusedMode() {
+            return !!singleSessionId;
+        }
+
+        function sessionMatchesFocus(session, focusId = singleSessionId) {
+            if (!session || !focusId) return false;
+            return session.id === focusId || session.client_session_id === focusId;
+        }
+
+        function getMainGroupingMode() {
+            return isFocusedMode() ? 'all' : groupingMode;
+        }
+
+        function resetVisibleSessionLock() {
+            lockedVisibleSessionIds = null;
+            visibleSessionIds = new Set();
+            hiddenSessionCount = 0;
+        }
 
         // Sidebar state
         let sidebarPinned = localStorage.getItem('crabigator-sidebar-pinned') === 'true'; // default false (popover mode)

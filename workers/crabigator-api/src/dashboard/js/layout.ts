@@ -4,12 +4,18 @@ export const layoutJs = `
             currentLayout = layout;
             localStorage.setItem('crabigator-layout', layout);
             const container = document.getElementById('sessions');
-            container.dataset.layout = layout;
 
             // Update button states
             document.querySelectorAll('.style-option[data-layout]').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.layout === layout);
             });
+
+            if (isFocusedMode()) {
+                applyFocusMode();
+                return;
+            }
+
+            container.dataset.layout = layout;
 
             // For 'fit' mode, calculate columns based on available width
             if (layout === 'fit') {
@@ -49,6 +55,10 @@ export const layoutJs = `
 
         // Recalculate fit layout when session count changes
         function updateFitLayout() {
+            if (isFocusedMode()) {
+                applyFocusMode();
+                return;
+            }
             if (currentLayout === 'fit') {
                 setLayout('fit');
             }
