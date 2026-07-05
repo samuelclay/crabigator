@@ -103,6 +103,90 @@ export const headerCss = `
     color: var(--text-bright);
 }
 
+@media (max-width: 768px) {
+    .header {
+        flex-wrap: nowrap;
+        gap: 6px;
+        padding: 8px;
+    }
+    .header h1 {
+        flex: 0 0 24px;
+        width: 24px;
+        min-width: 24px;
+        overflow: hidden;
+        white-space: nowrap;
+        font-size: 16px;
+        gap: 0;
+        letter-spacing: 0;
+    }
+    .header h1::before {
+        display: none;
+    }
+    .header .refresh-btn,
+    .header .style-btn,
+    .header .settings-btn {
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 30px;
+        gap: 0;
+        font-size: 0;
+        letter-spacing: 0;
+    }
+    .header .refresh-btn::before {
+        content: '↻';
+        font-size: 13px;
+        line-height: 1;
+    }
+    .header .style-btn svg,
+    .header .settings-btn svg {
+        width: 14px;
+        height: 14px;
+    }
+    .header .sessions-container,
+    .header .style-container,
+    .header .settings-container {
+        flex: 0 0 auto;
+    }
+    .header .sessions-btn {
+        height: 30px;
+        min-width: 34px;
+        padding: 0 9px;
+        flex: 0 0 auto;
+        gap: 0;
+        letter-spacing: 0;
+    }
+    .header .sessions-label {
+        display: none;
+    }
+    .filter-indicator {
+        flex: 1 1 78px;
+        min-width: 0;
+        max-width: 92px;
+        height: 30px;
+        padding: 0 6px;
+        gap: 4px;
+        font-size: 9px;
+        letter-spacing: 0;
+    }
+    .filter-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        letter-spacing: 0;
+    }
+    .filter-clear {
+        width: 16px;
+        height: 20px;
+        padding: 0;
+        flex: 0 0 16px;
+        font-size: 11px;
+    }
+}
+
 /* Container */
 .container {
     padding: 16px;

@@ -221,14 +221,6 @@ export const widgetsCss = `
 /* Mobile responsive */
 @media (max-width: 768px) {
     .widgets-content { grid-template-columns: 1fr !important; }
-    .header {
-        flex-wrap: wrap;
-        padding: 12px 14px;
-        gap: 10px;
-    }
-    .header h1 {
-        font-size: 15px;
-    }
     .style-popover {
         right: -8px;
         min-width: 200px;
@@ -276,10 +268,6 @@ export const widgetsCss = `
     }
     .perm-hint {
         display: none;
-    }
-    .refresh-btn {
-        padding: 6px 10px;
-        font-size: 11px;
     }
 }
 
