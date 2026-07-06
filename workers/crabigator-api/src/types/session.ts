@@ -48,12 +48,31 @@ export interface GitFile {
 }
 
 /**
+ * Recent git commit metadata, newest first in git events.
+ */
+export interface GitCommitInfo {
+    hash: string;
+    short_hash: string;
+    timestamp: number;      // Unix timestamp (seconds)
+    subject: string;
+}
+
+/**
  * Git status event
  */
 export interface GitEvent {
     type: 'git';
     branch: string;
     files: GitFile[];
+    recent_commits?: GitCommitInfo[];
+}
+
+/**
+ * Commits detected during this web session, oldest first.
+ */
+export interface CommitHistoryEvent {
+    type: 'commit_history';
+    history: GitCommitInfo[];
 }
 
 /**
@@ -294,6 +313,7 @@ export type SessionEvent =
     | StateEvent
     | HeartbeatEvent
     | GitEvent
+    | CommitHistoryEvent
     | ChangesEvent
     | StatsEvent
     | ScreenEvent

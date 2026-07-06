@@ -68,6 +68,7 @@ export const eventsJs = `
                         prompt: '#f97316',
                         recap: '#22d3ee',
                         recap_history: '#22d3ee',
+                        commit_history: '#db6d28',
                     };
                     const color = typeColors[data.type] || '#9ca3af';
                     if (data.type !== 'screen') {
@@ -193,6 +194,12 @@ export const eventsJs = `
                         updateSessionSummary(sessionId, sessionData);
                     }
                     updateChangesWidget(sessionId, event);
+                    break;
+                case 'commit_history':
+                    if (sessionData) {
+                        sessionData.commitHistory = event.history || [];
+                        updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
+                    }
                     break;
                 case 'stats':
                     // Store stats in session data

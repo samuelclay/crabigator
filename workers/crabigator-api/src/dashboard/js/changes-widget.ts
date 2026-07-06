@@ -34,28 +34,62 @@ export const changesWidgetJs = `
             }
         }
 
+        function renderCommitHistory(commitHistory, withDivider) {
+            if (!commitHistory || commitHistory.length === 0) return '';
+
+            const commitWord = commitHistory.length === 1 ? 'commit' : 'commits';
+            const entriesHtml = commitHistory.slice().reverse().map(commit => {
+                const shortHash = commit.short_hash || (commit.hash || '').slice(0, 7);
+                const age = commit.timestamp ? formatElapsed(commit.timestamp) : '';
+                const date = commit.timestamp ? formatShortDate(commit.timestamp) : '';
+                const subject = commit.subject || '(no commit message)';
+
+                return \`<div class="commit-entry" title="\${escapeHtml(date)}">
+                    <span class="commit-sha">\${escapeHtml(shortHash)}</span>
+                    <span class="commit-subject">\${escapeHtml(subject)}</span>
+                    <span class="commit-time">\${escapeHtml(age)}</span>
+                </div>\`;
+            }).join('');
+
+            return \`<div class="commit-history\${withDivider ? ' with-divider' : ''}">
+                <div class="commit-history-title">
+                    <span>Commits</span>
+                    <span>\${commitHistory.length} \${commitWord}</span>
+                </div>
+                <div class="commit-list">\${entriesHtml}</div>
+            </div>\`;
+        }
+
         function updateChangesWidget(sessionId, changes) {
             const widget = document.getElementById('changes-' + sessionId);
             const widgetsContent = document.getElementById('widgets-content-' + sessionId);
             if (!widget) return;
 
-            const byLanguage = changes.by_language || [];
+            const byLanguage = changes?.by_language || [];
+            const sessionData = sessions.get(sessionId);
+            const commitHistory = sessionData?.commitHistory || [];
+            const totalChanges = byLanguage.reduce((sum, lang) => sum + (lang.changes?.length || 0), 0);
+            const hasChanges = totalChanges > 0;
+            const hasCommits = commitHistory.length > 0;
 
-            if (byLanguage.length === 0) {
-                // Hide widget entirely when no changes
+            if (!hasChanges && !hasCommits) {
+                // Hide widget entirely when no changes or session commits exist.
                 widget.classList.add('hidden-changes');
                 widgetsContent?.classList.add('no-changes');
                 return;
             }
 
-            // Show widget when there are changes
+            // Show widget when there are current changes or recorded commits.
             widget.classList.remove('hidden-changes');
             widgetsContent?.classList.remove('no-changes');
 
             // Build header: "Language N changes" (like CLI)
-            const firstLang = byLanguage[0];
-            const totalChanges = byLanguage.reduce((sum, lang) => sum + (lang.changes?.length || 0), 0);
+            const firstLang = byLanguage.find(lang => (lang.changes?.length || 0) > 0) || byLanguage[0];
             const changeWord = totalChanges === 1 ? 'change' : 'changes';
+            const headerLabel = hasChanges ? firstLang.language : 'Commits';
+            const headerCount = hasChanges
+                ? totalChanges + ' ' + changeWord
+                : commitHistory.length + ' ' + (commitHistory.length === 1 ? 'commit' : 'commits');
 
             // Compute column widths for alignment
             const { delNumWidth, addNumWidth } = computeChangesColumnWidths(byLanguage);
@@ -63,6 +97,8 @@ export const changesWidgetJs = `
             let changesHtml = '';
 
             for (const lang of byLanguage) {
+                if (!lang.changes || lang.changes.length === 0) continue;
+
                 // Add language header if multiple languages
                 if (byLanguage.length > 1) {
                     const langCount = lang.changes?.length || 0;
@@ -98,9 +134,11 @@ export const changesWidgetJs = `
                 }
             }
 
+            const commitHistoryHtml = renderCommitHistory(commitHistory, hasChanges);
+            const bodyHtml = (hasChanges ? \`<div class="changes-list">\${changesHtml}</div>\` : '') + commitHistoryHtml;
             const newHtml = \`
-                <div class="widget-title"><span style="color:#db6d28">\${firstLang.language}</span> <span style="float:right;color:#8b949e">\${totalChanges} \${changeWord}</span></div>
-                <div class="changes-list">\${changesHtml}</div>
+                <div class="widget-title"><span style="color:#db6d28">\${headerLabel}</span> <span style="float:right;color:#8b949e">\${headerCount}</span></div>
+                \${bodyHtml}
             \`;
 
             // Only update if content changed (prevents flicker)

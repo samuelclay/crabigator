@@ -311,4 +311,51 @@ export const widgetsCss = `
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.commit-history {
+    min-width: 0;
+}
+.commit-history.with-divider {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(139, 148, 158, 0.18);
+}
+.commit-history-title {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+    color: #8b949e;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+}
+.commit-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.commit-entry {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: baseline;
+    min-width: 0;
+    padding: 2px 0;
+}
+.commit-sha {
+    color: #7ee787;
+    font-size: 10px;
+}
+.commit-subject {
+    color: var(--text-bright);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.commit-time {
+    color: var(--text-dim);
+    font-size: 10px;
+    white-space: nowrap;
+}
 `;

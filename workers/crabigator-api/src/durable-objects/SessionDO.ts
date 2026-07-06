@@ -1,4 +1,14 @@
-import type { SessionEvent, SessionState, CloudToDesktopMessage, CloudPromptData, KeyStep, GitEvent, ChangesEvent, StatsEvent } from '../types/session';
+import type {
+    SessionEvent,
+    SessionState,
+    CloudToDesktopMessage,
+    CloudPromptData,
+    KeyStep,
+    GitEvent,
+    GitCommitInfo,
+    ChangesEvent,
+    StatsEvent,
+} from '../types/session';
 import type { Env } from '../types/env';
 
 /**
@@ -15,6 +25,10 @@ interface PersistentState {
     lastRecap: any | null;
     /** Full recap history for this session, oldest first. */
     lastRecapHistory: any[] | null;
+    /** Commits detected after this web session established a baseline, oldest first. */
+    lastCommitHistory: GitCommitInfo[] | null;
+    /** Last git HEAD hash seen by the web side. */
+    lastCommitHeadHash: string | null;
 }
 
 /**
@@ -90,6 +104,8 @@ export class SessionDO implements DurableObject {
             lastTitleHistory: null,
             lastRecap: null,
             lastRecapHistory: null,
+            lastCommitHistory: null,
+            lastCommitHeadHash: null,
         };
         this.ephemeralState = {
             lastScrollbackLine: 0,
@@ -105,7 +121,7 @@ export class SessionDO implements DurableObject {
         state.blockConcurrencyWhile(async () => {
             const stored = await state.storage.get<PersistentState>('persistentState');
             if (stored) {
-                this.persistentState = stored;
+                this.persistentState = { ...this.persistentState, ...stored };
             }
             const storedInfo = await state.storage.get<SessionInfo>('sessionInfo');
             if (storedInfo) {
@@ -328,6 +344,75 @@ export class SessionDO implements DurableObject {
     }
 
     /**
+     * Build web-only commit history from the bounded recent log desktop sends
+     * with git status. The first observed HEAD is a baseline; later HEAD changes
+     * are commits that happened while the session was visible to the web layer.
+     */
+    private updateCommitHistoryFromGit(event: GitEvent): {
+        persistentChanged: boolean;
+        historyEvent: SessionEvent | null;
+    } {
+        const recentCommits = event.recent_commits || [];
+        const currentHead = recentCommits[0]?.hash;
+        if (!currentHead) {
+            return { persistentChanged: false, historyEvent: null };
+        }
+
+        let persistentChanged = false;
+        let historyChanged = false;
+        const previousHead =
+            this.persistentState.lastCommitHeadHash ||
+            this.ephemeralState.lastGit?.recent_commits?.[0]?.hash ||
+            null;
+
+        if (previousHead && previousHead !== currentHead) {
+            const previousIndex = recentCommits.findIndex(commit => commit.hash === previousHead);
+            const newCommits = previousIndex === -1
+                ? recentCommits.slice(0, 1)
+                : recentCommits.slice(0, previousIndex);
+
+            historyChanged = this.appendCommitHistory(newCommits.slice().reverse());
+            persistentChanged = persistentChanged || historyChanged;
+        }
+
+        if (this.persistentState.lastCommitHeadHash !== currentHead) {
+            this.persistentState.lastCommitHeadHash = currentHead;
+            persistentChanged = true;
+        }
+
+        if (!historyChanged) {
+            return { persistentChanged, historyEvent: null };
+        }
+
+        return {
+            persistentChanged,
+            historyEvent: {
+                type: 'commit_history',
+                history: this.persistentState.lastCommitHistory || [],
+            },
+        };
+    }
+
+    private appendCommitHistory(commits: GitCommitInfo[]): boolean {
+        if (commits.length === 0) return false;
+
+        const existing = this.persistentState.lastCommitHistory || [];
+        const seenHashes = new Set(existing.map(commit => commit.hash));
+        const merged = [...existing];
+
+        for (const commit of commits) {
+            if (!commit.hash || seenHashes.has(commit.hash)) continue;
+            merged.push(commit);
+            seenHashes.add(commit.hash);
+        }
+
+        if (merged.length === existing.length) return false;
+
+        this.persistentState.lastCommitHistory = merged.slice(-100);
+        return true;
+    }
+
+    /**
      * Handle incoming event from desktop
      */
     private async handleEvent(event: SessionEvent): Promise<void> {
@@ -341,6 +426,7 @@ export class SessionDO implements DurableObject {
 
         // Track whether persistent state changed (requires storage write)
         let persistentChanged = false;
+        const postBroadcastEvents: SessionEvent[] = [];
 
         // Update local state based on event type
         switch (event.type) {
@@ -416,7 +502,14 @@ export class SessionDO implements DurableObject {
                 break;
             }
             case 'git':
-                // Ephemeral state - no storage write
+                {
+                    const commitUpdate = this.updateCommitHistoryFromGit(event as GitEvent);
+                    persistentChanged = persistentChanged || commitUpdate.persistentChanged;
+                    if (commitUpdate.historyEvent) {
+                        postBroadcastEvents.push(commitUpdate.historyEvent);
+                    }
+                }
+                // Git status itself is ephemeral; commit history above is web-only persistent state.
                 this.ephemeralState.lastGit = event as GitEvent;
                 break;
             case 'changes':
@@ -450,6 +543,9 @@ export class SessionDO implements DurableObject {
 
         // Broadcast to all SSE clients (still immediate for real-time feel)
         await this.broadcast(event);
+        for (const followupEvent of postBroadcastEvents) {
+            await this.broadcast(followupEvent);
+        }
 
         // Notify SessionListDO of activity (throttled to every 10s)
         // This keeps sessions alive during deploys via the grace period
@@ -564,6 +660,13 @@ export class SessionDO implements DurableObject {
             const historyEvent = {
                 type: 'recap_history' as const,
                 history: this.persistentState.lastRecapHistory,
+            };
+            await this.sendSSE(writer, historyEvent as SessionEvent);
+        }
+        if (this.persistentState.lastCommitHistory && this.persistentState.lastCommitHistory.length > 0) {
+            const historyEvent = {
+                type: 'commit_history' as const,
+                history: this.persistentState.lastCommitHistory,
             };
             await this.sendSSE(writer, historyEvent as SessionEvent);
         }

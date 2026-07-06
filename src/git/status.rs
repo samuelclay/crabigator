@@ -20,8 +20,17 @@ impl FileStatus {
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct GitCommit {
+    pub hash: String,
+    pub short_hash: String,
+    pub timestamp: u64,
+    pub subject: String,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct GitState {
     pub files: Vec<FileStatus>,
+    pub recent_commits: Vec<GitCommit>,
     pub branch: String,
     pub is_repo: bool,
     pub loading: bool,
@@ -75,6 +84,8 @@ impl GitState {
                 state.branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
             }
         }
+
+        state.recent_commits = Self::recent_commits(dir).await;
 
         // Get file statuses using porcelain format
         // -uall shows individual files in untracked directories instead of aggregating
@@ -204,6 +215,42 @@ impl GitState {
                     file.deletions += deletions;
                 }
             }
+        }
+    }
+
+    async fn recent_commits(base_dir: &Path) -> Vec<GitCommit> {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            Command::new("git")
+                .args(["log", "-n", "20", "--format=%H%x1f%h%x1f%ct%x1f%s"])
+                .env("GIT_OPTIONAL_LOCKS", "0")
+                .current_dir(base_dir)
+                .output(),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(output)) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout
+                    .lines()
+                    .filter_map(|line| {
+                        let parts: Vec<&str> = line.splitn(4, '\x1f').collect();
+                        if parts.len() != 4 || parts[0].is_empty() || parts[1].is_empty() {
+                            return None;
+                        }
+
+                        let timestamp = parts[2].parse::<u64>().ok()?;
+                        Some(GitCommit {
+                            hash: parts[0].to_string(),
+                            short_hash: parts[1].to_string(),
+                            timestamp,
+                            subject: parts[3].to_string(),
+                        })
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
         }
     }
 

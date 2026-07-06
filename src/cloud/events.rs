@@ -122,6 +122,16 @@ pub struct GitFile {
     pub deletions: usize,
 }
 
+/// Recent git commit metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitCommit {
+    pub hash: String,
+    pub short_hash: String,
+    /// Unix timestamp (seconds)
+    pub timestamp: u64,
+    pub subject: String,
+}
+
 /// Git status event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitEvent {
@@ -129,14 +139,18 @@ pub struct GitEvent {
     pub event_type: String,
     pub branch: String,
     pub files: Vec<GitFile>,
+    /// Bounded recent commit log, newest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_commits: Vec<GitCommit>,
 }
 
 impl GitEvent {
-    pub fn new(branch: String, files: Vec<GitFile>) -> Self {
+    pub fn new(branch: String, files: Vec<GitFile>, recent_commits: Vec<GitCommit>) -> Self {
         Self {
             event_type: "git".to_string(),
             branch,
             files,
+            recent_commits,
         }
     }
 }
@@ -599,7 +613,22 @@ impl SessionEventBuilder {
             })
             .collect();
 
-        CloudEvent::Git(GitEvent::new(git_state.branch.clone(), files))
+        let recent_commits = git_state
+            .recent_commits
+            .iter()
+            .map(|commit| GitCommit {
+                hash: commit.hash.clone(),
+                short_hash: commit.short_hash.clone(),
+                timestamp: commit.timestamp,
+                subject: commit.subject.clone(),
+            })
+            .collect();
+
+        CloudEvent::Git(GitEvent::new(
+            git_state.branch.clone(),
+            files,
+            recent_commits,
+        ))
     }
 
     /// Build a changes event from diff summary

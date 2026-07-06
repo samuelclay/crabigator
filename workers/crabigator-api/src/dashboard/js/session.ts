@@ -598,6 +598,7 @@ export const sessionJs = `
                 deviceName: session.device_name || null,
                 lastActivityAt: getSessionActivityTime(session),
                 recapHistory: [],
+                commitHistory: [],
                 // Scrollback chunking: store full buffer, render only visible portion
                 scrollbackBuffer: [],      // Full scrollback lines
                 scrollbackRendered: 0,     // How many lines currently rendered
