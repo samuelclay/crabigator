@@ -345,8 +345,9 @@ export class SessionDO implements DurableObject {
 
     /**
      * Build web-only commit history from the bounded recent log desktop sends
-     * with git status. The first observed HEAD is a baseline; later HEAD changes
-     * are commits that happened while the session was visible to the web layer.
+     * with git status. If no history has been recorded yet, backfill commits
+     * from this session's start time so late Worker/client upgrades don't
+     * silently discard commits that already happened in the session.
      */
     private updateCommitHistoryFromGit(event: GitEvent): {
         persistentChanged: boolean;
@@ -360,17 +361,25 @@ export class SessionDO implements DurableObject {
 
         let persistentChanged = false;
         let historyChanged = false;
+        const hasCommitHistory = (this.persistentState.lastCommitHistory?.length || 0) > 0;
         const previousHead =
             this.persistentState.lastCommitHeadHash ||
             this.ephemeralState.lastGit?.recent_commits?.[0]?.hash ||
             null;
 
-        if (previousHead && previousHead !== currentHead) {
+        let newCommits: GitCommitInfo[] = [];
+        if (!hasCommitHistory) {
+            newCommits = this.commitsSinceSessionStart(recentCommits);
+        }
+
+        if (newCommits.length === 0 && previousHead && previousHead !== currentHead) {
             const previousIndex = recentCommits.findIndex(commit => commit.hash === previousHead);
-            const newCommits = previousIndex === -1
+            newCommits = previousIndex === -1
                 ? recentCommits.slice(0, 1)
                 : recentCommits.slice(0, previousIndex);
+        }
 
+        if (newCommits.length > 0) {
             historyChanged = this.appendCommitHistory(newCommits.slice().reverse());
             persistentChanged = persistentChanged || historyChanged;
         }
@@ -391,6 +400,13 @@ export class SessionDO implements DurableObject {
                 history: this.persistentState.lastCommitHistory || [],
             },
         };
+    }
+
+    private commitsSinceSessionStart(recentCommits: GitCommitInfo[]): GitCommitInfo[] {
+        const sessionStartedAt = this.sessionInfo?.started_at || 0;
+        if (!sessionStartedAt) return [];
+
+        return recentCommits.filter(commit => commit.timestamp >= sessionStartedAt);
     }
 
     private appendCommitHistory(commits: GitCommitInfo[]): boolean {
