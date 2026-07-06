@@ -50,9 +50,10 @@ export const sseJs = `
                 sessionListSource.close();
                 sessionListSource = null;
 
-                // If we were recently connected, this might be a deploy
+                // If we were recently connected, this might be a deploy. Verify
+                // the build before showing update UI; ordinary reconnects are silent.
                 if (hadSessionsBefore && wasRecentlyConnected() && !isDeploying) {
-                    showDeployOverlay();
+                    void checkVersionAndReload();
                 }
 
                 if (isDeploying) {
@@ -97,10 +98,7 @@ export const sseJs = `
                     // Check for version mismatch on reconnect (deploy detected)
                     if (serverVersion !== null && event.version && event.version !== serverVersion) {
                         console.log('%cversion mismatch', 'color:#ef4444', serverVersion, '->', event.version);
-                        // Use cache-busting URL to ensure fresh HTML/JS/CSS
-                        const url = new URL(location.href);
-                        url.searchParams.set('v', event.version);
-                        location.href = url.toString();
+                        reloadForVersion(event.version);
                         return;
                     }
                     // Store version on first connect
@@ -133,10 +131,10 @@ export const sseJs = `
                         syncRenderedSessions();
                         if (sessions.size === 0) {
                             container.innerHTML = '<div class="no-sessions">No active sessions</div>';
-                            // If all sessions gone and we had sessions before, likely a deploy
+                            // If all sessions disappeared, verify the build before
+                            // treating it as a deploy.
                             if (hadSessionsBefore && !isDeploying) {
-                                showDeployOverlay();
-                                scheduleReconnect();
+                                void checkVersionAndReload();
                             }
                         }
                     }

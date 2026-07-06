@@ -17,24 +17,32 @@ export const deployJs = `
             isDeploying = true;
             document.getElementById('deploy-overlay').classList.add('visible');
             updateDeployCountdown();
-            // Check if server version changed - if so, reload immediately
-            checkVersionAndReload();
+        }
+
+        function reloadForVersion(nextVersion) {
+            if (!serverVersion || !nextVersion || nextVersion === serverVersion) {
+                return false;
+            }
+            console.log('Version mismatch (' + serverVersion + ' -> ' + nextVersion + '), reloading for new code');
+            showDeployOverlay();
+            const url = new URL(location.href);
+            url.searchParams.set('v', nextVersion);
+            location.replace(url.toString());
+            return true;
         }
 
         async function checkVersionAndReload() {
             try {
-                const resp = await fetch(API_BASE + '/health');
+                if (!serverVersion) return false;
+                const resp = await fetch(API_BASE + '/health', { cache: 'no-store' });
+                if (!resp.ok) return false;
                 const data = await resp.json();
-                if (data.build && serverVersion && data.build !== serverVersion) {
-                    console.log('Version mismatch (' + serverVersion + ' -> ' + data.build + '), reloading for new code');
-                    const url = new URL(location.href);
-                    url.searchParams.set('v', data.build);
-                    location.href = url.toString();
-                }
+                return reloadForVersion(data.build);
             } catch (e) {
-                // Server not ready yet, will retry on reconnect
-                console.log('Version check failed, will retry:', e.message);
+                // Server not ready yet, retry through the normal reconnect path.
+                console.log('Version check failed:', e.message);
             }
+            return false;
         }
 
         function hideDeployOverlay() {

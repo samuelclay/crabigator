@@ -257,7 +257,7 @@ impl RecapManager {
         self.active_turn = None;
         self.state.status = if self.state.enabled {
             if self.api_key.is_some() {
-                RecapStatus::Updating
+                RecapStatus::Waiting
             } else {
                 RecapStatus::MissingKey
             }
@@ -303,7 +303,11 @@ impl RecapManager {
             self.state.latest = None;
             self.pending = None;
             self.state.status = if self.state.enabled {
-                RecapStatus::Updating
+                if self.api_key.is_some() {
+                    RecapStatus::Waiting
+                } else {
+                    RecapStatus::MissingKey
+                }
             } else {
                 RecapStatus::Disabled
             };
@@ -1214,6 +1218,6 @@ mod tests {
         assert!(changed);
         assert!(manager.state.latest.is_none());
         assert!(!manager.state.prefers_handoff());
-        assert!(matches!(manager.state.status, RecapStatus::Updating));
+        assert!(matches!(manager.state.status, RecapStatus::Waiting));
     }
 }

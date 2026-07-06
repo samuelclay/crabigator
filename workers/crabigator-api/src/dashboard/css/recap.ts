@@ -27,6 +27,10 @@ export const recapCss = `
         linear-gradient(135deg, rgba(34, 211, 238, 0.10), rgba(34, 211, 238, 0) 60%),
         var(--bg-deep);
 }
+.session-recap.expanded {
+    max-height: none;
+    overflow: visible;
+}
 .session-recap::before {
     content: '';
     position: absolute;
@@ -76,6 +80,10 @@ export const recapCss = `
     -webkit-box-orient: vertical;
     overflow: hidden;
     word-break: break-word;
+}
+.session-recap.expanded .session-recap-headline {
+    display: block;
+    -webkit-line-clamp: unset;
 }
 
 .session-recap-bullets {

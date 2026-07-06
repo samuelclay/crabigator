@@ -167,7 +167,7 @@ export const changesWidgetJs = `
                 case 'updating': return { label: 'Generating recap…', color: '#fbbf24' };
                 case 'failed': return { label: 'Recap unavailable', color: '#fbbf24' };
                 case 'missing_key': return { label: 'Recaps off', color: '#94a3b8' };
-                case 'waiting': return { label: 'Awaiting first turn…', color: '#94a3b8' };
+                case 'waiting': return { label: 'No recap', color: '#94a3b8' };
                 case 'disabled': return { label: 'Recaps disabled', color: '#64748b' };
                 default: return { label: 'Recap', color: '#22d3ee' };
             }
@@ -214,8 +214,9 @@ export const changesWidgetJs = `
 
             if (status === 'ready' && recap.latest) {
                 const latest = recap.latest;
+                const isExpanded = card.classList.contains('expanded');
                 headlineEl.textContent = latest.headline || '';
-                const bullets = (latest.bullets || []).slice(0, 2);
+                const bullets = isExpanded ? (latest.bullets || []) : (latest.bullets || []).slice(0, 2);
                 bulletsEl.innerHTML = bullets.map(b => '<div class="rb-line">' + escapeHtml(b) + '</div>').join('');
                 metaEl.innerHTML = formatRecapMeta(recap, latest);
             } else if (status === 'failed') {
@@ -233,7 +234,7 @@ export const changesWidgetJs = `
                 bulletsEl.innerHTML = '';
                 metaEl.innerHTML = '';
             } else if (status === 'waiting') {
-                headlineEl.textContent = 'Recaps will appear here after each completed turn.';
+                headlineEl.textContent = 'Recaps appear after completed turns.';
                 bulletsEl.innerHTML = '';
                 metaEl.innerHTML = '';
             } else if (status === 'disabled') {
@@ -263,23 +264,23 @@ export const changesWidgetJs = `
         }
 
         function onRecapClick(sessionId, ev) {
-            const card = document.getElementById('session-' + sessionId);
-            if (!card) return;
+            const recapCard = document.getElementById('recap-' + sessionId);
+            if (!recapCard) return;
             // Shift+Click jumps focus to the recap-history widget (full timeline);
-            // a normal click just expands the card so the user sees terminal + bullets.
+            // a normal click expands only this recap card.
             const recapsWidget = document.getElementById('recaps-' + sessionId);
+            const card = document.getElementById('session-' + sessionId);
             const widgetsCard = document.querySelector('#widgets-' + sessionId);
             if (ev?.shiftKey && recapsWidget && recapsWidget.style.display !== 'none') {
-                card.classList.remove('collapsed');
+                if (card) card.classList.remove('collapsed');
                 if (widgetsCard) widgetsCard.classList.remove('collapsed');
                 recapsWidget.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 return;
             }
-            // Treat the recap card like the existing collapse toggle target.
-            if (typeof toggleCollapse === 'function') {
-                toggleCollapse(sessionId);
-            } else {
-                card.classList.toggle('collapsed');
+            recapCard.classList.toggle('expanded');
+            const sessionData = sessions.get(sessionId);
+            if (sessionData?.recap) {
+                updateRecapCard(sessionId, sessionData.recap);
             }
         }
 

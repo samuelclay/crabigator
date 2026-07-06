@@ -24,6 +24,17 @@ export const eventsJs = `
             }
         }
 
+        function isActiveRecapTurnState(state) {
+            return state === 'thinking' || state === 'permission' || state === 'question';
+        }
+
+        function normalizeRecapForSession(sessionData, recap) {
+            if (recap?.status === 'updating' && isActiveRecapTurnState(sessionData?.state)) {
+                return { ...recap, status: 'waiting' };
+            }
+            return recap;
+        }
+
         function connectToSession(sessionId) {
             console.log('Connecting SSE for session:', sessionId);
             const eventSource = new EventSource(API_BASE + '/sessions/' + sessionId + '/events' + getAuthQueryParam());
@@ -89,9 +100,15 @@ export const eventsJs = `
                 }
                 updateFitLayout();
 
-                // If all sessions disconnected and we had sessions before, likely a deploy
-                if (sessions.size === 0 && hadSessionsBefore && !isDeploying) {
-                    showDeployOverlay();
+                // If all sessions disconnected, verify the build before showing
+                // deploy UI. Otherwise retry silently and recreate live sessions.
+                if (sessions.size === 0 && hadSessionsBefore) {
+                    if (!isDeploying) {
+                        void checkVersionAndReload();
+                    }
+                    setTimeout(loadSessions, 1000);
+                }
+                if (isDeploying) {
                     scheduleReconnect();
                 }
             };
@@ -131,21 +148,14 @@ export const eventsJs = `
                         stateEl.className = 'state ' + event.state;
                         stateEl.textContent = event.state;
                     }
-                    // Optimistically clear the recap card the instant a new
-                    // turn starts. Complete/Ready → Thinking is a reliable
-                    // new-prompt signal — mid-turn tool calls don't pass
-                    // through Complete first. The real recap=updating event
-                    // arrives a moment later from the desktop and confirms.
-                    if (sessionData
-                        && event.state === 'thinking'
-                        && (sessionData.state === 'complete' || sessionData.state === 'ready')) {
-                        const updatingRecap = { status: 'updating' };
-                        sessionData.recap = updatingRecap;
-                        updateRecapCard(sessionId, updatingRecap);
-                    }
                     // Update session state for stats widget
                     if (sessionData) {
                         sessionData.state = event.state;
+                        if (sessionData.recap?.status === 'updating' && isActiveRecapTurnState(event.state)) {
+                            const waitingRecap = { ...sessionData.recap, status: 'waiting' };
+                            sessionData.recap = waitingRecap;
+                            updateRecapCard(sessionId, waitingRecap);
+                        }
                         // Clear permission/prompt when leaving interactive states
                         // This is a safety net in case the prompt event was missed
                         if (event.state !== 'permission' && event.state !== 'question') {
@@ -214,7 +224,7 @@ export const eventsJs = `
                     if (!event.connected) {
                         // Check for version change FIRST - likely a deploy
                         // Do this before DOM cleanup that might throw
-                        checkVersionAndReload();
+                        void checkVersionAndReload();
 
                         // Desktop disconnected - remove session from view
                         const session = sessions.get(sessionId);
@@ -254,10 +264,11 @@ export const eventsJs = `
                     updatePromptPanel(sessionId, event.prompt);
                     break;
                 case 'recap':
+                    const recap = normalizeRecapForSession(sessionData, event);
                     if (sessionData) {
-                        sessionData.recap = event;
+                        sessionData.recap = recap;
                     }
-                    updateRecapCard(sessionId, event);
+                    updateRecapCard(sessionId, recap);
                     break;
                 case 'recap_history':
                     updateRecapHistoryWidget(sessionId, event.history || []);

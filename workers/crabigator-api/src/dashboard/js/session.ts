@@ -245,9 +245,10 @@ export const sessionJs = `
                 if (filteredSessions.length === 0) {
                     const hasAnyActiveSession = data.sessions.length > 0;
 
-                    // If we had sessions recently and now have none, likely a deploy
+                    // If we had sessions recently and now have none, verify the
+                    // build before showing deploy UI.
                     if (!hasAnyActiveSession && hadSessionsBefore && wasRecentlyConnected() && !isDeploying) {
-                        showDeployOverlay();
+                        void checkVersionAndReload();
                     }
 
                     for (const [, session] of sessions) {
@@ -340,9 +341,10 @@ export const sessionJs = `
             } catch (err) {
                 console.error('Failed to load sessions:', err);
                 updateSessionsCount();
-                // Network error might mean deploy - only show overlay if we were recently connected
+                // Network errors can happen during normal reconnects. Only show
+                // deploy UI after the health endpoint proves the build changed.
                 if (hadSessionsBefore && wasRecentlyConnected() && !isDeploying) {
-                    showDeployOverlay();
+                    void checkVersionAndReload();
                 }
                 if (isDeploying) {
                     scheduleReconnect();
@@ -418,7 +420,7 @@ export const sessionJs = `
                         </div>
                         <div class="session-recap empty" id="recap-\${session.id}"
                              onclick="onRecapClick('\${session.id}', event)"
-                             title="Click to expand session • shift+click to view full history">
+                             title="Click to expand recap • shift+click to view full history">
                             <div class="session-recap-status" id="recap-status-\${session.id}"></div>
                             <div class="session-recap-headline" id="recap-headline-\${session.id}"></div>
                             <div class="session-recap-bullets" id="recap-bullets-\${session.id}"></div>
