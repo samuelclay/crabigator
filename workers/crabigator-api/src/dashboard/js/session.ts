@@ -484,7 +484,7 @@ export const sessionJs = `
                                     <span class="wh-stat" id="widgets-idle-wrapper-\${session.id}" style="display:none" data-tooltip="Idle"><span class="wh-icon" style="color:#8b949e">◌</span><span class="wh-value" id="widgets-idle-\${session.id}">—</span></span>
                                     <span class="wh-stat" data-tooltip="Prompts"><span class="wh-icon" style="color:#8b949e">⟩</span><span class="wh-value" id="widgets-prompts-\${session.id}">0</span><span class="wh-elapsed" id="widgets-prompts-elapsed-\${session.id}"></span></span>
                                     <span class="wh-stat" data-tooltip="Completions"><span class="wh-icon" style="color:#8b949e">⋗</span><span class="wh-value" id="widgets-completions-\${session.id}">0</span><span class="wh-elapsed" id="widgets-completions-elapsed-\${session.id}"></span></span>
-                                    <span class="wh-stat" data-tooltip="Tool calls"><span class="wh-icon" style="color:#f0883e">⚒</span><span class="wh-value" id="widgets-tools-\${session.id}">—</span></span>
+                                    <span class="wh-stat wh-tools" data-tooltip="Tool calls"><span class="wh-icon" style="color:#f0883e">⚒</span><span class="wh-value" id="widgets-tools-\${session.id}">—</span></span>
                                     <span class="wh-stat" data-tooltip="Compactions"><span class="wh-icon" style="color:#e879f9">⊜</span><span class="wh-value" id="widgets-compactions-\${session.id}">0</span><span class="wh-elapsed" id="widgets-compactions-elapsed-\${session.id}"></span></span>
                                     <span class="wh-git" id="widgets-git-\${session.id}"></span>
                                 </div>

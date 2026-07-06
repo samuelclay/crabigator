@@ -221,6 +221,39 @@ export const widgetsCss = `
 /* Mobile responsive */
 @media (max-width: 768px) {
     .widgets-content { grid-template-columns: 1fr !important; }
+    .widgets-header {
+        padding: 8px 10px;
+        gap: 4px;
+        font-size: 9px;
+    }
+    .widgets-header-row2 {
+        flex-wrap: nowrap;
+        gap: 6px;
+        min-width: 0;
+        overflow: hidden;
+    }
+    .widgets-header-row2 .wh-stat {
+        flex: 0 0 auto;
+        gap: 2px;
+        min-width: 0;
+    }
+    .widgets-header-row2 .wh-tools {
+        flex: 1 1 46px;
+        max-width: 58px;
+        overflow: hidden;
+    }
+    .widgets-header-row2 .wh-tools .wh-value {
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+    }
+    .widgets-header-row2 .wh-elapsed,
+    .widgets-header-row2 .wh-git {
+        display: none;
+    }
+    .widgets-header-row2 .wh-icon {
+        font-size: 9px;
+    }
     .style-popover {
         right: -8px;
         min-width: 200px;

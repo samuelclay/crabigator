@@ -64,7 +64,17 @@ export const statsWidgetJs = `
 
             if (promptsEl) promptsEl.textContent = stats.prompts || 0;
             if (completionsEl) completionsEl.textContent = stats.completions || 0;
-            if (toolsEl) toolsEl.innerHTML = renderToolsSparkline(stats.tool_timestamps, stats.session_start, Date.now() / 1000);
+            if (toolsEl) {
+                const compactTools = typeof window !== 'undefined'
+                    && window.matchMedia
+                    && window.matchMedia('(max-width: 768px)').matches;
+                toolsEl.innerHTML = renderToolsSparkline(
+                    stats.tool_timestamps,
+                    stats.session_start,
+                    Date.now() / 1000,
+                    compactTools ? 8 : 20
+                );
+            }
             if (compactionsEl) compactionsEl.textContent = stats.compressions || 0;
 
             // Update elapsed times
@@ -107,12 +117,12 @@ export const statsWidgetJs = `
         const SPARKLINE_MAX = 10; // Fixed max: 10 tools = full height
 
         // Render tools sparkline histogram like CLI
-        function renderToolsSparkline(timestamps, sessionStart, now) {
+        function renderToolsSparkline(timestamps, sessionStart, now, numBins = 20) {
             if (!timestamps || !sessionStart || timestamps.length === 0) {
                 return '<span style="color:#8b949e">—</span>';
             }
 
-            const numBins = 20; // Number of histogram buckets
+            numBins = Math.max(4, Math.min(20, numBins));
             const duration = now - sessionStart;
             if (duration <= 0) {
                 return '<span style="color:#8b949e">—</span>';
