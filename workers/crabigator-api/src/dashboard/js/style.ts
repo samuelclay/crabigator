@@ -352,7 +352,7 @@ export const styleJs = `
                     }
 
                     if (deviceGroups.size === 0) {
-                        container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                        container.innerHTML = '<div class="no-sessions">' + getSessionsEmptyMessage(allSessions.length > 0) + '</div>';
                     }
                 } else {
                     // Single device — flat project grouping (no device headers)
@@ -404,7 +404,7 @@ export const styleJs = `
                     }
 
                     if (groups.size === 0) {
-                        container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                        container.innerHTML = '<div class="no-sessions">' + getSessionsEmptyMessage(allSessions.length > 0) + '</div>';
                     }
                 }
             } else {
@@ -429,7 +429,7 @@ export const styleJs = `
 
                 // Show empty state if no sessions
                 if (sessions.size === 0 && !container.querySelector('.no-sessions')) {
-                    container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                    container.innerHTML = '<div class="no-sessions">' + getSessionsEmptyMessage(allSessions.length > 0) + '</div>';
                 }
             }
 

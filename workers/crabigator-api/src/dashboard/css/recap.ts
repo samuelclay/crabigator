@@ -116,6 +116,10 @@ export const recapCss = `
     color: var(--text-dim);
     font-style: italic;
 }
+.session-recap.expanded .session-recap-bullets .rb-line {
+    display: block;
+    -webkit-line-clamp: unset;
+}
 
 .session-recap-meta {
     grid-area: meta;
@@ -151,7 +155,14 @@ export const recapCss = `
     50% { opacity: 1; }
 }
 
-/* Recap history widget — sits in widgets-content next to title-history. */
+/* Recap history sits directly under the recap card, outside Git/Changes collapse. */
+.session-recap-history {
+    padding: 12px 16px 14px;
+    background: var(--bg-deep);
+    border-top: 1px solid rgba(34, 211, 238, 0.14);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+}
 .recap-history-widget .widget-title { display: flex; justify-content: space-between; align-items: baseline; }
 .recap-history-widget .recap-history-count {
     color: var(--text-dim);
@@ -213,6 +224,9 @@ export const recapCss = `
             ".      bullets"
             "meta   meta";
         max-height: 110px;
+    }
+    .session-recap.expanded {
+        max-height: none;
     }
     .session-recap-meta { justify-self: end; padding-top: 2px; }
 }

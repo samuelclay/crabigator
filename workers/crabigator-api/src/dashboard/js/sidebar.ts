@@ -351,7 +351,7 @@ export const sidebarJs = `
             const sidebarSessions = getSidebarSessions(allSessions);
 
             if (sidebarSessions.length === 0) {
-                content.innerHTML = '<div class="sessions-empty">No active sessions</div>';
+                content.innerHTML = '<div class="sessions-empty">' + getSessionsEmptyMessage(allSessions.length > 0) + '</div>';
                 return;
             }
 

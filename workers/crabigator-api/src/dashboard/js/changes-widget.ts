@@ -247,6 +247,7 @@ export const changesWidgetJs = `
                 metaEl.innerHTML = '';
                 card.classList.add('empty');
             }
+            syncRecapHistoryVisibility(sessionId);
         }
 
         function extractFriendlyRecapError(raw) {
@@ -266,34 +267,43 @@ export const changesWidgetJs = `
         function onRecapClick(sessionId, ev) {
             const recapCard = document.getElementById('recap-' + sessionId);
             if (!recapCard) return;
-            // Shift+Click jumps focus to the recap-history widget (full timeline);
-            // a normal click expands only this recap card.
-            const recapsWidget = document.getElementById('recaps-' + sessionId);
-            const card = document.getElementById('session-' + sessionId);
-            const widgetsCard = document.querySelector('#widgets-' + sessionId);
-            if (ev?.shiftKey && recapsWidget && recapsWidget.style.display !== 'none') {
-                if (card) card.classList.remove('collapsed');
-                if (widgetsCard) widgetsCard.classList.remove('collapsed');
-                recapsWidget.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                return;
-            }
             recapCard.classList.toggle('expanded');
             const sessionData = sessions.get(sessionId);
             if (sessionData?.recap) {
                 updateRecapCard(sessionId, sessionData.recap);
+            } else {
+                syncRecapHistoryVisibility(sessionId);
             }
+        }
+
+        function syncRecapHistoryVisibility(sessionId) {
+            const widget = document.getElementById('recaps-' + sessionId);
+            const recapCard = document.getElementById('recap-' + sessionId);
+            const sessionData = sessions.get(sessionId);
+            if (!widget || !recapCard) return;
+
+            const history = sessionData?.recapHistory || [];
+            const recapHasContent = !recapCard.classList.contains('empty')
+                && !recapCard.classList.contains('waiting')
+                && !recapCard.classList.contains('disabled');
+            widget.style.display = history.length > 0 && recapCard.classList.contains('expanded') && recapHasContent
+                ? ''
+                : 'none';
         }
 
         function updateRecapHistoryWidget(sessionId, history) {
             const widget = document.getElementById('recaps-' + sessionId);
             const countEl = document.getElementById('recap-count-' + sessionId);
             if (!widget) return;
+            const sessionData = sessions.get(sessionId);
+            if (sessionData) {
+                sessionData.recapHistory = history || [];
+            }
             if (!history || history.length === 0) {
                 widget.style.display = 'none';
                 if (countEl) countEl.textContent = '';
                 return;
             }
-            widget.style.display = '';
             if (countEl) {
                 countEl.textContent = history.length + ' recap' + (history.length === 1 ? '' : 's');
             }
@@ -314,6 +324,7 @@ export const changesWidgetJs = `
 
             const list = widget.querySelector('.recaps-list');
             if (list) list.innerHTML = rowsHtml;
+            syncRecapHistoryVisibility(sessionId);
         }
 
         setInterval(() => {

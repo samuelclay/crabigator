@@ -130,7 +130,7 @@ export const sseJs = `
                         allSessions = allSessions.filter(s => s.id !== event.session.id);
                         syncRenderedSessions();
                         if (sessions.size === 0) {
-                            container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                            container.innerHTML = '<div class="no-sessions">' + getSessionsEmptyMessage(allSessions.length > 0) + '</div>';
                             // If all sessions disappeared, verify the build before
                             // treating it as a deploy.
                             if (hadSessionsBefore && !isDeploying) {

@@ -2,6 +2,32 @@
 import { iconMicrophone, iconKeyboard, iconClose, iconPencil } from '../icons';
 
 export const sessionJs = `
+        let hasLoadedSessionsOnce = false;
+        let sessionsLoadInFlight = false;
+
+        function sessionsAreStillLoading() {
+            return sessionsLoadInFlight || !hasLoadedSessionsOnce;
+        }
+
+        function getSessionsEmptyMessage(hasAnyActiveSession = false) {
+            if (sessionsAreStillLoading()) return 'Loading sessions...';
+            if (isFocusedMode() && hasAnyActiveSession) return 'Focused session is not active';
+            return 'No active sessions';
+        }
+
+        function showSessionsPlaceholder(message) {
+            const container = document.getElementById('sessions');
+            if (container && sessions.size === 0) {
+                container.innerHTML = '<div class="no-sessions">' + message + '</div>';
+            }
+        }
+
+        function showSessionsLoadingIfEmpty() {
+            if (sessions.size === 0 && !hasLoadedSessionsOnce) {
+                showSessionsPlaceholder('Loading sessions...');
+            }
+        }
+
         function getSessionActivityTime(session) {
             const raw = session?.last_activity_at || session?.lastActivityAt || session?.last_seen_at || session?.last_seen || session?.started_at || session?.startedAt || 0;
             return raw > 1000000000000 ? raw / 1000 : raw;
@@ -155,10 +181,7 @@ export const sessionJs = `
 
                 if (renderableSessions.length === 0) {
                     if (sessions.size === 0) {
-                        const message = isFocusedMode() && allSessions.length > 0
-                            ? 'Focused session is not active'
-                            : 'No active sessions';
-                        container.innerHTML = '<div class="no-sessions">' + message + '</div>';
+                        container.innerHTML = '<div class="no-sessions">' + getSessionsEmptyMessage(allSessions.length > 0) + '</div>';
                     }
                     updateFitLayout();
                     return;
@@ -212,15 +235,22 @@ export const sessionJs = `
         }
 
         async function loadSessions() {
+            sessionsLoadInFlight = true;
+            showSessionsLoadingIfEmpty();
             try {
                 // Fetch sessions and projects in parallel
                 const [resp, projectsResp] = await Promise.all([
                     fetch(API_BASE + '/sessions', { headers: getAuthHeaders() }),
                     fetch(API_BASE + '/projects', { headers: getAuthHeaders() }).catch(() => null),
                 ]);
-                if (handleAuthFailure(resp)) return;
+                if (handleAuthFailure(resp)) {
+                    sessionsLoadInFlight = false;
+                    return;
+                }
                 if (!resp.ok) throw new Error('Failed to fetch sessions');
                 const data = await resp.json();
+                hasLoadedSessionsOnce = true;
+                sessionsLoadInFlight = false;
 
                 // Store projects for history display
                 if (projectsResp && projectsResp.ok) {
@@ -256,11 +286,7 @@ export const sessionJs = `
                     }
                     sessions.clear();
                     activeTerminalId = null;
-                    container.innerHTML = '<div class="no-sessions">' + (
-                        isFocusedMode() && hasAnyActiveSession
-                            ? 'Focused session is not active'
-                            : 'No active sessions'
-                    ) + '</div>';
+                    container.innerHTML = '<div class="no-sessions">' + getSessionsEmptyMessage(hasAnyActiveSession) + '</div>';
 
                     if (hasAnyActiveSession) {
                         hadSessionsBefore = true;
@@ -339,8 +365,12 @@ export const sessionJs = `
                     rerenderSessions();
                 }
             } catch (err) {
+                sessionsLoadInFlight = false;
                 console.error('Failed to load sessions:', err);
                 updateSessionsCount();
+                if (!hasLoadedSessionsOnce && sessions.size === 0) {
+                    showSessionsPlaceholder('Unable to load sessions');
+                }
                 // Network errors can happen during normal reconnects. Only show
                 // deploy UI after the health endpoint proves the build changed.
                 if (hadSessionsBefore && wasRecentlyConnected() && !isDeploying) {
@@ -420,11 +450,15 @@ export const sessionJs = `
                         </div>
                         <div class="session-recap empty" id="recap-\${session.id}"
                              onclick="onRecapClick('\${session.id}', event)"
-                             title="Click to expand recap • shift+click to view full history">
+                             title="Click to expand recap and history">
                             <div class="session-recap-status" id="recap-status-\${session.id}"></div>
                             <div class="session-recap-headline" id="recap-headline-\${session.id}"></div>
                             <div class="session-recap-bullets" id="recap-bullets-\${session.id}"></div>
                             <div class="session-recap-meta" id="recap-meta-\${session.id}"></div>
+                        </div>
+                        <div class="session-recap-history recap-history-widget" id="recaps-\${session.id}" style="display:none">
+                            <div class="widget-title"><span style="color:#22d3ee">Recap history</span> <span class="recap-history-count" id="recap-count-\${session.id}"></span></div>
+                            <div class="recaps-list"></div>
                         </div>
                         <div class="prompt-panel" id="prompt-\${session.id}">
                             <div class="prompt-header" id="prompt-header-\${session.id}"></div>
@@ -456,10 +490,6 @@ export const sessionJs = `
                                 </div>
                             </div>
                             <div class="widgets-content" id="widgets-content-\${session.id}">
-                            <div class="widget recap-history-widget" id="recaps-\${session.id}" style="display:none">
-                                <div class="widget-title"><span style="color:#22d3ee">Recap history</span> <span class="recap-history-count" id="recap-count-\${session.id}"></span></div>
-                                <div class="recaps-list"></div>
-                            </div>
                             <div class="widget title-history-widget" id="titles-\${session.id}" style="display:none">
                                 <div class="widget-title"><span style="color:#58a6ff">—</span></div>
                                 <div class="titles-list"></div>
@@ -567,6 +597,7 @@ export const sessionJs = `
                 cwd: session.cwd,
                 deviceName: session.device_name || null,
                 lastActivityAt: getSessionActivityTime(session),
+                recapHistory: [],
                 // Scrollback chunking: store full buffer, render only visible portion
                 scrollbackBuffer: [],      // Full scrollback lines
                 scrollbackRendered: 0,     // How many lines currently rendered
