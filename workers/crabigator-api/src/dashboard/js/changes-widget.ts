@@ -111,6 +111,12 @@ export const changesWidgetJs = `
                 for (const c of (lang.changes || [])) {
                     const { modifier, color: modColor } = getModifierStyle(c.change_type);
                     const { icon, color: iconColor } = getKindIcon(c.kind);
+                    // Names may carry a "parent › name" scope chain — mute the parents
+                    const nameParts = String(c.name || '').split(' › ');
+                    const shortName = nameParts.pop();
+                    const scopeHtml = nameParts.length
+                        ? \`<span class="name-scope">\${escapeHtml(nameParts.join(' › '))} › </span>\`
+                        : '';
                     const del = c.deletions || 0;
                     const add = c.additions || 0;
 
@@ -130,7 +136,7 @@ export const changesWidgetJs = `
 
                     changesHtml += \`<div class="change-item">
                         <span style="color:\${modColor}">\${modifier}</span><span style="color:\${iconColor}">\${icon}</span>
-                        <span class="name">\${c.name}</span>
+                        <span class="name">\${scopeHtml}\${escapeHtml(shortName)}</span>
                         <span class="stats" style="margin-left:auto">\${delNumHtml}&nbsp;\${addNumHtml}</span>
                     </div>\`;
                 }

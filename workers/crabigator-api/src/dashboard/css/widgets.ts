@@ -350,6 +350,9 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.change-item .name-scope {
+    color: var(--text-dim, #8b949e);
+}
 .commit-history {
     min-width: 0;
 }
