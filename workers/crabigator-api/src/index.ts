@@ -533,13 +533,37 @@ function generateClientId(): string {
     return crypto.randomUUID();
 }
 
+interface SectionVisibility {
+    recap?: boolean;
+    prs?: boolean;
+    commits?: boolean;
+    git?: boolean;
+    changes?: boolean;
+}
+
+const SECTION_KEYS: (keyof SectionVisibility)[] = ['recap', 'prs', 'commits', 'git', 'changes'];
+
 interface DashboardSettings {
     fontScaleIndex?: number;
     terminalHeightIndex?: number;
     terminalWrapEnabled?: boolean;
+    widgetsExpanded?: boolean;
+    groupingMode?: 'all' | 'project';
+    projectOrderMode?: 'recent' | 'alpha';
+    visibleSections?: SectionVisibility;
 }
 
 const DEFAULT_SETTINGS: DashboardSettings = { fontScaleIndex: 3, terminalHeightIndex: 3, terminalWrapEnabled: true };
+
+function sanitizeVisibleSections(input: unknown): SectionVisibility | undefined {
+    if (!input || typeof input !== 'object') return undefined;
+    const out: SectionVisibility = {};
+    for (const key of SECTION_KEYS) {
+        const value = (input as Record<string, unknown>)[key];
+        if (typeof value === 'boolean') out[key] = value;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+}
 
 router.get('/api/settings', async (request, env) => {
     const clientId = getClientId(request);
@@ -569,6 +593,7 @@ router.post('/api/settings', async (request, env) => {
 
     // Load existing settings and merge
     const existing = await env.TOKENS.get(`settings:${clientId}`, 'json') as DashboardSettings | null;
+    const sectionUpdate = sanitizeVisibleSections(body.visibleSections);
     const settings: DashboardSettings = {
         fontScaleIndex: typeof body.fontScaleIndex === 'number'
             ? Math.max(0, Math.min(6, body.fontScaleIndex))
@@ -578,7 +603,19 @@ router.post('/api/settings', async (request, env) => {
             : existing?.terminalHeightIndex ?? 3,
         terminalWrapEnabled: typeof body.terminalWrapEnabled === 'boolean'
             ? body.terminalWrapEnabled
-            : existing?.terminalWrapEnabled ?? true
+            : existing?.terminalWrapEnabled ?? true,
+        widgetsExpanded: typeof body.widgetsExpanded === 'boolean'
+            ? body.widgetsExpanded
+            : existing?.widgetsExpanded,
+        groupingMode: body.groupingMode === 'all' || body.groupingMode === 'project'
+            ? body.groupingMode
+            : existing?.groupingMode,
+        projectOrderMode: body.projectOrderMode === 'recent' || body.projectOrderMode === 'alpha'
+            ? body.projectOrderMode
+            : existing?.projectOrderMode,
+        visibleSections: sectionUpdate
+            ? { ...existing?.visibleSections, ...sectionUpdate }
+            : existing?.visibleSections
     };
 
     await env.TOKENS.put(`settings:${clientId}`, JSON.stringify(settings), {
