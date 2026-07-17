@@ -170,6 +170,17 @@ export const sessionJs = `
                                 ? '(not in locked set)'
                                 : '(no longer active)'
                         );
+                        // Snapshot last-known metadata into allSessions before we
+                        // drop the live connection, so the sidebar (which lists
+                        // every session) keeps showing real titles/state/stats
+                        // instead of shimmer placeholders — e.g. when focusing one
+                        // session tears down the live data for all the others.
+                        const meta = allSessions.find(s => s.id === id);
+                        if (meta) {
+                            if (session.title) meta.title = session.title;
+                            if (session.state) meta.state = session.state;
+                            if (session.stats) meta.stats = session.stats;
+                        }
                         session.eventSource?.close();
                         sessions.delete(id);
                         if (activeTerminalId === id) activeTerminalId = null;
