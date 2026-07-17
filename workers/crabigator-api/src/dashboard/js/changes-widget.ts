@@ -365,6 +365,104 @@ export const changesWidgetJs = `
             syncRecapHistoryVisibility(sessionId);
         }
 
+        function prStateInfo(pr) {
+            if (pr.state === 'MERGED') return { label: 'merged', color: '#a371f7' };
+            if (pr.state === 'CLOSED') return { label: 'closed', color: '#f85149' };
+            if (pr.is_draft) return { label: 'draft', color: '#8b949e' };
+            // Softer green matching the dir path (xterm 114 in the CLI).
+            if (pr.state === 'OPEN') return { label: 'open', color: '#87d787' };
+            return { label: '', color: '#8b949e' };
+        }
+
+        // CI rollup badge: ✓ CI (all pass) / ✗N CI (failures) / ●N CI (pending).
+        function prCiBadge(pr) {
+            if (!pr.checks_total) return '';
+            if (pr.checks_failed > 0) return '<span class="pr-ci fail">✗' + pr.checks_failed + ' CI</span>';
+            if (pr.checks_pending > 0) return '<span class="pr-ci pending">●' + pr.checks_pending + ' CI</span>';
+            return '<span class="pr-ci pass">✓ CI</span>';
+        }
+
+        // Merge cleanliness badge: conflicts / behind (needs update) / clean.
+        function prMergeBadge(pr) {
+            if (pr.mergeable === 'CONFLICTING') return '<span class="pr-merge conflict">conflicts</span>';
+            if (pr.mergeable === 'MERGEABLE') {
+                return pr.merge_state_status === 'BEHIND'
+                    ? '<span class="pr-merge behind">behind</span>'
+                    : '<span class="pr-merge clean">clean</span>';
+            }
+            return '';
+        }
+
+        function togglePrs(sessionId) {
+            const sessionData = sessions.get(sessionId);
+            if (!sessionData) return;
+            sessionData.prsExpanded = !sessionData.prsExpanded;
+            updatePrList(sessionId, sessionData.prs || []);
+        }
+
+        function updatePrList(sessionId, prs) {
+            const widget = document.getElementById('recap-prs-' + sessionId);
+            if (!widget) return;
+            const sessionData = sessions.get(sessionId);
+            if (sessionData) sessionData.prs = prs || [];
+            // Collapsed by default: one line per PR. Click the header to expand
+            // into the full view (PR title + branch).
+            const expanded = !!(sessionData && sessionData.prsExpanded);
+
+            if (!prs || prs.length === 0) {
+                widget.style.display = 'none';
+                widget.innerHTML = '';
+                return;
+            }
+
+            const label = prs.length === 1 ? '1 PR' : prs.length + ' PRs';
+            const rows = prs.map(pr => {
+                const stateInfo = prStateInfo(pr);
+                const repoLabel = (pr.repo || 'PR') + ' #' + pr.number;
+                const badge = stateInfo.label
+                    ? '<span class="pr-badge" style="color:' + stateInfo.color
+                        + ';border-color:' + stateInfo.color + '">' + stateInfo.label + '</span>'
+                    : '';
+                const diffParts = [];
+                if (pr.additions) diffParts.push('<span class="rd-add">+' + pr.additions + '</span>');
+                if (pr.deletions) diffParts.push('<span class="rd-del">-' + pr.deletions + '</span>');
+                const files = pr.changed_files
+                    ? '<span class="pr-files">' + pr.changed_files + (pr.changed_files === 1 ? ' file' : ' files') + '</span>'
+                    : '';
+                const diff = (diffParts.length || files)
+                    ? '<span class="pr-diff">' + diffParts.join(' ') + (diffParts.length && files ? ' ' : '') + files + '</span>'
+                    : '';
+                const link = '<a class="pr-link" href="' + escapeHtml(pr.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(repoLabel) + '</a>';
+                // Right-hand status cluster: state, CI, merge cleanliness.
+                const status = '<span class="pr-status">' + badge + prCiBadge(pr) + prMergeBadge(pr) + '</span>';
+
+                if (!expanded) {
+                    // One compact line: repo #num + diff on the left, status on the right.
+                    return '<div class="pr-row pr-collapsed"><div class="pr-row-top">' + link + diff + status + '</div></div>';
+                }
+                const branch = pr.branch
+                    ? '<span class="pr-branch" title="' + escapeHtml(pr.branch) + '">⎇ ' + escapeHtml(pr.branch) + '</span>'
+                    : '';
+                const title = pr.title ? '<div class="pr-title" title="' + escapeHtml(pr.title) + '">' + escapeHtml(pr.title) + '</div>' : '';
+                return '<div class="pr-row">' +
+                    '<div class="pr-row-top">' + link + diff + status + '</div>' +
+                    title +
+                    (branch ? '<div class="pr-row-bottom">' + branch + '</div>' : '') +
+                    '</div>';
+            }).join('');
+
+            const chevron = expanded ? '▾' : '▸';
+            const titleAttr = expanded ? 'Click to collapse' : 'Click to expand';
+            widget.innerHTML = '<div class="pr-list-title" title="' + titleAttr + '">'
+                + '<span class="pr-list-chevron">' + chevron + '</span>Pull requests '
+                + '<span class="pr-list-count">' + label + '</span></div>' + rows;
+            // Attach the toggle handler via JS (avoids escaping quotes inside the
+            // outer template literal, which broke an inline onclick).
+            const titleEl = widget.querySelector('.pr-list-title');
+            if (titleEl) titleEl.onclick = () => togglePrs(sessionId);
+            widget.style.display = '';
+        }
+
         setInterval(() => {
             for (const [sessionId, sessionData] of sessions.entries()) {
                 if (sessionData?.recap?.status === 'ready' && sessionData.recap.latest?.generated_at) {

@@ -233,6 +233,39 @@ export interface RecapHistoryEvent {
 }
 
 /**
+ * A pull request created or updated during this session, shown in the recap panel.
+ */
+export interface SessionPr {
+    number: number;
+    owner: string;
+    repo: string;
+    url: string;
+    branch: string;
+    title: string;
+    state: string;          // OPEN / MERGED / CLOSED
+    is_draft: boolean;
+    additions: number;
+    deletions: number;
+    changed_files: number;
+    mergeable: string;      // MERGEABLE / CONFLICTING / UNKNOWN
+    merge_state_status: string; // CLEAN / DIRTY / BEHIND / BLOCKED / UNSTABLE / …
+    checks_passed: number;
+    checks_failed: number;
+    checks_pending: number;
+    checks_total: number;
+    created_here: boolean;
+    refreshed_at: number;
+}
+
+/**
+ * Current set of PRs created/updated during this session.
+ */
+export interface PrsEvent {
+    type: 'prs';
+    prs: SessionPr[];
+}
+
+/**
  * Desktop connection status event (for dashboard)
  */
 export interface DesktopStatusEvent {
@@ -322,7 +355,8 @@ export type SessionEvent =
     | DesktopStatusEvent
     | PromptEvent
     | RecapEvent
-    | RecapHistoryEvent;
+    | RecapHistoryEvent
+    | PrsEvent;
 
 /**
  * Message from cloud to desktop (via WebSocket)

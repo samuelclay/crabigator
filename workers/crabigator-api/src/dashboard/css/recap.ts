@@ -230,4 +230,148 @@ export const recapCss = `
     }
     .session-recap-meta { justify-self: end; padding-top: 2px; }
 }
+
+/* PR list sits directly under the recap card: every PR created or updated in
+   this session, linked to GitHub, with branch + live diff stats. */
+.session-prs {
+    padding: 10px 16px 12px;
+    background:
+        linear-gradient(135deg, rgba(163, 113, 247, 0.06), rgba(163, 113, 247, 0) 60%),
+        var(--bg-deep);
+    border-top: 1px solid rgba(163, 113, 247, 0.20);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.session-prs::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 2px;
+    background: linear-gradient(180deg, #a371f7, rgba(163, 113, 247, 0.05));
+    opacity: 0.85;
+}
+.session-prs .pr-list-title {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #c4a7f7;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+}
+.session-prs .pr-list-title:hover { color: #d6bffb; }
+.session-prs .pr-list-chevron {
+    display: inline-block;
+    width: 12px;
+    color: #a371f7;
+    font-size: 9px;
+}
+.session-prs .pr-list-count {
+    color: var(--text-dim);
+    margin-left: 6px;
+    text-transform: none;
+    letter-spacing: 0;
+}
+/* Collapsed rows are a single tight line. */
+.session-prs .pr-row.pr-collapsed {
+    padding: 4px 8px;
+}
+.session-prs .pr-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-dim);
+    border-left: 2px solid rgba(163, 113, 247, 0.55);
+    border-radius: 4px;
+}
+.session-prs .pr-row-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.session-prs .pr-badge {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    flex: 0 0 auto;
+}
+.session-prs .pr-link {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: #c4a7f7;
+    text-decoration: none;
+    white-space: nowrap;
+}
+.session-prs .pr-link:hover {
+    text-decoration: underline;
+    color: #d6bffb;
+}
+.session-prs .pr-diff {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    margin-left: auto;
+    white-space: nowrap;
+}
+.session-prs .pr-diff .rd-add { color: var(--accent-green); }
+.session-prs .pr-diff .rd-del { color: var(--accent-red); }
+.session-prs .pr-diff .pr-files { color: var(--text-dim); margin-left: 4px; }
+
+/* Right-hand status cluster: state, CI, merge cleanliness. */
+.session-prs .pr-status {
+    margin-left: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+.session-prs .pr-ci,
+.session-prs .pr-merge {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.session-prs .pr-ci.pass { color: var(--accent-green); }
+.session-prs .pr-ci.fail { color: var(--accent-red); }
+.session-prs .pr-ci.pending { color: #d29922; }
+.session-prs .pr-merge.clean { color: var(--accent-green); }
+.session-prs .pr-merge.conflict { color: var(--accent-red); }
+.session-prs .pr-merge.behind { color: #d29922; }
+.session-prs .pr-title {
+    color: var(--text-mid);
+    font-size: 11.5px;
+    line-height: 1.35;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.session-prs .pr-row-bottom {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.session-prs .pr-branch {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
 `;

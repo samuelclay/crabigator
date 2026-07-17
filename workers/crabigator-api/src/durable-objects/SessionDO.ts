@@ -25,6 +25,8 @@ interface PersistentState {
     lastRecap: any | null;
     /** Full recap history for this session, oldest first. */
     lastRecapHistory: any[] | null;
+    /** PRs created/updated during this session (recap panel). */
+    lastPrs: any[] | null;
     /** Commits detected after this web session established a baseline, oldest first. */
     lastCommitHistory: GitCommitInfo[] | null;
     /** Last git HEAD hash seen by the web side. */
@@ -104,6 +106,7 @@ export class SessionDO implements DurableObject {
             lastTitleHistory: null,
             lastRecap: null,
             lastRecapHistory: null,
+            lastPrs: null,
             lastCommitHistory: null,
             lastCommitHeadHash: null,
         };
@@ -517,6 +520,11 @@ export class SessionDO implements DurableObject {
                 persistentChanged = true;
                 break;
             }
+            case 'prs': {
+                this.persistentState.lastPrs = (event as any).prs || [];
+                persistentChanged = true;
+                break;
+            }
             case 'git':
                 {
                     const commitUpdate = this.updateCommitHistoryFromGit(event as GitEvent);
@@ -678,6 +686,13 @@ export class SessionDO implements DurableObject {
                 history: this.persistentState.lastRecapHistory,
             };
             await this.sendSSE(writer, historyEvent as SessionEvent);
+        }
+        if (this.persistentState.lastPrs && this.persistentState.lastPrs.length > 0) {
+            const prsEvent = {
+                type: 'prs' as const,
+                prs: this.persistentState.lastPrs,
+            };
+            await this.sendSSE(writer, prsEvent as SessionEvent);
         }
         if (this.persistentState.lastCommitHistory && this.persistentState.lastCommitHistory.length > 0) {
             const historyEvent = {

@@ -68,6 +68,7 @@ export const eventsJs = `
                         prompt: '#f97316',
                         recap: '#22d3ee',
                         recap_history: '#22d3ee',
+                        prs: '#a371f7',
                         commit_history: '#db6d28',
                     };
                     const color = typeColors[data.type] || '#9ca3af';
@@ -279,6 +280,9 @@ export const eventsJs = `
                     break;
                 case 'recap_history':
                     updateRecapHistoryWidget(sessionId, event.history || []);
+                    break;
+                case 'prs':
+                    updatePrList(sessionId, event.prs || []);
                     break;
             }
         }

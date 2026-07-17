@@ -460,6 +460,7 @@ export const sessionJs = `
                             <div class="widget-title"><span style="color:#22d3ee">Recap history</span> <span class="recap-history-count" id="recap-count-\${session.id}"></span></div>
                             <div class="recaps-list"></div>
                         </div>
+                        <div class="session-prs" id="recap-prs-\${session.id}" style="display:none"></div>
                         <div class="prompt-panel" id="prompt-\${session.id}">
                             <div class="prompt-header" id="prompt-header-\${session.id}"></div>
                             <div class="prompt-question" id="prompt-question-\${session.id}"></div>
