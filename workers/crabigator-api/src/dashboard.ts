@@ -126,6 +126,16 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <button class="style-option" data-project-order="alpha" onclick="setProjectOrder('alpha')">Alphabetical</button>
                     </div>
                 </div>
+                <div class="style-section">
+                    <div class="style-section-label">Visible Sections</div>
+                    <div class="sidebar-checkbox-list">
+                        <label class="sidebar-checkbox"><input type="checkbox" id="section-recap" onchange="toggleSection('recap')" checked><span class="sidebar-checkbox-icon" style="color:#22d3ee">◈</span><span class="sidebar-checkbox-label">Recap</span></label>
+                        <label class="sidebar-checkbox"><input type="checkbox" id="section-prs" onchange="toggleSection('prs')" checked><span class="sidebar-checkbox-icon" style="color:#a371f7">⇄</span><span class="sidebar-checkbox-label">Pull requests</span></label>
+                        <label class="sidebar-checkbox"><input type="checkbox" id="section-commits" onchange="toggleSection('commits')" checked><span class="sidebar-checkbox-icon" style="color:#db6d28">●</span><span class="sidebar-checkbox-label">Commits</span></label>
+                        <label class="sidebar-checkbox"><input type="checkbox" id="section-git" onchange="toggleSection('git')" checked><span class="sidebar-checkbox-icon" style="color:#7ee787">⎇</span><span class="sidebar-checkbox-label">Git status</span></label>
+                        <label class="sidebar-checkbox"><input type="checkbox" id="section-changes" onchange="toggleSection('changes')" checked><span class="sidebar-checkbox-icon" style="color:#ec4899">Δ</span><span class="sidebar-checkbox-label">Changes</span></label>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="settings-container">

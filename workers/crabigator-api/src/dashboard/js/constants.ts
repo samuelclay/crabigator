@@ -43,6 +43,9 @@ export const constantsJs = `
         // Widgets panel visibility (true = expanded, false = collapsed by default)
         let widgetsExpanded = false;
 
+        // Session-card section visibility (recap panel, PR list, commit history, git status, changes)
+        let visibleSections = { recap: true, prs: true, commits: true, git: true, changes: true };
+
         // Session grouping mode ('all' = flat list, 'project' = grouped by working directory)
         let groupingMode = localStorage.getItem('crabigator-grouping') || 'project';
 

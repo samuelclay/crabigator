@@ -65,9 +65,11 @@ export const changesWidgetJs = `
             const widgetsContent = document.getElementById('widgets-content-' + sessionId);
             if (!widget) return;
 
-            const byLanguage = changes?.by_language || [];
+            // Hidden sections contribute no data: with both toggled off the
+            // widget hides itself through the existing empty-state path below.
+            const byLanguage = visibleSections.changes ? (changes?.by_language || []) : [];
             const sessionData = sessions.get(sessionId);
-            const commitHistory = sessionData?.commitHistory || [];
+            const commitHistory = visibleSections.commits ? (sessionData?.commitHistory || []) : [];
             const totalChanges = byLanguage.reduce((sum, lang) => sum + (lang.changes?.length || 0), 0);
             const hasChanges = totalChanges > 0;
             const hasCommits = commitHistory.length > 0;

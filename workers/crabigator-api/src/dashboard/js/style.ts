@@ -79,7 +79,8 @@ export const styleJs = `
                         terminalWrapEnabled: terminalWrapEnabled,
                         widgetsExpanded: widgetsExpanded,
                         groupingMode: groupingMode,
-                        projectOrderMode: projectOrderMode
+                        projectOrderMode: projectOrderMode,
+                        visibleSections: visibleSections
                     }),
                     credentials: 'same-origin'
                 });
@@ -118,6 +119,9 @@ export const styleJs = `
                         projectOrderMode = data.projectOrderMode;
                         localStorage.setItem('crabigator-project-order', projectOrderMode);
                     }
+                    if (data.visibleSections && typeof data.visibleSections === 'object') {
+                        visibleSections = { ...visibleSections, ...data.visibleSections };
+                    }
                 }
             } catch {}
             applyFontScale();
@@ -126,6 +130,33 @@ export const styleJs = `
             applyWidgetsExpanded();
             applyGrouping();
             applyProjectOrder();
+            applySectionVisibility();
+        }
+
+        // Session-card section visibility (recap, PRs, commits, git status, changes)
+        function toggleSection(section) {
+            visibleSections[section] = !visibleSections[section];
+            applySectionVisibility();
+            saveSettingsToServer();
+        }
+
+        function applySectionVisibility() {
+            // Sections hidden purely by CSS body classes
+            document.body.classList.toggle('hide-section-recap', !visibleSections.recap);
+            document.body.classList.toggle('hide-section-prs', !visibleSections.prs);
+            document.body.classList.toggle('hide-section-git', !visibleSections.git);
+
+            // Sync checkbox states in the Style popover
+            for (const [section, visible] of Object.entries(visibleSections)) {
+                const cb = document.getElementById('section-' + section);
+                if (cb) cb.checked = visible;
+            }
+
+            // Commits and changes render inside the Changes widget, which sizes
+            // its header from the data, so re-render it for every session.
+            for (const [sessionId, sessionData] of sessions) {
+                updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
+            }
         }
 
         // Terminal wrap mode
