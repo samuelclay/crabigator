@@ -234,34 +234,42 @@ export const eventsJs = `
                         // Do this before DOM cleanup that might throw
                         void checkVersionAndReload();
 
-                        // Desktop disconnected - remove session from view
-                        const session = sessions.get(sessionId);
-                        if (session) {
-                            session.eventSource?.close();
-                            sessions.delete(sessionId);
-                            if (activeTerminalId === sessionId) activeTerminalId = null;
-                        }
-                        // Also remove from allSessions for accurate count
-                        const allIdx = allSessions.findIndex(s => s.id === sessionId);
-                        if (allIdx !== -1) {
-                            allSessions.splice(allIdx, 1);
-                            updateSessionsCount();
-                            updateSessionLimitBanner();
-                            if (typeof updateUsageDisplay === 'function') {
-                                updateUsageDisplay();
+                        // Wrap the whole teardown in preservePageScroll so the
+                        // scroll position is captured BEFORE the card is removed.
+                        // Otherwise removing a card above the viewport collapses
+                        // the page and pins the viewport to the top — which fires
+                        // for every session at once whenever WebSockets drop (e.g.
+                        // a deploy), hoisting the user to the top repeatedly.
+                        preservePageScroll(() => {
+                            // Desktop disconnected - remove session from view
+                            const session = sessions.get(sessionId);
+                            if (session) {
+                                session.eventSource?.close();
+                                sessions.delete(sessionId);
+                                if (activeTerminalId === sessionId) activeTerminalId = null;
                             }
-                        }
-                        const cwd = card.querySelector('.cwd')?.textContent;
-                        card.remove();
-                        // Update project group count if in grouped mode
-                        if (groupingMode === 'project' && cwd) {
-                            updateProjectGroupCount(cwd);
-                        }
-                        updateFitLayout();
-                        syncRenderedSessions();
-                        // Update status
-                        const statusEl = document.getElementById('status');
-                        if (statusEl) statusEl.textContent = sessionCount(sessions.size);
+                            // Also remove from allSessions for accurate count
+                            const allIdx = allSessions.findIndex(s => s.id === sessionId);
+                            if (allIdx !== -1) {
+                                allSessions.splice(allIdx, 1);
+                                updateSessionsCount();
+                                updateSessionLimitBanner();
+                                if (typeof updateUsageDisplay === 'function') {
+                                    updateUsageDisplay();
+                                }
+                            }
+                            const cwd = card.querySelector('.cwd')?.textContent;
+                            card.remove();
+                            // Update project group count if in grouped mode
+                            if (groupingMode === 'project' && cwd) {
+                                updateProjectGroupCount(cwd);
+                            }
+                            updateFitLayout();
+                            syncRenderedSessions();
+                            // Update status
+                            const statusEl = document.getElementById('status');
+                            if (statusEl) statusEl.textContent = sessionCount(sessions.size);
+                        });
                     }
                     break;
                 case 'title_history':
