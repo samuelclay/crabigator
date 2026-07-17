@@ -347,6 +347,24 @@ fn format_header(language: &str, count: usize, label: &str, width: usize) -> Str
     format!("{}{:pad$}", content, "", pad = pad)
 }
 
+/// Render the `parent › ` scope prefix (if any) in gray, leaving the symbol
+/// name itself in the default color.
+fn colorize_scope_prefix(name: &str) -> String {
+    match name.rfind(" › ") {
+        Some(idx) => {
+            let split = idx + " › ".len();
+            format!(
+                "{}{}{}{}",
+                fg(color::GRAY),
+                &name[..split],
+                RESET,
+                &name[split..]
+            )
+        }
+        None => name.to_string(),
+    }
+}
+
 /// Format a single change entry with aligned columns (for one-per-row display)
 fn format_change_entry(
     change: &ChangeNode,
@@ -367,14 +385,15 @@ fn format_change_entry(
     let name = truncate_middle(&change.name, name_width);
     let name_char_count = name.chars().count();
     let name_padding = name_width.saturating_sub(name_char_count);
+    let styled_name = colorize_scope_prefix(&name);
 
     // Wrap name in hyperlink if we have file path info
     let linked_name = if let Some(ref path) = change.file_path {
         let abs_path = cwd.join(path).to_string_lossy().to_string();
         let url = ide.file_url(&abs_path, change.line_number);
-        hyperlink(&url, &name)
+        hyperlink(&url, &styled_name)
     } else {
-        name.to_string()
+        styled_name
     };
 
     // Format stats with aligned columns
@@ -412,14 +431,15 @@ fn format_change_compact(change: &ChangeNode, ide: IdeKind, cwd: &Path) -> Forma
 
     // Truncate name for compact display
     let name = truncate_middle(&change.name, 20);
+    let styled_name = colorize_scope_prefix(&name);
 
     // Wrap name in hyperlink if we have file path info
     let linked_name = if let Some(ref path) = change.file_path {
         let abs_path = cwd.join(path).to_string_lossy().to_string();
         let url = ide.file_url(&abs_path, change.line_number);
-        hyperlink(&url, &name)
+        hyperlink(&url, &styled_name)
     } else {
-        name.to_string()
+        styled_name
     };
 
     // Compact stats (no alignment)
