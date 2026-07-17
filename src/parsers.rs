@@ -8,6 +8,7 @@ mod objc;
 pub mod permission_prompt;
 mod python;
 mod rust;
+mod scope_walker;
 pub mod suggestion;
 mod summary;
 mod swift;

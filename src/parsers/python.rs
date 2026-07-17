@@ -1,9 +1,42 @@
 use regex::Regex;
-use std::collections::HashMap;
+use std::sync::LazyLock;
 
-use super::{ChangeNode, ChangeType, DiffParser, NodeKind};
+use super::scope_walker::{walk_diff, Definition, ScopeRules};
+use super::{ChangeNode, DiffParser, NodeKind};
 
 pub struct PythonParser;
+
+/// Dunder methods other than __init__ aren't worth a row of their own.
+fn is_skipped_dunder(name: &str) -> bool {
+    name.starts_with("__") && name.ends_with("__") && name != "__init__"
+}
+
+impl ScopeRules for PythonParser {
+    fn match_definition(&self, content: &str) -> Option<Definition> {
+        static CLASS_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^\s*class\s+(\w+)").unwrap());
+        static DEF_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^\s*(?:async\s+)?def\s+(\w+)").unwrap());
+
+        if let Some(caps) = CLASS_RE.captures(content) {
+            let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::scoped(NodeKind::Class, name));
+        }
+        if let Some(caps) = DEF_RE.captures(content) {
+            let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+            if !is_skipped_dunder(name) {
+                return Some(Definition::scoped(NodeKind::Function, name));
+            }
+        }
+        None
+    }
+
+    fn match_hunk_context(&self, context: &str) -> Option<Definition> {
+        // Hunk contexts historically resolve to a plain function node.
+        self.extract_function_from_context(context)
+            .map(|name| Definition::scoped(NodeKind::Function, name))
+    }
+}
 
 impl DiffParser for PythonParser {
     fn language(&self) -> &'static str {
@@ -29,153 +62,47 @@ impl DiffParser for PythonParser {
     }
 
     fn parse(&self, diff: &str, filename: &str) -> Vec<ChangeNode> {
-        let file_path = Some(filename.to_string());
-        // Track changes with their line counts
-        // Key: (kind, name), Value: (change_type, additions, deletions)
-        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> =
-            HashMap::new();
+        walk_diff(self, diff, filename)
+    }
+}
 
-        // Regex patterns for Python constructs
-        let class_re = Regex::new(r"^class\s+(\w+)").unwrap();
-        let def_re = Regex::new(r"^(\s*)(?:async\s+)?def\s+(\w+)").unwrap();
-        let hunk_re = Regex::new(r"^@@[^@]+@@\s*(.*)$").unwrap();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parsers::ChangeType;
 
-        // Current context: which function/class we're inside
-        let mut current_context: Option<(NodeKind, String)> = None;
+    #[test]
+    fn methods_carry_class_scope_and_line_numbers() {
+        let diff = "\
+@@ -10,5 +10,6 @@ class Publisher:
+     def publish(self, event):
++        event = normalize(event)
+         return self.send(event)
+";
+        let nodes = PythonParser.parse(diff, "publisher.py");
+        let method = nodes
+            .iter()
+            .find(|n| n.name == "publish")
+            .expect("method tracked");
+        assert_eq!(method.scope, vec!["Publisher".to_string()]);
+        assert_eq!(method.additions, 1);
+        assert_eq!(method.line_number, Some(11));
+    }
 
-        for line in diff.lines() {
-            // Check for hunk headers with function context
-            if let Some(caps) = hunk_re.captures(line) {
-                if let Some(context) = caps.get(1) {
-                    let context_str = context.as_str();
-                    if let Some(fn_name) = self.extract_function_from_context(context_str) {
-                        let key = (NodeKind::Function, fn_name.clone());
-                        change_map
-                            .entry(key.clone())
-                            .or_insert((ChangeType::Modified, 0, 0));
-                        current_context = Some(key);
-                    } else {
-                        current_context = None;
-                    }
-                } else {
-                    current_context = None;
-                }
-                continue;
-            }
-
-            let is_added = line.starts_with('+') && !line.starts_with("+++");
-            let is_removed = line.starts_with('-') && !line.starts_with("---");
-            let is_context = line.starts_with(' ');
-
-            // Check context lines for function/class definitions to track current scope
-            if is_context {
-                let content = &line[1..];
-                // Check for class definitions in context
-                if let Some(caps) = class_re.captures(content) {
-                    let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
-                    current_context = Some((NodeKind::Class, name.to_string()));
-                }
-                // Check for function/method definitions in context
-                else if let Some(caps) = def_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    // Skip dunder methods except __init__
-                    if !(name.starts_with("__") && name.ends_with("__") && name != "__init__") {
-                        current_context = Some((NodeKind::Function, name.to_string()));
-                    }
-                }
-                continue;
-            }
-
-            if !is_added && !is_removed {
-                continue;
-            }
-
-            let content = &line[1..];
-            let mut found_definition = false;
-
-            // Check for class definitions
-            if let Some(caps) = class_re.captures(content) {
-                let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
-                let key = (NodeKind::Class, name.to_string());
-                let entry = change_map.entry(key.clone()).or_insert((
-                    if is_added {
-                        ChangeType::Added
-                    } else {
-                        ChangeType::Deleted
-                    },
-                    0,
-                    0,
-                ));
-                if is_added {
-                    entry.1 += 1;
-                } else {
-                    entry.2 += 1;
-                }
-                current_context = Some(key);
-                found_definition = true;
-            }
-
-            // Check for function/method definitions
-            if !found_definition {
-                if let Some(caps) = def_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-
-                    // Skip dunder methods except __init__
-                    if name.starts_with("__") && name.ends_with("__") && name != "__init__" {
-                        continue;
-                    }
-
-                    let key = (NodeKind::Function, name.to_string());
-                    let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added {
-                            ChangeType::Added
-                        } else {
-                            ChangeType::Deleted
-                        },
-                        0,
-                        0,
-                    ));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                    current_context = Some(key);
-                    found_definition = true;
-                }
-            }
-
-            // If not a definition line, add to current context
-            if !found_definition {
-                if let Some(ref key) = current_context {
-                    let entry =
-                        change_map
-                            .entry(key.clone())
-                            .or_insert((ChangeType::Modified, 0, 0));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                }
-            }
-        }
-
-        // Convert map to vec of ChangeNodes
-        change_map
-            .into_iter()
-            .map(
-                |((kind, name), (change_type, additions, deletions))| ChangeNode {
-                    kind,
-                    name,
-                    change_type,
-                    additions,
-                    deletions,
-                    file_path: file_path.clone(),
-                    line_number: None, // TODO: extract from hunk headers
-                    children: Vec::new(),
-                },
-            )
-            .collect()
+    #[test]
+    fn added_top_level_function() {
+        let diff = "\
+@@ -1,2 +1,5 @@
+ import os
++
++def plan():
++    return \"planning\"
+";
+        let nodes = PythonParser.parse(diff, "main.py");
+        let f = nodes.iter().find(|n| n.name == "plan").expect("fn tracked");
+        assert_eq!(f.change_type, ChangeType::Added);
+        assert!(f.scope.is_empty());
+        assert_eq!(f.additions, 2);
+        assert_eq!(f.line_number, Some(3));
     }
 }

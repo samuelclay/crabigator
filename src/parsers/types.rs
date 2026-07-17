@@ -28,6 +28,9 @@ pub enum ChangeType {
 pub struct ChangeNode {
     pub kind: NodeKind,
     pub name: String,
+    /// Enclosing named scopes, outermost first (e.g. class name, describe
+    /// block titles). Used to disambiguate same-named symbols in display.
+    pub scope: Vec<String>,
     pub change_type: ChangeType,
     pub additions: usize,
     pub deletions: usize,

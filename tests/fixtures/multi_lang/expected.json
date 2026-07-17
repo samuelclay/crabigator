@@ -22,11 +22,12 @@
           {
             "changes": [
               {
-                "additions": 3,
+                "additions": 2,
                 "change_type": "modified",
                 "deletions": 1,
                 "file_path": "src/app.ts",
                 "kind": "function",
+                "line_number": 2,
                 "name": "greet"
               },
               {
@@ -35,6 +36,7 @@
                 "deletions": 0,
                 "file_path": "src/app.ts",
                 "kind": "function",
+                "line_number": 5,
                 "name": "plan"
               },
               {
@@ -43,6 +45,7 @@
                 "deletions": 0,
                 "file_path": "src/utils.ts",
                 "kind": "function",
+                "line_number": 1,
                 "name": "sum"
               }
             ],
@@ -51,11 +54,12 @@
           {
             "changes": [
               {
-                "additions": 2,
+                "additions": 1,
                 "change_type": "modified",
                 "deletions": 1,
                 "file_path": "scripts/main.py",
                 "kind": "function",
+                "line_number": 2,
                 "name": "greet"
               },
               {
@@ -64,6 +68,7 @@
                 "deletions": 0,
                 "file_path": "scripts/main.py",
                 "kind": "function",
+                "line_number": 4,
                 "name": "plan"
               }
             ],
@@ -74,11 +79,11 @@
       },
       "rendered": [
         "JavaScript - 3 changes",
-        "  ~Function greet +3-1",
+        "  ~Function greet +2-1",
         "  +Function plan +2-0",
         "  +Function sum +3-0",
         "Python - 2 changes",
-        "  ~Function greet +2-1",
+        "  ~Function greet +1-1",
         "  +Function plan +2-0"
       ]
     },

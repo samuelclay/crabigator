@@ -22,11 +22,12 @@
           {
             "changes": [
               {
-                "additions": 3,
+                "additions": 2,
                 "change_type": "modified",
                 "deletions": 1,
                 "file_path": "src/lib.rs",
                 "kind": "function",
+                "line_number": 2,
                 "name": "greet"
               },
               {
@@ -35,7 +36,7 @@
                 "deletions": 0,
                 "file_path": "src/new.rs",
                 "kind": "function",
-                "line_number": 2,
+                "line_number": 1,
                 "name": "new_feature"
               },
               {
@@ -44,7 +45,7 @@
                 "deletions": 0,
                 "file_path": "src/lib.rs",
                 "kind": "function",
-                "line_number": 6,
+                "line_number": 5,
                 "name": "plan"
               }
             ],
@@ -55,7 +56,7 @@
       },
       "rendered": [
         "Rust - 3 changes",
-        "  ~Function greet +3-1",
+        "  ~Function greet +2-1",
         "  +Function new_feature +3-0",
         "  +Function plan +2-0"
       ]

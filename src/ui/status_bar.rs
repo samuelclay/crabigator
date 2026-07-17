@@ -455,6 +455,7 @@ mod tests {
             .map(|i| ChangeNode {
                 kind: NodeKind::Function,
                 name: format!("symbol_{i}"),
+                scope: Vec::new(),
                 additions: 5,
                 deletions: 1,
                 change_type: ChangeType::Added,

@@ -1,9 +1,84 @@
 use regex::Regex;
-use std::collections::HashMap;
+use std::sync::LazyLock;
 
-use super::{ChangeNode, ChangeType, DiffParser, NodeKind};
+use super::scope_walker::{walk_diff, Definition, ScopeRules};
+use super::{ChangeNode, DiffParser, NodeKind};
 
 pub struct RustParser;
+
+/// Format an impl block name: "Type" or "Trait for Type".
+fn impl_name(caps: &regex::Captures) -> String {
+    let type_name = caps.get(2).map(|m| m.as_str()).unwrap_or("Unknown");
+    match caps.get(1) {
+        Some(trait_name) => format!("{} for {}", trait_name.as_str(), type_name),
+        None => type_name.to_string(),
+    }
+}
+
+impl ScopeRules for RustParser {
+    fn match_definition(&self, content: &str) -> Option<Definition> {
+        static IMPL_RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^\s*impl(?:<[^>]*>)?\s+(?:(\w+)\s+for\s+)?(\w+)").unwrap()
+        });
+        static FN_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?(async\s+)?fn\s+(\w+)").unwrap());
+        static STRUCT_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?struct\s+(\w+)").unwrap());
+        static ENUM_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?enum\s+(\w+)").unwrap());
+        static TRAIT_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?trait\s+(\w+)").unwrap());
+        static MOD_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?mod\s+(\w+)").unwrap());
+        static CONST_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?const\s+(\w+)").unwrap());
+
+        if let Some(caps) = IMPL_RE.captures(content) {
+            return Some(Definition::scoped(NodeKind::Impl, impl_name(&caps)));
+        }
+        if let Some(caps) = FN_RE.captures(content) {
+            let name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::scoped(NodeKind::Function, name));
+        }
+        if let Some(caps) = STRUCT_RE.captures(content) {
+            let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::scoped(NodeKind::Struct, name));
+        }
+        if let Some(caps) = ENUM_RE.captures(content) {
+            let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::scoped(NodeKind::Enum, name));
+        }
+        if let Some(caps) = TRAIT_RE.captures(content) {
+            let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::scoped(NodeKind::Trait, name));
+        }
+        if let Some(caps) = MOD_RE.captures(content) {
+            let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::scoped(NodeKind::Module, name));
+        }
+        if let Some(caps) = CONST_RE.captures(content) {
+            let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::leaf(NodeKind::Const, name));
+        }
+        None
+    }
+
+    fn match_hunk_context(&self, context: &str) -> Option<Definition> {
+        static FN_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(?:pub\s+)?(?:async\s+)?fn\s+(\w+)").unwrap());
+        static IMPL_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"impl(?:<[^>]*>)?\s+(?:(\w+)\s+for\s+)?(\w+)").unwrap());
+
+        if let Some(caps) = FN_RE.captures(context) {
+            let name = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::scoped(NodeKind::Function, name));
+        }
+        if let Some(caps) = IMPL_RE.captures(context) {
+            return Some(Definition::scoped(NodeKind::Impl, impl_name(&caps)));
+        }
+        None
+    }
+}
 
 impl DiffParser for RustParser {
     fn language(&self) -> &'static str {
@@ -15,365 +90,53 @@ impl DiffParser for RustParser {
     }
 
     fn extract_function_from_context(&self, context: &str) -> Option<String> {
-        // Rust hunk context patterns:
-        // "fn name(" or "pub fn name(" or "async fn name("
-        // "impl Type" or "impl Trait for Type"
-        let fn_re = Regex::new(r"(?:pub\s+)?(?:async\s+)?fn\s+(\w+)").unwrap();
-        let impl_re = Regex::new(r"impl(?:<[^>]*>)?\s+(?:(\w+)\s+for\s+)?(\w+)").unwrap();
-
-        if let Some(caps) = fn_re.captures(context) {
-            return caps.get(1).map(|m| m.as_str().to_string());
-        }
-        if let Some(caps) = impl_re.captures(context) {
-            let type_name = caps.get(2).map(|m| m.as_str()).unwrap_or("Unknown");
-            let trait_name = caps.get(1).map(|m| m.as_str());
-            return Some(if let Some(trait_n) = trait_name {
-                format!("{} for {}", trait_n, type_name)
-            } else {
-                type_name.to_string()
-            });
-        }
-        None
+        self.match_hunk_context(context)
+            .map(|definition| definition.name)
     }
 
     fn parse(&self, diff: &str, filename: &str) -> Vec<ChangeNode> {
-        // Track changes with their line counts
-        // Key: (kind, name), Value: (change_type, additions, deletions, line_number)
-        type ChangeMap = HashMap<(NodeKind, String), (ChangeType, usize, usize, Option<usize>)>;
-        let mut change_map: ChangeMap = HashMap::new();
+        walk_diff(self, diff, filename)
+    }
+}
 
-        // Regex patterns for Rust constructs
-        let fn_re = Regex::new(r"^\s*(pub\s+)?(async\s+)?fn\s+(\w+)").unwrap();
-        let impl_re = Regex::new(r"^\s*impl(?:<[^>]*>)?\s+(?:(\w+)\s+for\s+)?(\w+)").unwrap();
-        let struct_re = Regex::new(r"^\s*(pub\s+)?struct\s+(\w+)").unwrap();
-        let enum_re = Regex::new(r"^\s*(pub\s+)?enum\s+(\w+)").unwrap();
-        let trait_re = Regex::new(r"^\s*(pub\s+)?trait\s+(\w+)").unwrap();
-        let mod_re = Regex::new(r"^\s*(pub\s+)?mod\s+(\w+)").unwrap();
-        let const_re = Regex::new(r"^\s*(pub\s+)?const\s+(\w+)").unwrap();
-        // Pattern for hunk headers: @@ -old,count +new,count @@ context
-        // Captures: 1=new_line_start, 2=context
-        let hunk_re = Regex::new(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@\s*(.*)$").unwrap();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parsers::ChangeType;
 
-        // Current context: which function/impl we're inside
-        let mut current_context: Option<(NodeKind, String)> = None;
-        // Track current line number in the new file
-        let mut current_line: usize = 0;
-        let file_path = Some(filename.to_string());
+    #[test]
+    fn fns_carry_impl_scope_and_line_numbers() {
+        let diff = "\
+@@ -20,5 +20,6 @@ impl Publisher {
+     pub fn publish(&self) -> Result<()> {
++        self.normalize();
+         self.send()
+     }
+";
+        let nodes = RustParser.parse(diff, "src/publisher.rs");
+        let f = nodes
+            .iter()
+            .find(|n| n.name == "publish")
+            .expect("fn tracked");
+        assert_eq!(f.scope, vec!["Publisher".to_string()]);
+        assert_eq!(f.additions, 1);
+        assert_eq!(f.line_number, Some(21));
+    }
 
-        for line in diff.lines() {
-            // Check for hunk headers with function context
-            if let Some(caps) = hunk_re.captures(line) {
-                // Extract new file line number from hunk header
-                if let Some(line_num) = caps.get(1) {
-                    current_line = line_num.as_str().parse().unwrap_or(1);
-                }
-                if let Some(context) = caps.get(2) {
-                    let context_str = context.as_str();
-                    // Try to extract function name from context
-                    if let Some(fn_caps) = fn_re.captures(context_str) {
-                        let fn_name = fn_caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
-                        current_context = Some((NodeKind::Function, fn_name.to_string()));
-                        // Pre-register as modified (will be updated with line counts)
-                        let key = (NodeKind::Function, fn_name.to_string());
-                        change_map.entry(key).or_insert((
-                            ChangeType::Modified,
-                            0,
-                            0,
-                            Some(current_line),
-                        ));
-                    }
-                    // Check for impl block in context
-                    else if let Some(impl_caps) = impl_re.captures(context_str) {
-                        let type_name = impl_caps.get(2).map(|m| m.as_str()).unwrap_or("Unknown");
-                        let trait_name = impl_caps.get(1).map(|m| m.as_str());
-                        let name = if let Some(trait_n) = trait_name {
-                            format!("{} for {}", trait_n, type_name)
-                        } else {
-                            type_name.to_string()
-                        };
-                        current_context = Some((NodeKind::Impl, name.clone()));
-                        let key = (NodeKind::Impl, name);
-                        change_map.entry(key).or_insert((
-                            ChangeType::Modified,
-                            0,
-                            0,
-                            Some(current_line),
-                        ));
-                    } else {
-                        // No function context in hunk header
-                        current_context = None;
-                    }
-                } else {
-                    current_context = None;
-                }
-                continue;
-            }
-
-            let is_added = line.starts_with('+') && !line.starts_with("+++");
-            let is_removed = line.starts_with('-') && !line.starts_with("---");
-            let is_context = line.starts_with(' ');
-
-            // Check context lines for function/struct/impl definitions to track current scope
-            if is_context {
-                current_line += 1; // Context lines appear in new file
-                let content = &line[1..];
-                // Check for impl blocks in context
-                if let Some(caps) = impl_re.captures(content) {
-                    let type_name = caps.get(2).map(|m| m.as_str()).unwrap_or("Unknown");
-                    let trait_name = caps.get(1).map(|m| m.as_str());
-                    let name = if let Some(trait_n) = trait_name {
-                        format!("{} for {}", trait_n, type_name)
-                    } else {
-                        type_name.to_string()
-                    };
-                    current_context = Some((NodeKind::Impl, name));
-                }
-                // Check for functions in context
-                else if let Some(caps) = fn_re.captures(content) {
-                    let fn_name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
-                    current_context = Some((NodeKind::Function, fn_name.to_string()));
-                }
-                // Check for structs in context
-                else if let Some(caps) = struct_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    current_context = Some((NodeKind::Struct, name.to_string()));
-                }
-                // Check for enums in context
-                else if let Some(caps) = enum_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    current_context = Some((NodeKind::Enum, name.to_string()));
-                }
-                // Check for traits in context
-                else if let Some(caps) = trait_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    current_context = Some((NodeKind::Trait, name.to_string()));
-                }
-                continue;
-            }
-
-            if !is_added && !is_removed {
-                continue;
-            }
-
-            // Increment line number for added lines (they appear in new file)
-            if is_added {
-                current_line += 1;
-            }
-
-            let content = &line[1..]; // Strip the +/- prefix
-
-            // Check if this line defines a new construct
-            let mut found_definition = false;
-
-            // Check for impl blocks
-            if let Some(caps) = impl_re.captures(content) {
-                let type_name = caps.get(2).map(|m| m.as_str()).unwrap_or("Unknown");
-                let trait_name = caps.get(1).map(|m| m.as_str());
-                let name = if let Some(trait_n) = trait_name {
-                    format!("{} for {}", trait_n, type_name)
-                } else {
-                    type_name.to_string()
-                };
-                let key = (NodeKind::Impl, name);
-                let entry = change_map.entry(key.clone()).or_insert((
-                    if is_added {
-                        ChangeType::Added
-                    } else {
-                        ChangeType::Deleted
-                    },
-                    0,
-                    0,
-                    if is_added { Some(current_line) } else { None },
-                ));
-                if is_added {
-                    entry.1 += 1;
-                } else {
-                    entry.2 += 1;
-                }
-                current_context = Some(key);
-                found_definition = true;
-            }
-
-            // Check for functions
-            if !found_definition {
-                if let Some(caps) = fn_re.captures(content) {
-                    let fn_name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
-                    let key = (NodeKind::Function, fn_name.to_string());
-                    let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added {
-                            ChangeType::Added
-                        } else {
-                            ChangeType::Deleted
-                        },
-                        0,
-                        0,
-                        if is_added { Some(current_line) } else { None },
-                    ));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                    current_context = Some(key);
-                    found_definition = true;
-                }
-            }
-
-            // Check for structs
-            if !found_definition {
-                if let Some(caps) = struct_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    let key = (NodeKind::Struct, name.to_string());
-                    let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added {
-                            ChangeType::Added
-                        } else {
-                            ChangeType::Deleted
-                        },
-                        0,
-                        0,
-                        if is_added { Some(current_line) } else { None },
-                    ));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                    current_context = Some(key);
-                    found_definition = true;
-                }
-            }
-
-            // Check for enums
-            if !found_definition {
-                if let Some(caps) = enum_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    let key = (NodeKind::Enum, name.to_string());
-                    let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added {
-                            ChangeType::Added
-                        } else {
-                            ChangeType::Deleted
-                        },
-                        0,
-                        0,
-                        if is_added { Some(current_line) } else { None },
-                    ));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                    current_context = Some(key);
-                    found_definition = true;
-                }
-            }
-
-            // Check for traits
-            if !found_definition {
-                if let Some(caps) = trait_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    let key = (NodeKind::Trait, name.to_string());
-                    let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added {
-                            ChangeType::Added
-                        } else {
-                            ChangeType::Deleted
-                        },
-                        0,
-                        0,
-                        if is_added { Some(current_line) } else { None },
-                    ));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                    current_context = Some(key);
-                    found_definition = true;
-                }
-            }
-
-            // Check for modules
-            if !found_definition {
-                if let Some(caps) = mod_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    let key = (NodeKind::Module, name.to_string());
-                    let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added {
-                            ChangeType::Added
-                        } else {
-                            ChangeType::Deleted
-                        },
-                        0,
-                        0,
-                        if is_added { Some(current_line) } else { None },
-                    ));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                    current_context = Some(key);
-                    found_definition = true;
-                }
-            }
-
-            // Check for consts
-            if !found_definition {
-                if let Some(caps) = const_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    let key = (NodeKind::Const, name.to_string());
-                    let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added {
-                            ChangeType::Added
-                        } else {
-                            ChangeType::Deleted
-                        },
-                        0,
-                        0,
-                        if is_added { Some(current_line) } else { None },
-                    ));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                    found_definition = true;
-                }
-            }
-
-            // If not a definition line, add to current context
-            if !found_definition {
-                if let Some(ref key) = current_context {
-                    let entry =
-                        change_map
-                            .entry(key.clone())
-                            .or_insert((ChangeType::Modified, 0, 0, None));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                }
-            }
-        }
-
-        // Convert map to vec of ChangeNodes
-        change_map
-            .into_iter()
-            .map(
-                |((kind, name), (change_type, additions, deletions, line_number))| ChangeNode {
-                    kind,
-                    name,
-                    change_type,
-                    additions,
-                    deletions,
-                    file_path: file_path.clone(),
-                    line_number,
-                    children: Vec::new(),
-                },
-            )
-            .collect()
+    #[test]
+    fn added_top_level_fn() {
+        let diff = "\
+@@ -1,2 +1,6 @@
+ use anyhow::Result;
++
++pub fn plan() -> &'static str {
++    \"planning\"
++}
+";
+        let nodes = RustParser.parse(diff, "src/lib.rs");
+        let f = nodes.iter().find(|n| n.name == "plan").expect("fn tracked");
+        assert_eq!(f.change_type, ChangeType::Added);
+        assert!(f.scope.is_empty());
+        assert_eq!(f.line_number, Some(3));
     }
 }

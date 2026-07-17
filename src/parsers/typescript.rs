@@ -1,9 +1,98 @@
 use regex::Regex;
-use std::collections::HashMap;
+use std::sync::LazyLock;
 
-use super::{ChangeNode, ChangeType, DiffParser, NodeKind};
+use super::scope_walker::{walk_diff, Definition, ScopeRules};
+use super::{ChangeNode, DiffParser, NodeKind};
 
 pub struct TypeScriptParser;
+
+/// Extract (callee, title) from a test-block call like `describe('title', ...)`.
+fn test_block(line: &str) -> Option<(String, String)> {
+    static TEST_BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"^\s*(?:\w+\.)?(describe|context|suite)(?:\.\w+)*\s*\(\s*['"`]([^'"`]+)"#)
+            .unwrap()
+    });
+    let caps = TEST_BLOCK_RE.captures(line)?;
+    Some((caps[1].to_string(), caps[2].to_string()))
+}
+
+impl ScopeRules for TypeScriptParser {
+    fn match_definition(&self, content: &str) -> Option<Definition> {
+        static CLASS_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^\s*(export\s+)?(abstract\s+)?class\s+(\w+)").unwrap());
+        static FUNCTION_RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(
+                r"^\s*(export\s+)?(async\s+)?function\s+(\w+)|^\s*(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(async\s+)?\(",
+            )
+            .unwrap()
+        });
+        static METHOD_RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^\s*(public|private|protected|static|async|\s)*(\w+)\s*\([^)]*\)\s*[:{]")
+                .unwrap()
+        });
+        static ARROW_FN_RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(
+                r"^\s*(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(async\s+)?(\([^)]*\)|[^=])\s*=>",
+            )
+            .unwrap()
+        });
+        static INTERFACE_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^\s*(export\s+)?interface\s+(\w+)").unwrap());
+        static TYPE_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^\s*(export\s+)?type\s+(\w+)").unwrap());
+
+        // Test blocks are special: keyed by callee (describe/context/suite)
+        // but labelled and scoped by their title so same-named blocks split.
+        if let Some((callee, title)) = test_block(content) {
+            return Some(Definition::titled_block(callee, title));
+        }
+        if let Some(caps) = CLASS_RE.captures(content) {
+            let name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::scoped(NodeKind::Class, name));
+        }
+        if let Some(caps) = INTERFACE_RE.captures(content) {
+            let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::scoped(NodeKind::Trait, name));
+        }
+        if let Some(caps) = TYPE_RE.captures(content) {
+            // Type definitions have no body scope to track.
+            let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::leaf(NodeKind::Other, format!("type {}", name)));
+        }
+        if let Some(caps) = FUNCTION_RE.captures(content) {
+            let name = caps
+                .get(3)
+                .or_else(|| caps.get(6))
+                .map(|m| m.as_str())
+                .unwrap_or("unknown");
+            return Some(Definition::scoped(NodeKind::Function, name));
+        }
+        if let Some(caps) = ARROW_FN_RE.captures(content) {
+            let name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
+            return Some(Definition::scoped(NodeKind::Function, name));
+        }
+        if let Some(caps) = METHOD_RE.captures(content) {
+            let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
+            // Skip constructor and common keywords.
+            if !matches!(name, "constructor" | "if" | "for" | "while" | "switch") {
+                return Some(Definition::scoped(NodeKind::Method, name));
+            }
+        }
+        None
+    }
+
+    fn match_hunk_context(&self, context: &str) -> Option<Definition> {
+        // Test blocks carry their title as a scope so same-named blocks
+        // (describe/context/suite) can be told apart.
+        if let Some((callee, title)) = test_block(context) {
+            return Some(Definition::titled_block(callee, title));
+        }
+        // Hunk contexts are free-form: fall back to the looser name-only
+        // extraction (bind/prototype/bare-call patterns).
+        self.extract_function_from_context(context)
+            .map(|name| Definition::scoped(NodeKind::Function, name))
+    }
+}
 
 impl DiffParser for TypeScriptParser {
     fn language(&self) -> &'static str {
@@ -15,6 +104,16 @@ impl DiffParser for TypeScriptParser {
             || filename.ends_with(".tsx")
             || filename.ends_with(".js")
             || filename.ends_with(".jsx")
+    }
+
+    fn extract_scoped_context(&self, context: &str) -> Option<(String, Vec<String>)> {
+        self.match_hunk_context(context).map(|definition| {
+            let mut scope = Vec::new();
+            if definition.self_scoped {
+                scope.extend(definition.label);
+            }
+            (definition.name, scope)
+        })
     }
 
     fn extract_function_from_context(&self, context: &str) -> Option<String> {
@@ -76,284 +175,93 @@ impl DiffParser for TypeScriptParser {
     }
 
     fn parse(&self, diff: &str, filename: &str) -> Vec<ChangeNode> {
-        let file_path = Some(filename.to_string());
-        // Track changes with their line counts
-        // Key: (kind, name), Value: (change_type, additions, deletions)
-        let mut change_map: HashMap<(NodeKind, String), (ChangeType, usize, usize)> =
-            HashMap::new();
+        walk_diff(self, diff, filename)
+    }
+}
 
-        // Regex patterns for TypeScript/JavaScript constructs
-        let class_re = Regex::new(r"^\s*(export\s+)?(abstract\s+)?class\s+(\w+)").unwrap();
-        let function_re = Regex::new(
-            r"^\s*(export\s+)?(async\s+)?function\s+(\w+)|^\s*(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(async\s+)?\(",
-        )
-        .unwrap();
-        let method_re =
-            Regex::new(r"^\s*(public|private|protected|static|async|\s)*(\w+)\s*\([^)]*\)\s*[:{]")
-                .unwrap();
-        let arrow_fn_re = Regex::new(
-            r"^\s*(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(async\s+)?(\([^)]*\)|[^=])\s*=>",
-        )
-        .unwrap();
-        let interface_re = Regex::new(r"^\s*(export\s+)?interface\s+(\w+)").unwrap();
-        let type_re = Regex::new(r"^\s*(export\s+)?type\s+(\w+)").unwrap();
-        let hunk_re = Regex::new(r"^@@[^@]+@@\s*(.*)$").unwrap();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parsers::ChangeType;
 
-        // Current context: which function/class we're inside
-        let mut current_context: Option<(NodeKind, String)> = None;
+    fn find<'a>(nodes: &'a [ChangeNode], name: &str, scope: &[&str]) -> Option<&'a ChangeNode> {
+        nodes
+            .iter()
+            .find(|n| n.name == name && n.scope == scope.to_vec())
+    }
 
-        for line in diff.lines() {
-            // Check for hunk headers with function context
-            if let Some(caps) = hunk_re.captures(line) {
-                if let Some(context) = caps.get(1) {
-                    let context_str = context.as_str();
-                    if let Some(fn_name) = self.extract_function_from_context(context_str) {
-                        let key = (NodeKind::Function, fn_name.clone());
-                        change_map
-                            .entry(key.clone())
-                            .or_insert((ChangeType::Modified, 0, 0));
-                        current_context = Some(key);
-                    } else {
-                        current_context = None;
-                    }
-                } else {
-                    current_context = None;
-                }
-                continue;
-            }
+    #[test]
+    fn describe_blocks_are_keyed_by_title() {
+        let diff = "\
+@@ -38,10 +39,11 @@ describe('thread mention DM routing', () => {
+   const before = 1;
++  const after = 2;
+@@ -266,6 +301,30 @@ describe('thread mention DM routing', () => {
+ });
++describe('stripPostbackPromptQuestion', () => {
++  it('removes a trailing postback question', () => {
++    expect(strip(text)).toBe(clean);
++  });
++});
+";
+        let nodes = TypeScriptParser.parse(diff, "thread-routing.test.ts");
 
-            let is_added = line.starts_with('+') && !line.starts_with("+++");
-            let is_removed = line.starts_with('-') && !line.starts_with("---");
-            let is_context = line.starts_with(' ');
+        let routing = find(&nodes, "describe", &["thread mention DM routing"])
+            .expect("outer describe tracked by title");
+        assert_eq!(routing.additions, 1);
+        assert_eq!(routing.line_number, Some(39));
 
-            // Check context lines for function/class definitions to track current scope
-            if is_context {
-                let content = &line[1..];
-                // Check for class definitions in context
-                if let Some(caps) = class_re.captures(content) {
-                    let name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
-                    current_context = Some((NodeKind::Class, name.to_string()));
-                }
-                // Check for function definitions in context
-                else if let Some(caps) = function_re.captures(content) {
-                    let name = caps
-                        .get(3)
-                        .or_else(|| caps.get(6))
-                        .map(|m| m.as_str())
-                        .unwrap_or("unknown");
-                    current_context = Some((NodeKind::Function, name.to_string()));
-                }
-                // Check for arrow functions in context
-                else if let Some(caps) = arrow_fn_re.captures(content) {
-                    let name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
-                    current_context = Some((NodeKind::Function, name.to_string()));
-                }
-                // Check for methods in context
-                else if let Some(caps) = method_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    if name != "constructor"
-                        && name != "if"
-                        && name != "for"
-                        && name != "while"
-                        && name != "switch"
-                    {
-                        current_context = Some((NodeKind::Method, name.to_string()));
-                    }
-                }
-                continue;
-            }
+        let strip = find(&nodes, "describe", &["stripPostbackPromptQuestion"])
+            .expect("added describe tracked by its own title");
+        assert_eq!(strip.change_type, ChangeType::Added);
+        // it() blocks roll up into the enclosing describe: 5 added lines total
+        assert_eq!(strip.additions, 5);
+        // The `});` context line is 301, so the added describe starts at 302
+        assert_eq!(strip.line_number, Some(302));
+    }
 
-            if !is_added && !is_removed {
-                continue;
-            }
+    #[test]
+    fn nested_describe_carries_outer_title_in_scope() {
+        let diff = "\
+@@ -10,3 +10,6 @@ describe('outer suite', () => {
+   describe('inner suite', () => {
++    expect(1).toBe(1);
+   });
+";
+        let nodes = TypeScriptParser.parse(diff, "a.test.ts");
+        let inner = find(&nodes, "describe", &["outer suite", "inner suite"])
+            .expect("inner describe nests under outer title");
+        assert_eq!(inner.additions, 1);
+    }
 
-            let content = &line[1..];
-            let mut found_definition = false;
+    #[test]
+    fn class_methods_carry_class_scope() {
+        let diff = "\
+@@ -5,4 +5,5 @@ class Delivery {
+   chunkMetadata(input: string): Meta {
++    const extra = parse(input);
+     return meta;
+   }
+";
+        let nodes = TypeScriptParser.parse(diff, "delivery.ts");
+        let method =
+            find(&nodes, "chunkMetadata", &["Delivery"]).expect("method scoped under its class");
+        assert_eq!(method.kind, NodeKind::Method);
+        assert_eq!(method.additions, 1);
+        assert_eq!(method.line_number, Some(6));
+    }
 
-            // Check for class definitions
-            if let Some(caps) = class_re.captures(content) {
-                let name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
-                let key = (NodeKind::Class, name.to_string());
-                let entry = change_map.entry(key.clone()).or_insert((
-                    if is_added {
-                        ChangeType::Added
-                    } else {
-                        ChangeType::Deleted
-                    },
-                    0,
-                    0,
-                ));
-                if is_added {
-                    entry.1 += 1;
-                } else {
-                    entry.2 += 1;
-                }
-                current_context = Some(key);
-                found_definition = true;
-            }
-
-            // Check for interface definitions
-            if !found_definition {
-                if let Some(caps) = interface_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    let key = (NodeKind::Trait, name.to_string());
-                    let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added {
-                            ChangeType::Added
-                        } else {
-                            ChangeType::Deleted
-                        },
-                        0,
-                        0,
-                    ));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                    current_context = Some(key);
-                    found_definition = true;
-                }
-            }
-
-            // Check for type definitions
-            if !found_definition {
-                if let Some(caps) = type_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    let key = (NodeKind::Other, format!("type {}", name));
-                    let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added {
-                            ChangeType::Added
-                        } else {
-                            ChangeType::Deleted
-                        },
-                        0,
-                        0,
-                    ));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                    found_definition = true;
-                }
-            }
-
-            // Check for function declarations
-            if !found_definition {
-                if let Some(caps) = function_re.captures(content) {
-                    let name = caps
-                        .get(3)
-                        .or_else(|| caps.get(6))
-                        .map(|m| m.as_str())
-                        .unwrap_or("unknown");
-                    let key = (NodeKind::Function, name.to_string());
-                    let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added {
-                            ChangeType::Added
-                        } else {
-                            ChangeType::Deleted
-                        },
-                        0,
-                        0,
-                    ));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                    current_context = Some(key);
-                    found_definition = true;
-                }
-            }
-
-            // Check for arrow functions
-            if !found_definition {
-                if let Some(caps) = arrow_fn_re.captures(content) {
-                    let name = caps.get(3).map(|m| m.as_str()).unwrap_or("unknown");
-                    let key = (NodeKind::Function, name.to_string());
-                    let entry = change_map.entry(key.clone()).or_insert((
-                        if is_added {
-                            ChangeType::Added
-                        } else {
-                            ChangeType::Deleted
-                        },
-                        0,
-                        0,
-                    ));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                    current_context = Some(key);
-                    found_definition = true;
-                }
-            }
-
-            // Check for methods (inside classes)
-            if !found_definition {
-                if let Some(caps) = method_re.captures(content) {
-                    let name = caps.get(2).map(|m| m.as_str()).unwrap_or("unknown");
-                    // Skip constructor and common keywords
-                    if name != "constructor"
-                        && name != "if"
-                        && name != "for"
-                        && name != "while"
-                        && name != "switch"
-                    {
-                        let key = (NodeKind::Method, name.to_string());
-                        let entry = change_map.entry(key.clone()).or_insert((
-                            if is_added {
-                                ChangeType::Added
-                            } else {
-                                ChangeType::Deleted
-                            },
-                            0,
-                            0,
-                        ));
-                        if is_added {
-                            entry.1 += 1;
-                        } else {
-                            entry.2 += 1;
-                        }
-                        current_context = Some(key);
-                        found_definition = true;
-                    }
-                }
-            }
-
-            // If not a definition line, add to current context
-            if !found_definition {
-                if let Some(ref key) = current_context {
-                    let entry =
-                        change_map
-                            .entry(key.clone())
-                            .or_insert((ChangeType::Modified, 0, 0));
-                    if is_added {
-                        entry.1 += 1;
-                    } else {
-                        entry.2 += 1;
-                    }
-                }
-            }
-        }
-
-        // Convert map to vec of ChangeNodes
-        change_map
-            .into_iter()
-            .map(
-                |((kind, name), (change_type, additions, deletions))| ChangeNode {
-                    kind,
-                    name,
-                    change_type,
-                    additions,
-                    deletions,
-                    file_path: file_path.clone(),
-                    line_number: None, // TODO: extract from hunk headers
-                    children: Vec::new(),
-                },
-            )
-            .collect()
+    #[test]
+    fn top_level_functions_have_empty_scope() {
+        let diff = "\
+@@ -1,3 +1,4 @@
++export const deliver = async (payload) => {
++  return send(payload);
++};
+";
+        let nodes = TypeScriptParser.parse(diff, "deliver.ts");
+        let f = find(&nodes, "deliver", &[]).expect("top-level arrow fn");
+        assert_eq!(f.change_type, ChangeType::Added);
+        assert_eq!(f.line_number, Some(1));
     }
 }
