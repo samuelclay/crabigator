@@ -123,15 +123,10 @@ pub fn draw_git_widget(
     let files = &git_state.files;
 
     if area.row == 1 {
-        // Header with branch name on left, status on right.
-        // Drop the leading space from the format — the outer 1-col margin
-        // already provides it, and stacking would push the branch in by 2.
-        let cwd_label = format_cwd_for_header(cwd);
-        let left_label = if git_state.branch.is_empty() {
-            cwd_label
-        } else {
-            format!("{} ‹{}›", cwd_label, git_state.branch)
-        };
+        // Header: working directory on the left, clean/dirty status on the right.
+        // The branch used to live here too, but it now shows in the PR handoff
+        // line above (⎇ branch), so we drop it here to give the dir path room.
+        let left_label = format_cwd_for_header(cwd);
 
         // Right side: loading, "✓ Clean", or file count
         let right = if git_state.loading {
@@ -145,23 +140,21 @@ pub fn draw_git_widget(
         };
         let right_len = strip_ansi_len(&right);
 
-        // Let the branch name grow to fill the room left of the status, keeping
-        // at least one column of gap so it never collides with the file count.
-        // (Previously this was a fixed 15-char cap, which clipped branches that
-        // had plenty of room.)
-        const BRANCH_MIN_GAP: usize = 1;
-        let max_branch_chars = inner_width.saturating_sub(right_len + BRANCH_MIN_GAP);
+        // Let the dir path grow to fill the room left of the status, keeping at
+        // least one column of gap so it never collides with the file count.
+        const PATH_MIN_GAP: usize = 1;
+        let max_path_chars = inner_width.saturating_sub(right_len + PATH_MIN_GAP);
         let left = format!(
             "{}{}{}",
             fg(color::LIGHT_GREEN),
-            truncate_path(&left_label, max_branch_chars),
+            truncate_path(&left_label, max_path_chars),
             RESET
         );
         let left_len = strip_ansi_len(&left);
 
         let pad = inner_width
             .saturating_sub(left_len + right_len)
-            .max(BRANCH_MIN_GAP);
+            .max(PATH_MIN_GAP);
         write!(stdout, "{}{:pad$}{}", left, "", right, pad = pad)?;
         write!(stdout, " ")?;
         return Ok(());
