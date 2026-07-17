@@ -7,13 +7,208 @@ use std::io::{Stdout, Write};
 
 use anyhow::Result;
 
+use crate::pr::SessionPr;
 use crate::recap::{RecapState, RecapStatus, RecapVariant, TurnLineDelta};
 use crate::terminal::escape::{self, bg, color, fg, RESET, RESET_FG};
 
 use super::time::format_elapsed_age;
 
-/// Rows reserved between PTY output and the widget separator.
+/// Rows reserved for the recap/toast/pairing content in the handoff strip.
 pub const HANDOFF_RESERVED_ROWS: u16 = 3;
+
+/// Maximum PR lines rendered in the handoff strip (one per PR). Bounds how far
+/// the handoff can grow into the assistant's PTY area.
+pub const MAX_PR_ROWS: u16 = 6;
+
+/// PR lines the handoff will render for this session (one per PR, capped).
+pub fn pr_handoff_rows(prs: &[SessionPr]) -> u16 {
+    (prs.len() as u16).min(MAX_PR_ROWS)
+}
+
+/// Total handoff height = recap area + PR lines. This is what the layout must
+/// reserve between the PTY and the widget separator.
+pub fn total_handoff_rows(prs: &[SessionPr]) -> u16 {
+    HANDOFF_RESERVED_ROWS + pr_handoff_rows(prs)
+}
+
+/// Draw the session's PR list, one PR per row, on the dark handoff background.
+/// Each row: `⑂ repo #num  +A -D  branch  [state]`, truncated to width. Returns
+/// the number of rows drawn (capped at `available_rows` and `MAX_PR_ROWS`).
+pub fn draw_pr_handoff(
+    stdout: &mut Stdout,
+    row: u16,
+    width: u16,
+    prs: &[SessionPr],
+    available_rows: u16,
+) -> Result<u16> {
+    if available_rows == 0 || prs.is_empty() {
+        return Ok(0);
+    }
+    let limit = prs.len().min(available_rows as usize).min(MAX_PR_ROWS as usize);
+    for (i, pr) in prs.iter().take(limit).enumerate() {
+        draw_pr_row(stdout, row + i as u16, width, pr)?;
+    }
+    write!(stdout, "{}", RESET)?;
+    Ok(limit as u16)
+}
+
+fn draw_pr_row(stdout: &mut Stdout, row: u16, width: u16, pr: &SessionPr) -> Result<()> {
+    fill_row(stdout, row, width)?;
+    write!(stdout, "{}", escape::cursor_to(row, 1))?;
+
+    let bgc = bg(color::BG_DARK);
+    let w = width as usize;
+
+    // Right-hand status cluster: state, CI, merge cleanliness. Built first so the
+    // left (identity + diff + branch) knows how much room to leave for it.
+    let (right, right_w) = build_pr_status(pr);
+    let right_reserve = if right_w > 0 { right_w + 2 } else { 0 };
+    let left_budget = w.saturating_sub(right_reserve);
+
+    // Left: PR glyph + repo #num (OSC 8 hyperlink — cmd-click to open; the escapes
+    // have zero visible width, so width math uses the plain label), then diff +
+    // files, then the branch (truncated to whatever room is left).
+    let repo = if pr.repo.is_empty() { "PR" } else { pr.repo.as_str() };
+    let label = format!("{} #{}", repo, pr.number);
+    let mut line = format!(
+        "{} {}⑂ {}{}",
+        bgc,
+        fg(color::PURPLE),
+        escape::hyperlink(&pr.url, &label),
+        RESET_FG
+    );
+    let mut used = 3 + label.chars().count(); // " ⑂ " + label
+
+    // Diff stats + files changed.
+    let has_diff = pr.additions != 0 || pr.deletions != 0;
+    let has_files = pr.changed_files != 0;
+    if has_diff || has_files {
+        let files_word = if pr.changed_files == 1 { "file" } else { "files" };
+        let plain = match (has_diff, has_files) {
+            (true, true) => format!(
+                "+{} -{}  {} {}",
+                pr.additions, pr.deletions, pr.changed_files, files_word
+            ),
+            (true, false) => format!("+{} -{}", pr.additions, pr.deletions),
+            (false, true) => format!("{} {}", pr.changed_files, files_word),
+            (false, false) => String::new(),
+        };
+        if used + 2 + plain.chars().count() <= left_budget {
+            let mut seg = String::from("  ");
+            if has_diff {
+                seg.push_str(&format!(
+                    "{}+{} {}-{}{}",
+                    fg(color::GREEN),
+                    pr.additions,
+                    fg(color::RED),
+                    pr.deletions,
+                    RESET_FG
+                ));
+            }
+            if has_files {
+                if has_diff {
+                    seg.push_str("  ");
+                }
+                seg.push_str(&format!(
+                    "{}{} {}{}",
+                    fg(color::DARK_GRAY),
+                    pr.changed_files,
+                    files_word,
+                    RESET_FG
+                ));
+            }
+            line.push_str(&seg);
+            used += 2 + plain.chars().count();
+        }
+    }
+    // Branch, truncated to the room left before the status cluster.
+    if !pr.branch.is_empty() {
+        let remaining = left_budget.saturating_sub(used).saturating_sub(4);
+        if remaining >= 6 {
+            let branch = truncate_display(&pr.branch, remaining);
+            line.push_str(&format!("  {}⎇ {}{}", fg(color::DARK_GRAY), branch, RESET_FG));
+            used += 2 + 2 + branch.chars().count(); // "  " + "⎇ " + branch
+        }
+    }
+
+    // Pad to right-align the status cluster at the far edge.
+    write!(stdout, "{}{}", bgc, line)?;
+    if right_w > 0 {
+        let pad = w.saturating_sub(used).saturating_sub(right_w);
+        write!(stdout, "{:pad$}{}", "", right, pad = pad)?;
+    }
+    Ok(())
+}
+
+/// Build the right-hand status cluster (state · CI · merge) for a PR row.
+/// Returns the colored string and its visible width. Segments are joined with a
+/// two-space gap; each ends with RESET_FG so the row background persists.
+fn build_pr_status(pr: &SessionPr) -> (String, usize) {
+    let mut segs: Vec<(String, usize)> = Vec::new();
+
+    // State: open / draft / merged / closed.
+    let (state_label, state_color) = pr_state_label(pr);
+    if !state_label.is_empty() {
+        segs.push((
+            format!("{}{}{}", fg(state_color), state_label, RESET_FG),
+            state_label.chars().count(),
+        ));
+    }
+
+    // CI rollup: ✓ CI (all pass) / ✗N CI (failures) / ●N CI (pending).
+    if pr.checks_total > 0 {
+        let (plain, color) = if pr.checks_failed > 0 {
+            (format!("✗{} CI", pr.checks_failed), color::RED)
+        } else if pr.checks_pending > 0 {
+            (format!("●{} CI", pr.checks_pending), color::YELLOW)
+        } else {
+            ("✓ CI".to_string(), color::GREEN)
+        };
+        let w = plain.chars().count();
+        segs.push((format!("{}{}{}", fg(color), plain, RESET_FG), w));
+    }
+
+    // Merge cleanliness: conflicts / behind (needs update) / clean.
+    let merge = match pr.mergeable.as_str() {
+        "CONFLICTING" => Some(("conflicts", color::RED)),
+        "MERGEABLE" if pr.merge_state_status == "BEHIND" => Some(("behind", color::YELLOW)),
+        "MERGEABLE" => Some(("clean", color::GREEN)),
+        _ => None,
+    };
+    if let Some((label, color)) = merge {
+        segs.push((
+            format!("{}{}{}", fg(color), label, RESET_FG),
+            label.chars().count(),
+        ));
+    }
+
+    if segs.is_empty() {
+        return (String::new(), 0);
+    }
+    let width = segs.iter().map(|(_, w)| *w).sum::<usize>() + 2 * (segs.len() - 1);
+    let joined = segs
+        .iter()
+        .map(|(s, _)| s.as_str())
+        .collect::<Vec<_>>()
+        .join("  ");
+    (joined, width)
+}
+
+/// `(label, color)` for a PR's state; empty label when unknown.
+fn pr_state_label(pr: &SessionPr) -> (&'static str, u8) {
+    if pr.state == "MERGED" {
+        ("merged", color::PURPLE)
+    } else if pr.state == "CLOSED" {
+        ("closed", color::RED)
+    } else if pr.is_draft {
+        ("draft", color::GRAY)
+    } else if pr.state == "OPEN" {
+        // Match the softer green used for the dir path in the git widget.
+        ("open", color::LIGHT_GREEN)
+    } else {
+        ("", color::GRAY)
+    }
+}
 
 pub fn draw_recap_handoff(
     stdout: &mut Stdout,

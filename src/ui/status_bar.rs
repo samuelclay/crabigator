@@ -12,14 +12,16 @@ use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::ide::IdeKind;
 use crate::parsers::DiffSummary;
+use crate::pr::SessionPr;
 use crate::recap::RecapState;
 use crate::terminal::escape::{self, color, RESET};
 use crate::update::UpdateState;
 
 use super::{
     changes_natural_rows, draw_changes_widget, draw_git_widget, draw_pairing_banner,
-    draw_recap_handoff, draw_stats_widget, draw_update_banner, git_natural_rows,
-    stats_natural_rows, PairingState, WidgetArea, HANDOFF_RESERVED_ROWS,
+    draw_pr_handoff, draw_recap_handoff, draw_stats_widget, draw_update_banner, git_natural_rows,
+    pr_handoff_rows, stats_natural_rows, total_handoff_rows, PairingState, WidgetArea,
+    HANDOFF_RESERVED_ROWS,
 };
 
 /// Layout information needed for rendering widgets
@@ -36,12 +38,13 @@ pub const MIN_STATUS_ROWS: u16 = MIN_WIDGET_DATA_ROWS + 1;
 
 /// Split terminal height into assistant PTY rows and status widget rows.
 ///
-/// Handoff rows are fixed between the two regions. Status rows include the
-/// widget separator, so MIN_STATUS_ROWS preserves four rows for widget content.
-pub fn split_terminal_rows(total_rows: u16) -> (u16, u16) {
-    let status_rows = preferred_status_rows_max(total_rows);
+/// `handoff_rows` is the (possibly PR-expanded) handoff height reserved between
+/// the two regions. Status rows include the widget separator, so MIN_STATUS_ROWS
+/// preserves four rows for widget content.
+pub fn split_terminal_rows(total_rows: u16, handoff_rows: u16) -> (u16, u16) {
+    let status_rows = preferred_status_rows_max(total_rows, handoff_rows);
     let pty_rows = total_rows
-        .saturating_sub(status_rows + HANDOFF_RESERVED_ROWS)
+        .saturating_sub(status_rows + handoff_rows)
         .max(1);
 
     (pty_rows, status_rows)
@@ -49,9 +52,9 @@ pub fn split_terminal_rows(total_rows: u16) -> (u16, u16) {
 
 /// Upper bound on status rows for the current terminal height — the historical
 /// "20% of screen, never less than MIN_STATUS_ROWS, never more than fits."
-pub fn preferred_status_rows_max(total_rows: u16) -> u16 {
+pub fn preferred_status_rows_max(total_rows: u16, handoff_rows: u16) -> u16 {
     let preferred_status_rows = ((total_rows as f32 * 0.2) as u16).max(MIN_STATUS_ROWS);
-    let max_status_rows = total_rows.saturating_sub(HANDOFF_RESERVED_ROWS + 1).max(1);
+    let max_status_rows = total_rows.saturating_sub(handoff_rows + 1).max(1);
     preferred_status_rows.min(max_status_rows)
 }
 
@@ -96,6 +99,7 @@ pub fn compute_dynamic_status_rows(
     pairing_state: &PairingState,
     recap_state: &RecapState,
     recap_toast_visible: bool,
+    prs: &[SessionPr],
 ) -> u16 {
     let (git_w, changes_w) = estimate_column_widths(total_cols);
     let has_title = terminal_title.is_some_and(|t| !t.is_empty());
@@ -104,7 +108,7 @@ pub fn compute_dynamic_status_rows(
         .max(changes_natural_rows(diff_summary, changes_w, has_title));
     let footer = desired_footer_rows(pairing_state, recap_state, recap_toast_visible);
     let desired = natural.saturating_add(1).saturating_add(footer); // +1 separator
-    let preferred_max = preferred_status_rows_max(total_rows);
+    let preferred_max = preferred_status_rows_max(total_rows, total_handoff_rows(prs));
     desired.clamp(MIN_STATUS_ROWS, preferred_max)
 }
 
@@ -128,6 +132,7 @@ pub fn draw_status_bar(
     update_state: &UpdateState,
     recap_state: &RecapState,
     recap_toast_visible: bool,
+    prs: &[SessionPr],
     cursor_position: Option<(u16, u16)>, // (row, col) from vt100 parser, 0-indexed
 ) -> Result<()> {
     // Begin synchronized update - terminal batches all our drawing
@@ -191,8 +196,17 @@ pub fn draw_status_bar(
         }
     }
 
-    // Draw thick separator line (always after the reserved banner space)
-    let separator_row = layout.pty_rows + 1 + HANDOFF_RESERVED_ROWS;
+    // PR list occupies the handoff rows that grew below the recap region. The
+    // layout already reserved these rows (pty_rows accounts for total_handoff),
+    // so they sit directly above the widget separator.
+    let pr_rows = pr_handoff_rows(prs);
+    if pr_rows > 0 {
+        let pr_start = layout.pty_rows + 1 + HANDOFF_RESERVED_ROWS;
+        draw_pr_handoff(stdout, pr_start, layout.total_cols, prs, pr_rows)?;
+    }
+
+    // Draw thick separator line (always after the reserved handoff space)
+    let separator_row = layout.pty_rows + 1 + total_handoff_rows(prs);
     write!(stdout, "{}", escape::cursor_to(separator_row, 1))?;
     write!(
         stdout,
@@ -244,7 +258,7 @@ pub fn draw_status_bar(
     };
 
     // Draw content rows (after reserved handoff space + separator).
-    let widget_pty_rows = layout.pty_rows + HANDOFF_RESERVED_ROWS;
+    let widget_pty_rows = layout.pty_rows + total_handoff_rows(prs);
     for widget_row in 1..=widget_data_rows {
         // Stats column (leftmost, fixed width)
         draw_stats_widget(
@@ -354,7 +368,7 @@ mod tests {
         let recap = RecapState::default();
 
         let rows = compute_dynamic_status_rows(
-            60, 200, &stats, &git, &diff, None, &pairing, &recap, false,
+            60, 200, &stats, &git, &diff, None, &pairing, &recap, false, &[],
         );
         assert_eq!(rows, 8);
     }
@@ -380,9 +394,9 @@ mod tests {
         let recap = RecapState::default();
 
         let rows = compute_dynamic_status_rows(
-            60, 120, &stats, &git, &diff, None, &pairing, &recap, false,
+            60, 120, &stats, &git, &diff, None, &pairing, &recap, false, &[],
         );
-        assert_eq!(rows, preferred_status_rows_max(60));
+        assert_eq!(rows, preferred_status_rows_max(60, HANDOFF_RESERVED_ROWS));
     }
 
     #[test]
@@ -405,6 +419,7 @@ mod tests {
             &pairing_state(),
             &recap,
             false,
+            &[],
         );
         assert_eq!(rows, 8);
     }
@@ -420,10 +435,10 @@ mod tests {
         let recap = RecapState::default();
 
         let rows = compute_dynamic_status_rows(
-            15, 100, &stats, &git, &diff, None, &pairing, &recap, false,
+            15, 100, &stats, &git, &diff, None, &pairing, &recap, false, &[],
         );
         assert!(rows >= MIN_STATUS_ROWS);
-        assert!(rows <= preferred_status_rows_max(15));
+        assert!(rows <= preferred_status_rows_max(15, HANDOFF_RESERVED_ROWS));
     }
 
     #[test]
@@ -464,7 +479,7 @@ mod tests {
         // come in well under that — typical of the user's bottom-screenshot
         // resize complaint.
         let rows = compute_dynamic_status_rows(
-            100, 250, &stats, &git, &diff, None, &pairing, &recap, false,
+            100, 250, &stats, &git, &diff, None, &pairing, &recap, false, &[],
         );
         assert!(
             rows < 12,
@@ -476,7 +491,7 @@ mod tests {
 
     #[test]
     fn split_terminal_rows_keeps_four_widget_rows_when_possible() {
-        let (pty_rows, status_rows) = split_terminal_rows(20);
+        let (pty_rows, status_rows) = split_terminal_rows(20, HANDOFF_RESERVED_ROWS);
 
         assert_eq!(status_rows, MIN_STATUS_ROWS);
         assert_eq!(pty_rows + HANDOFF_RESERVED_ROWS + status_rows, 20);
@@ -484,7 +499,7 @@ mod tests {
 
     #[test]
     fn split_terminal_rows_uses_preferred_status_height_when_larger() {
-        let (pty_rows, status_rows) = split_terminal_rows(44);
+        let (pty_rows, status_rows) = split_terminal_rows(44, HANDOFF_RESERVED_ROWS);
 
         assert_eq!(status_rows, 8);
         assert_eq!(pty_rows + HANDOFF_RESERVED_ROWS + status_rows, 44);
@@ -492,7 +507,7 @@ mod tests {
 
     #[test]
     fn split_terminal_rows_shrinks_status_area_only_when_terminal_is_too_short() {
-        let (pty_rows, status_rows) = split_terminal_rows(8);
+        let (pty_rows, status_rows) = split_terminal_rows(8, HANDOFF_RESERVED_ROWS);
 
         assert_eq!(pty_rows, 1);
         assert_eq!(status_rows, 4);

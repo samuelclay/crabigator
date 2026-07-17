@@ -15,7 +15,9 @@ pub mod utils;
 
 pub use changes::{changes_natural_rows, draw_changes_widget};
 pub use git::{draw_git_widget, git_natural_rows};
-pub use handoff::{draw_recap_handoff, HANDOFF_RESERVED_ROWS};
+pub use handoff::{
+    draw_pr_handoff, draw_recap_handoff, pr_handoff_rows, total_handoff_rows, HANDOFF_RESERVED_ROWS,
+};
 pub use pairing::{draw_pairing_banner, draw_update_banner, PairingState};
 pub use stats::{draw_stats_widget, stats_natural_rows, throbber_frame_index};
 pub use status_bar::{compute_dynamic_status_rows, draw_status_bar, split_terminal_rows, Layout};

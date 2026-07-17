@@ -15,6 +15,7 @@ use serde::Serialize;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::parsers::{ChangeType, DiffSummary};
+use crate::pr::SessionPr;
 use crate::recap::{RecapState, TurnRecap};
 
 /// Minimum interval between publishes (1 second)
@@ -41,6 +42,9 @@ pub struct MirrorState {
     /// Every recap generated this session, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recap_history: Vec<TurnRecap>,
+    /// PRs created or updated during this session.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prs: Vec<SessionPr>,
     pub last_updated: f64,
     pub capture: CaptureMirror,
     pub launch_timing: LaunchTimingMirror,
@@ -197,6 +201,7 @@ impl MirrorPublisher {
         title_history: &[String],
         recap: Option<&RecapState>,
         recap_history: &[TurnRecap],
+        prs: &[SessionPr],
         initial_git_time_ms: Option<u64>,
         initial_diff_time_ms: Option<u64>,
     ) -> Result<bool> {
@@ -218,6 +223,7 @@ impl MirrorPublisher {
             title_history,
             recap,
             recap_history,
+            prs,
         );
         if hash == self.last_hash {
             return Ok(false);
@@ -237,6 +243,7 @@ impl MirrorPublisher {
             title_history,
             recap,
             recap_history,
+            prs,
             launch_timing,
         );
         let json = serde_json::to_string_pretty(&state)?;
@@ -266,6 +273,7 @@ impl MirrorPublisher {
         title_history: &[String],
         recap: Option<&RecapState>,
         recap_history: &[TurnRecap],
+        prs: &[SessionPr],
     ) -> u64 {
         let mut hasher = DefaultHasher::new();
 
@@ -318,6 +326,24 @@ impl MirrorPublisher {
         }
         recap_history.len().hash(&mut hasher);
 
+        // Hash PR state — url + branch + diff stats + state so live refreshes redraw.
+        prs.len().hash(&mut hasher);
+        for pr in prs {
+            pr.url.hash(&mut hasher);
+            pr.branch.hash(&mut hasher);
+            pr.state.hash(&mut hasher);
+            pr.is_draft.hash(&mut hasher);
+            pr.additions.hash(&mut hasher);
+            pr.deletions.hash(&mut hasher);
+            pr.changed_files.hash(&mut hasher);
+            pr.title.hash(&mut hasher);
+            pr.mergeable.hash(&mut hasher);
+            pr.merge_state_status.hash(&mut hasher);
+            pr.checks_passed.hash(&mut hasher);
+            pr.checks_failed.hash(&mut hasher);
+            pr.checks_pending.hash(&mut hasher);
+        }
+
         hasher.finish()
     }
 
@@ -331,6 +357,7 @@ impl MirrorPublisher {
         title_history: &[String],
         recap: Option<&RecapState>,
         recap_history: &[TurnRecap],
+        prs: &[SessionPr],
         launch_timing: LaunchTimingMirror,
     ) -> MirrorState {
         let timestamp = SystemTime::now()
@@ -345,6 +372,7 @@ impl MirrorPublisher {
             title_history: title_history.to_vec(),
             recap: recap.cloned(),
             recap_history: recap_history.to_vec(),
+            prs: prs.to_vec(),
             last_updated: timestamp,
             capture: self.capture.clone(),
             launch_timing,

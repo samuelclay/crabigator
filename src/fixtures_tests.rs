@@ -118,6 +118,7 @@ mod fixtures {
             &[],
             None,
             &[],
+            &[],
             Some(42),
             Some(10),
         )?;

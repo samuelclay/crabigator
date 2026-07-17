@@ -24,6 +24,7 @@ use crate::ide::{self, IdeKind};
 use crate::mirror::MirrorPublisher;
 use crate::parsers::DiffSummary;
 use crate::platforms::{Platform, PlatformKind, SessionState};
+use crate::pr::PrTracker;
 use crate::recap::RecapManager;
 use crate::terminal::{
     escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, ScrollRegionFilter,
@@ -31,7 +32,7 @@ use crate::terminal::{
 use crate::title::TitleManager;
 use crate::ui::{
     compute_dynamic_status_rows, draw_status_bar, split_terminal_rows, throbber_frame_index,
-    Layout, PairingState, HANDOFF_RESERVED_ROWS,
+    total_handoff_rows, Layout, PairingState, HANDOFF_RESERVED_ROWS,
 };
 use crate::update::UpdateState;
 
@@ -193,6 +194,8 @@ pub struct App {
     pairing_state: PairingState,
     /// Automatic per-turn recap state
     recap_manager: RecapManager,
+    /// Tracks PRs created/updated during this session for the recap panel
+    pr_tracker: PrTracker,
     /// Update state for version banner
     update_state: UpdateState,
     /// Last time we polled pairing status
@@ -243,7 +246,8 @@ impl App {
 
         // Reserve bottom rows for widgets, keeping at least four widget data rows
         // when the terminal is tall enough and at least one PTY row in all cases.
-        let (pty_rows, status_rows) = split_terminal_rows(rows);
+        // No PRs tracked yet at startup, so the handoff starts at its base height.
+        let (pty_rows, status_rows) = split_terminal_rows(rows, HANDOFF_RESERVED_ROWS);
 
         // Give the assistant CLI only the top portion
         let platform_pty =
@@ -321,6 +325,7 @@ impl App {
             last_exit_plan_retry_count: 0,
             pairing_state: PairingState::default(),
             recap_manager: RecapManager::load(),
+            pr_tracker: PrTracker::new(),
             update_state,
             last_pairing_poll: Instant::now(),
             pending_pairing_poll: None,
@@ -506,6 +511,11 @@ impl App {
             git_refresh_generation,
             true,
         );
+
+        // Surface the current worktree/branch's existing PR immediately on
+        // startup (like Claude Code's "PR #123" status line), rather than
+        // waiting for a `gh pr create` this session.
+        self.pr_tracker.resolve_current_branch(&self.cwd);
 
         // Track whether we've sent an initial screen capture (after PTY has rendered)
         let mut sent_initial_screen = false;
@@ -873,7 +883,8 @@ impl App {
         // Move cursor below the status bar so the next shell prompt
         // appears after our content (pty_rows + handoff rows + status_rows + 1)
         let mut stdout = stdout();
-        let final_row = self.pty_rows + HANDOFF_RESERVED_ROWS + self.status_rows + 1;
+        let final_row =
+            self.pty_rows + total_handoff_rows(self.pr_tracker.prs()) + self.status_rows + 1;
         write!(stdout, "{}", escape::cursor_to(final_row, 1))?;
         stdout.flush()?;
 
@@ -1008,16 +1019,20 @@ impl App {
             &self.pairing_state,
             self.recap_manager.state(),
             self.recap_manager.enabled_toast_visible(),
+            self.pr_tracker.prs(),
         );
 
-        if desired_status_rows == self.status_rows {
-            return Ok(());
-        }
-
+        // The handoff grows with the PR list, so pty_rows can change even when
+        // status_rows is stable — recompute pty_rows and compare that too.
+        let handoff = total_handoff_rows(self.pr_tracker.prs());
         let new_pty_rows = self
             .total_rows
-            .saturating_sub(desired_status_rows + HANDOFF_RESERVED_ROWS)
+            .saturating_sub(desired_status_rows + handoff)
             .max(1);
+
+        if desired_status_rows == self.status_rows && new_pty_rows == self.pty_rows {
+            return Ok(());
+        }
 
         // Clear the old widget area before the layout shifts so stale rows
         // don't linger in the PTY's newly-claimed space.
@@ -1104,6 +1119,22 @@ impl App {
             // Recap handoff
             self.recap_manager.state_hash().hash(&mut hasher);
 
+            // PR handoff — url + branch + diff + state + CI/merge so live
+            // refreshes redraw.
+            for pr in self.pr_tracker.prs() {
+                pr.url.hash(&mut hasher);
+                pr.branch.hash(&mut hasher);
+                pr.state.hash(&mut hasher);
+                pr.is_draft.hash(&mut hasher);
+                pr.additions.hash(&mut hasher);
+                pr.deletions.hash(&mut hasher);
+                pr.mergeable.hash(&mut hasher);
+                pr.merge_state_status.hash(&mut hasher);
+                pr.checks_passed.hash(&mut hasher);
+                pr.checks_failed.hash(&mut hasher);
+                pr.checks_pending.hash(&mut hasher);
+            }
+
             // Include throbber frame when animating to trigger redraws on frame change
             let needs_animation = matches!(
                 self.session_stats.effective_state(),
@@ -1154,6 +1185,7 @@ impl App {
             &self.update_state,
             self.recap_manager.state(),
             self.recap_manager.enabled_toast_visible(),
+            self.pr_tracker.prs(),
             cursor_position,
         )?;
 
@@ -1166,6 +1198,7 @@ impl App {
             &self.title_history,
             Some(self.recap_manager.state()),
             self.recap_manager.history(),
+            self.pr_tracker.prs(),
             self.initial_git_time_ms,
             self.initial_diff_time_ms,
         );
@@ -1297,6 +1330,8 @@ impl App {
         self.diff_summary = DiffSummary::new();
         self.mirror_publisher
             .set_cwd(self.cwd.to_string_lossy().to_string());
+        // New worktree/branch — surface its existing PR right away.
+        self.pr_tracker.resolve_current_branch(&self.cwd);
         self.last_status_bar_hash = None;
         self.last_cloud_git_hash = None;
         self.last_cloud_changes_hash = None;
@@ -1339,6 +1374,21 @@ impl App {
                     client.send_event(SessionEventBuilder::recap_history(history));
                 }
             }
+        }
+
+        // Advance PR tracking on the same tick. Poll finished `gh` jobs, and on a
+        // turn completion refresh tracked PRs so their diff stats stay current
+        // ("where it starts" vs "where it ends"). Both may change the visible list.
+        let mut prs_changed = self.scan_prs_from_transcript();
+        prs_changed |= self.pr_tracker.poll();
+        let turn_completed = old_effective_state != SessionState::Complete
+            && new_effective_state == SessionState::Complete;
+        if turn_completed {
+            // Fetches run on background threads; results land via poll() next tick.
+            self.pr_tracker.refresh_stale();
+        }
+        if prs_changed {
+            self.send_cloud_prs_event();
         }
 
         // Advance the generated-title state on the same tick. This also polls
@@ -1453,13 +1503,16 @@ impl App {
         // cycle observes prompts++. By that point it's already visually stale.
         if key.code == KeyCode::Enter && !key.modifiers.contains(KeyModifiers::SHIFT) {
             let effective = self.session_stats.effective_state();
-            if matches!(effective, SessionState::Ready | SessionState::Complete)
-                && self.recap_manager.note_user_submitted_prompt()
-            {
-                if let Some(ref mut client) = self.cloud_client {
-                    client.send_event(SessionEventBuilder::recap(self.recap_manager.state()));
+            if matches!(effective, SessionState::Ready | SessionState::Complete) {
+                // A new turn begins: stop attributing later PR URLs to the previous
+                // turn's `gh pr create` (see PrTracker::on_new_prompt).
+                self.pr_tracker.on_new_prompt();
+                if self.recap_manager.note_user_submitted_prompt() {
+                    if let Some(ref mut client) = self.cloud_client {
+                        client.send_event(SessionEventBuilder::recap(self.recap_manager.state()));
+                    }
+                    self.draw_status_bar()?;
                 }
-                self.draw_status_bar()?;
             }
         }
 
@@ -1488,11 +1541,12 @@ impl App {
             &self.pairing_state,
             self.recap_manager.state(),
             self.recap_manager.enabled_toast_visible(),
+            self.pr_tracker.prs(),
         );
         self.status_rows = new_status_rows;
         self.pty_rows = self
             .total_rows
-            .saturating_sub(new_status_rows + HANDOFF_RESERVED_ROWS)
+            .saturating_sub(new_status_rows + total_handoff_rows(self.pr_tracker.prs()))
             .max(1);
         self.scroll_region_filter.set_pty_rows(self.pty_rows);
 
@@ -1557,6 +1611,32 @@ impl App {
         if let Some(ref mut client) = self.cloud_client {
             let event = SessionEventBuilder::scrollback(update.diff, update.total_lines);
             client.send_event(event);
+        }
+    }
+
+    /// Scan the current turn's transcript for PR creates/updates.
+    ///
+    /// Uses `collect_latest_turn_text`, which parses both Claude and Codex
+    /// transcripts, rather than `scrollback.log` (which is only populated for
+    /// Claude). Returns true if the tracked PR list changed.
+    fn scan_prs_from_transcript(&mut self) -> bool {
+        let Some(path) = self.session_stats.platform_stats.transcript_path.clone() else {
+            return false;
+        };
+        let Ok(turn) = crate::recap::collect_latest_turn_text(
+            self.platform.kind(),
+            Some(std::path::Path::new(&path)),
+        ) else {
+            return false;
+        };
+        self.pr_tracker.scan_text(&turn.activity, &self.cwd)
+    }
+
+    /// Send the current session PR list to the cloud (recap panel).
+    fn send_cloud_prs_event(&mut self) {
+        if let Some(ref mut client) = self.cloud_client {
+            let prs = self.pr_tracker.prs().to_vec();
+            client.send_event(SessionEventBuilder::prs(prs));
         }
     }
 

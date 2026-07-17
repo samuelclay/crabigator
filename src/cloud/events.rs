@@ -456,6 +456,24 @@ pub enum CloudEvent {
     Prompt(PromptEvent),
     Recap(RecapEvent),
     RecapHistory(RecapHistoryEvent),
+    Prs(PrsEvent),
+}
+
+/// Pull requests created or updated during this session (for the recap panel).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrsEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub prs: Vec<crate::pr::SessionPr>,
+}
+
+impl PrsEvent {
+    pub fn new(prs: Vec<crate::pr::SessionPr>) -> Self {
+        Self {
+            event_type: "prs".to_string(),
+            prs,
+        }
+    }
 }
 
 /// Latest recap state for the dashboard.
@@ -598,6 +616,10 @@ impl SessionEventBuilder {
 
     pub fn recap_history(history: Vec<crate::recap::TurnRecap>) -> CloudEvent {
         CloudEvent::RecapHistory(RecapHistoryEvent::new(history))
+    }
+
+    pub fn prs(prs: Vec<crate::pr::SessionPr>) -> CloudEvent {
+        CloudEvent::Prs(PrsEvent::new(prs))
     }
 
     /// Build a git status event
