@@ -3,15 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "db:migrate:local": "wrangler d1 execute crabigator --local --file=migrations/0001_initial.sql",
-    "db:migrate:prod": "wrangler d1 execute crabigator --file=migrations/0001_initial.sql",
+    "dev": "wrangler dev --profile newsblur",
+    "deploy": "wrangler deploy --profile newsblur",
+    "db:migrate:local": "wrangler d1 execute crabigator --local --file=migrations/0001_initial.sql --profile newsblur",
+    "db:migrate:prod": "wrangler d1 execute crabigator --file=migrations/0001_initial.sql --profile newsblur",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241230.0",
+    "@cloudflare/workers-types": "^5.20260714.1",
     "typescript": "^5.7.2",
-    "wrangler": "^4.72.0"
+    "wrangler": "^4.112.0"
   }
 }

@@ -255,12 +255,14 @@ Queries Cloudflare GraphQL API for worker requests, Durable Objects, and D1 usag
 
 The database name is `crabigator` (defined in `workers/crabigator-api/wrangler.toml`).
 
+`wrangler` is installed globally (no `npx` needed). The `crabigator-api` Worker lives in the **NewsBlur** Cloudflare account, so always pass `--profile newsblur`.
+
 ```bash
 # Query production database
-npx wrangler d1 execute crabigator --remote --command "SELECT * FROM page_views LIMIT 5"
+wrangler d1 execute crabigator --remote --profile newsblur --command "SELECT * FROM page_views LIMIT 5"
 
 # Example: Traffic sources by referrer domain
-npx wrangler d1 execute crabigator --remote --command "
+wrangler d1 execute crabigator --remote --profile newsblur --command "
 SELECT referrer_domain, COUNT(DISTINCT visitor_id) as visitors
 FROM page_views
 WHERE created_at > strftime('%s', 'now', '-30 days')
