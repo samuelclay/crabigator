@@ -154,13 +154,13 @@ export const headerCss = `
     .header .sessions-btn {
         height: 30px;
         min-width: 34px;
-        padding: 0 9px;
+        padding: 0 10px;
         flex: 0 0 auto;
-        gap: 0;
+        gap: 6px;
         letter-spacing: 0;
     }
     .header .sessions-label {
-        display: none;
+        display: inline;
     }
     .filter-indicator {
         flex: 1 1 78px;

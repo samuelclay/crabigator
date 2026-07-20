@@ -445,8 +445,12 @@ export const popoversCss = `
     font-size: 11px;
 }
 @media (max-width: 768px) {
-    .sessions-btn .sessions-label {
-        display: none;
+    .settings-popover {
+        max-height: calc(100vh - var(--header-height, 46px) - 16px);
+        max-height: calc(100dvh - var(--header-height, 46px) - 16px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
     }
 }
 
