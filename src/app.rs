@@ -278,11 +278,11 @@ impl App {
             enabled: capture_enabled,
             session_id: session_id.clone(),
         };
-        let capture_manager = CaptureManager::new(capture_config, cols, pty_rows)?;
+        let capture_manager = CaptureManager::new(capture_config, platform.kind(), cols, pty_rows)?;
 
         // Note: We don't pre-initialize transcript_path on startup because we can't
-        // reliably determine which session is being resumed. The hooks will provide
-        // the correct transcript_path once Claude Code starts.
+        // reliably determine which session is being resumed. Platform stats provide
+        // the correct transcript_path once the assistant starts.
 
         // Initialize cloud client (optional - don't fail if cloud is unreachable)
         let cloud_client = Self::init_cloud_client(&session_id, &cwd_str, platform.as_ref()).await;

@@ -1,11 +1,11 @@
 //! Output capture for streaming-ready session recording.
 //!
 //! Captures assistant CLI output to files:
-//! - `scrollback.log`: Session transcript from Claude Code JSONL (append-only)
+//! - `scrollback.log`: Session transcript from platform JSONL (append-only)
 //! - `screen.txt`: Current screen snapshot with ANSI codes (rendered by vt100)
 //!
-//! Scrollback is read from Claude Code's transcript files (~/.claude/projects/...)
-//! which provides clean conversation history without status bar noise.
+//! Scrollback is read from Claude Code or Codex transcript files, which provide
+//! clean conversation history without status bar noise.
 
 use std::collections::HashMap;
 #[cfg(debug_assertions)]
@@ -15,7 +15,9 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::platforms::claude_code::transcript::{self, PendingToolUse};
+use crate::platforms::claude_code::transcript as claude_transcript;
+use crate::platforms::codex_cli::transcript as codex_transcript;
+use crate::platforms::PlatformKind;
 
 /// Maximum size for raw PTY log before rotation (50MB)
 #[cfg(debug_assertions)]
@@ -40,6 +42,7 @@ pub struct ScrollbackUpdate {
 /// Manages output capture to scrollback and screen files.
 pub struct CaptureManager {
     config: CaptureConfig,
+    platform: PlatformKind,
     /// Base directory: /tmp/crabigator-{session_id}/
     capture_dir: PathBuf,
     /// vt100 parser for screen capture (uses actual terminal dimensions)
@@ -52,12 +55,14 @@ pub struct CaptureManager {
     last_screen_update: Instant,
     /// Screen update interval
     screen_update_interval: Duration,
-    /// Path to Claude Code transcript JSONL file
+    /// Path to the assistant platform transcript JSONL file
     transcript_path: Option<PathBuf>,
     /// Byte offset into transcript file (for incremental reads)
     transcript_offset: u64,
     /// Pending tool calls awaiting results (persisted across incremental reads)
-    pending_tools: HashMap<String, PendingToolUse>,
+    claude_pending_tools: HashMap<String, claude_transcript::PendingToolUse>,
+    /// Pending Codex tool calls awaiting results (persisted across reads)
+    codex_pending_tools: HashMap<String, codex_transcript::PendingToolUse>,
     /// Total line count in scrollback.log
     total_scrollback_lines: usize,
     /// Raw PTY output log file (debug builds only)
@@ -101,14 +106,20 @@ impl CaptureManager {
     /// Create a new CaptureManager.
     ///
     /// Screen capture uses actual terminal dimensions.
-    /// Scrollback is read from Claude Code's transcript JSONL file.
-    pub fn new(config: CaptureConfig, cols: u16, rows: u16) -> std::io::Result<Self> {
+    /// Scrollback is read from the selected platform's transcript JSONL file.
+    pub fn new(
+        config: CaptureConfig,
+        platform: PlatformKind,
+        cols: u16,
+        rows: u16,
+    ) -> std::io::Result<Self> {
         // Use actual terminal dimensions for screen capture
         let capture_parser = vt100::Parser::new(rows, cols, 0);
 
         if !config.enabled {
             return Ok(Self {
                 config,
+                platform,
                 capture_dir: PathBuf::new(),
                 capture_parser,
                 last_scrollback_update: Instant::now(),
@@ -117,7 +128,8 @@ impl CaptureManager {
                 screen_update_interval: Duration::from_millis(100),
                 transcript_path: None,
                 transcript_offset: 0,
-                pending_tools: HashMap::new(),
+                claude_pending_tools: HashMap::new(),
+                codex_pending_tools: HashMap::new(),
                 total_scrollback_lines: 0,
                 #[cfg(debug_assertions)]
                 raw_log: None,
@@ -142,6 +154,7 @@ impl CaptureManager {
 
         Ok(Self {
             config,
+            platform,
             capture_dir,
             capture_parser,
             last_scrollback_update: Instant::now() - Duration::from_secs(10),
@@ -150,7 +163,8 @@ impl CaptureManager {
             screen_update_interval: Duration::from_millis(100),
             transcript_path: None,
             transcript_offset: 0,
-            pending_tools: HashMap::new(),
+            claude_pending_tools: HashMap::new(),
+            codex_pending_tools: HashMap::new(),
             total_scrollback_lines: 0,
             #[cfg(debug_assertions)]
             raw_log,
@@ -174,7 +188,8 @@ impl CaptureManager {
                 self.transcript_path = Some(path_buf);
                 // Reset state when switching to a different file
                 self.transcript_offset = 0;
-                self.pending_tools.clear();
+                self.claude_pending_tools.clear();
+                self.codex_pending_tools.clear();
                 self.total_scrollback_lines = 0;
                 // Clear scrollback.log to avoid mixing content from different sessions
                 if self.config.enabled {
@@ -241,7 +256,7 @@ impl CaptureManager {
         self.update_scrollback()
     }
 
-    /// Append new content to scrollback.log from Claude Code transcript.
+    /// Append new content to scrollback.log from the platform transcript.
     ///
     /// Reads incrementally from the JSONL transcript file, which contains
     /// clean conversation history without status bar noise.
@@ -261,12 +276,20 @@ impl CaptureManager {
             return Ok(None);
         }
 
-        // Read new content from transcript (pending_tools persisted across reads)
-        let (new_content, new_offset) = transcript::read_transcript(
-            transcript_path,
-            self.transcript_offset,
-            &mut self.pending_tools,
-        )?;
+        // Read new content from the platform-specific JSONL schema. Pending tool
+        // calls persist across reads so delayed results can still be summarized.
+        let (new_content, new_offset) = match self.platform {
+            PlatformKind::Claude => claude_transcript::read_transcript(
+                transcript_path,
+                self.transcript_offset,
+                &mut self.claude_pending_tools,
+            )?,
+            PlatformKind::Codex => codex_transcript::read_transcript(
+                transcript_path,
+                self.transcript_offset,
+                &mut self.codex_pending_tools,
+            )?,
+        };
 
         if new_content.is_empty() {
             self.last_scrollback_update = Instant::now();
@@ -298,7 +321,7 @@ impl CaptureManager {
     /// Used for initial sync when connecting to cloud.
     ///
     /// Reads from the scrollback.log file which contains formatted
-    /// conversation history from Claude Code's transcript.
+    /// conversation history from the assistant platform's transcript.
     pub fn get_full_scrollback(&self) -> Option<String> {
         if !self.config.enabled {
             return None;

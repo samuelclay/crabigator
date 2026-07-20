@@ -3,6 +3,7 @@
 //! Reads Codex session logs under ~/.codex/sessions and derives session stats.
 
 mod log_parser;
+pub mod transcript;
 
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
