@@ -309,17 +309,30 @@ export const sidebarJs = `
             const sessionTime = stats?.work_seconds ? formatDuration(stats.work_seconds) : '';
             const thinkingTime = stats?.thinking_seconds ? formatDuration(stats.thinking_seconds) : '';
             const promptsCount = stats?.prompts || 0;
-            const promptsElapsed = stats?.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
+            const promptsChangedAt = stats?.prompts_changed_at || 0;
+            const promptsElapsed = promptsChangedAt ? formatElapsed(promptsChangedAt) : '—';
             const completionsCount = stats?.completions || 0;
-            const completionsElapsed = stats?.completions_changed_at ? formatElapsed(stats.completions_changed_at) : '';
+            const completionsChangedAt = stats?.completions_changed_at || 0;
+            const completionsElapsed = completionsChangedAt ? formatElapsed(completionsChangedAt) : '—';
 
-            const hasStats = sessionTime || thinkingTime || promptsCount > 0 || completionsCount > 0;
+            const hasStats = sessionTime || thinkingTime || promptsCount > 0 || completionsCount > 0
+                || promptsChangedAt || completionsChangedAt;
 
             let statsHtml = '';
             if (vs.sessionTime) statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#58a6ff">◉</span>' + (sessionTime || '—') + '</span>';
             if (vs.thinkingTime) statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#3fb950">◐</span>' + (thinkingTime || '—') + '</span>';
-            if (vs.prompts) statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">⟩</span>' + promptsCount + (promptsElapsed ? '<span class="si-elapsed">' + promptsElapsed + '</span>' : '') + '</span>';
-            if (vs.completions) statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">⋗</span>' + completionsCount + (completionsElapsed ? '<span class="si-elapsed">' + completionsElapsed + '</span>' : '') + '</span>';
+            if (vs.prompts || vs.promptRecency) {
+                statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">⟩</span>'
+                    + (vs.prompts ? promptsCount : '')
+                    + (vs.promptRecency ? '<span class="si-elapsed" data-recency-timestamp="' + promptsChangedAt + '">' + promptsElapsed + '</span>' : '')
+                    + '</span>';
+            }
+            if (vs.completions || vs.completionRecency) {
+                statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">⋗</span>'
+                    + (vs.completions ? completionsCount : '')
+                    + (vs.completionRecency ? '<span class="si-elapsed" data-recency-timestamp="' + completionsChangedAt + '">' + completionsElapsed + '</span>' : '')
+                    + '</span>';
+            }
 
             // Tools and compactions don't have matching data in popover stats, show count if available
             // (These stats are available in the session card widgets, but the popover format uses simpler stats)

@@ -94,6 +94,8 @@ export class SessionDO implements DurableObject {
     private lastSeenNotifiedAt: number = 0;
     /** Last time we updated D1 last_seen_at (throttled separately, 60s) */
     private lastD1SeenUpdate: number = 0;
+    /** Serializes stats persistence so external D1 I/O cannot reorder updates. */
+    private statsUpdateQueue: Promise<void> = Promise.resolve();
 
     constructor(state: DurableObjectState, env: Env) {
         this.state = state;
@@ -540,10 +542,51 @@ export class SessionDO implements DurableObject {
                 // Ephemeral state - no storage write
                 this.ephemeralState.lastChanges = event as ChangesEvent;
                 break;
-            case 'stats':
-                // Ephemeral state - cache for late-joining viewers
-                this.ephemeralState.lastStats = event as StatsEvent;
+            case 'stats': {
+                const stats = event as StatsEvent;
+                this.statsUpdateQueue = this.statsUpdateQueue.then(async () => {
+                    // Cache for late-joining viewers and persist low-frequency
+                    // prompt/completion timestamps for the D1-backed session list.
+                    const previousStats = this.ephemeralState.lastStats;
+                    const promptTimestampChanged = stats.prompts_changed_at !== undefined
+                        && stats.prompts_changed_at !== previousStats?.prompts_changed_at;
+                    const completionTimestampChanged = stats.completions_changed_at !== undefined
+                        && stats.completions_changed_at !== previousStats?.completions_changed_at;
+                    let recencyPersisted = true;
+
+                    if ((promptTimestampChanged || completionTimestampChanged)
+                        && this.persistentState.sessionId) {
+                        try {
+                            await this.env.DB.prepare(`
+                                UPDATE sessions
+                                SET prompts_changed_at = COALESCE(?, prompts_changed_at),
+                                    completions_changed_at = COALESCE(?, completions_changed_at)
+                                WHERE id = ?
+                            `).bind(
+                                stats.prompts_changed_at ?? null,
+                                stats.completions_changed_at ?? null,
+                                this.persistentState.sessionId,
+                            ).run();
+                        } catch (error) {
+                            recencyPersisted = false;
+                            console.error('Failed to persist session recency timestamps', {
+                                sessionId: this.persistentState.sessionId,
+                                error,
+                            });
+                        }
+                    }
+
+                    this.ephemeralState.lastStats = recencyPersisted
+                        ? stats
+                        : {
+                            ...stats,
+                            prompts_changed_at: previousStats?.prompts_changed_at,
+                            completions_changed_at: previousStats?.completions_changed_at,
+                        };
+                });
+                await this.statsUpdateQueue;
                 break;
+            }
             case 'prompt':
                 // Compare prompts - this is critical for dashboard interaction
                 const currentPromptJson = JSON.stringify(this.persistentState.currentPrompt);

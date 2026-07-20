@@ -434,5 +434,9 @@ export interface SessionInfo {
         completions: number;
         tool_calls: number;
         thinking_seconds: number;
+        /** Unix timestamp when prompts count last changed */
+        prompts_changed_at?: number;
+        /** Unix timestamp when completions count last changed */
+        completions_changed_at?: number;
     };
 }

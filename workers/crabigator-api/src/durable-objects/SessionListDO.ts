@@ -1,4 +1,5 @@
 import type { Env } from '../types/env';
+import type { SessionInfo } from '../types/session';
 
 interface ActiveSession {
     id: string;
@@ -11,6 +12,7 @@ interface ActiveSession {
     group_id?: string | null;
     last_seen?: number;  // Timestamp of last desktop activity
     last_activity_at?: number;  // Unix timestamp of recent session activity
+    stats?: SessionInfo['stats'];
 }
 
 /**
@@ -355,7 +357,9 @@ export class SessionListDO implements DurableObject {
     private async fetchActiveSessionsFromD1(groupId: string): Promise<ActiveSession[]> {
         const results = await this.env.DB.prepare(`
             SELECT sessions.id, sessions.cwd, sessions.platform, sessions.state, sessions.started_at,
-                   sessions.last_seen_at, sessions.device_id, devices.group_id, devices.name as device_name
+                   sessions.last_seen_at, sessions.device_id, devices.group_id, devices.name as device_name,
+                   sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds,
+                   sessions.prompts_changed_at, sessions.completions_changed_at
             FROM sessions
             JOIN devices ON devices.id = sessions.device_id
             WHERE devices.group_id = ? AND sessions.is_active = 1
@@ -371,6 +375,12 @@ export class SessionListDO implements DurableObject {
             device_id: string;
             group_id: string | null;
             device_name: string | null;
+            prompts: number;
+            completions: number;
+            tool_calls: number;
+            thinking_seconds: number;
+            prompts_changed_at: number | null;
+            completions_changed_at: number | null;
         }>();
 
         return (results.results || []).map(row => ({
@@ -383,6 +393,14 @@ export class SessionListDO implements DurableObject {
             device_id: row.device_id,
             device_name: row.device_name || undefined,
             group_id: row.group_id,
+            stats: {
+                prompts: row.prompts,
+                completions: row.completions,
+                tool_calls: row.tool_calls,
+                thinking_seconds: row.thinking_seconds,
+                prompts_changed_at: row.prompts_changed_at || undefined,
+                completions_changed_at: row.completions_changed_at || undefined,
+            },
         }));
     }
 

@@ -196,6 +196,7 @@ export async function listSessions(
         SELECT sessions.id, sessions.client_session_id, sessions.cwd, sessions.platform, sessions.state,
                sessions.started_at, sessions.ended_at, sessions.is_active, sessions.last_seen_at,
                sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds,
+               sessions.prompts_changed_at, sessions.completions_changed_at,
                devices.name as device_name
         FROM sessions
         JOIN devices ON devices.id = sessions.device_id
@@ -231,6 +232,8 @@ export async function listSessions(
         completions: number;
         tool_calls: number;
         thinking_seconds: number;
+        prompts_changed_at: number | null;
+        completions_changed_at: number | null;
         device_name: string | null;
     }>();
 
@@ -311,6 +314,8 @@ export async function listSessions(
                 completions: row.completions,
                 tool_calls: row.tool_calls,
                 thinking_seconds: row.thinking_seconds,
+                prompts_changed_at: row.prompts_changed_at || undefined,
+                completions_changed_at: row.completions_changed_at || undefined,
             },
         }));
 
@@ -353,6 +358,7 @@ export async function getSession(
         SELECT sessions.id, sessions.client_session_id, sessions.cwd, sessions.platform, sessions.state,
                sessions.started_at, sessions.ended_at, sessions.is_active,
                sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds,
+               sessions.prompts_changed_at, sessions.completions_changed_at,
                sessions.share_token
         FROM sessions
     `;
@@ -381,6 +387,8 @@ export async function getSession(
         completions: number;
         tool_calls: number;
         thinking_seconds: number;
+        prompts_changed_at: number | null;
+        completions_changed_at: number | null;
         share_token: string | null;
     }>();
 
@@ -410,6 +418,8 @@ export async function getSession(
             completions: session.completions,
             tool_calls: session.tool_calls,
             thinking_seconds: session.thinking_seconds,
+            prompts_changed_at: session.prompts_changed_at || undefined,
+            completions_changed_at: session.completions_changed_at || undefined,
         },
         share_url: shareUrl,
     };
@@ -432,9 +442,20 @@ export async function updateSession(
     const sessionId = params.id;
 
     // Verify session belongs to device
-    const session = await env.DB.prepare(
-        'SELECT id FROM sessions WHERE id = ? AND device_id = ?'
-    ).bind(sessionId, device_id).first();
+    const session = await env.DB.prepare(`
+        SELECT id, prompts, completions, tool_calls, thinking_seconds,
+               prompts_changed_at, completions_changed_at
+        FROM sessions
+        WHERE id = ? AND device_id = ?
+    `).bind(sessionId, device_id).first<{
+        id: string;
+        prompts: number;
+        completions: number;
+        tool_calls: number;
+        thinking_seconds: number;
+        prompts_changed_at: number | null;
+        completions_changed_at: number | null;
+    }>();
 
     if (!session) {
         return new Response(
@@ -455,6 +476,9 @@ export async function updateSession(
 
     const updates: string[] = [];
     const values: (string | number | null)[] = [];
+    const now = Math.floor(Date.now() / 1000);
+    let promptsChangedAt = session.prompts_changed_at;
+    let completionsChangedAt = session.completions_changed_at;
 
     if (body.ended_at !== undefined) {
         updates.push('ended_at = ?');
@@ -468,6 +492,17 @@ export async function updateSession(
     }
 
     if (body.stats) {
+        if (body.stats.prompts !== undefined && body.stats.prompts !== session.prompts) {
+            promptsChangedAt = now;
+            updates.push('prompts_changed_at = ?');
+            values.push(promptsChangedAt);
+        }
+        if (body.stats.completions !== undefined && body.stats.completions !== session.completions) {
+            completionsChangedAt = now;
+            updates.push('completions_changed_at = ?');
+            values.push(completionsChangedAt);
+        }
+
         const statFields = [
             'prompts', 'completions', 'tool_calls', 'thinking_seconds',
             'work_seconds', 'model', 'compressions', 'mode',
@@ -491,7 +526,6 @@ export async function updateSession(
         ).bind(...values).run();
 
         // Notify dashboard of session update (fire-and-forget)
-        const now = Math.floor(Date.now() / 1000);
         notifySessionListChange(env, {
             type: 'updated',
             session: {
@@ -500,6 +534,14 @@ export async function updateSession(
                 last_activity_at: now,
                 ended_at: body.ended_at,
                 is_active: body.ended_at ? false : undefined,
+                stats: body.stats ? {
+                    prompts: body.stats.prompts ?? session.prompts,
+                    completions: body.stats.completions ?? session.completions,
+                    tool_calls: body.stats.tool_calls ?? session.tool_calls,
+                    thinking_seconds: body.stats.thinking_seconds ?? session.thinking_seconds,
+                    prompts_changed_at: promptsChangedAt || undefined,
+                    completions_changed_at: completionsChangedAt || undefined,
+                } : undefined,
             },
         });
     }

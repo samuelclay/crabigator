@@ -90,10 +90,23 @@ export const constantsJs = `
         let sidebarDensity = localStorage.getItem('crabigator-sidebar-density') || 'comfortable';
         let sidebarWidth = parseInt(localStorage.getItem('crabigator-sidebar-width') || '300', 10);
         let sessionClickAction = localStorage.getItem('crabigator-click-action') || 'scroll';
-        let sidebarVisibleStats = JSON.parse(localStorage.getItem('crabigator-sidebar-stats') || JSON.stringify({
-            sessionTime: true, thinkingTime: true, prompts: true,
-            completions: true, tools: true, compactions: true
-        }));
+        const sidebarStatsDefaults = {
+            sessionTime: true,
+            thinkingTime: true,
+            prompts: true,
+            promptRecency: true,
+            completions: true,
+            completionRecency: true,
+            tools: true,
+            compactions: true
+        };
+        let sidebarVisibleStats = { ...sidebarStatsDefaults };
+        try {
+            const savedSidebarStats = JSON.parse(localStorage.getItem('crabigator-sidebar-stats') || '{}');
+            sidebarVisibleStats = { ...sidebarStatsDefaults, ...savedSidebarStats };
+        } catch {
+            // Keep defaults when an old or manually edited preference is invalid.
+        }
 
         // Spinner frames for thinking indicator
         const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];

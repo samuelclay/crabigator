@@ -82,15 +82,9 @@ export const statsWidgetJs = `
             const completionsElapsedEl = document.getElementById('widgets-completions-elapsed-' + sessionId);
             const compactionsElapsedEl = document.getElementById('widgets-compactions-elapsed-' + sessionId);
 
-            if (promptsElapsedEl) {
-                promptsElapsedEl.textContent = stats.prompts_changed_at ? formatElapsed(stats.prompts_changed_at) : '';
-            }
-            if (completionsElapsedEl) {
-                completionsElapsedEl.textContent = stats.completions_changed_at ? formatElapsed(stats.completions_changed_at) : '';
-            }
-            if (compactionsElapsedEl) {
-                compactionsElapsedEl.textContent = stats.compressions_changed_at ? formatElapsed(stats.compressions_changed_at) : '';
-            }
+            updateRecencyElement(promptsElapsedEl, stats.prompts_changed_at);
+            updateRecencyElement(completionsElapsedEl, stats.completions_changed_at);
+            updateRecencyElement(compactionsElapsedEl, stats.compressions_changed_at);
         }
 
         // Create two-sided progress bar like CLI: ▓▓ (red/deletions) █████ (green/additions)

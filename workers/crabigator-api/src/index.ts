@@ -1,5 +1,6 @@
 import { Router, jsonResponse } from './router';
 import type { Env } from './types/env';
+import type { SessionInfo } from './types/session';
 import { registerDevice, deviceHeartbeat, getLinkedDevices, revokeLinkedDevice } from './handlers/devices';
 import { createSession, getSession, updateSession, deleteSession } from './handlers/sessions';
 import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCodePage, generateInviteCode } from './handlers/pairing';
@@ -172,7 +173,7 @@ router.get('/api/sessions', async (request, env) => {
     const url = new URL('https://internal/sessions');
     url.searchParams.set('group_id', group_id);
     const response = await stub.fetch(new Request(url.toString()));
-    const data = await response.json() as { sessions: Array<{ id: string; cwd: string; platform: string; state: string; started_at: number; last_activity_at?: number }> };
+    const data = await response.json() as { sessions: Array<Pick<SessionInfo, 'id' | 'cwd' | 'platform' | 'state' | 'started_at' | 'last_activity_at' | 'stats'>> };
 
     return jsonResponse({ sessions: data.sessions });
 });

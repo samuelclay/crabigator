@@ -13,6 +13,26 @@ export const formatJs = `
             return days + 'd ago';
         }
 
+        function updateRecencyElement(element, timestamp) {
+            if (!element) return;
+            if (!timestamp) {
+                element.textContent = '';
+                element.removeAttribute('data-recency-timestamp');
+                return;
+            }
+            element.dataset.recencyTimestamp = String(timestamp);
+            element.textContent = formatElapsed(timestamp);
+        }
+
+        function refreshRecencyLabels() {
+            document.querySelectorAll('[data-recency-timestamp]').forEach(element => {
+                const timestamp = Number(element.dataset.recencyTimestamp);
+                if (timestamp) element.textContent = formatElapsed(timestamp);
+            });
+        }
+
+        setInterval(refreshRecencyLabels, 30000);
+
         function formatShortDate(timestamp) {
             if (!timestamp) return '';
             const date = new Date(timestamp * 1000);
