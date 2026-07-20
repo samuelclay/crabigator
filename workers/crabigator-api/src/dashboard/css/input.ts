@@ -5,28 +5,33 @@ export const inputCss = `
     padding: 14px;
     border-top: 1px solid var(--border-dim);
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     gap: 10px;
     background: var(--bg-card);
     border-radius: 0 0 11px 11px;
 }
-.input-area input {
+.input-area textarea {
     flex: 1;
+    min-width: 0;
     background: var(--bg-abyss);
     border: 1px solid var(--border-dim);
     border-radius: 8px;
-    padding: 10px 14px;
+    padding: 9px 14px;
     color: var(--text-bright);
     font-family: 'JetBrains Mono', monospace;
     font-size: 13px;
+    line-height: 1.35;
+    max-height: calc(1.35em * 6 + 20px);
+    overflow-y: hidden;
+    resize: none;
     transition: border-color 0.2s, box-shadow 0.2s;
 }
-.input-area input:focus {
+.input-area textarea:focus {
     outline: none;
     border-color: var(--accent-cyan);
     box-shadow: 0 0 20px var(--glow-cyan);
 }
-.input-area input::placeholder {
+.input-area textarea::placeholder {
     color: var(--text-dim);
 }
 .input-area button {
@@ -207,10 +212,10 @@ export const inputCss = `
         width: 16px;
         height: 16px;
     }
-    .input-area input {
-        padding: 8px 10px;
-        font-size: 12px;
-        min-width: 0;
+    .input-area textarea {
+        padding: 7px 10px;
+        font-size: 16px;  /* Prevent iOS focus zoom */
+        max-height: calc(1.35em * 6 + 16px);
     }
     .input-area > button:last-child {
         padding: 8px 12px;

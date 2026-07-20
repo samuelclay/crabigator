@@ -406,6 +406,13 @@ export const promptJs = `
             const text = input.value.trim() || (inputSuggestions.get(sessionId) || '');
             if (!text) return;
 
+            const restoreFailedSend = () => {
+                input.value = text;
+                resizeMessageInput(input);
+                saveInputLocally(sessionId, text);
+                updateSendButton(sessionId);
+            };
+
             // Cancel any pending debounced save
             if (inputSaveTimers.has(sessionId)) {
                 clearTimeout(inputSaveTimers.get(sessionId));
@@ -415,6 +422,7 @@ export const promptJs = `
             // Clear input and cache BEFORE sending (optimistically)
             // This prevents stale text from being restored if page reloads mid-send
             input.value = '';
+            resizeMessageInput(input);
             input.blur();
             clearLocalInput(sessionId);
             saveInputToServer(sessionId, '');
@@ -429,9 +437,7 @@ export const promptJs = `
 
                 if (handleAuthFailure(resp)) {
                     // Auth failure - restore input so user can retry after re-auth
-                    input.value = text;
-                    saveInputLocally(sessionId, text);
-                    updateSendButton(sessionId);
+                    restoreFailedSend();
                     return;
                 }
                 if (resp.ok) {
@@ -439,17 +445,13 @@ export const promptJs = `
                     scrollToSession(sessionId);
                 } else {
                     // Server error - restore input so user can retry
-                    input.value = text;
-                    saveInputLocally(sessionId, text);
-                    updateSendButton(sessionId);
+                    restoreFailedSend();
                     const err = await resp.json();
                     alert('Error: ' + (err.error || 'Failed to send'));
                 }
             } catch (err) {
                 // Network error - restore input so user can retry
-                input.value = text;
-                saveInputLocally(sessionId, text);
-                updateSendButton(sessionId);
+                restoreFailedSend();
                 console.error('Failed to send answer:', err);
                 alert('Failed to send: ' + err.message);
             }

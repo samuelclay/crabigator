@@ -295,9 +295,6 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     .input-area {
         padding: 12px;
     }
-    .input-area input {
-        font-size: 16px;  /* Prevent iOS zoom */
-    }
     .permission-bar {
         padding: 12px 14px;
     }

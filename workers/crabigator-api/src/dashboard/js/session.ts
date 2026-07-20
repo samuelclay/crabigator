@@ -546,10 +546,13 @@ export const sessionJs = `
                                 ${iconClose}
                             </button>
                             <div class="voice-overlay" id="voice-overlay-\${session.id}"></div>
-                            <input type="text" id="input-\${session.id}"
-                                   placeholder="Type a command or answer..."
-                                   oninput="handleInputChange('\${session.id}', this.value)"
-                                   onkeydown="handleInputKeydown(event, '\${session.id}')">
+                            <textarea id="input-\${session.id}"
+                                      rows="1"
+                                      enterkeyhint="send"
+                                      aria-label="Message"
+                                      placeholder="Type a command or answer..."
+                                      oninput="handleInputChange('\${session.id}', this.value)"
+                                      onkeydown="handleInputKeydown(event, '\${session.id}')"></textarea>
                             <div class="voice-actions" id="voice-actions-\${session.id}" style="display:none">
                                 <button type="button" class="voice-edit-btn"
                                         onclick="stopAndEditVoice('\${session.id}')"

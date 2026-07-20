@@ -35,7 +35,7 @@ html {
 }
 
 /* Prevent double-tap zoom on interactive elements */
-button, input, select, .style-option, .style-popover {
+button, input, textarea, select, .style-option, .style-popover {
     touch-action: manipulation;
 }
 

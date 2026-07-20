@@ -70,6 +70,7 @@ export const inputJs = `
                     input.value = text;
                 }
             }
+            resizeMessageInput(document.getElementById('input-' + sessionId));
             updateSendButton(sessionId);
         }
 
@@ -93,7 +94,7 @@ export const inputJs = `
         }
 
         function handleInputKeydown(event, sessionId) {
-            if (event.key === 'Enter') {
+            if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
                 event.preventDefault();
                 sendAnswer(sessionId);
             } else if (event.key === 'Tab') {
@@ -116,7 +117,32 @@ export const inputJs = `
 
         // Debounce server saves
         const inputSaveTimers = new Map();
+
+        function resizeMessageInput(input) {
+            if (!input) return;
+
+            if (!input.value) {
+                input.style.height = '';
+                input.style.overflowY = 'hidden';
+                return;
+            }
+
+            input.style.height = 'auto';
+            const maxHeight = parseFloat(getComputedStyle(input).maxHeight);
+            const naturalHeight = input.scrollHeight;
+            const nextHeight = Number.isFinite(maxHeight)
+                ? Math.min(naturalHeight, maxHeight)
+                : naturalHeight;
+
+            input.style.height = Math.ceil(nextHeight) + 'px';
+            input.style.overflowY = Number.isFinite(maxHeight) && naturalHeight > maxHeight
+                ? 'auto'
+                : 'hidden';
+        }
+
         function handleInputChange(sessionId, text) {
+            resizeMessageInput(document.getElementById('input-' + sessionId));
+
             // Always save locally immediately
             saveInputLocally(sessionId, text);
             updateSendButton(sessionId);
