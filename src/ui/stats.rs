@@ -546,7 +546,7 @@ fn draw_normal_row(
         5 => {
             // Completions: count left-aligned after label, timer right-aligned
             let label = format!(
-                "{}⋗ Completions{} {}{}{}",
+                "{}⋖ Completions{} {}{}{}",
                 fg(color::GRAY),
                 RESET,
                 fg(color::LIGHT_BLUE),

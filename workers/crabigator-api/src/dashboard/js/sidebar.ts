@@ -328,7 +328,7 @@ export const sidebarJs = `
                     + '</span>';
             }
             if (vs.completions || vs.completionRecency) {
-                statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">⋗</span>'
+                statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">⋖</span>'
                     + (vs.completions ? completionsCount : '')
                     + (vs.completionRecency ? '<span class="si-elapsed" data-recency-timestamp="' + completionsChangedAt + '">' + completionsElapsed + '</span>' : '')
                     + '</span>';
