@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crabigator Release"
+  short_description: "Cut and verify a Crabigator release"
+  default_prompt: "Use $crabigator-release to cut the next Crabigator release."
