@@ -1,9 +1,8 @@
 //! GitHub PR tracking for the recap.
 //!
-//! Screen-scrapes the session's turn transcript for signs that *this* session
-//! created or updated a pull request (`gh pr create`, `git push`,
-//! `gh pr ready|edit|merge`), then enriches each PR with live details from the
-//! GitHub CLI (`gh pr view`) on a background thread. The resulting list is
+//! Screen-scrapes the session's turn transcript for pull requests the agent
+//! mentions, creates, or updates, then enriches each PR with live details from
+//! the GitHub CLI (`gh pr view`) on a background thread. The resulting list is
 //! session-scoped and deduplicated by PR URL, so a single session working across
 //! several PRs (e.g. an RQH PR and a dev portal PR) shows all of them.
 //!
@@ -37,7 +36,22 @@ fn pr_url_re() -> &'static Regex {
     })
 }
 
-/// A pull request created or updated during this session.
+fn pr_number_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"#(\d+)\b").expect("valid PR number regex"))
+}
+
+fn repo_qualified_gh_pr_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?is)\bgh\s+pr\s+(?:view|checks|edit|ready|merge|reopen|close)\s+#?(\d+)\b.{0,500}?(?:--repo|-R)\s+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)",
+        )
+        .expect("valid repo-qualified gh pr regex")
+    })
+}
+
+/// A pull request associated with this session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionPr {
     pub number: u64,
@@ -192,6 +206,9 @@ pub struct PrTracker {
     /// Last time a `git push` / PR-edit triggered a current-branch PR lookup.
     /// Throttles branch resolution since the same turn text is re-scanned each tick.
     last_branch_resolve: Option<Instant>,
+    /// Last attempt to resolve a bare `#123` mention in a working directory.
+    /// The same latest-turn transcript is re-scanned on every hook tick.
+    mention_resolved_at: HashMap<String, Instant>,
 }
 
 impl Default for PrTracker {
@@ -207,6 +224,7 @@ impl PrTracker {
             pending: HashMap::new(),
             expect_created_since: None,
             last_branch_resolve: None,
+            mention_resolved_at: HashMap::new(),
         }
     }
 
@@ -231,17 +249,18 @@ impl PrTracker {
     /// `gh pr create`'s own URL output is collapsed in the transcript, so the PR
     /// URLs only surface later in the assistant's summary text — and one visible
     /// create can produce several PRs. We therefore claim *every* new PR URL after
-    /// a create until the next prompt ends the turn, which stops PR URLs merely
-    /// referenced in a later prompt from being adopted.
+    /// a create until the next prompt ends the turn, so later references remain
+    /// associated without being mislabeled as created by this session.
     pub fn on_new_prompt(&mut self) {
         self.expect_created_since = None;
     }
 
     /// Scan a chunk of transcript/activity text (one turn's worth).
     ///
-    /// Detects PR-mutating commands and PR URLs, kicks off `gh` enrichment for
-    /// anything newly tracked, and returns true when the visible PR list changed
-    /// (a placeholder was added). Enrichment results land later via [`poll`].
+    /// Detects PR-mutating commands, URLs, repo-qualified `gh pr` targets, and
+    /// assistant references such as `PR #123`. Bare numbers are validated against
+    /// the current repository before being added. Enrichment results land later
+    /// via [`poll`].
     pub fn scan_text(&mut self, text: &str, cwd: &Path) -> bool {
         if text.is_empty() {
             return false;
@@ -269,6 +288,28 @@ impl PrTracker {
             }
         }
 
+        // A Codex tool call often carries the identity only as
+        // `gh pr view 2469 --repo owner/repo`, without printing a PR URL.
+        for caps in repo_qualified_gh_pr_re().captures_iter(text) {
+            let loc = PrLocation {
+                owner: caps[2].to_string(),
+                repo: caps[3].to_string(),
+                number: caps[1].parse().unwrap_or(0),
+                url: format!(
+                    "https://github.com/{}/{}/pull/{}",
+                    &caps[2], &caps[3], &caps[1]
+                ),
+            };
+            changed |= self.observe_url(&loc);
+        }
+
+        // Natural-language `#123` references do not identify a repository. Try
+        // them in the session's current repo; `gh pr view` rejects issue numbers
+        // and nonexistent PRs, so only confirmed PRs reach the visible list.
+        for number in assistant_pr_numbers(text) {
+            self.resolve_mentioned_pr(number, cwd);
+        }
+
         changed
     }
 
@@ -281,21 +322,43 @@ impl PrTracker {
             return false;
         }
 
-        // New URL. Under the "created/updated by us" scope we only adopt it while a
-        // `gh pr create` claim window is open (see `on_new_prompt`). Bare references
-        // outside that window are ignored. The window stays open for the rest of the
-        // turn so every PR from a batch of creates is captured.
-        let claiming = self
+        // References are associated with the session whether they were created
+        // here or merely discussed. The claim window only controls attribution.
+        let created_here = self
             .expect_created_since
             .map(|t| t.elapsed() < CREATE_CLAIM_WINDOW)
             .unwrap_or(false);
-        if !claiming {
-            return false;
-        }
 
-        self.prs.push(SessionPr::placeholder(loc, true));
-        self.spawn_fetch(loc.url.clone(), true);
+        self.prs.push(SessionPr::placeholder(loc, created_here));
+        self.spawn_fetch(loc.url.clone(), created_here);
         true
+    }
+
+    fn resolve_mentioned_pr(&mut self, number: u64, cwd: &Path) {
+        if number == 0 {
+            return;
+        }
+        let key = format!("mention:{}#{number}", cwd.display());
+        if self.pending.contains_key(&key)
+            || self
+                .mention_resolved_at
+                .get(&key)
+                .map(|t| t.elapsed() < REFRESH_THROTTLE)
+                .unwrap_or(false)
+        {
+            return;
+        }
+        self.mention_resolved_at.insert(key.clone(), Instant::now());
+        let cwd = cwd.to_path_buf();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(FetchResult {
+                requested_url: None,
+                created_here: false,
+                data: fetch_pr_number(&cwd, number),
+            });
+        });
+        self.pending.insert(key, rx);
     }
 
     /// Refresh any tracked PRs whose stats are older than the throttle window.
@@ -499,6 +562,43 @@ fn is_pr_update_command(line: &str) -> bool {
         || line.contains("gh pr reopen")
 }
 
+/// Extract `#123` references only from assistant prose. Tool output can contain
+/// arbitrary issue/PR inventories that should not all become session associations.
+/// Raw text without transcript section markers is treated as assistant prose for
+/// unit tests and callers that provide a plain chunk.
+fn assistant_pr_numbers(text: &str) -> Vec<u64> {
+    let has_sections = text
+        .lines()
+        .any(|line| matches!(line.trim(), "[assistant]" | "[tool]" | "[tool_result]"));
+    let mut in_assistant = !has_sections;
+    let mut numbers = Vec::new();
+
+    for line in text.lines() {
+        match line.trim() {
+            "[assistant]" => {
+                in_assistant = true;
+                continue;
+            }
+            "[tool]" | "[tool_result]" => {
+                in_assistant = false;
+                continue;
+            }
+            _ => {}
+        }
+        if !in_assistant || line.contains("/pull/") {
+            continue;
+        }
+        for caps in pr_number_re().captures_iter(line) {
+            if let Ok(number) = caps[1].parse() {
+                if !numbers.contains(&number) {
+                    numbers.push(number);
+                }
+            }
+        }
+    }
+    numbers
+}
+
 const GH_JSON_FIELDS: &str = "number,title,headRefName,url,state,isDraft,additions,deletions,\
     changedFiles,mergeable,mergeStateStatus,statusCheckRollup";
 
@@ -515,6 +615,16 @@ fn fetch_pr(url: &str) -> Result<GhPrJson, String> {
 /// `gh pr view --json ...` run in `cwd` — resolves the current branch's PR.
 fn fetch_pr_for_branch(cwd: &Path) -> Result<GhPrJson, String> {
     run_gh_pr_view(&["pr", "view", "--json", GH_JSON_FIELDS], Some(cwd))
+}
+
+/// `gh pr view <number>` in `cwd` — validates a natural-language `#123`
+/// reference against the current repository.
+fn fetch_pr_number(cwd: &Path, number: u64) -> Result<GhPrJson, String> {
+    let number = number.to_string();
+    run_gh_pr_view(
+        &["pr", "view", &number, "--json", GH_JSON_FIELDS],
+        Some(cwd),
+    )
 }
 
 /// Run `gh pr view`, retrying while `mergeable` is UNKNOWN (GitHub is still
@@ -560,15 +670,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ignores_bare_pr_references() {
+    fn adopts_pr_url_references_without_marking_them_created_here() {
         let mut tracker = PrTracker::new();
-        // A referenced PR URL with no create/push command must not be tracked.
         let changed = tracker.scan_text(
             "see https://github.com/Tavus-Engineering/request-handler/pull/2371 for context",
             Path::new("/tmp"),
         );
-        assert!(!changed);
-        assert!(tracker.prs().is_empty());
+        assert!(changed);
+        assert_eq!(tracker.prs().len(), 1);
+        assert!(!tracker.prs()[0].created_here);
     }
 
     #[test]
@@ -601,17 +711,40 @@ mod tests {
     }
 
     #[test]
-    fn new_prompt_closes_claim_window() {
+    fn new_prompt_stops_marking_references_created_here() {
         let mut tracker = PrTracker::new();
         tracker.scan_text("gh pr create", Path::new("/tmp"));
-        // Next turn starts: a referenced PR URL must not be adopted.
+        // Next turn starts: a referenced PR is still associated, but not claimed.
         tracker.on_new_prompt();
         let changed = tracker.scan_text(
             "as discussed in https://github.com/o/r/pull/9\n",
             Path::new("/tmp"),
         );
-        assert!(!changed);
-        assert!(tracker.prs().is_empty());
+        assert!(changed);
+        assert_eq!(tracker.prs().len(), 1);
+        assert!(!tracker.prs()[0].created_here);
+    }
+
+    #[test]
+    fn adopts_repo_qualified_gh_pr_references() {
+        let mut tracker = PrTracker::new();
+        let changed = tracker.scan_text(
+            "gh pr view 2469 --repo Tavus-Engineering/request-handler --json url",
+            Path::new("/tmp"),
+        );
+        assert!(changed);
+        let pr = &tracker.prs()[0];
+        assert_eq!(pr.number, 2469);
+        assert_eq!(pr.repo, "request-handler");
+        assert!(!pr.created_here);
+    }
+
+    #[test]
+    fn extracts_numbers_from_assistant_prose_only() {
+        let transcript = "[assistant]\nI’ll update RQH #2469 and preserve #988.\n\
+                          [tool_result]\nHistorical PR #111\n\
+                          [assistant]\nSee https://github.com/o/r/pull/7 as well.";
+        assert_eq!(assistant_pr_numbers(transcript), vec![2469, 988]);
     }
 
     /// End-to-end against the live GitHub CLI: detect a created PR from scrollback,

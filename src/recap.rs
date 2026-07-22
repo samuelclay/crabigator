@@ -653,6 +653,27 @@ fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
                         );
                     }
                 }
+                Some("custom_tool_call") if after_user_prompt => {
+                    let name = payload
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tool");
+                    let input = payload
+                        .get("input")
+                        .map(format_codex_custom_tool_preview)
+                        .unwrap_or_default();
+                    push_section(&mut activity, "tool", &format!("{} {}", name, input));
+                }
+                Some("custom_tool_call_output") if after_user_prompt => {
+                    let output = codex_custom_tool_output_text(payload);
+                    if !output.trim().is_empty() {
+                        push_section(
+                            &mut activity,
+                            "tool_result",
+                            &truncate_end(output.trim(), MAX_TOOL_RESULT_CHARS),
+                        );
+                    }
+                }
                 _ => {}
             },
             Some("event_msg") => match payload.get("type").and_then(|v| v.as_str()) {
@@ -753,6 +774,28 @@ fn codex_message_text(payload: &Value) -> String {
         .filter_map(|entry| entry.get("text").and_then(|v| v.as_str()))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn format_codex_custom_tool_preview(value: &Value) -> String {
+    match value {
+        Value::String(text) => truncate_middle(text, 1_200),
+        other => format_json_preview(other),
+    }
+}
+
+fn codex_custom_tool_output_text(payload: &Value) -> String {
+    let Some(output) = payload.get("output") else {
+        return String::new();
+    };
+    match output {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        other => format_json_preview(other),
+    }
 }
 
 fn is_codex_bootstrap(text: &str) -> bool {
@@ -986,6 +1029,20 @@ fn truncate_end(text: &str, max_chars: usize) -> String {
     }
 }
 
+fn truncate_middle(text: &str, max_chars: usize) -> String {
+    let count = text.chars().count();
+    if count <= max_chars {
+        return text.to_string();
+    }
+    let marker = "\n... omitted middle ...\n";
+    let available = max_chars.saturating_sub(marker.chars().count());
+    let head_chars = available / 2;
+    let tail_chars = available - head_chars;
+    let head: String = text.chars().take(head_chars).collect();
+    let tail: String = text.chars().skip(count - tail_chars).collect();
+    format!("{head}{marker}{tail}")
+}
+
 fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1072,12 +1129,18 @@ mod tests {
 {"type":"event_msg","payload":{"type":"agent_message","message":"old answer","phase":"final"}}
 {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"new prompt"}]}}
 {"type":"event_msg","payload":{"type":"agent_message","message":"new answer","phase":"final"}}
-{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cargo test\"}"}}"#;
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cargo test\"}"}}
+{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"const r = await tools.exec_command({cmd:\"gh pr view 2469 --repo Tavus-Engineering/request-handler\"}); text(r.output);"}}
+{"type":"response_item","payload":{"type":"custom_tool_call_output","output":[{"type":"input_text","text":"https://github.com/Tavus-Engineering/request-handler/pull/2469"}]}}"#;
 
         let turn = collect_codex_latest_turn(transcript);
         assert_eq!(turn.user_prompt.as_deref(), Some("new prompt"));
         assert!(turn.activity.contains("new answer"));
         assert!(turn.activity.contains("cargo test"));
+        assert!(turn.activity.contains("gh pr view 2469"));
+        assert!(turn
+            .activity
+            .contains("https://github.com/Tavus-Engineering/request-handler/pull/2469"));
         assert!(!turn.activity.contains("old answer"));
     }
 
