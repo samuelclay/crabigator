@@ -6,6 +6,7 @@
 use std::io::{Stdout, Write};
 
 use anyhow::Result;
+use unicode_width::UnicodeWidthStr;
 
 use crate::pr::SessionPr;
 use crate::recap::{RecapState, RecapStatus, RecapVariant, TurnLineDelta};
@@ -20,6 +21,19 @@ pub const HANDOFF_RESERVED_ROWS: u16 = 3;
 /// the handoff can grow into the assistant's PTY area.
 pub const MAX_PR_ROWS: u16 = 6;
 
+const PR_COLUMN_GAP: usize = 2;
+const PR_LEFT_PADDING: usize = 1;
+const PR_RIGHT_PADDING: usize = 1;
+const PR_IDENTITY_MAX: usize = 32;
+const PR_DIFF_MAX: usize = 18;
+const PR_FILES_MAX: usize = 11;
+const PR_BRANCH_MAX: usize = 40;
+const PR_STATE_MAX: usize = 6;
+const PR_CI_MAX: usize = 10;
+const PR_MERGE_MAX: usize = 9;
+const PR_IDENTITY_MIN: usize = 10;
+const PR_BRANCH_MIN: usize = 8;
+
 /// PR lines the handoff will render for this session (one per PR, capped).
 pub fn pr_handoff_rows(prs: &[SessionPr]) -> u16 {
     (prs.len() as u16).min(MAX_PR_ROWS)
@@ -32,8 +46,12 @@ pub fn total_handoff_rows(prs: &[SessionPr]) -> u16 {
 }
 
 /// Draw the session's PR list, one PR per row, on the dark handoff background.
-/// Each row: `⑂ repo #num  +A -D  branch  [state]`, truncated to width. Returns
-/// the number of rows drawn (capped at `available_rows` and `MAX_PR_ROWS`).
+/// Each row uses seven shared columns:
+/// `⑂ repo #num  +A -D  N files  ⎇ branch  state  CI  merge`.
+/// The first four are left-aligned, with the branch column flexing across the
+/// middle. The final three are anchored at the right edge but remain
+/// left-aligned within their shared widths. Adjacent columns use a two-space gap,
+/// and the table leaves one cell of breathing room at the right window edge.
 pub fn draw_pr_handoff(
     stdout: &mut Stdout,
     row: u16,
@@ -44,154 +62,321 @@ pub fn draw_pr_handoff(
     if available_rows == 0 || prs.is_empty() {
         return Ok(0);
     }
-    let limit = prs.len().min(available_rows as usize).min(MAX_PR_ROWS as usize);
+    let limit = prs
+        .len()
+        .min(available_rows as usize)
+        .min(MAX_PR_ROWS as usize);
+    let widths = PrColumnWidths::from_prs(&prs[..limit], width as usize);
     for (i, pr) in prs.iter().take(limit).enumerate() {
-        draw_pr_row(stdout, row + i as u16, width, pr)?;
+        draw_pr_row(stdout, row + i as u16, width, pr, &widths)?;
     }
     write!(stdout, "{}", RESET)?;
     Ok(limit as u16)
 }
 
-fn draw_pr_row(stdout: &mut Stdout, row: u16, width: u16, pr: &SessionPr) -> Result<()> {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PrColumnWidths {
+    identity: usize,
+    diff: usize,
+    files: usize,
+    branch: usize,
+    state: usize,
+    ci: usize,
+    merge: usize,
+}
+
+impl PrColumnWidths {
+    fn from_prs(prs: &[SessionPr], total_width: usize) -> Self {
+        let mut widths = Self::default();
+        for pr in prs {
+            widths.identity = widths
+                .identity
+                .max(pr_identity_text(pr).width().min(PR_IDENTITY_MAX));
+            widths.diff = widths.diff.max(pr_diff_text(pr).width().min(PR_DIFF_MAX));
+            widths.files = widths
+                .files
+                .max(pr_files_text(pr).width().min(PR_FILES_MAX));
+            widths.branch = widths
+                .branch
+                .max(pr_branch_text(pr).width().min(PR_BRANCH_MAX));
+            widths.state = widths
+                .state
+                .max(pr_state_label(pr).0.width().min(PR_STATE_MAX));
+            widths.ci = widths.ci.max(pr_ci_label(pr).0.width().min(PR_CI_MAX));
+            widths.merge = widths
+                .merge
+                .max(pr_merge_label(pr).0.width().min(PR_MERGE_MAX));
+        }
+
+        widths.fit_right(total_width);
+        widths.fit_left(total_width);
+        widths
+    }
+
+    fn fit_right(&mut self, total_width: usize) {
+        let right_budget = total_width
+            .saturating_sub(PR_LEFT_PADDING + PR_IDENTITY_MIN + PR_COLUMN_GAP + PR_RIGHT_PADDING);
+        while self.right_width() > right_budget {
+            if self.merge > 0 {
+                self.merge = 0;
+            } else if self.ci > 0 {
+                self.ci = 0;
+            } else {
+                self.state = self.state.min(right_budget);
+                break;
+            }
+        }
+    }
+
+    fn fit_left(&mut self, total_width: usize) {
+        let right = self.right_width();
+        let cluster_gap = usize::from(right > 0) * PR_COLUMN_GAP;
+        let left_budget = total_width
+            .saturating_sub(PR_LEFT_PADDING)
+            .saturating_sub(PR_RIGHT_PADDING)
+            .saturating_sub(right)
+            .saturating_sub(cluster_gap);
+
+        while self.left_width() > left_budget {
+            if self.branch > PR_BRANCH_MIN {
+                let overflow = self.left_width() - left_budget;
+                self.branch -= overflow.min(self.branch - PR_BRANCH_MIN);
+            } else if self.branch > 0 {
+                self.branch = 0;
+            } else if self.files > 0 {
+                self.files = 0;
+            } else if self.diff > 0 {
+                self.diff = 0;
+            } else {
+                self.identity = self.identity.min(left_budget);
+                break;
+            }
+        }
+
+        // The branch is the flexible middle column. Once every required column
+        // fits, give it all remaining room so the status columns stay anchored
+        // at the right edge without becoming right-aligned themselves.
+        if self.branch > 0 {
+            self.branch += left_budget.saturating_sub(self.left_width());
+        }
+    }
+
+    fn left_width(&self) -> usize {
+        table_width(&[self.identity, self.diff, self.files, self.branch])
+    }
+
+    fn right_width(&self) -> usize {
+        table_width(&[self.state, self.ci, self.merge])
+    }
+
+    #[cfg(test)]
+    fn total_width(&self) -> usize {
+        let left = self.left_width();
+        let right = self.right_width();
+        PR_LEFT_PADDING
+            + left
+            + usize::from(left > 0 && right > 0) * PR_COLUMN_GAP
+            + right
+            + PR_RIGHT_PADDING
+    }
+}
+
+fn table_width(columns: &[usize]) -> usize {
+    let active = columns.iter().filter(|&&width| width > 0).count();
+    columns.iter().sum::<usize>() + active.saturating_sub(1) * PR_COLUMN_GAP
+}
+
+fn draw_pr_row(
+    stdout: &mut Stdout,
+    row: u16,
+    width: u16,
+    pr: &SessionPr,
+    widths: &PrColumnWidths,
+) -> Result<()> {
     fill_row(stdout, row, width)?;
     write!(stdout, "{}", escape::cursor_to(row, 1))?;
 
     let bgc = bg(color::BG_DARK);
-    let w = width as usize;
+    write!(stdout, "{}{:pad$}", bgc, "", pad = PR_LEFT_PADDING)?;
 
-    // Right-hand status cluster: state, CI, merge cleanliness. Built first so the
-    // left (identity + diff + branch) knows how much room to leave for it.
-    let (right, right_w) = build_pr_status(pr);
-    let right_reserve = if right_w > 0 { right_w + 2 } else { 0 };
-    let left_budget = w.saturating_sub(right_reserve);
+    let left = pr_left_cells(pr, widths);
+    write_cells(stdout, &left)?;
 
-    // Left: PR glyph + repo #num (OSC 8 hyperlink — cmd-click to open; the escapes
-    // have zero visible width, so width math uses the plain label), then diff +
-    // files, then the branch (truncated to whatever room is left).
-    let repo = if pr.repo.is_empty() { "PR" } else { pr.repo.as_str() };
-    let label = format!("{} #{}", repo, pr.number);
-    let mut line = format!(
-        "{} {}⑂ {}{}",
-        bgc,
-        fg(color::PURPLE),
-        escape::hyperlink(&pr.url, &label),
-        RESET_FG
-    );
-    let mut used = 3 + label.chars().count(); // " ⑂ " + label
-
-    // Diff stats + files changed.
-    let has_diff = pr.additions != 0 || pr.deletions != 0;
-    let has_files = pr.changed_files != 0;
-    if has_diff || has_files {
-        let files_word = if pr.changed_files == 1 { "file" } else { "files" };
-        let plain = match (has_diff, has_files) {
-            (true, true) => format!(
-                "+{} -{}  {} {}",
-                pr.additions, pr.deletions, pr.changed_files, files_word
-            ),
-            (true, false) => format!("+{} -{}", pr.additions, pr.deletions),
-            (false, true) => format!("{} {}", pr.changed_files, files_word),
-            (false, false) => String::new(),
-        };
-        if used + 2 + plain.chars().count() <= left_budget {
-            let mut seg = String::from("  ");
-            if has_diff {
-                seg.push_str(&format!(
-                    "{}+{} {}-{}{}",
-                    fg(color::GREEN),
-                    pr.additions,
-                    fg(color::RED),
-                    pr.deletions,
-                    RESET_FG
-                ));
-            }
-            if has_files {
-                if has_diff {
-                    seg.push_str("  ");
-                }
-                seg.push_str(&format!(
-                    "{}{} {}{}",
-                    fg(color::DARK_GRAY),
-                    pr.changed_files,
-                    files_word,
-                    RESET_FG
-                ));
-            }
-            line.push_str(&seg);
-            used += 2 + plain.chars().count();
-        }
-    }
-    // Branch, truncated to the room left before the status cluster.
-    if !pr.branch.is_empty() {
-        let remaining = left_budget.saturating_sub(used).saturating_sub(4);
-        if remaining >= 6 {
-            let branch = truncate_display(&pr.branch, remaining);
-            line.push_str(&format!("  {}⎇ {}{}", fg(color::DARK_GRAY), branch, RESET_FG));
-            used += 2 + 2 + branch.chars().count(); // "  " + "⎇ " + branch
-        }
-    }
-
-    // Pad to right-align the status cluster at the far edge.
-    write!(stdout, "{}{}", bgc, line)?;
+    let left_w = widths.left_width();
+    let right_w = widths.right_width();
     if right_w > 0 {
-        let pad = w.saturating_sub(used).saturating_sub(right_w);
-        write!(stdout, "{:pad$}{}", "", right, pad = pad)?;
+        let gap = (width as usize)
+            .saturating_sub(PR_LEFT_PADDING)
+            .saturating_sub(PR_RIGHT_PADDING)
+            .saturating_sub(left_w)
+            .saturating_sub(right_w);
+        write!(stdout, "{:gap$}", "", gap = gap)?;
+        let right = pr_right_cells(pr, widths);
+        write_cells(stdout, &right)?;
     }
     Ok(())
 }
 
-/// Build the right-hand status cluster (state · CI · merge) for a PR row.
-/// Returns the colored string and its visible width. Segments are joined with a
-/// two-space gap; each ends with RESET_FG so the row background persists.
-fn build_pr_status(pr: &SessionPr) -> (String, usize) {
-    let mut segs: Vec<(String, usize)> = Vec::new();
+type PrCell = (String, usize, usize);
 
-    // State: open / draft / merged / closed.
-    let (state_label, state_color) = pr_state_label(pr);
-    if !state_label.is_empty() {
-        segs.push((
-            format!("{}{}{}", fg(state_color), state_label, RESET_FG),
-            state_label.chars().count(),
-        ));
-    }
-
-    // CI rollup: ✓ CI (all pass) / ✗N CI (failures) / ●N CI (pending).
-    if pr.checks_total > 0 {
-        let (plain, color) = if pr.checks_failed > 0 {
-            (format!("✗{} CI", pr.checks_failed), color::RED)
-        } else if pr.checks_pending > 0 {
-            (format!("●{} CI", pr.checks_pending), color::YELLOW)
-        } else {
-            ("✓ CI".to_string(), color::GREEN)
-        };
-        let w = plain.chars().count();
-        segs.push((format!("{}{}{}", fg(color), plain, RESET_FG), w));
-    }
-
-    // Merge cleanliness: conflicts / behind (needs update) / clean.
-    let merge = match pr.mergeable.as_str() {
-        "CONFLICTING" => Some(("conflicts", color::RED)),
-        "MERGEABLE" if pr.merge_state_status == "BEHIND" => Some(("behind", color::YELLOW)),
-        "MERGEABLE" => Some(("clean", color::GREEN)),
-        _ => None,
+fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
+    let identity = truncate_identity(pr, widths.identity);
+    let identity_styled = if let Some(identity_label) = identity.strip_prefix("⑂ ") {
+        format!(
+            "{}⑂ {}{}",
+            fg(color::PURPLE),
+            escape::hyperlink(&pr.url, identity_label),
+            RESET_FG
+        )
+    } else {
+        format!(
+            "{}{}{}",
+            fg(color::PURPLE),
+            escape::hyperlink(&pr.url, &identity),
+            RESET_FG
+        )
     };
-    if let Some((label, color)) = merge {
-        segs.push((
-            format!("{}{}{}", fg(color), label, RESET_FG),
-            label.chars().count(),
-        ));
-    }
 
-    if segs.is_empty() {
-        return (String::new(), 0);
+    let full_diff = pr_diff_text(pr);
+    let diff = truncate_display(&full_diff, widths.diff);
+    let diff_styled = if diff.is_empty() {
+        String::new()
+    } else if diff.width() == full_diff.width() {
+        format!(
+            "{}+{} {}-{}{}",
+            fg(color::GREEN),
+            pr.additions,
+            fg(color::RED),
+            pr.deletions,
+            RESET_FG
+        )
+    } else {
+        format!("{}{}{}", fg(color::GRAY), diff, RESET_FG)
+    };
+
+    [
+        (identity_styled, identity.width(), widths.identity),
+        (diff_styled, diff.width(), widths.diff),
+        colored_cell(&pr_files_text(pr), color::DARK_GRAY, widths.files),
+        colored_cell_capped(
+            &pr_branch_text(pr),
+            color::DARK_GRAY,
+            widths.branch,
+            PR_BRANCH_MAX,
+        ),
+    ]
+}
+
+fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 3] {
+    let (state_label, state_color) = pr_state_label(pr);
+    let (ci_label, ci_color) = pr_ci_label(pr);
+    let (merge_label, merge_color) = pr_merge_label(pr);
+    [
+        colored_cell(state_label, state_color, widths.state),
+        colored_cell(&ci_label, ci_color, widths.ci),
+        colored_cell(merge_label, merge_color, widths.merge),
+    ]
+}
+
+fn colored_cell(label: &str, color: u8, width: usize) -> PrCell {
+    colored_cell_capped(label, color, width, width)
+}
+
+fn colored_cell_capped(label: &str, color: u8, width: usize, max_content: usize) -> PrCell {
+    let label = truncate_display(label, width.min(max_content));
+    let visible = label.width();
+    (
+        format!("{}{}{}", fg(color), label, RESET_FG),
+        visible,
+        width,
+    )
+}
+
+fn write_cells(stdout: &mut Stdout, cells: &[PrCell]) -> Result<()> {
+    let mut first = true;
+    for (styled, visible, width) in cells.iter().filter(|(_, _, width)| *width > 0) {
+        if !first {
+            write!(stdout, "{:gap$}", "", gap = PR_COLUMN_GAP)?;
+        }
+        let pad = width.saturating_sub(*visible);
+        write!(stdout, "{}{:pad$}", styled, "", pad = pad)?;
+        first = false;
     }
-    let width = segs.iter().map(|(_, w)| *w).sum::<usize>() + 2 * (segs.len() - 1);
-    let joined = segs
-        .iter()
-        .map(|(s, _)| s.as_str())
-        .collect::<Vec<_>>()
-        .join("  ");
-    (joined, width)
+    Ok(())
+}
+
+fn truncate_identity(pr: &SessionPr, width: usize) -> String {
+    let repo = if pr.repo.is_empty() {
+        "PR"
+    } else {
+        pr.repo.as_str()
+    };
+    let suffix = format!(" #{}", pr.number);
+    let fixed = 2 + suffix.width(); // "⑂ " + number
+    if width <= fixed {
+        return truncate_display(&format!("⑂ {repo}{suffix}"), width);
+    }
+    let repo = truncate_display(repo, width - fixed);
+    format!("⑂ {repo}{suffix}")
+}
+
+fn pr_identity_text(pr: &SessionPr) -> String {
+    let repo = if pr.repo.is_empty() {
+        "PR"
+    } else {
+        pr.repo.as_str()
+    };
+    format!("⑂ {} #{}", repo, pr.number)
+}
+
+fn pr_diff_text(pr: &SessionPr) -> String {
+    if pr.additions == 0 && pr.deletions == 0 {
+        String::new()
+    } else {
+        format!("+{} -{}", pr.additions, pr.deletions)
+    }
+}
+
+fn pr_files_text(pr: &SessionPr) -> String {
+    if pr.changed_files == 0 {
+        String::new()
+    } else {
+        let word = if pr.changed_files == 1 {
+            "file"
+        } else {
+            "files"
+        };
+        format!("{} {}", pr.changed_files, word)
+    }
+}
+
+fn pr_branch_text(pr: &SessionPr) -> String {
+    if pr.branch.is_empty() {
+        String::new()
+    } else {
+        format!("⎇ {}", pr.branch)
+    }
+}
+
+fn pr_ci_label(pr: &SessionPr) -> (String, u8) {
+    if pr.checks_total == 0 {
+        (String::new(), color::GRAY)
+    } else if pr.checks_failed > 0 {
+        (format!("✗{} CI", pr.checks_failed), color::RED)
+    } else if pr.checks_pending > 0 {
+        (format!("●{} CI", pr.checks_pending), color::YELLOW)
+    } else {
+        ("✓ CI".to_string(), color::GREEN)
+    }
+}
+
+fn pr_merge_label(pr: &SessionPr) -> (&'static str, u8) {
+    match pr.mergeable.as_str() {
+        "CONFLICTING" => ("conflicts", color::RED),
+        "MERGEABLE" if pr.merge_state_status == "BEHIND" => ("behind", color::YELLOW),
+        "MERGEABLE" => ("clean", color::GREEN),
+        _ => ("", color::GRAY),
+    }
 }
 
 /// `(label, color)` for a PR's state; empty label when unknown.
@@ -737,6 +922,117 @@ fn truncate_display(text: &str, max_width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_pr(repo: &str, number: u64, branch: &str) -> SessionPr {
+        SessionPr {
+            number,
+            owner: "Tavus-Engineering".to_string(),
+            repo: repo.to_string(),
+            url: format!("https://github.com/Tavus-Engineering/{repo}/pull/{number}"),
+            branch: branch.to_string(),
+            title: String::new(),
+            state: "OPEN".to_string(),
+            is_draft: false,
+            additions: 1_869,
+            deletions: 2,
+            changed_files: 13,
+            mergeable: "MERGEABLE".to_string(),
+            merge_state_status: "BEHIND".to_string(),
+            checks_passed: 38,
+            checks_failed: 0,
+            checks_pending: 2,
+            checks_total: 40,
+            created_here: false,
+            refreshed_at: 0,
+        }
+    }
+
+    #[test]
+    fn pr_columns_use_widest_visible_value_with_caps() {
+        let mut long = sample_pr(
+            "request-handler-with-an-unreasonably-long-name",
+            2475,
+            "sam/modify-system-user-document-callback-with-more-detail",
+        );
+        long.changed_files = 48;
+        long.checks_failed = 4;
+        long.checks_pending = 0;
+        long.mergeable = "CONFLICTING".to_string();
+
+        let prs = [
+            long,
+            sample_pr("developer-portal", 989, "sam/pal-maker-fanout-local"),
+        ];
+        let widths = PrColumnWidths::from_prs(&prs, 220);
+        let long_cells = pr_left_cells(&prs[0], &widths);
+
+        assert_eq!(widths.identity, PR_IDENTITY_MAX);
+        assert!(widths.branch > PR_BRANCH_MAX);
+        assert_eq!(long_cells[3].1, PR_BRANCH_MAX);
+        assert_eq!(long_cells[3].2, widths.branch);
+        assert_eq!(widths.files, "48 files".width());
+        assert_eq!(widths.state, "open".width());
+        assert_eq!(widths.ci, "✗4 CI".width());
+        assert_eq!(widths.merge, "conflicts".width());
+        assert_eq!(widths.total_width(), 220);
+    }
+
+    #[test]
+    fn pr_columns_shrink_branch_before_core_columns_at_narrow_widths() {
+        let prs = [
+            sample_pr(
+                "request-handler",
+                2475,
+                "reev/rqh-ecs-preview-with-a-long-branch-name",
+            ),
+            sample_pr("developer-portal", 989, "sam/pal-maker-fanout-local"),
+        ];
+        let widths = PrColumnWidths::from_prs(&prs, 80);
+
+        assert!(widths.branch < PR_BRANCH_MAX);
+        assert!(widths.identity > 0);
+        assert!(widths.diff > 0);
+        assert!(widths.files > 0);
+        assert!(widths.state > 0);
+        assert_eq!(widths.total_width(), 80);
+    }
+
+    #[test]
+    fn empty_pr_values_leave_aligned_cells_blank() {
+        let full = sample_pr("request-handler", 2475, "feature/full");
+        let mut pending = sample_pr("developer-portal", 989, "");
+        pending.additions = 0;
+        pending.deletions = 0;
+        pending.changed_files = 0;
+
+        let widths = PrColumnWidths::from_prs(&[full, pending.clone()], 160);
+        let cells = pr_left_cells(&pending, &widths);
+
+        assert_eq!(cells[1].1, 0);
+        assert_eq!(cells[2].1, 0);
+        assert_eq!(cells[3].1, 0);
+        assert_eq!(crate::ui::utils::strip_ansi_len(&cells[1].0), 0);
+    }
+
+    #[test]
+    fn right_cells_truncate_styled_labels_to_their_columns() {
+        let mut pr = sample_pr("request-handler", 2475, "feature/full");
+        pr.state = "MERGED".to_string();
+        pr.checks_failed = 123_456_789;
+        pr.checks_pending = 0;
+        pr.mergeable = "CONFLICTING".to_string();
+        let widths = PrColumnWidths {
+            state: 3,
+            ci: 6,
+            merge: 5,
+            ..PrColumnWidths::default()
+        };
+
+        for (styled, visible, width) in pr_right_cells(&pr, &widths) {
+            assert_eq!(visible, width);
+            assert_eq!(crate::ui::utils::strip_ansi_len(&styled), width);
+        }
+    }
 
     #[test]
     fn anthropic_credit_error_surfaces_just_the_message() {
