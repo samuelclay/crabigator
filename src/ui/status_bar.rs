@@ -19,9 +19,9 @@ use crate::update::UpdateState;
 
 use super::{
     changes_natural_rows, draw_changes_widget, draw_git_widget, draw_pairing_banner,
-    draw_pr_handoff, draw_recap_handoff, draw_stats_widget, draw_update_banner, git_natural_rows,
-    pr_handoff_rows, stats_natural_rows, total_handoff_rows, PairingState, WidgetArea,
-    HANDOFF_RESERVED_ROWS,
+    draw_pr_handoff, draw_pr_separator, draw_recap_handoff, draw_stats_widget, draw_update_banner,
+    git_natural_rows, pr_handoff_rows, pr_separator_rows, recap_handoff_rows, stats_natural_rows,
+    total_handoff_rows, PairingState, WidgetArea, MAX_RECAP_ROWS,
 };
 
 /// Layout information needed for rendering widgets
@@ -29,6 +29,7 @@ pub struct Layout {
     pub pty_rows: u16,
     pub total_cols: u16,
     pub status_rows: u16,
+    pub handoff_rows: u16,
 }
 
 /// Minimum content rows reserved for widget data below the separator.
@@ -58,15 +59,50 @@ pub fn preferred_status_rows_max(total_rows: u16, handoff_rows: u16) -> u16 {
     preferred_status_rows.min(max_status_rows)
 }
 
-/// No bottom-edge footer is rendered any more — the pair code lives in the
-/// stats header and the recap toast/hint live in the handoff strip — so no
-/// row is ever claimed below the widgets.
-fn desired_footer_rows(
-    _pairing_state: &PairingState,
-    _recap_state: &RecapState,
-    _recap_toast_visible: bool,
+/// Exact height needed by update, recap, and pairing content above the PR list.
+fn banner_handoff_rows(
+    width: u16,
+    pairing_state: &PairingState,
+    update_state: &UpdateState,
+    recap_state: &RecapState,
+    recap_toast_visible: bool,
 ) -> u16 {
-    0
+    let update_rows = update_state.banner_rows();
+    let remaining = MAX_RECAP_ROWS.saturating_sub(update_rows);
+    let recap_rows = recap_handoff_rows(width, recap_state, remaining, recap_toast_visible);
+    let pairing_rows = if recap_rows == 0 {
+        if update_rows > 0 {
+            pairing_state.banner_rows_compact()
+        } else {
+            pairing_state.banner_rows()
+        }
+        .min(remaining)
+    } else {
+        0
+    };
+
+    update_rows + recap_rows.max(pairing_rows)
+}
+
+/// Exact height reserved between the assistant PTY and widget separator.
+pub fn handoff_rows(
+    width: u16,
+    pairing_state: &PairingState,
+    update_state: &UpdateState,
+    recap_state: &RecapState,
+    recap_toast_visible: bool,
+    prs: &[SessionPr],
+) -> u16 {
+    total_handoff_rows(
+        banner_handoff_rows(
+            width,
+            pairing_state,
+            update_state,
+            recap_state,
+            recap_toast_visible,
+        ),
+        prs,
+    )
 }
 
 /// Estimate the column widths the renderer will assign to git and changes,
@@ -84,11 +120,10 @@ fn estimate_column_widths(total_cols: u16) -> (u16, u16) {
 }
 
 /// Compute the status row count needed to show every widget's natural content
-/// (plus the separator and any active footer), clamped between MIN_STATUS_ROWS
-/// and the historical 20% ceiling. The result lets the widget area shrink when
-/// content is shorter than the cap — including when git or changes use packed
-/// layouts that consume far fewer rows than there are items.
-#[allow(clippy::too_many_arguments)]
+/// (plus the separator), clamped between MIN_STATUS_ROWS and the historical
+/// 20% ceiling. The result lets the widget area shrink when content is shorter
+/// than the cap — including when git or changes use packed layouts that consume
+/// far fewer rows than there are items.
 pub fn compute_dynamic_status_rows(
     total_rows: u16,
     total_cols: u16,
@@ -96,19 +131,15 @@ pub fn compute_dynamic_status_rows(
     git_state: &GitState,
     diff_summary: &DiffSummary,
     terminal_title: Option<&str>,
-    pairing_state: &PairingState,
-    recap_state: &RecapState,
-    recap_toast_visible: bool,
-    prs: &[SessionPr],
+    handoff_rows: u16,
 ) -> u16 {
     let (git_w, changes_w) = estimate_column_widths(total_cols);
     let has_title = terminal_title.is_some_and(|t| !t.is_empty());
     let natural = stats_natural_rows(session_stats)
         .max(git_natural_rows(git_state, git_w))
         .max(changes_natural_rows(diff_summary, changes_w, has_title));
-    let footer = desired_footer_rows(pairing_state, recap_state, recap_toast_visible);
-    let desired = natural.saturating_add(1).saturating_add(footer); // +1 separator
-    let preferred_max = preferred_status_rows_max(total_rows, total_handoff_rows(prs));
+    let desired = natural.saturating_add(1); // +1 separator
+    let preferred_max = preferred_status_rows_max(total_rows, handoff_rows);
     desired.clamp(MIN_STATUS_ROWS, preferred_max)
 }
 
@@ -144,8 +175,7 @@ pub fn draw_status_bar(
     write!(stdout, "{}", escape::cursor_to(layout.pty_rows + 1, 1))?;
     write!(stdout, "{}", escape::CLEAR_TO_END)?;
 
-    // Handoff space is always reserved between PTY and status bar.
-    // Draw update/recap/pairing content if active, otherwise leave it empty.
+    // The handoff reserves only the rows its visible content actually needs.
     let update_banner_rows = update_state.banner_rows();
     let pairing_compact = update_banner_rows > 0;
     let pairing_banner_rows = if pairing_compact {
@@ -166,10 +196,12 @@ pub fn draw_status_bar(
         current_banner_row += update_banner_rows;
     }
 
-    let handoff_limit = layout.pty_rows + HANDOFF_RESERVED_ROWS;
-    let remaining_rows = handoff_limit
-        .saturating_sub(current_banner_row)
-        .saturating_add(1);
+    let banner_rows_reserved = layout
+        .handoff_rows
+        .saturating_sub(pr_separator_rows(prs))
+        .saturating_sub(pr_handoff_rows(prs));
+    let handoff_limit = layout.pty_rows + banner_rows_reserved;
+    let remaining_rows = banner_rows_reserved.saturating_sub(update_banner_rows);
     let recap_rows = draw_recap_handoff(
         stdout,
         current_banner_row,
@@ -201,12 +233,14 @@ pub fn draw_status_bar(
     // so they sit directly above the widget separator.
     let pr_rows = pr_handoff_rows(prs);
     if pr_rows > 0 {
-        let pr_start = layout.pty_rows + 1 + HANDOFF_RESERVED_ROWS;
+        let divider_row = layout.pty_rows + 1 + banner_rows_reserved;
+        draw_pr_separator(stdout, divider_row, layout.total_cols)?;
+        let pr_start = divider_row + pr_separator_rows(prs);
         draw_pr_handoff(stdout, pr_start, layout.total_cols, prs, pr_rows)?;
     }
 
     // Draw thick separator line (always after the reserved handoff space)
-    let separator_row = layout.pty_rows + 1 + total_handoff_rows(prs);
+    let separator_row = layout.pty_rows + 1 + layout.handoff_rows;
     write!(stdout, "{}", escape::cursor_to(separator_row, 1))?;
     write!(
         stdout,
@@ -258,7 +292,7 @@ pub fn draw_status_bar(
     };
 
     // Draw content rows (after reserved handoff space + separator).
-    let widget_pty_rows = layout.pty_rows + total_handoff_rows(prs);
+    let widget_pty_rows = layout.pty_rows + layout.handoff_rows;
     for widget_row in 1..=widget_data_rows {
         // Stats column (leftmost, fixed width)
         draw_stats_widget(
@@ -347,7 +381,6 @@ mod tests {
     use super::*;
     use crate::git::GitState;
     use crate::parsers::DiffSummary;
-    use crate::recap::RecapStatus;
 
     fn pairing_state() -> PairingState {
         PairingState {
@@ -364,12 +397,7 @@ mod tests {
         let stats = SessionStats::default();
         let git = GitState::default();
         let diff = DiffSummary::default();
-        let pairing = PairingState::default();
-        let recap = RecapState::default();
-
-        let rows = compute_dynamic_status_rows(
-            60, 200, &stats, &git, &diff, None, &pairing, &recap, false, &[],
-        );
+        let rows = compute_dynamic_status_rows(60, 200, &stats, &git, &diff, None, 0);
         assert_eq!(rows, 8);
     }
 
@@ -390,13 +418,8 @@ mod tests {
             })
             .collect();
         let diff = DiffSummary::default();
-        let pairing = PairingState::default();
-        let recap = RecapState::default();
-
-        let rows = compute_dynamic_status_rows(
-            60, 120, &stats, &git, &diff, None, &pairing, &recap, false, &[],
-        );
-        assert_eq!(rows, preferred_status_rows_max(60, HANDOFF_RESERVED_ROWS));
+        let rows = compute_dynamic_status_rows(60, 120, &stats, &git, &diff, None, MAX_RECAP_ROWS);
+        assert_eq!(rows, preferred_status_rows_max(60, MAX_RECAP_ROWS));
     }
 
     #[test]
@@ -407,20 +430,16 @@ mod tests {
         let stats = SessionStats::default();
         let git = GitState::default();
         let diff = DiffSummary::default();
-        let recap = RecapState::default();
-
-        let rows = compute_dynamic_status_rows(
-            80,
+        let pairing = pairing_state();
+        let handoff = handoff_rows(
             200,
-            &stats,
-            &git,
-            &diff,
-            None,
-            &pairing_state(),
-            &recap,
+            &pairing,
+            &UpdateState::default(),
+            &RecapState::default(),
             false,
             &[],
         );
+        let rows = compute_dynamic_status_rows(80, 200, &stats, &git, &diff, None, handoff);
         assert_eq!(rows, 8);
     }
 
@@ -431,14 +450,9 @@ mod tests {
         let stats = SessionStats::default();
         let git = GitState::default();
         let diff = DiffSummary::default();
-        let pairing = PairingState::default();
-        let recap = RecapState::default();
-
-        let rows = compute_dynamic_status_rows(
-            15, 100, &stats, &git, &diff, None, &pairing, &recap, false, &[],
-        );
+        let rows = compute_dynamic_status_rows(15, 100, &stats, &git, &diff, None, MAX_RECAP_ROWS);
         assert!(rows >= MIN_STATUS_ROWS);
-        assert!(rows <= preferred_status_rows_max(15, HANDOFF_RESERVED_ROWS));
+        assert!(rows <= preferred_status_rows_max(15, MAX_RECAP_ROWS));
     }
 
     #[test]
@@ -472,16 +486,11 @@ mod tests {
             }],
             loading: false,
         };
-        let pairing = PairingState::default();
-        let recap = RecapState::default();
-
         // Wide terminal (250 cols): preferred ceiling is 20, but the natural
         // packed layout for stats(7) and changes(~7) plus separator should
         // come in well under that — typical of the user's bottom-screenshot
         // resize complaint.
-        let rows = compute_dynamic_status_rows(
-            100, 250, &stats, &git, &diff, None, &pairing, &recap, false, &[],
-        );
+        let rows = compute_dynamic_status_rows(100, 250, &stats, &git, &diff, None, 0);
         assert!(
             rows < 12,
             "expected packed layout to keep status_rows under 12, got {}",
@@ -492,58 +501,47 @@ mod tests {
 
     #[test]
     fn split_terminal_rows_keeps_four_widget_rows_when_possible() {
-        let (pty_rows, status_rows) = split_terminal_rows(20, HANDOFF_RESERVED_ROWS);
+        let (pty_rows, status_rows) = split_terminal_rows(20, MAX_RECAP_ROWS);
 
         assert_eq!(status_rows, MIN_STATUS_ROWS);
-        assert_eq!(pty_rows + HANDOFF_RESERVED_ROWS + status_rows, 20);
+        assert_eq!(pty_rows + MAX_RECAP_ROWS + status_rows, 20);
     }
 
     #[test]
     fn split_terminal_rows_uses_preferred_status_height_when_larger() {
-        let (pty_rows, status_rows) = split_terminal_rows(44, HANDOFF_RESERVED_ROWS);
+        let (pty_rows, status_rows) = split_terminal_rows(44, MAX_RECAP_ROWS);
 
         assert_eq!(status_rows, 8);
-        assert_eq!(pty_rows + HANDOFF_RESERVED_ROWS + status_rows, 44);
+        assert_eq!(pty_rows + MAX_RECAP_ROWS + status_rows, 44);
+    }
+
+    #[test]
+    fn split_terminal_rows_reclaims_unused_recap_rows() {
+        let (with_recap, _) = split_terminal_rows(44, MAX_RECAP_ROWS);
+        let (without_recap, _) = split_terminal_rows(44, 0);
+
+        assert_eq!(without_recap - with_recap, MAX_RECAP_ROWS);
     }
 
     #[test]
     fn split_terminal_rows_shrinks_status_area_only_when_terminal_is_too_short() {
-        let (pty_rows, status_rows) = split_terminal_rows(8, HANDOFF_RESERVED_ROWS);
+        let (pty_rows, status_rows) = split_terminal_rows(8, MAX_RECAP_ROWS);
 
         assert_eq!(pty_rows, 1);
         assert_eq!(status_rows, 4);
     }
 
-    fn visible_width(s: &str) -> usize {
-        crate::ui::utils::strip_ansi_len(s)
-    }
-
     #[test]
-    fn footer_helper_always_returns_zero() {
-        // The bottom-edge footer is gone — pair code lives in the stats
-        // header and recap messages live in the handoff strip — so the
-        // footer-row helper should never claim a row regardless of inputs.
-        let recap_missing = RecapState {
-            enabled: true,
-            status: RecapStatus::MissingKey,
-            ..RecapState::default()
-        };
-        let recap_waiting = RecapState {
-            enabled: true,
-            status: RecapStatus::Waiting,
-            ..RecapState::default()
-        };
+    fn handoff_rows_reserve_only_visible_content() {
+        let update = UpdateState::default();
+        let recap = RecapState::default();
         assert_eq!(
-            desired_footer_rows(&pairing_state(), &recap_missing, false),
+            handoff_rows(200, &PairingState::default(), &update, &recap, false, &[]),
             0
         );
         assert_eq!(
-            desired_footer_rows(&PairingState::default(), &recap_waiting, true),
-            0
-        );
-        assert_eq!(
-            desired_footer_rows(&PairingState::default(), &RecapState::default(), false),
-            0
+            handoff_rows(200, &pairing_state(), &update, &recap, false, &[]),
+            2
         );
     }
 }

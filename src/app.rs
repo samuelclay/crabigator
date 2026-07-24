@@ -31,8 +31,8 @@ use crate::terminal::{
 };
 use crate::title::TitleManager;
 use crate::ui::{
-    compute_dynamic_status_rows, draw_status_bar, split_terminal_rows, throbber_frame_index,
-    total_handoff_rows, Layout, PairingState, HANDOFF_RESERVED_ROWS,
+    compute_dynamic_status_rows, draw_status_bar, handoff_rows, split_terminal_rows,
+    throbber_frame_index, Layout, PairingState,
 };
 use crate::update::UpdateState;
 
@@ -244,10 +244,21 @@ impl App {
     ) -> Result<Self> {
         let (pty_tx, pty_rx) = mpsc::channel(256);
 
-        // Reserve bottom rows for widgets, keeping at least four widget data rows
-        // when the terminal is tall enough and at least one PTY row in all cases.
-        // No PRs tracked yet at startup, so the handoff starts at its base height.
-        let (pty_rows, status_rows) = split_terminal_rows(rows, HANDOFF_RESERVED_ROWS);
+        let pairing_state = PairingState::default();
+        let recap_manager = RecapManager::load();
+        let pr_tracker = PrTracker::new();
+        let initial_handoff_rows = handoff_rows(
+            cols,
+            &pairing_state,
+            &update_state,
+            recap_manager.state(),
+            recap_manager.enabled_toast_visible(),
+            pr_tracker.prs(),
+        );
+
+        // Reserve only the handoff rows with visible content, keeping at least
+        // four widget data rows and one assistant PTY row when possible.
+        let (pty_rows, status_rows) = split_terminal_rows(rows, initial_handoff_rows);
 
         // Give the assistant CLI only the top portion
         let platform_pty =
@@ -323,9 +334,9 @@ impl App {
             last_cloud_active_prompt_was_some: false,
             last_exit_plan_option_count: 0,
             last_exit_plan_retry_count: 0,
-            pairing_state: PairingState::default(),
-            recap_manager: RecapManager::load(),
-            pr_tracker: PrTracker::new(),
+            pairing_state,
+            recap_manager,
+            pr_tracker,
             update_state,
             last_pairing_poll: Instant::now(),
             pending_pairing_poll: None,
@@ -883,8 +894,10 @@ impl App {
         // Move cursor below the status bar so the next shell prompt
         // appears after our content (pty_rows + handoff rows + status_rows + 1)
         let mut stdout = stdout();
-        let final_row =
-            self.pty_rows + total_handoff_rows(self.pr_tracker.prs()) + self.status_rows + 1;
+        let reserved_handoff_rows = self
+            .total_rows
+            .saturating_sub(self.pty_rows + self.status_rows);
+        let final_row = self.pty_rows + reserved_handoff_rows + self.status_rows + 1;
         write!(stdout, "{}", escape::cursor_to(final_row, 1))?;
         stdout.flush()?;
 
@@ -1008,7 +1021,15 @@ impl App {
     /// Resize the widget area to fit the tallest widget's natural content,
     /// capped at the historical 20% ceiling. Called before each status redraw
     /// so the assistant CLI reclaims space when widgets are short.
-    fn maybe_apply_dynamic_layout(&mut self) -> Result<()> {
+    fn maybe_apply_dynamic_layout(&mut self, recap_toast_visible: bool) -> Result<u16> {
+        let handoff = handoff_rows(
+            self.total_cols,
+            &self.pairing_state,
+            &self.update_state,
+            self.recap_manager.state(),
+            recap_toast_visible,
+            self.pr_tracker.prs(),
+        );
         let desired_status_rows = compute_dynamic_status_rows(
             self.total_rows,
             self.total_cols,
@@ -1016,22 +1037,18 @@ impl App {
             &self.git_state,
             &self.diff_summary,
             self.display_title.as_deref(),
-            &self.pairing_state,
-            self.recap_manager.state(),
-            self.recap_manager.enabled_toast_visible(),
-            self.pr_tracker.prs(),
+            handoff,
         );
 
         // The handoff grows with the PR list, so pty_rows can change even when
         // status_rows is stable — recompute pty_rows and compare that too.
-        let handoff = total_handoff_rows(self.pr_tracker.prs());
         let new_pty_rows = self
             .total_rows
             .saturating_sub(desired_status_rows + handoff)
             .max(1);
 
         if desired_status_rows == self.status_rows && new_pty_rows == self.pty_rows {
-            return Ok(());
+            return Ok(handoff);
         }
 
         // Clear the old widget area before the layout shifts so stale rows
@@ -1047,7 +1064,7 @@ impl App {
         self.capture_manager.resize(self.total_cols, self.pty_rows);
         self.last_status_bar_hash = None;
 
-        Ok(())
+        Ok(handoff)
     }
 
     /// Draw status bar using the widget system
@@ -1058,7 +1075,8 @@ impl App {
 
         // Recompute the widget area height before drawing so it can shrink to
         // the tallest widget's natural content (capped at the 20% ceiling).
-        self.maybe_apply_dynamic_layout()?;
+        let recap_toast_visible = self.recap_manager.enabled_toast_visible();
+        let handoff_rows = self.maybe_apply_dynamic_layout(recap_toast_visible)?;
 
         // Compute hash of status bar inputs to detect changes
         let current_hash = {
@@ -1160,6 +1178,7 @@ impl App {
             pty_rows: self.pty_rows,
             total_cols: self.total_cols,
             status_rows: self.status_rows,
+            handoff_rows,
         };
 
         let mut stdout = stdout();
@@ -1184,7 +1203,7 @@ impl App {
             &self.pairing_state,
             &self.update_state,
             self.recap_manager.state(),
-            self.recap_manager.enabled_toast_visible(),
+            recap_toast_visible,
             self.pr_tracker.prs(),
             cursor_position,
         )?;
@@ -1531,6 +1550,14 @@ impl App {
         // Pick the natural status height for the new terminal size in one
         // step — going through the preferred max first would briefly show a
         // taller-than-needed widget area before the next draw shrinks it.
+        let new_handoff_rows = handoff_rows(
+            self.total_cols,
+            &self.pairing_state,
+            &self.update_state,
+            self.recap_manager.state(),
+            self.recap_manager.enabled_toast_visible(),
+            self.pr_tracker.prs(),
+        );
         let new_status_rows = compute_dynamic_status_rows(
             self.total_rows,
             self.total_cols,
@@ -1538,15 +1565,12 @@ impl App {
             &self.git_state,
             &self.diff_summary,
             self.display_title.as_deref(),
-            &self.pairing_state,
-            self.recap_manager.state(),
-            self.recap_manager.enabled_toast_visible(),
-            self.pr_tracker.prs(),
+            new_handoff_rows,
         );
         self.status_rows = new_status_rows;
         self.pty_rows = self
             .total_rows
-            .saturating_sub(new_status_rows + total_handoff_rows(self.pr_tracker.prs()))
+            .saturating_sub(new_status_rows + new_handoff_rows)
             .max(1);
         self.scroll_region_filter.set_pty_rows(self.pty_rows);
 

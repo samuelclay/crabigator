@@ -14,16 +14,21 @@ use crate::terminal::escape::{self, bg, color, fg, RESET, RESET_FG};
 
 use super::time::format_elapsed_age;
 
-/// Rows reserved for the recap/toast/pairing content in the handoff strip.
-pub const HANDOFF_RESERVED_ROWS: u16 = 3;
+/// Maximum rows the recap/toast/pairing content may use in the handoff strip.
+pub const MAX_RECAP_ROWS: u16 = 3;
 
 /// Maximum PR lines rendered in the handoff strip (one per PR). Bounds how far
 /// the handoff can grow into the assistant's PTY area.
 pub const MAX_PR_ROWS: u16 = 6;
 
+/// Thin divider row shown only when the handoff contains PRs.
+pub const PR_SEPARATOR_ROWS: u16 = 1;
+
 const PR_COLUMN_GAP: usize = 2;
 const PR_LEFT_PADDING: usize = 1;
 const PR_RIGHT_PADDING: usize = 1;
+const RECAP_HINT_MIN_WIDTH: u16 = 47;
+const RECAP_TOAST_MIN_WIDTH: u16 = 18;
 const PR_IDENTITY_MAX: usize = 32;
 const PR_DIFF_MAX: usize = 18;
 const PR_FILES_MAX: usize = 11;
@@ -39,10 +44,44 @@ pub fn pr_handoff_rows(prs: &[SessionPr]) -> u16 {
     (prs.len() as u16).min(MAX_PR_ROWS)
 }
 
-/// Total handoff height = recap area + PR lines. This is what the layout must
-/// reserve between the PTY and the widget separator.
-pub fn total_handoff_rows(prs: &[SessionPr]) -> u16 {
-    HANDOFF_RESERVED_ROWS + pr_handoff_rows(prs)
+/// Total handoff height = active recap/banner rows + optional divider + PR lines.
+pub fn total_handoff_rows(recap_rows: u16, prs: &[SessionPr]) -> u16 {
+    recap_rows + pr_separator_rows(prs) + pr_handoff_rows(prs)
+}
+
+/// Divider height between recap content and the PR table.
+pub fn pr_separator_rows(prs: &[SessionPr]) -> u16 {
+    if prs.is_empty() {
+        0
+    } else {
+        PR_SEPARATOR_ROWS
+    }
+}
+
+/// Draw a subtle inset rule between recap content and the PR table.
+pub fn draw_pr_separator(stdout: &mut Stdout, row: u16, width: u16) -> Result<()> {
+    fill_row(stdout, row, width)?;
+    write!(
+        stdout,
+        "{}{}{}",
+        escape::cursor_to(row, 1),
+        bg(color::BG_DARK),
+        fg(color::DARK_GRAY)
+    )?;
+    let left_padding = usize::from(width > 0);
+    write!(
+        stdout,
+        "{:left_padding$}{}",
+        "",
+        "─".repeat(pr_separator_rule_width(width)),
+        left_padding = left_padding
+    )?;
+    write!(stdout, "{}", RESET)?;
+    Ok(())
+}
+
+fn pr_separator_rule_width(width: u16) -> usize {
+    (width as usize).saturating_sub(2)
 }
 
 /// Draw the session's PR list, one PR per row, on the dark handoff background.
@@ -427,18 +466,59 @@ pub fn draw_recap_handoff(
     Ok(0)
 }
 
+/// Exact recap rows needed at this width, capped by `available_rows`.
+///
+/// This shares the same item planning and wrapping logic as the renderer so
+/// layout reservations cannot drift from what is actually drawn.
+pub fn recap_handoff_rows(
+    width: u16,
+    recap: &RecapState,
+    available_rows: u16,
+    toast_visible: bool,
+) -> u16 {
+    if available_rows == 0 {
+        return 0;
+    }
+
+    if recap.latest.is_some() {
+        return latest_recap_rows(width, available_rows, recap);
+    }
+    if matches!(recap.status, RecapStatus::Failed(_)) {
+        return available_rows.min(2);
+    }
+    if matches!(recap.status, RecapStatus::MissingKey) {
+        return u16::from(recap_hint_fits(width));
+    }
+    if toast_visible
+        && matches!(
+            recap.status,
+            RecapStatus::Waiting | RecapStatus::Updating | RecapStatus::Ready
+        )
+    {
+        return u16::from(recap_toast_fits(width));
+    }
+    0
+}
+
+fn recap_hint_fits(width: u16) -> bool {
+    width >= RECAP_HINT_MIN_WIDTH
+}
+
+fn recap_toast_fits(width: u16) -> bool {
+    width >= RECAP_TOAST_MIN_WIDTH
+}
+
 /// One-line "✦ Per-turn AI recaps off — crabigator key <key> · crabigator
 /// recap disable" hint, painted on the dark recap background. Three width
 /// tiers degrade gracefully:
 /// - **Verbose** (≥78 cols): full label + both commands.
 /// - **Full**    (≥64 cols): drops the "Per-turn AI" preface.
 /// - **Compact** (≥47 cols): just the two commands.
+///
 /// Returns 1 row consumed when rendered, 0 if even the compact tier won't fit.
 fn draw_recap_hint(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
     const VERBOSE_VISIBLE: usize = 74;
     const FULL_VISIBLE: usize = 62;
-    const COMPACT_VISIBLE: usize = 45;
-
     let usable = width as usize;
     let dim = fg(color::DARK_GRAY);
     let sparkle = format!("{}✦{}", fg(color::YELLOW), RESET_FG);
@@ -464,7 +544,7 @@ fn draw_recap_hint(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
             "{} {} {} {} {} {} {}",
             sparkle, label, dash, key_cmd, placeholder, dot, disable_cmd
         )
-    } else if usable >= COMPACT_VISIBLE + 2 {
+    } else if usable >= RECAP_HINT_MIN_WIDTH as usize {
         format!("{} {}  {}  {}", sparkle, key_cmd, dot, disable_cmd)
     } else {
         return Ok(0);
@@ -482,15 +562,13 @@ fn draw_recap_hint(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
 /// background. Two width tiers; returns 0 if even the compact tier won't fit.
 fn draw_recap_toast(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
     const FULL_VISIBLE: usize = 28;
-    const COMPACT_VISIBLE: usize = 16;
-
     let usable = width as usize;
     let check = format!("{}✓{}", fg(color::GREEN), RESET_FG);
 
     let body = if usable >= FULL_VISIBLE + 2 {
         let label = format!("{}Per-turn AI recaps enabled{}", fg(color::GRAY), RESET_FG);
         format!("{} {}", check, label)
-    } else if usable >= COMPACT_VISIBLE + 2 {
+    } else if usable >= RECAP_TOAST_MIN_WIDTH as usize {
         let label = format!("{}Recaps enabled{}", fg(color::GRAY), RESET_FG);
         format!("{} {}", check, label)
     } else {
@@ -510,15 +588,16 @@ fn draw_recap_toast(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
     Ok(1)
 }
 
-fn draw_latest_recap(
-    stdout: &mut Stdout,
-    row: u16,
-    width: u16,
-    available_rows: u16,
-    recap: &RecapState,
-) -> Result<u16> {
+struct RecapItem {
+    first_prefix: String,
+    cont_prefix: String,
+    body: String,
+    right: Option<String>,
+}
+
+fn latest_recap_items(recap: &RecapState) -> Vec<RecapItem> {
     let Some(latest) = recap.latest.as_ref() else {
-        return Ok(0);
+        return Vec::new();
     };
 
     let delta = recap
@@ -529,32 +608,17 @@ fn draw_latest_recap(
 
     // Headline first — wraps onto the next row only if it overflows the
     // available body width on row 1 (where the Δ delta lives).
-    let headline = latest.headline.trim();
-    let headline_prefix = format!("{}{} ●{} ", bg(color::BG_DARK), fg(color::CYAN), RESET_FG);
-    let headline_indent = format!(
-        "{}{}   {}",
-        bg(color::BG_DARK),
-        fg(color::DARK_GRAY),
-        RESET_FG
-    );
-
-    let mut used = 0u16;
-    used += draw_wrapped(
-        stdout,
-        row,
-        width,
-        available_rows,
-        &headline_prefix,
-        &headline_indent,
-        headline,
-        meta.as_deref(),
-        &fg(color::WHITE),
-    )?;
-
-    if used >= available_rows {
-        write!(stdout, "{}", RESET)?;
-        return Ok(used);
-    }
+    let mut items = vec![RecapItem {
+        first_prefix: format!("{}{} ●{} ", bg(color::BG_DARK), fg(color::CYAN), RESET_FG),
+        cont_prefix: format!(
+            "{}{}   {}",
+            bg(color::BG_DARK),
+            fg(color::DARK_GRAY),
+            RESET_FG
+        ),
+        body: latest.headline.trim().to_string(),
+        right: meta,
+    }];
 
     // Build the detail items (bullets first when present, then next-prompt
     // note, then artifact). Each item gets its own wrap pass so we never
@@ -577,39 +641,77 @@ fn draw_latest_recap(
     }
 
     for (label, body) in detail_items {
-        if used >= available_rows {
-            break;
-        }
-        let detail_prefix = format!(
-            "{}{}   {}{}{}",
-            bg(color::BG_DARK),
-            fg(color::DARK_GRAY),
-            RESET_FG,
-            fg(color::WHITE),
-            label,
-        );
         // Continuation rows hang under the label so the eye tracks the bullet.
         let pad = " ".repeat(3 + label.chars().count());
-        let detail_indent = format!(
-            "{}{}{}{}",
-            bg(color::BG_DARK),
-            fg(color::DARK_GRAY),
-            pad,
-            RESET_FG
-        );
+        items.push(RecapItem {
+            first_prefix: format!(
+                "{}{}   {}{}{}",
+                bg(color::BG_DARK),
+                fg(color::DARK_GRAY),
+                RESET_FG,
+                fg(color::WHITE),
+                label,
+            ),
+            cont_prefix: format!(
+                "{}{}{}{}",
+                bg(color::BG_DARK),
+                fg(color::DARK_GRAY),
+                pad,
+                RESET_FG
+            ),
+            body,
+            right: None,
+        });
+    }
+
+    items
+}
+
+fn latest_recap_rows(width: u16, available_rows: u16, recap: &RecapState) -> u16 {
+    let mut used = 0;
+    for item in latest_recap_items(recap) {
+        let remaining = available_rows.saturating_sub(used);
+        if remaining == 0 {
+            break;
+        }
+        used += wrapped_lines(
+            width,
+            remaining,
+            &item.first_prefix,
+            &item.cont_prefix,
+            &item.body,
+            item.right.as_deref(),
+        )
+        .len() as u16;
+    }
+    used
+}
+
+fn draw_latest_recap(
+    stdout: &mut Stdout,
+    row: u16,
+    width: u16,
+    available_rows: u16,
+    recap: &RecapState,
+) -> Result<u16> {
+    let mut used = 0;
+    for item in latest_recap_items(recap) {
+        let remaining = available_rows.saturating_sub(used);
+        if remaining == 0 {
+            break;
+        }
         used += draw_wrapped(
             stdout,
             row + used,
             width,
-            available_rows.saturating_sub(used),
-            &detail_prefix,
-            &detail_indent,
-            &body,
-            None,
+            remaining,
+            &item.first_prefix,
+            &item.cont_prefix,
+            &item.body,
+            item.right.as_deref(),
             &fg(color::WHITE),
         )?;
     }
-
     write!(stdout, "{}", RESET)?;
     Ok(used)
 }
@@ -637,22 +739,15 @@ fn draw_wrapped(
 
     let first_prefix_width = crate::ui::utils::strip_ansi_len(first_prefix);
     let cont_prefix_width = crate::ui::utils::strip_ansi_len(cont_prefix);
-    let right_width = right.map(crate::ui::utils::strip_ansi_len).unwrap_or(0);
-    let right_gap = usize::from(right.is_some());
-
-    let first_body_budget = (width as usize)
-        .saturating_sub(first_prefix_width)
-        .saturating_sub(right_width)
-        .saturating_sub(right_gap)
-        .max(1);
-    let cont_body_budget = (width as usize).saturating_sub(cont_prefix_width).max(1);
-
-    let lines = wrap_to_widths(
+    let lines = wrapped_lines(
+        width,
+        available_rows,
+        first_prefix,
+        cont_prefix,
         body,
-        first_body_budget,
-        cont_body_budget,
-        available_rows as usize,
+        right,
     );
+    let right_width = right.map(crate::ui::utils::strip_ansi_len).unwrap_or(0);
 
     for (i, line) in lines.iter().enumerate() {
         let line_row = row + i as u16;
@@ -677,6 +772,33 @@ fn draw_wrapped(
     }
 
     Ok(lines.len() as u16)
+}
+
+fn wrapped_lines(
+    width: u16,
+    available_rows: u16,
+    first_prefix: &str,
+    cont_prefix: &str,
+    body: &str,
+    right: Option<&str>,
+) -> Vec<String> {
+    let first_prefix_width = crate::ui::utils::strip_ansi_len(first_prefix);
+    let cont_prefix_width = crate::ui::utils::strip_ansi_len(cont_prefix);
+    let right_width = right.map(crate::ui::utils::strip_ansi_len).unwrap_or(0);
+    let right_gap = usize::from(right.is_some());
+    let first_body_budget = (width as usize)
+        .saturating_sub(first_prefix_width)
+        .saturating_sub(right_width)
+        .saturating_sub(right_gap)
+        .max(1);
+    let cont_body_budget = (width as usize).saturating_sub(cont_prefix_width).max(1);
+
+    wrap_to_widths(
+        body,
+        first_body_budget,
+        cont_body_budget,
+        available_rows as usize,
+    )
 }
 
 fn draw_recap_failure(
@@ -948,6 +1070,26 @@ mod tests {
     }
 
     #[test]
+    fn pr_separator_reserves_a_row_only_when_prs_exist() {
+        assert_eq!(pr_separator_rows(&[]), 0);
+        assert_eq!(total_handoff_rows(0, &[]), 0);
+        assert_eq!(total_handoff_rows(2, &[]), 2);
+
+        let prs = [sample_pr("request-handler", 2475, "feature/full")];
+        assert_eq!(pr_separator_rows(&prs), PR_SEPARATOR_ROWS);
+        assert_eq!(total_handoff_rows(2, &prs), 2 + PR_SEPARATOR_ROWS + 1);
+    }
+
+    #[test]
+    fn pr_separator_rule_leaves_one_cell_at_each_edge() {
+        assert_eq!(pr_separator_rule_width(0), 0);
+        assert_eq!(pr_separator_rule_width(1), 0);
+        assert_eq!(pr_separator_rule_width(2), 0);
+        assert_eq!(pr_separator_rule_width(3), 1);
+        assert_eq!(pr_separator_rule_width(120), 118);
+    }
+
+    #[test]
     fn pr_columns_use_widest_visible_value_with_caps() {
         let mut long = sample_pr(
             "request-handler-with-an-unreasonably-long-name",
@@ -1054,6 +1196,53 @@ mod tests {
     fn non_json_errors_pass_through_cleaned() {
         let raw = "  recap worker stopped\n  ";
         assert_eq!(extract_friendly_error(raw), "recap worker stopped");
+    }
+
+    fn sample_recap(headline: &str, artifact: Option<&str>) -> RecapState {
+        RecapState {
+            enabled: true,
+            status: RecapStatus::Ready,
+            latest: Some(crate::recap::TurnRecap {
+                prompt_count: 1,
+                generated_at: 0,
+                variant: RecapVariant::Brief,
+                headline: headline.to_string(),
+                bullets: Vec::new(),
+                next_prompt_notes: Vec::new(),
+                artifacts: artifact.into_iter().map(str::to_string).collect(),
+                line_delta: TurnLineDelta::default(),
+            }),
+            line_delta: None,
+            model: String::new(),
+        }
+    }
+
+    #[test]
+    fn recap_rows_match_the_content_that_will_be_drawn() {
+        let one_line = sample_recap("Finished the requested change", None);
+        assert_eq!(recap_handoff_rows(200, &one_line, MAX_RECAP_ROWS, false), 1);
+
+        let two_lines = sample_recap(
+            "Listed four pull request URLs as requested",
+            Some("request-handler/pull/2475"),
+        );
+        assert_eq!(
+            recap_handoff_rows(200, &two_lines, MAX_RECAP_ROWS, false),
+            2
+        );
+    }
+
+    #[test]
+    fn recap_rows_are_capped_and_disappear_with_no_content() {
+        let long = sample_recap(
+            "A deliberately long recap headline that must wrap across several narrow rows",
+            Some("request-handler/pull/2475"),
+        );
+        assert_eq!(recap_handoff_rows(24, &long, 2, false), 2);
+        assert_eq!(
+            recap_handoff_rows(200, &RecapState::default(), MAX_RECAP_ROWS, false),
+            0
+        );
     }
 
     #[test]
