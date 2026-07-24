@@ -1653,7 +1653,13 @@ impl App {
         ) else {
             return false;
         };
-        self.pr_tracker.scan_text(&turn.activity, &self.cwd)
+        // A PR the user pastes into the prompt is the strongest signal there is,
+        // and the prompt is kept out of `activity`, so scan it too.
+        let mut changed = false;
+        if let Some(prompt) = turn.user_prompt.as_deref() {
+            changed |= self.pr_tracker.scan_text(prompt, &self.cwd);
+        }
+        changed | self.pr_tracker.scan_text(&turn.activity, &self.cwd)
     }
 
     /// Send the current session PR list to the cloud (recap panel).

@@ -41,6 +41,23 @@ fn pr_number_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"#(\d+)\b").expect("valid PR number regex"))
 }
 
+/// Uppercase words that precede a `#123` in prose without naming a repository.
+/// Without this, `SEV #2` / `TODO #3` would be mistaken for repo shorthand.
+const NON_REPO_ACRONYMS: &[&str] = &[
+    "TODO", "FIXME", "FIX", "XXX", "HACK", "NOTE", "BUG", "WIP", "TBD", "SEV", "RFC", "ADR", "NB",
+    "ETA", "EOD", "ID", "STEP", "ITEM", "Q", "CVE", "SLA", "P", "TASK", "ISSUE", "TICKET",
+];
+
+fn gh_pr_url_target_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?is)\bgh\s+pr\s+(?:view|checks|edit|ready|merge|reopen|close|comment|diff)\s+(?:--repo\s+\S+\s+)?https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)",
+        )
+        .expect("valid gh pr url target regex")
+    })
+}
+
 fn repo_qualified_gh_pr_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
@@ -110,12 +127,49 @@ impl SessionPr {
 }
 
 /// Parsed owner/repo/number identity for a PR URL.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PrLocation {
     owner: String,
     repo: String,
     number: u64,
     url: String,
+}
+
+impl PrLocation {
+    fn new(owner: &str, repo: &str, number: u64) -> Self {
+        Self {
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            number,
+            url: format!("https://github.com/{owner}/{repo}/pull/{number}"),
+        }
+    }
+}
+
+/// Which part of a turn transcript a chunk of text came from.
+///
+/// Detection trusts what the user and the agent *say*, plus the PR commands that
+/// actually ran. It does not trust tool output: a single `gh pr list` or `git log`
+/// prints every recent PR in the repo, and adopting those made unrelated PRs look
+/// like session work.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Channel {
+    /// User prompt or assistant prose.
+    Prose,
+    /// A tool invocation — the command line itself.
+    Tool,
+    /// Tool output.
+    ToolResult,
+}
+
+/// What marked a `#123` in prose as a pull request.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum PrMarker {
+    /// `PR #123`, `pull request #123`, `RQH #2469`, `developer-portal#123` — the
+    /// repository isn't pinned, so the session's own repo is tried.
+    Unqualified,
+    /// `owner/repo#123` — the repository is explicit, so no guessing is needed.
+    Repo(String, String),
 }
 
 /// JSON shape returned by `gh pr view --json ...`.
@@ -257,59 +311,33 @@ impl PrTracker {
 
     /// Scan a chunk of transcript/activity text (one turn's worth).
     ///
-    /// Detects PR-mutating commands, URLs, repo-qualified `gh pr` targets, and
-    /// assistant references such as `PR #123`. Bare numbers are validated against
-    /// the current repository before being added. Enrichment results land later
-    /// via [`poll`].
+    /// What counts as an association, by channel:
+    /// - **prose** (user prompt, assistant text): PR URLs, and `#123` that carries
+    ///   a PR marker (see [`pr_marker_before`]).
+    /// - **tool commands**: the PR a `gh pr` subcommand targets — `gh pr view 2469
+    ///   --repo owner/repo` or `gh pr checks <url>`. URLs merely quoted inside a
+    ///   command (a `gh pr create --body` that cites related PRs) are not targets.
+    /// - **tool output**: nothing, except the URL `gh pr create` prints for the PR
+    ///   it just opened. Listings (`gh pr list`, `git log`, JSON dumps) name PRs
+    ///   the session never touched.
+    ///
+    /// Bare numbers are validated against the current repository before being
+    /// added. Enrichment results land later via [`poll`].
     pub fn scan_text(&mut self, text: &str, cwd: &Path) -> bool {
         if text.is_empty() {
             return false;
         }
         let mut changed = false;
-
-        for line in text.lines() {
-            // Command signals. `gh pr create` claims the next PR URL as created here;
-            // pushes / PR edits trigger a branch-based lookup for an existing PR.
-            if line.contains("gh pr create") {
-                self.expect_created_since = Some(Instant::now());
-            }
-            if is_pr_update_command(line) {
-                self.resolve_branch_pr(cwd);
-            }
-
-            for caps in pr_url_re().captures_iter(line) {
-                let loc = PrLocation {
-                    owner: caps[1].to_string(),
-                    repo: caps[2].to_string(),
-                    number: caps[3].parse().unwrap_or(0),
-                    url: caps[0].to_string(),
-                };
-                changed |= self.observe_url(&loc);
+        for event in scan_events(text) {
+            match event {
+                ScanEvent::Created => self.expect_created_since = Some(Instant::now()),
+                ScanEvent::Updated => self.resolve_branch_pr(cwd),
+                ScanEvent::Located(loc) => changed |= self.observe_url(&loc),
+                // `gh pr view` rejects issue numbers and nonexistent PRs, so only
+                // numbers that are really PRs in this repo reach the visible list.
+                ScanEvent::Mentioned(number) => self.resolve_mentioned_pr(number, cwd),
             }
         }
-
-        // A Codex tool call often carries the identity only as
-        // `gh pr view 2469 --repo owner/repo`, without printing a PR URL.
-        for caps in repo_qualified_gh_pr_re().captures_iter(text) {
-            let loc = PrLocation {
-                owner: caps[2].to_string(),
-                repo: caps[3].to_string(),
-                number: caps[1].parse().unwrap_or(0),
-                url: format!(
-                    "https://github.com/{}/{}/pull/{}",
-                    &caps[2], &caps[3], &caps[1]
-                ),
-            };
-            changed |= self.observe_url(&loc);
-        }
-
-        // Natural-language `#123` references do not identify a repository. Try
-        // them in the session's current repo; `gh pr view` rejects issue numbers
-        // and nonexistent PRs, so only confirmed PRs reach the visible list.
-        for number in assistant_pr_numbers(text) {
-            self.resolve_mentioned_pr(number, cwd);
-        }
-
         changed
     }
 
@@ -336,6 +364,12 @@ impl PrTracker {
 
     fn resolve_mentioned_pr(&mut self, number: u64, cwd: &Path) {
         if number == 0 {
+            return;
+        }
+        // Already tracked from a source that named its repository. Prose nicknames
+        // ("RQH #2499") don't map to a repo, so guessing this number against the
+        // session's own repo could only find a different PR that happens to share it.
+        if self.prs.iter().any(|pr| pr.number == number) {
             return;
         }
         let key = format!("mention:{}#{number}", cwd.display());
@@ -562,41 +596,266 @@ fn is_pr_update_command(line: &str) -> bool {
         || line.contains("gh pr reopen")
 }
 
-/// Extract `#123` references only from assistant prose. Tool output can contain
-/// arbitrary issue/PR inventories that should not all become session associations.
-/// Raw text without transcript section markers is treated as assistant prose for
-/// unit tests and callers that provide a plain chunk.
-fn assistant_pr_numbers(text: &str) -> Vec<u64> {
-    let has_sections = text
-        .lines()
-        .any(|line| matches!(line.trim(), "[assistant]" | "[tool]" | "[tool_result]"));
-    let mut in_assistant = !has_sections;
-    let mut numbers = Vec::new();
+/// Something a transcript scan found, in the order it was written.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum ScanEvent {
+    /// A PR identified by repository and number.
+    Located(PrLocation),
+    /// A marked `#123` with no repository — resolved against the session's repo.
+    Mentioned(u64),
+    /// `gh pr create` ran, so PRs seen after it were created by this session.
+    Created,
+    /// A push or PR edit ran, so the current branch's PR is worth resolving.
+    Updated,
+}
 
-    for line in text.lines() {
-        match line.trim() {
-            "[assistant]" => {
-                in_assistant = true;
-                continue;
+/// Find every PR association in a chunk of transcript text.
+///
+/// Pure, so the channel rules can be tested (and replayed over real transcripts)
+/// without running `gh`. See [`PrTracker::scan_text`] for the rules themselves.
+fn scan_events(text: &str) -> Vec<ScanEvent> {
+    let mut events = Vec::new();
+    // Set while the section that just ran was a `gh pr create`, so its output
+    // (and only its output) is read for the new PR's URL.
+    let mut expect_create_output = false;
+
+    for (channel, body) in split_channels(text) {
+        match channel {
+            Channel::Prose | Channel::Tool => {
+                if channel == Channel::Tool {
+                    expect_create_output = body.contains("gh pr create");
+                }
+                for line in body.lines() {
+                    if line.contains("gh pr create") {
+                        events.push(ScanEvent::Created);
+                    }
+                    if is_pr_update_command(line) {
+                        events.push(ScanEvent::Updated);
+                    }
+                    if channel == Channel::Prose {
+                        push_located(&mut events, pr_urls(line));
+                        push_prose_mentions(&mut events, line);
+                    }
+                }
+                // Raw scrollback arrives unmarked, so commands land in prose too.
+                push_located(&mut events, gh_pr_targets(&body));
             }
-            "[tool]" | "[tool_result]" => {
-                in_assistant = false;
-                continue;
-            }
-            _ => {}
-        }
-        if !in_assistant || line.contains("/pull/") {
-            continue;
-        }
-        for caps in pr_number_re().captures_iter(line) {
-            if let Ok(number) = caps[1].parse() {
-                if !numbers.contains(&number) {
-                    numbers.push(number);
+            Channel::ToolResult => {
+                if expect_create_output {
+                    for line in body.lines() {
+                        push_located(&mut events, pr_urls(line));
+                    }
                 }
             }
         }
     }
-    numbers
+    events
+}
+
+fn push_located(events: &mut Vec<ScanEvent>, locations: Vec<PrLocation>) {
+    for loc in locations {
+        let event = ScanEvent::Located(loc);
+        if !events.contains(&event) {
+            events.push(event);
+        }
+    }
+}
+
+/// Record the marked `#123` mentions in one line of prose.
+fn push_prose_mentions(events: &mut Vec<ScanEvent>, line: &str) {
+    // A `#123` inside a PR link is part of the URL (or a review-thread anchor),
+    // and the URL scan already covers it.
+    if line.contains("/pull/") {
+        return;
+    }
+    let mut mentions = Vec::new();
+    line_pr_mentions(line, &mut mentions);
+    for (marker, number) in mentions {
+        let event = match marker {
+            // A repository-pinned mention needs no guessing.
+            PrMarker::Repo(owner, repo) => {
+                ScanEvent::Located(PrLocation::new(&owner, &repo, number))
+            }
+            PrMarker::Unqualified => ScanEvent::Mentioned(number),
+        };
+        if !events.contains(&event) {
+            events.push(event);
+        }
+    }
+}
+
+/// Every PR URL in a line of prose (or `gh pr create` output).
+fn pr_urls(line: &str) -> Vec<PrLocation> {
+    pr_url_re()
+        .captures_iter(line)
+        .map(|caps| PrLocation {
+            owner: caps[1].to_string(),
+            repo: caps[2].to_string(),
+            number: caps[3].parse().unwrap_or(0),
+            url: caps[0].to_string(),
+        })
+        .collect()
+}
+
+/// The PRs that `gh pr` subcommands in a section act on.
+///
+/// A Codex tool call often carries the identity only as `gh pr view 2469 --repo
+/// owner/repo`, without printing a PR URL. URLs merely quoted elsewhere in the
+/// command — a `gh pr create --body` citing related PRs — are not targets.
+fn gh_pr_targets(section: &str) -> Vec<PrLocation> {
+    let numbered = repo_qualified_gh_pr_re()
+        .captures_iter(section)
+        .map(|caps| PrLocation::new(&caps[2], &caps[3], caps[1].parse().unwrap_or(0)));
+    let by_url = gh_pr_url_target_re()
+        .captures_iter(section)
+        .map(|caps| PrLocation::new(&caps[1], &caps[2], caps[3].parse().unwrap_or(0)));
+    numbered.chain(by_url).collect()
+}
+
+/// Split transcript text into `(channel, body)` chunks on the `[assistant]` /
+/// `[tool]` / `[tool_result]` markers that `collect_latest_turn_text` emits.
+///
+/// Text before the first marker — raw scrollback, a user prompt, or a plain chunk
+/// from a unit test — is prose.
+fn split_channels(text: &str) -> Vec<(Channel, String)> {
+    let mut chunks: Vec<(Channel, String)> = Vec::new();
+    let mut channel = Channel::Prose;
+    let mut body = String::new();
+
+    for line in text.lines() {
+        let next = match line.trim() {
+            "[assistant]" | "[user]" | "[prompt]" => Channel::Prose,
+            "[tool]" => Channel::Tool,
+            "[tool_result]" => Channel::ToolResult,
+            _ => {
+                body.push_str(line);
+                body.push('\n');
+                continue;
+            }
+        };
+        if !body.is_empty() {
+            chunks.push((channel, std::mem::take(&mut body)));
+        }
+        channel = next;
+    }
+    if !body.is_empty() {
+        chunks.push((channel, body));
+    }
+    chunks
+}
+
+/// Collect marked PR mentions from one line of prose.
+///
+/// A match either carries its own marker (`PR #972`) or continues a comma/`and`
+/// run started by one (`PRs #100, #101 and #102`). Anything else — including the
+/// numbers in `Skipped #2, #3, and #5` — is skipped, and skipping also breaks the
+/// run so a trailing list can't attach to an earlier marker.
+fn line_pr_mentions(line: &str, out: &mut Vec<(PrMarker, u64)>) {
+    // Byte offset just past the previously accepted `#N`, while a run is open.
+    let mut run: Option<(usize, PrMarker)> = None;
+
+    for caps in pr_number_re().captures_iter(line) {
+        let matched = caps.get(0).expect("group 0 always present");
+        let Ok(number) = caps[1].parse::<u64>() else {
+            continue;
+        };
+        let marker = match pr_marker_before(&line[..matched.start()]) {
+            Some(marker) => Some(marker),
+            // `PRs #100, #101` — inherit the run's marker.
+            None => run
+                .as_ref()
+                .filter(|(end, _)| is_number_list_gap(&line[*end..matched.start()]))
+                .map(|(_, marker)| marker.clone()),
+        };
+        let Some(marker) = marker else {
+            run = None;
+            continue;
+        };
+        run = Some((matched.end(), marker.clone()));
+        let mention = (marker, number);
+        if !out.contains(&mention) {
+            out.push(mention);
+        }
+    }
+}
+
+/// Whether the text right before a `#123` marks it as a pull request, and whether
+/// that marker pins the repository.
+///
+/// Accepts `PR #123` / `PRs #123` / `pull request #123`, GitHub shorthand
+/// (`owner/repo#123`, `developer-portal#123`), and short uppercase repo
+/// nicknames (`RQH #2469`) that aren't conventional prose markers.
+///
+/// A bare `#123` is deliberately *not* enough: agents number their own findings
+/// (`#1 Chat-mode hot mic`, `Skipped #2, #3, and #5`), and those numbers resolve
+/// against any repository large enough to have them, so every list item would
+/// otherwise become a tracked PR.
+fn pr_marker_before(before: &str) -> Option<PrMarker> {
+    // GitHub shorthand binds tightly: no space between the repo and the `#`.
+    if !before.ends_with(char::is_whitespace) {
+        if let Some(marker) = trailing_repo_ref(before) {
+            return Some(marker);
+        }
+    }
+
+    let head = before.trim_end_matches(|c: char| c.is_whitespace() || c == ':');
+    let word = trailing_word(head);
+    if word.is_empty() {
+        return None;
+    }
+    if word.eq_ignore_ascii_case("pr") || word.eq_ignore_ascii_case("prs") {
+        return Some(PrMarker::Unqualified);
+    }
+    if word.eq_ignore_ascii_case("request") || word.eq_ignore_ascii_case("requests") {
+        let preceding = &head[..head.len() - word.len()];
+        return trailing_word(preceding.trim_end())
+            .eq_ignore_ascii_case("pull")
+            .then_some(PrMarker::Unqualified);
+    }
+    // A repo nickname such as `RQH #2469`.
+    let is_nickname = (2..=6).contains(&word.len())
+        && word.chars().all(|c| c.is_ascii_uppercase())
+        && !NON_REPO_ACRONYMS.contains(&word);
+    is_nickname.then_some(PrMarker::Unqualified)
+}
+
+/// The trailing run of alphabetic characters in `text` (empty if it ends otherwise).
+fn trailing_word(text: &str) -> &str {
+    let start = text
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_alphabetic())
+        .last()
+        .map(|(i, _)| i);
+    start.map_or("", |i| &text[i..])
+}
+
+/// Read a repository reference off the end of `text` — `owner/repo` (which pins
+/// the repository) or a single hyphenated/dotted name such as `developer-portal`
+/// (which doesn't, since the owner is unknown).
+fn trailing_repo_ref(text: &str) -> Option<PrMarker> {
+    let start = text
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+        .last()
+        .map(|(i, _)| i)?;
+    let token = &text[start..];
+    if let Some((owner, repo)) = token.rsplit_once('/') {
+        if owner.is_empty() || repo.is_empty() || owner.contains('/') {
+            return None;
+        }
+        return Some(PrMarker::Repo(owner.to_string(), repo.to_string()));
+    }
+    (token.len() >= 3 && token.contains(['-', '_', '.'])).then_some(PrMarker::Unqualified)
+}
+
+/// Whether the text between two `#N` matches is only list punctuation, so the
+/// second number continues the first one's run (`#100, #101 and #102`).
+fn is_number_list_gap(gap: &str) -> bool {
+    gap.split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|token| !token.is_empty())
+        .all(|token| matches!(token.to_ascii_lowercase().as_str(), "and" | "or" | "&" | "+"))
 }
 
 const GH_JSON_FIELDS: &str = "number,title,headRefName,url,state,isDraft,additions,deletions,\
@@ -668,6 +927,24 @@ fn now_unix_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The PR numbers a chunk of text mentions in prose, in order.
+    fn prose_pr_numbers(text: &str) -> Vec<u64> {
+        prose_pr_mentions(text).into_iter().map(|(_, n)| n).collect()
+    }
+
+    fn prose_pr_mentions(text: &str) -> Vec<(PrMarker, u64)> {
+        let mut mentions = Vec::new();
+        for (channel, body) in split_channels(text) {
+            if channel != Channel::Prose {
+                continue;
+            }
+            for line in body.lines().filter(|l| !l.contains("/pull/")) {
+                line_pr_mentions(line, &mut mentions);
+            }
+        }
+        mentions
+    }
 
     #[test]
     fn adopts_pr_url_references_without_marking_them_created_here() {
@@ -741,10 +1018,213 @@ mod tests {
 
     #[test]
     fn extracts_numbers_from_assistant_prose_only() {
-        let transcript = "[assistant]\nI’ll update RQH #2469 and preserve #988.\n\
+        let transcript = "[assistant]\nI’ll update RQH #2469 and PR #988.\n\
                           [tool_result]\nHistorical PR #111\n\
                           [assistant]\nSee https://github.com/o/r/pull/7 as well.";
-        assert_eq!(assistant_pr_numbers(transcript), vec![2469, 988]);
+        assert_eq!(prose_pr_numbers(transcript), vec![2469, 988]);
+    }
+
+    /// The regression from the fan-out session: an agent's own numbered findings
+    /// (`#1`…`#6`) each resolved to a real merged PR in the repo.
+    #[test]
+    fn requires_a_pr_marker_on_bare_numbers() {
+        let prose = "#1 Chat-mode hot mic — fixed in three layers:\n\
+                     - BuilderCall.tsx — startAudioOff now includes !mediaActive\n\
+                     #4 First-mention artifact explanations: the fan-out closeout nudge\n\
+                     #6 End-call offer: the Platform-capabilities rule now allows one offer\n\
+                     Skipped #2, #3, and #5 per your call, and I've noted those.\n\
+                     Two loose ends from the original thread if you want them chased.";
+        assert_eq!(prose_pr_numbers(prose), Vec::<u64>::new());
+        // Unmarked numbers are dropped even in prose that discusses the code.
+        assert_eq!(prose_pr_numbers("preserve #988 as-is"), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn accepts_marked_numbers() {
+        assert_eq!(prose_pr_numbers("PR #972 is green"), vec![972]);
+        assert_eq!(prose_pr_numbers("pull request #972 landed"), vec![972]);
+        assert_eq!(prose_pr_numbers("PR: #972 needs a rebase"), vec![972]);
+        assert_eq!(prose_pr_numbers("(see PR #972)"), vec![972]);
+        assert_eq!(prose_pr_numbers("developer-portal#972 conflicts"), vec![972]);
+        assert_eq!(prose_pr_numbers("RQH #2469 is next"), vec![2469]);
+        // Conventional prose markers are not repo nicknames.
+        assert_eq!(prose_pr_numbers("SEV #2 postmortem"), Vec::<u64>::new());
+        assert_eq!(prose_pr_numbers("TODO #3 later"), Vec::<u64>::new());
+        assert_eq!(prose_pr_numbers("PROD-1234 #5 is unrelated"), Vec::<u64>::new());
+    }
+
+    /// `owner/repo#123` pins the repository, so it never has to be guessed
+    /// against the session's cwd.
+    #[test]
+    fn owner_repo_shorthand_pins_the_repository() {
+        assert_eq!(
+            prose_pr_mentions("Tavus-Engineering/developer-portal#972 conflicts"),
+            vec![(
+                PrMarker::Repo("Tavus-Engineering".into(), "developer-portal".into()),
+                972
+            )]
+        );
+        // A bare repo name has no owner, so it still resolves against the cwd.
+        assert_eq!(
+            prose_pr_mentions("developer-portal#972"),
+            vec![(PrMarker::Unqualified, 972)]
+        );
+    }
+
+    #[test]
+    fn follows_marked_number_runs_until_prose_breaks_them() {
+        assert_eq!(
+            prose_pr_numbers("PRs #100, #101 and #102 are stacked"),
+            vec![100, 101, 102]
+        );
+        // The run ends at the first non-list word, so the later list is ignored.
+        assert_eq!(
+            prose_pr_numbers("PR #100, #101 but skipped #2, #3"),
+            vec![100, 101]
+        );
+    }
+
+    /// The regression from the four-repo preview session: a `gh pr list` table and
+    /// a `git log` naming five merged RQH PRs turned all of them into session PRs.
+    #[test]
+    fn ignores_prs_that_only_appear_in_tool_output() {
+        let mut tracker = PrTracker::new();
+        let transcript = "\n[assistant]\nChecking recent request-handler history.\n\
+            \n[tool]\nexec_command {\"cmd\":\"gh pr list --repo Tavus-Engineering/request-handler --limit 5\"}\n\
+            \n[tool_result]\n\
+            2494\tci: Add :dev: reaction\troey/dev-reaction\tMERGED\thttps://github.com/Tavus-Engineering/request-handler/pull/2494\n\
+            2492\tfeat: allow raven-1.5\tyonatan/allow-raven-1-5\tMERGED\thttps://github.com/Tavus-Engineering/request-handler/pull/2492\n\
+            2481\tfeat: Expose sleep_phrase\troey/sleep-phrase\tMERGED\thttps://github.com/Tavus-Engineering/request-handler/pull/2481\n\
+            69a790ca ci: Add :dev: reaction, ECS only on source file changes (#2494)\n";
+        assert!(!tracker.scan_text(transcript, Path::new("/tmp")));
+        assert!(tracker.prs().is_empty());
+    }
+
+    /// A `gh pr create --body` that cites related PRs is describing context, not
+    /// touching those PRs — only the created PR's own URL counts.
+    #[test]
+    fn create_adopts_its_own_output_but_not_cited_prs() {
+        let mut tracker = PrTracker::new();
+        let transcript = "\n[tool]\nexec_command {\"cmd\":\"gh pr create --title docs --body \
+            'This aligns with [RQH #2475](https://github.com/Tavus-Engineering/request-handler/pull/2475).'\"}\n\
+            \n[tool_result]\nhttps://github.com/Tavus-Engineering/developer-portal/pull/1011\n";
+        assert!(tracker.scan_text(transcript, Path::new("/tmp")));
+        assert_eq!(tracker.prs().len(), 1);
+        assert_eq!(tracker.prs()[0].number, 1011);
+        assert!(tracker.prs()[0].created_here);
+    }
+
+    #[test]
+    fn adopts_prs_a_gh_command_targets() {
+        let mut tracker = PrTracker::new();
+        let transcript = "\n[tool]\nexec_command {\"cmd\":\"gh pr ready 1011 --repo Tavus-Engineering/developer-portal\"}\n\
+            \n[tool]\nexec_command {\"cmd\":\"gh pr checks https://github.com/Tavus-Engineering/tavus-api/pull/1073\"}\n";
+        assert!(tracker.scan_text(transcript, Path::new("/tmp")));
+        let numbers: Vec<u64> = tracker.prs().iter().map(|p| p.number).collect();
+        assert_eq!(numbers, vec![1011, 1073]);
+    }
+
+    /// `RQH #2499` names a repo the tracker can't resolve, so once #2499 is known
+    /// from a URL it must not also be looked up in the session's own repo, where
+    /// that number could belong to something unrelated.
+    #[test]
+    fn skips_cwd_lookup_for_numbers_already_tracked() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_text(
+            "opened https://github.com/Tavus-Engineering/request-handler/pull/2499",
+            Path::new("/tmp"),
+        );
+        tracker.scan_text("RQH #2499 still shows as open", Path::new("/tmp"));
+        assert_eq!(tracker.prs().len(), 1);
+        assert_eq!(tracker.prs()[0].repo, "request-handler");
+        assert!(!tracker.pending.keys().any(|key| key.contains("mention:")));
+    }
+
+    /// A PR the user pastes into their prompt is session work, wherever it lives.
+    #[test]
+    fn adopts_pr_urls_from_a_user_prompt() {
+        let mut tracker = PrTracker::new();
+        let prompt = "Also, while we're here, look at \
+            https://github.com/Tavus-Engineering/tavus-operator/pull/1509 and \
+            https://github.com/Tavus-Engineering/tavus-api/pull/1073";
+        assert!(tracker.scan_text(prompt, Path::new("/tmp")));
+        let numbers: Vec<u64> = tracker.prs().iter().map(|p| p.number).collect();
+        assert_eq!(numbers, vec![1509, 1073]);
+    }
+
+    /// Replay a real transcript through the scanner and print every PR it would
+    /// associate, turn by turn — the audit that catches over-eager detection
+    /// against a session whose widget you've actually looked at. Needs a local
+    /// transcript, so it's ignored by default:
+    ///   CRABIGATOR_TRANSCRIPT=~/.codex/sessions/2026/07/24/rollout-….jsonl \
+    ///   CRABIGATOR_PLATFORM=codex \
+    ///   cargo test pr::tests::replay_transcript -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn replay_transcript() {
+        let Ok(path) = std::env::var("CRABIGATOR_TRANSCRIPT") else {
+            panic!("set CRABIGATOR_TRANSCRIPT=<transcript.jsonl> (and CRABIGATOR_PLATFORM)");
+        };
+        let platform = match std::env::var("CRABIGATOR_PLATFORM").as_deref() {
+            Ok("codex") => crate::platforms::PlatformKind::Codex,
+            _ => crate::platforms::PlatformKind::Claude,
+        };
+        let content = std::fs::read_to_string(&path).expect("transcript is readable");
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Each user message starts a turn; replaying the prefix that ends at the
+        // next one reproduces what the app scanned while that turn was current.
+        let mut boundaries: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| {
+                line.contains(r#""role":"user""#) || line.contains(r#""type":"user""#)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        boundaries.push(lines.len());
+
+        let replay_path = std::env::temp_dir().join("crabigator-pr-replay.jsonl");
+        let mut located: Vec<PrLocation> = Vec::new();
+        let mut mentioned: Vec<u64> = Vec::new();
+        let mut scanned_chars = 0usize;
+
+        for (turn, end) in boundaries.iter().skip(1).enumerate() {
+            std::fs::write(&replay_path, lines[..*end].join("\n")).expect("replay file written");
+            let Ok(text) = crate::recap::collect_latest_turn_text(platform, Some(&replay_path))
+            else {
+                continue;
+            };
+            scanned_chars += text.activity.len() + text.user_prompt.as_deref().unwrap_or("").len();
+            let mut events = scan_events(text.user_prompt.as_deref().unwrap_or_default());
+            events.extend(scan_events(&text.activity));
+            for event in events {
+                match event {
+                    ScanEvent::Located(loc) if !located.contains(&loc) => {
+                        eprintln!("turn {turn}: located {}/{} #{}", loc.owner, loc.repo, loc.number);
+                        located.push(loc);
+                    }
+                    // Mirrors `resolve_mentioned_pr`: a number already located with
+                    // its own repository is never guessed against the cwd.
+                    ScanEvent::Mentioned(number)
+                        if !mentioned.contains(&number)
+                            && !located.iter().any(|l| l.number == number) =>
+                    {
+                        eprintln!("turn {turn}: mentioned #{number} (resolved against cwd)");
+                        mentioned.push(number);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&replay_path);
+
+        let mut numbers: Vec<u64> = located.iter().map(|l| l.number).collect();
+        numbers.sort_unstable();
+        eprintln!(
+            "\n{} turns, {scanned_chars} chars scanned\nlocated: {numbers:?}\nmentioned in cwd: {mentioned:?}",
+            boundaries.len() - 1
+        );
     }
 
     /// End-to-end against the live GitHub CLI: detect a created PR from scrollback,
