@@ -143,6 +143,29 @@ On the first hook event, crabigator creates a symlink from the Claude Code conve
 
 This allows accessing the session directory using either ID. The Claude session UUID is also stored in the stats file as `claude_session_id`.
 
+### Session IDs: Finding a Session From Any ID
+
+A session has three identifiers, and **each one is a directory under `/tmp`** — the crabigator ID (canonical), the assistant conversation UUID (symlinked by the hook), and the cloud/streaming ID (symlinked once cloud registration succeeds).
+
+**When the user gives you a bare ID with no label** — like `ab9b47bb` or `e881821b` — it is almost always the **streaming ID** shown in the status bar as `Streaming ab9b47bb`, which is only the **first 8 characters** of the full cloud session ID. Resolve it with a prefix glob, then read `transcript_path` out of `inspect.json`:
+
+```bash
+ID=ab9b47bb
+ls -d /tmp/crabigator-$ID*                          # → the session directory (a symlink)
+jq -r '.transcript_path, .session_id, .cwd' /tmp/crabigator-$ID*/inspect.json
+```
+
+`inspect.json` carries `session_id`, `cloud_session_id`, and `transcript_path`, so any one ID leads to the others and to the assistant's JSONL conversation log (`~/.claude/projects/…` or `~/.codex/sessions/…`).
+
+If the glob finds nothing, the session predates the cloud symlink or never registered. Fall back to searching by content:
+
+```bash
+grep -l "$ID" /tmp/crabigator-*/inspect.json                             # ID recorded in a mirror
+grep -rl "distinctive phrase from the session" ~/.claude/projects ~/.codex/sessions
+```
+
+`crabigator inspect` reports each session once, under its canonical directory, even though all three aliases match the glob.
+
 ### Self-Inspection (for Claude Code)
 
 When running inside crabigator, Claude Code can inspect its own session using the conversation UUID. The UUID is visible in the Claude Code UI or can be provided by the user.

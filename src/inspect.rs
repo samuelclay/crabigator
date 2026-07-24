@@ -200,6 +200,25 @@ fn discover_instances(dir_filter: &Option<String>) -> Result<Vec<(PathBuf, Value
         }
     }
 
+    // A session is reachable under several directory aliases (its crabigator ID
+    // plus symlinks for the assistant's conversation UUID and the cloud ID), so
+    // the glob finds the same session more than once. Report it once, preferring
+    // the canonical (non-symlinked) directory.
+    instances.sort_by_key(|(path, _)| {
+        let symlinked = path
+            .parent()
+            .and_then(|dir| dir.symlink_metadata().ok())
+            .is_some_and(|meta| meta.file_type().is_symlink());
+        (symlinked, path.clone())
+    });
+    let mut seen = std::collections::HashSet::new();
+    instances.retain(|(_, data)| {
+        let Some(id) = data.get("session_id").and_then(|v| v.as_str()) else {
+            return true;
+        };
+        seen.insert(id.to_string())
+    });
+
     Ok(instances)
 }
 

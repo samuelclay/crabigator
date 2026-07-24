@@ -32,6 +32,14 @@ pub struct WidgetMirror<T: Serialize> {
 #[derive(Serialize)]
 pub struct MirrorState {
     pub session_id: String,
+    /// Cloud session id used for streaming — the status bar shows its first 8
+    /// characters as "Streaming <id>", and `/tmp/crabigator-<cloud id>` links here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cloud_session_id: Option<String>,
+    /// The assistant transcript this session reads (Claude or Codex JSONL), so a
+    /// session found by any of its ids leads straight to its conversation log.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcript_path: Option<String>,
     pub cwd: String,
     pub terminal_title: Option<String>,
     /// All terminal titles from this session (for history display)
@@ -141,6 +149,8 @@ pub struct ChangeMirror {
 pub struct MirrorPublisher {
     enabled: bool,
     session_id: String,
+    cloud_session_id: Option<String>,
+    transcript_path: Option<String>,
     cwd: String,
     capture: CaptureMirror,
     last_publish: Instant,
@@ -161,6 +171,8 @@ impl MirrorPublisher {
         Self {
             enabled,
             session_id,
+            cloud_session_id: None,
+            transcript_path: None,
             cwd,
             capture,
             // Allow immediate first publish
@@ -185,6 +197,23 @@ impl MirrorPublisher {
     pub fn set_cwd(&mut self, cwd: String) {
         if self.cwd != cwd {
             self.cwd = cwd;
+            self.last_hash = 0;
+        }
+    }
+
+    /// Record the session's other identifiers once they're known: the cloud
+    /// (streaming) session id and the assistant transcript path. Publishing them
+    /// is what lets a bare streaming id be traced back to its conversation log.
+    pub fn set_cloud_session_id(&mut self, cloud_session_id: String) {
+        if self.cloud_session_id.as_deref() != Some(cloud_session_id.as_str()) {
+            self.cloud_session_id = Some(cloud_session_id);
+            self.last_hash = 0;
+        }
+    }
+
+    pub fn set_transcript_path(&mut self, transcript_path: &str) {
+        if self.transcript_path.as_deref() != Some(transcript_path) {
+            self.transcript_path = Some(transcript_path.to_string());
             self.last_hash = 0;
         }
     }
@@ -367,6 +396,8 @@ impl MirrorPublisher {
 
         MirrorState {
             session_id: self.session_id.clone(),
+            cloud_session_id: self.cloud_session_id.clone(),
+            transcript_path: self.transcript_path.clone(),
             cwd: self.cwd.clone(),
             terminal_title: terminal_title.map(String::from),
             title_history: title_history.to_vec(),

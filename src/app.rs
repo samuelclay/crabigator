@@ -298,7 +298,7 @@ impl App {
         // Initialize cloud client (optional - don't fail if cloud is unreachable)
         let cloud_client = Self::init_cloud_client(&session_id, &cwd_str, platform.as_ref()).await;
 
-        Ok(Self {
+        let mut app = Self {
             running: true,
             platform,
             platform_pty,
@@ -353,7 +353,39 @@ impl App {
             last_cloud_init_attempt: None,
             pending_cloud_init: None,
             last_cwd_detection: Instant::now() - CWD_DETECTION_INTERVAL,
-        })
+        };
+        app.link_cloud_session();
+        Ok(app)
+    }
+
+    /// Make the cloud (streaming) session ID a way back into this session: alias
+    /// the stats file and the session directory under it, and record it in the
+    /// mirror. The status bar and dashboard URLs show that ID — often the only one
+    /// at hand — so it has to lead back to the session directory and transcript.
+    ///
+    /// Called from both registration paths (startup and the reconnect retry), and
+    /// safe to repeat: aliasing an existing link is a no-op.
+    fn link_cloud_session(&mut self) {
+        let Some(cloud_id) = self
+            .cloud_client
+            .as_ref()
+            .and_then(|client| client.session_id())
+            .map(str::to_string)
+        else {
+            return;
+        };
+        #[cfg(unix)]
+        {
+            symlink_session_alias(
+                &format!("/tmp/crabigator-stats-{}.json", self.session_id),
+                &format!("/tmp/crabigator-stats-{}.json", cloud_id),
+            );
+            symlink_session_alias(
+                &format!("/tmp/crabigator-{}", self.session_id),
+                &format!("/tmp/crabigator-{}", cloud_id),
+            );
+        }
+        self.mirror_publisher.set_cloud_session_id(cloud_id);
     }
 
     /// Initialize cloud client - returns None if cloud is unreachable
@@ -771,17 +803,8 @@ impl App {
                         if let Ok(result) = rx.try_recv() {
                             self.pending_cloud_init = None;
                             if let Ok(client) = result {
-                                // Create symlink from cloud session ID to local stats file
-                                #[cfg(unix)]
-                                if let Some(cloud_id) = client.session_id() {
-                                    let stats_target = format!("/tmp/crabigator-stats-{}.json", self.session_id);
-                                    let stats_link = format!("/tmp/crabigator-stats-{}.json", cloud_id);
-                                    if stats_target != stats_link {
-                                        let _ = std::os::unix::fs::symlink(&stats_target, &stats_link);
-                                    }
-                                }
-
                                 self.cloud_client = Some(client);
+                                self.link_cloud_session();
                                 self.cloud_init_retry_count = 0; // Reset on success
                                 // Send current state immediately - state changes may have
                                 // occurred before the cloud client was ready
@@ -1207,6 +1230,12 @@ impl App {
             self.pr_tracker.prs(),
             cursor_position,
         )?;
+
+        // The transcript path arrives with the first hook/session event, so keep
+        // the mirror's copy current for anyone tracing this session back to its log.
+        if let Some(path) = self.session_stats.platform_stats.transcript_path.clone() {
+            self.mirror_publisher.set_transcript_path(&path);
+        }
 
         // Publish mirror state (throttled, only when --profile)
         let _ = self.mirror_publisher.maybe_publish(
@@ -2243,6 +2272,17 @@ impl TermSignals {
         {
             std::future::pending::<()>().await;
         }
+    }
+}
+
+/// Alias a session path under one of the session's other identifiers, so a
+/// session can be found by whichever ID the user happens to have — the crabigator
+/// ID, the assistant's conversation UUID, or the cloud/streaming ID. Best effort:
+/// an existing link (or a same-name target) is left alone.
+#[cfg(unix)]
+fn symlink_session_alias(target: &str, link: &str) {
+    if target != link {
+        let _ = std::os::unix::fs::symlink(target, link);
     }
 }
 
