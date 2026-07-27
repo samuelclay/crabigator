@@ -93,6 +93,10 @@ pub struct SessionPr {
     pub checks_failed: i64,
     pub checks_pending: i64,
     pub checks_total: i64,
+    /// Where the CI column points: the first failing job's own page when a check
+    /// failed, else the PR's Checks tab. Empty when the PR has no checks yet.
+    #[serde(default)]
+    pub ci_url: String,
     /// True when we saw `gh pr create` produce it; false when it was updated
     /// (pushed to / edited) but created elsewhere or in a prior session.
     pub created_here: bool,
@@ -120,6 +124,7 @@ impl SessionPr {
             checks_failed: 0,
             checks_pending: 0,
             checks_total: 0,
+            ci_url: String::new(),
             created_here,
             refreshed_at: 0,
         }
@@ -200,8 +205,8 @@ struct GhPrJson {
     status_check_rollup: Vec<CheckEntry>,
 }
 
-/// One entry in `statusCheckRollup`: either a CheckRun (uses `status`/`conclusion`)
-/// or a StatusContext (uses `state`).
+/// One entry in `statusCheckRollup`: either a CheckRun (uses `status`/`conclusion`
+/// and links via `detailsUrl`) or a StatusContext (uses `state` and `targetUrl`).
 #[derive(Debug, Deserialize)]
 struct CheckEntry {
     #[serde(default)]
@@ -210,6 +215,10 @@ struct CheckEntry {
     status: Option<String>,
     #[serde(default)]
     state: Option<String>,
+    #[serde(default, rename = "detailsUrl")]
+    details_url: Option<String>,
+    #[serde(default, rename = "targetUrl")]
+    target_url: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -235,10 +244,22 @@ impl CheckEntry {
         }
         match self.conclusion.as_deref() {
             Some("SUCCESS") | Some("NEUTRAL") | Some("SKIPPED") => CheckClass::Pass,
-            Some("FAILURE") | Some("TIMED_OUT") | Some("CANCELLED") | Some("ACTION_REQUIRED")
-            | Some("STARTUP_FAILURE") | Some("STALE") => CheckClass::Fail,
+            Some("FAILURE")
+            | Some("TIMED_OUT")
+            | Some("CANCELLED")
+            | Some("ACTION_REQUIRED")
+            | Some("STARTUP_FAILURE")
+            | Some("STALE") => CheckClass::Fail,
             _ => CheckClass::Pending,
         }
+    }
+
+    /// The page for this check — a workflow job's logs, or a status context's target.
+    fn url(&self) -> Option<&str> {
+        self.details_url
+            .as_deref()
+            .or(self.target_url.as_deref())
+            .filter(|url| !url.is_empty())
     }
 }
 
@@ -527,6 +548,7 @@ impl PrTracker {
         let now = now_unix_ms();
         let (passed, failed, pending) = count_checks(&json.status_check_rollup);
         let total = passed + failed + pending;
+        let ci_url = ci_link(&json.status_check_rollup, &url);
 
         if let Some(existing) = self.prs.iter_mut().find(|p| p.url == url) {
             let before = existing.clone();
@@ -544,6 +566,7 @@ impl PrTracker {
             existing.checks_failed = failed;
             existing.checks_pending = pending;
             existing.checks_total = total;
+            existing.ci_url = ci_url;
             existing.refreshed_at = now;
             return *existing != before;
         }
@@ -566,11 +589,29 @@ impl PrTracker {
             checks_failed: failed,
             checks_pending: pending,
             checks_total: total,
+            ci_url,
             created_here,
             refreshed_at: now,
         });
         true
     }
+}
+
+/// Where the CI column should link for this PR.
+///
+/// A red rollup goes straight to the first failing job, so clicking the `✗N CI`
+/// cell lands on the logs that explain it. Anything else goes to the PR's Checks
+/// tab, which lists every run in PR context.
+fn ci_link(rollup: &[CheckEntry], pr_url: &str) -> String {
+    if rollup.is_empty() || pr_url.is_empty() {
+        return String::new();
+    }
+    rollup
+        .iter()
+        .find(|entry| entry.classify() == CheckClass::Fail)
+        .and_then(CheckEntry::url)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{pr_url}/checks"))
 }
 
 /// Tally a `statusCheckRollup` into (passed, failed, pending) counts.
@@ -855,7 +896,12 @@ fn trailing_repo_ref(text: &str) -> Option<PrMarker> {
 fn is_number_list_gap(gap: &str) -> bool {
     gap.split(|c: char| c.is_whitespace() || c == ',')
         .filter(|token| !token.is_empty())
-        .all(|token| matches!(token.to_ascii_lowercase().as_str(), "and" | "or" | "&" | "+"))
+        .all(|token| {
+            matches!(
+                token.to_ascii_lowercase().as_str(),
+                "and" | "or" | "&" | "+"
+            )
+        })
 }
 
 const GH_JSON_FIELDS: &str = "number,title,headRefName,url,state,isDraft,additions,deletions,\
@@ -930,7 +976,10 @@ mod tests {
 
     /// The PR numbers a chunk of text mentions in prose, in order.
     fn prose_pr_numbers(text: &str) -> Vec<u64> {
-        prose_pr_mentions(text).into_iter().map(|(_, n)| n).collect()
+        prose_pr_mentions(text)
+            .into_iter()
+            .map(|(_, n)| n)
+            .collect()
     }
 
     fn prose_pr_mentions(text: &str) -> Vec<(PrMarker, u64)> {
@@ -1045,12 +1094,18 @@ mod tests {
         assert_eq!(prose_pr_numbers("pull request #972 landed"), vec![972]);
         assert_eq!(prose_pr_numbers("PR: #972 needs a rebase"), vec![972]);
         assert_eq!(prose_pr_numbers("(see PR #972)"), vec![972]);
-        assert_eq!(prose_pr_numbers("developer-portal#972 conflicts"), vec![972]);
+        assert_eq!(
+            prose_pr_numbers("developer-portal#972 conflicts"),
+            vec![972]
+        );
         assert_eq!(prose_pr_numbers("RQH #2469 is next"), vec![2469]);
         // Conventional prose markers are not repo nicknames.
         assert_eq!(prose_pr_numbers("SEV #2 postmortem"), Vec::<u64>::new());
         assert_eq!(prose_pr_numbers("TODO #3 later"), Vec::<u64>::new());
-        assert_eq!(prose_pr_numbers("PROD-1234 #5 is unrelated"), Vec::<u64>::new());
+        assert_eq!(
+            prose_pr_numbers("PROD-1234 #5 is unrelated"),
+            Vec::<u64>::new()
+        );
     }
 
     /// `owner/repo#123` pins the repository, so it never has to be guessed
@@ -1201,7 +1256,10 @@ mod tests {
             for event in events {
                 match event {
                     ScanEvent::Located(loc) if !located.contains(&loc) => {
-                        eprintln!("turn {turn}: located {}/{} #{}", loc.owner, loc.repo, loc.number);
+                        eprintln!(
+                            "turn {turn}: located {}/{} #{}",
+                            loc.owner, loc.repo, loc.number
+                        );
                         located.push(loc);
                     }
                     // Mirrors `resolve_mentioned_pr`: a number already located with
@@ -1260,6 +1318,56 @@ mod tests {
         assert!(pr.additions > 0);
     }
 
+    /// A completed check run in the given class, optionally with its own page.
+    fn check(class: CheckClass, url: Option<&str>) -> CheckEntry {
+        CheckEntry {
+            conclusion: match class {
+                CheckClass::Pass => Some("SUCCESS".into()),
+                CheckClass::Fail => Some("FAILURE".into()),
+                CheckClass::Pending => None,
+            },
+            status: Some(match class {
+                CheckClass::Pending => "IN_PROGRESS".into(),
+                _ => "COMPLETED".to_string(),
+            }),
+            state: None,
+            details_url: url.map(str::to_string),
+            target_url: None,
+        }
+    }
+
+    #[test]
+    fn ci_link_targets_the_failing_job_then_falls_back_to_the_checks_tab() {
+        let pr_url = "https://github.com/o/r/pull/5";
+        let job = "https://github.com/o/r/actions/runs/1/job/2";
+
+        // Red: straight to the first failing job's logs.
+        let red = [
+            check(CheckClass::Pass, Some("https://github.com/o/r/actions/9")),
+            check(CheckClass::Fail, Some(job)),
+            check(CheckClass::Fail, Some("https://github.com/o/r/actions/3")),
+        ];
+        assert_eq!(ci_link(&red, pr_url), job);
+
+        // Green and pending both list every run in PR context instead.
+        let checks_tab = format!("{pr_url}/checks");
+        assert_eq!(
+            ci_link(&[check(CheckClass::Pass, Some(job))], pr_url),
+            checks_tab
+        );
+        assert_eq!(
+            ci_link(&[check(CheckClass::Pending, Some(job))], pr_url),
+            checks_tab
+        );
+        // A failure GitHub gave no page for still leads somewhere useful.
+        assert_eq!(
+            ci_link(&[check(CheckClass::Fail, None)], pr_url),
+            checks_tab
+        );
+        // No checks at all → no link (the cell is blank anyway).
+        assert_eq!(ci_link(&[], pr_url), "");
+    }
+
     #[test]
     fn apply_fetch_updates_existing() {
         let mut tracker = PrTracker::new();
@@ -1284,16 +1392,8 @@ mod tests {
             mergeable: "MERGEABLE".into(),
             merge_state_status: "CLEAN".into(),
             status_check_rollup: vec![
-                CheckEntry {
-                    conclusion: Some("SUCCESS".into()),
-                    status: Some("COMPLETED".into()),
-                    state: None,
-                },
-                CheckEntry {
-                    conclusion: Some("FAILURE".into()),
-                    status: Some("COMPLETED".into()),
-                    state: None,
-                },
+                check(CheckClass::Pass, Some("https://github.com/o/r/actions/1")),
+                check(CheckClass::Fail, Some("https://github.com/o/r/actions/2")),
             ],
         };
         let changed = tracker.apply_fetch(json, Some(loc.url.clone()), true);
@@ -1302,6 +1402,8 @@ mod tests {
         assert_eq!(tracker.prs()[0].mergeable, "MERGEABLE");
         assert_eq!(tracker.prs()[0].checks_passed, 1);
         assert_eq!(tracker.prs()[0].checks_failed, 1);
+        // The failing job wins the CI link, so the cell lands on its logs.
+        assert_eq!(tracker.prs()[0].ci_url, "https://github.com/o/r/actions/2");
         assert_eq!(tracker.prs()[0].branch, "feature/x");
         assert_eq!(tracker.prs()[0].additions, 10);
     }

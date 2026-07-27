@@ -260,21 +260,21 @@ type PrCell = (String, usize, usize);
 
 fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
     let identity = truncate_identity(pr, widths.identity);
-    let identity_styled = if let Some(identity_label) = identity.strip_prefix("⑂ ") {
-        format!(
-            "{}⑂ {}{}",
-            fg(color::PURPLE),
-            escape::hyperlink(&pr.url, identity_label),
-            RESET_FG
-        )
-    } else {
-        format!(
-            "{}{}{}",
-            fg(color::PURPLE),
-            escape::hyperlink(&pr.url, &identity),
-            RESET_FG
-        )
+    // The `⑂` glyph stays outside the link so only `repo #num` reads as one target.
+    let (glyph, identity_label) = match identity.strip_prefix("⑂ ") {
+        Some(label) => ("⑂ ", label),
+        None => ("", identity.as_str()),
     };
+    let identity_styled = format!(
+        "{}{}{}{}",
+        fg(color::PURPLE),
+        glyph,
+        escape::hyperlink(&pr.url, identity_label),
+        RESET_FG
+    );
+
+    // Both diff columns open the PR's Files-changed tab — the actual changes.
+    let files_url = pr_files_url(pr);
 
     let full_diff = pr_diff_text(pr);
     let diff = truncate_display(&full_diff, widths.diff);
@@ -295,8 +295,17 @@ fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
 
     [
         (identity_styled, identity.width(), widths.identity),
-        (diff_styled, diff.width(), widths.diff),
-        colored_cell(&pr_files_text(pr), color::DARK_GRAY, widths.files),
+        (
+            link_text(&files_url, diff_styled, diff.width()),
+            diff.width(),
+            widths.diff,
+        ),
+        linked_cell(
+            &pr_files_text(pr),
+            color::DARK_GRAY,
+            widths.files,
+            &files_url,
+        ),
         colored_cell_capped(
             &pr_branch_text(pr),
             color::DARK_GRAY,
@@ -312,13 +321,31 @@ fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 3] {
     let (merge_label, merge_color) = pr_merge_label(pr);
     [
         colored_cell(state_label, state_color, widths.state),
-        colored_cell(&ci_label, ci_color, widths.ci),
+        // Failing CI points at the failing job; anything else at the Checks tab.
+        linked_cell(&ci_label, ci_color, widths.ci, &pr.ci_url),
         colored_cell(merge_label, merge_color, widths.merge),
     ]
 }
 
 fn colored_cell(label: &str, color: u8, width: usize) -> PrCell {
     colored_cell_capped(label, color, width, width)
+}
+
+/// A colored cell whose visible text is also an OSC 8 link.
+fn linked_cell(label: &str, color: u8, width: usize, url: &str) -> PrCell {
+    let (styled, visible, width) = colored_cell(label, color, width);
+    (link_text(url, styled, visible), visible, width)
+}
+
+/// Wrap already-styled cell text in a link, skipping empty cells and empty
+/// targets so neither produces a clickable blank. Column padding is written
+/// outside the cell, so the link never covers dead space.
+fn link_text(url: &str, styled: String, visible: usize) -> String {
+    if url.is_empty() || visible == 0 {
+        styled
+    } else {
+        escape::hyperlink(url, &styled)
+    }
 }
 
 fn colored_cell_capped(label: &str, color: u8, width: usize, max_content: usize) -> PrCell {
@@ -373,6 +400,15 @@ fn pr_diff_text(pr: &SessionPr) -> String {
         String::new()
     } else {
         format!("+{} -{}", pr.additions, pr.deletions)
+    }
+}
+
+/// The PR's Files-changed tab — where the diff columns point.
+fn pr_files_url(pr: &SessionPr) -> String {
+    if pr.url.is_empty() {
+        String::new()
+    } else {
+        format!("{}/files", pr.url)
     }
 }
 
@@ -1064,6 +1100,7 @@ mod tests {
             checks_failed: 0,
             checks_pending: 2,
             checks_total: 40,
+            ci_url: format!("https://github.com/Tavus-Engineering/{repo}/pull/{number}/checks"),
             created_here: false,
             refreshed_at: 0,
         }
@@ -1137,6 +1174,52 @@ mod tests {
         assert!(widths.files > 0);
         assert!(widths.state > 0);
         assert_eq!(widths.total_width(), 80);
+    }
+
+    /// Every cell that has a target carries its own link, and linking never
+    /// changes the width the column was laid out for.
+    #[test]
+    fn pr_cells_link_to_their_own_github_targets() {
+        let pr = sample_pr("request-handler", 2412, "sam/pal-fanout-fable");
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
+        let left = pr_left_cells(&pr, &widths);
+        let right = pr_right_cells(&pr, &widths);
+
+        let link_to = |url: &str| format!("\x1b]8;;{url}\x07");
+        // Identity → the PR itself; the `⑂` glyph stays outside the link.
+        assert!(left[0].0.contains(&link_to(&pr.url)));
+        assert!(left[0].0.contains("⑂ \x1b]8;;"));
+        // Diff and file count → the Files-changed tab.
+        let files = link_to(&format!("{}/files", pr.url));
+        assert!(left[1].0.contains(&files));
+        assert!(left[2].0.contains(&files));
+        // CI → wherever the rollup pointed; state and merge stay plain.
+        assert!(right[1].0.contains(&link_to(&pr.ci_url)));
+        assert!(!right[0].0.contains("\x1b]8;;"));
+        assert!(!right[2].0.contains("\x1b]8;;"));
+
+        for (styled, visible, _) in left.iter().chain(right.iter()) {
+            assert_eq!(crate::ui::utils::strip_ansi_len(styled), *visible);
+        }
+    }
+
+    /// A PR with nothing to point at (no checks, no diff yet) stays unlinked
+    /// rather than rendering a clickable blank cell.
+    #[test]
+    fn pr_cells_without_targets_are_not_linked() {
+        let mut pending = sample_pr("developer-portal", 989, "");
+        pending.additions = 0;
+        pending.deletions = 0;
+        pending.changed_files = 0;
+        pending.ci_url = String::new();
+
+        let widths = PrColumnWidths::from_prs(&[sample_pr("request-handler", 2412, "x")], 160);
+        let left = pr_left_cells(&pending, &widths);
+        let right = pr_right_cells(&pending, &widths);
+
+        assert!(!left[1].0.contains("\x1b]8;;"));
+        assert!(!left[2].0.contains("\x1b]8;;"));
+        assert!(!right[1].0.contains("\x1b]8;;"));
     }
 
     #[test]

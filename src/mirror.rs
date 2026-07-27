@@ -371,6 +371,8 @@ impl MirrorPublisher {
             pr.checks_passed.hash(&mut hasher);
             pr.checks_failed.hash(&mut hasher);
             pr.checks_pending.hash(&mut hasher);
+            // A rerun can keep the same counts while moving the failing job.
+            pr.ci_url.hash(&mut hasher);
         }
 
         hasher.finish()
