@@ -58,8 +58,8 @@ export const dashboardHtml = `<!DOCTYPE html>
             <button class="filter-clear" onclick="clearSessionFilter()" title="Show all sessions">✕</button>
         </div>
         <div class="sessions-container">
-            <button class="sessions-btn" id="sessions-btn" onclick="toggleSidebar()">
-                <span class="sessions-count" id="sessions-count">0</span>
+            <button class="sessions-btn" id="sessions-btn" onclick="toggleSidebar()" aria-label="Loading sessions" aria-busy="true">
+                <span class="sessions-count" id="sessions-count">Loading</span>
                 <span class="sessions-label">sessions</span>
             </button>
         </div>

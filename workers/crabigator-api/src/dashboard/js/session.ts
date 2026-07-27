@@ -247,6 +247,7 @@ export const sessionJs = `
 
         async function loadSessions() {
             sessionsLoadInFlight = true;
+            updateSessionsCount();
             showSessionsLoadingIfEmpty();
             try {
                 // Fetch sessions and projects in parallel
