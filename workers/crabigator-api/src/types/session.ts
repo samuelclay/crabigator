@@ -253,6 +253,7 @@ export interface SessionPr {
     checks_failed: number;
     checks_pending: number;
     checks_total: number;
+    ci_url?: string;        // Failing job's page, else the PR's Checks tab
     created_here: boolean;
     refreshed_at: number;
 }

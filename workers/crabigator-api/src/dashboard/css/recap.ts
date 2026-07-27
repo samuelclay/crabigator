@@ -329,7 +329,11 @@ body.hide-section-prs .session-prs { display: none !important; }
     font-size: 10px;
     margin-left: auto;
     white-space: nowrap;
+    text-decoration: none;
 }
+/* Diff and CI badges are links when GitHub gave us somewhere to go; the
+   underline stays on hover so the row reads as a table at rest. */
+a.pr-diff:hover, a.pr-ci:hover { text-decoration: underline; }
 .session-prs .pr-diff .rd-add { color: var(--accent-green); }
 .session-prs .pr-diff .rd-del { color: var(--accent-red); }
 .session-prs .pr-diff .pr-files { color: var(--text-dim); margin-left: 4px; }
@@ -349,6 +353,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     font-size: 10px;
     font-weight: 600;
     white-space: nowrap;
+    text-decoration: none;
 }
 .session-prs .pr-ci.pass { color: var(--accent-green); }
 .session-prs .pr-ci.fail { color: var(--accent-red); }

@@ -383,11 +383,22 @@ export const changesWidgetJs = `
         }
 
         // CI rollup badge: ✓ CI (all pass) / ✗N CI (failures) / ●N CI (pending).
+        // Links to whatever the CLI resolved: the failing job when CI is red,
+        // otherwise the PR's Checks tab.
         function prCiBadge(pr) {
             if (!pr.checks_total) return '';
-            if (pr.checks_failed > 0) return '<span class="pr-ci fail">✗' + pr.checks_failed + ' CI</span>';
-            if (pr.checks_pending > 0) return '<span class="pr-ci pending">●' + pr.checks_pending + ' CI</span>';
-            return '<span class="pr-ci pass">✓ CI</span>';
+            const cls = pr.checks_failed > 0 ? 'fail' : pr.checks_pending > 0 ? 'pending' : 'pass';
+            const label = pr.checks_failed > 0
+                ? '✗' + pr.checks_failed + ' CI'
+                : pr.checks_pending > 0 ? '●' + pr.checks_pending + ' CI' : '✓ CI';
+            return prExternalLink(pr.ci_url, 'pr-ci ' + cls, label);
+        }
+
+        // A badge that opens a GitHub page when one is known, else plain text.
+        function prExternalLink(url, className, innerHtml) {
+            if (!url) return '<span class="' + className + '">' + innerHtml + '</span>';
+            return '<a class="' + className + '" href="' + escapeHtml(url)
+                + '" target="_blank" rel="noopener noreferrer">' + innerHtml + '</a>';
         }
 
         // Merge cleanliness badge: conflicts / behind (needs update) / clean.
@@ -437,8 +448,10 @@ export const changesWidgetJs = `
                 const files = pr.changed_files
                     ? '<span class="pr-files">' + pr.changed_files + (pr.changed_files === 1 ? ' file' : ' files') + '</span>'
                     : '';
+                // The diff cluster opens the PR's Files-changed tab.
                 const diff = (diffParts.length || files)
-                    ? '<span class="pr-diff">' + diffParts.join(' ') + (diffParts.length && files ? ' ' : '') + files + '</span>'
+                    ? prExternalLink(pr.url ? pr.url + '/files' : '', 'pr-diff',
+                        diffParts.join(' ') + (diffParts.length && files ? ' ' : '') + files)
                     : '';
                 const link = '<a class="pr-link" href="' + escapeHtml(pr.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(repoLabel) + '</a>';
                 // Right-hand status cluster: state, CI, merge cleanliness.
