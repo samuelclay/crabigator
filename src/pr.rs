@@ -24,6 +24,10 @@ use serde::{Deserialize, Serialize};
 
 /// Minimum time between `gh pr view` refreshes for a single PR.
 const REFRESH_THROTTLE: Duration = Duration::from_secs(30);
+/// Minimum time between review-thread queries for a single PR. Conversations
+/// move at human speed and the count costs an extra GraphQL round trip, so it
+/// refreshes far less often than diff stats and CI.
+const COMMENTS_THROTTLE: Duration = Duration::from_secs(180);
 /// Safety cap on how long a `gh pr create` keeps claiming PR URLs, in case no
 /// new prompt arrives to close the window. Normally closed by `on_new_prompt`.
 const CREATE_CLAIM_WINDOW: Duration = Duration::from_secs(600);
@@ -97,6 +101,17 @@ pub struct SessionPr {
     /// failed, else the PR's Checks tab. Empty when the PR has no checks yet.
     #[serde(default)]
     pub ci_url: String,
+    /// Unresolved review threads — GitHub's "N unresolved conversations".
+    /// Only queried while the PR is open, and cleared once it isn't.
+    #[serde(default)]
+    pub unresolved_comments: i64,
+    /// Anchor of the first unresolved thread's comment, so the badge lands on
+    /// the conversation itself rather than the top of the PR.
+    #[serde(default)]
+    pub comments_url: String,
+    /// Unix ms of the last successful review-thread query (0 = never).
+    #[serde(default)]
+    pub comments_refreshed_at: u64,
     /// True when we saw `gh pr create` produce it; false when it was updated
     /// (pushed to / edited) but created elsewhere or in a prior session.
     pub created_here: bool,
@@ -125,6 +140,9 @@ impl SessionPr {
             checks_pending: 0,
             checks_total: 0,
             ci_url: String::new(),
+            unresolved_comments: 0,
+            comments_url: String::new(),
+            comments_refreshed_at: 0,
             created_here,
             refreshed_at: 0,
         }
@@ -263,7 +281,7 @@ impl CheckEntry {
     }
 }
 
-/// Result of a background `gh` job.
+/// Result of a background `gh pr view` job.
 struct FetchResult {
     /// Location we asked about (for placeholder identity / created_here carry-over).
     requested_url: Option<String>,
@@ -271,11 +289,79 @@ struct FetchResult {
     data: Result<GhPrJson, String>,
 }
 
+/// What a finished background job carries back.
+enum JobResult {
+    /// A `gh pr view` enrichment.
+    Pr(FetchResult),
+    /// A review-thread count for the PR at `url`.
+    Threads {
+        url: String,
+        data: Result<ReviewThreads, String>,
+    },
+}
+
+/// Unresolved review threads on one PR.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ReviewThreads {
+    unresolved: i64,
+    /// The first unresolved thread's comment anchor (empty when none).
+    first_url: String,
+}
+
+/// GraphQL response shape for [`REVIEW_THREADS_QUERY`].
+#[derive(Debug, Deserialize)]
+struct ThreadsResponse {
+    data: ThreadsData,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadsData {
+    repository: ThreadsRepository,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadsRepository {
+    #[serde(rename = "pullRequest")]
+    pull_request: ThreadsPullRequest,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadsPullRequest {
+    #[serde(rename = "reviewThreads")]
+    review_threads: ThreadNodes,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ThreadNodes {
+    #[serde(default)]
+    nodes: Vec<ReviewThreadNode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReviewThreadNode {
+    #[serde(default, rename = "isResolved")]
+    is_resolved: bool,
+    #[serde(default)]
+    comments: ThreadComments,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ThreadComments {
+    #[serde(default)]
+    nodes: Vec<ThreadComment>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadComment {
+    #[serde(default)]
+    url: String,
+}
+
 /// Owns PR detection, background enrichment, and the session-scoped list.
 pub struct PrTracker {
     prs: Vec<SessionPr>,
     /// In-flight `gh` jobs keyed by the URL (or synthetic branch key) being fetched.
-    pending: HashMap<String, mpsc::Receiver<FetchResult>>,
+    pending: HashMap<String, mpsc::Receiver<JobResult>>,
     /// Set when a `gh pr create` was seen; the next fresh PR URL is attributed to it.
     expect_created_since: Option<Instant>,
     /// Last time a `git push` / PR-edit triggered a current-branch PR lookup.
@@ -284,6 +370,9 @@ pub struct PrTracker {
     /// Last attempt to resolve a bare `#123` mention in a working directory.
     /// The same latest-turn transcript is re-scanned on every hook tick.
     mention_resolved_at: HashMap<String, Instant>,
+    /// Last review-thread query attempt per PR URL. Failures back off like
+    /// successes, so a PR whose threads we can't read isn't re-queried each tick.
+    comments_attempted_at: HashMap<String, Instant>,
 }
 
 impl Default for PrTracker {
@@ -300,6 +389,7 @@ impl PrTracker {
             expect_created_since: None,
             last_branch_resolve: None,
             mention_resolved_at: HashMap::new(),
+            comments_attempted_at: HashMap::new(),
         }
     }
 
@@ -407,11 +497,11 @@ impl PrTracker {
         let cwd = cwd.to_path_buf();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(FetchResult {
+            let _ = tx.send(JobResult::Pr(FetchResult {
                 requested_url: None,
                 created_here: false,
                 data: fetch_pr_number(&cwd, number),
-            });
+            }));
         });
         self.pending.insert(key, rx);
     }
@@ -474,11 +564,11 @@ impl PrTracker {
         let cwd = cwd.to_path_buf();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(FetchResult {
+            let _ = tx.send(JobResult::Pr(FetchResult {
                 requested_url: None,
                 created_here: false,
                 data: fetch_pr_for_branch(&cwd),
-            });
+            }));
         });
         self.pending.insert(key, rx);
     }
@@ -491,13 +581,53 @@ impl PrTracker {
         let (tx, rx) = mpsc::channel();
         let url_for_job = url.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(FetchResult {
+            let _ = tx.send(JobResult::Pr(FetchResult {
                 requested_url: Some(url_for_job.clone()),
                 created_here,
                 data: fetch_pr(&url_for_job),
-            });
+            }));
         });
         self.pending.insert(url, rx);
+    }
+
+    /// Query unresolved review threads for open PRs whose count is due.
+    ///
+    /// Merged and closed PRs are skipped — their conversations are moot, and the
+    /// count they last had is cleared by [`apply_fetch`] — so this only costs a
+    /// GraphQL round trip for work still in flight.
+    fn refresh_review_threads(&mut self) {
+        let due: Vec<String> = self
+            .prs
+            .iter()
+            .filter(|pr| pr.state == "OPEN" && !pr.url.is_empty())
+            .map(|pr| pr.url.clone())
+            .filter(|url| !self.pending.contains_key(&threads_key(url)))
+            .filter(|url| {
+                self.comments_attempted_at
+                    .get(url)
+                    .map(|t| t.elapsed() >= COMMENTS_THROTTLE)
+                    .unwrap_or(true)
+            })
+            .collect();
+        for url in due {
+            self.spawn_threads_fetch(url);
+        }
+    }
+
+    /// Spawn a `gh api graphql` review-thread job for one PR.
+    fn spawn_threads_fetch(&mut self, url: String) {
+        self.comments_attempted_at
+            .insert(url.clone(), Instant::now());
+        let (tx, rx) = mpsc::channel();
+        let url_for_job = url.clone();
+        std::thread::spawn(move || {
+            let data = fetch_review_threads(&url_for_job);
+            let _ = tx.send(JobResult::Threads {
+                url: url_for_job,
+                data,
+            });
+        });
+        self.pending.insert(threads_key(&url), rx);
     }
 
     /// Collect any finished background jobs. Returns true if the visible list changed.
@@ -517,15 +647,42 @@ impl PrTracker {
 
         for (key, result) in done_keys {
             self.pending.remove(&key);
-            let Some(result) = result else { continue };
-            if let Ok(json) = result.data {
-                changed |= self.apply_fetch(json, result.requested_url, result.created_here);
-            }
             // Errors are silent: a PR we can't view (auth, deleted, private) simply
             // doesn't gain live stats. If it was only a placeholder from a claim we
             // still keep it so the user sees the URL they just created.
+            match result {
+                Some(JobResult::Pr(result)) => {
+                    if let Ok(json) = result.data {
+                        changed |=
+                            self.apply_fetch(json, result.requested_url, result.created_here);
+                    }
+                }
+                Some(JobResult::Threads {
+                    url,
+                    data: Ok(threads),
+                }) => changed |= self.apply_threads(&url, threads),
+                Some(JobResult::Threads { .. }) | None => {}
+            }
         }
 
+        // A PR that just became known (or whose count aged out) queries here;
+        // its result lands on a later poll.
+        self.refresh_review_threads();
+
+        changed
+    }
+
+    /// Merge a review-thread count into the PR it belongs to.
+    fn apply_threads(&mut self, url: &str, threads: ReviewThreads) -> bool {
+        let now = now_unix_ms();
+        let Some(pr) = self.prs.iter_mut().find(|p| p.url == url) else {
+            return false;
+        };
+        let changed =
+            pr.unresolved_comments != threads.unresolved || pr.comments_url != threads.first_url;
+        pr.unresolved_comments = threads.unresolved;
+        pr.comments_url = threads.first_url;
+        pr.comments_refreshed_at = now;
         changed
     }
 
@@ -567,6 +724,14 @@ impl PrTracker {
             existing.checks_pending = pending;
             existing.checks_total = total;
             existing.ci_url = ci_url;
+            // Unresolved threads are only tracked while a PR is open; once it
+            // merges or closes the count would freeze at a stale value, so drop
+            // it rather than leave a badge that no longer refreshes.
+            if existing.state != "OPEN" {
+                existing.unresolved_comments = 0;
+                existing.comments_url = String::new();
+                existing.comments_refreshed_at = 0;
+            }
             existing.refreshed_at = now;
             return *existing != before;
         }
@@ -590,6 +755,10 @@ impl PrTracker {
             checks_pending: pending,
             checks_total: total,
             ci_url,
+            // Filled in by the review-thread job this insert makes eligible.
+            unresolved_comments: 0,
+            comments_url: String::new(),
+            comments_refreshed_at: 0,
             created_here,
             refreshed_at: now,
         });
@@ -958,6 +1127,74 @@ fn run_gh_pr_view(args: &[&str], cwd: Option<&Path>) -> Result<GhPrJson, String>
     last.ok_or_else(|| "gh returned no data".to_string())
 }
 
+/// Key under which a PR's review-thread job is tracked in `pending`.
+fn threads_key(url: &str) -> String {
+    format!("threads:{url}")
+}
+
+/// `gh pr view` has no review-thread field, so the unresolved count comes from
+/// GraphQL. 100 threads is well past what any reviewable PR carries; a longer
+/// conversation simply undercounts rather than paging.
+const REVIEW_THREADS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
+     repository(owner:$owner,name:$repo){\
+       pullRequest(number:$number){\
+         reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{url}}}}\
+       }\
+     }\
+   }";
+
+/// Count a PR's unresolved review threads, and note where the first one lives.
+fn fetch_review_threads(url: &str) -> Result<ReviewThreads, String> {
+    let caps = pr_url_re()
+        .captures(url)
+        .ok_or_else(|| format!("not a PR url: {url}"))?;
+    let output = Command::new("gh")
+        .args([
+            "api",
+            "graphql",
+            "-f",
+            &format!("query={REVIEW_THREADS_QUERY}"),
+            "-f",
+            &format!("owner={}", &caps[1]),
+            "-f",
+            &format!("repo={}", &caps[2]),
+            // `-F` types the value, so `number` arrives as the Int! the query wants.
+            "-F",
+            &format!("number={}", &caps[3]),
+        ])
+        .output()
+        .map_err(|e| format!("gh not runnable: {e}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    parse_review_threads(&output.stdout)
+}
+
+/// Tally the unresolved threads in a [`REVIEW_THREADS_QUERY`] response.
+fn parse_review_threads(json: &[u8]) -> Result<ReviewThreads, String> {
+    let response: ThreadsResponse =
+        serde_json::from_slice(json).map_err(|e| format!("gh json parse: {e}"))?;
+
+    let mut threads = ReviewThreads::default();
+    for thread in response
+        .data
+        .repository
+        .pull_request
+        .review_threads
+        .nodes
+        .iter()
+        .filter(|thread| !thread.is_resolved)
+    {
+        threads.unresolved += 1;
+        if threads.first_url.is_empty() {
+            if let Some(comment) = thread.comments.nodes.first() {
+                threads.first_url = comment.url.clone();
+            }
+        }
+    }
+    Ok(threads)
+}
+
 fn split_owner_repo(url: &str) -> Option<(String, String)> {
     let caps = pr_url_re().captures(url)?;
     Some((caps[1].to_string(), caps[2].to_string()))
@@ -1285,6 +1522,30 @@ mod tests {
         );
     }
 
+    /// End-to-end against the live GitHub CLI: run the review-thread query and
+    /// parse what comes back, which is the part unit tests can't check (arg
+    /// typing, query text, auth). Thread counts change as people review, so it
+    /// asserts the shape rather than a number. Network + `gh` auth required:
+    ///   cargo test pr::tests::end_to_end_counts_review_threads -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn end_to_end_counts_review_threads() {
+        let url = std::env::var("CRABIGATOR_PR_URL")
+            .unwrap_or_else(|_| "https://github.com/rust-lang/rust/pull/135000".to_string());
+        let threads = fetch_review_threads(&url).expect("gh graphql query runs");
+        eprintln!(
+            "{url}\n  unresolved={} first={}",
+            threads.unresolved,
+            if threads.first_url.is_empty() {
+                "(none)"
+            } else {
+                &threads.first_url
+            }
+        );
+        // A count and a link must agree: either both are present, or neither is.
+        assert!(threads.first_url.is_empty() ^ (threads.unresolved > 0));
+    }
+
     /// End-to-end against the live GitHub CLI: detect a created PR from scrollback,
     /// then confirm the background `gh pr view` enrichment fills in real branch/diff.
     /// Network + `gh` auth required, so it's ignored by default:
@@ -1333,6 +1594,87 @@ mod tests {
             state: None,
             details_url: url.map(str::to_string),
             target_url: None,
+        }
+    }
+
+    /// Verbatim `gh api graphql` output for a PR with two unresolved threads,
+    /// so the field renames are checked against the shape GitHub really sends.
+    const LIVE_THREADS_JSON: &[u8] = br#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
+        {"isResolved":false,"comments":{"nodes":[{"url":"https://github.com/Tavus-Engineering/request-handler/pull/2501#discussion_r3648377388"}]}},
+        {"isResolved":true,"comments":{"nodes":[{"url":"https://github.com/Tavus-Engineering/request-handler/pull/2501#discussion_r3648300000"}]}},
+        {"isResolved":false,"comments":{"nodes":[{"url":"https://github.com/Tavus-Engineering/request-handler/pull/2501#discussion_r3648377828"}]}}
+    ]}}}}}"#;
+
+    #[test]
+    fn review_threads_count_the_unresolved_and_link_the_first() {
+        let threads = parse_review_threads(LIVE_THREADS_JSON).expect("parses gh output");
+        assert_eq!(threads.unresolved, 2);
+        assert_eq!(
+            threads.first_url,
+            "https://github.com/Tavus-Engineering/request-handler/pull/2501#discussion_r3648377388"
+        );
+
+        // A settled conversation leaves nothing to show or click.
+        let settled = br#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
+            {"isResolved":true,"comments":{"nodes":[{"url":"https://example.com/x"}]}}]}}}}}"#;
+        assert_eq!(
+            parse_review_threads(settled).expect("parses"),
+            ReviewThreads::default()
+        );
+        // A thread whose comment GitHub withheld still counts.
+        let no_comment = br#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
+            {"isResolved":false,"comments":{"nodes":[]}}]}}}}}"#;
+        let bare = parse_review_threads(no_comment).expect("parses");
+        assert_eq!((bare.unresolved, bare.first_url.as_str()), (1, ""));
+    }
+
+    /// A PR that leaves the open state stops being queried, so the count it had
+    /// is dropped rather than frozen at whatever it was mid-review.
+    #[test]
+    fn merging_a_pr_clears_its_unresolved_count() {
+        let mut tracker = PrTracker::new();
+        let loc = PrLocation::new("o", "r", 7);
+        tracker.prs.push(SessionPr::placeholder(&loc, false));
+        tracker.apply_threads(
+            &loc.url,
+            ReviewThreads {
+                unresolved: 3,
+                first_url: "https://github.com/o/r/pull/7#discussion_r1".into(),
+            },
+        );
+        assert_eq!(tracker.prs()[0].unresolved_comments, 3);
+
+        tracker.apply_fetch(gh_json(&loc.url, "MERGED"), None, false);
+        assert_eq!(tracker.prs()[0].unresolved_comments, 0);
+        assert!(tracker.prs()[0].comments_url.is_empty());
+
+        // ...and a still-open PR keeps it across a stats refresh.
+        tracker.apply_threads(
+            &loc.url,
+            ReviewThreads {
+                unresolved: 2,
+                first_url: "https://github.com/o/r/pull/7#discussion_r2".into(),
+            },
+        );
+        tracker.apply_fetch(gh_json(&loc.url, "OPEN"), None, false);
+        assert_eq!(tracker.prs()[0].unresolved_comments, 2);
+    }
+
+    /// Minimal `gh pr view` payload for a PR in the given state.
+    fn gh_json(url: &str, state: &str) -> GhPrJson {
+        GhPrJson {
+            number: 7,
+            title: "T".into(),
+            head_ref_name: "b".into(),
+            url: url.to_string(),
+            state: state.to_string(),
+            is_draft: false,
+            additions: 1,
+            deletions: 1,
+            changed_files: 1,
+            mergeable: "MERGEABLE".into(),
+            merge_state_status: "CLEAN".into(),
+            status_check_rollup: Vec::new(),
         }
     }
 

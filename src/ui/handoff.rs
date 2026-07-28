@@ -35,6 +35,8 @@ const PR_FILES_MAX: usize = 11;
 const PR_BRANCH_MAX: usize = 40;
 const PR_STATE_MAX: usize = 6;
 const PR_CI_MAX: usize = 10;
+/// `💬` is two cells wide, leaving room for a four-digit thread count.
+const PR_COMMENTS_MAX: usize = 6;
 const PR_MERGE_MAX: usize = 9;
 const PR_IDENTITY_MIN: usize = 10;
 const PR_BRANCH_MIN: usize = 8;
@@ -85,10 +87,10 @@ fn pr_separator_rule_width(width: u16) -> usize {
 }
 
 /// Draw the session's PR list, one PR per row, on the dark handoff background.
-/// Each row uses seven shared columns:
-/// `⑂ repo #num  +A -D  N files  ⎇ branch  state  CI  merge`.
+/// Each row uses eight shared columns:
+/// `⑂ repo #num  +A -D  N files  ⎇ branch  state  CI  💬N  merge`.
 /// The first four are left-aligned, with the branch column flexing across the
-/// middle. The final three are anchored at the right edge but remain
+/// middle. The final four are anchored at the right edge but remain
 /// left-aligned within their shared widths. Adjacent columns use a two-space gap,
 /// and the table leaves one cell of breathing room at the right window edge.
 pub fn draw_pr_handoff(
@@ -121,6 +123,7 @@ struct PrColumnWidths {
     branch: usize,
     state: usize,
     ci: usize,
+    comments: usize,
     merge: usize,
 }
 
@@ -142,6 +145,9 @@ impl PrColumnWidths {
                 .state
                 .max(pr_state_label(pr).0.width().min(PR_STATE_MAX));
             widths.ci = widths.ci.max(pr_ci_label(pr).0.width().min(PR_CI_MAX));
+            widths.comments = widths
+                .comments
+                .max(pr_comments_label(pr).0.width().min(PR_COMMENTS_MAX));
             widths.merge = widths
                 .merge
                 .max(pr_merge_label(pr).0.width().min(PR_MERGE_MAX));
@@ -155,9 +161,13 @@ impl PrColumnWidths {
     fn fit_right(&mut self, total_width: usize) {
         let right_budget = total_width
             .saturating_sub(PR_LEFT_PADDING + PR_IDENTITY_MIN + PR_COLUMN_GAP + PR_RIGHT_PADDING);
+        // Dropped least-actionable first: merge cleanliness, then the unresolved
+        // thread count, then CI, leaving the PR's own state as the last survivor.
         while self.right_width() > right_budget {
             if self.merge > 0 {
                 self.merge = 0;
+            } else if self.comments > 0 {
+                self.comments = 0;
             } else if self.ci > 0 {
                 self.ci = 0;
             } else {
@@ -197,6 +207,12 @@ impl PrColumnWidths {
         // at the right edge without becoming right-aligned themselves.
         if self.branch > 0 {
             self.branch += left_budget.saturating_sub(self.left_width());
+        } else {
+            // A branch too narrow to be worth reading is dropped whole, which
+            // leaves slack behind. Spend it on the identity so the repo name
+            // survives instead of stranding the cells.
+            let slack = left_budget.saturating_sub(self.left_width());
+            self.identity = (self.identity + slack).min(PR_IDENTITY_MAX);
         }
     }
 
@@ -205,7 +221,7 @@ impl PrColumnWidths {
     }
 
     fn right_width(&self) -> usize {
-        table_width(&[self.state, self.ci, self.merge])
+        table_width(&[self.state, self.ci, self.comments, self.merge])
     }
 
     #[cfg(test)]
@@ -233,27 +249,33 @@ fn draw_pr_row(
     widths: &PrColumnWidths,
 ) -> Result<()> {
     fill_row(stdout, row, width)?;
-    write!(stdout, "{}", escape::cursor_to(row, 1))?;
+    write!(
+        stdout,
+        "{}{}{}",
+        escape::cursor_to(row, 1),
+        bg(color::BG_DARK),
+        pr_row_text(width, pr, widths)
+    )?;
+    Ok(())
+}
 
-    let bgc = bg(color::BG_DARK);
-    write!(stdout, "{}{:pad$}", bgc, "", pad = PR_LEFT_PADDING)?;
+/// One styled row: left padding, the left columns, then a gap wide enough to
+/// anchor the status columns against the right edge.
+fn pr_row_text(width: u16, pr: &SessionPr, widths: &PrColumnWidths) -> String {
+    let mut row = " ".repeat(PR_LEFT_PADDING);
+    row.push_str(&cells_text(&pr_left_cells(pr, widths)));
 
-    let left = pr_left_cells(pr, widths);
-    write_cells(stdout, &left)?;
-
-    let left_w = widths.left_width();
-    let right_w = widths.right_width();
-    if right_w > 0 {
+    let right_width = widths.right_width();
+    if right_width > 0 {
         let gap = (width as usize)
             .saturating_sub(PR_LEFT_PADDING)
             .saturating_sub(PR_RIGHT_PADDING)
-            .saturating_sub(left_w)
-            .saturating_sub(right_w);
-        write!(stdout, "{:gap$}", "", gap = gap)?;
-        let right = pr_right_cells(pr, widths);
-        write_cells(stdout, &right)?;
+            .saturating_sub(widths.left_width())
+            .saturating_sub(right_width);
+        row.push_str(&" ".repeat(gap));
+        row.push_str(&cells_text(&pr_right_cells(pr, widths)));
     }
-    Ok(())
+    row
 }
 
 type PrCell = (String, usize, usize);
@@ -315,14 +337,22 @@ fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
     ]
 }
 
-fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 3] {
+fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
     let (state_label, state_color) = pr_state_label(pr);
     let (ci_label, ci_color) = pr_ci_label(pr);
+    let (comments_label, comments_color) = pr_comments_label(pr);
     let (merge_label, merge_color) = pr_merge_label(pr);
     [
         colored_cell(state_label, state_color, widths.state),
         // Failing CI points at the failing job; anything else at the Checks tab.
         linked_cell(&ci_label, ci_color, widths.ci, &pr.ci_url),
+        // Unresolved threads point at the first one's comment.
+        linked_cell(
+            &comments_label,
+            comments_color,
+            widths.comments,
+            &pr.comments_url,
+        ),
         colored_cell(merge_label, merge_color, widths.merge),
     ]
 }
@@ -358,17 +388,18 @@ fn colored_cell_capped(label: &str, color: u8, width: usize, max_content: usize)
     )
 }
 
-fn write_cells(stdout: &mut Stdout, cells: &[PrCell]) -> Result<()> {
-    let mut first = true;
+/// Lay cells out side by side, padding each to its column and separating
+/// adjacent ones. Cells with a zero width are skipped entirely.
+fn cells_text(cells: &[PrCell]) -> String {
+    let mut out = String::new();
     for (styled, visible, width) in cells.iter().filter(|(_, _, width)| *width > 0) {
-        if !first {
-            write!(stdout, "{:gap$}", "", gap = PR_COLUMN_GAP)?;
+        if !out.is_empty() {
+            out.push_str(&" ".repeat(PR_COLUMN_GAP));
         }
-        let pad = width.saturating_sub(*visible);
-        write!(stdout, "{}{:pad$}", styled, "", pad = pad)?;
-        first = false;
+        out.push_str(styled);
+        out.push_str(&" ".repeat(width.saturating_sub(*visible)));
     }
-    Ok(())
+    out
 }
 
 fn truncate_identity(pr: &SessionPr, width: usize) -> String {
@@ -442,6 +473,16 @@ fn pr_ci_label(pr: &SessionPr) -> (String, u8) {
         (format!("●{} CI", pr.checks_pending), color::YELLOW)
     } else {
         ("✓ CI".to_string(), color::GREEN)
+    }
+}
+
+/// `💬N` for a PR carrying unresolved review threads; blank when the
+/// conversation is settled (or the PR is no longer open, which clears it).
+fn pr_comments_label(pr: &SessionPr) -> (String, u8) {
+    if pr.unresolved_comments <= 0 {
+        (String::new(), color::GRAY)
+    } else {
+        (format!("💬{}", pr.unresolved_comments), color::ORANGE)
     }
 }
 
@@ -1101,6 +1142,11 @@ mod tests {
             checks_pending: 2,
             checks_total: 40,
             ci_url: format!("https://github.com/Tavus-Engineering/{repo}/pull/{number}/checks"),
+            unresolved_comments: 3,
+            comments_url: format!(
+                "https://github.com/Tavus-Engineering/{repo}/pull/{number}#discussion_r1"
+            ),
+            comments_refreshed_at: 0,
             created_here: false,
             refreshed_at: 0,
         }
@@ -1193,10 +1239,11 @@ mod tests {
         let files = link_to(&format!("{}/files", pr.url));
         assert!(left[1].0.contains(&files));
         assert!(left[2].0.contains(&files));
-        // CI → wherever the rollup pointed; state and merge stay plain.
+        // CI and the thread count → wherever they pointed; state and merge plain.
         assert!(right[1].0.contains(&link_to(&pr.ci_url)));
+        assert!(right[2].0.contains(&link_to(&pr.comments_url)));
         assert!(!right[0].0.contains("\x1b]8;;"));
-        assert!(!right[2].0.contains("\x1b]8;;"));
+        assert!(!right[3].0.contains("\x1b]8;;"));
 
         for (styled, visible, _) in left.iter().chain(right.iter()) {
             assert_eq!(crate::ui::utils::strip_ansi_len(styled), *visible);
@@ -1212,6 +1259,8 @@ mod tests {
         pending.deletions = 0;
         pending.changed_files = 0;
         pending.ci_url = String::new();
+        pending.unresolved_comments = 0;
+        pending.comments_url = String::new();
 
         let widths = PrColumnWidths::from_prs(&[sample_pr("request-handler", 2412, "x")], 160);
         let left = pr_left_cells(&pending, &widths);
@@ -1220,6 +1269,91 @@ mod tests {
         assert!(!left[1].0.contains("\x1b]8;;"));
         assert!(!left[2].0.contains("\x1b]8;;"));
         assert!(!right[1].0.contains("\x1b]8;;"));
+        assert!(!right[2].0.contains("\x1b]8;;"));
+    }
+
+    /// A settled conversation leaves the column blank; an unresolved one shows
+    /// `💬N`, and the emoji's two cells are budgeted for.
+    #[test]
+    fn unresolved_comments_render_only_when_threads_are_open() {
+        let mut pr = sample_pr("developer-portal", 952, "sam/pal-maker-fanout-fable");
+        pr.unresolved_comments = 70;
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 200);
+        // Two cells for the emoji plus one per digit.
+        assert_eq!(widths.comments, "💬70".width());
+        assert_eq!(widths.comments, 4);
+
+        let (label, _) = pr_comments_label(&pr);
+        assert_eq!(label, "💬70");
+
+        pr.unresolved_comments = 0;
+        assert_eq!(pr_comments_label(&pr).0, "");
+        assert_eq!(pr_right_cells(&pr, &widths)[2].1, 0);
+    }
+
+    /// The assembled row reads left to right in column order and fills the
+    /// window save for the right padding, with the status cluster anchored right.
+    #[test]
+    fn a_row_lays_its_columns_out_in_order() {
+        let mut pr = sample_pr("request-handler", 2412, "sam/pal-fanout-fable");
+        pr.unresolved_comments = 3;
+        pr.checks_failed = 1;
+        pr.mergeable = "CONFLICTING".to_string();
+
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 120);
+        let row = pr_row_text(120, &pr, &widths);
+        assert_eq!(
+            crate::ui::utils::strip_ansi_len(&row),
+            120 - PR_RIGHT_PADDING
+        );
+
+        let at = |needle: &str| {
+            row.find(needle)
+                .unwrap_or_else(|| panic!("{needle} missing"))
+        };
+        let order = [
+            at("request-handler #2412"),
+            at("+1869"),
+            at("13 files"),
+            at("⎇ sam/pal-fanout-fable"),
+            at("open"),
+            at("✗1 CI"),
+            at("💬3"),
+            at("conflicts"),
+        ];
+        assert!(
+            order.windows(2).all(|pair| pair[0] < pair[1]),
+            "columns out of order: {order:?}"
+        );
+    }
+
+    /// Narrow terminals shed the right cluster in priority order, so the thread
+    /// count outlives merge cleanliness but yields to CI and state.
+    #[test]
+    fn narrow_rows_drop_merge_before_the_comment_count() {
+        let mut pr = sample_pr("request-handler", 2501, "sam/guardrails");
+        pr.unresolved_comments = 2;
+
+        let roomy = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 200);
+        assert!(roomy.merge > 0 && roomy.comments > 0 && roomy.ci > 0);
+
+        // The width at which the right cluster gets exactly `budget` columns.
+        let total_for = |budget: usize| {
+            PR_LEFT_PADDING + PR_IDENTITY_MIN + PR_COLUMN_GAP + PR_RIGHT_PADDING + budget
+        };
+        // Enough for everything but merge cleanliness.
+        let mut tight = roomy;
+        tight.fit_right(total_for(roomy.right_width() - roomy.merge - PR_COLUMN_GAP));
+        assert_eq!(tight.merge, 0);
+        assert!(tight.comments > 0 && tight.ci > 0);
+
+        // Tighter still: the thread count goes next, CI and state hold on.
+        let mut tighter = roomy;
+        tighter.fit_right(total_for(
+            tight.right_width() - tight.comments - PR_COLUMN_GAP,
+        ));
+        assert_eq!((tighter.merge, tighter.comments), (0, 0));
+        assert!(tighter.ci > 0 && tighter.state > 0);
     }
 
     #[test]
