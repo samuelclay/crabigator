@@ -333,7 +333,7 @@ body.hide-section-prs .session-prs { display: none !important; }
 }
 /* Diff and CI badges are links when GitHub gave us somewhere to go; the
    underline stays on hover so the row reads as a table at rest. */
-a.pr-diff:hover, a.pr-ci:hover { text-decoration: underline; }
+a.pr-diff:hover, a.pr-ci:hover, a.pr-comments:hover { text-decoration: underline; }
 .session-prs .pr-diff .rd-add { color: var(--accent-green); }
 .session-prs .pr-diff .rd-del { color: var(--accent-red); }
 .session-prs .pr-diff .pr-files { color: var(--text-dim); margin-left: 4px; }
@@ -348,6 +348,7 @@ a.pr-diff:hover, a.pr-ci:hover { text-decoration: underline; }
     flex: 0 0 auto;
 }
 .session-prs .pr-ci,
+.session-prs .pr-comments,
 .session-prs .pr-merge {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 10px;
@@ -355,6 +356,9 @@ a.pr-diff:hover, a.pr-ci:hover { text-decoration: underline; }
     white-space: nowrap;
     text-decoration: none;
 }
+/* Unresolved review threads — orange, distinct from the yellow of a pending
+   check or a behind branch, since this one is waiting on a person. */
+.session-prs .pr-comments { color: #f0883e; }
 .session-prs .pr-ci.pass { color: var(--accent-green); }
 .session-prs .pr-ci.fail { color: var(--accent-red); }
 .session-prs .pr-ci.pending { color: #d29922; }

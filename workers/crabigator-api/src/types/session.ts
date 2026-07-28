@@ -254,6 +254,9 @@ export interface SessionPr {
     checks_pending: number;
     checks_total: number;
     ci_url?: string;        // Failing job's page, else the PR's Checks tab
+    unresolved_comments?: number; // Unresolved review threads (open PRs only)
+    comments_url?: string;  // Anchor of the first unresolved thread
+    comments_refreshed_at?: number;
     created_here: boolean;
     refreshed_at: number;
 }

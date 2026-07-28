@@ -394,6 +394,13 @@ export const changesWidgetJs = `
             return prExternalLink(pr.ci_url, 'pr-ci ' + cls, label);
         }
 
+        // Unresolved review threads, linked to the first one. Blank when the
+        // conversation is settled or the PR is no longer open.
+        function prCommentsBadge(pr) {
+            if (!pr.unresolved_comments) return '';
+            return prExternalLink(pr.comments_url, 'pr-comments', '💬' + pr.unresolved_comments);
+        }
+
         // A badge that opens a GitHub page when one is known, else plain text.
         function prExternalLink(url, className, innerHtml) {
             if (!url) return '<span class="' + className + '">' + innerHtml + '</span>';
@@ -455,7 +462,8 @@ export const changesWidgetJs = `
                     : '';
                 const link = '<a class="pr-link" href="' + escapeHtml(pr.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(repoLabel) + '</a>';
                 // Right-hand status cluster: state, CI, merge cleanliness.
-                const status = '<span class="pr-status">' + badge + prCiBadge(pr) + prMergeBadge(pr) + '</span>';
+                const status = '<span class="pr-status">' + badge + prCiBadge(pr)
+                    + prCommentsBadge(pr) + prMergeBadge(pr) + '</span>';
 
                 if (!expanded) {
                     // One compact line: repo #num + diff on the left, status on the right.
