@@ -24,10 +24,11 @@ use serde::{Deserialize, Serialize};
 
 /// Minimum time between `gh pr view` refreshes for a single PR.
 const REFRESH_THROTTLE: Duration = Duration::from_secs(30);
-/// Minimum time between review-thread queries for a single PR. Conversations
-/// move at human speed and the count costs an extra GraphQL round trip, so it
-/// refreshes far less often than diff stats and CI.
-const COMMENTS_THROTTLE: Duration = Duration::from_secs(180);
+/// Review-thread counts stay responsive while a PR is likely receiving feedback
+/// after a push, then fall back sharply to conserve GitHub's GraphQL quota.
+const COMMENTS_ACTIVE_THROTTLE: Duration = Duration::from_secs(60);
+const COMMENTS_IDLE_THROTTLE: Duration = Duration::from_secs(60 * 60);
+const COMMENTS_ACTIVE_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// Safety cap on how long a `gh pr create` keeps claiming PR URLs, in case no
 /// new prompt arrives to close the window. Normally closed by `on_new_prompt`.
 const CREATE_CLAIM_WINDOW: Duration = Duration::from_secs(600);
@@ -286,6 +287,9 @@ struct FetchResult {
     /// Location we asked about (for placeholder identity / created_here carry-over).
     requested_url: Option<String>,
     created_here: bool,
+    /// This fetch was caused by a push/PR creation, so review comments should
+    /// refresh immediately and remain on the active cadence for a short window.
+    comments_active: bool,
     data: Result<GhPrJson, String>,
 }
 
@@ -373,6 +377,20 @@ pub struct PrTracker {
     /// Last review-thread query attempt per PR URL. Failures back off like
     /// successes, so a PR whose threads we can't read isn't re-queried each tick.
     comments_attempted_at: HashMap<String, Instant>,
+    /// Last observed push/creation per PR URL. Recent activity uses a one-minute
+    /// comment cadence; older PRs use the hourly fallback.
+    comments_active_at: HashMap<String, Instant>,
+    /// Update commands already handled in the current turn, counted by their
+    /// command text so rescanning the growing transcript does not make one push
+    /// look perpetually recent.
+    update_commands_seen: HashMap<String, usize>,
+    /// User prompt that owns `update_commands_seen`. This also catches prompts
+    /// submitted outside the local keyboard path and scopes identical pushes to
+    /// their own turns.
+    update_commands_prompt: Option<String>,
+    /// A push can arrive while the startup/current-branch lookup is still in
+    /// flight. Carry that activity onto the existing job instead of dropping it.
+    pending_comments_active: HashMap<String, bool>,
 }
 
 impl Default for PrTracker {
@@ -390,6 +408,10 @@ impl PrTracker {
             last_branch_resolve: None,
             mention_resolved_at: HashMap::new(),
             comments_attempted_at: HashMap::new(),
+            comments_active_at: HashMap::new(),
+            update_commands_seen: HashMap::new(),
+            update_commands_prompt: None,
+            pending_comments_active: HashMap::new(),
         }
     }
 
@@ -406,7 +428,7 @@ impl PrTracker {
     /// push-scan throttle so a cwd switch resolves the new branch right away.
     pub fn resolve_current_branch(&mut self, cwd: &Path) {
         self.last_branch_resolve = None;
-        self.resolve_branch_pr(cwd);
+        self.resolve_branch_pr(cwd, false);
     }
 
     /// Close the "created here" claim window at the start of a new user turn.
@@ -418,6 +440,8 @@ impl PrTracker {
     /// associated without being mislabeled as created by this session.
     pub fn on_new_prompt(&mut self) {
         self.expect_created_since = None;
+        self.update_commands_seen.clear();
+        self.update_commands_prompt = None;
     }
 
     /// Scan a chunk of transcript/activity text (one turn's worth).
@@ -435,14 +459,38 @@ impl PrTracker {
     /// Bare numbers are validated against the current repository before being
     /// added. Enrichment results land later via [`poll`].
     pub fn scan_text(&mut self, text: &str, cwd: &Path) -> bool {
+        self.scan_text_inner(text, cwd, true)
+    }
+
+    /// Scan a user prompt for PR references without treating text such as
+    /// "please git push" as evidence that a push already happened.
+    pub fn scan_prompt(&mut self, text: &str, cwd: &Path) -> bool {
+        if self.update_commands_prompt.as_deref() != Some(text) {
+            self.update_commands_seen.clear();
+            self.update_commands_prompt = Some(text.to_string());
+        }
+        self.scan_text_inner(text, cwd, false)
+    }
+
+    fn scan_text_inner(&mut self, text: &str, cwd: &Path, handle_updates: bool) -> bool {
         if text.is_empty() {
             return false;
         }
         let mut changed = false;
+        let mut update_occurrences = HashMap::<String, usize>::new();
         for event in scan_events(text) {
             match event {
                 ScanEvent::Created => self.expect_created_since = Some(Instant::now()),
-                ScanEvent::Updated => self.resolve_branch_pr(cwd),
+                ScanEvent::Updated(command) if handle_updates => {
+                    let occurrence = update_occurrences.entry(command.clone()).or_default();
+                    *occurrence += 1;
+                    let seen = self.update_commands_seen.entry(command).or_default();
+                    if *occurrence > *seen {
+                        *seen = *occurrence;
+                        self.resolve_branch_pr(cwd, true);
+                    }
+                }
+                ScanEvent::Updated(_) => {}
                 ScanEvent::Located(loc) => changed |= self.observe_url(&loc),
                 // `gh pr view` rejects issue numbers and nonexistent PRs, so only
                 // numbers that are really PRs in this repo reach the visible list.
@@ -500,6 +548,7 @@ impl PrTracker {
             let _ = tx.send(JobResult::Pr(FetchResult {
                 requested_url: None,
                 created_here: false,
+                comments_active: false,
                 data: fetch_pr_number(&cwd, number),
             }));
         });
@@ -546,17 +595,21 @@ impl PrTracker {
 
     /// Resolve the PR attached to the current branch in `cwd` (after a push/edit).
     /// Adds it as an "updated here" PR once `gh` reports back.
-    fn resolve_branch_pr(&mut self, cwd: &Path) {
+    fn resolve_branch_pr(&mut self, cwd: &Path, comments_active: bool) {
+        let key = format!("branch:{}", cwd.display());
+        if comments_active {
+            self.pending_comments_active.insert(key.clone(), true);
+        }
         // Throttle: the same turn text is re-scanned every hook tick, so a turn
         // containing a `git push` would otherwise spawn a lookup on every tick.
-        if self
-            .last_branch_resolve
-            .map(|t| t.elapsed() < REFRESH_THROTTLE)
-            .unwrap_or(false)
+        if !comments_active
+            && self
+                .last_branch_resolve
+                .map(|t| t.elapsed() < REFRESH_THROTTLE)
+                .unwrap_or(false)
         {
             return;
         }
-        let key = format!("branch:{}", cwd.display());
         if self.pending.contains_key(&key) {
             return;
         }
@@ -567,6 +620,7 @@ impl PrTracker {
             let _ = tx.send(JobResult::Pr(FetchResult {
                 requested_url: None,
                 created_here: false,
+                comments_active,
                 data: fetch_pr_for_branch(&cwd),
             }));
         });
@@ -584,6 +638,7 @@ impl PrTracker {
             let _ = tx.send(JobResult::Pr(FetchResult {
                 requested_url: Some(url_for_job.clone()),
                 created_here,
+                comments_active: created_here,
                 data: fetch_pr(&url_for_job),
             }));
         });
@@ -594,7 +649,8 @@ impl PrTracker {
     ///
     /// Merged and closed PRs are skipped — their conversations are moot, and the
     /// count they last had is cleared by [`apply_fetch`] — so this only costs a
-    /// GraphQL round trip for work still in flight.
+    /// GraphQL round trip for work still in flight. Recently pushed/created PRs
+    /// refresh every minute; inactive PRs refresh hourly.
     fn refresh_review_threads(&mut self) {
         let due: Vec<String> = self
             .prs
@@ -603,10 +659,10 @@ impl PrTracker {
             .map(|pr| pr.url.clone())
             .filter(|url| !self.pending.contains_key(&threads_key(url)))
             .filter(|url| {
-                self.comments_attempted_at
-                    .get(url)
-                    .map(|t| t.elapsed() >= COMMENTS_THROTTLE)
-                    .unwrap_or(true)
+                review_threads_due(
+                    self.comments_attempted_at.get(url).map(Instant::elapsed),
+                    self.comments_active_at.get(url).map(Instant::elapsed),
+                )
             })
             .collect();
         for url in due {
@@ -647,14 +703,22 @@ impl PrTracker {
 
         for (key, result) in done_keys {
             self.pending.remove(&key);
+            let pending_comments_active =
+                self.pending_comments_active.remove(&key).unwrap_or(false);
             // Errors are silent: a PR we can't view (auth, deleted, private) simply
             // doesn't gain live stats. If it was only a placeholder from a claim we
             // still keep it so the user sees the URL they just created.
             match result {
                 Some(JobResult::Pr(result)) => {
                     if let Ok(json) = result.data {
+                        let comments_active = (result.comments_active || pending_comments_active)
+                            .then(|| json.url.clone())
+                            .filter(|u| !u.is_empty());
                         changed |=
                             self.apply_fetch(json, result.requested_url, result.created_here);
+                        if let Some(url) = comments_active {
+                            self.note_comments_active(&url);
+                        }
                     }
                 }
                 Some(JobResult::Threads {
@@ -670,6 +734,13 @@ impl PrTracker {
         self.refresh_review_threads();
 
         changed
+    }
+
+    /// Make the next review-thread poll immediate, then use the active cadence.
+    fn note_comments_active(&mut self, url: &str) {
+        self.comments_active_at
+            .insert(url.to_string(), Instant::now());
+        self.comments_attempted_at.remove(url);
     }
 
     /// Merge a review-thread count into the PR it belongs to.
@@ -733,7 +804,12 @@ impl PrTracker {
                 existing.comments_refreshed_at = 0;
             }
             existing.refreshed_at = now;
-            return *existing != before;
+            let changed = *existing != before;
+            if existing.state != "OPEN" {
+                self.comments_active_at.remove(&url);
+                self.comments_attempted_at.remove(&url);
+            }
+            return changed;
         }
 
         self.prs.push(SessionPr {
@@ -816,7 +892,7 @@ enum ScanEvent {
     /// `gh pr create` ran, so PRs seen after it were created by this session.
     Created,
     /// A push or PR edit ran, so the current branch's PR is worth resolving.
-    Updated,
+    Updated(String),
 }
 
 /// Find every PR association in a chunk of transcript text.
@@ -840,7 +916,7 @@ fn scan_events(text: &str) -> Vec<ScanEvent> {
                         events.push(ScanEvent::Created);
                     }
                     if is_pr_update_command(line) {
-                        events.push(ScanEvent::Updated);
+                        events.push(ScanEvent::Updated(line.trim().to_string()));
                     }
                     if channel == Channel::Prose {
                         push_located(&mut events, pr_urls(line));
@@ -860,6 +936,18 @@ fn scan_events(text: &str) -> Vec<ScanEvent> {
         }
     }
     events
+}
+
+/// Whether a review-thread query is due at the active or idle cadence.
+fn review_threads_due(
+    last_attempt_age: Option<Duration>,
+    last_activity_age: Option<Duration>,
+) -> bool {
+    let throttle = match last_activity_age {
+        Some(age) if age < COMMENTS_ACTIVE_WINDOW => COMMENTS_ACTIVE_THROTTLE,
+        _ => COMMENTS_IDLE_THROTTLE,
+    };
+    last_attempt_age.map(|age| age >= throttle).unwrap_or(true)
 }
 
 fn push_located(events: &mut Vec<ScanEvent>, locations: Vec<PrLocation>) {
@@ -1626,6 +1714,67 @@ mod tests {
             {"isResolved":false,"comments":{"nodes":[]}}]}}}}}"#;
         let bare = parse_review_threads(no_comment).expect("parses");
         assert_eq!((bare.unresolved, bare.first_url.as_str()), (1, ""));
+    }
+
+    #[test]
+    fn review_thread_refresh_adapts_to_recent_pr_activity() {
+        let just_under_a_minute = Duration::from_secs(59);
+        let just_over_a_minute = Duration::from_secs(61);
+        let recently_pushed = Duration::from_secs(5 * 60);
+        let inactive = Duration::from_secs(20 * 60);
+
+        assert!(!review_threads_due(
+            Some(just_under_a_minute),
+            Some(recently_pushed)
+        ));
+        assert!(review_threads_due(
+            Some(just_over_a_minute),
+            Some(recently_pushed)
+        ));
+
+        assert!(!review_threads_due(
+            Some(Duration::from_secs(59 * 60)),
+            Some(inactive)
+        ));
+        assert!(review_threads_due(
+            Some(Duration::from_secs(60 * 60)),
+            Some(inactive)
+        ));
+        assert!(review_threads_due(None, None));
+    }
+
+    #[test]
+    fn pr_activity_forces_the_next_review_thread_refresh() {
+        let mut tracker = PrTracker::new();
+        let url = "https://github.com/o/r/pull/7";
+        tracker
+            .comments_attempted_at
+            .insert(url.into(), Instant::now());
+
+        tracker.note_comments_active(url);
+
+        assert!(!tracker.comments_attempted_at.contains_key(url));
+        assert!(tracker.comments_active_at.contains_key(url));
+    }
+
+    #[test]
+    fn user_request_to_push_is_not_mistaken_for_completed_activity() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_prompt("Please git push this branch", Path::new("/tmp"));
+
+        assert!(tracker.update_commands_seen.is_empty());
+        assert!(tracker.pending_comments_active.is_empty());
+    }
+
+    #[test]
+    fn update_command_deduplication_is_scoped_to_one_prompt() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_prompt("First turn", Path::new("/tmp"));
+        tracker.update_commands_seen.insert("git push".into(), 1);
+
+        tracker.scan_prompt("Second turn", Path::new("/tmp"));
+
+        assert!(tracker.update_commands_seen.is_empty());
     }
 
     /// A PR that leaves the open state stops being queried, so the count it had

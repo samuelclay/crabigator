@@ -1686,7 +1686,7 @@ impl App {
         // and the prompt is kept out of `activity`, so scan it too.
         let mut changed = false;
         if let Some(prompt) = turn.user_prompt.as_deref() {
-            changed |= self.pr_tracker.scan_text(prompt, &self.cwd);
+            changed |= self.pr_tracker.scan_prompt(prompt, &self.cwd);
         }
         changed | self.pr_tracker.scan_text(&turn.activity, &self.cwd)
     }
