@@ -233,10 +233,8 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
         font-size: 9px;
     }
     .widgets-header-row2 {
-        flex-wrap: nowrap;
         gap: 6px;
         min-width: 0;
-        overflow: hidden;
     }
     .widgets-header-row2 .wh-stat {
         flex: 0 0 auto;
@@ -253,7 +251,6 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
         overflow: hidden;
         white-space: nowrap;
     }
-    .widgets-header-row2 .wh-elapsed,
     .widgets-header-row2 .wh-git {
         display: none;
     }

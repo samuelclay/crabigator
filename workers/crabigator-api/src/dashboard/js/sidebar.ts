@@ -198,7 +198,15 @@ export const sidebarJs = `
             sidebarVisibleStats[stat] = !sidebarVisibleStats[stat];
             localStorage.setItem('crabigator-sidebar-stats', JSON.stringify(sidebarVisibleStats));
             updateSidebarContent();
+            applySessionCardStatsVisibility();
             updateSidebarSettingsControls();
+        }
+
+        function applySessionCardStatsVisibility(root = document) {
+            root.querySelectorAll('[data-card-stats]').forEach(element => {
+                const stats = element.dataset.cardStats.split(' ');
+                element.style.display = stats.some(stat => sidebarVisibleStats[stat]) ? '' : 'none';
+            });
         }
 
         function updateSidebarSettingsControls() {

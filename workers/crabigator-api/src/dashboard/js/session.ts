@@ -492,13 +492,13 @@ export const sessionJs = `
                                     <button class="collapse-btn" id="widgets-btn-\${session.id}" title="Toggle Git & Changes widgets">▼</button>
                                 </div>
                                 <div class="widgets-header-row2">
-                                    <span class="wh-stat" data-tooltip="Session"><span class="wh-icon" style="color:#58a6ff">◉</span><span class="wh-value" id="widgets-session-\${session.id}">--</span></span>
-                                    <span class="wh-stat" data-tooltip="Thinking"><span class="wh-icon" style="color:#3fb950">◐</span><span class="wh-value" id="widgets-thinking-\${session.id}">—</span></span>
+                                    <span class="wh-stat" data-card-stats="sessionTime" data-tooltip="Session"><span class="wh-icon" style="color:#58a6ff">◉</span><span class="wh-value" id="widgets-session-\${session.id}">--</span></span>
+                                    <span class="wh-stat" data-card-stats="thinkingTime" data-tooltip="Thinking"><span class="wh-icon" style="color:#3fb950">◐</span><span class="wh-value" id="widgets-thinking-\${session.id}">—</span></span>
                                     <span class="wh-stat" id="widgets-idle-wrapper-\${session.id}" style="display:none" data-tooltip="Idle"><span class="wh-icon" style="color:#8b949e">◌</span><span class="wh-value" id="widgets-idle-\${session.id}">—</span></span>
-                                    <span class="wh-stat" data-tooltip="Prompts"><span class="wh-icon" style="color:#8b949e">⟩</span><span class="wh-value" id="widgets-prompts-\${session.id}">0</span><span class="wh-elapsed" id="widgets-prompts-elapsed-\${session.id}"></span></span>
-                                    <span class="wh-stat" data-tooltip="Completions"><span class="wh-icon" style="color:#8b949e">⋖</span><span class="wh-value" id="widgets-completions-\${session.id}">0</span><span class="wh-elapsed" id="widgets-completions-elapsed-\${session.id}"></span></span>
-                                    <span class="wh-stat wh-tools" data-tooltip="Tool calls"><span class="wh-icon" style="color:#f0883e">⚒</span><span class="wh-value" id="widgets-tools-\${session.id}">—</span></span>
-                                    <span class="wh-stat" data-tooltip="Compactions"><span class="wh-icon" style="color:#e879f9">⊜</span><span class="wh-value" id="widgets-compactions-\${session.id}">0</span><span class="wh-elapsed" id="widgets-compactions-elapsed-\${session.id}"></span></span>
+                                    <span class="wh-stat" data-card-stats="prompts promptRecency" data-tooltip="Prompts"><span class="wh-icon" style="color:#8b949e">⟩</span><span class="wh-value" data-card-stats="prompts" id="widgets-prompts-\${session.id}">0</span><span class="wh-elapsed" data-card-stats="promptRecency" id="widgets-prompts-elapsed-\${session.id}"></span></span>
+                                    <span class="wh-stat" data-card-stats="completions completionRecency" data-tooltip="Completions"><span class="wh-icon" style="color:#8b949e">⋖</span><span class="wh-value" data-card-stats="completions" id="widgets-completions-\${session.id}">0</span><span class="wh-elapsed" data-card-stats="completionRecency" id="widgets-completions-elapsed-\${session.id}"></span></span>
+                                    <span class="wh-stat wh-tools" data-card-stats="tools" data-tooltip="Tool calls"><span class="wh-icon" style="color:#f0883e">⚒</span><span class="wh-value" id="widgets-tools-\${session.id}">—</span></span>
+                                    <span class="wh-stat" data-card-stats="compactions" data-tooltip="Compactions"><span class="wh-icon" style="color:#e879f9">⊜</span><span class="wh-value" id="widgets-compactions-\${session.id}">0</span><span class="wh-elapsed" id="widgets-compactions-elapsed-\${session.id}"></span></span>
                                     <span class="wh-git" id="widgets-git-\${session.id}"></span>
                                 </div>
                             </div>
@@ -621,6 +621,7 @@ export const sessionJs = `
             });
             applyCollapsedState(session.id);
             applyWidgetsCollapsedState(session.id);
+            applySessionCardStatsVisibility(card);
             restoreInput(session.id);
             updateFitLayout();
 
