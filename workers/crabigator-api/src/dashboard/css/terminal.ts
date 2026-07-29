@@ -89,4 +89,14 @@ export const terminalCss = `
 .terminal .ansi-dim { opacity: 0.5; }
 .terminal .ansi-italic { font-style: italic; }
 .terminal .ansi-underline { text-decoration: underline; }
+.terminal .terminal-link {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--accent-cyan);
+    text-underline-offset: 2px;
+    cursor: pointer;
+}
+.terminal .terminal-link:hover {
+    color: var(--accent-cyan);
+}
 `;

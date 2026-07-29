@@ -134,6 +134,31 @@ export const ansiJs = `
                 currentStyle = nextStyle;
             }
 
+            function escapeHtml(value) {
+                return value
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+            }
+
+            function urlAt(index) {
+                const match = text.slice(index).match(/^https?:\\/\\/[^\\s<>"'\\x1b]+/i);
+                if (!match) return null;
+
+                let url = match[0].replace(/[.,;:!?]+$/, '');
+                const bracketPairs = [['(', ')'], ['[', ']'], ['{', '}']];
+                for (const [open, close] of bracketPairs) {
+                    while (url.endsWith(close)) {
+                        const openCount = url.split(open).length - 1;
+                        const closeCount = url.split(close).length - 1;
+                        if (closeCount <= openCount) break;
+                        url = url.slice(0, -1);
+                    }
+                }
+                return url || null;
+            }
+
             while (i < text.length) {
                 // Check for ESC character (char code 27)
                 if (text.charCodeAt(i) === 27 && text[i + 1] === '[') {
@@ -205,6 +230,15 @@ export const ansiJs = `
                     }
                     // Skip carriage return - we only care about line feeds
                     i++;
+                    continue;
+                }
+
+                const url = urlAt(i);
+                if (url) {
+                    const escapedUrl = escapeHtml(url);
+                    result += '<a class="terminal-link" href="' + escapedUrl
+                        + '" target="_blank" rel="noopener noreferrer">' + escapedUrl + '</a>';
+                    i += url.length;
                     continue;
                 }
 
