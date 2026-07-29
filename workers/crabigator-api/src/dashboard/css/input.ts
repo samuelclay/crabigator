@@ -214,7 +214,6 @@ export const inputCss = `
     }
     .input-area textarea {
         padding: 7px 10px;
-        font-size: 16px;  /* Prevent iOS focus zoom */
         max-height: calc(1.35em * 6 + 16px);
     }
     .input-area > button:last-child {
