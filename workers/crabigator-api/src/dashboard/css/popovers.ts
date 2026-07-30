@@ -445,6 +445,7 @@ export const popoversCss = `
     font-size: 11px;
 }
 @media (max-width: 768px) {
+    .style-popover,
     .settings-popover {
         max-height: calc(100vh - var(--header-height, 46px) - 16px);
         max-height: calc(100dvh - var(--header-height, 46px) - 16px);
