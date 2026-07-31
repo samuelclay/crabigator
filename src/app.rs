@@ -1394,10 +1394,14 @@ impl App {
     ) -> Result<()> {
         let old_effective_state = self.session_stats.effective_state();
         let old_last_updated = self.session_stats.platform_stats.last_updated;
+        let old_prompts = self.session_stats.platform_stats.prompts;
         self.session_stats
             .refresh_platform_stats(self.platform.as_ref(), &self.stats_cwd.to_string_lossy());
         let new_effective_state = self.session_stats.effective_state();
         let new_last_updated = self.session_stats.platform_stats.last_updated;
+        if self.session_stats.platform_stats.prompts > old_prompts {
+            self.pr_tracker.on_prompt_observed();
+        }
 
         // Update transcript path for scrollback capture
         if let Some(ref path) = self.session_stats.platform_stats.transcript_path {
