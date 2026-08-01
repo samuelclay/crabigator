@@ -251,15 +251,24 @@ export const changesWidgetJs = `
             // Reset state classes — set the freshest one below.
             card.classList.remove('empty', 'ready', 'updating', 'failed', 'missing-key', 'waiting', 'disabled');
 
+            const sessionData = sessions.get(sessionId);
+            const history = sessionData?.recapHistory || [];
+            // A new prompt intentionally clears recap.latest because the old
+            // recap no longer describes the active turn. Keep that previous
+            // recap available on the dashboard from its permanent history,
+            // especially when someone already has the history expanded.
+            const latest = recap.latest || history[history.length - 1] || null;
             const status = recap.status || 'waiting';
-            const statusInfo = recapStatusLabel(status);
+            const statusInfo = status === 'waiting' && latest
+                ? { label: 'Previous recap', color: '#94a3b8' }
+                : recapStatusLabel(status);
             card.classList.add(status.replace('_', '-'));
+            card.classList.toggle('has-content', !!latest);
 
             statusEl.innerHTML = '<span class="rs-dot" style="background:' + statusInfo.color + '"></span>'
                 + '<span class="rs-label" style="color:' + statusInfo.color + '">' + escapeHtml(statusInfo.label) + '</span>';
 
-            if (status === 'ready' && recap.latest) {
-                const latest = recap.latest;
+            if (latest && (status === 'ready' || status === 'waiting' || status === 'updating')) {
                 const isExpanded = card.classList.contains('expanded');
                 headlineEl.textContent = latest.headline || '';
                 const bullets = isExpanded ? (latest.bullets || []) : (latest.bullets || []).slice(0, 2);
@@ -329,10 +338,7 @@ export const changesWidgetJs = `
             if (!widget || !recapCard) return;
 
             const history = sessionData?.recapHistory || [];
-            const recapHasContent = !recapCard.classList.contains('empty')
-                && !recapCard.classList.contains('waiting')
-                && !recapCard.classList.contains('disabled');
-            widget.style.display = history.length > 0 && recapCard.classList.contains('expanded') && recapHasContent
+            widget.style.display = history.length > 0 && recapCard.classList.contains('expanded')
                 ? ''
                 : 'none';
         }
@@ -348,6 +354,9 @@ export const changesWidgetJs = `
             if (!history || history.length === 0) {
                 widget.style.display = 'none';
                 if (countEl) countEl.textContent = '';
+                if (sessionData?.recap) {
+                    updateRecapCard(sessionId, sessionData.recap);
+                }
                 return;
             }
             if (countEl) {
@@ -370,7 +379,11 @@ export const changesWidgetJs = `
 
             const list = widget.querySelector('.recaps-list');
             if (list) list.innerHTML = rowsHtml;
-            syncRecapHistoryVisibility(sessionId);
+            if (sessionData?.recap) {
+                updateRecapCard(sessionId, sessionData.recap);
+            } else {
+                syncRecapHistoryVisibility(sessionId);
+            }
         }
 
         function prStateInfo(pr) {
