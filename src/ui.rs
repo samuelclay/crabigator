@@ -7,6 +7,7 @@ mod changes;
 mod git;
 mod handoff;
 mod pairing;
+pub(crate) mod pr_cells;
 pub mod sparkline;
 mod stats;
 mod status_bar;
