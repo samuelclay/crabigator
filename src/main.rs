@@ -16,6 +16,7 @@ mod parsers;
 mod platforms;
 mod pr;
 mod pr_rank;
+mod prs_board;
 mod recap;
 mod terminal;
 mod terminal_spawner;
@@ -178,6 +179,9 @@ async fn main() -> Result<()> {
         }
         Command::Pair => {
             return pair::run_pair().await;
+        }
+        Command::Prs { once } => {
+            return prs_board::run_prs_board(once).await;
         }
         Command::InstallLauncher => {
             return launcher::install_launcher().map(|()| {

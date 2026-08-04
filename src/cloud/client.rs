@@ -38,6 +38,15 @@ struct PrOverridesResponse {
     overrides: Vec<PrOverrideRow>,
 }
 
+/// One-shot overrides fetch for CLI commands that run outside a session
+/// (the `crabigator prs` board). Uses the same device identity and HMAC
+/// auth as a live session.
+pub async fn fetch_pr_overrides_standalone() -> Result<HashMap<String, PrDisposition>> {
+    let device = DeviceIdentity::load_or_create()?;
+    CloudClient::fetch_pr_overrides_with(device, HttpClient::new(), DEFAULT_API_URL.to_string())
+        .await
+}
+
 fn parse_pr_disposition(value: &str) -> Option<PrDisposition> {
     match value {
         "primary" => Some(PrDisposition::Primary),

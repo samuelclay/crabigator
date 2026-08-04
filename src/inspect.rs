@@ -179,7 +179,7 @@ fn print_history(instances: &[(PathBuf, Value)]) -> Result<()> {
     Ok(())
 }
 
-fn discover_instances(dir_filter: &Option<String>) -> Result<Vec<(PathBuf, Value)>> {
+pub(crate) fn discover_instances(dir_filter: &Option<String>) -> Result<Vec<(PathBuf, Value)>> {
     let pattern = "/tmp/crabigator-*/inspect.json";
     let mut instances = vec![];
 

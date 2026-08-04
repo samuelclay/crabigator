@@ -27,6 +27,11 @@ pub enum Command {
     },
     /// Generate a pairing code for Chrome MCP auto-login
     Pair,
+    /// Cross-session PR board: every tracked PR from every live session
+    Prs {
+        /// Print one frame and exit instead of the live view
+        once: bool,
+    },
     /// Install the URL scheme handler for crabigator:// URLs
     InstallLauncher,
     /// Manage automatic turn recaps
@@ -119,6 +124,12 @@ pub fn parse_args() -> Args {
             "pair" => {
                 iter.next(); // consume "pair"
                 args.command = Command::Pair;
+                return args;
+            }
+            "prs" => {
+                iter.next(); // consume "prs"
+                let once = iter.any(|arg| arg == "--once" || arg == "-1");
+                args.command = Command::Prs { once };
                 return args;
             }
             "install-launcher" => {
