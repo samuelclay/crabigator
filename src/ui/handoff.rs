@@ -1229,6 +1229,8 @@ mod tests {
             dismissed: false,
             slack_origin_url: String::new(),
             slack_comment_urls: Vec::new(),
+            ai_note: String::new(),
+            ai_confidence: String::new(),
             refreshed_at: 0,
         }
     }
@@ -1554,6 +1556,7 @@ mod tests {
                 next_prompt_notes: Vec::new(),
                 artifacts: artifact.into_iter().map(str::to_string).collect(),
                 line_delta: TurnLineDelta::default(),
+                pr_notes: Vec::new(),
             }),
             line_delta: None,
             model: String::new(),

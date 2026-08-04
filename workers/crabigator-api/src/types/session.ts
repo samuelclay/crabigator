@@ -270,6 +270,8 @@ export interface SessionPr {
     dismissed?: boolean;      // User dismissed — do not render
     slack_origin_url?: string;    // Slack permalink pasted in the prompt that led here
     slack_comment_urls?: string[]; // Slack permalinks found in the PR's GitHub comments
+    ai_note?: string;         // Latest recap's one-line read on this PR's progress
+    ai_confidence?: string;   // 'high' | 'medium' | 'low' — confidence the PR is finished
     refreshed_at: number;
 }
 

@@ -402,6 +402,8 @@ impl MirrorPublisher {
             pr.dismissed.hash(&mut hasher);
             pr.slack_origin_url.hash(&mut hasher);
             pr.slack_comment_urls.hash(&mut hasher);
+            pr.ai_note.hash(&mut hasher);
+            pr.ai_confidence.hash(&mut hasher);
         }
 
         hasher.finish()

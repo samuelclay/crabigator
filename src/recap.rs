@@ -66,6 +66,30 @@ pub struct TurnRecap {
     pub next_prompt_notes: Vec<String>,
     pub artifacts: Vec<String>,
     pub line_delta: TurnLineDelta,
+    /// Per-PR progress judgments from the same generation pass.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pr_notes: Vec<PrRecapNote>,
+}
+
+/// The model's read on one tracked PR: a short progress note and how
+/// confident it is that the PR is finished.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct PrRecapNote {
+    pub url: String,
+    pub note: String,
+    /// high / medium / low — confidence that the PR is done.
+    pub confidence: String,
+}
+
+/// Snapshot of one tracked PR handed to the recap prompt.
+#[derive(Clone, Debug)]
+pub struct PrBrief {
+    pub url: String,
+    /// `repo #123 — title`.
+    pub label: String,
+    /// OPEN / DRAFT / MERGED / CLOSED plus a compact CI summary.
+    pub status: String,
+    pub primary: bool,
 }
 
 /// Compact or bullet recap rendering mode.
@@ -138,6 +162,8 @@ struct RecapJob {
     model: String,
     api_key: String,
     line_delta: TurnLineDelta,
+    /// Tracked PRs at generation time, for per-PR progress notes.
+    prs: Vec<PrBrief>,
 }
 
 /// Owns turn detection, background recap generation, and the display cache.
@@ -154,6 +180,8 @@ pub struct RecapManager {
     /// All successful recaps generated in this session, oldest first. Mirrors
     /// the title_history pattern so the dashboard can replay the full timeline.
     history: Vec<TurnRecap>,
+    /// Tracked PRs to judge in the next generation, set fresh each tick.
+    pr_context: Vec<PrBrief>,
 }
 
 impl RecapManager {
@@ -192,7 +220,43 @@ impl RecapManager {
             pending: None,
             started_at: Instant::now(),
             history: Vec::new(),
+            pr_context: Vec::new(),
         }
+    }
+
+    /// Hand the recap generator the session's tracked PRs so each turn's
+    /// recap can judge their progress alongside the summary.
+    pub fn set_pr_context(&mut self, prs: &[crate::pr::SessionPr]) {
+        self.pr_context = prs
+            .iter()
+            .filter(|pr| !pr.dismissed)
+            .map(|pr| {
+                let title = if pr.title.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {}", pr.title)
+                };
+                let state = if pr.is_draft && pr.state == "OPEN" {
+                    "DRAFT"
+                } else {
+                    pr.state.as_str()
+                };
+                let checks = if pr.checks_total > 0 {
+                    format!(
+                        ", CI {}✓ {}✗ {}●",
+                        pr.checks_passed, pr.checks_failed, pr.checks_pending
+                    )
+                } else {
+                    String::new()
+                };
+                PrBrief {
+                    url: pr.url.clone(),
+                    label: format!("{} #{}{}", pr.repo, pr.number, title),
+                    status: format!("{state}{checks}"),
+                    primary: pr.primary,
+                }
+            })
+            .collect();
     }
 
     pub fn state(&self) -> &RecapState {
@@ -372,6 +436,7 @@ impl RecapManager {
             model: self.state.model.clone(),
             api_key,
             line_delta,
+            prs: self.pr_context.clone(),
         };
 
         let (tx, rx) = mpsc::channel();
@@ -837,20 +902,47 @@ fn build_anthropic_request(job: &RecapJob, transcript: &TurnTranscript) -> Value
         .as_deref()
         .unwrap_or("(last user prompt unavailable)");
 
+    let (pr_block, pr_shape, pr_rules) = if job.prs.is_empty() {
+        (String::new(), "", "")
+    } else {
+        let list = job
+            .prs
+            .iter()
+            .map(|pr| {
+                format!(
+                    "- {} [{}, {}] :: {}",
+                    pr.label,
+                    pr.status,
+                    if pr.primary { "primary" } else { "secondary" },
+                    pr.url
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        (
+            format!("Tracked PRs:\n{list}\n\n"),
+            ",\"prs\":[{\"url\":\"\",\"note\":\"\",\"confidence\":\"high|medium|low\"}]",
+            "- prs: one entry per tracked PR (same url). note: ≤80 chars on its \
+             progress this turn or current blocker. confidence: how confident you \
+             are the PR is FINISHED (high = merged/ready, medium = close, low = \
+             still cooking or stalled).\n",
+        )
+    };
+
     let prompt = format!(
         "Write a Crabigator handoff recap for agent output since the last user-initiated prompt.\n\
          Preferred variant: {preferred_variant}\n\
          Last user prompt, for context only:\n{user_prompt}\n\n\
-         Agent activity:\n{}\n\n\
+         {pr_block}Agent activity:\n{}\n\n\
          Return JSON only with this exact shape:\n\
          {{\"variant\":\"brief|bullets\",\"headline\":\"\",\
-         \"bullets\":[],\"next_prompt_notes\":[],\"artifacts\":[]}}\n\
+         \"bullets\":[],\"next_prompt_notes\":[],\"artifacts\":[]{pr_shape}}}\n\
          Hard length budget — terse > complete sentences:\n\
          - headline: ≤72 chars, no trailing period.\n\
          - bullets: 0-2 items, ≤80 chars each. brief: omit bullets.\n\
          - next_prompt_notes: 0-1 items, ≤80 chars.\n\
          - artifacts: 0-2 items, ≤50 chars each.\n\
-         Rules:\n\
+         {pr_rules}Rules:\n\
          - Be terse. Cut filler words. Don't repeat the headline in bullets.\n\
          - Skip code-level details (file names, line numbers, diffs); the Git and Changes widgets cover those.\n\
          - Artifacts = non-code outputs to review (screenshots, logs, URLs, PRs, build reports).\n\
@@ -858,9 +950,16 @@ fn build_anthropic_request(job: &RecapJob, transcript: &TurnTranscript) -> Value
         transcript.activity
     );
 
+    // Per-PR notes need extra room beyond the base recap budget.
+    let max_tokens = if job.prs.is_empty() {
+        350
+    } else {
+        350 + 60 * job.prs.len().min(6)
+    };
+
     json!({
         "model": job.model,
-        "max_tokens": 350,
+        "max_tokens": max_tokens,
         "temperature": 0.2,
         "messages": [
             {"role": "user", "content": prompt}
@@ -939,6 +1038,7 @@ fn parse_recap_response(job: &RecapJob, response: &str) -> Result<TurnRecap> {
     let bullets = string_array(&value, "bullets", 3);
     let next_prompt_notes = string_array(&value, "next_prompt_notes", 2);
     let artifacts = string_array(&value, "artifacts", 3);
+    let pr_notes = pr_note_array(&value);
 
     Ok(TurnRecap {
         prompt_count: job.prompt_count,
@@ -949,7 +1049,43 @@ fn parse_recap_response(job: &RecapJob, response: &str) -> Result<TurnRecap> {
         next_prompt_notes,
         artifacts,
         line_delta: job.line_delta,
+        pr_notes,
     })
+}
+
+/// The per-PR judgments in a recap response, keeping only well-formed entries.
+fn pr_note_array(value: &Value) -> Vec<PrRecapNote> {
+    value
+        .get("prs")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let url = entry.get("url")?.as_str()?.trim().to_string();
+            if url.is_empty() {
+                return None;
+            }
+            let note = entry
+                .get("note")
+                .and_then(|v| v.as_str())
+                .map(clean_one_line)
+                .map(|s| truncate_end(&s, 120))
+                .unwrap_or_default();
+            let confidence = match entry.get("confidence").and_then(|v| v.as_str()) {
+                Some(c @ ("high" | "medium" | "low")) => c.to_string(),
+                _ => String::new(),
+            };
+            if note.is_empty() && confidence.is_empty() {
+                return None;
+            }
+            Some(PrRecapNote {
+                url,
+                note,
+                confidence,
+            })
+        })
+        .take(12)
+        .collect()
 }
 
 fn fallback_recap(job: &RecapJob, headline: &str) -> TurnRecap {
@@ -962,6 +1098,7 @@ fn fallback_recap(job: &RecapJob, headline: &str) -> TurnRecap {
         next_prompt_notes: Vec::new(),
         artifacts: Vec::new(),
         line_delta: job.line_delta,
+        pr_notes: Vec::new(),
     }
 }
 
@@ -1089,6 +1226,7 @@ mod tests {
             prompt_count: 2,
             model: DEFAULT_RECAP_MODEL.to_string(),
             api_key: "key".to_string(),
+            prs: Vec::new(),
             line_delta: TurnLineDelta {
                 additions: 12,
                 deletions: 3,
@@ -1107,6 +1245,24 @@ mod tests {
         assert_eq!(recap.next_prompt_notes, vec!["Check behavior"]);
         assert_eq!(recap.artifacts, vec!["test log"]);
         assert_eq!(recap.line_delta.additions, 12);
+        assert!(recap.pr_notes.is_empty());
+
+        // Per-PR judgments parse when present; malformed entries are dropped.
+        let with_prs = parse_recap_response(
+            &job,
+            r#"{"variant":"brief","headline":"CI green on the fix",
+                "bullets":[],"next_prompt_notes":[],"artifacts":[],
+                "prs":[
+                    {"url":"https://github.com/o/r/pull/9","note":"CI green, awaiting review","confidence":"medium"},
+                    {"url":"","note":"orphan","confidence":"high"},
+                    {"url":"https://github.com/o/r/pull/10","confidence":"nonsense"}
+                ]}"#,
+        )
+        .unwrap();
+        assert_eq!(with_prs.pr_notes.len(), 1);
+        assert_eq!(with_prs.pr_notes[0].url, "https://github.com/o/r/pull/9");
+        assert_eq!(with_prs.pr_notes[0].note, "CI green, awaiting review");
+        assert_eq!(with_prs.pr_notes[0].confidence, "medium");
     }
 
     #[test]
@@ -1152,6 +1308,7 @@ mod tests {
             prompt_count: 1,
             model: DEFAULT_RECAP_MODEL.to_string(),
             api_key: "key".to_string(),
+            prs: Vec::new(),
             line_delta: TurnLineDelta::default(),
         };
 
@@ -1219,6 +1376,7 @@ mod tests {
             pending: None,
             started_at: Instant::now(),
             history: Vec::new(),
+            pr_context: Vec::new(),
         };
         assert!(manager.enabled_toast_visible());
 
@@ -1251,6 +1409,7 @@ mod tests {
                     next_prompt_notes: Vec::new(),
                     artifacts: Vec::new(),
                     line_delta: TurnLineDelta::default(),
+                    pr_notes: Vec::new(),
                 }),
                 line_delta: Some(TurnLineDelta::default()),
                 model: DEFAULT_RECAP_MODEL.to_string(),
@@ -1263,6 +1422,7 @@ mod tests {
             pending: None,
             started_at: Instant::now(),
             history: Vec::new(),
+            pr_context: Vec::new(),
         };
         let stats = PlatformStats {
             prompts: 2,

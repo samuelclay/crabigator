@@ -1433,6 +1433,7 @@ impl App {
         }
 
         let prev_recap_history_len = self.recap_manager.history().len();
+        self.recap_manager.set_pr_context(self.pr_tracker.prs());
         let recap_changed = self.recap_manager.handle_platform_update(
             self.platform.kind(),
             &self.session_stats.platform_stats,
@@ -1442,6 +1443,7 @@ impl App {
         );
 
         // Push recap state to the cloud whenever something renderable changed.
+        let mut recap_notes_changed = false;
         if recap_changed {
             if let Some(ref mut client) = self.cloud_client {
                 client.send_event(SessionEventBuilder::recap(self.recap_manager.state()));
@@ -1450,12 +1452,20 @@ impl App {
                     client.send_event(SessionEventBuilder::recap_history(history));
                 }
             }
+            // A fresh recap carries per-PR progress notes; stamp them onto the
+            // tracked PRs so they travel with the prs stream too.
+            if self.recap_manager.history().len() != prev_recap_history_len {
+                if let Some(latest) = self.recap_manager.state().latest.clone() {
+                    recap_notes_changed = self.pr_tracker.apply_recap_notes(&latest.pr_notes);
+                }
+            }
         }
 
         // Advance PR tracking on the same tick. Poll finished `gh` jobs, and on a
         // turn completion refresh tracked PRs so their diff stats stay current
         // ("where it starts" vs "where it ends"). Both may change the visible list.
-        let mut prs_changed = self.scan_prs_from_transcript();
+        let mut prs_changed = recap_notes_changed;
+        prs_changed |= self.scan_prs_from_transcript();
         prs_changed |= self.pr_tracker.poll();
         prs_changed |= self
             .pr_tracker

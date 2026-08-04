@@ -237,6 +237,12 @@ pub struct SessionPr {
     /// captured, even after the PR closes.
     #[serde(default)]
     pub slack_comment_urls: Vec<String>,
+    /// The latest recap's one-line read on this PR's progress.
+    #[serde(default)]
+    pub ai_note: String,
+    /// high / medium / low — the recap's confidence that the PR is finished.
+    #[serde(default)]
+    pub ai_confidence: String,
     /// Unix ms of the last successful `gh` refresh (0 = never enriched yet).
     pub refreshed_at: u64,
 }
@@ -278,6 +284,8 @@ impl SessionPr {
             dismissed: false,
             slack_origin_url: String::new(),
             slack_comment_urls: Vec::new(),
+            ai_note: String::new(),
+            ai_confidence: String::new(),
             refreshed_at: 0,
         }
     }
@@ -744,6 +752,22 @@ impl PrTracker {
     /// Replace the cloud-stored dispositions (dashboard toggles / action links).
     pub fn set_overrides(&mut self, overrides: HashMap<String, PrDisposition>) {
         self.overrides = overrides;
+    }
+
+    /// Copy a fresh recap's per-PR judgments onto the tracked PRs, so the
+    /// notes travel with the PR to the mirror, the cloud, and the boards.
+    pub fn apply_recap_notes(&mut self, notes: &[crate::recap::PrRecapNote]) -> bool {
+        let mut changed = false;
+        for note in notes {
+            if let Some(pr) = self.prs.iter_mut().find(|p| p.url == note.url) {
+                if pr.ai_note != note.note || pr.ai_confidence != note.confidence {
+                    pr.ai_note = note.note.clone();
+                    pr.ai_confidence = note.confidence.clone();
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 
     /// Re-run primary/secondary classification against the session's current
@@ -1268,6 +1292,8 @@ impl PrTracker {
             dismissed: false,
             slack_origin_url: origin_slack,
             slack_comment_urls: Vec::new(),
+            ai_note: String::new(),
+            ai_confidence: String::new(),
             refreshed_at: now,
         });
         true
