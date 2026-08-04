@@ -3,6 +3,7 @@ import type { Env } from './types/env';
 import type { SessionInfo } from './types/session';
 import { registerDevice, deviceHeartbeat, getLinkedDevices, revokeLinkedDevice } from './handlers/devices';
 import { getPrOverrides, setPrOverride, getPrActionPage } from './handlers/pr-overrides';
+import { getPrBoard } from './handlers/pr-board';
 import { createSession, getSession, updateSession, deleteSession } from './handlers/sessions';
 import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCodePage, generateInviteCode } from './handlers/pairing';
 import { requireAuth, requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
@@ -150,6 +151,8 @@ router.get('/api/pr-overrides', getPrOverrides);
 router.post('/api/pr-overrides', setPrOverride);
 // Self-closing action page behind the TUI's ★/✕ links
 router.get('/pr-action', getPrActionPage);
+// Cross-session PR board (durable, D1-backed)
+router.get('/api/prs/board', getPrBoard);
 
 // ============================================
 // Pairing endpoints
