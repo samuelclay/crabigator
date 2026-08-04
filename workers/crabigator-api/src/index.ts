@@ -2,7 +2,7 @@ import { Router, jsonResponse } from './router';
 import type { Env } from './types/env';
 import type { SessionInfo } from './types/session';
 import { registerDevice, deviceHeartbeat, getLinkedDevices, revokeLinkedDevice } from './handlers/devices';
-import { getPrOverrides, setPrOverride } from './handlers/pr-overrides';
+import { getPrOverrides, setPrOverride, getPrActionPage } from './handlers/pr-overrides';
 import { createSession, getSession, updateSession, deleteSession } from './handlers/sessions';
 import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCodePage, generateInviteCode } from './handlers/pairing';
 import { requireAuth, requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
@@ -148,6 +148,8 @@ router.delete('/api/devices/linked/:mobile_id', revokeLinkedDevice);
 
 router.get('/api/pr-overrides', getPrOverrides);
 router.post('/api/pr-overrides', setPrOverride);
+// Self-closing action page behind the TUI's ★/✕ links
+router.get('/pr-action', getPrActionPage);
 
 // ============================================
 // Pairing endpoints

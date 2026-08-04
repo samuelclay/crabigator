@@ -50,6 +50,72 @@ export async function getPrOverrides(request: Request, env: Env): Promise<Respon
 }
 
 /**
+ * GET /pr-action - Tiny self-closing page behind the TUI's action links.
+ * A cmd-click in the terminal lands here; the page posts the override with
+ * the dashboard auth already stored in this browser, shows the result, and
+ * closes its tab. Unpaired browsers are pointed at the dashboard instead.
+ */
+export async function getPrActionPage(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const owner = url.searchParams.get('owner') ?? '';
+    const repo = url.searchParams.get('repo') ?? '';
+    const number = parseInt(url.searchParams.get('number') ?? '', 10);
+    const disposition = url.searchParams.get('disposition') ?? '';
+
+    const valid =
+        /^[A-Za-z0-9_.-]+$/.test(owner) &&
+        /^[A-Za-z0-9_.-]+$/.test(repo) &&
+        Number.isInteger(number) && number > 0 &&
+        (disposition === 'auto' || DISPOSITIONS.includes(disposition as Disposition));
+    if (!valid) {
+        return new Response('Invalid PR action', { status: 400 });
+    }
+
+    const [verb, done] =
+        disposition === 'primary' ? ['Marking as primary', 'Marked as primary'] :
+        disposition === 'secondary' ? ['Marking as secondary', 'Marked as secondary'] :
+        disposition === 'dismissed' ? ['Dismissing', 'Dismissed'] :
+        ['Resetting to automatic', 'Reset to automatic'];
+    const prLabel = `${repo} #${number}`;
+    const payload = JSON.stringify({ owner, repo, number, disposition });
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${verb} ${prLabel}</title>
+<style>
+body { background: #0d1117; color: #c9d1d9; font: 14px -apple-system, sans-serif;
+       display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+.card { text-align: center; }
+.ok { color: #87d787; } .err { color: #f85149; }
+a { color: #c4a7f7; }
+</style></head><body><div class="card" id="card">${verb} <b>${prLabel}</b>…</div>
+<script>
+(async () => {
+    const card = document.getElementById('card');
+    const token = localStorage.getItem('crabigator_mobile_token');
+    if (!token) {
+        card.innerHTML = 'This browser is not paired. <a href="/dashboard">Open the dashboard</a> to pair, then try again.';
+        return;
+    }
+    try {
+        const res = await fetch('/api/pr-overrides', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: ${JSON.stringify(payload)},
+        });
+        if (!res.ok) throw new Error(await res.text());
+        card.innerHTML = '<span class="ok">✓</span> ${done} <b>${prLabel}</b>';
+        setTimeout(() => window.close(), 900);
+        setTimeout(() => { card.innerHTML += '<br><small>You can close this tab.</small>'; }, 1500);
+    } catch (e) {
+        card.innerHTML = '<span class="err">✗</span> Failed: ' + e.message;
+    }
+})();
+</script></body></html>`;
+
+    return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+}
+
+/**
  * POST /api/pr-overrides - Set or clear one PR's disposition.
  * Body: { owner, repo, number, disposition: 'primary' | 'secondary' | 'dismissed' | 'auto' }
  * 'auto' deletes the override, returning the PR to automatic classification.

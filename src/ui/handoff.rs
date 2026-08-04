@@ -134,6 +134,8 @@ struct PrColumnWidths {
     ci: usize,
     comments: usize,
     merge: usize,
+    /// The `✕` dismiss action at the right edge (1 cell when shown).
+    dismiss: usize,
 }
 
 impl PrColumnWidths {
@@ -165,6 +167,9 @@ impl PrColumnWidths {
             widths.merge = widths
                 .merge
                 .max(pr_merge_label(pr).0.width().min(PR_MERGE_MAX));
+            if !pr_action_url(pr, "dismissed").is_empty() {
+                widths.dismiss = 1;
+            }
         }
 
         widths.fit_right(total_width);
@@ -175,10 +180,13 @@ impl PrColumnWidths {
     fn fit_right(&mut self, total_width: usize) {
         let right_budget = total_width
             .saturating_sub(PR_LEFT_PADDING + PR_IDENTITY_MIN + PR_COLUMN_GAP + PR_RIGHT_PADDING);
-        // Dropped least-actionable first: merge cleanliness, then the unresolved
-        // thread count, then CI, leaving the PR's own state as the last survivor.
+        // Dropped least-essential first: the dismiss action, merge cleanliness,
+        // the unresolved thread count, then CI, leaving the PR's own state as
+        // the last survivor.
         while self.right_width() > right_budget {
-            if self.merge > 0 {
+            if self.dismiss > 0 {
+                self.dismiss = 0;
+            } else if self.merge > 0 {
                 self.merge = 0;
             } else if self.comments > 0 {
                 self.comments = 0;
@@ -235,7 +243,7 @@ impl PrColumnWidths {
     }
 
     fn right_width(&self) -> usize {
-        table_width(&[self.state, self.ci, self.comments, self.merge])
+        table_width(&[self.state, self.ci, self.comments, self.merge, self.dismiss])
     }
 
     #[cfg(test)]
@@ -296,16 +304,23 @@ type PrCell = (String, usize, usize);
 
 fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
     let identity = truncate_identity(pr, widths.identity);
-    // The glyph stays outside the link so only `repo #num` reads as one target.
+    // The glyph is its own click target — it flips the PR's disposition —
+    // while `repo #num` still opens the PR on GitHub.
     let glyph_prefix = format!("{} ", pr_glyph(pr));
     let (glyph, identity_label) = match identity.strip_prefix(glyph_prefix.as_str()) {
-        Some(label) => (glyph_prefix.as_str(), label),
+        Some(label) => (pr_glyph(pr), label),
         None => ("", identity.as_str()),
+    };
+    let flip = if pr.primary { "secondary" } else { "primary" };
+    let glyph_styled = if glyph.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", link_text(&pr_action_url(pr, flip), glyph.to_string(), 1))
     };
     let identity_styled = format!(
         "{}{}{}{}",
         fg(pr_identity_color(pr)),
-        glyph,
+        glyph_styled,
         escape::hyperlink(&pr.url, identity_label),
         RESET_FG
     );
@@ -352,7 +367,7 @@ fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
     ]
 }
 
-fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
+fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 5] {
     let (state_label, state_color) = pr_state_label(pr);
     let (ci_label, ci_color) = pr_ci_label(pr);
     let (comments_label, comments_color) = pr_comments_label(pr);
@@ -369,6 +384,13 @@ fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
             &pr.comments_url,
         ),
         colored_cell(merge_label, merge_color, widths.merge),
+        // Dismiss action: removes the PR from every list in the group.
+        linked_cell(
+            "✕",
+            color::DARK_GRAY,
+            widths.dismiss,
+            &pr_action_url(pr, "dismissed"),
+        ),
     ]
 }
 
@@ -424,6 +446,19 @@ fn pr_glyph(pr: &SessionPr) -> &'static str {
     } else {
         "⑂"
     }
+}
+
+/// Web action link that stores a disposition for the whole device group.
+/// The page posts the override with the dashboard's stored auth, confirms,
+/// and closes its tab; the desktop picks the change up within a minute.
+fn pr_action_url(pr: &SessionPr, disposition: &str) -> String {
+    if pr.owner.is_empty() || pr.repo.is_empty() {
+        return String::new();
+    }
+    format!(
+        "https://drinkcrabigator.com/pr-action?owner={}&repo={}&number={}&disposition={}",
+        pr.owner, pr.repo, pr.number, disposition
+    )
 }
 
 /// Primaries keep the PR purple; secondaries recede into gray.
@@ -1237,10 +1272,12 @@ mod tests {
         assert!(pr_identity_text(&pr).starts_with("⑂ "));
         pr.primary = true;
         assert!(pr_identity_text(&pr).starts_with("★ "));
-        // The glyph stays outside the link for both shapes.
+        // A primary's star links to the demote action.
         let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
         let cells = pr_left_cells(&pr, &widths);
-        assert!(cells[0].0.contains("★ \x1b]8;;"));
+        assert!(cells[0]
+            .0
+            .contains(&format!("\x1b]8;;{}\x07★", pr_action_url(&pr, "secondary"))));
     }
 
     #[test]
@@ -1312,9 +1349,12 @@ mod tests {
         let right = pr_right_cells(&pr, &widths);
 
         let link_to = |url: &str| format!("\x1b]8;;{url}\x07");
-        // Identity → the PR itself; the `⑂` glyph stays outside the link.
+        // Identity → the PR itself; the `⑂` glyph is its own link that flips
+        // the PR to primary via the web action page.
         assert!(left[0].0.contains(&link_to(&pr.url)));
-        assert!(left[0].0.contains("⑂ \x1b]8;;"));
+        assert!(left[0]
+            .0
+            .contains(&link_to(&pr_action_url(&pr, "primary"))));
         // Diff and file count → the Files-changed tab.
         let files = link_to(&format!("{}/files", pr.url));
         assert!(left[1].0.contains(&files));
@@ -1324,6 +1364,10 @@ mod tests {
         assert!(right[2].0.contains(&link_to(&pr.comments_url)));
         assert!(!right[0].0.contains("\x1b]8;;"));
         assert!(!right[3].0.contains("\x1b]8;;"));
+        // The dismiss action links to the same page with disposition=dismissed.
+        assert!(right[4]
+            .0
+            .contains(&link_to(&pr_action_url(&pr, "dismissed"))));
 
         for (styled, visible, _) in left.iter().chain(right.iter()) {
             assert_eq!(crate::ui::utils::strip_ansi_len(styled), *visible);
