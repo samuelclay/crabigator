@@ -32,6 +32,13 @@ const PR_ACTIVE_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// Safety cap on how long a `gh pr create` keeps claiming PR URLs, in case no
 /// new prompt arrives to close the window. Normally closed by `on_new_prompt`.
 const CREATE_CLAIM_WINDOW: Duration = Duration::from_secs(600);
+/// An untracked bare mention (`PR #7`, `RQH #12`) below this number never
+/// adopts a new PR: small numbers false-match Docker build steps
+/// (`#1 [internal] …`), docs anchors (`llm#1-model`), and numbered findings,
+/// and any repository old enough has a PR to collide with. Repo-qualified
+/// mentions (`owner/repo#12`), full URLs, and refreshes of already-tracked
+/// PRs are unaffected.
+const MIN_BARE_PR_NUMBER: u64 = 100;
 
 fn pr_url_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -595,6 +602,11 @@ impl PrTracker {
                 self.note_pr_active(&url);
                 self.refresh_url(&url, true);
             }
+            return;
+        }
+        // Adopting a new PR from a bare number is only safe when the number is
+        // large enough that a coincidental match is unlikely.
+        if number < MIN_BARE_PR_NUMBER {
             return;
         }
         let key = format!("mention:{}#{number}", cwd.display());
@@ -1536,6 +1548,41 @@ mod tests {
         assert_eq!(prose_pr_numbers(prose), Vec::<u64>::new());
         // Unmarked numbers are dropped even in prose that discusses the code.
         assert_eq!(prose_pr_numbers("preserve #988 as-is"), Vec::<u64>::new());
+    }
+
+    /// The regression from the developer-portal audit: a marked-but-bare `#1`
+    /// (Docker build steps, docs anchors, numbered findings) resolved against
+    /// the session repo and adopted an unrelated PR by another author.
+    #[test]
+    fn low_numbered_bare_mentions_never_adopt() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_text("Let's revisit PR #7 from last week", Path::new("/tmp"));
+        assert!(tracker.prs().is_empty());
+        assert!(tracker.pending.is_empty(), "no gh lookup may be spawned");
+    }
+
+    #[test]
+    fn low_numbered_bare_mentions_still_refresh_tracked_prs() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_text("see https://github.com/o/r/pull/7", Path::new("/tmp"));
+        assert_eq!(tracker.prs().len(), 1);
+        tracker.on_prompt_observed();
+        tracker.pr_active_at.clear();
+        tracker.scan_text("PR #7 is ready to merge", Path::new("/tmp"));
+        assert!(
+            tracker.pr_active_at.contains_key("https://github.com/o/r/pull/7"),
+            "a bare mention of a tracked PR must restart its active window"
+        );
+    }
+
+    #[test]
+    fn bare_mentions_at_the_threshold_still_adopt() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_text("PR #100 tracks the rollout", Path::new("/tmp"));
+        assert!(
+            tracker.pending.keys().any(|k| k.starts_with("mention:")),
+            "a bare #100 should still be looked up against the session repo"
+        );
     }
 
     #[test]
