@@ -112,8 +112,18 @@ export async function getPrBoard(request: Request, env: Env): Promise<Response> 
         });
     }
 
+    const dayMs = 24 * 3600 * 1000;
+    const nowMs = Date.now();
     const prs = [...merged.values()]
         .filter((entry) => {
+            // PRs gh never confirmed are scanning artifacts (doc examples,
+            // wrapped shorthand) — same rule as the desktop board.
+            if (!entry.pr.refreshed_at) return false;
+            // Finished PRs age off after a day, by close time or last mention.
+            if (entry.pr.state !== 'OPEN') {
+                const latest = Math.max(entry.pr.closed_at || 0, entry.pr.last_mentioned_at || 0);
+                if (!latest || nowMs - latest > dayMs) return false;
+            }
             if (entry.disposition === 'dismissed') return false;
             if (entry.disposition === 'primary') entry.pr.primary = true;
             if (entry.disposition === 'secondary') entry.pr.primary = false;
