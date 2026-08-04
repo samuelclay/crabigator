@@ -41,9 +41,17 @@ const PR_MERGE_MAX: usize = 9;
 const PR_IDENTITY_MIN: usize = 10;
 const PR_BRANCH_MIN: usize = 8;
 
+/// PRs the handoff renders: dismissed ones hidden, primaries above
+/// secondaries, arrival order kept within each group.
+pub fn display_prs(prs: &[SessionPr]) -> Vec<&SessionPr> {
+    let mut out: Vec<&SessionPr> = prs.iter().filter(|pr| !pr.dismissed).collect();
+    out.sort_by_key(|pr| !pr.primary);
+    out
+}
+
 /// PR lines the handoff will render for this session (one per PR, capped).
 pub fn pr_handoff_rows(prs: &[SessionPr]) -> u16 {
-    (prs.len() as u16).min(MAX_PR_ROWS)
+    (display_prs(prs).len() as u16).min(MAX_PR_ROWS)
 }
 
 /// Total handoff height = active recap/banner rows + optional divider + PR lines.
@@ -53,7 +61,7 @@ pub fn total_handoff_rows(recap_rows: u16, prs: &[SessionPr]) -> u16 {
 
 /// Divider height between recap content and the PR table.
 pub fn pr_separator_rows(prs: &[SessionPr]) -> u16 {
-    if prs.is_empty() {
+    if display_prs(prs).is_empty() {
         0
     } else {
         PR_SEPARATOR_ROWS
@@ -100,15 +108,16 @@ pub fn draw_pr_handoff(
     prs: &[SessionPr],
     available_rows: u16,
 ) -> Result<u16> {
-    if available_rows == 0 || prs.is_empty() {
+    let display = display_prs(prs);
+    if available_rows == 0 || display.is_empty() {
         return Ok(0);
     }
-    let limit = prs
+    let limit = display
         .len()
         .min(available_rows as usize)
         .min(MAX_PR_ROWS as usize);
-    let widths = PrColumnWidths::from_prs(&prs[..limit], width as usize);
-    for (i, pr) in prs.iter().take(limit).enumerate() {
+    let widths = PrColumnWidths::from_pr_refs(&display[..limit], width as usize);
+    for (i, pr) in display.iter().take(limit).enumerate() {
         draw_pr_row(stdout, row + i as u16, width, pr, &widths)?;
     }
     write!(stdout, "{}", RESET)?;
@@ -128,7 +137,12 @@ struct PrColumnWidths {
 }
 
 impl PrColumnWidths {
+    #[cfg(test)]
     fn from_prs(prs: &[SessionPr], total_width: usize) -> Self {
+        Self::from_pr_refs(&prs.iter().collect::<Vec<_>>(), total_width)
+    }
+
+    fn from_pr_refs(prs: &[&SessionPr], total_width: usize) -> Self {
         let mut widths = Self::default();
         for pr in prs {
             widths.identity = widths
@@ -282,14 +296,15 @@ type PrCell = (String, usize, usize);
 
 fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
     let identity = truncate_identity(pr, widths.identity);
-    // The `⑂` glyph stays outside the link so only `repo #num` reads as one target.
-    let (glyph, identity_label) = match identity.strip_prefix("⑂ ") {
-        Some(label) => ("⑂ ", label),
+    // The glyph stays outside the link so only `repo #num` reads as one target.
+    let glyph_prefix = format!("{} ", pr_glyph(pr));
+    let (glyph, identity_label) = match identity.strip_prefix(glyph_prefix.as_str()) {
+        Some(label) => (glyph_prefix.as_str(), label),
         None => ("", identity.as_str()),
     };
     let identity_styled = format!(
         "{}{}{}{}",
-        fg(color::PURPLE),
+        fg(pr_identity_color(pr)),
         glyph,
         escape::hyperlink(&pr.url, identity_label),
         RESET_FG
@@ -402,19 +417,38 @@ fn cells_text(cells: &[PrCell]) -> String {
     out
 }
 
+/// `★` marks the session's primary PR; `⑂` everything else.
+fn pr_glyph(pr: &SessionPr) -> &'static str {
+    if pr.primary {
+        "★"
+    } else {
+        "⑂"
+    }
+}
+
+/// Primaries keep the PR purple; secondaries recede into gray.
+fn pr_identity_color(pr: &SessionPr) -> u8 {
+    if pr.primary {
+        color::PURPLE
+    } else {
+        color::GRAY
+    }
+}
+
 fn truncate_identity(pr: &SessionPr, width: usize) -> String {
     let repo = if pr.repo.is_empty() {
         "PR"
     } else {
         pr.repo.as_str()
     };
+    let glyph = pr_glyph(pr);
     let suffix = format!(" #{}", pr.number);
-    let fixed = 2 + suffix.width(); // "⑂ " + number
+    let fixed = 2 + suffix.width(); // glyph + space + number
     if width <= fixed {
-        return truncate_display(&format!("⑂ {repo}{suffix}"), width);
+        return truncate_display(&format!("{glyph} {repo}{suffix}"), width);
     }
     let repo = truncate_display(repo, width - fixed);
-    format!("⑂ {repo}{suffix}")
+    format!("{glyph} {repo}{suffix}")
 }
 
 fn pr_identity_text(pr: &SessionPr) -> String {
@@ -423,7 +457,7 @@ fn pr_identity_text(pr: &SessionPr) -> String {
     } else {
         pr.repo.as_str()
     };
-    format!("⑂ {} #{}", repo, pr.number)
+    format!("{} {} #{}", pr_glyph(pr), repo, pr.number)
 }
 
 fn pr_diff_text(pr: &SessionPr) -> String {
@@ -1171,6 +1205,42 @@ mod tests {
         let prs = [sample_pr("request-handler", 2475, "feature/full")];
         assert_eq!(pr_separator_rows(&prs), PR_SEPARATOR_ROWS);
         assert_eq!(total_handoff_rows(2, &prs), 2 + PR_SEPARATOR_ROWS + 1);
+    }
+
+    #[test]
+    fn primaries_sort_first_and_dismissed_disappear() {
+        let mut primary = sample_pr("portal", 1079, "sam/fix");
+        primary.primary = true;
+        let secondary = sample_pr("portal", 1075, "sam/old");
+        let mut dismissed = sample_pr("cvi", 4546, "sam/rejected");
+        dismissed.dismissed = true;
+
+        let prs = [secondary, dismissed, primary];
+        let display = display_prs(&prs);
+        assert_eq!(
+            display.iter().map(|pr| pr.number).collect::<Vec<_>>(),
+            vec![1079, 1075],
+            "primary first, dismissed gone"
+        );
+        assert_eq!(pr_handoff_rows(&prs), 2);
+
+        // A session whose every PR is dismissed reserves no rows at all.
+        let mut all_dismissed = sample_pr("portal", 1, "x");
+        all_dismissed.dismissed = true;
+        assert_eq!(pr_separator_rows(std::slice::from_ref(&all_dismissed)), 0);
+        assert_eq!(pr_handoff_rows(std::slice::from_ref(&all_dismissed)), 0);
+    }
+
+    #[test]
+    fn primary_prs_wear_the_star() {
+        let mut pr = sample_pr("portal", 1079, "sam/fix");
+        assert!(pr_identity_text(&pr).starts_with("⑂ "));
+        pr.primary = true;
+        assert!(pr_identity_text(&pr).starts_with("★ "));
+        // The glyph stays outside the link for both shapes.
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
+        let cells = pr_left_cells(&pr, &widths);
+        assert!(cells[0].0.contains("★ \x1b]8;;"));
     }
 
     #[test]
