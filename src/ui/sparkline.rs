@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn test_render_empty() {
         assert_eq!(render_sparkline(&[], 10), "");
-        assert_eq!(render_sparkline(&[0, 0, 0], 10).contains(' '), true);
+        assert!(render_sparkline(&[0, 0, 0], 10).contains(' '));
     }
 
     #[test]

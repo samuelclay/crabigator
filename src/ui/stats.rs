@@ -55,77 +55,6 @@ fn format_elapsed(timestamp: Option<f64>) -> String {
         .unwrap_or_default()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn visible(s: &str) -> usize {
-        crate::ui::utils::strip_ansi_len(s)
-    }
-
-    fn osc_link_target(s: &str) -> Option<String> {
-        // OSC 8 hyperlink format: \x1b]8;;<url>\x07<text>\x1b]8;;\x07
-        let start = s.find("\x1b]8;;")? + "\x1b]8;;".len();
-        let end = s[start..].find('\x07')? + start;
-        Some(s[start..end].to_string())
-    }
-
-    #[test]
-    fn pair_suffix_full_tier_renders_with_label() {
-        let (width, ansi) = build_pair_suffix("ABC-DEF-GHI", 64).expect("full tier should render");
-        // " · Pair: ABC-DEF-GHI" = 3 + 6 + 11 = 20 cols
-        assert_eq!(width, 20);
-        assert_eq!(visible(&ansi), 20);
-        // The OSC link still points to the full code regardless of tier.
-        assert_eq!(
-            osc_link_target(&ansi).as_deref(),
-            Some("https://drinkcrabigator.com/dashboard?setup=ABC-DEF-GHI")
-        );
-    }
-
-    #[test]
-    fn pair_suffix_drops_label_when_tight() {
-        // 14 cols fits " · ABC-DEF-GHI" (3 + 11 = 14) but not the full tier (20).
-        let (width, ansi) = build_pair_suffix("ABC-DEF-GHI", 14).expect("no-label tier");
-        assert_eq!(width, 14);
-        assert!(!ansi.contains("Pair:"));
-    }
-
-    #[test]
-    fn pair_suffix_truncates_code_when_very_tight() {
-        // 8 cols → " · " + 5 visible code chars (4 + ellipsis).
-        let (width, ansi) = build_pair_suffix("ABC-DEF-GHI", 8).expect("truncated tier");
-        assert_eq!(width, 8);
-        assert!(ansi.contains('…'));
-        // URL still carries the full code.
-        assert_eq!(
-            osc_link_target(&ansi).as_deref(),
-            Some("https://drinkcrabigator.com/dashboard?setup=ABC-DEF-GHI")
-        );
-    }
-
-    #[test]
-    fn pair_suffix_returns_none_when_no_room() {
-        // " · " plus at least 2 code chars + ellipsis needs 6 cols. Below that, hide.
-        assert!(build_pair_suffix("ABC-DEF-GHI", 5).is_none());
-        assert!(build_pair_suffix("ABC-DEF-GHI", 0).is_none());
-    }
-
-    #[test]
-    fn pair_suffix_link_excludes_leading_separator() {
-        // The " · " before the link should sit OUTSIDE the OSC sequence so
-        // clicks only trigger on the meaningful pair text.
-        let (_, ansi) = build_pair_suffix("ABC-DEF-GHI", 64).unwrap();
-        let osc_open = ansi.find("\x1b]8;;").unwrap();
-        // Everything before the opening OSC must be just the prefix decoration:
-        // a single space, the dim middot (with its own SGR), space, RESET.
-        let before = &ansi[..osc_open];
-        assert!(before.starts_with(' '));
-        assert!(before.contains('·'));
-        assert!(!before.contains("Pair"));
-    }
-}
-
 /// Format the state indicator for the header row
 fn format_state_indicator(state: SessionState) -> String {
     match state {
@@ -615,5 +544,76 @@ fn draw_normal_row(
             }
         }
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn visible(s: &str) -> usize {
+        crate::ui::utils::strip_ansi_len(s)
+    }
+
+    fn osc_link_target(s: &str) -> Option<String> {
+        // OSC 8 hyperlink format: \x1b]8;;<url>\x07<text>\x1b]8;;\x07
+        let start = s.find("\x1b]8;;")? + "\x1b]8;;".len();
+        let end = s[start..].find('\x07')? + start;
+        Some(s[start..end].to_string())
+    }
+
+    #[test]
+    fn pair_suffix_full_tier_renders_with_label() {
+        let (width, ansi) = build_pair_suffix("ABC-DEF-GHI", 64).expect("full tier should render");
+        // " · Pair: ABC-DEF-GHI" = 3 + 6 + 11 = 20 cols
+        assert_eq!(width, 20);
+        assert_eq!(visible(&ansi), 20);
+        // The OSC link still points to the full code regardless of tier.
+        assert_eq!(
+            osc_link_target(&ansi).as_deref(),
+            Some("https://drinkcrabigator.com/dashboard?setup=ABC-DEF-GHI")
+        );
+    }
+
+    #[test]
+    fn pair_suffix_drops_label_when_tight() {
+        // 14 cols fits " · ABC-DEF-GHI" (3 + 11 = 14) but not the full tier (20).
+        let (width, ansi) = build_pair_suffix("ABC-DEF-GHI", 14).expect("no-label tier");
+        assert_eq!(width, 14);
+        assert!(!ansi.contains("Pair:"));
+    }
+
+    #[test]
+    fn pair_suffix_truncates_code_when_very_tight() {
+        // 8 cols → " · " + 5 visible code chars (4 + ellipsis).
+        let (width, ansi) = build_pair_suffix("ABC-DEF-GHI", 8).expect("truncated tier");
+        assert_eq!(width, 8);
+        assert!(ansi.contains('…'));
+        // URL still carries the full code.
+        assert_eq!(
+            osc_link_target(&ansi).as_deref(),
+            Some("https://drinkcrabigator.com/dashboard?setup=ABC-DEF-GHI")
+        );
+    }
+
+    #[test]
+    fn pair_suffix_returns_none_when_no_room() {
+        // " · " plus at least 2 code chars + ellipsis needs 6 cols. Below that, hide.
+        assert!(build_pair_suffix("ABC-DEF-GHI", 5).is_none());
+        assert!(build_pair_suffix("ABC-DEF-GHI", 0).is_none());
+    }
+
+    #[test]
+    fn pair_suffix_link_excludes_leading_separator() {
+        // The " · " before the link should sit OUTSIDE the OSC sequence so
+        // clicks only trigger on the meaningful pair text.
+        let (_, ansi) = build_pair_suffix("ABC-DEF-GHI", 64).unwrap();
+        let osc_open = ansi.find("\x1b]8;;").unwrap();
+        // Everything before the opening OSC must be just the prefix decoration:
+        // a single space, the dim middot (with its own SGR), space, RESET.
+        let before = &ansi[..osc_open];
+        assert!(before.starts_with(' '));
+        assert!(before.contains('·'));
+        assert!(!before.contains("Pair"));
     }
 }

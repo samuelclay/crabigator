@@ -319,10 +319,12 @@ mod tests {
 
     #[test]
     fn test_update_state_with_update() {
-        let mut state = UpdateState::default();
-        state.update_available = true;
-        state.new_version = Some("0.4.0".to_string());
-        state.prompt_dismissed = true;
+        let state = UpdateState {
+            update_available: true,
+            new_version: Some("0.4.0".to_string()),
+            prompt_dismissed: true,
+            ..Default::default()
+        };
 
         assert!(state.should_show_banner());
         assert_eq!(state.banner_rows(), 1);

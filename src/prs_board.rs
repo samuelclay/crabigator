@@ -304,7 +304,10 @@ fn format_age(secs: u64) -> String {
 fn sessions_text(sessions: &[SessionRef]) -> String {
     let mut seen: Vec<(String, usize, u64)> = Vec::new(); // (name, count, min idle age)
     for session in sessions {
-        match seen.iter_mut().find(|(name, _, _)| *name == session.dir_name) {
+        match seen
+            .iter_mut()
+            .find(|(name, _, _)| *name == session.dir_name)
+        {
             Some((_, count, min_age)) => {
                 *count += 1;
                 *min_age = (*min_age).min(session.age_secs);
@@ -813,8 +816,14 @@ mod tests {
         assert!(frame.contains("CI green, awaiting review"));
         assert!(frame.contains("slack origin"));
         // Progress reads as a bar and percent, not confidence prose.
-        assert!(frame.contains('▓') && frame.contains('%'), "progress bar renders");
-        assert!(!frame.contains("confidence"), "confidence prose replaced by the bar");
+        assert!(
+            frame.contains('▓') && frame.contains('%'),
+            "progress bar renders"
+        );
+        assert!(
+            !frame.contains("confidence"),
+            "confidence prose replaced by the bar"
+        );
         // Old-binary sessions report no mention counts; don't render "0 mentions".
         assert!(!frame.contains("mentions"), "zero mentions stays silent");
     }
@@ -885,11 +894,18 @@ mod tests {
 
         silent.dismissed = false;
         let entries = aggregate(
-            &[snapshot("one", vec![fresh, old, recently_discussed, silent])],
+            &[snapshot(
+                "one",
+                vec![fresh, old, recently_discussed, silent],
+            )],
             &HashMap::new(),
         );
         let numbers: Vec<u64> = entries.iter().map(|e| e.pr.number).collect();
-        assert_eq!(numbers, vec![1, 3], "fresh merge and closed-but-discussed stay");
+        assert_eq!(
+            numbers,
+            vec![1, 3],
+            "fresh merge and closed-but-discussed stay"
+        );
     }
 
     #[test]

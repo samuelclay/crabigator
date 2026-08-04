@@ -361,6 +361,39 @@ fn parse_hunk_modifications(
         .collect()
 }
 
+fn parse_diff_into_files(diff: &str) -> Vec<(String, String)> {
+    let mut files = Vec::new();
+    let mut current_file = String::new();
+    let mut current_diff = String::new();
+
+    for line in diff.lines() {
+        if line.starts_with("diff --git") {
+            // Save previous file if any
+            if !current_file.is_empty() {
+                files.push((current_file.clone(), current_diff.clone()));
+            }
+
+            // Extract filename from "diff --git a/path b/path"
+            if let Some(b_path) = line.split(" b/").nth(1) {
+                current_file = b_path.to_string();
+            } else {
+                current_file = String::new();
+            }
+            current_diff = String::new();
+        } else {
+            current_diff.push_str(line);
+            current_diff.push('\n');
+        }
+    }
+
+    // Don't forget the last file
+    if !current_file.is_empty() {
+        files.push((current_file, current_diff));
+    }
+
+    files
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,37 +460,4 @@ mod tests {
             vec!["outer A › shared › describe", "outer B › shared › describe"]
         );
     }
-}
-
-fn parse_diff_into_files(diff: &str) -> Vec<(String, String)> {
-    let mut files = Vec::new();
-    let mut current_file = String::new();
-    let mut current_diff = String::new();
-
-    for line in diff.lines() {
-        if line.starts_with("diff --git") {
-            // Save previous file if any
-            if !current_file.is_empty() {
-                files.push((current_file.clone(), current_diff.clone()));
-            }
-
-            // Extract filename from "diff --git a/path b/path"
-            if let Some(b_path) = line.split(" b/").nth(1) {
-                current_file = b_path.to_string();
-            } else {
-                current_file = String::new();
-            }
-            current_diff = String::new();
-        } else {
-            current_diff.push_str(line);
-            current_diff.push('\n');
-        }
-    }
-
-    // Don't forget the last file
-    if !current_file.is_empty() {
-        files.push((current_file, current_diff));
-    }
-
-    files
 }

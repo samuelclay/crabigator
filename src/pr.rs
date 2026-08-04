@@ -1151,8 +1151,7 @@ impl PrTracker {
                                 let before = self.prs.len();
                                 // Never drop a PR that once enriched — a repo
                                 // deleted later keeps its last known stats.
-                                self.prs
-                                    .retain(|pr| pr.url != *url || pr.refreshed_at > 0);
+                                self.prs.retain(|pr| pr.url != *url || pr.refreshed_at > 0);
                                 changed |= self.prs.len() != before;
                             }
                         }

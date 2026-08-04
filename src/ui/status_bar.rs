@@ -44,9 +44,7 @@ pub const MIN_STATUS_ROWS: u16 = MIN_WIDGET_DATA_ROWS + 1;
 /// preserves four rows for widget content.
 pub fn split_terminal_rows(total_rows: u16, handoff_rows: u16) -> (u16, u16) {
     let status_rows = preferred_status_rows_max(total_rows, handoff_rows);
-    let pty_rows = total_rows
-        .saturating_sub(status_rows + handoff_rows)
-        .max(1);
+    let pty_rows = total_rows.saturating_sub(status_rows + handoff_rows).max(1);
 
     (pty_rows, status_rows)
 }
