@@ -94,6 +94,10 @@ export class SessionDO implements DurableObject {
     private lastSeenNotifiedAt: number = 0;
     /** Last time we updated D1 last_seen_at (throttled separately, 60s) */
     private lastD1SeenUpdate: number = 0;
+    /** Last time session_prs rows were written to D1 (60s throttle) */
+    private lastD1PrsUpdate: number = 0;
+    /** Serialized form of the last session_prs write, to skip no-op writes */
+    private lastD1PrsSnapshot: string = '';
     /** Serializes stats persistence so external D1 I/O cannot reorder updates. */
     private statsUpdateQueue: Promise<void> = Promise.resolve();
 
@@ -349,6 +353,50 @@ export class SessionDO implements DurableObject {
     }
 
     /**
+     * Write the session's PR list through to D1 for the cross-session PR
+     * board. Diffed (no-op events skipped) and throttled to one write per
+     * minute per session — prs events fire on every enrichment poll and the
+     * write is fire-and-forget, matching the titles precedent.
+     */
+    private persistPrsToD1(prs: any[]): void {
+        const sessionId = this.persistentState.sessionId || this.sessionInfo?.id;
+        if (!sessionId || prs.length === 0) return;
+        const snapshot = JSON.stringify(prs);
+        if (snapshot === this.lastD1PrsSnapshot) return;
+        const firstWrite = this.lastD1PrsSnapshot === '';
+        if (!firstWrite && Date.now() - this.lastD1PrsUpdate < 60_000) return;
+        this.lastD1PrsUpdate = Date.now();
+        this.lastD1PrsSnapshot = snapshot;
+
+        const now = Math.floor(Date.now() / 1000);
+        const statements = prs
+            .filter((pr) => pr && pr.owner && pr.repo && pr.number)
+            .map((pr) =>
+                this.env.DB.prepare(
+                    `INSERT INTO session_prs (session_id, owner, repo, number, url, state, is_primary, data, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT (session_id, owner, repo, number)
+                     DO UPDATE SET url = excluded.url, state = excluded.state,
+                                   is_primary = excluded.is_primary, data = excluded.data,
+                                   updated_at = excluded.updated_at`
+                ).bind(
+                    sessionId,
+                    pr.owner,
+                    pr.repo,
+                    pr.number,
+                    pr.url || '',
+                    pr.state || '',
+                    pr.primary ? 1 : 0,
+                    JSON.stringify(pr),
+                    now
+                )
+            );
+        if (statements.length > 0) {
+            this.env.DB.batch(statements).catch(() => {});
+        }
+    }
+
+    /**
      * Build web-only commit history from the bounded recent log desktop sends
      * with git status. If no history has been recorded yet, backfill commits
      * from this session's start time so late Worker/client upgrades don't
@@ -525,6 +573,7 @@ export class SessionDO implements DurableObject {
             case 'prs': {
                 this.persistentState.lastPrs = (event as any).prs || [];
                 persistentChanged = true;
+                this.persistPrsToD1(this.persistentState.lastPrs || []);
                 break;
             }
             case 'git':
