@@ -1,4 +1,4 @@
-.PHONY: run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux
+.PHONY: run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo pr prs reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux
 
 PROVIDER_FILE := .crabigator-provider
 DEFAULT_PROVIDER := claude
@@ -42,6 +42,12 @@ claude:
 claude-yolo:
 	@echo "claude" > $(PROVIDER_FILE)
 	RUST_BACKTRACE=1 cargo run -- claude --dangerously-skip-permissions
+
+# Live cross-session PR board
+prs:
+	RUST_BACKTRACE=1 cargo run --release -- prs
+
+pr: prs
 
 build:
 	cargo build
