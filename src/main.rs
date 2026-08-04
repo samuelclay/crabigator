@@ -15,6 +15,7 @@ mod pair;
 mod parsers;
 mod platforms;
 mod pr;
+mod pr_rank;
 mod recap;
 mod terminal;
 mod terminal_spawner;

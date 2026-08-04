@@ -383,6 +383,9 @@ impl MirrorPublisher {
             pr.last_mentioned_at.hash(&mut hasher);
             pr.last_mention_prompt.hash(&mut hasher);
             pr.branch_matched.hash(&mut hasher);
+            pr.primary.hash(&mut hasher);
+            pr.primary_source.hash(&mut hasher);
+            pr.dismissed.hash(&mut hasher);
         }
 
         hasher.finish()

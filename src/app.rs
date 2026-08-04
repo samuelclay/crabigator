@@ -1174,6 +1174,8 @@ impl App {
                 pr.checks_passed.hash(&mut hasher);
                 pr.checks_failed.hash(&mut hasher);
                 pr.checks_pending.hash(&mut hasher);
+                pr.primary.hash(&mut hasher);
+                pr.dismissed.hash(&mut hasher);
             }
 
             // Include throbber frame when animating to trigger redraws on frame change
@@ -1435,6 +1437,9 @@ impl App {
         // ("where it starts" vs "where it ends"). Both may change the visible list.
         let mut prs_changed = self.scan_prs_from_transcript();
         prs_changed |= self.pr_tracker.poll();
+        prs_changed |= self
+            .pr_tracker
+            .reclassify(&self.git_state.branch, &self.cwd);
         let turn_completed = old_effective_state != SessionState::Complete
             && new_effective_state == SessionState::Complete;
         if turn_completed {

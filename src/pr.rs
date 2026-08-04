@@ -22,6 +22,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use crate::pr_rank::PrDisposition;
+
 /// Minimum time between `gh pr view` refreshes for a single PR.
 const REFRESH_THROTTLE: Duration = Duration::from_secs(30);
 /// PR status and review-thread counts stay responsive while a PR is being
@@ -32,6 +34,8 @@ const PR_ACTIVE_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// Safety cap on how long a `gh pr create` keeps claiming PR URLs, in case no
 /// new prompt arrives to close the window. Normally closed by `on_new_prompt`.
 const CREATE_CLAIM_WINDOW: Duration = Duration::from_secs(600);
+/// How many pasted-prompt URLs to keep for branch matching.
+const PROMPT_URLS_KEPT: usize = 32;
 /// An untracked bare mention (`PR #7`, `RQH #12`) below this number never
 /// adopts a new PR: small numbers false-match Docker build steps
 /// (`#1 [internal] …`), docs anchors (`llm#1-model`), and numbered findings,
@@ -51,6 +55,58 @@ fn pr_url_re() -> &'static Regex {
 fn pr_number_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"#(\d+)\b").expect("valid PR number regex"))
+}
+
+fn any_url_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"https?://[^\s)\]>'"]+"#).expect("valid url regex"))
+}
+
+/// `PR #123 … is (the) primary` / `#123 … secondary`.
+fn decl_number_first_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)(?:\bpr\s*#?|#)(\d+)\b[^\n.!?]{0,40}?\bis\s+(?:the\s+)?(primary|secondary)\b")
+            .expect("valid declaration regex")
+    })
+}
+
+/// `the primary (PR) is #123`, `make … primary … #123`.
+fn decl_keyword_first_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)\b(primary|secondary)\b[^\n.!?]{0,40}?(?:\bpr\s*#?|#)(\d+)\b")
+            .expect("valid declaration regex")
+    })
+}
+
+/// `dismiss PR #123` — the verb must target the PR directly; a wider window
+/// would turn "remove the flag from PR #123" into a dismissal.
+fn decl_dismiss_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)\b(?:dismiss|forget|untrack)\s+(?:pr\s*#?|#)(\d+)\b")
+            .expect("valid dismissal regex")
+    })
+}
+
+/// The same statement made with a full PR URL.
+fn decl_url_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?i)(https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+)[^\n.!?]{0,40}?\bis\s+(?:the\s+)?(primary|secondary)\b",
+        )
+        .expect("valid declaration regex")
+    })
+}
+
+fn parse_disposition(word: &str) -> PrDisposition {
+    match word.to_ascii_lowercase().as_str() {
+        "primary" => PrDisposition::Primary,
+        "secondary" => PrDisposition::Secondary,
+        _ => PrDisposition::Dismissed,
+    }
 }
 
 /// Uppercase words that precede a `#123` in prose without naming a repository.
@@ -149,6 +205,18 @@ pub struct SessionPr {
     /// or empty when no review is required or the value is unknown.
     #[serde(default)]
     pub review_decision: String,
+    /// The PR this session is actually working on, as opposed to one that
+    /// merely came up. Computed by [`crate::pr_rank::classify`].
+    #[serde(default)]
+    pub primary: bool,
+    /// What decided `primary`: "auto", "session" (an in-session statement),
+    /// or "override" (the cloud-stored dashboard disposition).
+    #[serde(default)]
+    pub primary_source: String,
+    /// Dismissed by the user — stays tracked so a re-mention can't resurrect
+    /// it, but nothing should render it.
+    #[serde(default)]
+    pub dismissed: bool,
     /// Unix ms of the last successful `gh` refresh (0 = never enriched yet).
     pub refreshed_at: u64,
 }
@@ -185,8 +253,17 @@ impl SessionPr {
             last_mention_prompt: 0,
             branch_matched: false,
             review_decision: String::new(),
+            primary: false,
+            primary_source: String::new(),
+            dismissed: false,
             refreshed_at: 0,
         }
+    }
+
+    /// Bare tracked PR for classifier tests.
+    #[cfg(test)]
+    pub fn test_stub(number: u64, owner: &str, repo: &str) -> Self {
+        Self::placeholder(&PrLocation::new(owner, repo, number), false)
     }
 }
 
@@ -338,7 +415,7 @@ struct FetchResult {
 /// What a finished background job carries back.
 enum JobResult {
     /// A `gh pr view` enrichment.
-    Pr(FetchResult),
+    Pr(Box<FetchResult>),
     /// A review-thread count for the PR at `url`.
     Threads {
         url: String,
@@ -439,6 +516,14 @@ pub struct PrTracker {
     /// The platform's prompt counter, stamped onto mentions so recency can be
     /// judged in turns rather than wall-clock time.
     prompt_count: u32,
+    /// URLs pasted into user prompts, kept for branch/preview-URL matching.
+    prompt_urls: Vec<String>,
+    /// "PR #123 is the primary" statements from this session, by number.
+    declared_numbers: HashMap<u64, PrDisposition>,
+    /// The same statements when made with a full PR URL.
+    declared_urls: HashMap<String, PrDisposition>,
+    /// Cloud-stored dispositions keyed `owner/repo#number`.
+    overrides: HashMap<String, PrDisposition>,
 }
 
 impl Default for PrTracker {
@@ -462,6 +547,10 @@ impl PrTracker {
             update_commands_seen: HashMap::new(),
             pending_pr_active: HashMap::new(),
             prompt_count: 0,
+            prompt_urls: Vec::new(),
+            declared_numbers: HashMap::new(),
+            declared_urls: HashMap::new(),
+            overrides: HashMap::new(),
         }
     }
 
@@ -534,8 +623,79 @@ impl PrTracker {
         if self.scan_prompt_owner.as_deref() != Some(text) {
             self.reset_scan_deduplication();
             self.scan_prompt_owner = Some(text.to_string());
+            self.note_prompt_urls(text);
+            self.scan_declarations(text);
         }
         self.scan_text_inner(text, cwd, false, "prompt")
+    }
+
+    /// Remember URLs the user pasted — preview deployments embed branch names,
+    /// which is sometimes the only tie between a session and its PR.
+    fn note_prompt_urls(&mut self, text: &str) {
+        for found in any_url_re().find_iter(text) {
+            let url = found
+                .as_str()
+                .trim_end_matches(['.', ',', ')', ']', '>', ';'])
+                .to_string();
+            if !self.prompt_urls.contains(&url) {
+                self.prompt_urls.push(url);
+            }
+        }
+        let excess = self.prompt_urls.len().saturating_sub(PROMPT_URLS_KEPT);
+        if excess > 0 {
+            self.prompt_urls.drain(..excess);
+        }
+    }
+
+    /// Pick up explicit dispositions the user types: "PR #123 is the primary",
+    /// "the secondary one is #99", "dismiss PR #4546". User statements outrank
+    /// automatic scoring and only a dashboard override outranks them.
+    fn scan_declarations(&mut self, text: &str) {
+        for caps in decl_number_first_re().captures_iter(text) {
+            if let (Ok(number), Some(word)) = (caps[1].parse::<u64>(), caps.get(2)) {
+                self.declared_numbers
+                    .insert(number, parse_disposition(word.as_str()));
+            }
+        }
+        for caps in decl_keyword_first_re().captures_iter(text) {
+            if let (Some(word), Ok(number)) = (caps.get(1), caps[2].parse::<u64>()) {
+                self.declared_numbers
+                    .insert(number, parse_disposition(word.as_str()));
+            }
+        }
+        for caps in decl_dismiss_re().captures_iter(text) {
+            if let Ok(number) = caps[1].parse::<u64>() {
+                self.declared_numbers
+                    .insert(number, PrDisposition::Dismissed);
+            }
+        }
+        for caps in decl_url_re().captures_iter(text) {
+            if let (Some(url), Some(word)) = (caps.get(1), caps.get(2)) {
+                self.declared_urls
+                    .insert(url.as_str().to_string(), parse_disposition(word.as_str()));
+            }
+        }
+    }
+
+    /// Re-run primary/secondary classification against the session's current
+    /// branch and working directory. Returns true when anything visible moved.
+    pub fn reclassify(&mut self, current_branch: &str, cwd: &Path) -> bool {
+        if self.prs.is_empty() {
+            return false;
+        }
+        let ctx = crate::pr_rank::RankContext {
+            current_branch: current_branch.to_string(),
+            worktree_dir: cwd
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            prompt_count: self.prompt_count,
+            prompt_urls: self.prompt_urls.clone(),
+            declared_numbers: self.declared_numbers.clone(),
+            declared_urls: self.declared_urls.clone(),
+            overrides: self.overrides.clone(),
+        };
+        crate::pr_rank::classify(&mut self.prs, &ctx)
     }
 
     fn scan_text_inner(
@@ -687,12 +847,12 @@ impl PrTracker {
         let cwd = cwd.to_path_buf();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(JobResult::Pr(FetchResult {
+            let _ = tx.send(JobResult::Pr(Box::new(FetchResult {
                 requested_url: None,
                 created_here: false,
                 pr_active: true,
                 data: fetch_pr_number(&cwd, number),
-            }));
+            })));
         });
         self.pending.insert(key, rx);
     }
@@ -767,12 +927,12 @@ impl PrTracker {
         let cwd = cwd.to_path_buf();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(JobResult::Pr(FetchResult {
+            let _ = tx.send(JobResult::Pr(Box::new(FetchResult {
                 requested_url: None,
                 created_here: false,
                 pr_active,
                 data: fetch_pr_for_branch(&cwd),
-            }));
+            })));
         });
         self.pending.insert(key, rx);
     }
@@ -787,12 +947,12 @@ impl PrTracker {
         let (tx, rx) = mpsc::channel();
         let url_for_job = url.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(JobResult::Pr(FetchResult {
+            let _ = tx.send(JobResult::Pr(Box::new(FetchResult {
                 requested_url: Some(url_for_job.clone()),
                 created_here,
                 pr_active: created_here,
                 data: fetch_pr(&url_for_job),
-            }));
+            })));
         });
         self.pending.insert(url, rx);
     }
@@ -1025,6 +1185,9 @@ impl PrTracker {
             last_mention_prompt: 0,
             branch_matched: false,
             review_decision: json.review_decision,
+            primary: false,
+            primary_source: String::new(),
+            dismissed: false,
             refreshed_at: now,
         });
         true
@@ -1750,6 +1913,32 @@ mod tests {
         );
         assert_eq!(tracker.prs().len(), 2);
         assert!(tracker.prs().iter().all(|pr| pr.mentions == 1));
+    }
+
+    #[test]
+    fn prompt_declarations_classify_prs() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_text("see https://github.com/o/r/pull/500", Path::new("/tmp"));
+        tracker.scan_prompt("I think PR #500 is the primary here", Path::new("/tmp"));
+        tracker.reclassify("", Path::new("/tmp"));
+        let pr = &tracker.prs()[0];
+        assert!(pr.primary);
+        assert_eq!(pr.primary_source, "session");
+    }
+
+    #[test]
+    fn dismissal_statements_hide_prs() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_text("see https://github.com/o/r/pull/500", Path::new("/tmp"));
+        tracker.scan_prompt("dismiss PR #500, it landed last week", Path::new("/tmp"));
+        tracker.reclassify("", Path::new("/tmp"));
+        assert!(tracker.prs()[0].dismissed);
+        // But "remove the flag from PR #500" must NOT dismiss.
+        let mut tracker = PrTracker::new();
+        tracker.scan_text("see https://github.com/o/r/pull/500", Path::new("/tmp"));
+        tracker.scan_prompt("remove the flag from PR #500", Path::new("/tmp"));
+        tracker.reclassify("", Path::new("/tmp"));
+        assert!(!tracker.prs()[0].dismissed);
     }
 
     #[test]

@@ -1155,6 +1155,9 @@ mod tests {
             last_mention_prompt: 0,
             branch_matched: false,
             review_decision: String::new(),
+            primary: false,
+            primary_source: String::new(),
+            dismissed: false,
             refreshed_at: 0,
         }
     }
