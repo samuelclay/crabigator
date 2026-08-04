@@ -220,6 +220,9 @@ pub struct SessionPr {
     /// or empty when no review is required or the value is unknown.
     #[serde(default)]
     pub review_decision: String,
+    /// Unix ms of the merge/close (0 while open or unknown).
+    #[serde(default)]
+    pub closed_at: u64,
     /// The PR this session is actually working on, as opposed to one that
     /// merely came up. Computed by [`crate::pr_rank::classify`].
     #[serde(default)]
@@ -283,6 +286,7 @@ impl SessionPr {
             last_mention_prompt: 0,
             branch_matched: false,
             review_decision: String::new(),
+            closed_at: 0,
             primary: false,
             primary_source: String::new(),
             dismissed: false,
@@ -373,6 +377,9 @@ struct GhPrJson {
     merge_state_status: String,
     #[serde(default, rename = "reviewDecision")]
     review_decision: String,
+    /// ISO 8601; set once the PR is merged or closed, empty while open.
+    #[serde(default, rename = "closedAt")]
+    closed_at: String,
     #[serde(default, rename = "statusCheckRollup")]
     status_check_rollup: Vec<CheckEntry>,
 }
@@ -1115,12 +1122,15 @@ impl PrTracker {
         for (key, result) in done_keys {
             self.pending.remove(&key);
             let pending_pr_active = self.pending_pr_active.remove(&key).unwrap_or(false);
-            // Errors are silent: a PR we can't view (auth, deleted, private) simply
-            // doesn't gain live stats. If it was only a placeholder from a claim we
-            // still keep it so the user sees the URL they just created.
+            // Most errors are silent: a PR we can't view right now (auth,
+            // network, private) simply doesn't gain live stats and keeps its
+            // placeholder. But when GitHub says the PR flat-out doesn't exist,
+            // the placeholder was a scanning artifact — a doc example like
+            // `o/r#500` or a line-wrapped `owner/repo#N` shorthand — and it
+            // must not linger on the boards.
             match result {
-                Some(JobResult::Pr(result)) => {
-                    if let Ok(json) = result.data {
+                Some(JobResult::Pr(result)) => match result.data {
+                    Ok(json) => {
                         let pr_active = if (result.pr_active || pending_pr_active)
                             && json.state == "OPEN"
                             && !json.url.is_empty()
@@ -1135,7 +1145,19 @@ impl PrTracker {
                             self.note_pr_active(&url);
                         }
                     }
-                }
+                    Err(error) => {
+                        if let Some(url) = &result.requested_url {
+                            if pr_does_not_exist(&error) {
+                                let before = self.prs.len();
+                                // Never drop a PR that once enriched — a repo
+                                // deleted later keeps its last known stats.
+                                self.prs
+                                    .retain(|pr| pr.url != *url || pr.refreshed_at > 0);
+                                changed |= self.prs.len() != before;
+                            }
+                        }
+                    }
+                },
                 Some(JobResult::Threads {
                     url,
                     data: Ok(threads),
@@ -1224,6 +1246,7 @@ impl PrTracker {
         let (passed, failed, pending) = count_checks(&json.status_check_rollup);
         let total = passed + failed + pending;
         let ci_url = ci_link(&json.status_check_rollup, &url);
+        let closed_at = parse_iso_ms(&json.closed_at);
 
         if let Some(existing) = self.prs.iter_mut().find(|p| p.url == url) {
             let before = existing.clone();
@@ -1238,6 +1261,7 @@ impl PrTracker {
             existing.mergeable = json.mergeable;
             existing.merge_state_status = json.merge_state_status;
             existing.review_decision = json.review_decision;
+            existing.closed_at = closed_at;
             existing.checks_passed = passed;
             existing.checks_failed = failed;
             existing.checks_pending = pending;
@@ -1281,6 +1305,7 @@ impl PrTracker {
             mergeable: json.mergeable,
             merge_state_status: json.merge_state_status,
             review_decision: json.review_decision,
+            closed_at,
             checks_passed: passed,
             checks_failed: failed,
             checks_pending: pending,
@@ -1414,6 +1439,14 @@ fn scan_events(text: &str) -> Vec<ScanEvent> {
         }
     }
     events
+}
+
+/// Whether a `gh` error means the PR definitively doesn't exist, as opposed
+/// to a transient failure (network, auth, rate limit) that spares the row.
+fn pr_does_not_exist(error: &str) -> bool {
+    error.contains("Could not resolve to")
+        || error.contains("HTTP 404")
+        || error.contains("no pull requests found")
 }
 
 /// Whether a review-thread query is due at the active or idle cadence.
@@ -1679,7 +1712,7 @@ fn is_number_list_gap(gap: &str) -> bool {
 }
 
 const GH_JSON_FIELDS: &str = "number,title,headRefName,url,state,isDraft,additions,deletions,\
-    changedFiles,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup";
+    changedFiles,mergeable,mergeStateStatus,reviewDecision,closedAt,statusCheckRollup";
 
 /// GitHub computes `mergeable` lazily, so the first read often returns UNKNOWN.
 /// Re-query up to this many times (with a short sleep) to get a resolved value.
@@ -1816,6 +1849,16 @@ fn parse_review_threads(json: &[u8]) -> Result<ReviewThreads, String> {
 fn split_owner_repo(url: &str) -> Option<(String, String)> {
     let caps = pr_url_re().captures(url)?;
     Some((caps[1].to_string(), caps[2].to_string()))
+}
+
+/// Unix ms from an ISO 8601 timestamp (0 for empty or unparsable input).
+fn parse_iso_ms(iso: &str) -> u64 {
+    if iso.is_empty() {
+        return 0;
+    }
+    chrono::DateTime::parse_from_rfc3339(iso)
+        .map(|dt| dt.timestamp_millis().max(0) as u64)
+        .unwrap_or(0)
 }
 
 fn now_unix_ms() -> u64 {
@@ -2596,6 +2639,7 @@ mod tests {
             mergeable: "MERGEABLE".into(),
             merge_state_status: "CLEAN".into(),
             review_decision: String::new(),
+            closed_at: String::new(),
             status_check_rollup: Vec::new(),
         }
     }
@@ -2656,6 +2700,7 @@ mod tests {
             mergeable: "MERGEABLE".into(),
             merge_state_status: "CLEAN".into(),
             review_decision: String::new(),
+            closed_at: String::new(),
             status_check_rollup: vec![
                 check(CheckClass::Pass, Some("https://github.com/o/r/actions/1")),
                 check(CheckClass::Fail, Some("https://github.com/o/r/actions/2")),
