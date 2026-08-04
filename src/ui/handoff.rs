@@ -550,7 +550,7 @@ fn extract_friendly_error(error: &str) -> String {
 fn write_failure_line(stdout: &mut Stdout, width: u16, prefix: &str, body: &str) -> Result<()> {
     let prefix_width = crate::ui::utils::strip_ansi_len(prefix);
     let body_width = (width as usize).saturating_sub(prefix_width).max(1);
-    let body = truncate_display(body, body_width);
+    let body = truncate_to_width(body, body_width);
     // Body text uses a slightly brighter gray than the dim hint so the
     // message itself is what catches the eye.
     write!(stdout, "{}{}{}", prefix, fg(color::GRAY), body)?;
@@ -861,9 +861,7 @@ mod tests {
         // Identity → the PR itself; the `⑂` glyph is its own link that flips
         // the PR to primary via the web action page.
         assert!(left[0].0.contains(&link_to(&pr.url)));
-        assert!(left[0]
-            .0
-            .contains(&link_to(&pr_action_url(&pr, "primary"))));
+        assert!(left[0].0.contains(&link_to(&pr_action_url(&pr, "primary"))));
         // Diff and file count → the Files-changed tab.
         let files = link_to(&format!("{}/files", pr.url));
         assert!(left[1].0.contains(&files));

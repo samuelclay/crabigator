@@ -11,17 +11,18 @@
 //! minute so dashboard toggles apply here too. Only sessions with a live
 //! mirror under /tmp appear; the durable history lives on the web board.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::io::{stdout, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use crossterm::event::{poll, read, Event, KeyCode, KeyModifiers};
+use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, size as terminal_size, EnterAlternateScreen,
     LeaveAlternateScreen,
 };
-use crossterm::execute;
 
 use crate::pr::SessionPr;
 use crate::pr_rank::PrDisposition;
@@ -74,13 +75,9 @@ fn gather() -> Result<Vec<SessionSnapshot>> {
             dir_name: data
                 .get("cwd")
                 .and_then(|v| v.as_str())
-                .map(|cwd| {
-                    cwd.rsplit('/')
-                        .next()
-                        .unwrap_or(cwd)
-                        .to_string()
-                })
-                .unwrap_or_default(),
+                .and_then(|cwd| cwd.rsplit('/').next())
+                .unwrap_or_default()
+                .to_string(),
             last_updated: data
                 .get("last_updated")
                 .and_then(|v| v.as_f64())
@@ -137,20 +134,15 @@ fn aggregate(
                 }
             });
 
+            // Newest GitHub stats win, but the engagement counters belong to the
+            // merge rather than to any one session's copy, so carry them over.
             if pr.refreshed_at > entry.pr.refreshed_at {
-                let (mentions, user_mentions, first, last, prompt) = (
-                    entry.pr.mentions,
-                    entry.pr.user_mentions,
-                    entry.pr.first_mentioned_at,
-                    entry.pr.last_mentioned_at,
-                    entry.pr.last_mention_prompt,
-                );
-                entry.pr = pr.clone();
-                entry.pr.mentions = mentions;
-                entry.pr.user_mentions = user_mentions;
-                entry.pr.first_mentioned_at = first;
-                entry.pr.last_mentioned_at = last;
-                entry.pr.last_mention_prompt = prompt;
+                let previous = std::mem::replace(&mut entry.pr, pr.clone());
+                entry.pr.mentions = previous.mentions;
+                entry.pr.user_mentions = previous.user_mentions;
+                entry.pr.first_mentioned_at = previous.first_mentioned_at;
+                entry.pr.last_mentioned_at = previous.last_mentioned_at;
+                entry.pr.last_mention_prompt = previous.last_mention_prompt;
             }
             entry.pr.mentions += pr.mentions;
             entry.pr.user_mentions += pr.user_mentions;
@@ -198,61 +190,59 @@ fn aggregate(
     // Twins first (same non-empty head branch stays adjacent), then repo
     // grouping and stage ordering happen in render.
     out.sort_by(|a, b| {
-        stage_rank(&a.pr)
-            .cmp(&stage_rank(&b.pr))
+        stage(&a.pr)
+            .rank
+            .cmp(&stage(&b.pr).rank)
             .then(b.pr.primary.cmp(&a.pr.primary))
             .then(b.pr.last_mentioned_at.cmp(&a.pr.last_mentioned_at))
     });
     out
 }
 
-/// Pipeline position, most-attention-needed first.
-fn stage_rank(pr: &SessionPr) -> u8 {
-    match () {
-        _ if pr.state == "OPEN" && (pr.checks_failed > 0 || pr.mergeable == "CONFLICTING") => 0,
-        _ if pr.state == "OPEN" && pr.review_decision == "CHANGES_REQUESTED" => 1,
-        _ if pr.state == "OPEN" && pr.is_draft => 2,
-        _ if pr.state == "OPEN" && pr.checks_pending > 0 => 3,
-        _ if pr.state == "OPEN" && pr.review_decision != "APPROVED" => 4,
-        _ if pr.state == "OPEN" => 5,
-        _ if pr.state == "MERGED" => 6,
-        _ => 7,
-    }
+/// Where a PR sits in the pipeline: its sort rank (most attention needed
+/// first) plus the label and color the board renders for it.
+struct Stage {
+    rank: u8,
+    label: &'static str,
+    color: u8,
 }
 
-fn stage_label(pr: &SessionPr) -> (&'static str, u8) {
-    match stage_rank(pr) {
-        0 => (
-            if pr.mergeable == "CONFLICTING" {
-                "conflicts"
-            } else {
-                "CI failing"
-            },
-            color::RED,
-        ),
-        1 => ("changes requested", color::RED),
-        2 => ("draft", color::GRAY),
-        3 => ("CI running", color::YELLOW),
-        4 => ("awaiting review", color::YELLOW),
-        5 => ("ready to merge", color::GREEN),
-        6 => ("merged", color::PURPLE),
-        _ => ("closed", color::DARK_GRAY),
-    }
+fn stage(pr: &SessionPr) -> Stage {
+    let (rank, label, color) = if pr.state == "MERGED" {
+        (6, "merged", color::PURPLE)
+    } else if pr.state != "OPEN" {
+        (7, "closed", color::DARK_GRAY)
+    } else if pr.mergeable == "CONFLICTING" {
+        (0, "conflicts", color::RED)
+    } else if pr.checks_failed > 0 {
+        (0, "CI failing", color::RED)
+    } else if pr.review_decision == "CHANGES_REQUESTED" {
+        (1, "changes requested", color::RED)
+    } else if pr.is_draft {
+        (2, "draft", color::GRAY)
+    } else if pr.checks_pending > 0 {
+        (3, "CI running", color::YELLOW)
+    } else if pr.review_decision != "APPROVED" {
+        (4, "awaiting review", color::YELLOW)
+    } else {
+        (5, "ready to merge", color::GREEN)
+    };
+    Stage { rank, label, color }
 }
 
 /// Five-dot progress strip: draft → open → CI → review → merged.
 fn checklist(pr: &SessionPr) -> String {
     let done = |on: bool| if on { "●" } else { "○" };
-    let drafted = format!("{}{}", fg(color::GREEN), done(true));
-    let opened = format!(
-        "{}{}",
-        if pr.state == "CLOSED" {
-            fg(color::RED)
-        } else {
-            fg(color::GREEN)
-        },
-        if pr.state == "CLOSED" { "✗" } else { done(!pr.is_draft || pr.state != "OPEN") }
-    );
+    let drafted = format!("{}●", fg(color::GREEN));
+    let opened = if pr.state == "CLOSED" {
+        format!("{}✗", fg(color::RED))
+    } else {
+        format!(
+            "{}{}",
+            fg(color::GREEN),
+            done(!pr.is_draft || pr.state != "OPEN")
+        )
+    };
     let ci = if pr.checks_total == 0 {
         format!("{}○", fg(color::DARK_GRAY))
     } else if pr.checks_failed > 0 {
@@ -287,15 +277,11 @@ fn format_age(secs: u64) -> String {
 /// Build one full frame as displayable lines (no trailing newline handling).
 fn render(entries: &[BoardPr], width: u16) -> Vec<String> {
     let now_ms = (now_secs() * 1000.0) as u64;
-    let session_count: usize = {
-        let mut names: Vec<&str> = entries
-            .iter()
-            .flat_map(|e| e.sessions.iter().map(|s| s.dir_name.as_str()))
-            .collect();
-        names.sort_unstable();
-        names.dedup();
-        names.len()
-    };
+    let session_count = entries
+        .iter()
+        .flat_map(|e| e.sessions.iter().map(|s| s.dir_name.as_str()))
+        .collect::<HashSet<_>>()
+        .len();
 
     let mut lines = Vec::new();
     lines.push(format!(
@@ -348,15 +334,14 @@ fn render(entries: &[BoardPr], width: u16) -> Vec<String> {
         let refs: Vec<&SessionPr> = group.iter().map(|e| &e.pr).collect();
         let widths = PrColumnWidths::from_pr_refs(&refs, width as usize);
         for entry in group {
-            let dim = entry.stale;
             let mut row = pr_row_text(width, &entry.pr, &widths);
-            if dim {
+            if entry.stale {
                 row = format!("{}{row}", fg(color::DARK_GRAY));
             }
             lines.push(format!("{row}{RESET}"));
 
             // Row 2: checklist, stage, sessions, engagement, local state.
-            let (label, label_color) = stage_label(&entry.pr);
+            let stage = stage(&entry.pr);
             let sessions = entry
                 .sessions
                 .iter()
@@ -387,8 +372,8 @@ fn render(entries: &[BoardPr], width: u16) -> Vec<String> {
             lines.push(format!(
                 "   {} {}{}{} · {}{}{}{} · {} mentions{}{}",
                 checklist(&entry.pr),
-                fg(label_color),
-                label,
+                fg(stage.color),
+                stage.label,
                 RESET_FG,
                 fg(color::GRAY),
                 sessions,
@@ -473,6 +458,13 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
     result
 }
 
+/// Identity of one rendered frame, so an unchanged board isn't repainted.
+fn frame_hash(lines: &[String]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    lines.hash(&mut hasher);
+    hasher.finish()
+}
+
 async fn board_loop(
     out: &mut std::io::Stdout,
     overrides: &mut HashMap<String, PrDisposition>,
@@ -494,10 +486,7 @@ async fn board_loop(
             let entries = aggregate(&gather()?, overrides);
             let lines = render(&entries, width);
 
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            use std::hash::{Hash, Hasher};
-            lines.hash(&mut hasher);
-            let hash = hasher.finish();
+            let hash = frame_hash(&lines);
             if hash != last_frame_hash {
                 last_frame_hash = hash;
                 write!(out, "{}", escape::CLEAR_SCREEN_HOME)?;
@@ -575,7 +564,10 @@ mod tests {
         overrides.insert(dismissed_key, PrDisposition::Dismissed);
 
         let entries = aggregate(
-            &[snapshot("one", vec![board_pr(5, "portal"), board_pr(6, "portal")])],
+            &[snapshot(
+                "one",
+                vec![board_pr(5, "portal"), board_pr(6, "portal")],
+            )],
             &overrides,
         );
         assert_eq!(entries.len(), 1, "dismissed PR is gone");
@@ -597,7 +589,10 @@ mod tests {
             pr
         };
 
-        let entries = aggregate(&[snapshot("one", vec![merged, ready, failing])], &HashMap::new());
+        let entries = aggregate(
+            &[snapshot("one", vec![merged, ready, failing])],
+            &HashMap::new(),
+        );
         let numbers: Vec<u64> = entries.iter().map(|e| e.pr.number).collect();
         assert_eq!(numbers, vec![1, 3, 2], "failing → ready → merged");
     }

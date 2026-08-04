@@ -454,11 +454,7 @@ export const changesWidgetJs = `
                 for (const o of (data.overrides || [])) {
                     prOverrides.set(o.owner + '/' + o.repo + '#' + o.number, o.disposition);
                 }
-                for (const [sessionId, sessionData] of sessions.entries()) {
-                    if (sessionData.prs && sessionData.prs.length) {
-                        updatePrList(sessionId, sessionData.prs);
-                    }
-                }
+                rerenderAllPrLists();
             } catch (e) { /* offline dashboards still render local state */ }
         }
 

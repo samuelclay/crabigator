@@ -5,6 +5,15 @@ import { requireDeviceAuth, requireMobileAuth } from '../auth/middleware';
 const DISPOSITIONS = ['primary', 'secondary', 'dismissed'] as const;
 type Disposition = (typeof DISPOSITIONS)[number];
 
+/** [in progress, done] wording for the action page; also the set of
+ * dispositions the page accepts. */
+const ACTION_WORDING = new Map<string, [string, string]>([
+    ['primary', ['Marking as primary', 'Marked as primary']],
+    ['secondary', ['Marking as secondary', 'Marked as secondary']],
+    ['dismissed', ['Dismissing', 'Dismissed']],
+    ['auto', ['Resetting to automatic', 'Reset to automatic']],
+]);
+
 interface PrOverrideRow {
     owner: string;
     repo: string;
@@ -62,20 +71,17 @@ export async function getPrActionPage(request: Request): Promise<Response> {
     const number = parseInt(url.searchParams.get('number') ?? '', 10);
     const disposition = url.searchParams.get('disposition') ?? '';
 
-    const valid =
-        /^[A-Za-z0-9_.-]+$/.test(owner) &&
-        /^[A-Za-z0-9_.-]+$/.test(repo) &&
-        Number.isInteger(number) && number > 0 &&
-        (disposition === 'auto' || DISPOSITIONS.includes(disposition as Disposition));
-    if (!valid) {
+    const wording = ACTION_WORDING.get(disposition);
+    const invalid =
+        !wording ||
+        !/^[A-Za-z0-9_.-]+$/.test(owner) ||
+        !/^[A-Za-z0-9_.-]+$/.test(repo) ||
+        !Number.isInteger(number) || number <= 0;
+    if (invalid) {
         return new Response('Invalid PR action', { status: 400 });
     }
 
-    const [verb, done] =
-        disposition === 'primary' ? ['Marking as primary', 'Marked as primary'] :
-        disposition === 'secondary' ? ['Marking as secondary', 'Marked as secondary'] :
-        disposition === 'dismissed' ? ['Dismissing', 'Dismissed'] :
-        ['Resetting to automatic', 'Reset to automatic'];
+    const [verb, done] = wording;
     const prLabel = `${repo} #${number}`;
     const payload = JSON.stringify({ owner, repo, number, disposition });
 

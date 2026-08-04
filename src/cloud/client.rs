@@ -614,7 +614,6 @@ impl CloudClient {
         }
     }
 
-    /// Send a session update asynchronously
     /// Start a background fetch of the group's PR dispositions when one is
     /// due. Results land via [`Self::try_recv_pr_overrides`].
     pub fn maybe_fetch_pr_overrides(&mut self) {
@@ -684,6 +683,7 @@ impl CloudClient {
             .collect())
     }
 
+    /// Send a session update asynchronously
     fn spawn_session_update(&self, update: UpdateSessionRequest) {
         let Some(session_id) = self.session_id.clone() else {
             return;

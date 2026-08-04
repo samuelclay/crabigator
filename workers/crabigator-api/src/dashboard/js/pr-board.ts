@@ -44,17 +44,16 @@ export const prBoardJs = `
 
         // Pipeline position, most-attention-needed first (mirrors the TUI).
         function prBoardStage(pr) {
-            if (pr.state === 'OPEN' && ((pr.checks_failed || 0) > 0 || pr.mergeable === 'CONFLICTING'))
-                return { rank: 0, label: pr.mergeable === 'CONFLICTING' ? 'conflicts' : 'CI failing', cls: 'bad' };
-            if (pr.state === 'OPEN' && pr.review_decision === 'CHANGES_REQUESTED')
-                return { rank: 1, label: 'changes requested', cls: 'bad' };
-            if (pr.state === 'OPEN' && pr.is_draft) return { rank: 2, label: 'draft', cls: 'dim' };
-            if (pr.state === 'OPEN' && (pr.checks_pending || 0) > 0) return { rank: 3, label: 'CI running', cls: 'warn' };
-            if (pr.state === 'OPEN' && pr.review_decision !== 'APPROVED')
-                return { rank: 4, label: 'awaiting review', cls: 'warn' };
-            if (pr.state === 'OPEN') return { rank: 5, label: 'ready to merge', cls: 'good' };
             if (pr.state === 'MERGED') return { rank: 6, label: 'merged', cls: 'merged' };
-            return { rank: 7, label: 'closed', cls: 'dim' };
+            if (pr.state !== 'OPEN') return { rank: 7, label: 'closed', cls: 'dim' };
+            if (pr.mergeable === 'CONFLICTING') return { rank: 0, label: 'conflicts', cls: 'bad' };
+            if ((pr.checks_failed || 0) > 0) return { rank: 0, label: 'CI failing', cls: 'bad' };
+            if (pr.review_decision === 'CHANGES_REQUESTED')
+                return { rank: 1, label: 'changes requested', cls: 'bad' };
+            if (pr.is_draft) return { rank: 2, label: 'draft', cls: 'dim' };
+            if ((pr.checks_pending || 0) > 0) return { rank: 3, label: 'CI running', cls: 'warn' };
+            if (pr.review_decision !== 'APPROVED') return { rank: 4, label: 'awaiting review', cls: 'warn' };
+            return { rank: 5, label: 'ready to merge', cls: 'good' };
         }
 
         // Five-dot progress strip: draft → open → CI → review → merged.

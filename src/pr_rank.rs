@@ -113,10 +113,17 @@ fn decide(
     {
         return apply_disposition(*disposition, "session");
     }
-    (auto_primary(pr, ctx, total_mentions, created), "auto", false)
+    (
+        auto_primary(pr, ctx, total_mentions, created),
+        "auto",
+        false,
+    )
 }
 
-fn apply_disposition(disposition: PrDisposition, source: &'static str) -> (bool, &'static str, bool) {
+fn apply_disposition(
+    disposition: PrDisposition,
+    source: &'static str,
+) -> (bool, &'static str, bool) {
     match disposition {
         PrDisposition::Primary => (true, source, false),
         PrDisposition::Secondary => (false, source, false),
@@ -158,9 +165,11 @@ fn is_superseded(pr: &SessionPr, created: &[(String, u64, u64)]) -> bool {
         return false;
     }
     let repo = repo_key(pr);
-    created.iter().any(|(sibling_repo, number, first_mentioned)| {
-        *sibling_repo == repo && *number != pr.number && *first_mentioned > pr.last_mentioned_at
-    })
+    created
+        .iter()
+        .any(|(sibling_repo, number, first_mentioned)| {
+            *sibling_repo == repo && *number != pr.number && *first_mentioned > pr.last_mentioned_at
+        })
 }
 
 /// Whether the PR's head branch ties it to this session: the checked-out

@@ -14,17 +14,16 @@ pub(crate) const PR_LEFT_PADDING: usize = 1;
 pub(crate) const PR_RIGHT_PADDING: usize = 1;
 
 pub(crate) const PR_IDENTITY_MAX: usize = 32;
-pub(crate) const PR_DIFF_MAX: usize = 18;
-pub(crate) const PR_FILES_MAX: usize = 11;
+const PR_DIFF_MAX: usize = 18;
+const PR_FILES_MAX: usize = 11;
 pub(crate) const PR_BRANCH_MAX: usize = 40;
-pub(crate) const PR_STATE_MAX: usize = 6;
-pub(crate) const PR_CI_MAX: usize = 10;
+const PR_STATE_MAX: usize = 6;
+const PR_CI_MAX: usize = 10;
 /// `💬` is two cells wide, leaving room for a four-digit thread count.
-pub(crate) const PR_COMMENTS_MAX: usize = 6;
-pub(crate) const PR_MERGE_MAX: usize = 9;
+const PR_COMMENTS_MAX: usize = 6;
+const PR_MERGE_MAX: usize = 9;
 pub(crate) const PR_IDENTITY_MIN: usize = 10;
-pub(crate) const PR_BRANCH_MIN: usize = 8;
-
+const PR_BRANCH_MIN: usize = 8;
 
 /// PRs the handoff renders: dismissed ones hidden, primaries above
 /// secondaries, arrival order kept within each group.
@@ -33,7 +32,6 @@ pub(crate) fn display_prs(prs: &[SessionPr]) -> Vec<&SessionPr> {
     out.sort_by_key(|pr| !pr.primary);
     out
 }
-
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PrColumnWidths {
@@ -110,7 +108,7 @@ impl PrColumnWidths {
         }
     }
 
-    pub(crate) fn fit_left(&mut self, total_width: usize) {
+    fn fit_left(&mut self, total_width: usize) {
         let right = self.right_width();
         let cluster_gap = usize::from(right > 0) * PR_COLUMN_GAP;
         let left_budget = total_width
@@ -149,7 +147,7 @@ impl PrColumnWidths {
         }
     }
 
-    pub(crate) fn left_width(&self) -> usize {
+    fn left_width(&self) -> usize {
         table_width(&[self.identity, self.diff, self.files, self.branch])
     }
 
@@ -174,7 +172,6 @@ fn table_width(columns: &[usize]) -> usize {
     columns.iter().sum::<usize>() + active.saturating_sub(1) * PR_COLUMN_GAP
 }
 
-
 /// One styled row: left padding, the left columns, then a gap wide enough to
 /// anchor the status columns against the right edge.
 pub(crate) fn pr_row_text(width: u16, pr: &SessionPr, widths: &PrColumnWidths) -> String {
@@ -194,22 +191,26 @@ pub(crate) fn pr_row_text(width: u16, pr: &SessionPr, widths: &PrColumnWidths) -
     row
 }
 
-pub(crate) type PrCell = (String, usize, usize);
+type PrCell = (String, usize, usize);
 
 pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
     let identity = truncate_identity(pr, widths.identity);
     // The glyph is its own click target — it flips the PR's disposition —
-    // while `repo #num` still opens the PR on GitHub.
-    let glyph_prefix = format!("{} ", pr_glyph(pr));
-    let (glyph, identity_label) = match identity.strip_prefix(glyph_prefix.as_str()) {
-        Some(label) => (pr_glyph(pr), label),
-        None => ("", identity.as_str()),
+    // while `repo #num` still opens the PR on GitHub. A column too narrow to
+    // hold the glyph drops it and links the whole label instead.
+    let glyph = pr_glyph(pr);
+    let (glyph_kept, identity_label) = match identity.strip_prefix(&format!("{glyph} ")) {
+        Some(label) => (true, label),
+        None => (false, identity.as_str()),
     };
     let flip = if pr.primary { "secondary" } else { "primary" };
-    let glyph_styled = if glyph.is_empty() {
-        String::new()
+    let glyph_styled = if glyph_kept {
+        format!(
+            "{} ",
+            link_text(&pr_action_url(pr, flip), glyph.to_string(), 1)
+        )
     } else {
-        format!("{} ", link_text(&pr_action_url(pr, flip), glyph.to_string(), 1))
+        String::new()
     };
     let identity_styled = format!(
         "{}{}{}{}",
@@ -223,7 +224,7 @@ pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell;
     let files_url = pr_files_url(pr);
 
     let full_diff = pr_diff_text(pr);
-    let diff = truncate_display(&full_diff, widths.diff);
+    let diff = truncate_to_width(&full_diff, widths.diff);
     let diff_styled = if diff.is_empty() {
         String::new()
     } else if diff.width() == full_diff.width() {
@@ -288,12 +289,12 @@ pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell
     ]
 }
 
-pub(crate) fn colored_cell(label: &str, color: u8, width: usize) -> PrCell {
+fn colored_cell(label: &str, color: u8, width: usize) -> PrCell {
     colored_cell_capped(label, color, width, width)
 }
 
 /// A colored cell whose visible text is also an OSC 8 link.
-pub(crate) fn linked_cell(label: &str, color: u8, width: usize, url: &str) -> PrCell {
+fn linked_cell(label: &str, color: u8, width: usize, url: &str) -> PrCell {
     let (styled, visible, width) = colored_cell(label, color, width);
     (link_text(url, styled, visible), visible, width)
 }
@@ -301,7 +302,7 @@ pub(crate) fn linked_cell(label: &str, color: u8, width: usize, url: &str) -> Pr
 /// Wrap already-styled cell text in a link, skipping empty cells and empty
 /// targets so neither produces a clickable blank. Column padding is written
 /// outside the cell, so the link never covers dead space.
-pub(crate) fn link_text(url: &str, styled: String, visible: usize) -> String {
+fn link_text(url: &str, styled: String, visible: usize) -> String {
     if url.is_empty() || visible == 0 {
         styled
     } else {
@@ -309,8 +310,8 @@ pub(crate) fn link_text(url: &str, styled: String, visible: usize) -> String {
     }
 }
 
-pub(crate) fn colored_cell_capped(label: &str, color: u8, width: usize, max_content: usize) -> PrCell {
-    let label = truncate_display(label, width.min(max_content));
+fn colored_cell_capped(label: &str, color: u8, width: usize, max_content: usize) -> PrCell {
+    let label = truncate_to_width(label, width.min(max_content));
     let visible = label.width();
     (
         format!("{}{}{}", fg(color), label, RESET_FG),
@@ -321,7 +322,7 @@ pub(crate) fn colored_cell_capped(label: &str, color: u8, width: usize, max_cont
 
 /// Lay cells out side by side, padding each to its column and separating
 /// adjacent ones. Cells with a zero width are skipped entirely.
-pub(crate) fn cells_text(cells: &[PrCell]) -> String {
+fn cells_text(cells: &[PrCell]) -> String {
     let mut out = String::new();
     for (styled, visible, width) in cells.iter().filter(|(_, _, width)| *width > 0) {
         if !out.is_empty() {
@@ -334,7 +335,7 @@ pub(crate) fn cells_text(cells: &[PrCell]) -> String {
 }
 
 /// `★` marks the session's primary PR; `⑂` everything else.
-pub(crate) fn pr_glyph(pr: &SessionPr) -> &'static str {
+fn pr_glyph(pr: &SessionPr) -> &'static str {
     if pr.primary {
         "★"
     } else {
@@ -356,7 +357,7 @@ pub(crate) fn pr_action_url(pr: &SessionPr, disposition: &str) -> String {
 }
 
 /// Primaries keep the PR purple; secondaries recede into gray.
-pub(crate) fn pr_identity_color(pr: &SessionPr) -> u8 {
+fn pr_identity_color(pr: &SessionPr) -> u8 {
     if pr.primary {
         color::PURPLE
     } else {
@@ -364,32 +365,34 @@ pub(crate) fn pr_identity_color(pr: &SessionPr) -> u8 {
     }
 }
 
-pub(crate) fn truncate_identity(pr: &SessionPr, width: usize) -> String {
-    let repo = if pr.repo.is_empty() {
+/// The repo name the identity column shows; PRs tracked before their repo is
+/// known fall back to a bare `PR`.
+fn pr_repo_label(pr: &SessionPr) -> &str {
+    if pr.repo.is_empty() {
         "PR"
     } else {
         pr.repo.as_str()
-    };
+    }
+}
+
+fn truncate_identity(pr: &SessionPr, width: usize) -> String {
+    let repo = pr_repo_label(pr);
     let glyph = pr_glyph(pr);
     let suffix = format!(" #{}", pr.number);
     let fixed = 2 + suffix.width(); // glyph + space + number
     if width <= fixed {
-        return truncate_display(&format!("{glyph} {repo}{suffix}"), width);
+        return truncate_to_width(&format!("{glyph} {repo}{suffix}"), width);
     }
-    let repo = truncate_display(repo, width - fixed);
+    let repo = truncate_to_width(repo, width - fixed);
     format!("{glyph} {repo}{suffix}")
 }
 
+/// The identity column at full width, for column sizing.
 pub(crate) fn pr_identity_text(pr: &SessionPr) -> String {
-    let repo = if pr.repo.is_empty() {
-        "PR"
-    } else {
-        pr.repo.as_str()
-    };
-    format!("{} {} #{}", pr_glyph(pr), repo, pr.number)
+    format!("{} {} #{}", pr_glyph(pr), pr_repo_label(pr), pr.number)
 }
 
-pub(crate) fn pr_diff_text(pr: &SessionPr) -> String {
+fn pr_diff_text(pr: &SessionPr) -> String {
     if pr.additions == 0 && pr.deletions == 0 {
         String::new()
     } else {
@@ -398,7 +401,7 @@ pub(crate) fn pr_diff_text(pr: &SessionPr) -> String {
 }
 
 /// The PR's Files-changed tab — where the diff columns point.
-pub(crate) fn pr_files_url(pr: &SessionPr) -> String {
+fn pr_files_url(pr: &SessionPr) -> String {
     if pr.url.is_empty() {
         String::new()
     } else {
@@ -406,7 +409,7 @@ pub(crate) fn pr_files_url(pr: &SessionPr) -> String {
     }
 }
 
-pub(crate) fn pr_files_text(pr: &SessionPr) -> String {
+fn pr_files_text(pr: &SessionPr) -> String {
     if pr.changed_files == 0 {
         String::new()
     } else {
@@ -419,7 +422,7 @@ pub(crate) fn pr_files_text(pr: &SessionPr) -> String {
     }
 }
 
-pub(crate) fn pr_branch_text(pr: &SessionPr) -> String {
+fn pr_branch_text(pr: &SessionPr) -> String {
     if pr.branch.is_empty() {
         String::new()
     } else {
@@ -427,7 +430,7 @@ pub(crate) fn pr_branch_text(pr: &SessionPr) -> String {
     }
 }
 
-pub(crate) fn pr_ci_label(pr: &SessionPr) -> (String, u8) {
+fn pr_ci_label(pr: &SessionPr) -> (String, u8) {
     if pr.checks_total == 0 {
         (String::new(), color::GRAY)
     } else if pr.checks_failed > 0 {
@@ -449,7 +452,7 @@ pub(crate) fn pr_comments_label(pr: &SessionPr) -> (String, u8) {
     }
 }
 
-pub(crate) fn pr_merge_label(pr: &SessionPr) -> (&'static str, u8) {
+fn pr_merge_label(pr: &SessionPr) -> (&'static str, u8) {
     match pr.mergeable.as_str() {
         "CONFLICTING" => ("conflicts", color::RED),
         "MERGEABLE" if pr.merge_state_status == "BEHIND" => ("behind", color::YELLOW),
@@ -459,7 +462,7 @@ pub(crate) fn pr_merge_label(pr: &SessionPr) -> (&'static str, u8) {
 }
 
 /// `(label, color)` for a PR's state; empty label when unknown.
-pub(crate) fn pr_state_label(pr: &SessionPr) -> (&'static str, u8) {
+fn pr_state_label(pr: &SessionPr) -> (&'static str, u8) {
     if pr.state == "MERGED" {
         ("merged", color::PURPLE)
     } else if pr.state == "CLOSED" {
@@ -474,7 +477,7 @@ pub(crate) fn pr_state_label(pr: &SessionPr) -> (&'static str, u8) {
     }
 }
 
-
+/// Cut `text` to `max_width` display cells, ellipsizing when it doesn't fit.
 pub(crate) fn truncate_to_width(text: &str, max_width: usize) -> String {
     use unicode_width::UnicodeWidthChar;
 
@@ -505,8 +508,3 @@ pub(crate) fn truncate_to_width(text: &str, max_width: usize) -> String {
     }
     out
 }
-
-pub(crate) fn truncate_display(text: &str, max_width: usize) -> String {
-    truncate_to_width(text, max_width)
-}
-

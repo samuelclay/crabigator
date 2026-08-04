@@ -77,8 +77,10 @@ fn slack_permalink_re() -> &'static Regex {
 fn decl_number_first_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"(?i)(?:\bpr\s*#?|#)(\d+)\b[^\n.!?]{0,40}?\bis\s+(?:the\s+)?(primary|secondary)\b")
-            .expect("valid declaration regex")
+        Regex::new(
+            r"(?i)(?:\bpr\s*#?|#)(\d+)\b[^\n.!?]{0,40}?\bis\s+(?:the\s+)?(primary|secondary)\b",
+        )
+        .expect("valid declaration regex")
     })
 }
 
@@ -112,11 +114,13 @@ fn decl_url_re() -> &'static Regex {
     })
 }
 
+/// The disposition word the declaration regexes capture — only ever
+/// `primary` or `secondary`, in any casing.
 fn parse_disposition(word: &str) -> PrDisposition {
-    match word.to_ascii_lowercase().as_str() {
-        "primary" => PrDisposition::Primary,
-        "secondary" => PrDisposition::Secondary,
-        _ => PrDisposition::Dismissed,
+    if word.eq_ignore_ascii_case("primary") {
+        PrDisposition::Primary
+    } else {
+        PrDisposition::Secondary
     }
 }
 
@@ -1256,11 +1260,17 @@ impl PrTracker {
             return changed;
         }
 
-        self.prs.push(SessionPr {
-            number: json.number,
+        // Everything the fetch didn't answer for — mention counters, review
+        // threads (filled in by the job this insert makes eligible), and the
+        // classification — comes from the placeholder, so a new field only
+        // needs a default in one place.
+        let loc = PrLocation {
             owner,
             repo,
+            number: json.number,
             url,
+        };
+        self.prs.push(SessionPr {
             branch: json.head_ref_name,
             title: json.title,
             state: json.state,
@@ -1270,31 +1280,15 @@ impl PrTracker {
             changed_files: json.changed_files,
             mergeable: json.mergeable,
             merge_state_status: json.merge_state_status,
+            review_decision: json.review_decision,
             checks_passed: passed,
             checks_failed: failed,
             checks_pending: pending,
             checks_total: total,
             ci_url,
-            // Filled in by the review-thread job this insert makes eligible.
-            unresolved_comments: 0,
-            comments_url: String::new(),
-            comments_refreshed_at: 0,
-            created_here,
-            mentions: 0,
-            user_mentions: 0,
-            first_mentioned_at: 0,
-            last_mentioned_at: 0,
-            last_mention_prompt: 0,
-            branch_matched: false,
-            review_decision: json.review_decision,
-            primary: false,
-            primary_source: String::new(),
-            dismissed: false,
             slack_origin_url: origin_slack,
-            slack_comment_urls: Vec::new(),
-            ai_note: String::new(),
-            ai_confidence: String::new(),
             refreshed_at: now,
+            ..SessionPr::placeholder(&loc, created_here)
         });
         true
     }
@@ -1969,7 +1963,9 @@ mod tests {
         tracker.pr_active_at.clear();
         tracker.scan_text("PR #7 is ready to merge", Path::new("/tmp"));
         assert!(
-            tracker.pr_active_at.contains_key("https://github.com/o/r/pull/7"),
+            tracker
+                .pr_active_at
+                .contains_key("https://github.com/o/r/pull/7"),
             "a bare mention of a tracked PR must restart its active window"
         );
     }
