@@ -1,6 +1,23 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for coding agents (Claude Code, Codex CLI) working in this repository. `CLAUDE.md` is a symlink to this file, so both assistants read the same instructions.
+
+## What This Project Is
+
+Crabigator is a Rust TUI wrapper around the Claude Code and Codex CLIs. It spawns the assistant CLI in a PTY (pseudo-terminal) and adds status widgets below the interface showing git status, file changes, session statistics, per-turn recaps, and tracked PRs. Sessions can stream live to a dashboard at drinkcrabigator.com, backed by a Cloudflare Workers project in `workers/crabigator-api/`.
+
+Platform selection:
+
+```bash
+crabigator                  # Uses default platform (config/env/claude)
+crabigator codex            # Use Codex CLI
+crabigator claude           # Use Claude Code
+crabigator --platform codex # Explicit flag
+```
+
+Other subcommands: `inspect` (view running instances), `pair` (dashboard auth code), `recap` (enable/disable/status for turn recaps), `install-launcher` (macOS crabigator:// URL handler), `resume`/`continue`.
+
+Preferences live in `~/.crabigator/config.toml` (platform, `ide` for clickable file links, terminal emulator override).
 
 ## Ask Questions Liberally
 
@@ -22,15 +39,28 @@ Ask about:
 
 Don't assume - ask. Multiple rounds of questions are better than one large batch. Even mid-implementation, if something feels unclear or you're choosing between options, ask. The interactive back-and-forth is valuable.
 
+## Plain Language: ISO 24495-1
+
+All prose you write for humans - summaries of your work, PR descriptions, release notes, and **git commit messages** - must follow the ISO 24495-1 plain language principles:
+
+1. **Relevant**: Include what the reader needs and nothing else. A commit message explains what changed and why it matters; it does not narrate the debugging journey or list every file touched.
+2. **Findable**: Put the most important information first. The commit subject line carries the change; the body adds the "why". Summaries lead with the outcome, then supporting detail.
+3. **Understandable**: Use familiar words, active voice, and short sentences. One idea per sentence. Prefer "Show the session ID in the status bar" over "Implement session identifier visibility enhancements".
+4. **Usable**: Write so the reader can act on it. A summary should let the user verify the work; a commit message should let a future reader decide whether this commit is the one they're hunting for.
+
+For commit messages specifically:
+- Subject line: imperative mood, plain words, describes the user-visible or behavioral change (matches existing history, e.g. "Keep previous recap visible between turns").
+- Body (when needed): explain why the change was made and any non-obvious consequences, in complete sentences.
+- No jargon, abbreviations, or codenames the reader can't be expected to know.
+
 ## Build Commands
 
 ```bash
-cargo build          # Build the project
+cargo build           # Build the project
 cargo build --release # Release build
-cargo run            # Run the application
-cargo check          # Quick type checking
-cargo test           # Run tests
-cargo clippy         # Lint
+cargo check           # Quick type checking
+cargo test            # Run tests
+cargo clippy          # Lint (also: make lint)
 ```
 
 ## Running
@@ -39,6 +69,8 @@ cargo clippy         # Lint
 make run             # Run with provider from .crabigator-provider (default: claude)
 make claude          # Set provider to Claude Code and run
 make codex           # Set provider to Codex CLI and run
+make claude-yolo     # Claude with --dangerously-skip-permissions
+make codex-yolo      # Codex with --dangerously-bypass-approvals-and-sandbox
 make resume          # Resume last session
 make continue        # Continue last conversation
 ```
@@ -58,49 +90,39 @@ Fixture layout:
 - `tests/fixtures/<name>/fixture.json` - staged paths and stats
 - `tests/fixtures/<name>/expected.json` - expected mirror JSON
 
-## What This Project Is
-
-Crabigator is a Rust TUI wrapper around the Claude Code and Codex CLIs. It spawns the assistant CLI in a PTY (pseudo-terminal) and adds status widgets below the interface showing git status, file changes, and session statistics.
-
-### Platform Selection
-
-Crabigator supports multiple assistant CLIs:
-- **Claude Code** (Anthropic)
-- **Codex CLI** (OpenAI)
-
-Platform selection:
-```bash
-crabigator                 # Uses default platform (config/env/claude)
-crabigator codex           # Use Codex CLI
-crabigator claude          # Use Claude Code
-crabigator --platform codex # Explicit flag
-```
-
-Platform preference is saved in `~/.crabigator/config.toml`.
-
 ## Architecture
 
 The application uses a **scroll region approach** to layer UI:
 - Sets terminal scroll region (DECSTBM escape sequence) to confine assistant CLI output to the top ~80% of the terminal
 - The assistant CLI runs in a PTY and its output passes through untouched within that scroll region
 - Status widgets are rendered below the scroll region using raw ANSI escape sequences
-- No intermediate rendering library (ratatui was removed) - all drawing is done with direct escape codes
+- No intermediate rendering library - all drawing is done with direct escape codes
 
 ### Key Modules
 
 - **app.rs**: Main application loop and layout management. Handles scroll region setup, event polling, status bar drawing, and PTY passthrough.
-- **config.rs**: Configuration loading/saving for `~/.crabigator/config.toml` (platform preferences).
-- **terminal/**: Terminal handling - `pty.rs` manages PTY via `portable-pty` (spawns the platform CLI, handles I/O), `input.rs` handles keyboard input forwarding, `escape.rs` centralizes all ANSI escape sequences (colors, styles, cursor control, screen clearing) - add new sequences here rather than inline.
+- **cli.rs**: Argument parsing, subcommand dispatch, platform resolution.
+- **config.rs**: `~/.crabigator/config.toml` loading/saving (platform, IDE, terminal preferences).
+- **terminal/**: Terminal handling - `pty.rs` manages the PTY via `portable-pty`, `input.rs` forwards keyboard input, `escape.rs` centralizes all ANSI escape sequences (add new sequences here rather than inline), `osc.rs`/`dsr.rs` handle terminal queries, `redraw.rs` manages repaints.
 - **git/**: Git state tracking via `git status --porcelain` and `git diff`.
-- **parsers/**: Language-specific diff parsers (Rust, TypeScript, Python, generic) that extract semantic information (functions, classes, etc.) from git diffs.
+- **parsers/**: Language-specific diff parsers (Rust, TypeScript, Python, Swift, Objective-C, generic) that extract semantic information (functions, classes, nested scopes) from git diffs. `scope_walker.rs` attributes changes to nested scopes; `summary.rs` builds the changes summary; `permission_prompt.rs` and `suggestion.rs` parse assistant screen content.
+- **platforms/**: Platform abstraction layer:
+  - `claude_code/`: Claude Code hooks (`stats_hook.py`, `hook_script.rs`) and transcript parsing (writes to `~/.claude/crabigator/`)
+  - `codex_cli/`: Codex CLI session log and transcript parsing (reads `~/.codex/sessions`)
 - **hooks/**: `SessionStats` for session time tracking and platform stats integration.
-- **platforms/**: Platform abstraction layer with `Platform` implementations:
-  - `claude_code.rs`: Claude Code hooks and stats (writes to `~/.claude/crabigator/`)
-  - `codex_cli.rs`: Codex CLI session log parsing (reads `~/.codex/sessions`)
-- **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout, with `git.rs`, `changes.rs`, `stats.rs` for individual widgets.
-- **mirror.rs**: Widget state mirroring for external inspection. Publishes throttled JSON snapshots of all widget state.
-- **inspect.rs**: Inspect command implementation for viewing other running crabigator instances.
-- **capture.rs**: Output capture for streaming. Writes raw PTY bytes to scrollback.log and periodic screen snapshots to screen.txt.
+- **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout; `git.rs`, `changes.rs`, `stats.rs` are the individual widgets; `handoff.rs` is the strip above the widgets (setup prompts, update notices, latest recap, tracked PRs); `pairing.rs` renders full-width pairing/update banners; `sparkline.rs` renders Unicode sparklines.
+- **cloud/**: Streaming to drinkcrabigator.com - device identity (`device.rs`), session registration (`client.rs`), event queue, and WebSocket connection with auto-reconnect.
+- **capture.rs**: Output capture. Writes the session transcript to `scrollback.log` (from platform JSONL) and periodic screen snapshots to `screen.txt`.
+- **mirror.rs**: Widget state mirroring. Publishes throttled JSON snapshots of all widget state to `inspect.json`.
+- **inspect.rs**: `crabigator inspect` implementation for viewing other running instances.
+- **recap.rs**: Automatic per-turn recaps, generated on the desktop from local transcripts; only the finished recap is sent to the cloud.
+- **pr.rs / pr_rank.rs**: GitHub PR tracking for the recap - scrapes the turn transcript for PR mentions, enriches via `gh pr view`, and classifies PRs as primary or secondary.
+- **mode.rs**: Detects Claude Code's operating mode (Normal, Auto-Accept, Plan) from screen content.
+- **title.rs**: Background generation of short terminal titles when the platform doesn't publish its own (Codex).
+- **update.rs**: Auto-update checks via the GitHub Releases API (npm, cargo, homebrew install methods).
+- **ide.rs / launcher.rs / terminal_spawner.rs**: IDE hyperlink URLs (OSC 8), macOS crabigator:// URL handler, and new-terminal-window spawning.
+- **pair.rs**: Pairing code generation for dashboard auto-login.
+- **banner.rs**: Styled session start/end banners.
 
 ### Module Organization
 
@@ -126,11 +148,12 @@ This keeps module declarations visible at the top level rather than buried in su
 ### Session Directory
 
 Each crabigator session creates `/tmp/crabigator-{session_id}/` containing:
-- **scrollback.log**: Clean text transcript (ANSI stripped, complete lines only)
-- **screen.txt**: Current screen snapshot from vt100 parser (updated ~100ms)
-- **mirror.json**: Widget state for external inspection (updated ~1s when changed)
+- **scrollback.log**: Session transcript (append-only, built from the platform's JSONL log)
+- **screen.txt**: Current screen snapshot from the vt100 parser (updated ~100ms)
+- **inspect.json**: Widget state for external inspection (updated ~1s when changed)
+- **hooks.log**: Debug log of hook invocations (Claude Code)
 
-The session directory path is shown in the startup banner in debug builds (`cargo build`), but hidden in release builds (`cargo build --release`).
+The session directory path is shown in the startup banner in debug builds (`cargo build`), but hidden in release builds.
 
 Use `--no-capture` to disable output capture (scrollback.log and screen.txt).
 
@@ -168,21 +191,14 @@ grep -rl "distinctive phrase from the session" ~/.claude/projects ~/.codex/sessi
 
 ### Self-Inspection (for Claude Code)
 
-When running inside crabigator, Claude Code can inspect its own session using the conversation UUID. The UUID is visible in the Claude Code UI or can be provided by the user.
+When running inside crabigator, Claude Code can inspect its own session using the conversation UUID (visible in the Claude Code UI or provided by the user):
 
-**To inspect your own session:**
 ```bash
-# Using Claude Code conversation UUID (e.g., f5cd7167-fc18-4ab2-8686-274fdfb098e1)
 cat /tmp/crabigator-{uuid}/screen.txt      # Current screen
 cat /tmp/crabigator-{uuid}/scrollback.log  # Conversation transcript
-cat /tmp/crabigator-{uuid}/mirror.json     # Widget state (stats, git status, etc.)
+cat /tmp/crabigator-{uuid}/inspect.json    # Widget state (stats, git status, etc.)
 cat /tmp/crabigator-{uuid}/hooks.log       # Hook event log
 ```
-
-**Example workflow:**
-1. User provides their Claude Code session UUID (from URL or UI)
-2. Use the UUID to read session files and inspect current state
-3. The `mirror.json` contains widget data including git status, session stats, and claude_session_id
 
 ### Instance Inspection
 
@@ -207,7 +223,6 @@ Crabigator installs Python hooks into Claude Code's `~/.claude/settings.json` to
 - Hooks are versioned by both `HOOK_VERSION` (from Cargo.toml) and an MD5 hash of the script content
 - On startup, crabigator checks if installed hooks match the current version/hash
 - If mismatched or missing, hooks are automatically reinstalled
-- To force reinstall after modifying the hook script: `make reinstall-hooks`
 
 **Updating hooks:**
 1. Edit `src/platforms/claude_code/stats_hook.py` (the Python script)
@@ -224,7 +239,7 @@ cat /tmp/crabigator-{session}/hooks.log  # Raw hook invocation log
 
 **Hook events handled:**
 - `UserPromptSubmit` → state = thinking
-- `PermissionRequest` → state = permission (or question if AskUserQuestion)
+- `PermissionRequest` → state = permission (or question if AskUserQuestion, plan if ExitPlanMode)
 - `PostToolUse` → state = thinking (tracks tool counts)
 - `Stop` → state = complete (or question if AskUserQuestion was used)
 - `SubagentStop`, `PreCompact` → increment counters
@@ -238,33 +253,37 @@ Cloudflare Workers project for real-time session streaming to drinkcrabigator.co
 ```
 workers/crabigator-api/
 ├── src/
-│   ├── index.ts            # Main worker entry, routes
-│   ├── dashboard.ts        # Dashboard HTML (inline)
-│   ├── session-do.ts       # Durable Object for session state
-│   └── auth/tokens.ts      # Device auth, HMAC signing
-└── wrangler.toml           # Worker config
+│   ├── index.ts                # Worker entry point
+│   ├── router.ts               # Route dispatch
+│   ├── durable-objects/        # SessionDO, SessionListDO, UsageDO
+│   ├── handlers/               # sessions, devices, pairing, analytics, payments, telemetry, …
+│   ├── auth/                   # Device auth, HMAC signing, middleware
+│   ├── dashboard.ts + dashboard/   # Dashboard HTML, CSS, JS, icons
+│   ├── landing.ts + landing/       # Landing page (incl. WebGL)
+│   ├── staff-dashboard.ts + staff-dashboard/
+│   ├── assets/                 # OG images
+│   └── types/                  # Shared TypeScript types
+└── wrangler.toml               # Worker config (D1, KV, Durable Objects bindings)
 ```
 
 ### Commands
 
 ```bash
-make deploy                                   # Deploy to Cloudflare
-make typecheck                                # TypeScript type checking
-cd workers/crabigator-api && npm run dev      # Local dev
+make deploy      # Deploy to Cloudflare
+make typecheck   # TypeScript type checking
+make dev         # Local dev server
 ```
+
+Project slash commands exist for common flows: `/deploy`, `/commit-push-deploy`, and `/release` (see `.claude/commands/`).
 
 ### Key Notes
 
-- **Dashboard**: Inline HTML in `dashboard.ts` with `ansiToHtml()` for terminal rendering
+- **Dashboard**: HTML assembled in `dashboard.ts` with `ansiToHtml()` for terminal rendering
 - **256-color**: Uses xterm formula `value = idx === 0 ? 0 : idx * 40 + 55`
 - **Deploys break WebSockets**: Desktop auto-reconnects with exponential backoff (1s-30s)
-- **Session state**: Managed by Durable Objects (`SessionDO`)
+- **Session state**: Managed by Durable Objects (`SessionDO` per session, `SessionListDO` for the roster, `UsageDO` for usage tracking)
 - **Auth**: Desktop device_id + HMAC-SHA256 signatures, no user accounts
-- **SVG Icons**: NEVER inline SVG icons in TypeScript template files. Keep all SVG icons in dedicated `icons.ts` files:
-  - `src/landing/icons.ts` - Icons for landing page
-  - `src/dashboard/icons.ts` - Icons for dashboard, staff dashboard (favicon, logo, gift icons, etc.)
-  - Export icons as named string constants and import where needed
-  - For favicons, use URL-encoded versions (with `%23` for `#` in colors)
+- **SVG Icons**: NEVER inline SVG icons in TypeScript template files. Keep all SVG icons in dedicated `icons.ts` files (`src/landing/icons.ts`, `src/dashboard/icons.ts`), export them as named string constants, and import where needed. For favicons, use URL-encoded versions (with `%23` for `#` in colors).
 
 ### Usage Analytics
 
@@ -272,7 +291,7 @@ cd workers/crabigator-api && npm run dev      # Local dev
 make cf-usage    # Show Cloudflare usage stats and scaling capacity
 ```
 
-Queries Cloudflare GraphQL API for worker requests, Durable Objects, and D1 usage. Shows free tier consumption and estimates scaling headroom. Script at `scripts/cf-usage.sh` reads wrangler OAuth token automatically.
+Queries the Cloudflare GraphQL API for worker requests, Durable Objects, and D1 usage. Script at `scripts/cf-usage.sh` reads the wrangler OAuth token automatically. Related: `make reset-usage` (clear today's usage rows) and `make sync-usage GROUP=<group_id>`.
 
 ### Querying the D1 Database
 
@@ -293,84 +312,36 @@ GROUP BY referrer_domain
 ORDER BY visitors DESC"
 ```
 
-Key tables: `page_views`, `analytics_events`, `funnel_events`, `email_signups`, `npm_downloads`.
+Key tables: `page_views`, `analytics_events`, `funnel_events`, `email_signups`, `npm_downloads`, `daily_usage`, `devices`.
 
-## Browser Testing with PlayWriter MCP
+## Browser Testing
 
-The PlayWriter MCP allows Claude Code to control Chrome for testing the dashboard and other web functionality.
+Use the Chrome browser automation tools (Claude-in-Chrome MCP) to test the dashboard and landing page visually.
 
-### Opening Chrome
+### Dashboard Auto-Login
 
-```bash
-open -a "Google Chrome" --new --args --new-window "https://drinkcrabigator.com/dashboard"
-```
-
-### Connecting PlayWriter
-
-After Chrome opens, the user must click the **PlayWriter extension icon** in Chrome's toolbar to enable control. Without this, you'll get "Extension not connected" errors.
-
-### Viewing the Dashboard
-
-```javascript
-// Navigate and get accessibility snapshot
-await page.goto('https://drinkcrabigator.com/dashboard');
-await page.waitForLoadState('load');
-console.log(await accessibilitySnapshot({ page }));
-```
-
-The accessibility snapshot shows the dashboard structure including:
-- Session list with state (thinking/permission/complete), path, and session ID
-- Screen preview showing the terminal output
-- Stats widget (session time, prompts, completions, tools)
-- Changes widget
-
-### Full Circle Test
-
-You can view your own running session on the dashboard - the screen preview will show the conversation you're currently having, creating a recursive view of yourself.
-
-### Chrome MCP Auto-Login
-
-The Chrome MCP controls an isolated Chrome instance without cookies. To authenticate:
+Automated browser sessions have no cookies. To authenticate:
 
 1. **Generate a pairing code:**
    ```bash
-   cargo run --release -- pair
-   # Or if crabigator is in PATH:
-   crabigator pair
+   crabigator pair          # or: cargo run --release -- pair
+   # Output: ABC-DEF-GHI
    ```
-   This outputs a code like `ABC-DEF-GHI`
-
 2. **Navigate to the dashboard with the setup parameter:**
    ```
    https://drinkcrabigator.com/dashboard?setup=ABC-DEF-GHI
    ```
 
-The dashboard auto-claims the code and authenticates. Codes expire in 5 minutes and can only be claimed once. The `pair` command automatically validates cached codes and generates new ones when needed.
+The dashboard auto-claims the code and authenticates. Codes expire in 5 minutes and can only be claimed once; the `pair` command validates cached codes and generates new ones when needed. A page snapshot after navigating should show the session list — "Setup Failed" means the code was stale, so run `crabigator pair` again.
 
-**Complete Claude Code workflow:**
-```bash
-# 1. Get pairing code (automatically validates cache)
-cargo run --release -- pair
-# Output: VQ6-NBP-EPM
-
-# 2. Use Chrome MCP to navigate (replace with actual code)
-mcp__chrome-devtools__navigate_page(url: "https://drinkcrabigator.com/dashboard?setup=VQ6-NBP-EPM", type: "url")
-
-# 3. Take snapshot to verify authentication worked
-mcp__chrome-devtools__take_snapshot()
-# Should show session list, not "Setup Failed"
+**Single-session view** - filter to one session for focused testing (hides Style/Account buttons, forces single-column layout):
 ```
-
-### Troubleshooting
-
-- **"Invalid or expired pairing token"**: Run `crabigator pair` again to get a fresh code
-- **"Extension not connected"**: User needs to click the Chrome DevTools MCP extension icon in Chrome's toolbar
-- **Connection errors**: The MCP server may need to be restarted
-- **No pages**: Ask user to restart Chrome (known Chrome bug)
+https://drinkcrabigator.com/dashboard?session=SESSION_ID
+```
 
 ## E2E Testing with tmux
 
-Claude Code can spawn and control Crabigator instances for end-to-end testing using tmux. This allows testing dashboard visual output by generating real Claude Code sessions.
+Agents can spawn and control Crabigator instances for end-to-end testing using tmux. This generates real assistant sessions whose output can be verified locally or on the dashboard. A scripted Codex flow exists as `make e2e-codex-tmux` (`scripts/e2e-codex-tmux.sh`).
 
 ### Basic Workflow
 
@@ -384,7 +355,7 @@ sleep 3
 # 3. Send a prompt
 tmux send-keys -t crab "explain this codebase" Enter
 
-# 4. Wait for processing, then inspect via Chrome MCP or local files
+# 4. Wait for processing, then inspect
 sleep 5
 cat /tmp/crabigator-*/screen.txt
 cat /tmp/crabigator-*/scrollback.log
@@ -407,66 +378,17 @@ When the user says "run end-to-end test with tmux", default to this Codex flow:
 ### Special Keys
 
 ```bash
-# Shift+Tab (mode cycling)
-tmux send-keys -t crab Escape "[" "Z"
-
-# Escape
-tmux send-keys -t crab Escape
-
-# Tab
-tmux send-keys -t crab Tab
-
-# Arrow keys
-tmux send-keys -t crab Up
-tmux send-keys -t crab Down
+tmux send-keys -t crab Escape "[" "Z"   # Shift+Tab (mode cycling)
+tmux send-keys -t crab Escape           # Escape
+tmux send-keys -t crab Tab              # Tab
+tmux send-keys -t crab Up               # Arrow keys (Up/Down/Left/Right)
 ```
 
 ### Inspecting Output
 
-**Local files** (in `/tmp/crabigator-*/`):
-- `screen.txt` - Current terminal snapshot with ANSI codes
-- `scrollback.log` - Conversation transcript
-- `inspect.json` - Widget state
+**Local files** (in `/tmp/crabigator-*/`): `screen.txt`, `scrollback.log`, `inspect.json`.
 
-**Dashboard** (via Chrome MCP):
-1. Navigate to `https://drinkcrabigator.com/dashboard`
-2. Use `take_snapshot` to get accessibility tree
-3. Use `take_screenshot` for visual verification
-
-**Single-session view** - Filter to one session for focused testing:
-```
-https://drinkcrabigator.com/dashboard?session=SESSION_ID
-```
-This hides Style/Account buttons and forces single-column layout.
-
-### Example: Testing Plan Mode Display
-
-```bash
-# Start session
-tmux new-session -d -s test "cd ~/test-project && crabigator"
-sleep 3
-
-# Get session ID for single-session dashboard view
-SESSION_ID=$(cat /tmp/crabigator-*/inspect.json 2>/dev/null | grep -o '"session_id":"[^"]*"' | tail -1 | cut -d'"' -f4)
-echo "Session: $SESSION_ID"
-
-# Enter plan mode
-tmux send-keys -t test "make a plan for adding authentication" Enter
-
-# Wait for plan
-sleep 10
-
-# Check dashboard via Chrome MCP (single-session view)
-# mcp__chrome-devtools__navigate_page(url: "https://drinkcrabigator.com/dashboard?session=$SESSION_ID")
-# mcp__chrome-devtools__take_screenshot()
-
-# Check local files
-cat /tmp/crabigator-*/screen.txt
-cat /tmp/crabigator-*/scrollback.log
-
-# Cleanup
-tmux kill-session -t test
-```
+**Dashboard** (via browser tools): navigate to `https://drinkcrabigator.com/dashboard` (see Browser Testing above for auth), then take a snapshot or screenshot to verify session state, screen preview, and widgets.
 
 ## Code Quality
 
@@ -484,11 +406,13 @@ The code simplifier will:
 
 ## Commit Practices
 
-When committing changes, split them into separate logical commits rather than one large commit. Each commit should represent a single coherent change:
+Commit messages follow the ISO 24495-1 plain language rules above: plain-words imperative subject, most important information first, body explains why.
+
+Split changes into separate logical commits rather than one large commit. Each commit should represent a single coherent change:
 
 - **One feature/fix per commit**: If you added a debug display feature AND fixed a bug, those should be separate commits
 - **Separate by layer**: Rust changes vs Worker/TypeScript changes should generally be separate commits
-- **Group related files**: Files that work together for a single feature go in the same commit (e.g., `client.rs` + `stats.rs` for a status display change)
+- **Group related files**: Files that work together for a single feature go in the same commit
 
 Example of good commit splitting:
 ```
@@ -499,91 +423,15 @@ deb5b0e Use D1 as source of truth for active sessions in dashboard
 ```
 
 Each commit should:
-- Have a clear, descriptive message explaining the "why"
 - Be buildable/deployable on its own (no broken intermediate states)
 - Be easy to revert independently if needed
 
 ## Releasing a New Version
 
-When releasing a new version, follow these steps carefully. The CI enforces version sync between `Cargo.toml` and `npm/package.json`.
+Use the `/release` command (`.claude/commands/release.md`) - it covers version selection, bumps, tagging, release notes, npm verification, and Worker deployment. Key invariants if releasing manually:
 
-### Pre-release Checklist
-
-1. **Update version in BOTH files:**
-   ```bash
-   # Cargo.toml - find and update the version line
-   version = "X.Y.Z"
-
-   # npm/package.json - update the version field
-   "version": "X.Y.Z"
-   ```
-
-2. **Commit the version bump:**
-   ```bash
-   git add Cargo.toml npm/package.json
-   git commit -m "Bump version to X.Y.Z"
-   git push origin main
-   ```
-
-3. **Create and push the tag:**
-   ```bash
-   git tag vX.Y.Z
-   git push origin vX.Y.Z
-   ```
-
-4. **Monitor the release workflow:**
-   ```bash
-   gh run list --limit 1
-   gh run watch <run-id>
-   ```
-
-### If the Release Fails
-
-Common failure: version mismatch between `Cargo.toml` and `npm/package.json`.
-
-**To fix and retry:**
-```bash
-# 1. Delete the tag locally and remotely
-git tag -d vX.Y.Z
-git push origin --delete vX.Y.Z
-
-# 2. Fix the version mismatch
-# Edit npm/package.json to match Cargo.toml
-
-# 3. Commit and push the fix
-git add npm/package.json
-git commit -m "Fix npm/package.json version sync for X.Y.Z release"
-git push origin main
-
-# 4. Re-tag and push
-git tag vX.Y.Z
-git push origin vX.Y.Z
-
-# 5. Watch the new workflow run
-gh run list --limit 1
-gh run watch <new-run-id>
-```
-
-### Verify the Release
-
-```bash
-# Check the release exists and has all assets
-gh release view vX.Y.Z
-
-# Expected assets (6 total):
-# - crabigator-vX.Y.Z-darwin-arm64.tar.gz
-# - crabigator-vX.Y.Z-darwin-x64.tar.gz
-# - crabigator-vX.Y.Z-linux-arm64.tar.gz
-# - crabigator-vX.Y.Z-linux-x64.tar.gz
-# - crabigator-vX.Y.Z-win32-arm64.zip
-# - crabigator-vX.Y.Z-win32-x64.zip
-```
-
-### Clean Up Draft Releases
-
-Failed workflows may leave draft releases. If a retry run uploads to an existing draft, the release may stay as a draft even after success. Check and publish:
-```bash
-gh release list                    # Check for drafts (shows "Draft" status)
-gh release edit vX.Y.Z --draft=false  # Publish a draft release
-gh release delete vX.Y.Z --yes     # Or delete draft entirely
-```
+1. **Version sync is CI-enforced**: `Cargo.toml` and `npm/package.json` must carry the same version. Commit the bump ("Bump version to X.Y.Z"), push, then tag `vX.Y.Z` and push the tag.
+2. **Watch the workflow**: `gh run list --limit 1` then `gh run watch <run-id>`.
+3. **Verify assets**: `gh release view vX.Y.Z` should show 6 assets (darwin/linux tar.gz and win32 zip, each for arm64 and x64).
+4. **If the release fails** (usually version mismatch): delete the tag locally and remotely (`git tag -d vX.Y.Z && git push origin --delete vX.Y.Z`), fix the mismatch, commit, re-tag, and push again. Never overwrite a published tag.
+5. **Clean up drafts**: failed workflows may leave draft releases. `gh release list` to check; `gh release edit vX.Y.Z --draft=false` to publish or `gh release delete vX.Y.Z --yes` to remove.
