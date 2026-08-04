@@ -258,6 +258,13 @@ export interface SessionPr {
     comments_url?: string;  // Anchor of the first unresolved thread
     comments_refreshed_at?: number;
     created_here: boolean;
+    mentions?: number;      // Counted mentions this session (bulk listings excluded)
+    user_mentions?: number; // Mentions typed by the user — strongest primacy signal
+    first_mentioned_at?: number; // Unix ms (0 = never mentioned)
+    last_mentioned_at?: number;  // Unix ms (0 = never mentioned)
+    last_mention_prompt?: number; // Session prompt counter at the latest mention
+    branch_matched?: boolean; // Head branch matched session branch/worktree/pasted URL
+    review_decision?: string; // APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED / ''
     refreshed_at: number;
 }
 

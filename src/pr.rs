@@ -123,6 +123,32 @@ pub struct SessionPr {
     /// True when we saw `gh pr create` produce it; false when it was updated
     /// (pushed to / edited) but created elsewhere or in a prior session.
     pub created_here: bool,
+    /// Counted mentions of this PR this session. Bulk listings — one line
+    /// naming several tracked PRs, like `gh pr list` output quoted into
+    /// prose — are excluded so a dump doesn't read as engagement.
+    #[serde(default)]
+    pub mentions: u64,
+    /// Mentions that appeared in user-authored prompt text. The strongest
+    /// primacy signal: a PR the human typed is almost always the work.
+    #[serde(default)]
+    pub user_mentions: u64,
+    /// Unix ms of the first counted mention (0 = never mentioned).
+    #[serde(default)]
+    pub first_mentioned_at: u64,
+    /// Unix ms of the most recent counted mention (0 = never mentioned).
+    #[serde(default)]
+    pub last_mentioned_at: u64,
+    /// The session's prompt counter at the most recent counted mention.
+    #[serde(default)]
+    pub last_mention_prompt: u32,
+    /// The PR's head branch matched the session's branch, its worktree
+    /// directory name, or a URL pasted into a user prompt. Sticky once set.
+    #[serde(default)]
+    pub branch_matched: bool,
+    /// GitHub review decision: APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED,
+    /// or empty when no review is required or the value is unknown.
+    #[serde(default)]
+    pub review_decision: String,
     /// Unix ms of the last successful `gh` refresh (0 = never enriched yet).
     pub refreshed_at: u64,
 }
@@ -152,6 +178,13 @@ impl SessionPr {
             comments_url: String::new(),
             comments_refreshed_at: 0,
             created_here,
+            mentions: 0,
+            user_mentions: 0,
+            first_mentioned_at: 0,
+            last_mentioned_at: 0,
+            last_mention_prompt: 0,
+            branch_matched: false,
+            review_decision: String::new(),
             refreshed_at: 0,
         }
     }
@@ -227,6 +260,8 @@ struct GhPrJson {
     mergeable: String,
     #[serde(default, rename = "mergeStateStatus")]
     merge_state_status: String,
+    #[serde(default, rename = "reviewDecision")]
+    review_decision: String,
     #[serde(default, rename = "statusCheckRollup")]
     status_check_rollup: Vec<CheckEntry>,
 }
@@ -401,6 +436,9 @@ pub struct PrTracker {
     /// A push can arrive while the startup/current-branch lookup is still in
     /// flight. Carry that activity onto the existing job instead of dropping it.
     pending_pr_active: HashMap<String, bool>,
+    /// The platform's prompt counter, stamped onto mentions so recency can be
+    /// judged in turns rather than wall-clock time.
+    prompt_count: u32,
 }
 
 impl Default for PrTracker {
@@ -423,11 +461,17 @@ impl PrTracker {
             pr_active_at: HashMap::new(),
             update_commands_seen: HashMap::new(),
             pending_pr_active: HashMap::new(),
+            prompt_count: 0,
         }
     }
 
     pub fn prs(&self) -> &[SessionPr] {
         &self.prs
+    }
+
+    /// Record the platform's prompt counter for mention recency stamps.
+    pub fn set_prompt_count(&mut self, prompts: u32) {
+        self.prompt_count = prompts;
     }
 
     /// Resolve the PR attached to the current branch in `cwd` and track it.
@@ -505,6 +549,7 @@ impl PrTracker {
             return false;
         }
         let mut changed = false;
+        let user_authored = mention_scope == "prompt";
         let mut update_occurrences = HashMap::<String, usize>::new();
         let mut mention_occurrences = HashMap::<String, usize>::new();
         for event in scan_events(text) {
@@ -520,23 +565,49 @@ impl PrTracker {
                     }
                 }
                 ScanEvent::Updated(_) => {}
-                ScanEvent::Located(loc) => {
+                ScanEvent::Located { loc, bulk } => {
                     if self.is_new_mention(mention_scope, &loc.url, &mut mention_occurrences) {
                         changed |= self.observe_url(&loc);
+                        if !bulk {
+                            changed |= self.record_mention_for_url(&loc.url, user_authored);
+                        }
                     }
                 }
                 // `gh pr view` rejects issue numbers and nonexistent PRs, so only
                 // numbers that are really PRs in this repo reach the visible list.
-                ScanEvent::Mentioned(number) => {
+                ScanEvent::Mentioned { number, bulk } => {
                     if self.is_new_mention(
                         mention_scope,
                         &format!("#{number}"),
                         &mut mention_occurrences,
                     ) {
                         self.resolve_mentioned_pr(number, cwd);
+                        if !bulk {
+                            changed |= self.record_mention_for_number(number, user_authored);
+                        }
                     }
                 }
             }
+        }
+        changed
+    }
+
+    /// Count one real mention against the tracked PR at `url`.
+    fn record_mention_for_url(&mut self, url: &str, user_authored: bool) -> bool {
+        let prompt_count = self.prompt_count;
+        match self.prs.iter_mut().find(|p| p.url == url) {
+            Some(pr) => bump_mention(pr, user_authored, prompt_count),
+            None => false,
+        }
+    }
+
+    /// Count one real mention against every tracked PR sharing `number` —
+    /// a bare mention doesn't name a repository, so all candidates gain it.
+    fn record_mention_for_number(&mut self, number: u64, user_authored: bool) -> bool {
+        let prompt_count = self.prompt_count;
+        let mut changed = false;
+        for pr in self.prs.iter_mut().filter(|p| p.number == number) {
+            changed |= bump_mention(pr, user_authored, prompt_count);
         }
         changed
     }
@@ -900,6 +971,7 @@ impl PrTracker {
             existing.changed_files = json.changed_files;
             existing.mergeable = json.mergeable;
             existing.merge_state_status = json.merge_state_status;
+            existing.review_decision = json.review_decision;
             existing.checks_passed = passed;
             existing.checks_failed = failed;
             existing.checks_pending = pending;
@@ -946,6 +1018,13 @@ impl PrTracker {
             comments_url: String::new(),
             comments_refreshed_at: 0,
             created_here,
+            mentions: 0,
+            user_mentions: 0,
+            first_mentioned_at: 0,
+            last_mentioned_at: 0,
+            last_mention_prompt: 0,
+            branch_matched: false,
+            review_decision: json.review_decision,
             refreshed_at: now,
         });
         true
@@ -967,6 +1046,22 @@ fn ci_link(rollup: &[CheckEntry], pr_url: &str) -> String {
         .and_then(CheckEntry::url)
         .map(str::to_string)
         .unwrap_or_else(|| format!("{pr_url}/checks"))
+}
+
+/// Stamp one counted mention onto a PR. Always a change: the counters and the
+/// recency stamps feed classification, the mirror, and the cloud stream.
+fn bump_mention(pr: &mut SessionPr, user_authored: bool, prompt_count: u32) -> bool {
+    let now = now_unix_ms();
+    pr.mentions += 1;
+    if user_authored {
+        pr.user_mentions += 1;
+    }
+    if pr.first_mentioned_at == 0 {
+        pr.first_mentioned_at = now;
+    }
+    pr.last_mentioned_at = now;
+    pr.last_mention_prompt = prompt_count;
+    true
 }
 
 /// Tally a `statusCheckRollup` into (passed, failed, pending) counts.
@@ -995,15 +1090,20 @@ fn is_pr_update_command(line: &str) -> bool {
 /// Something a transcript scan found, in the order it was written.
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum ScanEvent {
-    /// A PR identified by repository and number.
-    Located(PrLocation),
+    /// A PR identified by repository and number. `bulk` marks a reference from
+    /// a line that enumerated several PRs at once — a quoted `gh pr list` or
+    /// ticket dump — which still tracks the PR but doesn't count as a mention.
+    Located { loc: PrLocation, bulk: bool },
     /// A marked `#123` with no repository — resolved against the session's repo.
-    Mentioned(u64),
+    Mentioned { number: u64, bulk: bool },
     /// `gh pr create` ran, so PRs seen after it were created by this session.
     Created,
     /// A push or PR edit ran, so the current branch's PR is worth resolving.
     Updated(String),
 }
+
+/// A prose line naming this many distinct PRs is a listing, not engagement.
+const BULK_MENTION_LINE_THRESHOLD: usize = 4;
 
 /// Find every PR association in a chunk of transcript text.
 ///
@@ -1029,8 +1129,7 @@ fn scan_events(text: &str) -> Vec<ScanEvent> {
                         events.push(ScanEvent::Updated(line.trim().to_string()));
                     }
                     if channel == Channel::Prose {
-                        push_located(&mut events, pr_urls(line));
-                        push_prose_mentions(&mut events, line);
+                        push_prose_line(&mut events, line);
                     }
                 }
                 // Raw scrollback arrives unmarked, so repo-qualified commands land
@@ -1087,28 +1186,46 @@ fn active_pr_refresh_due(
         .unwrap_or(true)
 }
 
+/// Command-targeted references — never part of a listing line.
 fn push_located(events: &mut Vec<ScanEvent>, locations: Vec<PrLocation>) {
     for loc in locations {
-        events.push(ScanEvent::Located(loc));
+        events.push(ScanEvent::Located { loc, bulk: false });
     }
 }
 
-/// Record the marked `#123` mentions in one line of prose.
-fn push_prose_mentions(events: &mut Vec<ScanEvent>, line: &str) {
+/// Record every PR reference in one line of prose — URLs plus marked `#123`
+/// mentions — tagging them all `bulk` when the line enumerates enough distinct
+/// PRs to be a listing rather than engagement.
+fn push_prose_line(events: &mut Vec<ScanEvent>, line: &str) {
+    let urls = pr_urls(line);
+    let mut mentions = Vec::new();
     // A `#123` inside a PR link is part of the URL (or a review-thread anchor),
     // and the URL scan already covers it.
-    if line.contains("/pull/") {
-        return;
+    if !line.contains("/pull/") {
+        line_pr_mentions(line, &mut mentions);
     }
-    let mut mentions = Vec::new();
-    line_pr_mentions(line, &mut mentions);
+    let mut distinct: Vec<String> = urls.iter().map(|loc| loc.url.clone()).collect();
+    for (marker, number) in &mentions {
+        let identity = match marker {
+            PrMarker::Repo(owner, repo) => format!("{owner}/{repo}#{number}"),
+            PrMarker::Unqualified => format!("#{number}"),
+        };
+        if !distinct.contains(&identity) {
+            distinct.push(identity);
+        }
+    }
+    let bulk = distinct.len() >= BULK_MENTION_LINE_THRESHOLD;
+    for loc in urls {
+        events.push(ScanEvent::Located { loc, bulk });
+    }
     for (marker, number) in mentions {
         let event = match marker {
             // A repository-pinned mention needs no guessing.
-            PrMarker::Repo(owner, repo) => {
-                ScanEvent::Located(PrLocation::new(&owner, &repo, number))
-            }
-            PrMarker::Unqualified => ScanEvent::Mentioned(number),
+            PrMarker::Repo(owner, repo) => ScanEvent::Located {
+                loc: PrLocation::new(&owner, &repo, number),
+                bulk,
+            },
+            PrMarker::Unqualified => ScanEvent::Mentioned { number, bulk },
         };
         events.push(event);
     }
@@ -1299,7 +1416,7 @@ fn is_number_list_gap(gap: &str) -> bool {
 }
 
 const GH_JSON_FIELDS: &str = "number,title,headRefName,url,state,isDraft,additions,deletions,\
-    changedFiles,mergeable,mergeStateStatus,statusCheckRollup";
+    changedFiles,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup";
 
 /// GitHub computes `mergeable` lazily, so the first read often returns UNKNOWN.
 /// Re-query up to this many times (with a short sleep) to get a resolved value.
@@ -1576,6 +1693,66 @@ mod tests {
     }
 
     #[test]
+    fn counts_mentions_once_per_occurrence_per_turn() {
+        let mut tracker = PrTracker::new();
+        let text = "working on https://github.com/o/r/pull/500 now";
+        tracker.scan_text(text, Path::new("/tmp"));
+        // The growing transcript is re-scanned every tick; the same occurrence
+        // must not inflate the counters.
+        tracker.scan_text(text, Path::new("/tmp"));
+        let pr = &tracker.prs()[0];
+        assert_eq!(pr.mentions, 1);
+        assert_eq!(pr.user_mentions, 0);
+        assert!(pr.first_mentioned_at > 0);
+        assert_eq!(pr.first_mentioned_at, pr.last_mentioned_at);
+
+        // A new turn mentioning it again counts a second time.
+        tracker.on_prompt_observed();
+        tracker.scan_text(text, Path::new("/tmp"));
+        assert_eq!(tracker.prs()[0].mentions, 2);
+    }
+
+    #[test]
+    fn user_prompt_mentions_count_separately() {
+        let mut tracker = PrTracker::new();
+        tracker.set_prompt_count(7);
+        tracker.scan_prompt(
+            "please rebase https://github.com/o/r/pull/500",
+            Path::new("/tmp"),
+        );
+        let pr = &tracker.prs()[0];
+        assert_eq!(pr.mentions, 1);
+        assert_eq!(pr.user_mentions, 1);
+        assert_eq!(pr.last_mention_prompt, 7);
+    }
+
+    /// A `gh pr list` dump quoted into prose names every PR the session never
+    /// touched; those references track the PRs but must not read as engagement.
+    #[test]
+    fn bulk_listing_lines_track_without_counting() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_text(
+            "open: https://github.com/o/r/pull/501 https://github.com/o/r/pull/502 \
+             https://github.com/o/r/pull/503 https://github.com/o/r/pull/504",
+            Path::new("/tmp"),
+        );
+        assert_eq!(tracker.prs().len(), 4);
+        assert!(tracker.prs().iter().all(|pr| pr.mentions == 0));
+        assert!(tracker.prs().iter().all(|pr| pr.last_mentioned_at == 0));
+    }
+
+    #[test]
+    fn short_pr_runs_still_count() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_text(
+            "merged https://github.com/o/r/pull/501 and https://github.com/o/r/pull/502",
+            Path::new("/tmp"),
+        );
+        assert_eq!(tracker.prs().len(), 2);
+        assert!(tracker.prs().iter().all(|pr| pr.mentions == 1));
+    }
+
+    #[test]
     fn bare_mentions_at_the_threshold_still_adopt() {
         let mut tracker = PrTracker::new();
         tracker.scan_text("PR #100 tracks the rollout", Path::new("/tmp"));
@@ -1752,7 +1929,7 @@ mod tests {
             events.extend(scan_events(&text.activity));
             for event in events {
                 match event {
-                    ScanEvent::Located(loc) if !located.contains(&loc) => {
+                    ScanEvent::Located { loc, .. } if !located.contains(&loc) => {
                         eprintln!(
                             "turn {turn}: located {}/{} #{}",
                             loc.owner, loc.repo, loc.number
@@ -1761,7 +1938,7 @@ mod tests {
                     }
                     // Mirrors `resolve_mentioned_pr`: a number already located with
                     // its own repository is never guessed against the cwd.
-                    ScanEvent::Mentioned(number)
+                    ScanEvent::Mentioned { number, .. }
                         if !mentioned.contains(&number)
                             && !located.iter().any(|l| l.number == number) =>
                     {
@@ -2063,6 +2240,7 @@ mod tests {
             changed_files: 1,
             mergeable: "MERGEABLE".into(),
             merge_state_status: "CLEAN".into(),
+            review_decision: String::new(),
             status_check_rollup: Vec::new(),
         }
     }
@@ -2122,6 +2300,7 @@ mod tests {
             changed_files: 2,
             mergeable: "MERGEABLE".into(),
             merge_state_status: "CLEAN".into(),
+            review_decision: String::new(),
             status_check_rollup: vec![
                 check(CheckClass::Pass, Some("https://github.com/o/r/actions/1")),
                 check(CheckClass::Fail, Some("https://github.com/o/r/actions/2")),

@@ -375,6 +375,14 @@ impl MirrorPublisher {
             pr.ci_url.hash(&mut hasher);
             pr.unresolved_comments.hash(&mut hasher);
             pr.comments_url.hash(&mut hasher);
+            pr.created_here.hash(&mut hasher);
+            pr.review_decision.hash(&mut hasher);
+            // Mention signals republish so external readers see recency live.
+            pr.mentions.hash(&mut hasher);
+            pr.user_mentions.hash(&mut hasher);
+            pr.last_mentioned_at.hash(&mut hasher);
+            pr.last_mention_prompt.hash(&mut hasher);
+            pr.branch_matched.hash(&mut hasher);
         }
 
         hasher.finish()

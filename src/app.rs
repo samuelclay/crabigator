@@ -1402,6 +1402,8 @@ impl App {
         if self.session_stats.platform_stats.prompts > old_prompts {
             self.pr_tracker.on_prompt_observed();
         }
+        self.pr_tracker
+            .set_prompt_count(self.session_stats.platform_stats.prompts);
 
         // Update transcript path for scrollback capture
         if let Some(ref path) = self.session_stats.platform_stats.transcript_path {

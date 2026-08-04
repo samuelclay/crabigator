@@ -1148,6 +1148,13 @@ mod tests {
             ),
             comments_refreshed_at: 0,
             created_here: false,
+            mentions: 0,
+            user_mentions: 0,
+            first_mentioned_at: 0,
+            last_mentioned_at: 0,
+            last_mention_prompt: 0,
+            branch_matched: false,
+            review_decision: String::new(),
             refreshed_at: 0,
         }
     }
