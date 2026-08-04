@@ -36,6 +36,8 @@ const PR_ACTIVE_WINDOW: Duration = Duration::from_secs(15 * 60);
 const CREATE_CLAIM_WINDOW: Duration = Duration::from_secs(600);
 /// How many pasted-prompt URLs to keep for branch matching.
 const PROMPT_URLS_KEPT: usize = 32;
+/// How long a pasted Slack permalink keeps claiming new PRs as their origin.
+const SLACK_ORIGIN_CLAIM_WINDOW: Duration = Duration::from_secs(600);
 /// An untracked bare mention (`PR #7`, `RQH #12`) below this number never
 /// adopts a new PR: small numbers false-match Docker build steps
 /// (`#1 [internal] …`), docs anchors (`llm#1-model`), and numbered findings,
@@ -60,6 +62,15 @@ fn pr_number_re() -> &'static Regex {
 fn any_url_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r#"https?://[^\s)\]>'"]+"#).expect("valid url regex"))
+}
+
+/// A Slack message permalink: `https://<workspace>.slack.com/archives/<channel>/p<ts>`.
+fn slack_permalink_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"https://[A-Za-z0-9_-]+\.slack\.com/archives/[A-Z0-9]+/p\d+[^\s"'<>)\]]*"#)
+            .expect("valid slack permalink regex")
+    })
 }
 
 /// `PR #123 … is (the) primary` / `#123 … secondary`.
@@ -217,6 +228,15 @@ pub struct SessionPr {
     /// it, but nothing should render it.
     #[serde(default)]
     pub dismissed: bool,
+    /// The Slack permalink the user pasted into the prompt that led to this
+    /// PR — the conversation the work came from. Empty when none was seen.
+    #[serde(default)]
+    pub slack_origin_url: String,
+    /// Every Slack permalink found in the PR's GitHub comments (notification
+    /// bots and humans alike), deduped, in comment order. Never cleared once
+    /// captured, even after the PR closes.
+    #[serde(default)]
+    pub slack_comment_urls: Vec<String>,
     /// Unix ms of the last successful `gh` refresh (0 = never enriched yet).
     pub refreshed_at: u64,
 }
@@ -256,6 +276,8 @@ impl SessionPr {
             primary: false,
             primary_source: String::new(),
             dismissed: false,
+            slack_origin_url: String::new(),
+            slack_comment_urls: Vec::new(),
             refreshed_at: 0,
         }
     }
@@ -423,12 +445,15 @@ enum JobResult {
     },
 }
 
-/// Unresolved review threads on one PR.
+/// Unresolved review threads on one PR, plus any Slack permalinks its
+/// issue comments carry.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct ReviewThreads {
     unresolved: i64,
     /// The first unresolved thread's comment anchor (empty when none).
     first_url: String,
+    /// Every Slack permalink in the PR's comments, deduped, in order.
+    slack_urls: Vec<String>,
 }
 
 /// GraphQL response shape for [`REVIEW_THREADS_QUERY`].
@@ -452,6 +477,20 @@ struct ThreadsRepository {
 struct ThreadsPullRequest {
     #[serde(rename = "reviewThreads")]
     review_threads: ThreadNodes,
+    #[serde(default)]
+    comments: IssueComments,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct IssueComments {
+    #[serde(default)]
+    nodes: Vec<IssueComment>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueComment {
+    #[serde(default)]
+    body: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -524,6 +563,9 @@ pub struct PrTracker {
     declared_urls: HashMap<String, PrDisposition>,
     /// Cloud-stored dispositions keyed `owner/repo#number`.
     overrides: HashMap<String, PrDisposition>,
+    /// The most recent Slack permalink pasted into a user prompt, and when.
+    /// A PR that appears shortly after inherits it as its origin.
+    latest_prompt_slack: Option<(String, Instant)>,
 }
 
 impl Default for PrTracker {
@@ -551,6 +593,7 @@ impl PrTracker {
             declared_numbers: HashMap::new(),
             declared_urls: HashMap::new(),
             overrides: HashMap::new(),
+            latest_prompt_slack: None,
         }
     }
 
@@ -630,13 +673,17 @@ impl PrTracker {
     }
 
     /// Remember URLs the user pasted — preview deployments embed branch names,
-    /// which is sometimes the only tie between a session and its PR.
+    /// which is sometimes the only tie between a session and its PR. Slack
+    /// permalinks are also noted as the likely origin of upcoming work.
     fn note_prompt_urls(&mut self, text: &str) {
         for found in any_url_re().find_iter(text) {
             let url = found
                 .as_str()
                 .trim_end_matches(['.', ',', ')', ']', '>', ';'])
                 .to_string();
+            if slack_permalink_re().is_match(&url) {
+                self.latest_prompt_slack = Some((url.clone(), Instant::now()));
+            }
             if !self.prompt_urls.contains(&url) {
                 self.prompt_urls.push(url);
             }
@@ -645,6 +692,23 @@ impl PrTracker {
         if excess > 0 {
             self.prompt_urls.drain(..excess);
         }
+    }
+
+    /// The pasted Slack permalink a brand-new PR should claim as its origin,
+    /// while it is still fresh enough to plausibly be the source conversation.
+    fn current_origin_slack(&self) -> String {
+        self.latest_prompt_slack
+            .as_ref()
+            .filter(|(_, at)| at.elapsed() < SLACK_ORIGIN_CLAIM_WINDOW)
+            .map(|(url, _)| url.clone())
+            .unwrap_or_default()
+    }
+
+    /// The most recent Slack permalink the user pasted, for session-level use.
+    pub fn session_slack_origin(&self) -> Option<&str> {
+        self.latest_prompt_slack
+            .as_ref()
+            .map(|(url, _)| url.as_str())
     }
 
     /// Pick up explicit dispositions the user types: "PR #123 is the primary",
@@ -814,7 +878,9 @@ impl PrTracker {
             .map(|t| t.elapsed() < CREATE_CLAIM_WINDOW)
             .unwrap_or(false);
 
-        self.prs.push(SessionPr::placeholder(loc, created_here));
+        let mut pr = SessionPr::placeholder(loc, created_here);
+        pr.slack_origin_url = self.current_origin_slack();
+        self.prs.push(pr);
         self.note_pr_active(&loc.url);
         self.spawn_fetch(loc.url.clone(), created_here);
         true
@@ -1095,11 +1161,17 @@ impl PrTracker {
         let Some(pr) = self.prs.iter_mut().find(|p| p.url == url) else {
             return false;
         };
-        let changed =
+        let mut changed =
             pr.unresolved_comments != threads.unresolved || pr.comments_url != threads.first_url;
         pr.unresolved_comments = threads.unresolved;
         pr.comments_url = threads.first_url;
         pr.comments_refreshed_at = now;
+        // Slack links persist once seen: thread queries stop when a PR closes,
+        // and the notification comment doesn't stop mattering when it does.
+        if !threads.slack_urls.is_empty() && pr.slack_comment_urls != threads.slack_urls {
+            pr.slack_comment_urls = threads.slack_urls;
+            changed = true;
+        }
         changed
     }
 
@@ -1120,6 +1192,7 @@ impl PrTracker {
         }
         let (owner, repo) = split_owner_repo(&url).unwrap_or_default();
         let now = now_unix_ms();
+        let origin_slack = self.current_origin_slack();
         let (passed, failed, pending) = count_checks(&json.status_check_rollup);
         let total = passed + failed + pending;
         let ci_url = ci_link(&json.status_check_rollup, &url);
@@ -1193,6 +1266,8 @@ impl PrTracker {
             primary: false,
             primary_source: String::new(),
             dismissed: false,
+            slack_origin_url: origin_slack,
+            slack_comment_urls: Vec::new(),
             refreshed_at: now,
         });
         true
@@ -1644,11 +1719,14 @@ fn threads_key(url: &str) -> String {
 
 /// `gh pr view` has no review-thread field, so the unresolved count comes from
 /// GraphQL. 100 threads is well past what any reviewable PR carries; a longer
-/// conversation simply undercounts rather than paging.
+/// conversation simply undercounts rather than paging. Issue comments ride
+/// along so Slack notification permalinks (posted as PR comments by bots)
+/// can be surfaced; bodies are scanned for permalinks and discarded.
 const REVIEW_THREADS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
      repository(owner:$owner,name:$repo){\
        pullRequest(number:$number){\
          reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{url}}}}\
+         comments(first:100){nodes{body}}\
        }\
      }\
    }";
@@ -1699,6 +1777,16 @@ fn parse_review_threads(json: &[u8]) -> Result<ReviewThreads, String> {
         if threads.first_url.is_empty() {
             if let Some(comment) = thread.comments.nodes.first() {
                 threads.first_url = comment.url.clone();
+            }
+        }
+    }
+    // Slack permalinks from the PR conversation — notification bots post one
+    // per PR, and humans paste them when linking discussion back to Slack.
+    for comment in &response.data.repository.pull_request.comments.nodes {
+        for found in slack_permalink_re().find_iter(&comment.body) {
+            let url = found.as_str().to_string();
+            if !threads.slack_urls.contains(&url) {
+                threads.slack_urls.push(url);
             }
         }
     }
@@ -2259,6 +2347,52 @@ mod tests {
         assert_eq!((bare.unresolved, bare.first_url.as_str()), (1, ""));
     }
 
+    /// PR comments carry Slack notification permalinks (posted by bots) and
+    /// human-pasted thread links; all are collected, deduped, in order.
+    #[test]
+    fn review_threads_collect_slack_permalinks_from_comments() {
+        let with_comments = br#"{"data":{"repository":{"pullRequest":{
+            "reviewThreads":{"nodes":[]},
+            "comments":{"nodes":[
+                {"body":"PR notification sent: https://tavus.slack.com/archives/C012AB3CD/p1722800000000100"},
+                {"body":"no links here"},
+                {"body":"discussed in https://tavus.slack.com/archives/C012AB3CD/p1722800000000100 and https://tavus.slack.com/archives/C09XYZ111/p1722899999000200?thread_ts=1"}
+            ]}}}}}"#;
+        let threads = parse_review_threads(with_comments).expect("parses");
+        assert_eq!(
+            threads.slack_urls,
+            vec![
+                "https://tavus.slack.com/archives/C012AB3CD/p1722800000000100",
+                "https://tavus.slack.com/archives/C09XYZ111/p1722899999000200?thread_ts=1",
+            ]
+        );
+        // The old shape (no comments field) still parses.
+        assert!(parse_review_threads(LIVE_THREADS_JSON)
+            .expect("parses")
+            .slack_urls
+            .is_empty());
+    }
+
+    /// A PR that appears right after the user pastes a Slack link inherits it
+    /// as its origin; PRs adopted with no fresh link get none.
+    #[test]
+    fn new_prs_inherit_the_prompt_slack_origin() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_prompt(
+            "Investigate https://tavus.slack.com/archives/C012AB3CD/p1722800000000100 please",
+            Path::new("/tmp"),
+        );
+        tracker.scan_text("opened https://github.com/o/r/pull/900", Path::new("/tmp"));
+        assert_eq!(
+            tracker.prs()[0].slack_origin_url,
+            "https://tavus.slack.com/archives/C012AB3CD/p1722800000000100"
+        );
+
+        let mut plain = PrTracker::new();
+        plain.scan_text("opened https://github.com/o/r/pull/901", Path::new("/tmp"));
+        assert!(plain.prs()[0].slack_origin_url.is_empty());
+    }
+
     #[test]
     fn review_thread_refresh_adapts_to_recent_pr_activity() {
         let just_under_a_minute = Duration::from_secs(59);
@@ -2400,6 +2534,7 @@ mod tests {
             ReviewThreads {
                 unresolved: 3,
                 first_url: "https://github.com/o/r/pull/7#discussion_r1".into(),
+                slack_urls: vec!["https://t.slack.com/archives/C1/p100".into()],
             },
         );
         assert_eq!(tracker.prs()[0].unresolved_comments, 3);
@@ -2407,6 +2542,9 @@ mod tests {
         tracker.apply_fetch(gh_json(&loc.url, "MERGED"), None, false);
         assert_eq!(tracker.prs()[0].unresolved_comments, 0);
         assert!(tracker.prs()[0].comments_url.is_empty());
+        // Slack links survive the close-clearing: the notification comment
+        // doesn't stop mattering when the PR merges.
+        assert_eq!(tracker.prs()[0].slack_comment_urls.len(), 1);
 
         // ...and a still-open PR keeps it across a stats refresh.
         tracker.apply_threads(
@@ -2414,6 +2552,7 @@ mod tests {
             ReviewThreads {
                 unresolved: 2,
                 first_url: "https://github.com/o/r/pull/7#discussion_r2".into(),
+                slack_urls: Vec::new(),
             },
         );
         tracker.apply_fetch(gh_json(&loc.url, "OPEN"), None, false);

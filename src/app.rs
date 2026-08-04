@@ -1255,6 +1255,9 @@ impl App {
         if let Some(path) = self.session_stats.platform_stats.transcript_path.clone() {
             self.mirror_publisher.set_transcript_path(&path);
         }
+        let slack_origin = self.pr_tracker.session_slack_origin().map(str::to_string);
+        self.mirror_publisher
+            .set_slack_origin(slack_origin.as_deref());
 
         // Publish mirror state (throttled, only when --profile)
         let _ = self.mirror_publisher.maybe_publish(

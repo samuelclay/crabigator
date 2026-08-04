@@ -268,6 +268,8 @@ export interface SessionPr {
     primary?: boolean;        // The PR this session is actually working on
     primary_source?: string;  // 'auto' | 'session' | 'override'
     dismissed?: boolean;      // User dismissed — do not render
+    slack_origin_url?: string;    // Slack permalink pasted in the prompt that led here
+    slack_comment_urls?: string[]; // Slack permalinks found in the PR's GitHub comments
     refreshed_at: number;
 }
 

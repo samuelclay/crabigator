@@ -1227,6 +1227,8 @@ mod tests {
             primary: false,
             primary_source: String::new(),
             dismissed: false,
+            slack_origin_url: String::new(),
+            slack_comment_urls: Vec::new(),
             refreshed_at: 0,
         }
     }

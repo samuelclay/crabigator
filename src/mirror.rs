@@ -53,6 +53,9 @@ pub struct MirrorState {
     /// PRs created or updated during this session.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prs: Vec<SessionPr>,
+    /// The most recent Slack permalink the user pasted into a prompt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slack_origin: Option<String>,
     pub last_updated: f64,
     pub capture: CaptureMirror,
     pub launch_timing: LaunchTimingMirror,
@@ -151,6 +154,7 @@ pub struct MirrorPublisher {
     session_id: String,
     cloud_session_id: Option<String>,
     transcript_path: Option<String>,
+    slack_origin: Option<String>,
     cwd: String,
     capture: CaptureMirror,
     last_publish: Instant,
@@ -173,6 +177,7 @@ impl MirrorPublisher {
             session_id,
             cloud_session_id: None,
             transcript_path: None,
+            slack_origin: None,
             cwd,
             capture,
             // Allow immediate first publish
@@ -214,6 +219,15 @@ impl MirrorPublisher {
     pub fn set_transcript_path(&mut self, transcript_path: &str) {
         if self.transcript_path.as_deref() != Some(transcript_path) {
             self.transcript_path = Some(transcript_path.to_string());
+            self.last_hash = 0;
+        }
+    }
+
+    /// The most recent Slack permalink pasted into a prompt — the session's
+    /// likely origin conversation, for readers that aggregate across sessions.
+    pub fn set_slack_origin(&mut self, slack_origin: Option<&str>) {
+        if self.slack_origin.as_deref() != slack_origin {
+            self.slack_origin = slack_origin.map(str::to_string);
             self.last_hash = 0;
         }
     }
@@ -386,6 +400,8 @@ impl MirrorPublisher {
             pr.primary.hash(&mut hasher);
             pr.primary_source.hash(&mut hasher);
             pr.dismissed.hash(&mut hasher);
+            pr.slack_origin_url.hash(&mut hasher);
+            pr.slack_comment_urls.hash(&mut hasher);
         }
 
         hasher.finish()
@@ -419,6 +435,7 @@ impl MirrorPublisher {
             recap: recap.cloned(),
             recap_history: recap_history.to_vec(),
             prs: prs.to_vec(),
+            slack_origin: self.slack_origin.clone(),
             last_updated: timestamp,
             capture: self.capture.clone(),
             launch_timing,
