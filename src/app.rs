@@ -857,6 +857,23 @@ impl App {
                         last_cloud_heartbeat = Instant::now();
                     }
 
+                    // Keep the group's PR dispositions fresh (60s cadence) and
+                    // apply any that landed since the last tick.
+                    if let Some(ref mut client) = self.cloud_client {
+                        client.maybe_fetch_pr_overrides();
+                        if let Some(overrides) = client.try_recv_pr_overrides() {
+                            self.pr_tracker.set_overrides(overrides);
+                            if self
+                                .pr_tracker
+                                .reclassify(&self.git_state.branch, &self.cwd)
+                            {
+                                // The status-bar hash covers primary/dismissed,
+                                // so the next draw repaints on its own.
+                                self.send_cloud_prs_event();
+                            }
+                        }
+                    }
+
                     // Poll pairing status
                     self.maybe_poll_pairing();
 

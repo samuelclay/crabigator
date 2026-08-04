@@ -677,6 +677,11 @@ impl PrTracker {
         }
     }
 
+    /// Replace the cloud-stored dispositions (dashboard toggles / action links).
+    pub fn set_overrides(&mut self, overrides: HashMap<String, PrDisposition>) {
+        self.overrides = overrides;
+    }
+
     /// Re-run primary/secondary classification against the session's current
     /// branch and working directory. Returns true when anything visible moved.
     pub fn reclassify(&mut self, current_branch: &str, cwd: &Path) -> bool {

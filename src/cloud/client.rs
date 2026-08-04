@@ -16,9 +16,36 @@ use super::device::DeviceIdentity;
 use super::events::CloudEvent;
 use super::queue::OfflineQueue;
 use super::websocket::{CloudWebSocket, WebSocketHandle};
+use crate::pr_rank::PrDisposition;
 
 /// Default API URL
 const DEFAULT_API_URL: &str = "https://drinkcrabigator.com/api";
+
+/// How often to refresh the group's PR dispositions from the cloud.
+const PR_OVERRIDES_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// One row from GET /api/pr-overrides.
+#[derive(Debug, Deserialize)]
+struct PrOverrideRow {
+    owner: String,
+    repo: String,
+    number: u64,
+    disposition: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PrOverridesResponse {
+    overrides: Vec<PrOverrideRow>,
+}
+
+fn parse_pr_disposition(value: &str) -> Option<PrDisposition> {
+    match value {
+        "primary" => Some(PrDisposition::Primary),
+        "secondary" => Some(PrDisposition::Secondary),
+        "dismissed" => Some(PrDisposition::Dismissed),
+        _ => None,
+    }
+}
 
 /// Response from POST /api/sessions
 #[derive(Debug, Deserialize)]
@@ -118,6 +145,10 @@ pub struct CloudClient {
     /// Last time we received a viewer_status:true message from the cloud
     /// Used to auto-timeout viewer_active after 15s of no heartbeats
     last_viewer_active_at: Option<std::time::Instant>,
+    /// Pending PR-overrides fetch (receiver for the async result)
+    pending_pr_overrides: Option<std::sync::mpsc::Receiver<HashMap<String, PrDisposition>>>,
+    /// When the last PR-overrides fetch started, for the refresh cadence
+    last_pr_overrides_fetch: Option<std::time::Instant>,
 }
 
 impl CloudClient {
@@ -148,6 +179,8 @@ impl CloudClient {
             just_connected: false,
             viewer_active: false, // Assume no viewers initially, will be notified when one connects
             last_viewer_active_at: None,
+            pending_pr_overrides: None,
+            last_pr_overrides_fetch: None,
         })
     }
 
@@ -573,6 +606,75 @@ impl CloudClient {
     }
 
     /// Send a session update asynchronously
+    /// Start a background fetch of the group's PR dispositions when one is
+    /// due. Results land via [`Self::try_recv_pr_overrides`].
+    pub fn maybe_fetch_pr_overrides(&mut self) {
+        if self.pending_pr_overrides.is_some() {
+            return;
+        }
+        if let Some(started) = self.last_pr_overrides_fetch {
+            if started.elapsed() < PR_OVERRIDES_REFRESH {
+                return;
+            }
+        }
+        self.last_pr_overrides_fetch = Some(std::time::Instant::now());
+        let device = self.device.clone();
+        let http = self.http.clone();
+        let api_url = self.api_url.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pending_pr_overrides = Some(rx);
+        tokio::spawn(async move {
+            if let Ok(map) = Self::fetch_pr_overrides_with(device, http, api_url).await {
+                let _ = tx.send(map);
+            }
+        });
+    }
+
+    /// The result of a previously started overrides fetch, if it landed.
+    pub fn try_recv_pr_overrides(&mut self) -> Option<HashMap<String, PrDisposition>> {
+        let rx = self.pending_pr_overrides.as_ref()?;
+        match rx.try_recv() {
+            Ok(map) => {
+                self.pending_pr_overrides = None;
+                Some(map)
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_pr_overrides = None;
+                None
+            }
+        }
+    }
+
+    async fn fetch_pr_overrides_with(
+        device: DeviceIdentity,
+        http: HttpClient,
+        api_url: String,
+    ) -> Result<HashMap<String, PrDisposition>> {
+        let url = format!("{}/pr-overrides", api_url);
+        let headers = device.auth_headers("GET", "/api/pr-overrides")?;
+        let mut req = http.get(&url);
+        for (key, value) in headers {
+            req = req.header(&key, &value);
+        }
+        let response = req.send().await?;
+        if !response.status().is_success() {
+            anyhow::bail!("Failed to fetch PR overrides: {}", response.status());
+        }
+        let data: PrOverridesResponse = response.json().await?;
+        Ok(data
+            .overrides
+            .iter()
+            .filter_map(|row| {
+                let disposition = parse_pr_disposition(&row.disposition)?;
+                Some((
+                    format!("{}/{}#{}", row.owner, row.repo, row.number),
+                    disposition,
+                ))
+            })
+            .collect())
+    }
+
     fn spawn_session_update(&self, update: UpdateSessionRequest) {
         let Some(session_id) = self.session_id.clone() else {
             return;
