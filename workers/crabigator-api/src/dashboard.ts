@@ -58,6 +58,9 @@ export const dashboardHtml = `<!DOCTYPE html>
             <button class="filter-clear" onclick="clearSessionFilter()" title="Show all sessions">✕</button>
         </div>
         <div class="sessions-container">
+            <button class="pr-board-btn" id="pr-board-btn" onclick="togglePrBoard()" title="Cross-session PR board">
+                <span class="pr-board-btn-icon">⑆</span> PRs
+            </button>
             <button class="sessions-btn" id="sessions-btn" onclick="toggleSidebar()" aria-label="Loading sessions" aria-busy="true">
                 <span class="sessions-count" id="sessions-count">Loading</span>
                 <span class="sessions-label">sessions</span>
@@ -243,6 +246,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             <button class="session-limit-upgrade" onclick="showUpgradeModal()">Upgrade to Pro</button>
         </div>
         <div class="container" id="sessions" data-layout="1" data-grouping="all"></div>
+        <div class="pr-board" id="pr-board-view" hidden></div>
     </div>
 
     <!-- Gift Claim Overlay -->

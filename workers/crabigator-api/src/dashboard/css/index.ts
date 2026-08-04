@@ -15,6 +15,7 @@ import { sidebarCss } from './sidebar';
 import { paywallCss } from './paywall';
 import { giftCss } from './gift';
 import { voiceCss } from './voice';
+import { prBoardCss } from './pr-board';
 
 export const dashboardCss = [
     baseCss,
@@ -33,4 +34,5 @@ export const dashboardCss = [
     paywallCss,
     giftCss,
     voiceCss,
+    prBoardCss,
 ].join('\n');

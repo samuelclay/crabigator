@@ -24,6 +24,7 @@ import { viewerActivityJs } from './viewer-activity';
 import { pairingJs } from './pairing';
 import { giftClaimJs } from './gift-claim';
 import { paywallJs } from './paywall';
+import { prBoardJs } from './pr-board';
 import { initJs } from './init';
 
 export const dashboardJs = [
@@ -52,5 +53,6 @@ export const dashboardJs = [
     pairingJs,
     giftClaimJs,  // Must be after pairingJs (uses isPaired and getAuthHeaders)
     paywallJs,  // Must be after pairingJs (uses auth functions)
+    prBoardJs,  // Must be after pairingJs and changesWidgetJs (uses getAuthHeaders, PR helpers)
     initJs
 ].join('\n');
