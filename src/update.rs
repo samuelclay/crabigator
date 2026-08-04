@@ -109,7 +109,7 @@ pub struct UpdateCheckResult {
 }
 
 /// How Crabigator was installed
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InstallMethod {
     /// Installed via npm (npm install -g crabigator)
     Npm,
@@ -118,6 +118,7 @@ pub enum InstallMethod {
     /// Installed via Homebrew (brew install crabigator)
     Homebrew,
     /// Unknown installation method
+    #[default]
     Unknown,
 }
 
@@ -395,18 +396,19 @@ pub async fn check_for_update(cli_version: Option<String>) -> Result<UpdateCheck
 
     // If cache is fresh and cloud check failed, use cached version info
     // (but we still attempted to send telemetry above)
-    if !cache.is_stale() && cache.latest_version.is_some() && cloud_result.is_err() {
-        let latest = cache.latest_version.as_ref().unwrap();
-        let update_available = is_newer_version(latest, CURRENT_VERSION);
-        let was_dismissed = cache.dismissed_version.as_ref() == Some(latest);
+    if !cache.is_stale() && cloud_result.is_err() {
+        if let Some(latest) = cache.latest_version.as_ref() {
+            let update_available = is_newer_version(latest, CURRENT_VERSION);
+            let was_dismissed = cache.dismissed_version.as_ref() == Some(latest);
 
-        return Ok(UpdateCheckResult {
-            update_available,
-            new_version: Some(latest.clone()),
-            current_version: CURRENT_VERSION.to_string(),
-            was_dismissed,
-            release_url: cache.release_url.clone(),
-        });
+            return Ok(UpdateCheckResult {
+                update_available,
+                new_version: Some(latest.clone()),
+                current_version: CURRENT_VERSION.to_string(),
+                was_dismissed,
+                release_url: cache.release_url.clone(),
+            });
+        }
     }
 
     // Use cloud result or fallback to GitHub
@@ -472,12 +474,6 @@ pub struct UpdateState {
     pub prompt_dismissed: bool,
     /// Detected installation method
     pub install_method: InstallMethod,
-}
-
-impl Default for InstallMethod {
-    fn default() -> Self {
-        InstallMethod::Unknown
-    }
 }
 
 impl UpdateState {

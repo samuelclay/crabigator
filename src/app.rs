@@ -441,7 +441,7 @@ impl App {
             // Scroll the entire visible area up by printing newlines
             // This pushes existing content into scrollback
             for _ in 0..self.total_rows {
-                write!(stdout, "\n")?;
+                writeln!(stdout)?;
             }
             // Move cursor back to top of screen
             write!(stdout, "{}", escape::CURSOR_HOME)?;
@@ -715,11 +715,11 @@ impl App {
                 // Throbber animation timer - only active when in Thinking/Permission state
                 _ = throbber_interval_timer.tick(), if needs_throbber => {
                     // Only animate if PTY has been quiet (don't animate mid-burst)
-                    if last_pty_output.elapsed() >= PTY_SETTLE_TIME {
-                        if last_throbber_draw.elapsed() >= Duration::from_millis(100) {
-                            self.draw_status_bar()?;
-                            last_throbber_draw = Instant::now();
-                        }
+                    if last_pty_output.elapsed() >= PTY_SETTLE_TIME
+                        && last_throbber_draw.elapsed() >= Duration::from_millis(100)
+                    {
+                        self.draw_status_bar()?;
+                        last_throbber_draw = Instant::now();
                     }
                 }
 
