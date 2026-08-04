@@ -71,6 +71,10 @@ pattern = "drinkcrabigator.com/staff"
 zone_name = "drinkcrabigator.com"
 
 [[routes]]
+pattern = "drinkcrabigator.com/pr-action*"
+zone_name = "drinkcrabigator.com"
+
+[[routes]]
 pattern = "drinkcrabigator.com/assets/*"
 zone_name = "drinkcrabigator.com"
 
