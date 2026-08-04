@@ -33,6 +33,8 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const OVERRIDES_REFRESH: Duration = Duration::from_secs(60);
 /// A mirror this old is a session that stopped updating; its rows dim.
 const STALE_SESSION_SECS: f64 = 300.0;
+/// Merged/closed PRs age off the board after a day.
+const CLOSED_LINGER_MS: u64 = 24 * 3600 * 1000;
 
 /// One live session's contribution to the board.
 struct SessionSnapshot {
@@ -173,10 +175,26 @@ fn aggregate(
         }
     }
 
+    let now_ms = (now * 1000.0) as u64;
     let mut out: Vec<BoardPr> = order
         .into_iter()
         .filter_map(|key| {
             let mut entry = merged.remove(&key)?;
+            // A PR gh never confirmed is a scanning artifact — a doc example
+            // like `o/r#500` or a line-wrapped `owner/repo#N` shorthand. The
+            // session's own strip may show it mid-enrichment; the board waits
+            // for verification.
+            if entry.pr.refreshed_at == 0 {
+                return None;
+            }
+            // Finished PRs age off after a day, judged by the close time when
+            // known, else by the last time any session spoke about them.
+            if entry.pr.state != "OPEN" {
+                let latest = entry.pr.closed_at.max(entry.pr.last_mentioned_at);
+                if latest == 0 || now_ms.saturating_sub(latest) > CLOSED_LINGER_MS {
+                    return None;
+                }
+            }
             match overrides.get(&key) {
                 Some(PrDisposition::Dismissed) => return None,
                 Some(PrDisposition::Primary) => entry.pr.primary = true,
@@ -230,39 +248,44 @@ fn stage(pr: &SessionPr) -> Stage {
     Stage { rank, label, color }
 }
 
-/// Five-dot progress strip: draft → open → CI → review → merged.
-fn checklist(pr: &SessionPr) -> String {
-    let done = |on: bool| if on { "●" } else { "○" };
-    let drafted = format!("{}●", fg(color::GREEN));
-    let opened = if pr.state == "CLOSED" {
-        format!("{}✗", fg(color::RED))
-    } else {
-        format!(
-            "{}{}",
-            fg(color::GREEN),
-            done(!pr.is_draft || pr.state != "OPEN")
-        )
+/// How far along the PR is, as a percentage. The objective pipeline
+/// position sets the base; the recap's confidence nudges open PRs a step
+/// either way. Merged is always 100% — no model opinion overrides a merge.
+fn progress_percent(pr: &SessionPr) -> u8 {
+    if pr.state != "OPEN" {
+        return 100;
+    }
+    let base: i32 = match stage(pr).rank {
+        0 => 35, // conflicts / CI failing
+        1 => 40, // changes requested
+        2 => 15, // draft
+        3 => 55, // CI running
+        4 => 70, // awaiting review
+        _ => 90, // ready to merge
     };
-    let ci = if pr.checks_total == 0 {
-        format!("{}○", fg(color::DARK_GRAY))
-    } else if pr.checks_failed > 0 {
-        format!("{}✗", fg(color::RED))
-    } else if pr.checks_pending > 0 {
-        format!("{}◐", fg(color::YELLOW))
-    } else {
-        format!("{}●", fg(color::GREEN))
+    let nudge = match pr.ai_confidence.as_str() {
+        "high" => 10,
+        "low" => -10,
+        _ => 0,
     };
-    let review = match pr.review_decision.as_str() {
-        "APPROVED" => format!("{}●", fg(color::GREEN)),
-        "CHANGES_REQUESTED" => format!("{}✗", fg(color::RED)),
-        _ => format!("{}○", fg(color::DARK_GRAY)),
-    };
-    let merged = if pr.state == "MERGED" {
-        format!("{}●", fg(color::PURPLE))
-    } else {
-        format!("{}○", fg(color::DARK_GRAY))
-    };
-    format!("{drafted}{opened}{ci}{review}{merged}{RESET_FG}")
+    (base + nudge).clamp(5, 95) as u8
+}
+
+/// Ten-cell progress bar in the stage color: `▓▓▓▓▓▓▓░░░  70%`.
+fn progress_bar(pr: &SessionPr) -> String {
+    let pct = progress_percent(pr);
+    let stage = stage(pr);
+    let filled = (usize::from(pct) + 5) / 10;
+    format!(
+        "{}{}{}{}{} {:>3}%{}",
+        fg(stage.color),
+        "▓".repeat(filled),
+        fg(color::DARK_GRAY),
+        "░".repeat(10 - filled),
+        fg(stage.color),
+        pct,
+        RESET_FG
+    )
 }
 
 /// Coarse ages only: second-level precision would tick on every repaint and
@@ -313,8 +336,21 @@ fn sessions_text(sessions: &[SessionRef]) -> String {
         .join(", ")
 }
 
+/// Case-insensitive substring filter across a PR's identifying text.
+fn matches_search(pr: &SessionPr, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let query = query.to_lowercase();
+    pr.number.to_string().contains(&query)
+        || pr.repo.to_lowercase().contains(&query)
+        || pr.owner.to_lowercase().contains(&query)
+        || pr.title.to_lowercase().contains(&query)
+        || pr.branch.to_lowercase().contains(&query)
+}
+
 /// Build one full frame as displayable lines (no trailing newline handling).
-fn render(entries: &[BoardPr], width: u16) -> Vec<String> {
+fn render(entries: &[&BoardPr], width: u16) -> Vec<String> {
     let now_ms = (now_secs() * 1000.0) as u64;
     let session_count = entries
         .iter()
@@ -324,7 +360,7 @@ fn render(entries: &[BoardPr], width: u16) -> Vec<String> {
 
     let mut lines = Vec::new();
     lines.push(format!(
-        "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · ↑↓ scroll · q quit{}",
+        "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · ↑↓ scroll · / search · q quit{}",
         fg(color::PURPLE),
         RESET_FG,
         fg(color::DARK_GRAY),
@@ -351,7 +387,7 @@ fn render(entries: &[BoardPr], width: u16) -> Vec<String> {
         if !groups.contains_key(&repo) {
             repo_order.push(repo.clone());
         }
-        groups.entry(repo).or_default().push(entry);
+        groups.entry(repo).or_default().push(*entry);
     }
 
     for repo in repo_order {
@@ -413,7 +449,7 @@ fn render(entries: &[BoardPr], width: u16) -> Vec<String> {
             };
             lines.push(format!(
                 "   {} {}{}{} · {}in {}{}{}{}{}",
-                checklist(&entry.pr),
+                progress_bar(&entry.pr),
                 fg(stage.color),
                 stage.label,
                 RESET_FG,
@@ -426,18 +462,14 @@ fn render(entries: &[BoardPr], width: u16) -> Vec<String> {
             ));
 
             // Row 3: the recap's judgment and Slack links, when we have them.
+            // The judgment describes work in flight, so a merged or closed PR
+            // doesn't show one — a merge outranks any stale model opinion.
             let mut extras: Vec<String> = Vec::new();
-            if !entry.pr.ai_note.is_empty() {
-                let confidence = if entry.pr.ai_confidence.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({} confidence it's done)", entry.pr.ai_confidence)
-                };
+            if !entry.pr.ai_note.is_empty() && entry.pr.state == "OPEN" {
                 extras.push(format!(
-                    "{}✦ {}{}{}",
+                    "{}✦ {}{}",
                     fg(color::YELLOW),
                     entry.pr.ai_note,
-                    confidence,
                     RESET_FG
                 ));
             }
@@ -484,7 +516,8 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
     if once {
         let width = terminal_size().map(|(w, _)| w).unwrap_or(120);
         let entries = aggregate(&gather()?, &overrides);
-        for line in render(&entries, width) {
+        let refs: Vec<&BoardPr> = entries.iter().collect();
+        for line in render(&refs, width) {
             println!("{line}");
         }
         return Ok(());
@@ -506,6 +539,17 @@ fn frame_hash(lines: &[String]) -> u64 {
     hasher.finish()
 }
 
+/// The sticky search banner: unmistakable yellow-on-black, pinned above the
+/// scrolled content while a filter is active.
+fn search_banner(query: &str, matched: usize, width: u16) -> String {
+    let text = format!(
+        " /{query}▏ {matched} match{} · type to filter · Esc clears ",
+        if matched == 1 { "" } else { "es" }
+    );
+    let padded = format!("{text:<width$}", width = width as usize);
+    format!("{}{}{}{}", escape::bg(color::YELLOW), fg(16), padded, RESET)
+}
+
 async fn board_loop(
     out: &mut std::io::Stdout,
     overrides: &mut HashMap<String, PrDisposition>,
@@ -513,9 +557,13 @@ async fn board_loop(
 ) -> Result<()> {
     let mut last_frame_hash = 0u64;
     let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
+    let mut entries: Vec<BoardPr> = Vec::new();
     let mut lines: Vec<String> = Vec::new();
+    let mut matched = 0usize;
     let mut scroll: usize = 0;
+    let mut search: Option<String> = None;
     let mut dirty = false;
+    let mut needs_render = false;
 
     loop {
         if last_refresh.elapsed() >= REFRESH_INTERVAL {
@@ -526,9 +574,20 @@ async fn board_loop(
                     *overrides = fresh;
                 }
             }
-            let (width, _) = terminal_size().unwrap_or((120, 40));
-            let entries = aggregate(&gather()?, overrides);
-            let fresh = render(&entries, width);
+            entries = aggregate(&gather()?, overrides);
+            needs_render = true;
+        }
+
+        let (width, height) = terminal_size().unwrap_or((120, 40));
+        if needs_render {
+            needs_render = false;
+            let query = search.as_deref().unwrap_or("");
+            let filtered: Vec<&BoardPr> = entries
+                .iter()
+                .filter(|entry| matches_search(&entry.pr, query))
+                .collect();
+            matched = filtered.len();
+            let fresh = render(&filtered, width);
             let hash = frame_hash(&fresh);
             if hash != last_frame_hash {
                 last_frame_hash = hash;
@@ -537,8 +596,9 @@ async fn board_loop(
             }
         }
 
-        let (_, height) = terminal_size().unwrap_or((120, 40));
-        let page = height as usize;
+        // The banner is pinned above the scrolled content while searching.
+        let banner_rows = usize::from(search.is_some());
+        let page = (height as usize).saturating_sub(banner_rows).max(1);
         let max_scroll = lines.len().saturating_sub(page);
         if scroll > max_scroll {
             scroll = max_scroll;
@@ -548,8 +608,21 @@ async fn board_loop(
         if dirty {
             dirty = false;
             write!(out, "{}", escape::CLEAR_SCREEN_HOME)?;
+            if let Some(query) = &search {
+                write!(
+                    out,
+                    "{}{}",
+                    escape::cursor_to(1, 1),
+                    search_banner(query, matched, width)
+                )?;
+            }
             for (i, line) in lines.iter().skip(scroll).take(page).enumerate() {
-                write!(out, "{}{}", escape::cursor_to(i as u16 + 1, 1), line)?;
+                write!(
+                    out,
+                    "{}{}",
+                    escape::cursor_to((banner_rows + i) as u16 + 1, 1),
+                    line
+                )?;
             }
             out.flush()?;
         }
@@ -557,19 +630,58 @@ async fn board_loop(
         if poll(Duration::from_millis(250))? {
             match read()? {
                 Event::Key(key) => {
-                    let quit = matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
-                        || (key.code == KeyCode::Char('c')
-                            && key.modifiers.contains(KeyModifiers::CONTROL));
-                    if quit {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
                         return Ok(());
                     }
+                    // While a filter is active, printable keys edit the query
+                    // and Esc clears it; outside one, they're the shortcuts.
+                    if let Some(query) = &mut search {
+                        match key.code {
+                            KeyCode::Esc => {
+                                search = None;
+                                scroll = 0;
+                                needs_render = true;
+                                dirty = true;
+                            }
+                            KeyCode::Backspace => {
+                                query.pop();
+                                scroll = 0;
+                                needs_render = true;
+                                dirty = true;
+                            }
+                            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                query.push(c);
+                                scroll = 0;
+                                needs_render = true;
+                                dirty = true;
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                            KeyCode::Char('/') => {
+                                search = Some(String::new());
+                                scroll = 0;
+                                needs_render = true;
+                                dirty = true;
+                            }
+                            _ => {}
+                        }
+                    }
                     let target = match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => scroll.saturating_sub(1),
-                        KeyCode::Down | KeyCode::Char('j') => scroll + 1,
+                        KeyCode::Up => scroll.saturating_sub(1),
+                        KeyCode::Down => scroll + 1,
                         KeyCode::PageUp => scroll.saturating_sub(page.saturating_sub(2)),
                         KeyCode::PageDown => scroll + page.saturating_sub(2),
-                        KeyCode::Home | KeyCode::Char('g') => 0,
-                        KeyCode::End | KeyCode::Char('G') => max_scroll,
+                        KeyCode::Home if search.is_none() => 0,
+                        KeyCode::End if search.is_none() => max_scroll,
+                        KeyCode::Char('k') if search.is_none() => scroll.saturating_sub(1),
+                        KeyCode::Char('j') if search.is_none() => scroll + 1,
+                        KeyCode::Char('g') if search.is_none() => 0,
+                        KeyCode::Char('G') if search.is_none() => max_scroll,
                         _ => scroll,
                     };
                     let target = target.min(max_scroll);
@@ -582,6 +694,7 @@ async fn board_loop(
                     // Column widths depend on the terminal size; rebuild now.
                     last_refresh = Instant::now() - REFRESH_INTERVAL;
                     last_frame_hash = 0;
+                    dirty = true;
                 }
                 _ => {}
             }
@@ -598,6 +711,15 @@ mod tests {
         pr.state = "OPEN".to_string();
         pr.refreshed_at = 1_000;
         pr
+    }
+
+    fn render_frame(entries: &[BoardPr]) -> String {
+        let refs: Vec<&BoardPr> = entries.iter().collect();
+        render(&refs, 160).join("\n")
+    }
+
+    fn now_ms() -> u64 {
+        (now_secs() * 1000.0) as u64
     }
 
     fn snapshot(dir: &str, prs: Vec<SessionPr>) -> SessionSnapshot {
@@ -660,6 +782,7 @@ mod tests {
         failing.checks_failed = 1;
         let mut merged = board_pr(2, "portal");
         merged.state = "MERGED".to_string();
+        merged.closed_at = now_ms();
         let ready = {
             let mut pr = board_pr(3, "portal");
             pr.review_decision = "APPROVED".to_string();
@@ -685,11 +808,13 @@ mod tests {
         pr.slack_origin_url = "https://t.slack.com/archives/C1/p1".to_string();
 
         let entries = aggregate(&[snapshot("one", vec![pr])], &HashMap::new());
-        let frame = render(&entries, 160).join("\n");
+        let frame = render_frame(&entries);
         assert!(frame.contains("o/portal"));
         assert!(frame.contains("CI green, awaiting review"));
-        assert!(frame.contains("medium confidence"));
         assert!(frame.contains("slack origin"));
+        // Progress reads as a bar and percent, not confidence prose.
+        assert!(frame.contains('▓') && frame.contains('%'), "progress bar renders");
+        assert!(!frame.contains("confidence"), "confidence prose replaced by the bar");
         // Old-binary sessions report no mention counts; don't render "0 mentions".
         assert!(!frame.contains("mentions"), "zero mentions stays silent");
     }
@@ -700,7 +825,7 @@ mod tests {
         pr.mentions = 12;
         pr.user_mentions = 3;
         let entries = aggregate(&[snapshot("one", vec![pr])], &HashMap::new());
-        let frame = render(&entries, 160).join("\n");
+        let frame = render_frame(&entries);
         assert!(frame.contains("12 mentions (3 yours)"));
     }
 
@@ -729,5 +854,71 @@ mod tests {
         assert!(text.contains("old-worktree"));
         assert!(text.contains("idle 21m"));
         assert!(!text.contains('s'), "no second-level ages: {text}");
+    }
+
+    /// Scanning artifacts (`o/r#500` doc examples, wrapped `owner/repo#N`
+    /// shorthand) never enrich; the board hides anything gh hasn't confirmed.
+    #[test]
+    fn unverified_prs_stay_off_the_board() {
+        let mut phantom = SessionPr::test_stub(500, "o", "r");
+        phantom.state = "OPEN".to_string(); // refreshed_at stays 0
+        let entries = aggregate(&[snapshot("one", vec![phantom])], &HashMap::new());
+        assert!(entries.is_empty());
+    }
+
+    /// Merged and closed PRs linger for a day, judged by close time when
+    /// known, else the last mention; with neither signal they hide at once.
+    #[test]
+    fn finished_prs_age_off_after_a_day() {
+        let day_ms: u64 = 24 * 3600 * 1000;
+        let mut fresh = board_pr(1, "portal");
+        fresh.state = "MERGED".to_string();
+        fresh.closed_at = now_ms() - 3600 * 1000;
+        let mut old = board_pr(2, "portal");
+        old.state = "MERGED".to_string();
+        old.closed_at = now_ms() - day_ms - 60_000;
+        let mut recently_discussed = board_pr(3, "portal");
+        recently_discussed.state = "CLOSED".to_string();
+        recently_discussed.last_mentioned_at = now_ms() - 60_000;
+        let mut silent = board_pr(4, "portal");
+        silent.state = "CLOSED".to_string(); // no close time, no mentions
+
+        silent.dismissed = false;
+        let entries = aggregate(
+            &[snapshot("one", vec![fresh, old, recently_discussed, silent])],
+            &HashMap::new(),
+        );
+        let numbers: Vec<u64> = entries.iter().map(|e| e.pr.number).collect();
+        assert_eq!(numbers, vec![1, 3], "fresh merge and closed-but-discussed stay");
+    }
+
+    #[test]
+    fn merged_prs_show_a_full_bar_regardless_of_ai_opinion() {
+        let mut pr = board_pr(9, "portal");
+        pr.state = "MERGED".to_string();
+        pr.ai_confidence = "low".to_string();
+        assert_eq!(progress_percent(&pr), 100);
+
+        let mut open = board_pr(10, "portal");
+        open.review_decision = "APPROVED".to_string();
+        open.checks_total = 1;
+        open.checks_passed = 1;
+        assert_eq!(progress_percent(&open), 90, "ready to merge");
+        open.ai_confidence = "low".to_string();
+        assert_eq!(progress_percent(&open), 80, "low confidence nudges down");
+    }
+
+    #[test]
+    fn search_filters_by_number_repo_title_and_branch() {
+        let mut pr = board_pr(1089, "developer-portal");
+        pr.title = "Slim the tool catalog".to_string();
+        pr.branch = "sam/tool-diet".to_string();
+
+        assert!(matches_search(&pr, "1089"));
+        assert!(matches_search(&pr, "portal"));
+        assert!(matches_search(&pr, "catalog"));
+        assert!(matches_search(&pr, "TOOL-DIET"));
+        assert!(matches_search(&pr, ""));
+        assert!(!matches_search(&pr, "2557"));
     }
 }
