@@ -15,7 +15,7 @@ crabigator claude           # Use Claude Code
 crabigator --platform codex # Explicit flag
 ```
 
-Other subcommands: `inspect` (view running instances), `pair` (dashboard auth code), `recap` (enable/disable/status for turn recaps), `install-launcher` (macOS crabigator:// URL handler), `resume`/`continue`.
+Other subcommands: `inspect` (view running instances), `prs` (live cross-session PR board; `--once` prints one frame — only sessions with a live mirror under /tmp appear, the durable history lives on the web dashboard's PR board), `pair` (dashboard auth code), `recap` (enable/disable/status for turn recaps), `install-launcher` (macOS crabigator:// URL handler), `resume`/`continue`.
 
 Preferences live in `~/.crabigator/config.toml` (platform, `ide` for clickable file links, terminal emulator override).
 

@@ -180,6 +180,7 @@ crabigator claude       # Use Claude Code explicitly
 crabigator codex        # Use Codex CLI
 crabigator pair         # Generate a new pairing code
 crabigator inspect      # View other running instances
+crabigator prs          # Live cross-session PR board (--once for one frame)
 crabigator --help       # Show all options
 ```
 
