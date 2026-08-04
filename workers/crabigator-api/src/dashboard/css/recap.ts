@@ -312,6 +312,26 @@ body.hide-section-prs .session-prs { display: none !important; }
     border-radius: 3px;
     flex: 0 0 auto;
 }
+/* Primary/secondary toggle: ★ purple for the PR being worked on, ⑂ gray for
+   the rest. Click flips the disposition for the whole device group. */
+.session-prs .pr-primary-toggle {
+    font-size: 12px;
+    cursor: pointer;
+    flex: 0 0 auto;
+    user-select: none;
+}
+.session-prs .pr-primary-toggle.primary { color: #c4a7f7; }
+.session-prs .pr-primary-toggle.secondary { color: #6e7681; }
+.session-prs .pr-primary-toggle:hover { color: #d6bffb; }
+/* Dismiss: removes the PR from every list in the group. */
+.session-prs .pr-dismiss {
+    font-size: 10px;
+    color: #6e7681;
+    opacity: 0.55;
+    cursor: pointer;
+    user-select: none;
+}
+.session-prs .pr-dismiss:hover { opacity: 1; color: #f85149; }
 .session-prs .pr-link {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 12px;
@@ -320,6 +340,8 @@ body.hide-section-prs .session-prs { display: none !important; }
     text-decoration: none;
     white-space: nowrap;
 }
+/* Secondary rows recede so primaries read first. */
+.session-prs .pr-row:has(.pr-primary-toggle.secondary) .pr-link { color: #8b949e; }
 .session-prs .pr-link:hover {
     text-decoration: underline;
     color: #d6bffb;

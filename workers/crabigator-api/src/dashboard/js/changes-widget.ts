@@ -439,23 +439,91 @@ export const changesWidgetJs = `
             updatePrList(sessionId, sessionData.prs || []);
         }
 
+        // Canonical PR dispositions for the whole group, keyed owner/repo#number.
+        // The desktop already applies these during classification, but loading
+        // them here lets a fresh dashboard reflect toggles made elsewhere before
+        // the next prs event arrives.
+        const prOverrides = new Map();
+        let prOverridesLoadStarted = false;
+        async function loadPrOverrides() {
+            try {
+                const res = await fetch('/api/pr-overrides', { headers: getAuthHeaders() });
+                if (!res.ok) return;
+                const data = await res.json();
+                prOverrides.clear();
+                for (const o of (data.overrides || [])) {
+                    prOverrides.set(o.owner + '/' + o.repo + '#' + o.number, o.disposition);
+                }
+                for (const [sessionId, sessionData] of sessions.entries()) {
+                    if (sessionData.prs && sessionData.prs.length) {
+                        updatePrList(sessionId, sessionData.prs);
+                    }
+                }
+            } catch (e) { /* offline dashboards still render local state */ }
+        }
+
+        function prKey(pr) {
+            return pr.owner + '/' + pr.repo + '#' + pr.number;
+        }
+
+        // The same PR can sit in several session cards; a disposition change
+        // must move it everywhere at once.
+        function rerenderAllPrLists() {
+            for (const [sid, sd] of sessions.entries()) {
+                if (sd.prs && sd.prs.length) updatePrList(sid, sd.prs);
+            }
+        }
+
+        // Override wins; otherwise whatever the session's classifier decided.
+        function prDisposition(pr) {
+            const override = prOverrides.get(prKey(pr));
+            if (override) return override;
+            if (pr.dismissed) return 'dismissed';
+            return pr.primary ? 'primary' : 'secondary';
+        }
+
+        async function postPrOverride(pr, disposition) {
+            prOverrides.set(prKey(pr), disposition);
+            try {
+                await fetch('/api/pr-overrides', {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({
+                        owner: pr.owner,
+                        repo: pr.repo,
+                        number: pr.number,
+                        disposition: disposition,
+                    }),
+                });
+            } catch (e) { /* optimistic state stays; next load reconciles */ }
+        }
+
         function updatePrList(sessionId, prs) {
             const widget = document.getElementById('recap-prs-' + sessionId);
             if (!widget) return;
             const sessionData = sessions.get(sessionId);
             if (sessionData) sessionData.prs = prs || [];
+            if (!prOverridesLoadStarted) {
+                prOverridesLoadStarted = true;
+                loadPrOverrides();
+            }
             // Collapsed by default: one line per PR. Click the header to expand
             // into the full view (PR title + branch).
             const expanded = !!(sessionData && sessionData.prsExpanded);
 
-            if (!prs || prs.length === 0) {
+            // Dismissed PRs disappear; primaries render above secondaries.
+            const visible = (prs || []).filter(pr => prDisposition(pr) !== 'dismissed');
+            visible.sort((a, b) =>
+                (prDisposition(b) === 'primary' ? 1 : 0) - (prDisposition(a) === 'primary' ? 1 : 0));
+
+            if (visible.length === 0) {
                 widget.style.display = 'none';
                 widget.innerHTML = '';
                 return;
             }
 
-            const label = prs.length === 1 ? '1 PR' : prs.length + ' PRs';
-            const rows = prs.map(pr => {
+            const label = visible.length === 1 ? '1 PR' : visible.length + ' PRs';
+            const rows = visible.map(pr => {
                 const stateInfo = prStateInfo(pr);
                 const repoLabel = (pr.repo || 'PR') + ' #' + pr.number;
                 const badge = stateInfo.label
@@ -474,20 +542,25 @@ export const changesWidgetJs = `
                         diffParts.join(' ') + (diffParts.length && files ? ' ' : '') + files)
                     : '';
                 const link = '<a class="pr-link" href="' + escapeHtml(pr.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(repoLabel) + '</a>';
+                const isPrimary = prDisposition(pr) === 'primary';
+                const star = '<span class="pr-primary-toggle ' + (isPrimary ? 'primary' : 'secondary')
+                    + '" title="' + (isPrimary ? 'Primary — click to make secondary' : 'Secondary — click to make primary')
+                    + '">' + (isPrimary ? '★' : '⑂') + '</span>';
+                const dismiss = '<span class="pr-dismiss" title="Dismiss this PR everywhere">✕</span>';
                 // Right-hand status cluster: state, CI, merge cleanliness.
                 const status = '<span class="pr-status">' + badge + prCiBadge(pr)
-                    + prCommentsBadge(pr) + prMergeBadge(pr) + '</span>';
+                    + prCommentsBadge(pr) + prMergeBadge(pr) + dismiss + '</span>';
 
                 if (!expanded) {
                     // One compact line: repo #num + diff on the left, status on the right.
-                    return '<div class="pr-row pr-collapsed"><div class="pr-row-top">' + link + diff + status + '</div></div>';
+                    return '<div class="pr-row pr-collapsed"><div class="pr-row-top">' + star + link + diff + status + '</div></div>';
                 }
                 const branch = pr.branch
                     ? '<span class="pr-branch" title="' + escapeHtml(pr.branch) + '">⎇ ' + escapeHtml(pr.branch) + '</span>'
                     : '';
                 const title = pr.title ? '<div class="pr-title" title="' + escapeHtml(pr.title) + '">' + escapeHtml(pr.title) + '</div>' : '';
                 return '<div class="pr-row">' +
-                    '<div class="pr-row-top">' + link + diff + status + '</div>' +
+                    '<div class="pr-row-top">' + star + link + diff + status + '</div>' +
                     title +
                     (branch ? '<div class="pr-row-bottom">' + branch + '</div>' : '') +
                     '</div>';
@@ -498,10 +571,24 @@ export const changesWidgetJs = `
             widget.innerHTML = '<div class="pr-list-title" title="' + titleAttr + '">'
                 + '<span class="pr-list-chevron">' + chevron + '</span>Pull requests '
                 + '<span class="pr-list-count">' + label + '</span></div>' + rows;
-            // Attach the toggle handler via JS (avoids escaping quotes inside the
-            // outer template literal, which broke an inline onclick).
+            // Attach handlers via JS (avoids escaping quotes inside the outer
+            // template literal, which broke an inline onclick).
             const titleEl = widget.querySelector('.pr-list-title');
             if (titleEl) titleEl.onclick = () => togglePrs(sessionId);
+            widget.querySelectorAll('.pr-row').forEach((rowEl, i) => {
+                const pr = visible[i];
+                if (!pr) return;
+                const starEl = rowEl.querySelector('.pr-primary-toggle');
+                if (starEl) starEl.onclick = () => {
+                    postPrOverride(pr, prDisposition(pr) === 'primary' ? 'secondary' : 'primary');
+                    rerenderAllPrLists();
+                };
+                const dismissEl = rowEl.querySelector('.pr-dismiss');
+                if (dismissEl) dismissEl.onclick = () => {
+                    postPrOverride(pr, 'dismissed');
+                    rerenderAllPrLists();
+                };
+            });
             widget.style.display = '';
         }
 
