@@ -265,13 +265,52 @@ fn checklist(pr: &SessionPr) -> String {
     format!("{drafted}{opened}{ci}{review}{merged}{RESET_FG}")
 }
 
+/// Coarse ages only: second-level precision would tick on every repaint and
+/// make the board look like it's thrashing.
 fn format_age(secs: u64) -> String {
     match secs {
-        0..=59 => format!("{secs}s"),
-        60..=3599 => format!("{}m", secs / 60),
+        0..=89 => "1m".to_string(),
+        90..=3599 => format!("{}m", secs.div_ceil(60)),
         3600..=86399 => format!("{}h", secs / 3600),
         _ => format!("{}d", secs / 86400),
     }
+}
+
+/// The sessions that mention a PR, deduped by directory name (several
+/// sessions often share a cwd), with a dim idle tag for stopped mirrors.
+fn sessions_text(sessions: &[SessionRef]) -> String {
+    let mut seen: Vec<(String, usize, u64)> = Vec::new(); // (name, count, min idle age)
+    for session in sessions {
+        match seen.iter_mut().find(|(name, _, _)| *name == session.dir_name) {
+            Some((_, count, min_age)) => {
+                *count += 1;
+                *min_age = (*min_age).min(session.age_secs);
+            }
+            None => seen.push((session.dir_name.clone(), 1, session.age_secs)),
+        }
+    }
+    seen.iter()
+        .map(|(name, count, min_age)| {
+            let times = if *count > 1 {
+                format!(" ×{count}")
+            } else {
+                String::new()
+            };
+            // A live mirror updates constantly; only a stopped one gets a tag.
+            let idle = if *min_age as f64 > STALE_SESSION_SECS {
+                format!(
+                    " {}(idle {}){}",
+                    fg(color::DARK_GRAY),
+                    format_age(*min_age),
+                    fg(color::GRAY)
+                )
+            } else {
+                String::new()
+            };
+            format!("{name}{times}{idle}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Build one full frame as displayable lines (no trailing newline handling).
@@ -285,7 +324,7 @@ fn render(entries: &[BoardPr], width: u16) -> Vec<String> {
 
     let mut lines = Vec::new();
     lines.push(format!(
-        "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · q to quit{}",
+        "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · ↑↓ scroll · q quit{}",
         fg(color::PURPLE),
         RESET_FG,
         fg(color::DARK_GRAY),
@@ -342,20 +381,23 @@ fn render(entries: &[BoardPr], width: u16) -> Vec<String> {
 
             // Row 2: checklist, stage, sessions, engagement, local state.
             let stage = stage(&entry.pr);
-            let sessions = entry
-                .sessions
-                .iter()
-                .map(|s| format!("{}({})", s.dir_name, format_age(s.age_secs)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let mention_age = if entry.pr.last_mentioned_at > 0 {
-                let secs = now_ms.saturating_sub(entry.pr.last_mentioned_at) / 1000;
-                format!(" · spoken {} ago", format_age(secs))
+            let mentions = if entry.pr.mentions > 0 {
+                let yours = if entry.pr.user_mentions > 0 {
+                    format!(" ({} yours)", entry.pr.user_mentions)
+                } else {
+                    String::new()
+                };
+                format!(" · {} mentions{}", entry.pr.mentions, yours)
             } else {
                 String::new()
             };
-            let yours = if entry.pr.user_mentions > 0 {
-                format!(" ({} yours)", entry.pr.user_mentions)
+            let mention_age = if entry.pr.last_mentioned_at > 0 {
+                let secs = now_ms.saturating_sub(entry.pr.last_mentioned_at) / 1000;
+                if secs < 60 {
+                    " · spoken just now".to_string()
+                } else {
+                    format!(" · spoken {} ago", format_age(secs))
+                }
             } else {
                 String::new()
             };
@@ -370,17 +412,16 @@ fn render(entries: &[BoardPr], width: u16) -> Vec<String> {
                 String::new()
             };
             lines.push(format!(
-                "   {} {}{}{} · {}{}{}{} · {} mentions{}{}",
+                "   {} {}{}{} · {}in {}{}{}{}{}",
                 checklist(&entry.pr),
                 fg(stage.color),
                 stage.label,
                 RESET_FG,
                 fg(color::GRAY),
-                sessions,
+                sessions_text(&entry.sessions),
+                mentions,
                 mention_age,
                 RESET_FG,
-                entry.pr.mentions,
-                yours,
                 uncommitted,
             ));
 
@@ -472,6 +513,9 @@ async fn board_loop(
 ) -> Result<()> {
     let mut last_frame_hash = 0u64;
     let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
+    let mut lines: Vec<String> = Vec::new();
+    let mut scroll: usize = 0;
+    let mut dirty = false;
 
     loop {
         if last_refresh.elapsed() >= REFRESH_INTERVAL {
@@ -482,29 +526,64 @@ async fn board_loop(
                     *overrides = fresh;
                 }
             }
-            let (width, height) = terminal_size().unwrap_or((120, 40));
+            let (width, _) = terminal_size().unwrap_or((120, 40));
             let entries = aggregate(&gather()?, overrides);
-            let lines = render(&entries, width);
-
-            let hash = frame_hash(&lines);
+            let fresh = render(&entries, width);
+            let hash = frame_hash(&fresh);
             if hash != last_frame_hash {
                 last_frame_hash = hash;
-                write!(out, "{}", escape::CLEAR_SCREEN_HOME)?;
-                for (i, line) in lines.iter().take(height as usize).enumerate() {
-                    write!(out, "{}{}", escape::cursor_to(i as u16 + 1, 1), line)?;
-                }
-                out.flush()?;
+                lines = fresh;
+                dirty = true;
             }
         }
 
+        let (_, height) = terminal_size().unwrap_or((120, 40));
+        let page = height as usize;
+        let max_scroll = lines.len().saturating_sub(page);
+        if scroll > max_scroll {
+            scroll = max_scroll;
+            dirty = true;
+        }
+
+        if dirty {
+            dirty = false;
+            write!(out, "{}", escape::CLEAR_SCREEN_HOME)?;
+            for (i, line) in lines.iter().skip(scroll).take(page).enumerate() {
+                write!(out, "{}{}", escape::cursor_to(i as u16 + 1, 1), line)?;
+            }
+            out.flush()?;
+        }
+
         if poll(Duration::from_millis(250))? {
-            if let Event::Key(key) = read()? {
-                let quit = matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
-                    || (key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(KeyModifiers::CONTROL));
-                if quit {
-                    return Ok(());
+            match read()? {
+                Event::Key(key) => {
+                    let quit = matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+                        || (key.code == KeyCode::Char('c')
+                            && key.modifiers.contains(KeyModifiers::CONTROL));
+                    if quit {
+                        return Ok(());
+                    }
+                    let target = match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => scroll.saturating_sub(1),
+                        KeyCode::Down | KeyCode::Char('j') => scroll + 1,
+                        KeyCode::PageUp => scroll.saturating_sub(page.saturating_sub(2)),
+                        KeyCode::PageDown => scroll + page.saturating_sub(2),
+                        KeyCode::Home | KeyCode::Char('g') => 0,
+                        KeyCode::End | KeyCode::Char('G') => max_scroll,
+                        _ => scroll,
+                    };
+                    let target = target.min(max_scroll);
+                    if target != scroll {
+                        scroll = target;
+                        dirty = true;
+                    }
                 }
+                Event::Resize(..) => {
+                    // Column widths depend on the terminal size; rebuild now.
+                    last_refresh = Instant::now() - REFRESH_INTERVAL;
+                    last_frame_hash = 0;
+                }
+                _ => {}
             }
         }
     }
@@ -611,5 +690,44 @@ mod tests {
         assert!(frame.contains("CI green, awaiting review"));
         assert!(frame.contains("medium confidence"));
         assert!(frame.contains("slack origin"));
+        // Old-binary sessions report no mention counts; don't render "0 mentions".
+        assert!(!frame.contains("mentions"), "zero mentions stays silent");
+    }
+
+    #[test]
+    fn mention_counts_render_only_when_present() {
+        let mut pr = board_pr(9, "portal");
+        pr.mentions = 12;
+        pr.user_mentions = 3;
+        let entries = aggregate(&[snapshot("one", vec![pr])], &HashMap::new());
+        let frame = render(&entries, 160).join("\n");
+        assert!(frame.contains("12 mentions (3 yours)"));
+    }
+
+    /// Several sessions often share a cwd; the board names each directory
+    /// once with a multiplier instead of a flickering per-session age list.
+    #[test]
+    fn sessions_dedupe_by_directory_without_ages() {
+        let pr = board_pr(9, "portal");
+        let entries = aggregate(
+            &[
+                snapshot("developer-portal", vec![pr.clone()]),
+                snapshot("developer-portal", vec![pr.clone()]),
+                snapshot("builder-document-intent", vec![pr]),
+            ],
+            &HashMap::new(),
+        );
+        let text = sessions_text(&entries[0].sessions);
+        assert_eq!(text, "developer-portal ×2, builder-document-intent");
+
+        // A stopped mirror is tagged idle at minute granularity, never seconds.
+        let stale = vec![SessionRef {
+            dir_name: "old-worktree".to_string(),
+            age_secs: 1_260,
+        }];
+        let text = sessions_text(&stale);
+        assert!(text.contains("old-worktree"));
+        assert!(text.contains("idle 21m"));
+        assert!(!text.contains('s'), "no second-level ages: {text}");
     }
 }
