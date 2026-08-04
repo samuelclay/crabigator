@@ -2,6 +2,7 @@ import { Router, jsonResponse } from './router';
 import type { Env } from './types/env';
 import type { SessionInfo } from './types/session';
 import { registerDevice, deviceHeartbeat, getLinkedDevices, revokeLinkedDevice } from './handlers/devices';
+import { getPrOverrides, setPrOverride } from './handlers/pr-overrides';
 import { createSession, getSession, updateSession, deleteSession } from './handlers/sessions';
 import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCodePage, generateInviteCode } from './handlers/pairing';
 import { requireAuth, requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
@@ -140,6 +141,13 @@ router.post('/api/devices', registerDevice);
 router.post('/api/devices/heartbeat', deviceHeartbeat);
 router.get('/api/devices/linked', getLinkedDevices);
 router.delete('/api/devices/linked/:mobile_id', revokeLinkedDevice);
+
+// ============================================
+// PR disposition overrides (primary/secondary/dismissed)
+// ============================================
+
+router.get('/api/pr-overrides', getPrOverrides);
+router.post('/api/pr-overrides', setPrOverride);
 
 // ============================================
 // Pairing endpoints
