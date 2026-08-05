@@ -23,6 +23,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::pr_rank::PrDisposition;
+use crate::slack::{extract_threads, SlackThread};
 
 /// Minimum time between `gh pr view` refreshes for a single PR.
 const REFRESH_THROTTLE: Duration = Duration::from_secs(30);
@@ -62,15 +63,6 @@ fn pr_number_re() -> &'static Regex {
 fn any_url_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r#"https?://[^\s)\]>'"]+"#).expect("valid url regex"))
-}
-
-/// A Slack message permalink: `https://<workspace>.slack.com/archives/<channel>/p<ts>`.
-fn slack_permalink_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r#"https://[A-Za-z0-9_-]+\.slack\.com/archives/[A-Z0-9]+/p\d+[^\s"'<>)\]]*"#)
-            .expect("valid slack permalink regex")
-    })
 }
 
 /// `PR #123 … is (the) primary` / `#123 … secondary`.
@@ -585,6 +577,8 @@ pub struct PrTracker {
     /// The most recent Slack permalink pasted into a user prompt, and when.
     /// A PR that appears shortly after inherits it as its origin.
     latest_prompt_slack: Option<(String, Instant)>,
+    /// Every Slack permalink pasted this session, oldest first.
+    slack_threads: Vec<SlackThread>,
 }
 
 impl Default for PrTracker {
@@ -613,6 +607,7 @@ impl PrTracker {
             declared_urls: HashMap::new(),
             overrides: HashMap::new(),
             latest_prompt_slack: None,
+            slack_threads: Vec::new(),
         }
     }
 
@@ -695,14 +690,21 @@ impl PrTracker {
     /// which is sometimes the only tie between a session and its PR. Slack
     /// permalinks are also noted as the likely origin of upcoming work.
     fn note_prompt_urls(&mut self, text: &str) {
+        for thread in extract_threads(text) {
+            self.latest_prompt_slack = Some((thread.url.clone(), Instant::now()));
+            if !self
+                .slack_threads
+                .iter()
+                .any(|existing| existing.url == thread.url)
+            {
+                self.slack_threads.push(thread);
+            }
+        }
         for found in any_url_re().find_iter(text) {
             let url = found
                 .as_str()
                 .trim_end_matches(['.', ',', ')', ']', '>', ';'])
                 .to_string();
-            if slack_permalink_re().is_match(&url) {
-                self.latest_prompt_slack = Some((url.clone(), Instant::now()));
-            }
             if !self.prompt_urls.contains(&url) {
                 self.prompt_urls.push(url);
             }
@@ -728,6 +730,30 @@ impl PrTracker {
         self.latest_prompt_slack
             .as_ref()
             .map(|(url, _)| url.as_str())
+    }
+
+    /// Every Slack message permalink pasted into a user prompt this session.
+    pub fn slack_threads(&self) -> &[SlackThread] {
+        &self.slack_threads
+    }
+
+    /// Add poster names learned by the recap model without allowing it to add
+    /// URLs that were never present in a user prompt.
+    pub fn apply_slack_metadata(&mut self, threads: &[SlackThread]) -> bool {
+        let mut changed = false;
+        for thread in threads {
+            if let Some(existing) = self
+                .slack_threads
+                .iter_mut()
+                .find(|existing| existing.url == thread.url)
+            {
+                if existing.author.is_none() && thread.author.is_some() {
+                    existing.author = thread.author.clone();
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 
     /// Pick up explicit dispositions the user types: "PR #123 is the primary",
@@ -1835,8 +1861,8 @@ fn parse_review_threads(json: &[u8]) -> Result<ReviewThreads, String> {
     // Slack permalinks from the PR conversation — notification bots post one
     // per PR, and humans paste them when linking discussion back to Slack.
     for comment in &response.data.repository.pull_request.comments.nodes {
-        for found in slack_permalink_re().find_iter(&comment.body) {
-            let url = found.as_str().to_string();
+        for thread in extract_threads(&comment.body) {
+            let url = thread.url;
             if !threads.slack_urls.contains(&url) {
                 threads.slack_urls.push(url);
             }
@@ -2455,6 +2481,30 @@ mod tests {
         let mut plain = PrTracker::new();
         plain.scan_text("opened https://github.com/o/r/pull/901", Path::new("/tmp"));
         assert!(plain.prs()[0].slack_origin_url.is_empty());
+    }
+
+    #[test]
+    fn prompt_tracking_keeps_every_slack_link_and_applies_known_authors() {
+        let first = "https://tavus.slack.com/archives/C012AB3CD/p1722800000000100";
+        let second = "https://tavus.slack.com/archives/C09XYZ111/p1722899999000200";
+        let mut tracker = PrTracker::new();
+        tracker.scan_prompt(
+            &format!("Compare {first} with {second} and {first}"),
+            Path::new("/tmp"),
+        );
+
+        assert_eq!(tracker.slack_threads().len(), 2);
+        assert_eq!(tracker.slack_threads()[0].url, first);
+        assert_eq!(tracker.slack_threads()[1].url, second);
+
+        let mut metadata = extract_threads(first);
+        metadata[0].author = Some("Sam Clay".to_string());
+        assert!(tracker.apply_slack_metadata(&metadata));
+        assert_eq!(
+            tracker.slack_threads()[0].author.as_deref(),
+            Some("Sam Clay")
+        );
+        assert!(!tracker.apply_slack_metadata(&metadata));
     }
 
     #[test]

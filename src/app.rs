@@ -26,10 +26,10 @@ use crate::parsers::DiffSummary;
 use crate::platforms::{Platform, PlatformKind, SessionState};
 use crate::pr::PrTracker;
 use crate::recap::RecapManager;
+use crate::slack::SlackThread;
 use crate::terminal::{
     escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, ScrollRegionFilter,
 };
-use crate::title::TitleManager;
 use crate::ui::{
     compute_dynamic_status_rows, draw_status_bar, handoff_rows, split_terminal_rows,
     throbber_frame_index, Layout, PairingState,
@@ -161,11 +161,8 @@ pub struct App {
     scroll_region_filter: ScrollRegionFilter,
     /// Native terminal title extracted from OSC sequences (e.g., "Claude Code Ghostty Integration")
     terminal_title: Option<String>,
-    /// Title actually shown in the changes widget / dashboard: the native title
-    /// when fresh, otherwise a Crabigator-generated one (marked with a glyph).
+    /// Title actually shown in the changes widget and dashboard.
     display_title: Option<String>,
-    /// Generates a short title when the agent publishes none (e.g. Codex)
-    title_manager: TitleManager,
     /// History of all terminal titles during this session
     title_history: Vec<String>,
     /// Time taken for initial git refresh (set once on first load)
@@ -180,6 +177,8 @@ pub struct App {
     last_cloud_scrollback_lines: usize,
     /// Last title sent to cloud (to avoid duplicate events)
     last_cloud_title: Option<String>,
+    /// Last Slack thread list sent to cloud.
+    last_cloud_slack_threads: Vec<SlackThread>,
     /// Whether we've sent an initial stats payload to cloud
     cloud_stats_sent: bool,
     /// Whether we've sent a prompt event (to track clearing)
@@ -321,7 +320,6 @@ impl App {
             scroll_region_filter: ScrollRegionFilter::new(pty_rows),
             terminal_title: None,
             display_title: None,
-            title_manager: TitleManager::load(),
             title_history: Vec::new(),
             initial_git_time_ms: None,
             initial_diff_time_ms: None,
@@ -329,6 +327,7 @@ impl App {
             last_cloud_state: None,
             last_cloud_scrollback_lines: 0,
             last_cloud_title: None,
+            last_cloud_slack_threads: Vec::new(),
             cloud_stats_sent: false,
             last_cloud_prompt_sent: false,
             last_cloud_active_prompt_was_some: false,
@@ -810,6 +809,10 @@ impl App {
                                 // occurred before the cloud client was ready
                                 let current_state = self.session_stats.effective_state();
                                 self.send_cloud_state_event(current_state);
+                                if let Some(title) = self.display_title.clone() {
+                                    self.send_cloud_title_event(title);
+                                }
+                                self.send_cloud_slack_threads_event();
                             }
                         }
                     }
@@ -1001,15 +1004,7 @@ impl App {
                             })
                             .to_string();
 
-                        let is_default_title =
-                            clean_title == "Claude Code" || clean_title == "Codex CLI";
                         self.terminal_title = Some(clean_title.clone());
-                        // A real (non-default) native title means the agent is
-                        // labeling its own work — defer to it and reset our
-                        // generated-title staleness clock.
-                        if !clean_title.is_empty() && !is_default_title {
-                            self.title_manager.note_native_title();
-                        }
                         self.refresh_display_title();
                     }
 
@@ -1077,6 +1072,7 @@ impl App {
             &self.git_state,
             &self.diff_summary,
             self.display_title.as_deref(),
+            self.pr_tracker.slack_threads(),
             handoff,
         );
 
@@ -1160,6 +1156,7 @@ impl App {
 
             // Terminal title (the displayed one — native or generated)
             self.display_title.hash(&mut hasher);
+            self.pr_tracker.slack_threads().hash(&mut hasher);
 
             // Cloud status
             if let Some(client) = &self.cloud_client {
@@ -1239,6 +1236,7 @@ impl App {
             &self.git_state,
             &self.diff_summary,
             self.display_title.as_deref(),
+            self.pr_tracker.slack_threads(),
             self.ide,
             &self.cwd,
             cloud_status.as_ref(),
@@ -1258,6 +1256,8 @@ impl App {
         let slack_origin = self.pr_tracker.session_slack_origin().map(str::to_string);
         self.mirror_publisher
             .set_slack_origin(slack_origin.as_deref());
+        self.mirror_publisher
+            .set_slack_threads(self.pr_tracker.slack_threads());
 
         // Publish mirror state (throttled, only when --profile)
         let _ = self.mirror_publisher.maybe_publish(
@@ -1457,6 +1457,7 @@ impl App {
             if self.recap_manager.history().len() != prev_recap_history_len {
                 if let Some(latest) = self.recap_manager.state().latest.clone() {
                     recap_notes_changed = self.pr_tracker.apply_recap_notes(&latest.pr_notes);
+                    self.pr_tracker.apply_slack_metadata(&latest.slack_threads);
                 }
             }
         }
@@ -1466,6 +1467,7 @@ impl App {
         // ("where it starts" vs "where it ends"). Both may change the visible list.
         let mut prs_changed = recap_notes_changed;
         prs_changed |= self.scan_prs_from_transcript();
+        self.send_cloud_slack_threads_event();
         prs_changed |= self.pr_tracker.poll();
         prs_changed |= self
             .pr_tracker
@@ -1480,14 +1482,7 @@ impl App {
             self.send_cloud_prs_event();
         }
 
-        // Advance the generated-title state on the same tick. This also polls
-        // the background worker, so a finished title surfaces within one hook
-        // interval even when no further hook events arrive.
-        self.title_manager.update(
-            self.platform.kind(),
-            &self.session_stats.platform_stats,
-            new_effective_state,
-        );
+        // A Codex recap carries the title generated by the same LLM call.
         self.refresh_display_title();
 
         // Redraw if effective state changed (and PTY is quiet)
@@ -1635,6 +1630,7 @@ impl App {
             &self.git_state,
             &self.diff_summary,
             self.display_title.as_deref(),
+            self.pr_tracker.slack_threads(),
             new_handoff_rows,
         );
         self.status_rows = new_status_rows;
@@ -1748,21 +1744,20 @@ impl App {
         }
     }
 
-    /// Decide which title to display: the native one while it's fresh,
-    /// otherwise our generated one (marked), falling back to the last native
-    /// title if we have nothing generated yet.
+    /// Claude owns its OSC title. Codex uses the newest recap-generated title,
+    /// falling back to any native/default title until its first recap lands.
     fn compute_display_title(&self) -> Option<String> {
-        if self.title_manager.native_is_fresh() {
-            return self.terminal_title.clone();
-        }
-        if let Some(generated) = self.title_manager.generated_title() {
-            return Some(format!(
-                "{}{}",
-                crate::title::GENERATED_TITLE_MARKER,
-                generated
-            ));
-        }
-        self.terminal_title.clone()
+        let recap_title = self
+            .recap_manager
+            .history()
+            .iter()
+            .rev()
+            .find_map(|recap| recap.title.as_deref());
+        crate::title::display_title(
+            self.platform.kind(),
+            self.terminal_title.as_deref(),
+            recap_title,
+        )
     }
 
     /// Recompute the displayed title and, when it changes, force a redraw,
@@ -1790,18 +1785,33 @@ impl App {
         if self.last_cloud_title.as_ref() == Some(&title) {
             return;
         }
+        let Some(client) = self.cloud_client.as_mut() else {
+            return;
+        };
+
         self.last_cloud_title = Some(title.clone());
+        client.send_event(SessionEventBuilder::title(title));
 
-        if let Some(ref mut client) = self.cloud_client {
-            let event = SessionEventBuilder::title(title);
-            client.send_event(event);
-
-            // Also send the full title history
-            if !self.title_history.is_empty() {
-                let history_event = SessionEventBuilder::title_history(self.title_history.clone());
-                client.send_event(history_event);
-            }
+        // Also send the full title history
+        if !self.title_history.is_empty() {
+            client.send_event(SessionEventBuilder::title_history(
+                self.title_history.clone(),
+            ));
         }
+    }
+
+    /// Send the complete Slack thread list whenever a prompt or recap enriches it.
+    fn send_cloud_slack_threads_event(&mut self) {
+        let threads = self.pr_tracker.slack_threads().to_vec();
+        if threads == self.last_cloud_slack_threads {
+            return;
+        }
+        let Some(client) = self.cloud_client.as_mut() else {
+            return;
+        };
+
+        self.last_cloud_slack_threads = threads.clone();
+        client.send_event(SessionEventBuilder::slack_threads(threads));
     }
 
     /// Send stats event to cloud

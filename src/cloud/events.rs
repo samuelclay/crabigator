@@ -359,6 +359,23 @@ pub struct TitleHistoryEvent {
     pub history: Vec<String>,
 }
 
+/// Slack permalinks pasted during this session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlackThreadsEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub threads: Vec<crate::slack::SlackThread>,
+}
+
+impl SlackThreadsEvent {
+    pub fn new(threads: Vec<crate::slack::SlackThread>) -> Self {
+        Self {
+            event_type: "slack_threads".to_string(),
+            threads,
+        }
+    }
+}
+
 impl TitleHistoryEvent {
     pub fn new(history: Vec<String>) -> Self {
         Self {
@@ -453,6 +470,7 @@ pub enum CloudEvent {
     Screen(ScreenEvent),
     Title(TitleEvent),
     TitleHistory(TitleHistoryEvent),
+    SlackThreads(SlackThreadsEvent),
     Prompt(PromptEvent),
     Recap(RecapEvent),
     RecapHistory(RecapHistoryEvent),
@@ -608,6 +626,10 @@ impl SessionEventBuilder {
     /// Build a title history event
     pub fn title_history(history: Vec<String>) -> CloudEvent {
         CloudEvent::TitleHistory(TitleHistoryEvent::new(history))
+    }
+
+    pub fn slack_threads(threads: Vec<crate::slack::SlackThread>) -> CloudEvent {
+        CloudEvent::SlackThreads(SlackThreadsEvent::new(threads))
     }
 
     pub fn recap(state: &crate::recap::RecapState) -> CloudEvent {

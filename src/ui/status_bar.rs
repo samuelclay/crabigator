@@ -14,6 +14,7 @@ use crate::ide::IdeKind;
 use crate::parsers::DiffSummary;
 use crate::pr::SessionPr;
 use crate::recap::RecapState;
+use crate::slack::SlackThread;
 use crate::terminal::escape::{self, color, RESET};
 use crate::update::UpdateState;
 
@@ -122,6 +123,7 @@ fn estimate_column_widths(total_cols: u16) -> (u16, u16) {
 /// 20% ceiling. The result lets the widget area shrink when content is shorter
 /// than the cap — including when git or changes use packed layouts that consume
 /// far fewer rows than there are items.
+#[allow(clippy::too_many_arguments)]
 pub fn compute_dynamic_status_rows(
     total_rows: u16,
     total_cols: u16,
@@ -129,13 +131,19 @@ pub fn compute_dynamic_status_rows(
     git_state: &GitState,
     diff_summary: &DiffSummary,
     terminal_title: Option<&str>,
+    slack_threads: &[SlackThread],
     handoff_rows: u16,
 ) -> u16 {
     let (git_w, changes_w) = estimate_column_widths(total_cols);
     let has_title = terminal_title.is_some_and(|t| !t.is_empty());
     let natural = stats_natural_rows(session_stats)
         .max(git_natural_rows(git_state, git_w))
-        .max(changes_natural_rows(diff_summary, changes_w, has_title));
+        .max(changes_natural_rows(
+            diff_summary,
+            changes_w,
+            has_title,
+            slack_threads.len(),
+        ));
     let desired = natural.saturating_add(1); // +1 separator
     let preferred_max = preferred_status_rows_max(total_rows, handoff_rows);
     desired.clamp(MIN_STATUS_ROWS, preferred_max)
@@ -154,6 +162,7 @@ pub fn draw_status_bar(
     git_state: &GitState,
     diff_summary: &DiffSummary,
     terminal_title: Option<&str>,
+    slack_threads: &[SlackThread],
     ide: IdeKind,
     cwd: &Path,
     cloud_status: Option<&CloudStatus>,
@@ -345,6 +354,7 @@ pub fn draw_status_bar(
             },
             diff_summary,
             terminal_title,
+            slack_threads,
             ide,
             cwd,
         )?;
@@ -395,7 +405,7 @@ mod tests {
         let stats = SessionStats::default();
         let git = GitState::default();
         let diff = DiffSummary::default();
-        let rows = compute_dynamic_status_rows(60, 200, &stats, &git, &diff, None, 0);
+        let rows = compute_dynamic_status_rows(60, 200, &stats, &git, &diff, None, &[], 0);
         assert_eq!(rows, 8);
     }
 
@@ -416,7 +426,8 @@ mod tests {
             })
             .collect();
         let diff = DiffSummary::default();
-        let rows = compute_dynamic_status_rows(60, 120, &stats, &git, &diff, None, MAX_RECAP_ROWS);
+        let rows =
+            compute_dynamic_status_rows(60, 120, &stats, &git, &diff, None, &[], MAX_RECAP_ROWS);
         assert_eq!(rows, preferred_status_rows_max(60, MAX_RECAP_ROWS));
     }
 
@@ -437,7 +448,7 @@ mod tests {
             false,
             &[],
         );
-        let rows = compute_dynamic_status_rows(80, 200, &stats, &git, &diff, None, handoff);
+        let rows = compute_dynamic_status_rows(80, 200, &stats, &git, &diff, None, &[], handoff);
         assert_eq!(rows, 8);
     }
 
@@ -448,7 +459,8 @@ mod tests {
         let stats = SessionStats::default();
         let git = GitState::default();
         let diff = DiffSummary::default();
-        let rows = compute_dynamic_status_rows(15, 100, &stats, &git, &diff, None, MAX_RECAP_ROWS);
+        let rows =
+            compute_dynamic_status_rows(15, 100, &stats, &git, &diff, None, &[], MAX_RECAP_ROWS);
         assert!(rows >= MIN_STATUS_ROWS);
         assert!(rows <= preferred_status_rows_max(15, MAX_RECAP_ROWS));
     }
@@ -488,7 +500,7 @@ mod tests {
         // packed layout for stats(7) and changes(~7) plus separator should
         // come in well under that — typical of the user's bottom-screenshot
         // resize complaint.
-        let rows = compute_dynamic_status_rows(100, 250, &stats, &git, &diff, None, 0);
+        let rows = compute_dynamic_status_rows(100, 250, &stats, &git, &diff, None, &[], 0);
         assert!(
             rows < 12,
             "expected packed layout to keep status_rows under 12, got {}",

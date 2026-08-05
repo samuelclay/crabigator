@@ -17,6 +17,7 @@ use crate::hooks::SessionStats;
 use crate::parsers::{ChangeType, DiffSummary};
 use crate::pr::SessionPr;
 use crate::recap::{RecapState, TurnRecap};
+use crate::slack::SlackThread;
 
 /// Minimum interval between publishes (1 second)
 const PUBLISH_INTERVAL: Duration = Duration::from_secs(1);
@@ -56,6 +57,9 @@ pub struct MirrorState {
     /// The most recent Slack permalink the user pasted into a prompt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub slack_origin: Option<String>,
+    /// Every Slack permalink pasted during this session.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slack_threads: Vec<SlackThread>,
     pub last_updated: f64,
     pub capture: CaptureMirror,
     pub launch_timing: LaunchTimingMirror,
@@ -155,6 +159,7 @@ pub struct MirrorPublisher {
     cloud_session_id: Option<String>,
     transcript_path: Option<String>,
     slack_origin: Option<String>,
+    slack_threads: Vec<SlackThread>,
     cwd: String,
     capture: CaptureMirror,
     last_publish: Instant,
@@ -178,6 +183,7 @@ impl MirrorPublisher {
             cloud_session_id: None,
             transcript_path: None,
             slack_origin: None,
+            slack_threads: Vec::new(),
             cwd,
             capture,
             // Allow immediate first publish
@@ -228,6 +234,13 @@ impl MirrorPublisher {
     pub fn set_slack_origin(&mut self, slack_origin: Option<&str>) {
         if self.slack_origin.as_deref() != slack_origin {
             self.slack_origin = slack_origin.map(str::to_string);
+            self.last_hash = 0;
+        }
+    }
+
+    pub fn set_slack_threads(&mut self, slack_threads: &[SlackThread]) {
+        if self.slack_threads != slack_threads {
+            self.slack_threads = slack_threads.to_vec();
             self.last_hash = 0;
         }
     }
@@ -438,6 +451,7 @@ impl MirrorPublisher {
             recap_history: recap_history.to_vec(),
             prs: prs.to_vec(),
             slack_origin: self.slack_origin.clone(),
+            slack_threads: self.slack_threads.clone(),
             last_updated: timestamp,
             capture: self.capture.clone(),
             launch_timing,

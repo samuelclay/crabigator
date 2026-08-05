@@ -10,6 +10,7 @@ use anyhow::Result;
 
 use crate::ide::IdeKind;
 use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges, NodeKind};
+use crate::slack::{display_label as slack_display_label, SlackThread};
 use crate::terminal::escape::{self, color, fg, hyperlink, RESET};
 
 use super::utils::{digit_count, strip_ansi_len, truncate_middle, truncate_path};
@@ -95,10 +96,11 @@ pub fn changes_natural_rows(
     diff_summary: &DiffSummary,
     available_width: u16,
     has_title: bool,
+    slack_thread_count: usize,
 ) -> u16 {
     let langs = diff_summary.by_language();
     if langs.is_empty() {
-        return 1; // just the widget header (or "no changes")
+        return (u16::from(has_title) + slack_thread_count as u16).max(1);
     }
 
     // Average packed-item width: modifier + icon + truncated name (≤20) + " ±N".
@@ -125,6 +127,7 @@ pub fn changes_natural_rows(
     if has_title {
         rows = rows.saturating_add(1);
     }
+    rows = rows.saturating_add(slack_thread_count as u16);
     rows
 }
 
@@ -134,6 +137,7 @@ pub fn draw_changes_widget(
     area: WidgetArea,
     diff_summary: &DiffSummary,
     terminal_title: Option<&str>,
+    slack_threads: &[SlackThread],
     ide: IdeKind,
     cwd: &Path,
 ) -> Result<()> {
@@ -151,21 +155,45 @@ pub fn draw_changes_widget(
     let by_language = diff_summary.by_language();
 
     let has_title = terminal_title.is_some_and(|t| !t.is_empty());
+    let prefix_rows = u16::from(has_title).saturating_add(slack_threads.len() as u16);
 
-    // The top row carries the terminal (OSC8) title across the full width when
+    // The top row carries the terminal OSC title across the full width when
     // we have one — the language label ("JavaScript 16 changes") then drops to
     // the row below as the first body row. Without a title, fall back to
     // showing that language header on the top row so it isn't left blank.
-    if area.row == 1 {
-        let header = if has_title {
-            let title = terminal_title.unwrap();
-            let trimmed = if title.chars().count() > inner_width_usize {
-                truncate_path(title, inner_width_usize)
+    if area.row == 1 && has_title {
+        let title = terminal_title.unwrap();
+        let trimmed = if title.chars().count() > inner_width_usize {
+            truncate_path(title, inner_width_usize)
+        } else {
+            title.to_string()
+        };
+        let header = format!("{}{}{}", fg(color::LIGHT_BLUE), trimmed, RESET);
+        write_padded_row(stdout, &header, inner_width_usize)?;
+        return Ok(());
+    }
+
+    let slack_start_row = u16::from(has_title) + 1;
+    if area.row >= slack_start_row {
+        let slack_idx = (area.row - slack_start_row) as usize;
+        if let Some(thread) = slack_threads.get(slack_idx) {
+            let label = slack_display_label(thread);
+            let trimmed = if label.chars().count() > inner_width_usize {
+                truncate_middle(&label, inner_width_usize)
             } else {
-                title.to_string()
+                label
             };
-            format!("{}{}{}", fg(color::LIGHT_BLUE), trimmed, RESET)
-        } else if diff_summary.loading {
+            let linked = hyperlink(&thread.url, &trimmed);
+            let row = format!("{}{}{}", fg(color::CYAN), linked, RESET);
+            write_padded_row(stdout, &row, inner_width_usize)?;
+            return Ok(());
+        }
+    }
+
+    // Without title/link context, the first language header doubles as the
+    // top row so the widget never wastes a line.
+    if area.row == 1 && prefix_rows == 0 {
+        let header = if diff_summary.loading {
             format!(
                 "{}Changes{} {}...{}",
                 fg(color::ORANGE),
@@ -187,13 +215,9 @@ pub fn draw_changes_widget(
                 RESET
             )
         } else {
-            // No changes
             String::new()
         };
-        let header_len = strip_ansi_len(&header);
-        let pad = inner_width_usize.saturating_sub(header_len);
-        write!(stdout, "{}{:pad$}", header, "", pad = pad)?;
-        write!(stdout, " ")?;
+        write_padded_row(stdout, &header, inner_width_usize)?;
         return Ok(());
     }
 
@@ -204,13 +228,14 @@ pub fn draw_changes_widget(
     }
 
     // Build rows to display
-    let rows_data = build_rows_for_display(&by_language, inner_width, area.height, ide, cwd);
+    let available_rows = area.height.saturating_sub(1 + prefix_rows) as usize;
+    let rows_data = build_rows_for_display(&by_language, inner_width, available_rows, ide, cwd);
 
     // Map the terminal row to a built row. When the title occupies the top row,
     // the first language header (rows_data[0]) shows on the row just below it;
     // otherwise that header already lives on the top row, so we skip it here.
-    let row_idx = if has_title {
-        (area.row - 2) as usize
+    let row_idx = if prefix_rows > 0 {
+        area.row.saturating_sub(prefix_rows + 1) as usize
     } else {
         (area.row - 1) as usize
     };
@@ -231,6 +256,12 @@ pub fn draw_changes_widget(
     Ok(())
 }
 
+fn write_padded_row(stdout: &mut Stdout, content: &str, width: usize) -> Result<()> {
+    let pad = width.saturating_sub(strip_ansi_len(content));
+    write!(stdout, "{}{:pad$} ", content, "", pad = pad)?;
+    Ok(())
+}
+
 /// Formatted item with its display width
 struct FormattedItem {
     text: String,
@@ -241,12 +272,11 @@ struct FormattedItem {
 fn build_rows_for_display(
     by_language: &[LanguageChanges],
     width: u16,
-    height: u16,
+    available_rows: usize,
     ide: IdeKind,
     cwd: &Path,
 ) -> Vec<String> {
     let mut rows = Vec::new();
-    let available_rows = height.saturating_sub(2) as usize; // -2 for separator and first row
 
     for lang_changes in by_language {
         if rows.len() >= available_rows {

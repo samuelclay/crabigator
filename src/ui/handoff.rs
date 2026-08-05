@@ -1076,6 +1076,7 @@ mod tests {
             latest: Some(crate::recap::TurnRecap {
                 prompt_count: 1,
                 generated_at: 0,
+                title: None,
                 variant: RecapVariant::Brief,
                 headline: headline.to_string(),
                 bullets: Vec::new(),
@@ -1083,6 +1084,7 @@ mod tests {
                 artifacts: artifact.into_iter().map(str::to_string).collect(),
                 line_delta: TurnLineDelta::default(),
                 pr_notes: Vec::new(),
+                slack_threads: Vec::new(),
             }),
             line_delta: None,
             model: String::new(),
