@@ -76,7 +76,10 @@ export const changesWidgetJs = `
             if (!threads || threads.length === 0) return '';
             const rows = threads.map(thread => {
                 const date = formatSlackDate(thread.posted_at);
-                const details = [date, thread.author].filter(Boolean).join(' · ');
+                const channelId = String(thread.url || '').match(/\\/archives\\/([^/]+)/)?.[1] || '';
+                const channel = String(thread.channel || channelId).replace(/^#+/, '');
+                const channelLabel = channel ? '#' + channel : '';
+                const details = [date, channelLabel, thread.author].filter(Boolean).join(' · ');
                 const label = details ? 'Slack · ' + details : 'Slack';
                 return '<a class="slack-thread" href="' + escapeHtml(thread.url) + '" target="_blank" rel="noopener">'
                     + escapeHtml(label) + '</a>';

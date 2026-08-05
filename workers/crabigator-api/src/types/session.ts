@@ -217,6 +217,7 @@ export interface TurnRecap {
 export interface SlackThread {
     url: string;
     posted_at: number;
+    channel?: string;
     author?: string;
 }
 
