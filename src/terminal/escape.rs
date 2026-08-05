@@ -151,6 +151,30 @@ pub mod color {
     /// White (231) - For text on dark backgrounds
     #[allow(dead_code)]
     pub const WHITE: u8 = 231;
+
+    /// The one-notch-dimmer counterpart of a palette color, for muting a
+    /// whole row (e.g. secondary PRs) while keeping each cell's hue.
+    pub fn dimmed(color: u8) -> u8 {
+        match color {
+            GREEN => 71,
+            LIGHT_GREEN => 65,
+            YELLOW => 136,
+            LIGHT_YELLOW => 143,
+            ORANGE => 137,
+            DARK_ORANGE => 130,
+            RED => 131,
+            CYAN => 37,
+            BLUE => 31,
+            LIGHT_BLUE => 67,
+            PURPLE => 97,
+            PINK => 133,
+            GRAY => 242,
+            DARK_GRAY => 238,
+            FAINT => 246,
+            WHITE => 251,
+            other => other,
+        }
+    }
 }
 
 // === Standard ANSI Colors (16-color) ===

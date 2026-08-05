@@ -230,14 +230,14 @@ pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell;
     } else if diff.width() == full_diff.width() {
         format!(
             "{}+{} {}-{}{}",
-            fg(color::GREEN),
+            fg(row_color(pr, color::GREEN)),
             pr.additions,
-            fg(color::RED),
+            fg(row_color(pr, color::RED)),
             pr.deletions,
             RESET_FG
         )
     } else {
-        format!("{}{}{}", fg(color::GRAY), diff, RESET_FG)
+        format!("{}{}{}", fg(row_color(pr, color::GRAY)), diff, RESET_FG)
     };
 
     [
@@ -249,13 +249,13 @@ pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell;
         ),
         linked_cell(
             &pr_files_text(pr),
-            color::DARK_GRAY,
+            row_color(pr, color::DARK_GRAY),
             widths.files,
             &files_url,
         ),
         colored_cell_capped(
             &pr_branch_text(pr),
-            color::DARK_GRAY,
+            row_color(pr, color::DARK_GRAY),
             widths.branch,
             PR_BRANCH_MAX,
         ),
@@ -268,25 +268,36 @@ pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell
     let (comments_label, comments_color) = pr_comments_label(pr);
     let (merge_label, merge_color) = pr_merge_label(pr);
     [
-        colored_cell(state_label, state_color, widths.state),
+        colored_cell(state_label, row_color(pr, state_color), widths.state),
         // Failing CI points at the failing job; anything else at the Checks tab.
-        linked_cell(&ci_label, ci_color, widths.ci, &pr.ci_url),
+        linked_cell(&ci_label, row_color(pr, ci_color), widths.ci, &pr.ci_url),
         // Unresolved threads point at the first one's comment.
         linked_cell(
             &comments_label,
-            comments_color,
+            row_color(pr, comments_color),
             widths.comments,
             &pr.comments_url,
         ),
-        colored_cell(merge_label, merge_color, widths.merge),
+        colored_cell(merge_label, row_color(pr, merge_color), widths.merge),
         // Dismiss action: removes the PR from every list in the group.
         linked_cell(
             "✕",
-            color::DARK_GRAY,
+            row_color(pr, color::DARK_GRAY),
             widths.dismiss,
             &pr_action_url(pr, "dismissed"),
         ),
     ]
+}
+
+/// A cell color as the PR's row should render it: primaries keep the full
+/// palette, secondaries go one notch dimmer so the PR the session is actually
+/// driving stands out.
+fn row_color(pr: &SessionPr, base: u8) -> u8 {
+    if pr.primary {
+        base
+    } else {
+        color::dimmed(base)
+    }
 }
 
 fn colored_cell(label: &str, color: u8, width: usize) -> PrCell {
@@ -334,12 +345,12 @@ fn cells_text(cells: &[PrCell]) -> String {
     out
 }
 
-/// `★` marks the session's primary PR; `⑂` everything else.
+/// `★` marks the session's primary PR; `☆` everything else.
 fn pr_glyph(pr: &SessionPr) -> &'static str {
     if pr.primary {
         "★"
     } else {
-        "⑂"
+        "☆"
     }
 }
 
@@ -356,12 +367,12 @@ pub(crate) fn pr_action_url(pr: &SessionPr, disposition: &str) -> String {
     )
 }
 
-/// Primaries keep the PR purple; secondaries recede into gray.
+/// Primaries keep the PR purple; secondaries recede into dim gray.
 fn pr_identity_color(pr: &SessionPr) -> u8 {
     if pr.primary {
         color::PURPLE
     } else {
-        color::GRAY
+        color::dimmed(color::GRAY)
     }
 }
 

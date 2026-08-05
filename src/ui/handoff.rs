@@ -73,7 +73,7 @@ fn pr_separator_rule_width(width: u16) -> usize {
 
 /// Draw the session's PR list, one PR per row, on the dark handoff background.
 /// Each row uses eight shared columns:
-/// `⑂ repo #num  +A -D  N files  ⎇ branch  state  CI  💬N  merge`.
+/// `☆ repo #num  +A -D  N files  ⎇ branch  state  CI  💬N  merge`.
 /// The first four are left-aligned, with the branch column flexing across the
 /// middle. The final four are anchored at the right edge but remain
 /// left-aligned within their shared widths. Adjacent columns use a two-space gap,
@@ -781,7 +781,7 @@ mod tests {
     #[test]
     fn primary_prs_wear_the_star() {
         let mut pr = sample_pr("portal", 1079, "sam/fix");
-        assert!(pr_identity_text(&pr).starts_with("⑂ "));
+        assert!(pr_identity_text(&pr).starts_with("☆ "));
         pr.primary = true;
         assert!(pr_identity_text(&pr).starts_with("★ "));
         // A primary's star links to the demote action.
@@ -790,6 +790,26 @@ mod tests {
         assert!(cells[0]
             .0
             .contains(&format!("\x1b]8;;{}\x07★", pr_action_url(&pr, "secondary"))));
+    }
+
+    #[test]
+    fn secondary_prs_render_one_notch_dimmer() {
+        let mut pr = sample_pr("portal", 1079, "sam/fix");
+        pr.state = "MERGED".to_string();
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
+
+        let secondary_row = pr_row_text(160, &pr, &widths);
+        assert!(
+            secondary_row.contains(&fg(escape::color::dimmed(escape::color::PURPLE))),
+            "secondary merged state uses the dim purple"
+        );
+
+        pr.primary = true;
+        let primary_row = pr_row_text(160, &pr, &widths);
+        assert!(
+            primary_row.contains(&fg(escape::color::PURPLE)),
+            "primary merged state keeps the full purple"
+        );
     }
 
     #[test]
@@ -861,7 +881,7 @@ mod tests {
         let right = pr_right_cells(&pr, &widths);
 
         let link_to = |url: &str| format!("\x1b]8;;{url}\x07");
-        // Identity → the PR itself; the `⑂` glyph is its own link that flips
+        // Identity → the PR itself; the `☆` glyph is its own link that flips
         // the PR to primary via the web action page.
         assert!(left[0].0.contains(&link_to(&pr.url)));
         assert!(left[0].0.contains(&link_to(&pr_action_url(&pr, "primary"))));
