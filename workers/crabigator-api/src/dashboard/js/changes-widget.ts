@@ -423,7 +423,10 @@ export const changesWidgetJs = `
             if (pr.is_draft) return { label: 'draft', color: '#8b949e' };
             // Softer green matching the dir path (xterm 114 in the CLI).
             if (pr.state === 'OPEN') return { label: 'open', color: '#87d787' };
-            return { label: '', color: '#8b949e' };
+            // No state = never enriched. The desktop retries automatically;
+            // say what's happening instead of leaving the row bare.
+            if (pr.fetch_error) return { label: 'fetch failed', color: '#f85149', title: pr.fetch_error };
+            return { label: 'fetching…', color: '#8b949e' };
         }
 
         // CI rollup badge: ✓ CI (all pass) / ✗N CI (failures) / ●N CI (pending).
@@ -555,7 +558,9 @@ export const changesWidgetJs = `
                 const repoLabel = (pr.repo || 'PR') + ' #' + pr.number;
                 const badge = stateInfo.label
                     ? '<span class="pr-badge" style="color:' + stateInfo.color
-                        + ';border-color:' + stateInfo.color + '">' + stateInfo.label + '</span>'
+                        + ';border-color:' + stateInfo.color + '"'
+                        + (stateInfo.title ? ' title="' + escapeHtml(stateInfo.title) + '"' : '')
+                        + '>' + stateInfo.label + '</span>'
                     : '';
                 const diffParts = [];
                 if (pr.additions) diffParts.push('<span class="rd-add">+' + pr.additions + '</span>');

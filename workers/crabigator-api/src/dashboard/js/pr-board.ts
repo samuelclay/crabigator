@@ -44,6 +44,11 @@ export const prBoardJs = `
 
         // Pipeline position, most-attention-needed first (mirrors the TUI).
         function prBoardStage(pr) {
+            // No state = never enriched; the desktop is still fetching (and
+            // retries failures automatically).
+            if (!pr.state) return pr.fetch_error
+                ? { rank: 2, label: 'fetch failed, retrying', cls: 'bad' }
+                : { rank: 2, label: 'fetching', cls: 'dim' };
             if (pr.state === 'MERGED') return { rank: 6, label: 'merged', cls: 'merged' };
             if (pr.state !== 'OPEN') return { rank: 7, label: 'closed', cls: 'dim' };
             if (pr.mergeable === 'CONFLICTING') return { rank: 0, label: 'conflicts', cls: 'bad' };
@@ -159,7 +164,9 @@ export const prBoardJs = `
             const stateInfo = prStateInfo(pr);
             const badge = stateInfo.label
                 ? '<span class="pr-badge" style="color:' + stateInfo.color
-                    + ';border-color:' + stateInfo.color + '">' + stateInfo.label + '</span>'
+                    + ';border-color:' + stateInfo.color + '"'
+                    + (stateInfo.title ? ' title="' + escapeHtml(stateInfo.title) + '"' : '')
+                    + '>' + stateInfo.label + '</span>'
                 : '';
             const dismiss = '<span class="pr-dismiss" title="Dismiss this PR everywhere">✕</span>';
             const status = '<span class="pr-status">' + badge + prCiBadge(pr)

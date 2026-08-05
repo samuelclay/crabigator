@@ -286,6 +286,7 @@ export interface SessionPr {
     slack_comment_urls?: string[]; // Slack permalinks found in the PR's GitHub comments
     ai_note?: string;         // Latest recap's one-line read on this PR's progress
     ai_confidence?: string;   // 'high' | 'medium' | 'low' — confidence the PR is finished
+    fetch_error?: string;     // Why the last gh fetch failed; '' after a success
     refreshed_at: number;
 }
 
