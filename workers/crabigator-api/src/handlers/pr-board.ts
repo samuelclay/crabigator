@@ -16,6 +16,97 @@ interface SessionPrRow {
     disposition: string | null;
 }
 
+/** Resolve the caller's group from desktop HMAC or dashboard bearer auth. */
+async function boardGroupId(request: Request, env: Env): Promise<string | Response> {
+    if (request.headers.get('X-Device-Id')) {
+        const result = await requireDeviceAuth(request, env);
+        if ('error' in result) return result.error;
+        const row = await env.DB.prepare('SELECT group_id FROM devices WHERE id = ?')
+            .bind(result.auth.device_id)
+            .first<{ group_id: string | null }>();
+        return row?.group_id || result.auth.device_id;
+    }
+    const result = await requireMobileAuth(request, env);
+    if ('error' in result) return result.error;
+    return result.auth.group_id;
+}
+
+/**
+ * POST /api/prs/backfill - Populate session_prs for sessions that streamed
+ * PRs before the D1 write-through existed. Each SessionDO has durably stored
+ * its last PR list since PR streaming shipped; this walks the group's
+ * sessions that have no session_prs rows yet, reads that stored list, and
+ * writes it through with the session's last activity as the timestamp.
+ */
+export async function backfillSessionPrs(request: Request, env: Env): Promise<Response> {
+    const groupId = await boardGroupId(request, env);
+    if (groupId instanceof Response) return groupId;
+
+    const sessions = await env.DB.prepare(
+        `SELECT s.id, COALESCE(s.ended_at, s.last_seen_at, s.started_at) AS seen_at
+         FROM sessions s
+         JOIN devices d ON d.id = s.device_id
+         WHERE d.group_id = ?
+           AND s.id NOT IN (SELECT DISTINCT session_id FROM session_prs)
+         ORDER BY s.started_at DESC
+         LIMIT 200`
+    )
+        .bind(groupId)
+        .all<{ id: string; seen_at: number | null }>();
+
+    let sessionsBackfilled = 0;
+    let prsWritten = 0;
+    const rows = sessions.results ?? [];
+    // Small batches keep DO wakes and subrequests well inside limits.
+    for (let i = 0; i < rows.length; i += 10) {
+        const chunk = rows.slice(i, i + 10);
+        await Promise.all(
+            chunk.map(async (session) => {
+                try {
+                    const stub = env.SESSION.get(env.SESSION.idFromName(session.id));
+                    const response = await stub.fetch(new Request('https://internal/prs'));
+                    if (!response.ok) return;
+                    const data = (await response.json()) as { prs: any[] };
+                    const prs = (data.prs || []).filter(
+                        (pr) => pr && pr.owner && pr.repo && pr.number
+                    );
+                    if (prs.length === 0) return;
+                    const seenAt = session.seen_at || Math.floor(Date.now() / 1000);
+                    await env.DB.batch(
+                        prs.map((pr) =>
+                            env.DB.prepare(
+                                `INSERT INTO session_prs (session_id, owner, repo, number, url, state, is_primary, data, updated_at)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 ON CONFLICT (session_id, owner, repo, number) DO NOTHING`
+                            ).bind(
+                                session.id,
+                                pr.owner,
+                                pr.repo,
+                                pr.number,
+                                pr.url || '',
+                                pr.state || '',
+                                pr.primary ? 1 : 0,
+                                JSON.stringify(pr),
+                                seenAt
+                            )
+                        )
+                    );
+                    sessionsBackfilled += 1;
+                    prsWritten += prs.length;
+                } catch {
+                    // A dead or unreachable DO just contributes nothing.
+                }
+            })
+        );
+    }
+
+    return jsonResponse({
+        sessions_checked: rows.length,
+        sessions_backfilled: sessionsBackfilled,
+        prs_written: prsWritten,
+    });
+}
+
 /** One aggregated PR on the board: freshest data + per-session engagement. */
 interface BoardEntry {
     owner: string;
@@ -41,19 +132,20 @@ interface BoardEntry {
  * view). `?days=N` bounds how long finished PRs linger (default 1, max 90).
  */
 export async function getPrBoard(request: Request, env: Env): Promise<Response> {
-    let groupId: string;
-    if (request.headers.get('X-Device-Id')) {
-        const result = await requireDeviceAuth(request, env);
-        if ('error' in result) return result.error;
-        const row = await env.DB.prepare('SELECT group_id FROM devices WHERE id = ?')
-            .bind(result.auth.device_id)
-            .first<{ group_id: string | null }>();
-        groupId = row?.group_id || result.auth.device_id;
-    } else {
-        const result = await requireMobileAuth(request, env);
-        if ('error' in result) return result.error;
-        groupId = result.auth.group_id;
+    const groupId = await boardGroupId(request, env);
+    if (groupId instanceof Response) return groupId;
+    try {
+        return await buildPrBoard(request, env, groupId);
+    } catch (error) {
+        // Authed endpoint: the message helps the TUI/dashboard report failures.
+        return jsonResponse(
+            { error: `PR board failed: ${error instanceof Error ? error.message : error}` },
+            500
+        );
     }
+}
+
+async function buildPrBoard(request: Request, env: Env, groupId: string): Promise<Response> {
     const daysParam = parseInt(new URL(request.url).searchParams.get('days') ?? '1', 10);
     const lingerDays = Number.isFinite(daysParam) ? Math.min(Math.max(daysParam, 0), 90) : 1;
 
@@ -99,8 +191,8 @@ export async function getPrBoard(request: Request, env: Env): Promise<Response> 
         if (row.updated_at > entry.updated_at) {
             const { mentions, user_mentions, last_mentioned_at } = entry.pr;
             entry.pr = { ...pr, mentions, user_mentions, last_mentioned_at };
-            entry.updated_at = row.updated_at;
         }
+        entry.updated_at = Math.max(entry.updated_at, row.updated_at);
         entry.pr.mentions += pr.mentions || 0;
         entry.pr.user_mentions += pr.user_mentions || 0;
         entry.pr.last_mentioned_at = Math.max(entry.pr.last_mentioned_at, pr.last_mentioned_at || 0);
@@ -134,9 +226,15 @@ export async function getPrBoard(request: Request, env: Env): Promise<Response> 
             // wrapped shorthand) — same rule as the desktop board.
             if (!entry.pr.refreshed_at) return false;
             // Finished PRs age off after the window (0 = open only), by close
-            // time or last mention.
+            // time or last mention. Records from before those fields existed
+            // (backfilled sessions) fall back to when the row was last written
+            // — for a backfill, the session's final activity.
             if (entry.pr.state !== 'OPEN') {
-                const latest = Math.max(entry.pr.closed_at || 0, entry.pr.last_mentioned_at || 0);
+                const latest = Math.max(
+                    entry.pr.closed_at || 0,
+                    entry.pr.last_mentioned_at || 0,
+                    entry.updated_at * 1000
+                );
                 if (!lingerMs || !latest || nowMs - latest > lingerMs) return false;
             }
             if (entry.disposition === 'dismissed') return false;

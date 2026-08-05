@@ -186,6 +186,13 @@ export class SessionDO implements DurableObject {
                 }
             case '/state':
                 return this.handleGetState();
+            case '/prs':
+                // Dump the stored PR list — used to backfill session_prs in
+                // D1 for sessions that predate the write-through.
+                return new Response(
+                    JSON.stringify({ prs: this.persistentState.lastPrs || [] }),
+                    { headers: { 'Content-Type': 'application/json' } }
+                );
             case '/viewer-active':
                 return this.handleViewerActive();
             case '/spawn':
