@@ -15,6 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::io::{stdout, Write};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -40,10 +41,19 @@ const STALE_SESSION_SECS: f64 = 300.0;
 const DEFAULT_LINGER_DAYS: u64 = 1;
 /// Ceiling for the +key so the window can't run away unbounded.
 const MAX_LINGER_DAYS: u64 = 90;
+/// Transcript search needs this many characters before it kicks in — one or
+/// two letters match nearly every line and would light up the whole board.
+const TRANSCRIPT_QUERY_MIN: usize = 3;
+/// The expanded preview shows this many of the most recent matches.
+const PREVIEW_MATCHES: usize = 3;
+/// Transcript lines shown either side of a match in the expanded preview.
+const PREVIEW_CONTEXT: usize = 2;
 
 /// One live session's contribution to the board.
 struct SessionSnapshot {
     dir_name: String,
+    /// The session's /tmp mirror directory, where scrollback.log lives.
+    session_dir: PathBuf,
     last_updated: f64,
     branch: String,
     uncommitted_files: usize,
@@ -62,6 +72,9 @@ struct BoardPr {
 
 struct SessionRef {
     dir_name: String,
+    /// Local mirror directory holding scrollback.log; None for cloud records,
+    /// whose transcripts aren't reachable from this machine.
+    session_dir: Option<PathBuf>,
     age_secs: u64,
     /// The session is gone (cloud record only) — a candidate to resurrect.
     ended: bool,
@@ -70,7 +83,7 @@ struct SessionRef {
 /// Read every live mirror, one snapshot per session.
 fn gather() -> Result<Vec<SessionSnapshot>> {
     let mut snapshots = Vec::new();
-    for (_path, data) in crate::inspect::discover_instances(&None)? {
+    for (path, data) in crate::inspect::discover_instances(&None)? {
         let prs: Vec<SessionPr> = data
             .get("prs")
             .cloned()
@@ -81,6 +94,7 @@ fn gather() -> Result<Vec<SessionSnapshot>> {
         }
         let git = data.pointer("/widgets/git/data");
         snapshots.push(SessionSnapshot {
+            session_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
             dir_name: data
                 .get("cwd")
                 .and_then(|v| v.as_str())
@@ -179,6 +193,7 @@ fn aggregate(
             }
             entry.sessions.push(SessionRef {
                 dir_name: session.dir_name.clone(),
+                session_dir: Some(session.session_dir.clone()),
                 age_secs: session_age as u64,
                 ended: false,
             });
@@ -250,6 +265,7 @@ fn cloud_entries_to_board(cloud: Vec<crate::cloud::CloudBoardEntry>) -> Vec<Boar
                     .into_iter()
                     .map(|s| SessionRef {
                         dir_name: s.dir_name,
+                        session_dir: None,
                         age_secs: now.saturating_sub(s.last_seen_at),
                         ended: !s.active,
                     })
@@ -409,12 +425,294 @@ fn matches_search(pr: &SessionPr, query: &str) -> bool {
         || pr.branch.to_lowercase().contains(&query)
 }
 
-/// Build one full frame as displayable lines (no trailing newline handling).
-fn render(entries: &[&BoardPr], width: u16, linger_days: u64, include_ended: bool) -> Vec<String> {
-    let now_ms = (now_secs() * 1000.0) as u64;
-    let session_count = entries
+/// Byte range of the first case-insensitive occurrence of `needle` in
+/// `haystack`, safe for text whose lowercase form changes length.
+fn find_ci(haystack: &str, needle: &str) -> Option<(usize, usize)> {
+    let needle_lc: Vec<char> = needle.chars().flat_map(char::to_lowercase).collect();
+    if needle_lc.is_empty() {
+        return None;
+    }
+    let chars: Vec<(usize, char)> = haystack.char_indices().collect();
+    for start in 0..chars.len() {
+        let mut matched = 0;
+        let mut end = start;
+        'walk: while matched < needle_lc.len() && end < chars.len() {
+            for lc in chars[end].1.to_lowercase() {
+                if matched >= needle_lc.len() || needle_lc[matched] != lc {
+                    break 'walk;
+                }
+                matched += 1;
+            }
+            end += 1;
+        }
+        if matched == needle_lc.len() {
+            let s = chars[start].0;
+            let e = chars.get(end).map_or(haystack.len(), |(i, _)| *i);
+            return Some((s, e));
+        }
+    }
+    None
+}
+
+/// One session's scrollback, ANSI-stripped and split into lines, cached by
+/// file size + mtime so the 2s tick doesn't reread unchanged transcripts.
+struct CachedTranscript {
+    len: u64,
+    modified: SystemTime,
+    lines: Vec<String>,
+}
+
+#[derive(Default)]
+struct TranscriptCache {
+    files: HashMap<PathBuf, CachedTranscript>,
+}
+
+impl TranscriptCache {
+    /// The transcript lines for a session mirror directory, or None when the
+    /// session has no readable scrollback.log.
+    fn lines(&mut self, session_dir: &Path) -> Option<&[String]> {
+        let path = session_dir.join("scrollback.log");
+        let meta = std::fs::metadata(&path).ok()?;
+        let len = meta.len();
+        let modified = meta.modified().unwrap_or(UNIX_EPOCH);
+        let fresh = self
+            .files
+            .get(&path)
+            .is_some_and(|c| c.len == len && c.modified == modified);
+        if !fresh {
+            let raw = std::fs::read(&path).ok()?;
+            let text = crate::parsers::strip_ansi_for_debug(&String::from_utf8_lossy(&raw));
+            let lines = text.lines().map(str::to_string).collect();
+            self.files.insert(
+                path.clone(),
+                CachedTranscript {
+                    len,
+                    modified,
+                    lines,
+                },
+            );
+        }
+        self.files.get(&path).map(|c| c.lines.as_slice())
+    }
+}
+
+/// Indices of transcript lines containing the query, case-insensitively.
+fn transcript_match_lines(lines: &[String], query: &str) -> Vec<usize> {
+    lines
         .iter()
-        .flat_map(|e| e.sessions.iter().map(|s| s.dir_name.as_str()))
+        .enumerate()
+        .filter(|(_, line)| find_ci(line, query).is_some())
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// One row of a transcript preview, before styling.
+struct PreviewRow {
+    text: String,
+    is_match: bool,
+    /// This row starts a new context group — draw a `⋯` separator first.
+    gap_before: bool,
+}
+
+/// Pick the preview rows for one session: the most recent matching line when
+/// collapsed, or the last few matches with surrounding context when expanded.
+fn preview_rows(lines: &[String], matches: &[usize], expanded: bool) -> Vec<PreviewRow> {
+    if matches.is_empty() {
+        return Vec::new();
+    }
+    if !expanded {
+        let idx = *matches.last().unwrap();
+        return vec![PreviewRow {
+            text: lines[idx].clone(),
+            is_match: true,
+            gap_before: false,
+        }];
+    }
+    // Context windows around the last few matches, merged where they touch.
+    let recent = &matches[matches.len().saturating_sub(PREVIEW_MATCHES)..];
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for &idx in recent {
+        let start = idx.saturating_sub(PREVIEW_CONTEXT);
+        let end = (idx + PREVIEW_CONTEXT).min(lines.len().saturating_sub(1));
+        match ranges.last_mut() {
+            Some((_, prev_end)) if start <= *prev_end + 1 => *prev_end = (*prev_end).max(end),
+            _ => ranges.push((start, end)),
+        }
+    }
+    let mut rows = Vec::new();
+    for (group, (start, end)) in ranges.into_iter().enumerate() {
+        for (idx, line) in lines.iter().enumerate().take(end + 1).skip(start) {
+            rows.push(PreviewRow {
+                text: line.clone(),
+                is_match: matches.binary_search(&idx).is_ok(),
+                gap_before: group > 0 && idx == start,
+            });
+        }
+    }
+    rows
+}
+
+/// Trim a matched line so the first occurrence of the query stays visible in
+/// `max` display cells, ellipsizing the front when the match sits far right.
+fn window_around_match(line: &str, query: &str, max: usize) -> String {
+    use unicode_width::UnicodeWidthStr;
+    let trimmed = line.trim();
+    let Some((start, _)) = find_ci(trimmed, query) else {
+        return crate::ui::pr_cells::truncate_to_width(trimmed, max);
+    };
+    let lead = 15usize.min(max / 3);
+    if trimmed[..start].width() + lead <= max {
+        return crate::ui::pr_cells::truncate_to_width(trimmed, max);
+    }
+    // Drop chars from the front until the match sits `lead` cells in.
+    let mut cut = 0;
+    for (i, _) in trimmed.char_indices() {
+        if trimmed[i..start].width() <= lead {
+            cut = i;
+            break;
+        }
+    }
+    let windowed = format!("…{}", &trimmed[cut..]);
+    crate::ui::pr_cells::truncate_to_width(&windowed, max)
+}
+
+/// Wrap every occurrence of the query in a yellow highlight, restoring the
+/// row's own color afterwards.
+fn highlight_query(text: &str, query: &str, restore: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some((start, end)) = find_ci(rest, query) {
+        out.push_str(&rest[..start]);
+        out.push_str(&escape::bg(color::YELLOW));
+        out.push_str(&fg(16));
+        out.push_str(&rest[start..end]);
+        out.push_str(RESET);
+        out.push_str(restore);
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Fully styled preview lines for one board entry: for each contributing
+/// session whose transcript contains the query, an excerpt the search hit —
+/// so a match can be confirmed without opening the session. Empty when the
+/// query is too short or nothing matches.
+fn build_previews(
+    entry: &BoardPr,
+    cache: &mut TranscriptCache,
+    query: &str,
+    width: u16,
+    expanded: bool,
+) -> Vec<String> {
+    if query.len() < TRANSCRIPT_QUERY_MIN {
+        return Vec::new();
+    }
+    let mut seen_dirs: HashSet<&Path> = HashSet::new();
+    let mut out = Vec::new();
+    for session in &entry.sessions {
+        let Some(dir) = session.session_dir.as_deref() else {
+            continue;
+        };
+        if !seen_dirs.insert(dir) {
+            continue;
+        }
+        let Some(lines) = cache.lines(dir) else {
+            continue;
+        };
+        let matches = transcript_match_lines(lines, query);
+        if matches.is_empty() {
+            continue;
+        }
+        let rows = preview_rows(lines, &matches, expanded);
+        out.extend(styled_preview_lines(
+            &session.dir_name,
+            matches.len(),
+            &rows,
+            query,
+            width,
+            expanded,
+        ));
+    }
+    out
+}
+
+/// Render one session's preview rows into display lines: a single inline
+/// snippet when collapsed, or a header plus context block when expanded.
+fn styled_preview_lines(
+    dir_name: &str,
+    total: usize,
+    rows: &[PreviewRow],
+    query: &str,
+    width: u16,
+    expanded: bool,
+) -> Vec<String> {
+    use unicode_width::UnicodeWidthStr;
+    let matches_text = format!("{} match{}", total, if total == 1 { "" } else { "es" });
+    if !expanded {
+        let row = &rows[0];
+        let suffix = format!(" · {matches_text}");
+        let budget = (width as usize)
+            .saturating_sub(3 + 2 + dir_name.width() + 3 + suffix.width())
+            .max(10);
+        let snippet = window_around_match(&row.text, query, budget);
+        return vec![format!(
+            "   {}⌕ {}{}{} · {}{}{}{}{}",
+            fg(color::DARK_GRAY),
+            fg(color::CYAN),
+            dir_name,
+            fg(color::DARK_GRAY),
+            fg(color::GRAY),
+            highlight_query(&snippet, query, &fg(color::GRAY)),
+            fg(color::DARK_GRAY),
+            suffix,
+            RESET_FG,
+        )];
+    }
+    let mut out = vec![format!(
+        "   {}⌕ {}{}{} · {}{}",
+        fg(color::DARK_GRAY),
+        fg(color::CYAN),
+        dir_name,
+        fg(color::DARK_GRAY),
+        matches_text,
+        RESET_FG,
+    )];
+    let budget = (width as usize).saturating_sub(7).max(10);
+    for row in rows {
+        if row.gap_before {
+            out.push(format!("     {}⋯{}", fg(color::DARK_GRAY), RESET_FG));
+        }
+        let text = crate::ui::pr_cells::truncate_to_width(row.text.trim_end(), budget);
+        let line = if row.is_match {
+            format!(
+                "     {}│ {}{}{}",
+                fg(color::DARK_GRAY),
+                fg(color::GRAY),
+                highlight_query(&text, query, &fg(color::GRAY)),
+                RESET_FG,
+            )
+        } else {
+            format!("     {}│ {}{}", fg(color::DARK_GRAY), text, RESET_FG)
+        };
+        out.push(line);
+    }
+    out
+}
+
+/// One board entry ready to draw: the PR plus any transcript preview lines
+/// the active search produced for it.
+struct BoardRow<'a> {
+    entry: &'a BoardPr,
+    preview_lines: Vec<String>,
+}
+
+/// Build one full frame as displayable lines (no trailing newline handling).
+fn render(rows: &[BoardRow], width: u16, linger_days: u64, include_ended: bool) -> Vec<String> {
+    let now_ms = (now_secs() * 1000.0) as u64;
+    let session_count = rows
+        .iter()
+        .flat_map(|r| r.entry.sessions.iter().map(|s| s.dir_name.as_str()))
         .collect::<HashSet<_>>()
         .len();
     // The window reads gray at the default and yellow once adjusted, so an
@@ -447,7 +745,7 @@ fn render(entries: &[&BoardPr], width: u16, linger_days: u64, include_ended: boo
         fg(color::PURPLE),
         RESET_FG,
         fg(color::DARK_GRAY),
-        entries.len(),
+        rows.len(),
         session_count,
         source,
         window,
@@ -455,7 +753,7 @@ fn render(entries: &[&BoardPr], width: u16, linger_days: u64, include_ended: boo
     ));
     lines.push(String::new());
 
-    if entries.is_empty() {
+    if rows.is_empty() {
         lines.push(format!(
             "{}No PRs tracked by any live session.{}",
             fg(color::GRAY),
@@ -466,13 +764,13 @@ fn render(entries: &[&BoardPr], width: u16, linger_days: u64, include_ended: boo
 
     // Group by repo, preserving the attention ordering for group placement.
     let mut repo_order: Vec<String> = Vec::new();
-    let mut groups: HashMap<String, Vec<&BoardPr>> = HashMap::new();
-    for entry in entries {
-        let repo = format!("{}/{}", entry.pr.owner, entry.pr.repo);
+    let mut groups: HashMap<String, Vec<&BoardRow>> = HashMap::new();
+    for row in rows {
+        let repo = format!("{}/{}", row.entry.pr.owner, row.entry.pr.repo);
         if !groups.contains_key(&repo) {
             repo_order.push(repo.clone());
         }
-        groups.entry(repo).or_default().push(*entry);
+        groups.entry(repo).or_default().push(row);
     }
 
     for repo in repo_order {
@@ -491,9 +789,10 @@ fn render(entries: &[&BoardPr], width: u16, linger_days: u64, include_ended: boo
             RESET_FG,
         ));
 
-        let refs: Vec<&SessionPr> = group.iter().map(|e| &e.pr).collect();
+        let refs: Vec<&SessionPr> = group.iter().map(|r| &r.entry.pr).collect();
         let widths = PrColumnWidths::from_pr_refs(&refs, width as usize);
-        for entry in group {
+        for board_row in group {
+            let entry = board_row.entry;
             let mut row = pr_row_text(width, &entry.pr, &widths);
             if entry.stale {
                 row = format!("{}{row}", fg(color::DARK_GRAY));
@@ -582,6 +881,8 @@ fn render(entries: &[&BoardPr], width: u16, linger_days: u64, include_ended: boo
             if !extras.is_empty() {
                 lines.push(format!("   {}", extras.join("  ")));
             }
+            // Row 4: transcript excerpts backing an active search hit.
+            lines.extend(board_row.preview_lines.iter().cloned());
             lines.push(String::new());
         }
     }
@@ -601,8 +902,14 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
     if once {
         let width = terminal_size().map(|(w, _)| w).unwrap_or(120);
         let entries = aggregate(&gather()?, &overrides, DEFAULT_LINGER_DAYS);
-        let refs: Vec<&BoardPr> = entries.iter().collect();
-        for line in render(&refs, width, DEFAULT_LINGER_DAYS, false) {
+        let rows: Vec<BoardRow> = entries
+            .iter()
+            .map(|entry| BoardRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        for line in render(&rows, width, DEFAULT_LINGER_DAYS, false) {
             println!("{line}");
         }
         return Ok(());
@@ -628,7 +935,7 @@ fn frame_hash(lines: &[String]) -> u64 {
 /// scrolled content while a filter is active.
 fn search_banner(query: &str, matched: usize, width: u16) -> String {
     let text = format!(
-        " /{query}▏ {matched} match{} · type to filter · Esc clears ",
+        " /{query}▏ {matched} match{} · type to filter · Tab context · Esc clears ",
         if matched == 1 { "" } else { "es" }
     );
     let padded = format!("{text:<width$}", width = width as usize);
@@ -647,6 +954,10 @@ async fn board_loop(
     let mut matched = 0usize;
     let mut scroll: usize = 0;
     let mut search: Option<String> = None;
+    // Transcript search state: cached scrollbacks plus the Tab-toggled
+    // context view for the inline previews.
+    let mut transcripts = TranscriptCache::default();
+    let mut expanded = false;
     let mut linger_days = DEFAULT_LINGER_DAYS;
     let mut include_ended = false;
     // Cloud fetches are throttled well below the local tick; toggling the
@@ -685,9 +996,21 @@ async fn board_loop(
         if needs_render {
             needs_render = false;
             let query = search.as_deref().unwrap_or("");
-            let filtered: Vec<&BoardPr> = entries
+            // A PR stays visible when its metadata matches, or when any of
+            // its sessions' transcripts contain the query — with the matched
+            // excerpt shown inline so the hit can be confirmed.
+            let filtered: Vec<BoardRow> = entries
                 .iter()
-                .filter(|entry| matches_search(&entry.pr, query))
+                .filter_map(|entry| {
+                    let preview_lines =
+                        build_previews(entry, &mut transcripts, query, width, expanded);
+                    (matches_search(&entry.pr, query) || !preview_lines.is_empty()).then_some(
+                        BoardRow {
+                            entry,
+                            preview_lines,
+                        },
+                    )
+                })
                 .collect();
             matched = filtered.len();
             let fresh = render(&filtered, width, linger_days, include_ended);
@@ -744,7 +1067,15 @@ async fn board_loop(
                         match key.code {
                             KeyCode::Esc => {
                                 search = None;
+                                expanded = false;
                                 scroll = 0;
+                                needs_render = true;
+                                dirty = true;
+                            }
+                            // Tab flips the transcript previews between one
+                            // snippet and the surrounding context.
+                            KeyCode::Tab => {
+                                expanded = !expanded;
                                 needs_render = true;
                                 dirty = true;
                             }
@@ -842,8 +1173,14 @@ mod tests {
     }
 
     fn render_frame(entries: &[BoardPr]) -> String {
-        let refs: Vec<&BoardPr> = entries.iter().collect();
-        render(&refs, 160, DEFAULT_LINGER_DAYS, false).join("\n")
+        let rows: Vec<BoardRow> = entries
+            .iter()
+            .map(|entry| BoardRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        render(&rows, 160, DEFAULT_LINGER_DAYS, false).join("\n")
     }
 
     fn now_ms() -> u64 {
@@ -853,6 +1190,7 @@ mod tests {
     fn snapshot(dir: &str, prs: Vec<SessionPr>) -> SessionSnapshot {
         SessionSnapshot {
             dir_name: dir.to_string(),
+            session_dir: PathBuf::new(),
             last_updated: now_secs(),
             branch: String::new(),
             uncommitted_files: 0,
@@ -994,6 +1332,7 @@ mod tests {
         // A stopped mirror is tagged idle at minute granularity, never seconds.
         let stale = vec![SessionRef {
             dir_name: "old-worktree".to_string(),
+            session_dir: None,
             age_secs: 1_260,
             ended: false,
         }];
@@ -1096,5 +1435,115 @@ mod tests {
         assert!(matches_search(&pr, "TOOL-DIET"));
         assert!(matches_search(&pr, ""));
         assert!(!matches_search(&pr, "2557"));
+    }
+
+    #[test]
+    fn find_ci_matches_case_insensitively_at_byte_boundaries() {
+        assert_eq!(find_ci("Fix the WebGL shader", "webgl"), Some((8, 13)));
+        assert_eq!(find_ci("nothing here", "webgl"), None);
+        assert_eq!(find_ci("", "x"), None);
+        assert_eq!(find_ci("text", ""), None);
+        // Multibyte text before the match doesn't skew the byte range.
+        let line = "⌕ búsqueda WebGL";
+        let (start, end) = find_ci(line, "WEBGL").unwrap();
+        assert_eq!(&line[start..end], "WebGL");
+    }
+
+    fn transcript() -> Vec<String> {
+        (0..30)
+            .map(|i| match i {
+                5 => "> please fix the webgl shader".to_string(),
+                6 => "Sure — looking at the WebGL setup now.".to_string(),
+                20 => "The webgl fix is in PR #9.".to_string(),
+                _ => format!("line {i}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn transcript_matches_find_every_line_containing_the_query() {
+        let lines = transcript();
+        assert_eq!(transcript_match_lines(&lines, "webgl"), vec![5, 6, 20]);
+        assert!(transcript_match_lines(&lines, "nope").is_empty());
+    }
+
+    /// Collapsed shows only the most recent matching line; expanded shows the
+    /// last few matches with context, merging windows that touch and marking
+    /// the jump between distant groups.
+    #[test]
+    fn preview_rows_collapse_and_expand() {
+        let lines = transcript();
+        let matches = transcript_match_lines(&lines, "webgl");
+
+        let collapsed = preview_rows(&lines, &matches, false);
+        assert_eq!(collapsed.len(), 1);
+        assert!(collapsed[0].text.contains("PR #9"));
+        assert!(collapsed[0].is_match);
+
+        let expanded = preview_rows(&lines, &matches, true);
+        // Lines 3..=8 (5 and 6 merged) plus 18..=22 around line 20.
+        assert_eq!(expanded.len(), 11);
+        let match_count = expanded.iter().filter(|r| r.is_match).count();
+        assert_eq!(match_count, 3);
+        let gaps = expanded.iter().filter(|r| r.gap_before).count();
+        assert_eq!(gaps, 1, "one separator between the two context groups");
+        assert!(!expanded[0].is_match, "context precedes the first match");
+    }
+
+    #[test]
+    fn window_keeps_a_far_right_match_visible() {
+        let line = format!("{}needle at the end", "x".repeat(200));
+        let windowed = window_around_match(&line, "needle", 40);
+        assert!(windowed.starts_with('…'));
+        assert!(windowed.contains("needle"));
+    }
+
+    #[test]
+    fn highlight_wraps_every_occurrence() {
+        let restore = fg(color::GRAY);
+        let out = highlight_query("webgl and WebGL", "webgl", &restore);
+        assert_eq!(out.matches(&escape::bg(color::YELLOW)).count(), 2);
+        assert!(out.contains("and"));
+    }
+
+    /// A transcript hit keeps a PR visible even when its metadata doesn't
+    /// match, and the excerpt renders inline with the session named.
+    #[test]
+    fn transcript_hits_surface_prs_with_inline_previews() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("scrollback.log"),
+            "line one\nthe \x1b[32mwebgl\x1b[0m shader is fixed\nline three\n",
+        )
+        .unwrap();
+
+        let mut entry_pr = board_pr(9, "portal");
+        entry_pr.title = "Fix the flow".to_string();
+        let entry = BoardPr {
+            pr: entry_pr,
+            sessions: vec![SessionRef {
+                dir_name: "portal".to_string(),
+                session_dir: Some(dir.path().to_path_buf()),
+                age_secs: 10,
+                ended: false,
+            }],
+            uncommitted: 0,
+            stale: false,
+        };
+
+        let mut cache = TranscriptCache::default();
+        assert!(!matches_search(&entry.pr, "webgl"), "metadata misses");
+        let preview = build_previews(&entry, &mut cache, "webgl", 120, false);
+        assert_eq!(preview.len(), 1, "one collapsed line per session");
+        assert!(preview[0].contains("portal"), "session is named");
+        assert!(preview[0].contains("shader is fixed"), "ANSI stripped");
+        assert!(preview[0].contains("1 match"));
+
+        // Below the minimum query length, transcripts stay out of it.
+        assert!(build_previews(&entry, &mut cache, "we", 120, false).is_empty());
+        // Cloud rows have no local transcript to search.
+        let mut cloud = entry;
+        cloud.sessions[0].session_dir = None;
+        assert!(build_previews(&cloud, &mut cache, "webgl", 120, false).is_empty());
     }
 }
