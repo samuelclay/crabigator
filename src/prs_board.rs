@@ -422,19 +422,30 @@ fn progress_percent(pr: &SessionPr) -> u8 {
     (base + nudge).clamp(5, 95) as u8
 }
 
-/// Ten-cell progress bar in the stage color: `▓▓▓▓▓▓▓░░░  70%`.
+/// A muted variant of each stage color for the progress bar, so the gauge
+/// reads at a glance without outshining the text around it.
+fn dim_stage_color(stage_color: u8) -> u8 {
+    match stage_color {
+        color::RED => 131,    // muted brick
+        color::YELLOW => 136, // dark goldenrod
+        color::GREEN => 65,   // muted green
+        color::PURPLE => 97,  // muted violet
+        _ => 240,             // draft/closed grays fall back to dark gray
+    }
+}
+
+/// Ten-cell progress bar in a muted stage color: `▓▓▓▓▓▓▓░░░`. The bar is an
+/// approximation, so it shows no percentage — the shape is the signal.
 fn progress_bar(pr: &SessionPr) -> String {
     let pct = progress_percent(pr);
     let stage = stage(pr);
     let filled = (usize::from(pct) + 5) / 10;
     format!(
-        "{}{}{}{}{} {:>3}%{}",
-        fg(stage.color),
+        "{}{}{}{}{}",
+        fg(dim_stage_color(stage.color)),
         "▓".repeat(filled),
         fg(color::DARK_GRAY),
         "░".repeat(10 - filled),
-        fg(stage.color),
-        pct,
         RESET_FG
     )
 }
@@ -1525,11 +1536,9 @@ mod tests {
         assert!(frame.contains("o/portal"));
         assert!(frame.contains("CI green, awaiting review"));
         assert!(frame.contains("slack origin"));
-        // Progress reads as a bar and percent, not confidence prose.
-        assert!(
-            frame.contains('▓') && frame.contains('%'),
-            "progress bar renders"
-        );
+        // Progress reads as a quiet bar — no percentage, no confidence prose.
+        assert!(frame.contains('▓'), "progress bar renders");
+        assert!(!frame.contains('%'), "bar carries no percentage");
         assert!(
             !frame.contains("confidence"),
             "confidence prose replaced by the bar"
