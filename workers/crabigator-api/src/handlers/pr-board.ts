@@ -1,6 +1,6 @@
 import type { Env } from '../types/env';
 import { jsonResponse } from '../router';
-import { requireMobileAuth } from '../auth/middleware';
+import { requireDeviceAuth, requireMobileAuth } from '../auth/middleware';
 
 interface SessionPrRow {
     owner: string;
@@ -37,11 +37,25 @@ interface BoardEntry {
  * across sessions with the same merge rules the desktop board uses: newest
  * GitHub stats win, engagement counters sum, Slack links union, and stored
  * dispositions override classification (dismissed PRs are omitted).
+ * Accepts dashboard bearer auth or desktop HMAC auth (the TUI's all-sessions
+ * view). `?days=N` bounds how long finished PRs linger (default 1, max 90).
  */
 export async function getPrBoard(request: Request, env: Env): Promise<Response> {
-    const result = await requireMobileAuth(request, env);
-    if ('error' in result) return result.error;
-    const groupId = result.auth.group_id;
+    let groupId: string;
+    if (request.headers.get('X-Device-Id')) {
+        const result = await requireDeviceAuth(request, env);
+        if ('error' in result) return result.error;
+        const row = await env.DB.prepare('SELECT group_id FROM devices WHERE id = ?')
+            .bind(result.auth.device_id)
+            .first<{ group_id: string | null }>();
+        groupId = row?.group_id || result.auth.device_id;
+    } else {
+        const result = await requireMobileAuth(request, env);
+        if ('error' in result) return result.error;
+        groupId = result.auth.group_id;
+    }
+    const daysParam = parseInt(new URL(request.url).searchParams.get('days') ?? '1', 10);
+    const lingerDays = Number.isFinite(daysParam) ? Math.min(Math.max(daysParam, 0), 90) : 1;
 
     const rows = await env.DB.prepare(
         `SELECT sp.owner, sp.repo, sp.number, sp.data, sp.updated_at, sp.session_id,
@@ -112,17 +126,18 @@ export async function getPrBoard(request: Request, env: Env): Promise<Response> 
         });
     }
 
-    const dayMs = 24 * 3600 * 1000;
+    const lingerMs = lingerDays * 24 * 3600 * 1000;
     const nowMs = Date.now();
     const prs = [...merged.values()]
         .filter((entry) => {
             // PRs gh never confirmed are scanning artifacts (doc examples,
             // wrapped shorthand) — same rule as the desktop board.
             if (!entry.pr.refreshed_at) return false;
-            // Finished PRs age off after a day, by close time or last mention.
+            // Finished PRs age off after the window (0 = open only), by close
+            // time or last mention.
             if (entry.pr.state !== 'OPEN') {
                 const latest = Math.max(entry.pr.closed_at || 0, entry.pr.last_mentioned_at || 0);
-                if (!latest || nowMs - latest > dayMs) return false;
+                if (!lingerMs || !latest || nowMs - latest > lingerMs) return false;
             }
             if (entry.disposition === 'dismissed') return false;
             if (entry.disposition === 'primary') entry.pr.primary = true;

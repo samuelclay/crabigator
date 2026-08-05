@@ -8,8 +8,9 @@
 //!
 //! The board never talks to `gh` itself — it renders what the sessions
 //! already know, with honest ages. Cloud dispositions are fetched once a
-//! minute so dashboard toggles apply here too. Only sessions with a live
-//! mirror under /tmp appear; the durable history lives on the web board.
+//! minute so dashboard toggles apply here too. The default view reads live
+//! session mirrors under /tmp; `a` flips to the durable cloud record, which
+//! includes ended sessions' PRs (tagged for resurrection) at ~1min lag.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -31,6 +32,8 @@ use crate::ui::pr_cells::{pr_row_text, PrColumnWidths};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const OVERRIDES_REFRESH: Duration = Duration::from_secs(60);
+/// The all-sessions view refetches the cloud board at this cadence.
+const CLOUD_BOARD_REFRESH: Duration = Duration::from_secs(15);
 /// A mirror this old is a session that stopped updating; its rows dim.
 const STALE_SESSION_SECS: f64 = 300.0;
 /// How long merged/closed PRs linger by default; +/- adjusts at runtime.
@@ -60,6 +63,8 @@ struct BoardPr {
 struct SessionRef {
     dir_name: String,
     age_secs: u64,
+    /// The session is gone (cloud record only) — a candidate to resurrect.
+    ended: bool,
 }
 
 /// Read every live mirror, one snapshot per session.
@@ -175,6 +180,7 @@ fn aggregate(
             entry.sessions.push(SessionRef {
                 dir_name: session.dir_name.clone(),
                 age_secs: session_age as u64,
+                ended: false,
             });
         }
     }
@@ -213,15 +219,47 @@ fn aggregate(
         })
         .collect();
 
-    // Twins first (same non-empty head branch stays adjacent), then repo
-    // grouping and stage ordering happen in render.
-    out.sort_by(|a, b| {
+    sort_entries(&mut out);
+    out
+}
+
+/// Attention first, then primaries, then recency of discussion.
+fn sort_entries(entries: &mut [BoardPr]) {
+    entries.sort_by(|a, b| {
         stage(&a.pr)
             .rank
             .cmp(&stage(&b.pr).rank)
             .then(b.pr.primary.cmp(&a.pr.primary))
             .then(b.pr.last_mentioned_at.cmp(&a.pr.last_mentioned_at))
     });
+}
+
+/// Map the cloud board (durable D1 records, ended sessions included) into
+/// the same shape the live aggregation produces. Overrides and the linger
+/// window are already applied server-side.
+fn cloud_entries_to_board(cloud: Vec<crate::cloud::CloudBoardEntry>) -> Vec<BoardPr> {
+    let now = now_secs() as u64;
+    let mut out: Vec<BoardPr> = cloud
+        .into_iter()
+        .map(|entry| {
+            let any_active = entry.sessions.iter().any(|s| s.active);
+            BoardPr {
+                pr: entry.pr,
+                sessions: entry
+                    .sessions
+                    .into_iter()
+                    .map(|s| SessionRef {
+                        dir_name: s.dir_name,
+                        age_secs: now.saturating_sub(s.last_seen_at),
+                        ended: !s.active,
+                    })
+                    .collect(),
+                uncommitted: 0,
+                stale: !any_active,
+            }
+        })
+        .collect();
+    sort_entries(&mut out);
     out
 }
 
@@ -310,28 +348,39 @@ fn format_age(secs: u64) -> String {
 /// The sessions that mention a PR, deduped by directory name (several
 /// sessions often share a cwd), with a dim idle tag for stopped mirrors.
 fn sessions_text(sessions: &[SessionRef]) -> String {
-    let mut seen: Vec<(String, usize, u64)> = Vec::new(); // (name, count, min idle age)
+    // (name, count, min age, every ref ended)
+    let mut seen: Vec<(String, usize, u64, bool)> = Vec::new();
     for session in sessions {
         match seen
             .iter_mut()
-            .find(|(name, _, _)| *name == session.dir_name)
+            .find(|(name, _, _, _)| *name == session.dir_name)
         {
-            Some((_, count, min_age)) => {
+            Some((_, count, min_age, ended)) => {
                 *count += 1;
                 *min_age = (*min_age).min(session.age_secs);
+                *ended &= session.ended;
             }
-            None => seen.push((session.dir_name.clone(), 1, session.age_secs)),
+            None => seen.push((session.dir_name.clone(), 1, session.age_secs, session.ended)),
         }
     }
     seen.iter()
-        .map(|(name, count, min_age)| {
+        .map(|(name, count, min_age, ended)| {
             let times = if *count > 1 {
                 format!(" ×{count}")
             } else {
                 String::new()
             };
-            // A live mirror updates constantly; only a stopped one gets a tag.
-            let idle = if *min_age as f64 > STALE_SESSION_SECS {
+            // Ended sessions (cloud records) read as resurrection candidates;
+            // a live mirror updates constantly, so only a stopped one gets a
+            // tag.
+            let tag = if *ended {
+                format!(
+                    " {}(ended {} ago){}",
+                    fg(color::DARK_GRAY),
+                    format_age(*min_age),
+                    fg(color::GRAY)
+                )
+            } else if *min_age as f64 > STALE_SESSION_SECS {
                 format!(
                     " {}(idle {}){}",
                     fg(color::DARK_GRAY),
@@ -341,7 +390,7 @@ fn sessions_text(sessions: &[SessionRef]) -> String {
             } else {
                 String::new()
             };
-            format!("{name}{times}{idle}")
+            format!("{name}{times}{tag}")
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -361,7 +410,7 @@ fn matches_search(pr: &SessionPr, query: &str) -> bool {
 }
 
 /// Build one full frame as displayable lines (no trailing newline handling).
-fn render(entries: &[&BoardPr], width: u16, linger_days: u64) -> Vec<String> {
+fn render(entries: &[&BoardPr], width: u16, linger_days: u64, include_ended: bool) -> Vec<String> {
     let now_ms = (now_secs() * 1000.0) as u64;
     let session_count = entries
         .iter()
@@ -384,15 +433,23 @@ fn render(entries: &[&BoardPr], width: u16, linger_days: u64) -> Vec<String> {
             fg(color::DARK_GRAY)
         )
     };
+    // The source also reads yellow off its default, so the cloud view (which
+    // lags live mirrors by up to a minute) never passes for the live one.
+    let source = if include_ended {
+        format!("{}all sessions{}", fg(color::YELLOW), fg(color::DARK_GRAY))
+    } else {
+        "live".to_string()
+    };
 
     let mut lines = Vec::new();
     lines.push(format!(
-        "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · ↑↓ scroll · / search · +/- days · q quit{}",
+        "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {} · ↑↓ scroll · / search · +/- days · a all · q quit{}",
         fg(color::PURPLE),
         RESET_FG,
         fg(color::DARK_GRAY),
         entries.len(),
         session_count,
+        source,
         window,
         RESET_FG,
     ));
@@ -545,7 +602,7 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
         let width = terminal_size().map(|(w, _)| w).unwrap_or(120);
         let entries = aggregate(&gather()?, &overrides, DEFAULT_LINGER_DAYS);
         let refs: Vec<&BoardPr> = entries.iter().collect();
-        for line in render(&refs, width, DEFAULT_LINGER_DAYS) {
+        for line in render(&refs, width, DEFAULT_LINGER_DAYS, false) {
             println!("{line}");
         }
         return Ok(());
@@ -591,6 +648,11 @@ async fn board_loop(
     let mut scroll: usize = 0;
     let mut search: Option<String> = None;
     let mut linger_days = DEFAULT_LINGER_DAYS;
+    let mut include_ended = false;
+    // Cloud fetches are throttled well below the local tick; toggling the
+    // source or changing the day window forces one.
+    let mut cloud_fetch_due = false;
+    let mut cloud_fetched: Option<Instant> = None;
     let mut dirty = false;
     let mut needs_render = false;
 
@@ -603,7 +665,19 @@ async fn board_loop(
                     *overrides = fresh;
                 }
             }
-            entries = aggregate(&gather()?, overrides, linger_days);
+            if include_ended {
+                let stale = cloud_fetched.is_none_or(|at| at.elapsed() >= CLOUD_BOARD_REFRESH);
+                if cloud_fetch_due || stale {
+                    cloud_fetch_due = false;
+                    cloud_fetched = Some(Instant::now());
+                    match crate::cloud::fetch_pr_board_standalone(linger_days).await {
+                        Ok(cloud) => entries = cloud_entries_to_board(cloud),
+                        Err(_) => entries = aggregate(&gather()?, overrides, linger_days),
+                    }
+                }
+            } else {
+                entries = aggregate(&gather()?, overrides, linger_days);
+            }
             needs_render = true;
         }
 
@@ -616,7 +690,7 @@ async fn board_loop(
                 .filter(|entry| matches_search(&entry.pr, query))
                 .collect();
             matched = filtered.len();
-            let fresh = render(&filtered, width, linger_days);
+            let fresh = render(&filtered, width, linger_days, include_ended);
             let hash = frame_hash(&fresh);
             if hash != last_frame_hash {
                 last_frame_hash = hash;
@@ -698,15 +772,27 @@ async fn board_loop(
                                 dirty = true;
                             }
                             // Widen or narrow how long finished PRs linger.
-                            // The filter runs during aggregation, so force a
-                            // fresh pass rather than waiting out the tick.
+                            // The filter runs during aggregation (server-side
+                            // for the cloud view), so force a fresh pass
+                            // rather than waiting out the tick.
                             KeyCode::Char('+') | KeyCode::Char('=') => {
                                 linger_days = (linger_days + 1).min(MAX_LINGER_DAYS);
+                                cloud_fetch_due = true;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
                             KeyCode::Char('-') | KeyCode::Char('_') => {
                                 linger_days = linger_days.saturating_sub(1);
+                                cloud_fetch_due = true;
+                                last_refresh = Instant::now() - REFRESH_INTERVAL;
+                                last_frame_hash = 0;
+                            }
+                            // Flip between live mirrors and the durable cloud
+                            // record, which includes ended sessions.
+                            KeyCode::Char('a') => {
+                                include_ended = !include_ended;
+                                cloud_fetch_due = true;
+                                scroll = 0;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
@@ -757,7 +843,7 @@ mod tests {
 
     fn render_frame(entries: &[BoardPr]) -> String {
         let refs: Vec<&BoardPr> = entries.iter().collect();
-        render(&refs, 160, DEFAULT_LINGER_DAYS).join("\n")
+        render(&refs, 160, DEFAULT_LINGER_DAYS, false).join("\n")
     }
 
     fn now_ms() -> u64 {
@@ -909,6 +995,7 @@ mod tests {
         let stale = vec![SessionRef {
             dir_name: "old-worktree".to_string(),
             age_secs: 1_260,
+            ended: false,
         }];
         let text = sessions_text(&stale);
         assert!(text.contains("old-worktree"));

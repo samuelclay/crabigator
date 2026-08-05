@@ -47,6 +47,49 @@ pub async fn fetch_pr_overrides_standalone() -> Result<HashMap<String, PrDisposi
         .await
 }
 
+/// One aggregated PR from GET /api/prs/board — the durable cross-session
+/// record, including sessions that have since ended.
+#[derive(Debug, Deserialize)]
+pub struct CloudBoardEntry {
+    pub pr: crate::pr::SessionPr,
+    #[serde(default)]
+    pub sessions: Vec<CloudBoardSession>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CloudBoardSession {
+    #[serde(default)]
+    pub dir_name: String,
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub last_seen_at: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudBoardResponse {
+    prs: Vec<CloudBoardEntry>,
+}
+
+/// Fetch the group's durable PR board from D1 — every PR any session ever
+/// tracked, with overrides already applied and finished PRs bounded by
+/// `linger_days` (0 = open only).
+pub async fn fetch_pr_board_standalone(linger_days: u64) -> Result<Vec<CloudBoardEntry>> {
+    let device = DeviceIdentity::load_or_create()?;
+    let url = format!("{}/prs/board?days={}", DEFAULT_API_URL, linger_days);
+    let headers = device.auth_headers("GET", "/api/prs/board")?;
+    let mut req = HttpClient::new().get(&url);
+    for (key, value) in headers {
+        req = req.header(&key, &value);
+    }
+    let response = req.send().await?;
+    if !response.status().is_success() {
+        anyhow::bail!("Failed to fetch PR board: {}", response.status());
+    }
+    let data: CloudBoardResponse = response.json().await?;
+    Ok(data.prs)
+}
+
 fn parse_pr_disposition(value: &str) -> Option<PrDisposition> {
     match value {
         "primary" => Some(PrDisposition::Primary),
