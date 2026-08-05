@@ -60,6 +60,30 @@ export const changesWidgetJs = `
             </div>\`;
         }
 
+        function formatSlackDate(postedAt) {
+            if (!postedAt) return '';
+            const date = new Date(postedAt * 1000);
+            if (Number.isNaN(date.getTime())) return '';
+            return new Intl.DateTimeFormat([], {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+            }).format(date);
+        }
+
+        function renderSlackThreads(threads) {
+            if (!threads || threads.length === 0) return '';
+            const rows = threads.map(thread => {
+                const date = formatSlackDate(thread.posted_at);
+                const details = [date, thread.author].filter(Boolean).join(' · ');
+                const label = details ? 'Slack · ' + details : 'Slack';
+                return '<a class="slack-thread" href="' + escapeHtml(thread.url) + '" target="_blank" rel="noopener">'
+                    + escapeHtml(label) + '</a>';
+            }).join('');
+            return '<div class="slack-threads">' + rows + '</div>';
+        }
+
         function updateChangesWidget(sessionId, changes) {
             const widget = document.getElementById('changes-' + sessionId);
             const widgetsContent = document.getElementById('widgets-content-' + sessionId);
@@ -70,28 +94,32 @@ export const changesWidgetJs = `
             const byLanguage = visibleSections.changes ? (changes?.by_language || []) : [];
             const sessionData = sessions.get(sessionId);
             const commitHistory = visibleSections.commits ? (sessionData?.commitHistory || []) : [];
+            const slackThreads = sessionData?.slackThreads || [];
             const totalChanges = byLanguage.reduce((sum, lang) => sum + (lang.changes?.length || 0), 0);
             const hasChanges = totalChanges > 0;
             const hasCommits = commitHistory.length > 0;
+            const hasSlackThreads = slackThreads.length > 0;
 
-            if (!hasChanges && !hasCommits) {
-                // Hide widget entirely when no changes or session commits exist.
+            if (!hasChanges && !hasCommits && !hasSlackThreads) {
+                // Hide widget entirely when it has no links, changes, or commits.
                 widget.classList.add('hidden-changes');
                 widgetsContent?.classList.add('no-changes');
                 return;
             }
 
-            // Show widget when there are current changes or recorded commits.
+            // Show the widget when it has a Slack link, change, or commit.
             widget.classList.remove('hidden-changes');
             widgetsContent?.classList.remove('no-changes');
 
             // Build header: "Language N changes" (like CLI)
             const firstLang = byLanguage.find(lang => (lang.changes?.length || 0) > 0) || byLanguage[0];
             const changeWord = totalChanges === 1 ? 'change' : 'changes';
-            const headerLabel = hasChanges ? firstLang.language : 'Commits';
+            const headerLabel = hasChanges ? firstLang.language : hasSlackThreads ? 'Slack' : 'Commits';
             const headerCount = hasChanges
                 ? totalChanges + ' ' + changeWord
-                : commitHistory.length + ' ' + (commitHistory.length === 1 ? 'commit' : 'commits');
+                : hasSlackThreads
+                    ? slackThreads.length + ' thread' + (slackThreads.length === 1 ? '' : 's')
+                    : commitHistory.length + ' ' + (commitHistory.length === 1 ? 'commit' : 'commits');
 
             // Compute column widths for alignment
             const { delNumWidth, addNumWidth } = computeChangesColumnWidths(byLanguage);
@@ -142,8 +170,11 @@ export const changesWidgetJs = `
                 }
             }
 
-            const commitHistoryHtml = renderCommitHistory(commitHistory, hasChanges);
-            const bodyHtml = (hasChanges ? \`<div class="changes-list">\${changesHtml}</div>\` : '') + commitHistoryHtml;
+            const slackThreadsHtml = renderSlackThreads(slackThreads);
+            const commitHistoryHtml = renderCommitHistory(commitHistory, hasChanges || hasSlackThreads);
+            const bodyHtml = slackThreadsHtml
+                + (hasChanges ? \`<div class="changes-list\${hasSlackThreads ? ' with-divider' : ''}">\${changesHtml}</div>\` : '')
+                + commitHistoryHtml;
             const newHtml = \`
                 <div class="widget-title"><span style="color:#db6d28">\${headerLabel}</span> <span style="float:right;color:#8b949e">\${headerCount}</span></div>
                 \${bodyHtml}

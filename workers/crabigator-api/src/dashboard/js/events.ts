@@ -64,6 +64,7 @@ export const eventsJs = `
                         scrollback_history: '#6b7280',
                         title: '#06b6d4',
                         title_history: '#06b6d4',
+                        slack_threads: '#58d6ff',
                         desktop_status: '#ef4444',
                         prompt: '#f97316',
                         recap: '#22d3ee',
@@ -275,6 +276,12 @@ export const eventsJs = `
                 case 'title_history':
                     updateTitlesWidget(sessionId, event.history);
                     break;
+                case 'slack_threads':
+                    if (sessionData) {
+                        sessionData.slackThreads = event.threads || [];
+                        updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
+                    }
+                    break;
                 case 'prompt':
                     // Interactive prompt (question or permission)
                     updatePromptPanel(sessionId, event.prompt);
@@ -288,6 +295,9 @@ export const eventsJs = `
                     break;
                 case 'recap_history':
                     updateRecapHistoryWidget(sessionId, event.history || []);
+                    if (sessionData) {
+                        updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
+                    }
                     break;
                 case 'prs':
                     updatePrList(sessionId, event.prs || []);

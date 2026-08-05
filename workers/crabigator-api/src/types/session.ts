@@ -204,12 +204,25 @@ export interface TitleHistoryEvent {
 export interface TurnRecap {
     prompt_count: number;
     generated_at: number;
+    title?: string;
     variant: 'brief' | 'bullets';
     headline: string;
     bullets: string[];
     next_prompt_notes: string[];
     artifacts: string[];
     line_delta: { additions: number; deletions: number };
+    slack_threads?: SlackThread[];
+}
+
+export interface SlackThread {
+    url: string;
+    posted_at: number;
+    author?: string;
+}
+
+export interface SlackThreadsEvent {
+    type: 'slack_threads';
+    threads: SlackThread[];
 }
 
 /**
@@ -371,6 +384,7 @@ export type SessionEvent =
     | ScreenEvent
     | TitleEvent
     | TitleHistoryEvent
+    | SlackThreadsEvent
     | DesktopStatusEvent
     | PromptEvent
     | RecapEvent

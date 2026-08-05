@@ -614,6 +614,7 @@ export const sessionJs = `
                 deviceName: session.device_name || null,
                 lastActivityAt: getSessionActivityTime(session),
                 recapHistory: [],
+                slackThreads: [],
                 commitHistory: [],
                 // Scrollback chunking: store full buffer, render only visible portion
                 scrollbackBuffer: [],      // Full scrollback lines

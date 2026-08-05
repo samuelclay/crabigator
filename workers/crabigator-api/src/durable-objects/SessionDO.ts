@@ -7,6 +7,7 @@ import type {
     GitEvent,
     GitCommitInfo,
     ChangesEvent,
+    SlackThread,
     StatsEvent,
 } from '../types/session';
 import type { Env } from '../types/env';
@@ -25,6 +26,8 @@ interface PersistentState {
     lastRecap: any | null;
     /** Full recap history for this session, oldest first. */
     lastRecapHistory: any[] | null;
+    /** Slack permalinks pasted during this session. */
+    lastSlackThreads: SlackThread[] | null;
     /** PRs created/updated during this session (recap panel). */
     lastPrs: any[] | null;
     /** Commits detected after this web session established a baseline, oldest first. */
@@ -128,6 +131,7 @@ export class SessionDO implements DurableObject {
             lastTitleHistory: null,
             lastRecap: null,
             lastRecapHistory: null,
+            lastSlackThreads: null,
             lastPrs: null,
             lastCommitHistory: null,
             lastCommitHeadHash: null,
@@ -604,6 +608,11 @@ export class SessionDO implements DurableObject {
                 persistentChanged = true;
                 break;
             }
+            case 'slack_threads': {
+                this.persistentState.lastSlackThreads = event.threads;
+                persistentChanged = true;
+                break;
+            }
             case 'prs': {
                 this.persistentState.lastPrs = (event as any).prs || [];
                 persistentChanged = true;
@@ -812,6 +821,13 @@ export class SessionDO implements DurableObject {
                 history: this.persistentState.lastRecapHistory,
             };
             await this.sendSSE(writer, historyEvent as SessionEvent);
+        }
+        if (this.persistentState.lastSlackThreads && this.persistentState.lastSlackThreads.length > 0) {
+            const slackThreadsEvent = {
+                type: 'slack_threads' as const,
+                threads: this.persistentState.lastSlackThreads,
+            };
+            await this.sendSSE(writer, slackThreadsEvent as SessionEvent);
         }
         if (this.persistentState.lastPrs && this.persistentState.lastPrs.length > 0) {
             const prsEvent = {

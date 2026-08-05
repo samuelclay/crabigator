@@ -216,6 +216,27 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     font-size: 10px;
 }
 
+.slack-threads {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.changes-list.with-divider {
+    border-top: 1px solid rgba(88, 214, 255, 0.16);
+    margin-top: 6px;
+    padding-top: 6px;
+}
+.slack-thread {
+    color: #58d6ff;
+    font-size: 10px;
+    line-height: 1.35;
+    overflow: hidden;
+    text-decoration: none;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.slack-thread:hover { text-decoration: underline; }
+
 /* Stack widgets for multi-column layouts */
 .container[data-layout="2"] .widgets-content,
 .container[data-layout="3"] .widgets-content,
