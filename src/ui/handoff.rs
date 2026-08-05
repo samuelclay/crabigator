@@ -739,6 +739,7 @@ mod tests {
             slack_comment_urls: Vec::new(),
             ai_note: String::new(),
             ai_confidence: String::new(),
+            fetch_error: String::new(),
             refreshed_at: 0,
         }
     }
@@ -790,6 +791,20 @@ mod tests {
         assert!(cells[0]
             .0
             .contains(&format!("\x1b]8;;{}\x07★", pr_action_url(&pr, "secondary"))));
+    }
+
+    #[test]
+    fn unenriched_prs_show_fetch_progress_then_errors() {
+        let mut pr = sample_pr("portal", 1079, "");
+        pr.state = String::new();
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
+        let row = pr_row_text(160, &pr, &widths);
+        assert!(row.contains("fetch…"), "never-enriched PR shows progress");
+
+        pr.fetch_error = "HTTP 403: rate limited".to_string();
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
+        let row = pr_row_text(160, &pr, &widths);
+        assert!(row.contains("error"), "failed fetch says so, not silence");
     }
 
     #[test]

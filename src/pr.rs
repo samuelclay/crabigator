@@ -242,6 +242,11 @@ pub struct SessionPr {
     /// high / medium / low — the recap's confidence that the PR is finished.
     #[serde(default)]
     pub ai_confidence: String,
+    /// Why the most recent `gh pr view` failed (first line of stderr), empty
+    /// after a success. A never-enriched PR with this set renders a fetch
+    /// error instead of looking silently bare; retries clear it on success.
+    #[serde(default)]
+    pub fetch_error: String,
     /// Unix ms of the last successful `gh` refresh (0 = never enriched yet).
     pub refreshed_at: u64,
 }
@@ -286,6 +291,7 @@ impl SessionPr {
             slack_comment_urls: Vec::new(),
             ai_note: String::new(),
             ai_confidence: String::new(),
+            fetch_error: String::new(),
             refreshed_at: 0,
         }
     }
@@ -550,6 +556,9 @@ pub struct PrTracker {
     /// Last `gh pr view` attempt per PR URL. Failed requests back off too, rather
     /// than retrying on every two-second idle hook tick.
     refresh_attempted_at: HashMap<String, Instant>,
+    /// Consecutive `gh pr view` failures per PR URL, cleared on success.
+    /// Never-enriched PRs retry on this count's backoff schedule.
+    fetch_failures: HashMap<String, u32>,
     /// Last review-thread query attempt per PR URL. Failures back off like
     /// successes, so a PR whose threads we can't read isn't re-queried each tick.
     comments_attempted_at: HashMap<String, Instant>,
@@ -597,6 +606,7 @@ impl PrTracker {
             mention_events_seen: HashMap::new(),
             scan_prompt_owner: None,
             refresh_attempted_at: HashMap::new(),
+            fetch_failures: HashMap::new(),
             comments_attempted_at: HashMap::new(),
             pr_active_at: HashMap::new(),
             update_commands_seen: HashMap::new(),
@@ -1179,6 +1189,18 @@ impl PrTracker {
                                 // deleted later keeps its last known stats.
                                 self.prs.retain(|pr| pr.url != *url || pr.refreshed_at > 0);
                                 changed |= self.prs.len() != before;
+                            } else {
+                                // Real failure (auth, network, rate limit):
+                                // remember it so the row can say so instead of
+                                // sitting silently bare, and so retries back off.
+                                *self.fetch_failures.entry(url.clone()).or_insert(0) += 1;
+                                let brief = brief_error(&error);
+                                if let Some(pr) = self.prs.iter_mut().find(|p| p.url == *url) {
+                                    if pr.fetch_error != brief {
+                                        pr.fetch_error = brief;
+                                        changed = true;
+                                    }
+                                }
                             }
                         }
                     }
@@ -1194,6 +1216,7 @@ impl PrTracker {
         // A PR that just became known (or whose count aged out) queries here;
         // its result lands on a later poll.
         self.refresh_active_prs();
+        self.retry_unenriched();
         self.refresh_review_threads();
 
         changed
@@ -1227,6 +1250,30 @@ impl PrTracker {
             .collect();
         for url in due {
             self.refresh_url(&url, false);
+        }
+    }
+
+    /// Keep trying PRs that have never enriched. Their row is a bare identity
+    /// until `gh pr view` succeeds, and `refresh_active_prs` skips them (their
+    /// state isn't OPEN yet), so without this a failed first fetch would wait
+    /// for the next turn boundary — potentially the whole of a long turn.
+    fn retry_unenriched(&mut self) {
+        let due: Vec<String> = self
+            .prs
+            .iter()
+            .filter(|pr| pr.refreshed_at == 0 && !pr.url.is_empty() && !pr.dismissed)
+            .map(|pr| pr.url.clone())
+            .filter(|url| !self.pending.contains_key(url))
+            .filter(|url| {
+                let failures = self.fetch_failures.get(url).copied().unwrap_or(0);
+                self.refresh_attempted_at
+                    .get(url)
+                    .map(|t| t.elapsed() >= unenriched_retry_delay(failures))
+                    .unwrap_or(true)
+            })
+            .collect();
+        for url in due {
+            self.spawn_fetch(url, false);
         }
     }
 
@@ -1267,6 +1314,7 @@ impl PrTracker {
         }
         let (owner, repo) = split_owner_repo(&url).unwrap_or_default();
         let now = now_unix_ms();
+        self.fetch_failures.remove(&url);
         let origin_slack = self.current_origin_slack();
         let (passed, failed, pending) = count_checks(&json.status_check_rollup);
         let total = passed + failed + pending;
@@ -1300,6 +1348,7 @@ impl PrTracker {
                 existing.comments_url = String::new();
                 existing.comments_refreshed_at = 0;
             }
+            existing.fetch_error.clear();
             existing.refreshed_at = now;
             let changed = *existing != before;
             if existing.state != "OPEN" {
@@ -1342,6 +1391,28 @@ impl PrTracker {
         });
         true
     }
+}
+
+/// Delay before re-attempting a never-enriched PR: 30s doubling to a
+/// four-minute ceiling, so a transient failure recovers quickly without
+/// hammering `gh` when something is durably wrong (auth, private repo).
+fn unenriched_retry_delay(failures: u32) -> Duration {
+    REFRESH_THROTTLE * 2u32.pow(failures.min(3))
+}
+
+/// First meaningful line of a `gh` error, capped so a stack of stderr noise
+/// doesn't travel through the mirror and cloud streams.
+fn brief_error(error: &str) -> String {
+    let line = error
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("gh pr view failed");
+    let mut brief: String = line.chars().take(120).collect();
+    if brief.len() < line.len() {
+        brief.push('…');
+    }
+    brief
 }
 
 /// Where the CI column should link for this PR.
@@ -1896,6 +1967,24 @@ fn now_unix_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unenriched_retry_delay_doubles_then_caps() {
+        assert_eq!(unenriched_retry_delay(0), Duration::from_secs(30));
+        assert_eq!(unenriched_retry_delay(1), Duration::from_secs(60));
+        assert_eq!(unenriched_retry_delay(2), Duration::from_secs(120));
+        assert_eq!(unenriched_retry_delay(3), Duration::from_secs(240));
+        assert_eq!(unenriched_retry_delay(12), Duration::from_secs(240));
+    }
+
+    #[test]
+    fn brief_error_keeps_the_first_line_and_caps_length() {
+        assert_eq!(brief_error("HTTP 403\nfull stack trace"), "HTTP 403");
+        assert_eq!(brief_error("\n  spaced  \nrest"), "spaced");
+        assert_eq!(brief_error(""), "gh pr view failed");
+        let long = "x".repeat(300);
+        assert_eq!(brief_error(&long).chars().count(), 121, "120 chars + ellipsis");
+    }
 
     /// The PR numbers a chunk of text mentions in prose, in order.
     fn prose_pr_numbers(text: &str) -> Vec<u64> {

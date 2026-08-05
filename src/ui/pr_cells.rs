@@ -472,7 +472,9 @@ fn pr_merge_label(pr: &SessionPr) -> (&'static str, u8) {
     }
 }
 
-/// `(label, color)` for a PR's state; empty label when unknown.
+/// `(label, color)` for a PR's state. A PR that has never enriched shows
+/// fetch progress or the failure instead of a silently bare row — retries
+/// run automatically, so "error" means "failing, still trying".
 fn pr_state_label(pr: &SessionPr) -> (&'static str, u8) {
     if pr.state == "MERGED" {
         ("merged", color::PURPLE)
@@ -483,6 +485,10 @@ fn pr_state_label(pr: &SessionPr) -> (&'static str, u8) {
     } else if pr.state == "OPEN" {
         // Match the softer green used for the dir path in the git widget.
         ("open", color::LIGHT_GREEN)
+    } else if !pr.fetch_error.is_empty() {
+        ("error", color::RED)
+    } else if pr.refreshed_at == 0 {
+        ("fetch…", color::GRAY)
     } else {
         ("", color::GRAY)
     }

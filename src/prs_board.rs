@@ -377,7 +377,12 @@ struct Stage {
 }
 
 fn stage(pr: &SessionPr) -> Stage {
-    let (rank, label, color) = if pr.state == "MERGED" {
+    // A PR with no state yet was never enriched: show the fetch, not "closed".
+    let (rank, label, color) = if pr.state.is_empty() && !pr.fetch_error.is_empty() {
+        (2, "fetch failed, retrying", color::RED)
+    } else if pr.state.is_empty() {
+        (2, "fetching", color::GRAY)
+    } else if pr.state == "MERGED" {
         (6, "merged", color::PURPLE)
     } else if pr.state != "OPEN" {
         (7, "closed", color::DARK_GRAY)
@@ -403,6 +408,10 @@ fn stage(pr: &SessionPr) -> Stage {
 /// position sets the base; the recap's confidence nudges open PRs a step
 /// either way. Merged is always 100% — no model opinion overrides a merge.
 fn progress_percent(pr: &SessionPr) -> u8 {
+    if pr.state.is_empty() {
+        // Not enriched yet — nothing is known, so the bar stays near empty.
+        return 5;
+    }
     if pr.state != "OPEN" {
         return 100;
     }
