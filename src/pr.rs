@@ -747,8 +747,8 @@ impl PrTracker {
         &self.slack_threads
     }
 
-    /// Add poster names learned by the recap model without allowing it to add
-    /// URLs that were never present in a user prompt.
+    /// Add channel and poster names learned by the recap model without allowing
+    /// it to add URLs that were never present in a user prompt.
     pub fn apply_slack_metadata(&mut self, threads: &[SlackThread]) -> bool {
         let mut changed = false;
         for thread in threads {
@@ -757,6 +757,12 @@ impl PrTracker {
                 .iter_mut()
                 .find(|existing| existing.url == thread.url)
             {
+                if let Some(channel) = thread.channel.as_ref().filter(|channel| {
+                    !channel.is_empty() && existing.channel.as_ref() != Some(*channel)
+                }) {
+                    existing.channel = Some(channel.clone());
+                    changed = true;
+                }
                 if existing.author.is_none() && thread.author.is_some() {
                     existing.author = thread.author.clone();
                     changed = true;
@@ -2587,8 +2593,13 @@ mod tests {
         assert_eq!(tracker.slack_threads()[1].url, second);
 
         let mut metadata = extract_threads(first);
+        metadata[0].channel = Some("builder".to_string());
         metadata[0].author = Some("Sam Clay".to_string());
         assert!(tracker.apply_slack_metadata(&metadata));
+        assert_eq!(
+            tracker.slack_threads()[0].channel.as_deref(),
+            Some("builder")
+        );
         assert_eq!(
             tracker.slack_threads()[0].author.as_deref(),
             Some("Sam Clay")

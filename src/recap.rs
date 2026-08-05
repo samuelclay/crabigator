@@ -939,9 +939,9 @@ fn build_anthropic_request(
             .collect::<Vec<_>>()
             .join("\n");
         (
-            ",\"slack_threads\":[{\"url\":\"\",\"author\":\"\"}]".to_string(),
+            ",\"slack_threads\":[{\"url\":\"\",\"channel\":\"\",\"author\":\"\"}]".to_string(),
             format!(
-                "- slack_threads: one entry for each URL below, unchanged and in the same order. Set author to the poster's display name only when the transcript identifies it clearly; otherwise use an empty string.\nSlack permalinks:\n{urls}\n"
+                "- slack_threads: one entry for each URL below, unchanged and in the same order. Set channel to its readable channel name and author to the poster's display name only when the transcript identifies them clearly; otherwise use empty strings.\nSlack permalinks:\n{urls}\n"
             ),
         )
     };
@@ -1099,7 +1099,7 @@ fn parse_recap_response(
     } else {
         None
     };
-    let slack_threads = merge_slack_authors(slack_threads, &value);
+    let slack_threads = merge_slack_metadata(slack_threads, &value);
 
     Ok(TurnRecap {
         prompt_count: job.prompt_count,
@@ -1116,9 +1116,9 @@ fn parse_recap_response(
     })
 }
 
-/// Apply optional model-derived poster names to the deterministic permalink
-/// list. Unknown or invented URLs never enter session state.
-fn merge_slack_authors(threads: &[SlackThread], value: &Value) -> Vec<SlackThread> {
+/// Apply optional model-derived channel and poster names to the deterministic
+/// permalink list. Unknown or invented URLs never enter session state.
+fn merge_slack_metadata(threads: &[SlackThread], value: &Value) -> Vec<SlackThread> {
     let candidates = value
         .get("slack_threads")
         .and_then(|value| value.as_array())
@@ -1128,15 +1128,25 @@ fn merge_slack_authors(threads: &[SlackThread], value: &Value) -> Vec<SlackThrea
     threads
         .iter()
         .map(|thread| {
-            let author = candidates
+            let candidate = candidates
                 .iter()
-                .find(|entry| entry.get("url").and_then(|url| url.as_str()) == Some(&thread.url))
+                .find(|entry| entry.get("url").and_then(|url| url.as_str()) == Some(&thread.url));
+            let channel = candidate
+                .and_then(|entry| entry.get("channel"))
+                .and_then(|channel| channel.as_str())
+                .map(clean_one_line)
+                .map(|channel| channel.trim_start_matches('#').to_string())
+                .filter(|channel| !channel.is_empty())
+                .map(|channel| truncate_end(&channel, 60))
+                .or_else(|| thread.channel.clone());
+            let author = candidate
                 .and_then(|entry| entry.get("author"))
                 .and_then(|author| author.as_str())
                 .map(clean_one_line)
                 .filter(|author| !author.is_empty())
                 .map(|author| truncate_end(&author, 60));
             SlackThread {
+                channel,
                 author,
                 ..thread.clone()
             }
@@ -1369,7 +1379,7 @@ mod tests {
             r#"{"variant":"brief","headline":"Linked the thread","title":"Track Slack Discussions.",
                 "bullets":[],"next_prompt_notes":[],"artifacts":[],
                 "slack_threads":[
-                    {"url":"https://tavus.slack.com/archives/C123/p1754404040123456?thread_ts=1754400000.000000&cid=C123","author":"Sam Clay"},
+                    {"url":"https://tavus.slack.com/archives/C123/p1754404040123456?thread_ts=1754400000.000000&cid=C123","channel":"builder","author":"Sam Clay"},
                     {"url":"https://invented.slack.com/archives/C9/p1754404040123456","author":"Nope"}
                 ]}"#,
             &slack,
@@ -1377,6 +1387,7 @@ mod tests {
         .unwrap();
         assert_eq!(codex.title.as_deref(), Some("Track Slack Discussions"));
         assert_eq!(codex.slack_threads.len(), 1);
+        assert_eq!(codex.slack_threads[0].channel.as_deref(), Some("builder"));
         assert_eq!(codex.slack_threads[0].author.as_deref(), Some("Sam Clay"));
     }
 

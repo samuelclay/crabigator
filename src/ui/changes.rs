@@ -10,7 +10,7 @@ use anyhow::Result;
 
 use crate::ide::IdeKind;
 use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges, NodeKind};
-use crate::slack::{display_label as slack_display_label, SlackThread};
+use crate::slack::{compact_display_label, SlackThread};
 use crate::terminal::escape::{self, color, fg, hyperlink, RESET};
 
 use super::utils::{digit_count, strip_ansi_len, truncate_middle, truncate_path};
@@ -177,12 +177,7 @@ pub fn draw_changes_widget(
     if area.row >= slack_start_row {
         let slack_idx = (area.row - slack_start_row) as usize;
         if let Some(thread) = slack_threads.get(slack_idx) {
-            let label = slack_display_label(thread);
-            let trimmed = if label.chars().count() > inner_width_usize {
-                truncate_middle(&label, inner_width_usize)
-            } else {
-                label
-            };
+            let trimmed = compact_display_label(thread, inner_width_usize);
             let linked = hyperlink(&thread.url, &trimmed);
             let row = format!("{}{}{}", fg(color::CYAN), linked, RESET);
             write_padded_row(stdout, &row, inner_width_usize)?;
