@@ -368,9 +368,21 @@ fn render(entries: &[&BoardPr], width: u16, linger_days: u64) -> Vec<String> {
         .flat_map(|e| e.sessions.iter().map(|s| s.dir_name.as_str()))
         .collect::<HashSet<_>>()
         .len();
-    let window = match linger_days {
+    // The window reads gray at the default and yellow once adjusted, so an
+    // unusual view never masquerades as the everyday one.
+    let window_text = match linger_days {
         0 => "open only".to_string(),
         days => format!("done ≤ {days}d"),
+    };
+    let window = if linger_days == DEFAULT_LINGER_DAYS {
+        window_text
+    } else {
+        format!(
+            "{}{}{}",
+            fg(color::YELLOW),
+            window_text,
+            fg(color::DARK_GRAY)
+        )
     };
 
     let mut lines = Vec::new();

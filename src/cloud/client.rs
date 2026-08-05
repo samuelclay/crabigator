@@ -116,7 +116,9 @@ pub struct CloudStatus {
     pub _backoff_secs: u64,
     /// Number of queued events waiting to be sent
     pub _queue_len: usize,
-    /// Session ID (for debug display)
+    /// Session ID — only read by the debug-build "Streaming <id>" header,
+    /// so release builds see it as dead.
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub session_id: Option<String>,
 }
 
