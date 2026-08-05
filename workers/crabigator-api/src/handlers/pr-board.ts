@@ -13,7 +13,17 @@ interface SessionPrRow {
     session_state: string | null;
     is_active: number | null;
     last_seen_at: number | null;
+    titles: string | null;
+    recap: string | null;
     disposition: string | null;
+}
+
+/** Per-session recap brief stored in sessions.recap (see SessionDO). */
+interface SessionRecapBrief {
+    headline: string;
+    generated_at: number;
+    additions: number;
+    deletions: number;
 }
 
 /** Resolve the caller's group from desktop HMAC or dashboard bearer auth. */
@@ -120,6 +130,10 @@ interface BoardEntry {
         state: string;
         active: boolean;
         last_seen_at: number;
+        /** The session's current terminal title (last of the titles history). */
+        title: string;
+        /** The session's latest recap brief, when one was recorded. */
+        recap: SessionRecapBrief | null;
     }[];
 }
 
@@ -152,6 +166,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     const rows = await env.DB.prepare(
         `SELECT sp.owner, sp.repo, sp.number, sp.data, sp.updated_at, sp.session_id,
                 s.cwd, s.state AS session_state, s.is_active, s.last_seen_at,
+                s.titles, s.recap,
                 o.disposition
          FROM session_prs sp
          JOIN sessions s ON s.id = sp.session_id
@@ -209,12 +224,35 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             entry.pr.ai_confidence = pr.ai_confidence || '';
         }
         const cwd = row.cwd || '';
+        let title = '';
+        try {
+            const titles = JSON.parse(row.titles || '[]');
+            if (Array.isArray(titles) && titles.length > 0) title = String(titles[titles.length - 1]);
+        } catch {
+            // Unparseable titles column contributes nothing.
+        }
+        let recap: SessionRecapBrief | null = null;
+        try {
+            const parsed = JSON.parse(row.recap || 'null');
+            if (parsed?.headline) {
+                recap = {
+                    headline: String(parsed.headline),
+                    generated_at: parsed.generated_at || 0,
+                    additions: parsed.additions || 0,
+                    deletions: parsed.deletions || 0,
+                };
+            }
+        } catch {
+            // Unparseable recap column contributes nothing.
+        }
         entry.sessions.push({
             session_id: row.session_id,
             dir_name: cwd.split('/').filter(Boolean).pop() || cwd,
             state: row.session_state || '',
             active: !!row.is_active,
             last_seen_at: row.last_seen_at || 0,
+            title,
+            recap,
         });
     }
 

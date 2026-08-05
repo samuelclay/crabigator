@@ -48,6 +48,22 @@ interface EphemeralState {
     eventSequence: number;
 }
 
+/**
+ * The slice of a recap event the PR board needs, as the JSON string stored
+ * in sessions.recap: headline, generation time, and the turn's line delta.
+ * Null when the event carries no finished recap.
+ */
+function recapBrief(event: any): string | null {
+    const latest = event?.latest;
+    if (!latest?.headline) return null;
+    return JSON.stringify({
+        headline: latest.headline,
+        generated_at: latest.generated_at || 0,
+        additions: latest.line_delta?.additions || 0,
+        deletions: latest.line_delta?.deletions || 0,
+    });
+}
+
 /** Viewer activity timeout - 35s to allow for 5s heartbeat intervals */
 const VIEWER_ACTIVITY_TIMEOUT_MS = 35_000;
 /** Desktop heartbeat cadence is 2h; allow multiple missed beats before culling. */
@@ -567,8 +583,19 @@ export class SessionDO implements DurableObject {
                 const incoming = JSON.stringify(event);
                 const stored = JSON.stringify(this.persistentState.lastRecap);
                 if (stored !== incoming) {
+                    const previousBrief = recapBrief(this.persistentState.lastRecap);
                     this.persistentState.lastRecap = event;
                     persistentChanged = true;
+                    // Persist a small brief to D1 so the PR board can show
+                    // what each session was doing — and how stale that
+                    // picture is — after it ends (titles precedent).
+                    const brief = recapBrief(event);
+                    if (brief && brief !== previousBrief && this.persistentState.sessionId) {
+                        this.env.DB.prepare('UPDATE sessions SET recap = ? WHERE id = ?')
+                            .bind(brief, this.persistentState.sessionId)
+                            .run()
+                            .catch(() => {});
+                    }
                 }
                 break;
             }
