@@ -57,6 +57,9 @@ export const prBoardCss = `
     margin-bottom: 2px;
 }
 .pr-board-row:hover { background: var(--bg-tertiary, #21262d); }
+/* Secondary PRs recede so the primary being worked on stands out. */
+.pr-board-row.pr-secondary { opacity: 0.7; }
+.pr-board-row.pr-secondary:hover { opacity: 1; }
 .pr-board-row .pr-row-top {
     display: flex;
     align-items: center;

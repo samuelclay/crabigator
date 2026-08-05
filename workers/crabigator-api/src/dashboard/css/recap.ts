@@ -295,6 +295,12 @@ body.hide-section-prs .session-prs { display: none !important; }
     border-left: 2px solid rgba(163, 113, 247, 0.55);
     border-radius: 4px;
 }
+/* Secondary PRs recede so the primary being worked on stands out. */
+.session-prs .pr-row.pr-secondary {
+    opacity: 0.7;
+    border-left-color: rgba(110, 118, 129, 0.55);
+}
+.session-prs .pr-row.pr-secondary:hover { opacity: 1; }
 .session-prs .pr-row-top {
     display: flex;
     align-items: center;
@@ -312,7 +318,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     border-radius: 3px;
     flex: 0 0 auto;
 }
-/* Primary/secondary toggle: ★ purple for the PR being worked on, ⑂ gray for
+/* Primary/secondary toggle: ★ purple for the PR being worked on, ☆ gray for
    the rest. Click flips the disposition for the whole device group. */
 .session-prs .pr-primary-toggle {
     font-size: 12px;

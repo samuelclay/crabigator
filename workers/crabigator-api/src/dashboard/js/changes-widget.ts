@@ -541,21 +541,22 @@ export const changesWidgetJs = `
                 const isPrimary = prDisposition(pr) === 'primary';
                 const star = '<span class="pr-primary-toggle ' + (isPrimary ? 'primary' : 'secondary')
                     + '" title="' + (isPrimary ? 'Primary — click to make secondary' : 'Secondary — click to make primary')
-                    + '">' + (isPrimary ? '★' : '⑂') + '</span>';
+                    + '">' + (isPrimary ? '★' : '☆') + '</span>';
                 const dismiss = '<span class="pr-dismiss" title="Dismiss this PR everywhere">✕</span>';
                 // Right-hand status cluster: state, CI, merge cleanliness.
                 const status = '<span class="pr-status">' + badge + prCiBadge(pr)
                     + prCommentsBadge(pr) + prMergeBadge(pr) + dismiss + '</span>';
 
+                const secondary = isPrimary ? '' : ' pr-secondary';
                 if (!expanded) {
                     // One compact line: repo #num + diff on the left, status on the right.
-                    return '<div class="pr-row pr-collapsed"><div class="pr-row-top">' + star + link + diff + status + '</div></div>';
+                    return '<div class="pr-row pr-collapsed' + secondary + '"><div class="pr-row-top">' + star + link + diff + status + '</div></div>';
                 }
                 const branch = pr.branch
                     ? '<span class="pr-branch" title="' + escapeHtml(pr.branch) + '">⎇ ' + escapeHtml(pr.branch) + '</span>'
                     : '';
                 const title = pr.title ? '<div class="pr-title" title="' + escapeHtml(pr.title) + '">' + escapeHtml(pr.title) + '</div>' : '';
-                return '<div class="pr-row">' +
+                return '<div class="pr-row' + secondary + '">' +
                     '<div class="pr-row-top">' + star + link + diff + status + '</div>' +
                     title +
                     (branch ? '<div class="pr-row-bottom">' + branch + '</div>' : '') +

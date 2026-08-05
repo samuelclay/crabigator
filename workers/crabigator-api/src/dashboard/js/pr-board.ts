@@ -144,7 +144,7 @@ export const prBoardJs = `
             const isPrimary = entry.primary;
             const star = '<span class="pr-primary-toggle ' + (isPrimary ? 'primary' : 'secondary')
                 + '" title="' + (isPrimary ? 'Primary — click to make secondary' : 'Secondary — click to make primary')
-                + '">' + (isPrimary ? '★' : '⑂') + '</span>';
+                + '">' + (isPrimary ? '★' : '☆') + '</span>';
             const link = '<a class="pr-link" href="' + escapeHtml(pr.url)
                 + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(pr.repo + ' #' + pr.number) + '</a>';
             const title = pr.title
@@ -192,7 +192,7 @@ export const prBoardJs = `
                 extras += prExternalLink(pr.slack_comment_urls[i], 'pb-slack', label);
             }
 
-            return '<div class="pr-board-row">'
+            return '<div class="pr-board-row' + (isPrimary ? '' : ' pr-secondary') + '">'
                 + '<div class="pr-row-top">' + star + link + title + diff + status + '</div>'
                 + '<div class="pr-board-meta">' + meta + '</div>'
                 + (extras ? '<div class="pr-board-extras">' + extras + '</div>' : '')
