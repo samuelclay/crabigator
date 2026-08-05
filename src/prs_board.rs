@@ -33,8 +33,10 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const OVERRIDES_REFRESH: Duration = Duration::from_secs(60);
 /// A mirror this old is a session that stopped updating; its rows dim.
 const STALE_SESSION_SECS: f64 = 300.0;
-/// Merged/closed PRs age off the board after a day.
-const CLOSED_LINGER_MS: u64 = 24 * 3600 * 1000;
+/// How long merged/closed PRs linger by default; +/- adjusts at runtime.
+const DEFAULT_LINGER_DAYS: u64 = 1;
+/// Ceiling for the +key so the window can't run away unbounded.
+const MAX_LINGER_DAYS: u64 = 90;
 
 /// One live session's contribution to the board.
 struct SessionSnapshot {
@@ -108,9 +110,11 @@ fn now_secs() -> f64 {
 }
 
 /// Merge session snapshots into deduped board entries, honoring overrides.
+/// `linger_days` bounds how long finished PRs stay visible (0 = open only).
 fn aggregate(
     snapshots: &[SessionSnapshot],
     overrides: &HashMap<String, PrDisposition>,
+    linger_days: u64,
 ) -> Vec<BoardPr> {
     let now = now_secs();
     let mut merged: HashMap<String, BoardPr> = HashMap::new();
@@ -187,11 +191,15 @@ fn aggregate(
             if entry.pr.refreshed_at == 0 {
                 return None;
             }
-            // Finished PRs age off after a day, judged by the close time when
-            // known, else by the last time any session spoke about them.
+            // Finished PRs age off after the linger window (0 = open only),
+            // judged by the close time when known, else by the last time any
+            // session spoke about them.
             if entry.pr.state != "OPEN" {
                 let latest = entry.pr.closed_at.max(entry.pr.last_mentioned_at);
-                if latest == 0 || now_ms.saturating_sub(latest) > CLOSED_LINGER_MS {
+                if linger_days == 0
+                    || latest == 0
+                    || now_ms.saturating_sub(latest) > linger_days * 24 * 3600 * 1000
+                {
                     return None;
                 }
             }
@@ -353,22 +361,27 @@ fn matches_search(pr: &SessionPr, query: &str) -> bool {
 }
 
 /// Build one full frame as displayable lines (no trailing newline handling).
-fn render(entries: &[&BoardPr], width: u16) -> Vec<String> {
+fn render(entries: &[&BoardPr], width: u16, linger_days: u64) -> Vec<String> {
     let now_ms = (now_secs() * 1000.0) as u64;
     let session_count = entries
         .iter()
         .flat_map(|e| e.sessions.iter().map(|s| s.dir_name.as_str()))
         .collect::<HashSet<_>>()
         .len();
+    let window = match linger_days {
+        0 => "open only".to_string(),
+        days => format!("done ≤ {days}d"),
+    };
 
     let mut lines = Vec::new();
     lines.push(format!(
-        "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · ↑↓ scroll · / search · q quit{}",
+        "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · ↑↓ scroll · / search · +/- days · q quit{}",
         fg(color::PURPLE),
         RESET_FG,
         fg(color::DARK_GRAY),
         entries.len(),
         session_count,
+        window,
         RESET_FG,
     ));
     lines.push(String::new());
@@ -518,9 +531,9 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
 
     if once {
         let width = terminal_size().map(|(w, _)| w).unwrap_or(120);
-        let entries = aggregate(&gather()?, &overrides);
+        let entries = aggregate(&gather()?, &overrides, DEFAULT_LINGER_DAYS);
         let refs: Vec<&BoardPr> = entries.iter().collect();
-        for line in render(&refs, width) {
+        for line in render(&refs, width, DEFAULT_LINGER_DAYS) {
             println!("{line}");
         }
         return Ok(());
@@ -565,6 +578,7 @@ async fn board_loop(
     let mut matched = 0usize;
     let mut scroll: usize = 0;
     let mut search: Option<String> = None;
+    let mut linger_days = DEFAULT_LINGER_DAYS;
     let mut dirty = false;
     let mut needs_render = false;
 
@@ -577,7 +591,7 @@ async fn board_loop(
                     *overrides = fresh;
                 }
             }
-            entries = aggregate(&gather()?, overrides);
+            entries = aggregate(&gather()?, overrides, linger_days);
             needs_render = true;
         }
 
@@ -590,7 +604,7 @@ async fn board_loop(
                 .filter(|entry| matches_search(&entry.pr, query))
                 .collect();
             matched = filtered.len();
-            let fresh = render(&filtered, width);
+            let fresh = render(&filtered, width, linger_days);
             let hash = frame_hash(&fresh);
             if hash != last_frame_hash {
                 last_frame_hash = hash;
@@ -671,6 +685,19 @@ async fn board_loop(
                                 needs_render = true;
                                 dirty = true;
                             }
+                            // Widen or narrow how long finished PRs linger.
+                            // The filter runs during aggregation, so force a
+                            // fresh pass rather than waiting out the tick.
+                            KeyCode::Char('+') | KeyCode::Char('=') => {
+                                linger_days = (linger_days + 1).min(MAX_LINGER_DAYS);
+                                last_refresh = Instant::now() - REFRESH_INTERVAL;
+                                last_frame_hash = 0;
+                            }
+                            KeyCode::Char('-') | KeyCode::Char('_') => {
+                                linger_days = linger_days.saturating_sub(1);
+                                last_refresh = Instant::now() - REFRESH_INTERVAL;
+                                last_frame_hash = 0;
+                            }
                             _ => {}
                         }
                     }
@@ -718,7 +745,7 @@ mod tests {
 
     fn render_frame(entries: &[BoardPr]) -> String {
         let refs: Vec<&BoardPr> = entries.iter().collect();
-        render(&refs, 160).join("\n")
+        render(&refs, 160, DEFAULT_LINGER_DAYS).join("\n")
     }
 
     fn now_ms() -> u64 {
@@ -750,6 +777,7 @@ mod tests {
         let entries = aggregate(
             &[snapshot("one", vec![a]), snapshot("two", vec![b])],
             &HashMap::new(),
+            DEFAULT_LINGER_DAYS,
         );
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
@@ -773,6 +801,7 @@ mod tests {
                 vec![board_pr(5, "portal"), board_pr(6, "portal")],
             )],
             &overrides,
+            DEFAULT_LINGER_DAYS,
         );
         assert_eq!(entries.len(), 1, "dismissed PR is gone");
         assert!(entries[0].pr.primary, "override promotes");
@@ -797,6 +826,7 @@ mod tests {
         let entries = aggregate(
             &[snapshot("one", vec![merged, ready, failing])],
             &HashMap::new(),
+            DEFAULT_LINGER_DAYS,
         );
         let numbers: Vec<u64> = entries.iter().map(|e| e.pr.number).collect();
         assert_eq!(numbers, vec![1, 3, 2], "failing → ready → merged");
@@ -810,7 +840,11 @@ mod tests {
         pr.ai_confidence = "medium".to_string();
         pr.slack_origin_url = "https://t.slack.com/archives/C1/p1".to_string();
 
-        let entries = aggregate(&[snapshot("one", vec![pr])], &HashMap::new());
+        let entries = aggregate(
+            &[snapshot("one", vec![pr])],
+            &HashMap::new(),
+            DEFAULT_LINGER_DAYS,
+        );
         let frame = render_frame(&entries);
         assert!(frame.contains("o/portal"));
         assert!(frame.contains("CI green, awaiting review"));
@@ -833,7 +867,11 @@ mod tests {
         let mut pr = board_pr(9, "portal");
         pr.mentions = 12;
         pr.user_mentions = 3;
-        let entries = aggregate(&[snapshot("one", vec![pr])], &HashMap::new());
+        let entries = aggregate(
+            &[snapshot("one", vec![pr])],
+            &HashMap::new(),
+            DEFAULT_LINGER_DAYS,
+        );
         let frame = render_frame(&entries);
         assert!(frame.contains("12 mentions (3 yours)"));
     }
@@ -850,6 +888,7 @@ mod tests {
                 snapshot("builder-document-intent", vec![pr]),
             ],
             &HashMap::new(),
+            DEFAULT_LINGER_DAYS,
         );
         let text = sessions_text(&entries[0].sessions);
         assert_eq!(text, "developer-portal ×2, builder-document-intent");
@@ -871,7 +910,11 @@ mod tests {
     fn unverified_prs_stay_off_the_board() {
         let mut phantom = SessionPr::test_stub(500, "o", "r");
         phantom.state = "OPEN".to_string(); // refreshed_at stays 0
-        let entries = aggregate(&[snapshot("one", vec![phantom])], &HashMap::new());
+        let entries = aggregate(
+            &[snapshot("one", vec![phantom])],
+            &HashMap::new(),
+            DEFAULT_LINGER_DAYS,
+        );
         assert!(entries.is_empty());
     }
 
@@ -899,6 +942,7 @@ mod tests {
                 vec![fresh, old, recently_discussed, silent],
             )],
             &HashMap::new(),
+            DEFAULT_LINGER_DAYS,
         );
         let numbers: Vec<u64> = entries.iter().map(|e| e.pr.number).collect();
         assert_eq!(
@@ -906,6 +950,23 @@ mod tests {
             vec![1, 3],
             "fresh merge and closed-but-discussed stay"
         );
+    }
+
+    /// +/- widen or narrow how far back finished PRs are pulled from.
+    #[test]
+    fn linger_window_scales_with_days() {
+        let mut merged = board_pr(1, "portal");
+        merged.state = "MERGED".to_string();
+        merged.closed_at = now_ms() - 2 * 24 * 3600 * 1000; // two days ago
+        let snapshots = [snapshot("one", vec![merged])];
+
+        assert!(aggregate(&snapshots, &HashMap::new(), 1).is_empty());
+        assert_eq!(aggregate(&snapshots, &HashMap::new(), 3).len(), 1);
+        // Zero shows open PRs only, no matter how fresh the merge.
+        let mut fresh = board_pr(2, "portal");
+        fresh.state = "MERGED".to_string();
+        fresh.closed_at = now_ms();
+        assert!(aggregate(&[snapshot("one", vec![fresh])], &HashMap::new(), 0).is_empty());
     }
 
     #[test]
