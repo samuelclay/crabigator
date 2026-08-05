@@ -48,6 +48,30 @@ const TRANSCRIPT_QUERY_MIN: usize = 3;
 const PREVIEW_MATCHES: usize = 3;
 /// Transcript lines shown either side of a match in the expanded preview.
 const PREVIEW_CONTEXT: usize = 2;
+/// Detail levels `e`/`c` expand and collapse through: 0 = compact (one line
+/// per PR), 1 = standard (progress + sessions + judgment), 2 = + each
+/// session's terminal title, 3 = + each session's latest recap headline.
+const MAX_DETAIL: u8 = 3;
+const DEFAULT_DETAIL: u8 = 1;
+
+/// Header name for a non-default detail level.
+fn detail_name(detail: u8) -> &'static str {
+    match detail {
+        0 => "compact",
+        2 => "titles",
+        3 => "recaps",
+        _ => "standard",
+    }
+}
+
+/// The slice of a session's latest recap the detail view renders.
+#[derive(Clone)]
+struct RecapBrief {
+    headline: String,
+    /// Unix ms when the recap was generated; 0 when unknown.
+    generated_at: u64,
+    line_delta: crate::recap::TurnLineDelta,
+}
 
 /// One live session's contribution to the board.
 struct SessionSnapshot {
@@ -57,6 +81,10 @@ struct SessionSnapshot {
     last_updated: f64,
     branch: String,
     uncommitted_files: usize,
+    /// The session's current terminal title (generated or OSC-published).
+    title: String,
+    /// The session's latest recap, when one has been generated.
+    recap: Option<RecapBrief>,
     prs: Vec<SessionPr>,
 }
 
@@ -78,6 +106,10 @@ struct SessionRef {
     age_secs: u64,
     /// The session is gone (cloud record only) — a candidate to resurrect.
     ended: bool,
+    /// The session's current terminal title (detail level 2+).
+    title: String,
+    /// The session's latest recap (detail level 3).
+    recap: Option<RecapBrief>,
 }
 
 /// Read every live mirror, one snapshot per session.
@@ -115,10 +147,54 @@ fn gather() -> Result<Vec<SessionSnapshot>> {
                 .and_then(|v| v.as_array())
                 .map(|files| files.len())
                 .unwrap_or(0),
+            title: data
+                .get("terminal_title")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    data.get("title_history")
+                        .and_then(|v| v.as_array())
+                        .and_then(|titles| titles.last())
+                        .and_then(|v| v.as_str())
+                })
+                .unwrap_or_default()
+                .to_string(),
+            recap: data
+                .pointer("/recap/latest")
+                .or_else(|| {
+                    data.get("recap_history")
+                        .and_then(|v| v.as_array())
+                        .and_then(|recaps| recaps.last())
+                })
+                .and_then(recap_brief_from),
             prs,
         });
     }
     Ok(snapshots)
+}
+
+/// Parse the fields the board needs out of a mirrored TurnRecap value.
+fn recap_brief_from(recap: &serde_json::Value) -> Option<RecapBrief> {
+    let headline = recap.get("headline")?.as_str()?;
+    if headline.is_empty() {
+        return None;
+    }
+    Some(RecapBrief {
+        headline: headline.to_string(),
+        generated_at: recap
+            .get("generated_at")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        line_delta: crate::recap::TurnLineDelta {
+            additions: recap
+                .pointer("/line_delta/additions")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
+            deletions: recap
+                .pointer("/line_delta/deletions")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
+        },
+    })
 }
 
 fn now_secs() -> f64 {
@@ -196,6 +272,8 @@ fn aggregate(
                 session_dir: Some(session.session_dir.clone()),
                 age_secs: session_age as u64,
                 ended: false,
+                title: session.title.clone(),
+                recap: session.recap.clone(),
             });
         }
     }
@@ -268,6 +346,17 @@ fn cloud_entries_to_board(cloud: Vec<crate::cloud::CloudBoardEntry>) -> Vec<Boar
                         session_dir: None,
                         age_secs: now.saturating_sub(s.last_seen_at),
                         ended: !s.active,
+                        title: s.title,
+                        recap: s.recap.and_then(|r| {
+                            (!r.headline.is_empty()).then_some(RecapBrief {
+                                headline: r.headline,
+                                generated_at: r.generated_at,
+                                line_delta: crate::recap::TurnLineDelta {
+                                    additions: r.additions,
+                                    deletions: r.deletions,
+                                },
+                            })
+                        }),
                     })
                     .collect(),
                 uncommitted: 0,
@@ -700,6 +789,103 @@ fn styled_preview_lines(
     out
 }
 
+/// Detail lines for one PR at level 2+: each contributing session's terminal
+/// title, and at level 3 its latest recap headline underneath. Sessions with
+/// nothing to show are skipped; exact duplicates collapse (cloud records
+/// often repeat a directory).
+fn session_detail_lines(
+    sessions: &[SessionRef],
+    width: u16,
+    detail: u8,
+    now_ms: u64,
+) -> Vec<String> {
+    use unicode_width::UnicodeWidthStr;
+    let mut seen: HashSet<(&str, &str, &str)> = HashSet::new();
+    let mut out = Vec::new();
+    for session in sessions {
+        let recap = if detail >= 3 {
+            session.recap.as_ref()
+        } else {
+            None
+        };
+        // A title that just repeats the directory name is the terminal's
+        // default, not a generated one — it says nothing the row doesn't.
+        let title = if session.title == session.dir_name {
+            ""
+        } else {
+            session.title.as_str()
+        };
+        if title.is_empty() && recap.is_none() {
+            continue;
+        }
+        let recap_key = recap.map_or("", |r| r.headline.as_str());
+        if !seen.insert((session.dir_name.as_str(), title, recap_key)) {
+            continue;
+        }
+        // The title is only as fresh as the session's last mirror update,
+        // so that age answers "current as of when?".
+        let title_age = format!(" · {} ago", format_age(session.age_secs));
+        let mut header = format!(
+            "   {}⌾ {}{}{}",
+            fg(color::DARK_GRAY),
+            fg(color::CYAN),
+            session.dir_name,
+            fg(color::DARK_GRAY),
+        );
+        if !title.is_empty() {
+            let budget = (width as usize)
+                .saturating_sub(5 + session.dir_name.width() + 3 + title_age.width())
+                .max(10);
+            header.push_str(&format!(
+                " · {}{}{}",
+                RESET_FG,
+                crate::ui::pr_cells::truncate_to_width(title, budget),
+                fg(color::DARK_GRAY),
+            ));
+        }
+        header.push_str(&title_age);
+        header.push_str(RESET_FG);
+        out.push(header);
+        if let Some(recap) = recap {
+            let age = if recap.generated_at > 0 {
+                format!(
+                    " · {} ago",
+                    format_age(now_ms.saturating_sub(recap.generated_at) / 1000)
+                )
+            } else {
+                String::new()
+            };
+            // A zero delta says nothing here — leave it off rather than
+            // rendering the handoff strip's `Δ ·` placeholder.
+            let delta = if recap.line_delta.additions == 0 && recap.line_delta.deletions == 0 {
+                String::new()
+            } else {
+                format!(
+                    " · {}{}",
+                    crate::ui::handoff::format_line_delta(recap.line_delta),
+                    fg(color::DARK_GRAY)
+                )
+            };
+            // The delta carries its own colors; budget by its visible form.
+            let delta_width = crate::parsers::strip_ansi_for_debug(&delta).width();
+            let budget = (width as usize)
+                .saturating_sub(7 + delta_width + age.width())
+                .max(10);
+            out.push(format!(
+                "     {}↪ {}{}{}{}{}{}",
+                fg(color::DARK_GRAY),
+                fg(color::GRAY),
+                crate::ui::pr_cells::truncate_to_width(&recap.headline, budget),
+                fg(color::DARK_GRAY),
+                delta,
+                age,
+                RESET_FG,
+            ));
+        }
+    }
+    out
+}
+
 /// One board entry ready to draw: the PR plus any transcript preview lines
 /// the active search produced for it.
 struct BoardRow<'a> {
@@ -708,7 +894,13 @@ struct BoardRow<'a> {
 }
 
 /// Build one full frame as displayable lines (no trailing newline handling).
-fn render(rows: &[BoardRow], width: u16, linger_days: u64, include_ended: bool) -> Vec<String> {
+fn render(
+    rows: &[BoardRow],
+    width: u16,
+    linger_days: u64,
+    include_ended: bool,
+    detail: u8,
+) -> Vec<String> {
     let now_ms = (now_secs() * 1000.0) as u64;
     let session_count = rows
         .iter()
@@ -738,10 +930,21 @@ fn render(rows: &[BoardRow], width: u16, linger_days: u64, include_ended: bool) 
     } else {
         "live".to_string()
     };
+    // Non-default detail levels announce themselves the same way.
+    let detail_label = if detail == DEFAULT_DETAIL {
+        String::new()
+    } else {
+        format!(
+            " · {}{}{}",
+            fg(color::YELLOW),
+            detail_name(detail),
+            fg(color::DARK_GRAY)
+        )
+    };
 
     let mut lines = Vec::new();
     lines.push(format!(
-        "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {} · ↑↓ scroll · / search · +/- days · a all · q quit{}",
+        "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{} · ↑↓ scroll · / search · +/- days · e/c detail · a all · q quit{}",
         fg(color::PURPLE),
         RESET_FG,
         fg(color::DARK_GRAY),
@@ -749,6 +952,7 @@ fn render(rows: &[BoardRow], width: u16, linger_days: u64, include_ended: bool) 
         session_count,
         source,
         window,
+        detail_label,
         RESET_FG,
     ));
     lines.push(String::new());
@@ -798,6 +1002,13 @@ fn render(rows: &[BoardRow], width: u16, linger_days: u64, include_ended: bool) 
                 row = format!("{}{row}", fg(color::DARK_GRAY));
             }
             lines.push(format!("{row}{RESET}"));
+
+            // Compact detail keeps only the identity row (search excerpts
+            // still show, so an active filter stays explainable).
+            if detail == 0 {
+                lines.extend(board_row.preview_lines.iter().cloned());
+                continue;
+            }
 
             // Row 2: checklist, stage, sessions, engagement, local state.
             let stage = stage(&entry.pr);
@@ -881,8 +1092,17 @@ fn render(rows: &[BoardRow], width: u16, linger_days: u64, include_ended: bool) 
             if !extras.is_empty() {
                 lines.push(format!("   {}", extras.join("  ")));
             }
-            // Row 4: transcript excerpts backing an active search hit.
+            // Row 4: per-session terminal titles (and recap headlines at the
+            // deepest level), for the expanded detail views.
+            if detail >= 2 {
+                lines.extend(session_detail_lines(&entry.sessions, width, detail, now_ms));
+            }
+            // Row 5: transcript excerpts backing an active search hit.
             lines.extend(board_row.preview_lines.iter().cloned());
+            lines.push(String::new());
+        }
+        // Compact rows sit flush; a single gap still separates repo groups.
+        if detail == 0 {
             lines.push(String::new());
         }
     }
@@ -909,7 +1129,7 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
                 preview_lines: Vec::new(),
             })
             .collect();
-        for line in render(&rows, width, DEFAULT_LINGER_DAYS, false) {
+        for line in render(&rows, width, DEFAULT_LINGER_DAYS, false, DEFAULT_DETAIL) {
             println!("{line}");
         }
         return Ok(());
@@ -958,6 +1178,7 @@ async fn board_loop(
     // context view for the inline previews.
     let mut transcripts = TranscriptCache::default();
     let mut expanded = false;
+    let mut detail = DEFAULT_DETAIL;
     let mut linger_days = DEFAULT_LINGER_DAYS;
     let mut include_ended = false;
     // Cloud fetches are throttled well below the local tick; toggling the
@@ -1013,7 +1234,7 @@ async fn board_loop(
                 })
                 .collect();
             matched = filtered.len();
-            let fresh = render(&filtered, width, linger_days, include_ended);
+            let fresh = render(&filtered, width, linger_days, include_ended, detail);
             let hash = frame_hash(&fresh);
             if hash != last_frame_hash {
                 last_frame_hash = hash;
@@ -1118,6 +1339,19 @@ async fn board_loop(
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
+                            // Expand or collapse the detail level, one step
+                            // at a time like +/- for days: compact ↔ standard
+                            // ↔ titles ↔ recaps.
+                            KeyCode::Char('e') => {
+                                detail = (detail + 1).min(MAX_DETAIL);
+                                needs_render = true;
+                                dirty = true;
+                            }
+                            KeyCode::Char('c') => {
+                                detail = detail.saturating_sub(1);
+                                needs_render = true;
+                                dirty = true;
+                            }
                             // Flip between live mirrors and the durable cloud
                             // record, which includes ended sessions.
                             KeyCode::Char('a') => {
@@ -1172,7 +1406,7 @@ mod tests {
         pr
     }
 
-    fn render_frame(entries: &[BoardPr]) -> String {
+    fn render_frame_at(entries: &[BoardPr], detail: u8) -> String {
         let rows: Vec<BoardRow> = entries
             .iter()
             .map(|entry| BoardRow {
@@ -1180,7 +1414,11 @@ mod tests {
                 preview_lines: Vec::new(),
             })
             .collect();
-        render(&rows, 160, DEFAULT_LINGER_DAYS, false).join("\n")
+        render(&rows, 160, DEFAULT_LINGER_DAYS, false, detail).join("\n")
+    }
+
+    fn render_frame(entries: &[BoardPr]) -> String {
+        render_frame_at(entries, DEFAULT_DETAIL)
     }
 
     fn now_ms() -> u64 {
@@ -1194,6 +1432,8 @@ mod tests {
             last_updated: now_secs(),
             branch: String::new(),
             uncommitted_files: 0,
+            title: String::new(),
+            recap: None,
             prs,
         }
     }
@@ -1335,6 +1575,8 @@ mod tests {
             session_dir: None,
             age_secs: 1_260,
             ended: false,
+            title: String::new(),
+            recap: None,
         }];
         let text = sessions_text(&stale);
         assert!(text.contains("old-worktree"));
@@ -1526,6 +1768,8 @@ mod tests {
                 session_dir: Some(dir.path().to_path_buf()),
                 age_secs: 10,
                 ended: false,
+                title: String::new(),
+                recap: None,
             }],
             uncommitted: 0,
             stale: false,
@@ -1545,5 +1789,103 @@ mod tests {
         let mut cloud = entry;
         cloud.sessions[0].session_dir = None;
         assert!(build_previews(&cloud, &mut cache, "webgl", 120, false).is_empty());
+    }
+
+    /// Sessions carrying a title and recap for the detail levels.
+    fn titled_entries() -> Vec<BoardPr> {
+        let mut with_title = snapshot("portal", vec![board_pr(9, "portal")]);
+        with_title.title = "Wiring the PR board detail levels".to_string();
+        with_title.recap = Some(RecapBrief {
+            headline: "Added e-cycled detail to the prs board".to_string(),
+            generated_at: now_ms() - 42 * 60 * 1000,
+            line_delta: crate::recap::TurnLineDelta {
+                additions: 120,
+                deletions: 35,
+            },
+        });
+        let bare = snapshot("other-dir", vec![board_pr(9, "portal")]);
+        aggregate(&[with_title, bare], &HashMap::new(), DEFAULT_LINGER_DAYS)
+    }
+
+    /// `e` steps through four detail levels: compact keeps only the identity
+    /// row; standard adds progress; titles adds each session's terminal
+    /// title; recaps adds the latest recap headline.
+    #[test]
+    fn detail_levels_reveal_titles_then_recaps() {
+        let entries = titled_entries();
+
+        let compact = render_frame_at(&entries, 0);
+        assert!(!compact.contains('▓'), "no progress bar at compact");
+        assert!(!compact.contains("Wiring the PR board"), "no titles");
+        assert!(compact.contains("#9"), "identity row stays");
+        assert!(compact.contains("compact"), "header names the level");
+
+        let standard = render_frame_at(&entries, 1);
+        assert!(standard.contains('▓'), "progress bar returns");
+        assert!(
+            !standard.contains("Wiring the PR board"),
+            "titles wait for level 2"
+        );
+
+        let titles = render_frame_at(&entries, 2);
+        assert!(titles.contains("Wiring the PR board detail levels"));
+        assert!(
+            !titles.contains("Added e-cycled detail"),
+            "recaps wait for level 3"
+        );
+
+        let recaps = render_frame_at(&entries, 3);
+        assert!(recaps.contains("Wiring the PR board detail levels"));
+        assert!(recaps.contains("Added e-cycled detail to the prs board"));
+        // The recap line carries the turn's diff and its staleness.
+        assert!(recaps.contains("+120"), "recap shows the line delta");
+        assert!(recaps.contains("-35"));
+        assert!(recaps.contains("42m ago"), "recap shows its age");
+    }
+
+    /// Sessions with neither a title nor a recap contribute no detail lines,
+    /// and duplicate (dir, title, recap) triples collapse to one.
+    #[test]
+    fn session_detail_lines_skip_empty_and_dedupe() {
+        let entries = titled_entries();
+        let now = now_ms();
+        let lines = session_detail_lines(&entries[0].sessions, 160, 3, now);
+        assert_eq!(lines.len(), 2, "one title line + one recap line: {lines:?}");
+        assert!(lines[0].contains("portal"));
+        assert!(lines[0].contains("ago"), "title line carries its age");
+        assert!(lines[1].contains("Added e-cycled detail"));
+
+        let doubled: Vec<SessionRef> = entries[0]
+            .sessions
+            .iter()
+            .chain(entries[0].sessions.iter())
+            .map(|s| SessionRef {
+                dir_name: s.dir_name.clone(),
+                session_dir: s.session_dir.clone(),
+                age_secs: s.age_secs,
+                ended: s.ended,
+                title: s.title.clone(),
+                recap: s.recap.clone(),
+            })
+            .collect();
+        assert_eq!(session_detail_lines(&doubled, 160, 3, now).len(), 2);
+
+        // At level 2 a recap-only session shows nothing yet.
+        let recap_only = vec![SessionRef {
+            dir_name: "quiet".to_string(),
+            session_dir: None,
+            age_secs: 5,
+            ended: false,
+            title: String::new(),
+            recap: Some(RecapBrief {
+                headline: "Half-finished refactor".to_string(),
+                generated_at: 0,
+                line_delta: crate::recap::TurnLineDelta::default(),
+            }),
+        }];
+        assert!(session_detail_lines(&recap_only, 160, 2, now).is_empty());
+        let at_three = session_detail_lines(&recap_only, 160, 3, now);
+        assert_eq!(at_three.len(), 2, "dir header plus recap line");
+        assert!(at_three[1].contains("Half-finished refactor"));
     }
 }

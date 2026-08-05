@@ -64,6 +64,26 @@ pub struct CloudBoardSession {
     pub active: bool,
     #[serde(default)]
     pub last_seen_at: u64,
+    /// The session's current terminal title.
+    #[serde(default)]
+    pub title: String,
+    /// The session's latest recap brief, when one was recorded.
+    #[serde(default)]
+    pub recap: Option<CloudSessionRecap>,
+}
+
+/// The slice of a session's latest recap the PR board renders.
+#[derive(Debug, Deserialize)]
+pub struct CloudSessionRecap {
+    #[serde(default)]
+    pub headline: String,
+    /// Unix ms when the recap was generated; 0 when unknown.
+    #[serde(default)]
+    pub generated_at: u64,
+    #[serde(default)]
+    pub additions: i64,
+    #[serde(default)]
+    pub deletions: i64,
 }
 
 #[derive(Debug, Deserialize)]

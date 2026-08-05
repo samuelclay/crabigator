@@ -5,7 +5,7 @@
 
 mod changes;
 mod git;
-mod handoff;
+pub(crate) mod handoff;
 mod pairing;
 pub(crate) mod pr_cells;
 pub mod sparkline;

@@ -557,7 +557,9 @@ fn write_failure_line(stdout: &mut Stdout, width: u16, prefix: &str, body: &str)
     Ok(())
 }
 
-fn format_line_delta(delta: TurnLineDelta) -> String {
+/// `Δ +A -D` in green/red, or `Δ net +N` when a rebase makes either side
+/// negative. Shared with the PR board's recap detail lines.
+pub(crate) fn format_line_delta(delta: TurnLineDelta) -> String {
     if delta.additions == 0 && delta.deletions == 0 {
         return format!("{}Δ ·{}", fg(color::DARK_GRAY), RESET_FG);
     }
