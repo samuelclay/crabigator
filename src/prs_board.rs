@@ -1703,7 +1703,6 @@ fn render_pr_board_row(
         lines.extend(session_detail_lines(&entry.sessions, width, detail, now_ms));
     }
     lines.extend(board_row.preview_lines.iter().cloned());
-    lines.push(String::new());
     lines
 }
 
@@ -1768,7 +1767,6 @@ fn render_workspace_board_row(
     );
     let mut lines = vec![format!("{row}{RESET}")];
     lines.extend(workspace_row.preview_lines.iter().cloned());
-    lines.push(String::new());
     lines
 }
 
@@ -1935,7 +1933,10 @@ fn render(
     }
     sections.sort_by(|a, b| b.rows[0].0.cmp(&a.rows[0].0));
 
-    for section in sections {
+    for (section_index, section) in sections.into_iter().enumerate() {
+        if section_index > 0 {
+            lines.push(String::new());
+        }
         let section_session_count = section
             .rows
             .iter()
@@ -1992,13 +1993,6 @@ fn render(
                 )),
             }
         }
-        if !lines.last().is_some_and(String::is_empty) {
-            lines.push(String::new());
-        }
-    }
-
-    while lines.last().is_some_and(String::is_empty) {
-        lines.pop();
     }
     lines
 }
@@ -2584,6 +2578,86 @@ mod tests {
             column(portal_pr_row, "a-much-longer-branch-name")
         );
         assert!(!no_pr_row.contains("no tracked PR"));
+    }
+
+    #[test]
+    fn blank_lines_separate_repositories_in_compact_and_recap_views() {
+        let now = now_secs() as u64;
+        let mut pr = board_pr(2, "crabigator");
+        make_primary(&mut pr);
+        let mut pr_session = snapshot("crabigator", vec![pr]);
+        pr_session.title = "PR session".to_string();
+        pr_session.completed_at = now - 60;
+        pr_session.recap = Some(RecapBrief {
+            headline: "Finished the PR work".to_string(),
+            generated_at: now * 1000,
+            line_delta: crate::recap::TurnLineDelta::default(),
+        });
+
+        let mut peer_session = snapshot("crabigator", Vec::new());
+        peer_session.session_id = "peer-session".to_string();
+        peer_session.title = "Peer session".to_string();
+        peer_session.completed_at = now - 120;
+
+        let mut other_repo = snapshot("portal", Vec::new());
+        other_repo.title = "Portal session".to_string();
+        other_repo.completed_at = now - 300;
+
+        let snapshots = vec![pr_session, peer_session, other_repo];
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let workspaces = local_workspaces(&snapshots, &entries);
+        let rows: Vec<BoardRow<'_>> = entries
+            .iter()
+            .map(|entry| BoardRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        let workspace_rows: Vec<WorkspaceRow<'_>> = workspaces
+            .iter()
+            .map(|entry| WorkspaceRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+
+        for detail in [0, MAX_DETAIL] {
+            let lines: Vec<String> = render(
+                &rows,
+                &workspace_rows,
+                160,
+                DEFAULT_LINGER_DAYS,
+                false,
+                detail,
+            )
+            .into_iter()
+            .map(|line| crate::parsers::strip_ansi_for_debug(&line))
+            .collect();
+            let crabigator = lines
+                .iter()
+                .position(|line| line.contains("o/crabigator"))
+                .unwrap();
+            let portal = lines
+                .iter()
+                .position(|line| line.contains("o/portal"))
+                .unwrap();
+            let pr_row = lines
+                .iter()
+                .position(|line| line.contains("crabigator #2"))
+                .unwrap();
+            let peer_row = lines
+                .iter()
+                .position(|line| line.contains("◇ Peer session"))
+                .unwrap();
+            let blank_lines: Vec<usize> = lines[crabigator..]
+                .iter()
+                .enumerate()
+                .filter_map(|(offset, line)| line.is_empty().then_some(crabigator + offset))
+                .collect();
+
+            assert!(crabigator < pr_row && pr_row < peer_row && peer_row < portal);
+            assert_eq!(blank_lines, vec![portal - 1]);
+        }
     }
 
     #[test]
