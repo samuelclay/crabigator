@@ -31,6 +31,10 @@ pub struct GitCommit {
 pub struct GitState {
     pub files: Vec<FileStatus>,
     pub recent_commits: Vec<GitCommit>,
+    /// Repository owner parsed from the origin remote, when available.
+    pub repo_owner: String,
+    /// Repository name parsed from the origin remote or worktree root.
+    pub repo_name: String,
     pub branch: String,
     pub is_repo: bool,
     pub loading: bool,
@@ -71,6 +75,8 @@ impl GitState {
                 return Ok(state);
             }
         }
+
+        (state.repo_owner, state.repo_name) = Self::repository_identity(dir).await;
 
         // Get current branch
         if let Ok(output) = Command::new("git")
@@ -254,6 +260,39 @@ impl GitState {
         }
     }
 
+    async fn repository_identity(base_dir: &Path) -> (String, String) {
+        if let Ok(output) = Command::new("git")
+            .args(["remote", "get-url", "origin"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .current_dir(base_dir)
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let remote = String::from_utf8_lossy(&output.stdout);
+                if let Some(identity) = parse_remote_identity(remote.trim()) {
+                    return identity;
+                }
+            }
+        }
+
+        let name = Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .current_dir(base_dir)
+            .output()
+            .await
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| {
+                Path::new(String::from_utf8_lossy(&output.stdout).trim())
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .unwrap_or_default();
+        (String::new(), name)
+    }
+
     /// Count lines in a file by reading it directly
     async fn count_lines_in_file(base_dir: &Path, path: &str) -> usize {
         let file_path = base_dir.join(path);
@@ -349,5 +388,39 @@ fn unquote_git_path(path: &str) -> String {
         result
     } else {
         path.to_string()
+    }
+}
+
+/// Parse the final owner/repository pair from common HTTPS, SSH, and scp-like
+/// Git remotes. The host is intentionally irrelevant: the PR board is scoped
+/// to the user's sessions, not to one GitHub organization.
+pub(crate) fn parse_remote_identity(remote: &str) -> Option<(String, String)> {
+    let normalized = remote
+        .trim()
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .replace(':', "/");
+    let mut parts = normalized.split('/').filter(|part| !part.is_empty()).rev();
+    let repo = parts.next()?.to_string();
+    let owner = parts.next()?.rsplit('@').next()?.to_string();
+    (!owner.is_empty() && !repo.is_empty()).then_some((owner, repo))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_remote_identity;
+
+    #[test]
+    fn parses_repository_identity_from_common_remotes() {
+        for remote in [
+            "git@github.com:samuelclay/crabigator.git",
+            "ssh://git@github.com/samuelclay/crabigator.git",
+            "https://github.com/samuelclay/crabigator.git",
+        ] {
+            assert_eq!(
+                parse_remote_identity(remote),
+                Some(("samuelclay".to_string(), "crabigator".to_string()))
+            );
+        }
     }
 }

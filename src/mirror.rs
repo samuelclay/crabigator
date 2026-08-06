@@ -119,6 +119,8 @@ pub struct StatsMirrorData {
 /// Simplified git data for JSON
 #[derive(Serialize)]
 pub struct GitMirrorData {
+    pub repo_owner: String,
+    pub repo_name: String,
     pub branch: String,
     pub is_repo: bool,
     pub files: Vec<GitFileMirror>,
@@ -355,6 +357,8 @@ impl MirrorPublisher {
         stats.platform_stats.mode.as_str().hash(&mut hasher);
 
         // Hash key fields from git
+        git.repo_owner.hash(&mut hasher);
+        git.repo_name.hash(&mut hasher);
         git.branch.hash(&mut hasher);
         git.files.len().hash(&mut hasher);
         for f in &git.files {
@@ -483,6 +487,8 @@ impl MirrorPublisher {
                 },
                 git: WidgetMirror {
                     data: GitMirrorData {
+                        repo_owner: git.repo_owner.clone(),
+                        repo_name: git.repo_name.clone(),
                         branch: git.branch.clone(),
                         is_repo: git.is_repo,
                         files: git

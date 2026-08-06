@@ -108,6 +108,23 @@ impl PrColumnWidths {
         }
     }
 
+    /// Include a non-PR board row in the shared left-column measurements.
+    pub(crate) fn include_board_row(
+        &mut self,
+        identity: &str,
+        diff: &str,
+        files: &str,
+        branch: &str,
+        total_width: usize,
+    ) {
+        self.identity = self.identity.max(identity.width().min(PR_IDENTITY_MAX));
+        self.diff = self.diff.max(diff.width().min(PR_DIFF_MAX));
+        self.files = self.files.max(files.width().min(PR_FILES_MAX));
+        self.branch = self.branch.max(branch.width().min(PR_BRANCH_MAX));
+        self.fit_right(total_width);
+        self.fit_left(total_width);
+    }
+
     fn fit_left(&mut self, total_width: usize) {
         let right = self.right_width();
         let cluster_gap = usize::from(right > 0) * PR_COLUMN_GAP;
@@ -190,6 +207,46 @@ pub(crate) fn pr_row_text_with_activity(
     column_width: usize,
 ) -> String {
     pr_row_text_with_optional_activity(width, pr, widths, Some((styled, visible, column_width)))
+}
+
+/// Render an active session without a PR in the same columns as PR rows.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn session_row_text_with_activity(
+    width: u16,
+    title: &str,
+    diff: &str,
+    files: &str,
+    branch: &str,
+    widths: &PrColumnWidths,
+    styled_activity: String,
+    activity_visible: usize,
+    activity_width: usize,
+) -> String {
+    let identity = truncate_to_width(&format!("◇ {title}"), widths.identity);
+    let left_cells = [
+        colored_cell(&identity, color::GRAY, widths.identity),
+        colored_cell(diff, color::DARK_GRAY, widths.diff),
+        colored_cell(files, color::DARK_GRAY, widths.files),
+        colored_cell_capped(branch, color::DARK_GRAY, widths.branch, PR_BRANCH_MAX),
+    ];
+    let mut row = " ".repeat(PR_LEFT_PADDING);
+    row.push_str(&cells_text(&left_cells));
+
+    let right_cells = [
+        (styled_activity, activity_visible, activity_width),
+        (String::new(), 0, widths.right_width()),
+    ];
+    let right_width = cells_width(&right_cells);
+    if right_width > 0 {
+        let gap = (width as usize)
+            .saturating_sub(PR_LEFT_PADDING)
+            .saturating_sub(PR_RIGHT_PADDING)
+            .saturating_sub(widths.left_width())
+            .saturating_sub(right_width);
+        row.push_str(&" ".repeat(gap));
+        row.push_str(&cells_text(&right_cells));
+    }
+    row
 }
 
 fn pr_row_text_with_optional_activity(

@@ -13,8 +13,8 @@ mod queue;
 mod websocket;
 
 pub use client::{
-    fetch_pr_board_standalone, fetch_pr_overrides_standalone, CloudBoardEntry, CloudClient,
-    CloudStatus, PairingStatusResponse,
+    fetch_pr_board_standalone, fetch_pr_overrides_standalone, CloudBoard, CloudClient, CloudStatus,
+    PairingStatusResponse,
 };
 pub use device::DeviceIdentity;
 pub use events::{KeyStep, SessionEventBuilder};

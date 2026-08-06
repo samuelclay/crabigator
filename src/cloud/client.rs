@@ -59,7 +59,15 @@ pub struct CloudBoardEntry {
 #[derive(Debug, Deserialize)]
 pub struct CloudBoardSession {
     #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
     pub dir_name: String,
+    #[serde(default)]
+    pub repo_owner: String,
+    #[serde(default)]
+    pub repo_name: String,
+    #[serde(default)]
+    pub branch: String,
     #[serde(default)]
     pub active: bool,
     #[serde(default)]
@@ -93,14 +101,17 @@ pub struct CloudSessionRecap {
 }
 
 #[derive(Debug, Deserialize)]
-struct CloudBoardResponse {
-    prs: Vec<CloudBoardEntry>,
+pub struct CloudBoard {
+    #[serde(default)]
+    pub prs: Vec<CloudBoardEntry>,
+    #[serde(default)]
+    pub sessions: Vec<CloudBoardSession>,
 }
 
 /// Fetch the group's durable PR board from D1 — every PR any session ever
 /// tracked, with overrides already applied and finished PRs bounded by
 /// `linger_days` (0 = open only).
-pub async fn fetch_pr_board_standalone(linger_days: u64) -> Result<Vec<CloudBoardEntry>> {
+pub async fn fetch_pr_board_standalone(linger_days: u64) -> Result<CloudBoard> {
     let device = DeviceIdentity::load_or_create()?;
     let url = format!("{}/prs/board?days={}", DEFAULT_API_URL, linger_days);
     let headers = device.auth_headers("GET", "/api/prs/board")?;
@@ -112,8 +123,7 @@ pub async fn fetch_pr_board_standalone(linger_days: u64) -> Result<Vec<CloudBoar
     if !response.status().is_success() {
         anyhow::bail!("Failed to fetch PR board: {}", response.status());
     }
-    let data: CloudBoardResponse = response.json().await?;
-    Ok(data.prs)
+    Ok(response.json().await?)
 }
 
 fn parse_pr_disposition(value: &str) -> Option<PrDisposition> {

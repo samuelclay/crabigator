@@ -131,7 +131,7 @@ mod fixtures {
             .with_context(|| format!("read {}", mirror_path.display()))?;
         let mut actual_json: Value = serde_json::from_str(&mirror_contents)
             .with_context(|| format!("parse {}", mirror_path.display()))?;
-        normalize_mirror(&mut actual_json);
+        normalize_mirror(&mut actual_json, fixture_name);
         publisher.cleanup();
 
         let expected_path = fixture_dir.join("expected.json");
@@ -251,11 +251,16 @@ mod fixtures {
         Ok(())
     }
 
-    fn normalize_mirror(value: &mut Value) {
+    fn normalize_mirror(value: &mut Value, fixture_name: &str) {
         if let Some(obj) = value.as_object_mut() {
             obj.insert("last_updated".to_string(), Value::from(0.0));
             // Normalize session_start timestamp in widgets.stats.data
             if let Some(widgets) = obj.get_mut("widgets").and_then(|v| v.as_object_mut()) {
+                if let Some(git) = widgets.get_mut("git").and_then(|v| v.as_object_mut()) {
+                    if let Some(data) = git.get_mut("data").and_then(|v| v.as_object_mut()) {
+                        data.insert("repo_name".to_string(), Value::from(fixture_name));
+                    }
+                }
                 if let Some(stats) = widgets.get_mut("stats").and_then(|v| v.as_object_mut()) {
                     if let Some(data) = stats.get_mut("data").and_then(|v| v.as_object_mut()) {
                         data.insert("session_start".to_string(), Value::from(0.0));

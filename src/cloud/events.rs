@@ -137,6 +137,10 @@ pub struct GitCommit {
 pub struct GitEvent {
     #[serde(rename = "type")]
     pub event_type: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub repo_owner: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub repo_name: String,
     pub branch: String,
     pub files: Vec<GitFile>,
     /// Bounded recent commit log, newest first.
@@ -145,9 +149,17 @@ pub struct GitEvent {
 }
 
 impl GitEvent {
-    pub fn new(branch: String, files: Vec<GitFile>, recent_commits: Vec<GitCommit>) -> Self {
+    pub fn new(
+        repo_owner: String,
+        repo_name: String,
+        branch: String,
+        files: Vec<GitFile>,
+        recent_commits: Vec<GitCommit>,
+    ) -> Self {
         Self {
             event_type: "git".to_string(),
+            repo_owner,
+            repo_name,
             branch,
             files,
             recent_commits,
@@ -669,6 +681,8 @@ impl SessionEventBuilder {
             .collect();
 
         CloudEvent::Git(GitEvent::new(
+            git_state.repo_owner.clone(),
+            git_state.repo_name.clone(),
             git_state.branch.clone(),
             files,
             recent_commits,

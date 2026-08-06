@@ -110,7 +110,9 @@
             "status": "A"
           }
         ],
-        "is_repo": true
+        "is_repo": true,
+        "repo_name": "multi_lang",
+        "repo_owner": ""
       },
       "rendered": [
         "main - 3 files",

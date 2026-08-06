@@ -84,7 +84,9 @@
             "status": "??"
           }
         ],
-        "is_repo": true
+        "is_repo": true,
+        "repo_name": "rust_planning",
+        "repo_owner": ""
       },
       "rendered": [
         "main - 3 files",

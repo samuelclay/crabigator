@@ -2,7 +2,7 @@
 //!
 //! Aggregates every tracked PR from every running session's `inspect.json`
 //! mirror into one read-only, auto-refreshing view: grouped by repository,
-//! ordered by how much attention each PR needs, with primaries starred,
+//! ordered by latest completion (or prompt while work is still running),
 //! cross-repo twins (same head branch) kept together, a progress checklist,
 //! the latest recap's judgment, and clickable GitHub/Slack/action links.
 //!
@@ -31,7 +31,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::pr::SessionPr;
 use crate::pr_rank::PrDisposition;
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG};
-use crate::ui::pr_cells::{pr_row_text_with_activity, PrColumnWidths, PR_COLUMN_GAP};
+use crate::ui::pr_cells::{
+    pr_row_text_with_activity, session_row_text_with_activity, PrColumnWidths, PR_COLUMN_GAP,
+};
 use crate::ui::{COMPLETION_ICON, PROMPT_ICON};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -87,12 +89,17 @@ struct RecapBrief {
 
 /// One live session's contribution to the board.
 struct SessionSnapshot {
+    session_id: String,
     dir_name: String,
+    repo_owner: String,
+    repo_name: String,
     /// The session's /tmp mirror directory, where scrollback.log lives.
     session_dir: PathBuf,
     last_updated: f64,
     branch: String,
     uncommitted_files: usize,
+    additions: i64,
+    deletions: i64,
     /// The session's current terminal title (generated or OSC-published).
     title: String,
     /// The session's latest recap, when one has been generated.
@@ -114,7 +121,9 @@ struct BoardPr {
     stale: bool,
 }
 
+#[derive(Clone)]
 struct SessionRef {
+    session_id: String,
     dir_name: String,
     /// Local mirror directory holding scrollback.log; None for cloud records,
     /// whose transcripts aren't reachable from this machine.
@@ -130,6 +139,24 @@ struct SessionRef {
     prompted_at: u64,
     /// Unix seconds when the session's completion count last changed.
     completed_at: u64,
+}
+
+/// Active sessions in a repository/branch that has no matching visible PR row.
+#[derive(Clone)]
+struct WorkspaceEntry {
+    repo_owner: String,
+    repo_name: String,
+    branch: String,
+    session: SessionRef,
+    uncommitted: usize,
+    additions: i64,
+    deletions: i64,
+}
+
+impl WorkspaceEntry {
+    fn sessions(&self) -> &[SessionRef] {
+        std::slice::from_ref(&self.session)
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -161,44 +188,60 @@ struct CachedActivity {
 #[derive(Default)]
 struct ActivityHistory {
     transcripts: HashMap<PathBuf, CachedActivity>,
+    repositories: HashMap<PathBuf, (String, String)>,
 }
 
 /// Read every live mirror, one snapshot per session.
 fn gather(activity_history: &mut ActivityHistory) -> Result<Vec<SessionSnapshot>> {
     let mut snapshots = Vec::new();
     for (path, data) in crate::inspect::discover_instances(&None)? {
+        let last_updated = data
+            .get("last_updated")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        if now_secs() - last_updated > STALE_SESSION_SECS {
+            continue;
+        }
         let prs: Vec<SessionPr> = data
             .get("prs")
             .cloned()
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default();
-        if prs.is_empty() {
-            continue;
-        }
         let git = data.pointer("/widgets/git/data");
+        let files = git.and_then(|g| g.get("files")).and_then(|v| v.as_array());
         let activity = activity_times(&data, activity_history);
+        let cwd = data.get("cwd").and_then(|v| v.as_str()).unwrap_or_default();
+        let (repo_owner, repo_name) = activity_history.repository_identity(&data, cwd);
         snapshots.push(SessionSnapshot {
-            session_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
-            dir_name: data
-                .get("cwd")
+            session_id: data
+                .get("cloud_session_id")
                 .and_then(|v| v.as_str())
-                .and_then(|cwd| cwd.rsplit('/').next())
+                .or_else(|| data.get("session_id").and_then(|v| v.as_str()))
                 .unwrap_or_default()
                 .to_string(),
-            last_updated: data
-                .get("last_updated")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0),
+            session_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
+            dir_name: cwd.rsplit('/').next().unwrap_or_default().to_string(),
+            repo_owner,
+            repo_name,
+            last_updated,
             branch: git
                 .and_then(|g| g.get("branch"))
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            uncommitted_files: git
-                .and_then(|g| g.get("files"))
-                .and_then(|v| v.as_array())
-                .map(|files| files.len())
-                .unwrap_or(0),
+            uncommitted_files: files.map_or(0, Vec::len),
+            additions: files.map_or(0, |files| {
+                files
+                    .iter()
+                    .filter_map(|file| file.get("additions").and_then(|value| value.as_i64()))
+                    .sum()
+            }),
+            deletions: files.map_or(0, |files| {
+                files
+                    .iter()
+                    .filter_map(|file| file.get("deletions").and_then(|value| value.as_i64()))
+                    .sum()
+            }),
             title: data
                 .get("terminal_title")
                 .and_then(|v| v.as_str())
@@ -304,6 +347,44 @@ impl ActivityHistory {
             cached.scanned_len = file_len;
         }
         cached.times
+    }
+
+    fn repository_identity(&mut self, data: &serde_json::Value, cwd: &str) -> (String, String) {
+        let owner = data
+            .pointer("/widgets/git/data/repo_owner")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        let name = data
+            .pointer("/widgets/git/data/repo_name")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if !name.is_empty() {
+            return (owner.to_string(), name.to_string());
+        }
+
+        let path = PathBuf::from(cwd);
+        if let Some(identity) = self.repositories.get(&path) {
+            return identity.clone();
+        }
+        let remote = std::process::Command::new("git")
+            .args(["remote", "get-url", "origin"])
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .current_dir(&path)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| {
+                crate::git::parse_remote_identity(String::from_utf8_lossy(&output.stdout).trim())
+            });
+        let identity = remote.unwrap_or_else(|| {
+            let fallback = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (String::new(), fallback)
+        });
+        self.repositories.insert(path, identity.clone());
+        identity
     }
 }
 
@@ -532,6 +613,7 @@ fn aggregate(
                 entry.uncommitted = entry.uncommitted.max(session.uncommitted_files);
             }
             entry.sessions.push(SessionRef {
+                session_id: session.session_id.clone(),
                 dir_name: session.dir_name.clone(),
                 session_dir: Some(session.session_dir.clone()),
                 age_secs: session_age as u64,
@@ -567,6 +649,133 @@ fn aggregate(
 
     sort_entries(&mut out);
     out
+}
+
+/// Keep one row for every active session that has no visible PR in its current
+/// repository. Sessions remain distinct even when they share a branch.
+fn local_workspaces(snapshots: &[SessionSnapshot], entries: &[BoardPr]) -> Vec<WorkspaceEntry> {
+    let now = now_secs();
+    let mut workspaces: Vec<WorkspaceEntry> = Vec::new();
+    for snapshot in snapshots {
+        let age_secs = (now - snapshot.last_updated).max(0.0) as u64;
+        if age_secs > STALE_SESSION_SECS as u64 || session_has_matching_pr(snapshot, entries) {
+            continue;
+        }
+        let session = SessionRef {
+            session_id: snapshot.session_id.clone(),
+            dir_name: snapshot.dir_name.clone(),
+            session_dir: Some(snapshot.session_dir.clone()),
+            age_secs,
+            ended: false,
+            title: snapshot.title.clone(),
+            recap: snapshot.recap.clone(),
+            prompted_at: snapshot.prompted_at,
+            completed_at: snapshot.completed_at,
+        };
+        workspaces.push(WorkspaceEntry {
+            repo_owner: snapshot.repo_owner.clone(),
+            repo_name: snapshot.repo_name.clone(),
+            branch: snapshot.branch.clone(),
+            session,
+            uncommitted: snapshot.uncommitted_files,
+            additions: snapshot.additions,
+            deletions: snapshot.deletions,
+        });
+    }
+    sort_workspaces(&mut workspaces);
+    workspaces
+}
+
+fn session_has_matching_pr(snapshot: &SessionSnapshot, entries: &[BoardPr]) -> bool {
+    entries_represent_session(
+        &snapshot.repo_owner,
+        &snapshot.repo_name,
+        &snapshot.session_id,
+        &snapshot.dir_name,
+        entries,
+    )
+}
+
+fn entries_represent_session(
+    repo_owner: &str,
+    repo_name: &str,
+    session_id: &str,
+    dir_name: &str,
+    entries: &[BoardPr],
+) -> bool {
+    entries.iter().any(|entry| {
+        repository_matches(repo_owner, repo_name, &entry.pr.owner, &entry.pr.repo)
+            && entry.sessions.iter().any(|session| {
+                if session_id.is_empty() {
+                    session.session_id.is_empty() && session.dir_name == dir_name
+                } else {
+                    session.session_id == session_id
+                }
+            })
+    })
+}
+
+fn repository_matches(owner: &str, repo: &str, other_owner: &str, other_repo: &str) -> bool {
+    !repo.is_empty()
+        && owner.eq_ignore_ascii_case(other_owner)
+        && repo.eq_ignore_ascii_case(other_repo)
+}
+
+fn local_board(
+    history: &mut ActivityHistory,
+    overrides: &HashMap<String, PrDisposition>,
+    linger_days: u64,
+) -> Result<(Vec<BoardPr>, Vec<WorkspaceEntry>)> {
+    let snapshots = gather(history)?;
+    let entries = aggregate(&snapshots, overrides, linger_days);
+    let workspaces = local_workspaces(&snapshots, &entries);
+    Ok((entries, workspaces))
+}
+
+fn sort_workspaces(workspaces: &mut [WorkspaceEntry]) {
+    workspaces.sort_by_key(|entry| std::cmp::Reverse(activity_sort_time(entry.sessions())));
+}
+
+/// Overlay live mirrors on the durable session list. This keeps `a` mode's
+/// historical PRs while still showing active no-PR sessions immediately,
+/// including before the Worker has learned the session metadata.
+fn merge_live_workspaces(
+    workspaces: &mut Vec<WorkspaceEntry>,
+    live_workspaces: Vec<WorkspaceEntry>,
+    entries: &[BoardPr],
+) {
+    for live in live_workspaces {
+        let live_session = &live.session;
+        let existing = workspaces.iter().position(|entry| {
+            let session = &entry.session;
+            if !live_session.session_id.is_empty() {
+                live_session.session_id == session.session_id
+            } else {
+                live.repo_owner.eq_ignore_ascii_case(&entry.repo_owner)
+                    && live.repo_name.eq_ignore_ascii_case(&entry.repo_name)
+                    && live.branch == entry.branch
+                    && live_session.dir_name == session.dir_name
+            }
+        });
+        if entries_represent_session(
+            &live.repo_owner,
+            &live.repo_name,
+            &live_session.session_id,
+            &live_session.dir_name,
+            entries,
+        ) {
+            if let Some(index) = existing {
+                workspaces.remove(index);
+            }
+            continue;
+        }
+        if let Some(index) = existing {
+            workspaces[index] = live;
+        } else {
+            workspaces.push(live);
+        }
+    }
+    sort_workspaces(workspaces);
 }
 
 /// Keep the strongest source among the session copies that called this PR
@@ -640,18 +849,24 @@ fn sort_entries(entries: &mut [BoardPr]) {
 /// Map the cloud board (durable D1 records, ended sessions included) into
 /// the same shape the live aggregation produces. Overrides and the linger
 /// window are already applied server-side.
-fn cloud_entries_to_board(cloud: Vec<crate::cloud::CloudBoardEntry>) -> Vec<BoardPr> {
+fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec<WorkspaceEntry>) {
     let now = now_secs() as u64;
+    let mut represented = HashSet::new();
     let mut out: Vec<BoardPr> = cloud
+        .prs
         .into_iter()
         .map(|entry| {
             let any_active = entry.sessions.iter().any(|s| s.active);
-            BoardPr {
-                pr: entry.pr,
-                sessions: entry
-                    .sessions
-                    .into_iter()
-                    .map(|s| SessionRef {
+            let pr = entry.pr;
+            let sessions = entry
+                .sessions
+                .into_iter()
+                .map(|s| {
+                    if repository_matches(&s.repo_owner, &s.repo_name, &pr.owner, &pr.repo) {
+                        represented.insert(s.session_id.clone());
+                    }
+                    SessionRef {
+                        session_id: s.session_id,
                         dir_name: s.dir_name,
                         session_dir: None,
                         age_secs: now.saturating_sub(s.last_seen_at),
@@ -669,15 +884,61 @@ fn cloud_entries_to_board(cloud: Vec<crate::cloud::CloudBoardEntry>) -> Vec<Boar
                         }),
                         prompted_at: activity_timestamp_secs(s.prompts_changed_at),
                         completed_at: activity_timestamp_secs(s.completions_changed_at),
-                    })
-                    .collect(),
+                    }
+                })
+                .collect();
+            BoardPr {
+                pr,
+                sessions,
                 uncommitted: 0,
                 stale: !any_active,
             }
         })
         .collect();
     sort_entries(&mut out);
-    out
+
+    let mut workspaces: Vec<WorkspaceEntry> = Vec::new();
+    for session in cloud.sessions {
+        if !session.active || represented.contains(&session.session_id) {
+            continue;
+        }
+        let repo_name = if session.repo_name.is_empty() {
+            session.dir_name.clone()
+        } else {
+            session.repo_name.clone()
+        };
+        let session_ref = SessionRef {
+            session_id: session.session_id,
+            dir_name: session.dir_name,
+            session_dir: None,
+            age_secs: now.saturating_sub(session.last_seen_at),
+            ended: false,
+            title: session.title,
+            recap: session.recap.and_then(|recap| {
+                (!recap.headline.is_empty()).then_some(RecapBrief {
+                    headline: recap.headline,
+                    generated_at: recap.generated_at,
+                    line_delta: crate::recap::TurnLineDelta {
+                        additions: recap.additions,
+                        deletions: recap.deletions,
+                    },
+                })
+            }),
+            prompted_at: activity_timestamp_secs(session.prompts_changed_at),
+            completed_at: activity_timestamp_secs(session.completions_changed_at),
+        };
+        workspaces.push(WorkspaceEntry {
+            repo_owner: session.repo_owner,
+            repo_name,
+            branch: session.branch,
+            session: session_ref,
+            uncommitted: 0,
+            additions: 0,
+            deletions: 0,
+        });
+    }
+    sort_workspaces(&mut workspaces);
+    (out, workspaces)
 }
 
 /// Where a PR sits in the pipeline: its sort rank (most attention needed
@@ -808,6 +1069,25 @@ fn activity_cell(sessions: &[SessionRef], now: u64) -> ActivityCell {
     }
 }
 
+/// Sort completed work by its latest completion. A row that has not completed
+/// yet falls back to its latest prompt so new work still rises immediately.
+fn activity_sort_time(sessions: &[SessionRef]) -> u64 {
+    let completed = sessions
+        .iter()
+        .map(|session| session.completed_at)
+        .max()
+        .unwrap_or(0);
+    if completed > 0 {
+        completed
+    } else {
+        sessions
+            .iter()
+            .map(|session| session.prompted_at)
+            .max()
+            .unwrap_or(0)
+    }
+}
+
 fn activity_part(label: &str, timestamp: u64, now: u64) -> ActivityCell {
     let (plain, part_color) = if timestamp == 0 {
         (format!("{label} —"), color::DARK_GRAY)
@@ -895,6 +1175,17 @@ fn matches_search(pr: &SessionPr, query: &str) -> bool {
         || pr.owner.to_lowercase().contains(&query)
         || pr.title.to_lowercase().contains(&query)
         || pr.branch.to_lowercase().contains(&query)
+}
+
+fn workspace_matches_search(entry: &WorkspaceEntry, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let query = query.to_lowercase();
+    entry.repo_owner.to_lowercase().contains(&query)
+        || entry.repo_name.to_lowercase().contains(&query)
+        || entry.branch.to_lowercase().contains(&query)
+        || entry.session.title.to_lowercase().contains(&query)
 }
 
 /// Byte range of the first case-insensitive occurrence of `needle` in
@@ -1077,12 +1368,22 @@ fn build_previews(
     width: u16,
     expanded: bool,
 ) -> Vec<String> {
+    build_session_previews(&entry.sessions, cache, query, width, expanded)
+}
+
+fn build_session_previews(
+    sessions: &[SessionRef],
+    cache: &mut TranscriptCache,
+    query: &str,
+    width: u16,
+    expanded: bool,
+) -> Vec<String> {
     if query.len() < TRANSCRIPT_QUERY_MIN {
         return Vec::new();
     }
     let mut seen_dirs: HashSet<&Path> = HashSet::new();
     let mut out = Vec::new();
-    for session in &entry.sessions {
+    for session in sessions {
         let Some(dir) = session.session_dir.as_deref() else {
             continue;
         };
@@ -1276,9 +1577,194 @@ struct BoardRow<'a> {
     preview_lines: Vec<String>,
 }
 
+struct WorkspaceRow<'a> {
+    entry: &'a WorkspaceEntry,
+    preview_lines: Vec<String>,
+}
+
+fn render_pr_board_row(
+    board_row: &BoardRow<'_>,
+    width: u16,
+    detail: u8,
+    now_ms: u64,
+    activity_width: usize,
+    widths: &PrColumnWidths,
+) -> Vec<String> {
+    let entry = board_row.entry;
+    let activity = activity_cell(&entry.sessions, now_ms / 1000);
+    let mut row = pr_row_text_with_activity(
+        width,
+        &entry.pr,
+        widths,
+        activity.styled,
+        activity.visible,
+        activity_width,
+    );
+    if entry.stale {
+        row = format!("{}{row}", fg(color::DARK_GRAY));
+    }
+
+    let mut lines = vec![format!("{row}{RESET}")];
+    if detail == 0 {
+        lines.extend(board_row.preview_lines.iter().cloned());
+        return lines;
+    }
+
+    let stage = stage(&entry.pr);
+    let mentions = if entry.pr.mentions > 0 {
+        let yours = if entry.pr.user_mentions > 0 {
+            format!(" ({} yours)", entry.pr.user_mentions)
+        } else {
+            String::new()
+        };
+        format!(" · {} mentions{}", entry.pr.mentions, yours)
+    } else {
+        String::new()
+    };
+    let mention_age = if entry.pr.last_mentioned_at > 0 {
+        let secs = now_ms.saturating_sub(entry.pr.last_mentioned_at) / 1000;
+        if secs < 60 {
+            " · spoken just now".to_string()
+        } else {
+            format!(" · spoken {} ago", format_age(secs))
+        }
+    } else {
+        String::new()
+    };
+    let uncommitted = if entry.uncommitted > 0 {
+        format!(
+            " · {}⚠ {} uncommitted{}",
+            fg(color::YELLOW),
+            entry.uncommitted,
+            RESET_FG
+        )
+    } else {
+        String::new()
+    };
+    lines.push(format!(
+        "   {} {}{}{} · {}in {}{}{}{}{}",
+        progress_bar(&entry.pr),
+        fg(stage.color),
+        stage.label,
+        RESET_FG,
+        fg(color::GRAY),
+        sessions_text(&entry.sessions),
+        mentions,
+        mention_age,
+        RESET_FG,
+        uncommitted,
+    ));
+
+    let mut extras: Vec<String> = Vec::new();
+    if !entry.pr.ai_note.is_empty() && entry.pr.state == "OPEN" {
+        extras.push(format!(
+            "{}✦ {}{}",
+            fg(color::YELLOW),
+            entry.pr.ai_note,
+            RESET_FG
+        ));
+    }
+    if !entry.pr.slack_origin_url.is_empty() {
+        extras.push(format!(
+            "{}{}{}",
+            fg(color::CYAN),
+            escape::hyperlink(&entry.pr.slack_origin_url, "⛓ slack origin"),
+            RESET_FG
+        ));
+    }
+    for (i, url) in entry.pr.slack_comment_urls.iter().enumerate() {
+        let label = if entry.pr.slack_comment_urls.len() == 1 {
+            "⛓ slack".to_string()
+        } else {
+            format!("⛓ slack {}", i + 1)
+        };
+        extras.push(format!(
+            "{}{}{}",
+            fg(color::CYAN),
+            escape::hyperlink(url, &label),
+            RESET_FG
+        ));
+    }
+    if !extras.is_empty() {
+        lines.push(format!("   {}", extras.join("  ")));
+    }
+    if detail >= 2 {
+        lines.extend(session_detail_lines(&entry.sessions, width, detail, now_ms));
+    }
+    lines.extend(board_row.preview_lines.iter().cloned());
+    lines.push(String::new());
+    lines
+}
+
+fn workspace_title(entry: &WorkspaceEntry) -> &str {
+    let session = &entry.session;
+    let title = session.title.strip_prefix("⟁ ").unwrap_or(&session.title);
+    if title.is_empty() {
+        session.dir_name.as_str()
+    } else {
+        title
+    }
+}
+
+fn workspace_diff_text(entry: &WorkspaceEntry) -> String {
+    if entry.additions == 0 && entry.deletions == 0 {
+        String::new()
+    } else {
+        format!("+{} -{}", entry.additions, entry.deletions)
+    }
+}
+
+fn workspace_files_text(entry: &WorkspaceEntry) -> String {
+    match entry.uncommitted {
+        0 => String::new(),
+        1 => "1 file".to_string(),
+        count => format!("{count} files"),
+    }
+}
+
+fn workspace_branch_text(entry: &WorkspaceEntry) -> String {
+    let branch = if entry.branch.is_empty() {
+        "(no branch)"
+    } else {
+        entry.branch.as_str()
+    };
+    format!("⎇ {branch}")
+}
+
+fn render_workspace_board_row(
+    workspace_row: &WorkspaceRow<'_>,
+    width: u16,
+    now_ms: u64,
+    activity_width: usize,
+    widths: &PrColumnWidths,
+) -> Vec<String> {
+    let entry = workspace_row.entry;
+    let title = workspace_title(entry);
+    let branch = workspace_branch_text(entry);
+    let diff = workspace_diff_text(entry);
+    let files = workspace_files_text(entry);
+    let activity = activity_cell(entry.sessions(), now_ms / 1000);
+    let row = session_row_text_with_activity(
+        width,
+        title,
+        &diff,
+        &files,
+        &branch,
+        widths,
+        activity.styled,
+        activity.visible,
+        activity_width,
+    );
+    let mut lines = vec![format!("{row}{RESET}")];
+    lines.extend(workspace_row.preview_lines.iter().cloned());
+    lines.push(String::new());
+    lines
+}
+
 /// Build one full frame as displayable lines (no trailing newline handling).
 fn render(
     rows: &[BoardRow],
+    workspace_rows: &[WorkspaceRow],
     width: u16,
     linger_days: u64,
     include_ended: bool,
@@ -1287,11 +1773,17 @@ fn render(
     let now_ms = (now_secs() * 1000.0) as u64;
     let session_count = rows
         .iter()
-        .flat_map(|r| r.entry.sessions.iter().map(|s| s.dir_name.as_str()))
+        .flat_map(|row| row.entry.sessions.iter())
+        .chain(workspace_rows.iter().map(|row| &row.entry.session))
+        .map(|session| {
+            if session.session_id.is_empty() {
+                session.dir_name.as_str()
+            } else {
+                session.session_id.as_str()
+            }
+        })
         .collect::<HashSet<_>>()
         .len();
-    // The window reads gray at the default and yellow once adjusted, so an
-    // unusual view never masquerades as the everyday one.
     let window_text = match linger_days {
         0 => "open only".to_string(),
         days => format!("primary done ≤ {days}d"),
@@ -1306,15 +1798,11 @@ fn render(
             fg(color::DARK_GRAY)
         )
     };
-    // The source also reads yellow off its default, so the cloud view (which
-    // lags live mirrors by up to a minute) never passes for the live one.
     let source = if include_ended {
         format!("{}all sessions{}", fg(color::YELLOW), fg(color::DARK_GRAY))
     } else {
         "live".to_string()
     };
-    // Always name the level so `e` and `c` have a visible four-step model.
-    // Non-default levels use yellow to show that the view changed.
     let detail_label = if detail == DEFAULT_DETAIL {
         format!(" · {}", detail_name(detail))
     } else {
@@ -1326,192 +1814,178 @@ fn render(
         )
     };
 
-    let mut lines = Vec::new();
-    lines.push(format!(
-        "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{} · ↑↓ scroll · / search · +/- days · e/c detail · a all · q quit{}",
-        fg(color::PURPLE),
-        RESET_FG,
-        fg(color::DARK_GRAY),
-        rows.len(),
-        session_count,
-        source,
-        window,
-        detail_label,
-        RESET_FG,
-    ));
-    lines.push(String::new());
-
-    if rows.is_empty() {
+    let mut lines = vec![
+        format!(
+            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{} · ↑↓ scroll · / search · +/- days · e/c detail · a all · q quit{}",
+            fg(color::PURPLE),
+            RESET_FG,
+            fg(color::DARK_GRAY),
+            rows.len(),
+            session_count,
+            source,
+            window,
+            detail_label,
+            RESET_FG,
+        ),
+        String::new(),
+    ];
+    if rows.is_empty() && workspace_rows.is_empty() {
         lines.push(format!(
-            "{}No PRs tracked by any live session.{}",
+            "{}No live sessions or tracked PRs.{}",
             fg(color::GRAY),
             RESET_FG
         ));
         return lines;
     }
 
-    // Group by repo, preserving the attention ordering for group placement.
-    let mut repo_order: Vec<String> = Vec::new();
-    let mut groups: HashMap<String, Vec<&BoardRow>> = HashMap::new();
-    for row in rows {
-        let repo = format!("{}/{}", row.entry.pr.owner, row.entry.pr.repo);
-        if !groups.contains_key(&repo) {
-            repo_order.push(repo.clone());
-        }
-        groups.entry(repo).or_default().push(row);
+    let activity_width = rows
+        .iter()
+        .map(|row| activity_cell(&row.entry.sessions, now_ms / 1000).visible)
+        .chain(
+            workspace_rows
+                .iter()
+                .map(|row| activity_cell(row.entry.sessions(), now_ms / 1000).visible),
+        )
+        .max()
+        .unwrap_or(0);
+    let shared_width = (width as usize)
+        .saturating_sub(activity_width)
+        .saturating_sub(usize::from(activity_width > 0) * PR_COLUMN_GAP)
+        .min(u16::MAX as usize) as u16;
+    let pr_refs: Vec<&SessionPr> = rows.iter().map(|row| &row.entry.pr).collect();
+    let mut widths = PrColumnWidths::from_pr_refs(&pr_refs, shared_width as usize);
+    for row in workspace_rows {
+        let entry = row.entry;
+        widths.include_board_row(
+            &format!("◇ {}", workspace_title(entry)),
+            &workspace_diff_text(entry),
+            &workspace_files_text(entry),
+            &workspace_branch_text(entry),
+            shared_width as usize,
+        );
     }
 
-    for repo in repo_order {
-        let group = &groups[&repo];
+    #[derive(Clone, Copy)]
+    enum SectionRow {
+        Pr(usize),
+        Workspace(usize),
+    }
+
+    struct RepositorySection {
+        key: String,
+        name: String,
+        rows: Vec<(u64, SectionRow)>,
+        pr_count: usize,
+    }
+
+    let mut sections: Vec<RepositorySection> = Vec::new();
+    {
+        let mut add_row = |name: String, activity: u64, row: SectionRow| {
+            let key = name.to_ascii_lowercase();
+            let index = sections
+                .iter()
+                .position(|section| section.key == key)
+                .unwrap_or_else(|| {
+                    sections.push(RepositorySection {
+                        key,
+                        name,
+                        rows: Vec::new(),
+                        pr_count: 0,
+                    });
+                    sections.len() - 1
+                });
+            let section = &mut sections[index];
+            section.pr_count += usize::from(matches!(row, SectionRow::Pr(_)));
+            section.rows.push((activity, row));
+        };
+        for (index, row) in rows.iter().enumerate() {
+            add_row(
+                format!("{}/{}", row.entry.pr.owner, row.entry.pr.repo),
+                activity_sort_time(&row.entry.sessions),
+                SectionRow::Pr(index),
+            );
+        }
+        for (index, row) in workspace_rows.iter().enumerate() {
+            let repo = if row.entry.repo_owner.is_empty() {
+                row.entry.repo_name.clone()
+            } else {
+                format!("{}/{}", row.entry.repo_owner, row.entry.repo_name)
+            };
+            add_row(
+                repo,
+                activity_sort_time(row.entry.sessions()),
+                SectionRow::Workspace(index),
+            );
+        }
+    }
+
+    for section in &mut sections {
+        section.rows.sort_by(|a, b| b.0.cmp(&a.0));
+    }
+    sections.sort_by(|a, b| b.rows[0].0.cmp(&a.rows[0].0));
+
+    for section in sections {
+        let section_session_count = section
+            .rows
+            .iter()
+            .flat_map(|(_, row)| match *row {
+                SectionRow::Pr(index) => rows[index].entry.sessions.iter(),
+                SectionRow::Workspace(index) => workspace_rows[index].entry.sessions().iter(),
+            })
+            .map(|session| {
+                if session.session_id.is_empty() {
+                    session.dir_name.as_str()
+                } else {
+                    session.session_id.as_str()
+                }
+            })
+            .collect::<HashSet<_>>()
+            .len();
+        let pr_label = if section.pr_count == 1 {
+            "1 PR".to_string()
+        } else {
+            format!("{} PRs", section.pr_count)
+        };
+        let session_label = if section_session_count == 1 {
+            "1 session".to_string()
+        } else {
+            format!("{section_session_count} sessions")
+        };
         lines.push(format!(
-            "{}{}{}  {}{}{}",
+            "{}{}{}  {}{} · {}{}",
             fg(color::CYAN),
-            repo,
+            section.name,
             RESET_FG,
             fg(color::DARK_GRAY),
-            if group.len() == 1 {
-                "1 PR".to_string()
-            } else {
-                format!("{} PRs", group.len())
-            },
+            pr_label,
+            session_label,
             RESET_FG,
         ));
 
-        let refs: Vec<&SessionPr> = group.iter().map(|r| &r.entry.pr).collect();
-        let activities: Vec<ActivityCell> = group
-            .iter()
-            .map(|row| activity_cell(&row.entry.sessions, now_ms / 1000))
-            .collect();
-        let activity_width = activities
-            .iter()
-            .map(|activity| activity.visible)
-            .max()
-            .unwrap_or(0);
-        // Reserve this board-only column before the shared PR layout decides
-        // how much branch text can remain. The activity cell itself is then
-        // inserted immediately before the GitHub status.
-        let shared_width = (width as usize)
-            .saturating_sub(activity_width + PR_COLUMN_GAP)
-            .min(u16::MAX as usize) as u16;
-        let widths = PrColumnWidths::from_pr_refs(&refs, shared_width as usize);
-        for (board_row, activity) in group.iter().zip(activities) {
-            let entry = board_row.entry;
-            let mut row = pr_row_text_with_activity(
-                width,
-                &entry.pr,
-                &widths,
-                activity.styled,
-                activity.visible,
-                activity_width,
-            );
-            if entry.stale {
-                row = format!("{}{row}", fg(color::DARK_GRAY));
+        for (_, row) in section.rows {
+            match row {
+                SectionRow::Pr(index) => lines.extend(render_pr_board_row(
+                    &rows[index],
+                    width,
+                    detail,
+                    now_ms,
+                    activity_width,
+                    &widths,
+                )),
+                SectionRow::Workspace(index) => lines.extend(render_workspace_board_row(
+                    &workspace_rows[index],
+                    width,
+                    now_ms,
+                    activity_width,
+                    &widths,
+                )),
             }
-            lines.push(format!("{row}{RESET}"));
-
-            // Compact detail keeps only the identity row (search excerpts
-            // still show, so an active filter stays explainable).
-            if detail == 0 {
-                lines.extend(board_row.preview_lines.iter().cloned());
-                continue;
-            }
-
-            // Row 2: checklist, stage, sessions, engagement, local state.
-            let stage = stage(&entry.pr);
-            let mentions = if entry.pr.mentions > 0 {
-                let yours = if entry.pr.user_mentions > 0 {
-                    format!(" ({} yours)", entry.pr.user_mentions)
-                } else {
-                    String::new()
-                };
-                format!(" · {} mentions{}", entry.pr.mentions, yours)
-            } else {
-                String::new()
-            };
-            let mention_age = if entry.pr.last_mentioned_at > 0 {
-                let secs = now_ms.saturating_sub(entry.pr.last_mentioned_at) / 1000;
-                if secs < 60 {
-                    " · spoken just now".to_string()
-                } else {
-                    format!(" · spoken {} ago", format_age(secs))
-                }
-            } else {
-                String::new()
-            };
-            let uncommitted = if entry.uncommitted > 0 {
-                format!(
-                    " · {}⚠ {} uncommitted{}",
-                    fg(color::YELLOW),
-                    entry.uncommitted,
-                    RESET_FG
-                )
-            } else {
-                String::new()
-            };
-            lines.push(format!(
-                "   {} {}{}{} · {}in {}{}{}{}{}",
-                progress_bar(&entry.pr),
-                fg(stage.color),
-                stage.label,
-                RESET_FG,
-                fg(color::GRAY),
-                sessions_text(&entry.sessions),
-                mentions,
-                mention_age,
-                RESET_FG,
-                uncommitted,
-            ));
-
-            // Row 3: the recap's judgment and Slack links, when we have them.
-            // The judgment describes work in flight, so a merged or closed PR
-            // doesn't show one — a merge outranks any stale model opinion.
-            let mut extras: Vec<String> = Vec::new();
-            if !entry.pr.ai_note.is_empty() && entry.pr.state == "OPEN" {
-                extras.push(format!(
-                    "{}✦ {}{}",
-                    fg(color::YELLOW),
-                    entry.pr.ai_note,
-                    RESET_FG
-                ));
-            }
-            if !entry.pr.slack_origin_url.is_empty() {
-                extras.push(format!(
-                    "{}{}{}",
-                    fg(color::CYAN),
-                    escape::hyperlink(&entry.pr.slack_origin_url, "⛓ slack origin"),
-                    RESET_FG
-                ));
-            }
-            for (i, url) in entry.pr.slack_comment_urls.iter().enumerate() {
-                let label = if entry.pr.slack_comment_urls.len() == 1 {
-                    "⛓ slack".to_string()
-                } else {
-                    format!("⛓ slack {}", i + 1)
-                };
-                extras.push(format!(
-                    "{}{}{}",
-                    fg(color::CYAN),
-                    escape::hyperlink(url, &label),
-                    RESET_FG
-                ));
-            }
-            if !extras.is_empty() {
-                lines.push(format!("   {}", extras.join("  ")));
-            }
-            // Row 4: per-session terminal titles (and recap headlines at the
-            // deepest level), for the expanded detail views.
-            if detail >= 2 {
-                lines.extend(session_detail_lines(&entry.sessions, width, detail, now_ms));
-            }
-            // Row 5: transcript excerpts backing an active search hit.
-            lines.extend(board_row.preview_lines.iter().cloned());
-            lines.push(String::new());
         }
-        // Compact rows sit flush; a single gap still separates repo groups.
-        if detail == 0 {
+        if !lines.last().is_some_and(String::is_empty) {
             lines.push(String::new());
         }
     }
+
     while lines.last().is_some_and(String::is_empty) {
         lines.pop();
     }
@@ -1528,11 +2002,8 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
     if once {
         let width = terminal_size().map(|(w, _)| w).unwrap_or(120);
         let mut activity_history = ActivityHistory::default();
-        let entries = aggregate(
-            &gather(&mut activity_history)?,
-            &overrides,
-            DEFAULT_LINGER_DAYS,
-        );
+        let (entries, workspaces) =
+            local_board(&mut activity_history, &overrides, DEFAULT_LINGER_DAYS)?;
         let rows: Vec<BoardRow> = entries
             .iter()
             .map(|entry| BoardRow {
@@ -1540,7 +2011,21 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
                 preview_lines: Vec::new(),
             })
             .collect();
-        for line in render(&rows, width, DEFAULT_LINGER_DAYS, false, DEFAULT_DETAIL) {
+        let workspace_rows: Vec<WorkspaceRow> = workspaces
+            .iter()
+            .map(|entry| WorkspaceRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        for line in render(
+            &rows,
+            &workspace_rows,
+            width,
+            DEFAULT_LINGER_DAYS,
+            false,
+            DEFAULT_DETAIL,
+        ) {
             println!("{line}");
         }
         return Ok(());
@@ -1581,6 +2066,9 @@ async fn board_loop(
     let mut last_frame_hash = 0u64;
     let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
     let mut entries: Vec<BoardPr> = Vec::new();
+    let mut workspaces: Vec<WorkspaceEntry> = Vec::new();
+    let mut durable_workspaces: Vec<WorkspaceEntry> = Vec::new();
+    let mut durable_history_loaded = false;
     let mut lines: Vec<String> = Vec::new();
     let mut matched = 0usize;
     let mut scroll: usize = 0;
@@ -1614,16 +2102,20 @@ async fn board_loop(
                 if cloud_fetch_due || stale {
                     cloud_fetch_due = false;
                     cloud_fetched = Some(Instant::now());
-                    match crate::cloud::fetch_pr_board_standalone(linger_days).await {
-                        Ok(cloud) => entries = cloud_entries_to_board(cloud),
-                        Err(_) => {
-                            entries =
-                                aggregate(&gather(&mut activity_history)?, overrides, linger_days)
-                        }
+                    if let Ok(cloud) = crate::cloud::fetch_pr_board_standalone(linger_days).await {
+                        (entries, durable_workspaces) = cloud_entries_to_board(cloud);
+                        durable_history_loaded = true;
                     }
                 }
+                let (live_entries, live_workspaces) =
+                    local_board(&mut activity_history, overrides, linger_days)?;
+                if !durable_history_loaded {
+                    entries = live_entries;
+                }
+                workspaces = durable_workspaces.clone();
+                merge_live_workspaces(&mut workspaces, live_workspaces, &entries);
             } else {
-                entries = aggregate(&gather(&mut activity_history)?, overrides, linger_days);
+                (entries, workspaces) = local_board(&mut activity_history, overrides, linger_days)?;
             }
             needs_render = true;
         }
@@ -1648,8 +2140,33 @@ async fn board_loop(
                     )
                 })
                 .collect();
-            matched = filtered.len();
-            let fresh = render(&filtered, width, linger_days, include_ended, detail);
+            let filtered_workspaces: Vec<WorkspaceRow> = workspaces
+                .iter()
+                .filter_map(|entry| {
+                    let preview_lines = build_session_previews(
+                        entry.sessions(),
+                        &mut transcripts,
+                        query,
+                        width,
+                        expanded,
+                    );
+                    (workspace_matches_search(entry, query) || !preview_lines.is_empty()).then_some(
+                        WorkspaceRow {
+                            entry,
+                            preview_lines,
+                        },
+                    )
+                })
+                .collect();
+            matched = filtered.len() + filtered_workspaces.len();
+            let fresh = render(
+                &filtered,
+                &filtered_workspaces,
+                width,
+                linger_days,
+                include_ended,
+                detail,
+            );
             let hash = frame_hash(&fresh);
             if hash != last_frame_hash {
                 last_frame_hash = hash;
@@ -1834,7 +2351,7 @@ mod tests {
                 preview_lines: Vec::new(),
             })
             .collect();
-        render(&rows, 160, DEFAULT_LINGER_DAYS, false, detail).join("\n")
+        render(&rows, &[], 160, DEFAULT_LINGER_DAYS, false, detail).join("\n")
     }
 
     fn render_frame(entries: &[BoardPr]) -> String {
@@ -1847,11 +2364,16 @@ mod tests {
 
     fn snapshot(dir: &str, prs: Vec<SessionPr>) -> SessionSnapshot {
         SessionSnapshot {
+            session_id: dir.to_string(),
             dir_name: dir.to_string(),
+            repo_owner: "o".to_string(),
+            repo_name: dir.to_string(),
             session_dir: PathBuf::new(),
             last_updated: now_secs(),
             branch: String::new(),
             uncommitted_files: 0,
+            additions: 0,
+            deletions: 0,
             title: String::new(),
             recap: None,
             prompted_at: 0,
@@ -1883,6 +2405,211 @@ mod tests {
         assert_eq!(entry.pr.additions, 42, "newest gh stats win");
         assert_eq!(entry.sessions.len(), 2);
         assert_eq!(entry.pr.slack_comment_urls.len(), 1);
+    }
+
+    #[test]
+    fn active_sessions_without_visible_prs_stay_on_the_board() {
+        let mut first = snapshot("crabigator", Vec::new());
+        first.session_id = "one".to_string();
+        first.repo_owner = "samuelclay".to_string();
+        first.repo_name = "crabigator".to_string();
+        first.branch = "sam/pr-board-session-rows".to_string();
+        first.title = "First active session".to_string();
+        first.uncommitted_files = 3;
+        first.additions = 10;
+        first.deletions = 2;
+        let mut second = snapshot("crabigator", Vec::new());
+        second.session_id = "two".to_string();
+        second.repo_owner = "SamuelClay".to_string();
+        second.repo_name = "crabigator".to_string();
+        second.branch = first.branch.clone();
+        second.title = "Second active session".to_string();
+
+        let snapshots = vec![first, second];
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let workspaces = local_workspaces(&snapshots, &entries);
+        assert_eq!(workspaces.len(), 2);
+
+        let rows: Vec<WorkspaceRow<'_>> = workspaces
+            .iter()
+            .map(|entry| WorkspaceRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        let frame = render(&[], &rows, 160, DEFAULT_LINGER_DAYS, false, DEFAULT_DETAIL).join("\n");
+        assert!(frame.contains("samuelclay/crabigator"));
+        assert!(frame.contains("sam/pr-board-session-rows"));
+        assert!(frame.contains("2 sessions"));
+        assert!(!frame.contains("no tracked PR"));
+        assert!(frame.contains("First active session"));
+        assert!(frame.contains("Second active session"));
+        assert!(frame.contains("+10 -2"));
+        assert!(frame.contains("3 files"));
+    }
+
+    #[test]
+    fn all_mode_keeps_live_sessions_when_cloud_has_no_session_rows() {
+        let mut session = snapshot("crabigator", Vec::new());
+        session.session_id = "live-session".to_string();
+        session.additions = 12;
+        session.deletions = 3;
+        let live = local_workspaces(&[session], &[]);
+        let mut cloud = Vec::new();
+
+        merge_live_workspaces(&mut cloud, live, &[]);
+
+        assert_eq!(cloud.len(), 1);
+        assert_eq!(cloud[0].session.session_id, "live-session");
+        assert_eq!(cloud[0].additions, 12);
+        assert_eq!(cloud[0].deletions, 3);
+    }
+
+    #[test]
+    fn all_mode_pr_represents_its_live_session_after_a_branch_change() {
+        let mut pr = board_pr(7, "crabigator");
+        pr.branch = "old-branch".to_string();
+        let mut durable = snapshot("crabigator", vec![pr]);
+        durable.session_id = "cloud-session".to_string();
+        let entries = aggregate(&[durable], &HashMap::new(), DEFAULT_LINGER_DAYS);
+
+        let mut current = snapshot("crabigator", Vec::new());
+        current.session_id = "cloud-session".to_string();
+        current.branch = "new-branch".to_string();
+        let live = local_workspaces(&[current], &[]);
+        let mut workspaces = Vec::new();
+
+        merge_live_workspaces(&mut workspaces, live, &entries);
+
+        assert!(workspaces.is_empty());
+    }
+
+    #[test]
+    fn repository_rows_share_columns_and_follow_completion_activity() {
+        let now = now_secs() as u64;
+        let mut crab_pr = board_pr(7, "crabigator");
+        crab_pr.owner = "samuelclay".to_string();
+        crab_pr.branch = "with-pr".to_string();
+        let mut pr_session = snapshot("crabigator", vec![crab_pr]);
+        pr_session.session_id = "with-pr".to_string();
+        pr_session.repo_owner = "samuelclay".to_string();
+        pr_session.repo_name = "crabigator".to_string();
+        pr_session.branch = "with-pr".to_string();
+        pr_session.completed_at = now - 120;
+
+        let mut no_pr_session = snapshot("crabigator", Vec::new());
+        no_pr_session.session_id = "without-pr".to_string();
+        no_pr_session.repo_owner = "samuelclay".to_string();
+        no_pr_session.repo_name = "crabigator".to_string();
+        no_pr_session.branch = "main".to_string();
+        no_pr_session.completed_at = now - 30;
+        no_pr_session.title = "Newest completed session".to_string();
+
+        let mut portal_pr = board_pr(9, "developer-portal");
+        portal_pr.branch = "a-much-longer-branch-name".to_string();
+        let mut portal_session = snapshot("developer-portal", vec![portal_pr]);
+        portal_session.completed_at = now - 300;
+
+        let snapshots = vec![pr_session, no_pr_session, portal_session];
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let workspaces = local_workspaces(&snapshots, &entries);
+        let rows: Vec<BoardRow<'_>> = entries
+            .iter()
+            .map(|entry| BoardRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        let workspace_rows: Vec<WorkspaceRow<'_>> = workspaces
+            .iter()
+            .map(|entry| WorkspaceRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        let frame = crate::parsers::strip_ansi_for_debug(
+            &render(
+                &rows,
+                &workspace_rows,
+                160,
+                DEFAULT_LINGER_DAYS,
+                false,
+                DEFAULT_DETAIL,
+            )
+            .join("\n"),
+        );
+
+        assert_eq!(frame.matches("samuelclay/crabigator").count(), 1);
+        let no_pr_offset = frame.find("◇ Newest completed session").unwrap();
+        let pr_offset = frame.find("crabigator #7").unwrap();
+        assert!(no_pr_offset < pr_offset, "newer completion sorts first");
+
+        let no_pr_row = frame
+            .lines()
+            .find(|line| line.contains("◇ Newest completed session"))
+            .unwrap();
+        let crab_pr_row = frame
+            .lines()
+            .find(|line| line.contains("crabigator #7"))
+            .unwrap();
+        let portal_pr_row = frame
+            .lines()
+            .find(|line| line.contains("developer-portal #9"))
+            .unwrap();
+        let column = |line: &str, text: &str| {
+            crate::ui::utils::strip_ansi_len(&line[..line.find(text).unwrap()])
+        };
+        assert_eq!(column(no_pr_row, "⟩"), column(crab_pr_row, "⟩"));
+        assert_eq!(column(crab_pr_row, "⟩"), column(portal_pr_row, "⟩"));
+        assert_eq!(column(no_pr_row, "main"), column(crab_pr_row, "with-pr"));
+        assert_eq!(
+            column(crab_pr_row, "with-pr"),
+            column(portal_pr_row, "a-much-longer-branch-name")
+        );
+        assert!(!no_pr_row.contains("no tracked PR"));
+    }
+
+    #[test]
+    fn sessions_with_visible_prs_do_not_get_duplicate_workspace_rows() {
+        let session = snapshot("crabigator", vec![board_pr(1, "crabigator")]);
+        let snapshots = vec![session];
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        assert_eq!(entries.len(), 1);
+        assert!(local_workspaces(&snapshots, &entries).is_empty());
+    }
+
+    #[test]
+    fn unrelated_visible_prs_do_not_hide_the_current_workspace() {
+        let mut cross_repo_pr = board_pr(1, "portal");
+        cross_repo_pr.branch = "feature".to_string();
+        let mut cross_repo = snapshot("crabigator", vec![cross_repo_pr]);
+        cross_repo.session_id = "cross-repo".to_string();
+        cross_repo.repo_name = "crabigator".to_string();
+        cross_repo.branch = "feature".to_string();
+
+        let mut other_branch_pr = board_pr(2, "crabigator");
+        other_branch_pr.branch = "other".to_string();
+        let mut other_branch = snapshot("crabigator", vec![other_branch_pr]);
+        other_branch.session_id = "other-branch".to_string();
+        other_branch.branch = "feature".to_string();
+
+        let snapshots = vec![cross_repo, other_branch];
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let workspaces = local_workspaces(&snapshots, &entries);
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].session.session_id, "cross-repo");
+    }
+
+    #[test]
+    fn stale_session_mirrors_do_not_stay_on_the_board() {
+        let mut session = snapshot("crabigator", Vec::new());
+        session.last_updated = now_secs() - STALE_SESSION_SECS - 60.0;
+
+        let workspaces = local_workspaces(&[session], &[]);
+
+        assert!(workspaces.is_empty());
     }
 
     #[test]
@@ -2014,6 +2741,7 @@ mod tests {
 
         // A stopped mirror is tagged idle at minute granularity, never seconds.
         let stale = vec![SessionRef {
+            session_id: "stale".to_string(),
             dir_name: "old-worktree".to_string(),
             session_dir: None,
             age_secs: 1_260,
@@ -2242,6 +2970,7 @@ mod tests {
         let entry = BoardPr {
             pr: entry_pr,
             sessions: vec![SessionRef {
+                session_id: "portal".to_string(),
                 dir_name: "portal".to_string(),
                 session_dir: Some(dir.path().to_path_buf()),
                 age_secs: 10,
@@ -2363,6 +3092,7 @@ mod tests {
         let now = 1_000_000;
         let sessions = vec![
             SessionRef {
+                session_id: "older".to_string(),
                 dir_name: "older".to_string(),
                 session_dir: None,
                 age_secs: 0,
@@ -2373,6 +3103,7 @@ mod tests {
                 completed_at: now - 8 * 60 * 60,
             },
             SessionRef {
+                session_id: "newer".to_string(),
                 dir_name: "newer".to_string(),
                 session_dir: None,
                 age_secs: 0,
@@ -2401,6 +3132,25 @@ mod tests {
         let unknown = activity_cell(&[], now);
         assert!(unknown.styled.contains("⟩ —"));
         assert!(unknown.styled.contains("⋖ —"));
+    }
+
+    #[test]
+    fn activity_sort_uses_prompts_only_until_a_completion_exists() {
+        let mut session = SessionRef {
+            session_id: "one".to_string(),
+            dir_name: "crabigator".to_string(),
+            session_dir: None,
+            age_secs: 0,
+            ended: false,
+            title: String::new(),
+            recap: None,
+            prompted_at: 200,
+            completed_at: 0,
+        };
+        assert_eq!(activity_sort_time(std::slice::from_ref(&session)), 200);
+
+        session.completed_at = 150;
+        assert_eq!(activity_sort_time(&[session]), 150);
     }
 
     #[test]
@@ -2540,6 +3290,7 @@ mod tests {
             .iter()
             .chain(entries[0].sessions.iter())
             .map(|s| SessionRef {
+                session_id: s.session_id.clone(),
                 dir_name: s.dir_name.clone(),
                 session_dir: s.session_dir.clone(),
                 age_secs: s.age_secs,
@@ -2554,6 +3305,7 @@ mod tests {
 
         // At level 2 a recap-only session shows nothing yet.
         let recap_only = vec![SessionRef {
+            session_id: "quiet".to_string(),
             dir_name: "quiet".to_string(),
             session_dir: None,
             age_secs: 5,

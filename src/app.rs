@@ -1906,6 +1906,8 @@ impl App {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
+        self.git_state.repo_owner.hash(&mut hasher);
+        self.git_state.repo_name.hash(&mut hasher);
         self.git_state.branch.hash(&mut hasher);
         self.git_state.files.len().hash(&mut hasher);
         for f in &self.git_state.files {
