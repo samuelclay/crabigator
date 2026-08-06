@@ -279,7 +279,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         const aggregatePrimary = !!entry.pr.primary || !!pr.primary;
         const aggregatePrimarySource = combinedPrimarySource(entry.pr, pr);
         const aggregateDismissed = !!entry.pr.dismissed || !!pr.dismissed;
-        if (row.updated_at > entry.updated_at) {
+        if (pr.refreshed_at > entry.pr.refreshed_at) {
             const previous = entry.pr;
             entry.pr = {
                 ...pr,
