@@ -24,6 +24,7 @@ interface SessionPrRow extends BoardSessionRow {
     number: number;
     data: string;
     updated_at: number;
+    is_primary: number;
     disposition: string | null;
 }
 
@@ -131,6 +132,7 @@ interface BoardEntry {
     number: number;
     pr: SessionPr;
     updated_at: number;
+    /** Sessions created with this PR or currently working on its branch. */
     sessions: {
         session_id: string;
         dir_name: string;
@@ -304,6 +306,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
 
     const rows = await env.DB.prepare(
         `SELECT sp.owner, sp.repo, sp.number, sp.data, sp.updated_at, sp.session_id,
+                sp.is_primary,
                 s.cwd, s.state AS session_state, s.is_active, s.last_seen_at,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.recap, s.repo_owner, s.repo_name, s.branch,
@@ -373,7 +376,12 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             entry.pr.ai_note = pr.ai_note;
             entry.pr.ai_confidence = pr.ai_confidence || '';
         }
-        entry.sessions.push(boardSession(row));
+        const representsSession = row.is_primary === 1
+            && !!row.repo_name
+            && (row.repo_owner || '').toLowerCase() === row.owner.toLowerCase()
+            && row.repo_name.toLowerCase() === row.repo.toLowerCase()
+            && (!!pr.created_here || (!!pr.branch && row.branch === pr.branch));
+        if (representsSession) entry.sessions.push(boardSession(row));
     }
 
     const lingerMs = lingerDays * 24 * 3600 * 1000;
@@ -393,9 +401,8 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         })
         .map(({ disposition: _disposition, ...entry }) => entry);
 
-    // PR rows cannot represent a session until that session has mentioned a
-    // PR. Return every active account session separately so clients can show
-    // the remaining repositories as "no tracked PR" instead of dropping them.
+    // Return every active account session separately. Clients keep any session
+    // without a same-repository primary PR as its own peer row.
     const sessionRows = await env.DB.prepare(
         `SELECT s.id AS session_id, s.cwd, s.state AS session_state,
                 s.is_active, s.last_seen_at,

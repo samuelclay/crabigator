@@ -608,21 +608,26 @@ fn aggregate(
                 entry.pr.ai_confidence = pr.ai_confidence.clone();
             }
 
-            entry.stale &= session_age > STALE_SESSION_SECS;
-            if !pr.branch.is_empty() && session.branch == pr.branch {
-                entry.uncommitted = entry.uncommitted.max(session.uncommitted_files);
+            let represents_session = pr.primary
+                && repository_matches(&session.repo_owner, &session.repo_name, &pr.owner, &pr.repo)
+                && (pr.created_here || (!pr.branch.is_empty() && session.branch == pr.branch));
+            if represents_session {
+                entry.stale &= session_age > STALE_SESSION_SECS;
+                if !pr.branch.is_empty() && session.branch == pr.branch {
+                    entry.uncommitted = entry.uncommitted.max(session.uncommitted_files);
+                }
+                entry.sessions.push(SessionRef {
+                    session_id: session.session_id.clone(),
+                    dir_name: session.dir_name.clone(),
+                    session_dir: Some(session.session_dir.clone()),
+                    age_secs: session_age as u64,
+                    ended: false,
+                    title: session.title.clone(),
+                    recap: session.recap.clone(),
+                    prompted_at: session.prompted_at,
+                    completed_at: session.completed_at,
+                });
             }
-            entry.sessions.push(SessionRef {
-                session_id: session.session_id.clone(),
-                dir_name: session.dir_name.clone(),
-                session_dir: Some(session.session_dir.clone()),
-                age_secs: session_age as u64,
-                ended: false,
-                title: session.title.clone(),
-                recap: session.recap.clone(),
-                prompted_at: session.prompted_at,
-                completed_at: session.completed_at,
-            });
         }
     }
 
@@ -862,9 +867,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                 .sessions
                 .into_iter()
                 .map(|s| {
-                    if repository_matches(&s.repo_owner, &s.repo_name, &pr.owner, &pr.repo) {
-                        represented.insert(s.session_id.clone());
-                    }
+                    represented.insert(s.session_id.clone());
                     SessionRef {
                         session_id: s.session_id,
                         dir_name: s.dir_name,
@@ -1641,14 +1644,22 @@ fn render_pr_board_row(
     } else {
         String::new()
     };
+    let location = if entry.sessions.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " · {}in {}",
+            fg(color::GRAY),
+            sessions_text(&entry.sessions)
+        )
+    };
     lines.push(format!(
-        "   {} {}{}{} · {}in {}{}{}{}{}",
+        "   {} {}{}{}{}{}{}{}{}",
         progress_bar(&entry.pr),
         fg(stage.color),
         stage.label,
         RESET_FG,
-        fg(color::GRAY),
-        sessions_text(&entry.sessions),
+        location,
         mentions,
         mention_age,
         RESET_FG,
@@ -2341,6 +2352,7 @@ mod tests {
     fn make_primary(pr: &mut SessionPr) {
         pr.primary = true;
         pr.primary_source = "auto".to_string();
+        pr.created_here = true;
     }
 
     fn render_frame_at(entries: &[BoardPr], detail: u8) -> String {
@@ -2385,20 +2397,22 @@ mod tests {
     #[test]
     fn aggregation_merges_the_same_pr_across_sessions() {
         let mut a = board_pr(5, "portal");
+        make_primary(&mut a);
         a.mentions = 10;
         a.user_mentions = 1;
         a.refreshed_at = 2_000;
         a.additions = 42;
         let mut b = board_pr(5, "portal");
+        make_primary(&mut b);
         b.mentions = 3;
         b.refreshed_at = 1_000;
         b.slack_comment_urls = vec!["https://t.slack.com/archives/C1/p1".to_string()];
 
-        let entries = aggregate(
-            &[snapshot("one", vec![a]), snapshot("two", vec![b])],
-            &HashMap::new(),
-            DEFAULT_LINGER_DAYS,
-        );
+        let mut one = snapshot("one", vec![a]);
+        one.repo_name = "portal".to_string();
+        let mut two = snapshot("two", vec![b]);
+        two.repo_name = "portal".to_string();
+        let entries = aggregate(&[one, two], &HashMap::new(), DEFAULT_LINGER_DAYS);
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.pr.mentions, 13, "mentions sum across sessions");
@@ -2468,6 +2482,7 @@ mod tests {
     #[test]
     fn all_mode_pr_represents_its_live_session_after_a_branch_change() {
         let mut pr = board_pr(7, "crabigator");
+        make_primary(&mut pr);
         pr.branch = "old-branch".to_string();
         let mut durable = snapshot("crabigator", vec![pr]);
         durable.session_id = "cloud-session".to_string();
@@ -2488,6 +2503,7 @@ mod tests {
     fn repository_rows_share_columns_and_follow_completion_activity() {
         let now = now_secs() as u64;
         let mut crab_pr = board_pr(7, "crabigator");
+        make_primary(&mut crab_pr);
         crab_pr.owner = "samuelclay".to_string();
         crab_pr.branch = "with-pr".to_string();
         let mut pr_session = snapshot("crabigator", vec![crab_pr]);
@@ -2506,6 +2522,7 @@ mod tests {
         no_pr_session.title = "Newest completed session".to_string();
 
         let mut portal_pr = board_pr(9, "developer-portal");
+        make_primary(&mut portal_pr);
         portal_pr.branch = "a-much-longer-branch-name".to_string();
         let mut portal_session = snapshot("developer-portal", vec![portal_pr]);
         portal_session.completed_at = now - 300;
@@ -2571,7 +2588,9 @@ mod tests {
 
     #[test]
     fn sessions_with_visible_prs_do_not_get_duplicate_workspace_rows() {
-        let session = snapshot("crabigator", vec![board_pr(1, "crabigator")]);
+        let mut pr = board_pr(1, "crabigator");
+        make_primary(&mut pr);
+        let session = snapshot("crabigator", vec![pr]);
         let snapshots = vec![session];
         let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
         assert_eq!(entries.len(), 1);
@@ -2579,8 +2598,79 @@ mod tests {
     }
 
     #[test]
+    fn unowned_pr_mentions_keep_sessions_as_peer_rows_in_every_detail_mode() {
+        let now = now_secs() as u64;
+        let mut primary_pr = board_pr(2, "crabigator");
+        make_primary(&mut primary_pr);
+
+        let mut primary = snapshot("crabigator", vec![primary_pr.clone()]);
+        primary.session_id = "primary-session".to_string();
+        primary.branch = "main".to_string();
+        primary.title = "PR owner session".to_string();
+        primary.prompted_at = now - 180;
+        primary.completed_at = now - 120;
+
+        primary_pr.created_here = false;
+        primary_pr.branch = "older-pr-branch".to_string();
+        let mut secondary = snapshot("crabigator", vec![primary_pr]);
+        secondary.session_id = "secondary-session".to_string();
+        secondary.branch = "main".to_string();
+        secondary.title = "Independent session".to_string();
+        secondary.prompted_at = now - 60;
+        secondary.completed_at = now - 30;
+
+        let snapshots = vec![primary, secondary];
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let workspaces = local_workspaces(&snapshots, &entries);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].session.session_id, "secondary-session");
+        assert_eq!(entries[0].sessions.len(), 1);
+
+        let rows = [BoardRow {
+            entry: &entries[0],
+            preview_lines: Vec::new(),
+        }];
+        let workspace_rows = [WorkspaceRow {
+            entry: &workspaces[0],
+            preview_lines: Vec::new(),
+        }];
+        for detail in 0..=MAX_DETAIL {
+            let frame = crate::parsers::strip_ansi_for_debug(
+                &render(
+                    &rows,
+                    &workspace_rows,
+                    160,
+                    DEFAULT_LINGER_DAYS,
+                    false,
+                    detail,
+                )
+                .join("\n"),
+            );
+            assert!(frame.contains("2 sessions"));
+            let pr_row = frame.lines().find(|line| line.contains("#2")).unwrap();
+            assert!(pr_row.contains(PROMPT_ICON));
+            assert!(pr_row.contains(COMPLETION_ICON));
+            let session_row = frame
+                .lines()
+                .find(|line| line.contains("◇ Independent session"))
+                .unwrap();
+            assert!(session_row.contains(PROMPT_ICON));
+            assert!(session_row.contains(COMPLETION_ICON));
+            if detail == MAX_DETAIL {
+                assert_eq!(
+                    frame.matches("Independent session").count(),
+                    1,
+                    "the peer session must not also appear beneath the PR"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn unrelated_visible_prs_do_not_hide_the_current_workspace() {
         let mut cross_repo_pr = board_pr(1, "portal");
+        make_primary(&mut cross_repo_pr);
         cross_repo_pr.branch = "feature".to_string();
         let mut cross_repo = snapshot("crabigator", vec![cross_repo_pr]);
         cross_repo.session_id = "cross-repo".to_string();
@@ -2588,6 +2678,7 @@ mod tests {
         cross_repo.branch = "feature".to_string();
 
         let mut other_branch_pr = board_pr(2, "crabigator");
+        make_primary(&mut other_branch_pr);
         other_branch_pr.branch = "other".to_string();
         let mut other_branch = snapshot("crabigator", vec![other_branch_pr]);
         other_branch.session_id = "other-branch".to_string();
@@ -2726,13 +2817,16 @@ mod tests {
     /// once with a multiplier instead of a flickering per-session age list.
     #[test]
     fn sessions_dedupe_by_directory_without_ages() {
-        let pr = board_pr(9, "portal");
+        let mut pr = board_pr(9, "portal");
+        make_primary(&mut pr);
+        let mut first = snapshot("developer-portal", vec![pr.clone()]);
+        first.repo_name = "portal".to_string();
+        let mut second = snapshot("developer-portal", vec![pr.clone()]);
+        second.repo_name = "portal".to_string();
+        let mut builder = snapshot("builder-document-intent", vec![pr]);
+        builder.repo_name = "portal".to_string();
         let entries = aggregate(
-            &[
-                snapshot("developer-portal", vec![pr.clone()]),
-                snapshot("developer-portal", vec![pr.clone()]),
-                snapshot("builder-document-intent", vec![pr]),
-            ],
+            &[first, second, builder],
             &HashMap::new(),
             DEFAULT_LINGER_DAYS,
         );
@@ -3003,6 +3097,7 @@ mod tests {
     /// Sessions carrying a title and recap for the detail levels.
     fn titled_entries() -> Vec<BoardPr> {
         let mut pr = board_pr(9, "portal");
+        make_primary(&mut pr);
         pr.mergeable = "MERGEABLE".to_string();
         let mut with_title = snapshot("portal", vec![pr.clone()]);
         with_title.title = "Wiring the PR board detail levels".to_string();
