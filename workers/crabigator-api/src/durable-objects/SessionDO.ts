@@ -117,6 +117,8 @@ export class SessionDO implements DurableObject {
     private lastD1PrsUpdate: number = 0;
     /** Serialized form of the last session_prs write, to skip no-op writes */
     private lastD1PrsSnapshot: string = '';
+    /** Last repository identity written to the session row. */
+    private lastD1RepositorySnapshot: string = '';
     /** Serializes stats persistence so external D1 I/O cannot reorder updates. */
     private statsUpdateQueue: Promise<void> = Promise.resolve();
 
@@ -424,6 +426,38 @@ export class SessionDO implements DurableObject {
     }
 
     /**
+     * Keep the session's repository and branch beside its durable session
+     * record. This lets the PR board retain active sessions before they have
+     * created or mentioned a pull request.
+     */
+    private persistRepositoryToD1(event: GitEvent): void {
+        const sessionId = this.persistentState.sessionId || this.sessionInfo?.id;
+        if (!sessionId) return;
+        const snapshot = JSON.stringify([
+            event.repo_owner || '',
+            event.repo_name || '',
+            event.branch || '',
+        ]);
+        if (snapshot === this.lastD1RepositorySnapshot) return;
+        this.env.DB.prepare(
+            `UPDATE sessions
+             SET repo_owner = ?, repo_name = ?, branch = ?
+             WHERE id = ?`
+        ).bind(
+            event.repo_owner || '',
+            event.repo_name || '',
+            event.branch || '',
+            sessionId
+        ).run()
+            .then(() => {
+                this.lastD1RepositorySnapshot = snapshot;
+            })
+            .catch((error) => {
+                console.error('Error persisting session repository:', error);
+            });
+    }
+
+    /**
      * Build web-only commit history from the bounded recent log desktop sends
      * with git status. If no history has been recorded yet, backfill commits
      * from this session's start time so late Worker/client upgrades don't
@@ -621,11 +655,13 @@ export class SessionDO implements DurableObject {
             }
             case 'git':
                 {
-                    const commitUpdate = this.updateCommitHistoryFromGit(event as GitEvent);
+                    const gitEvent = event as GitEvent;
+                    const commitUpdate = this.updateCommitHistoryFromGit(gitEvent);
                     persistentChanged = persistentChanged || commitUpdate.persistentChanged;
                     if (commitUpdate.historyEvent) {
                         postBroadcastEvents.push(commitUpdate.historyEvent);
                     }
+                    this.persistRepositoryToD1(gitEvent);
                 }
                 // Git status itself is ephemeral; commit history above is web-only persistent state.
                 this.ephemeralState.lastGit = event as GitEvent;

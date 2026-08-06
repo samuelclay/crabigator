@@ -3,12 +3,7 @@ import type { SessionPr } from '../types/session';
 import { jsonResponse } from '../router';
 import { requireDeviceAuth, requireMobileAuth } from '../auth/middleware';
 
-interface SessionPrRow {
-    owner: string;
-    repo: string;
-    number: number;
-    data: string;
-    updated_at: number;
+interface BoardSessionRow {
     session_id: string;
     cwd: string | null;
     session_state: string | null;
@@ -18,6 +13,17 @@ interface SessionPrRow {
     completions_changed_at: number | null;
     titles: string | null;
     recap: string | null;
+    repo_owner: string | null;
+    repo_name: string | null;
+    branch: string | null;
+}
+
+interface SessionPrRow extends BoardSessionRow {
+    owner: string;
+    repo: string;
+    number: number;
+    data: string;
+    updated_at: number;
     disposition: string | null;
 }
 
@@ -128,6 +134,9 @@ interface BoardEntry {
     sessions: {
         session_id: string;
         dir_name: string;
+        repo_owner: string;
+        repo_name: string;
+        branch: string;
         state: string;
         active: boolean;
         last_seen_at: number;
@@ -140,6 +149,53 @@ interface BoardEntry {
         /** The session's latest recap brief, when one was recorded. */
         recap: SessionRecapBrief | null;
     }[];
+}
+
+type BoardSession = BoardEntry['sessions'][number];
+
+function sessionTitle(raw: string | null): string {
+    try {
+        const titles: unknown = JSON.parse(raw || '[]');
+        return Array.isArray(titles) && titles.length > 0
+            ? String(titles[titles.length - 1])
+            : '';
+    } catch {
+        return '';
+    }
+}
+
+function sessionRecap(raw: string | null): SessionRecapBrief | null {
+    try {
+        const parsed = JSON.parse(raw || 'null');
+        if (!parsed?.headline) return null;
+        return {
+            headline: String(parsed.headline),
+            generated_at: parsed.generated_at || 0,
+            additions: parsed.additions || 0,
+            deletions: parsed.deletions || 0,
+        };
+    } catch {
+        return null;
+    }
+}
+
+function boardSession(row: BoardSessionRow): BoardSession {
+    const cwd = row.cwd || '';
+    const dirName = cwd.split('/').filter(Boolean).pop() || cwd;
+    return {
+        session_id: row.session_id,
+        dir_name: dirName,
+        repo_owner: row.repo_owner || '',
+        repo_name: row.repo_name || dirName,
+        branch: row.branch || '',
+        state: row.session_state || '',
+        active: !!row.is_active,
+        last_seen_at: row.last_seen_at || 0,
+        prompts_changed_at: row.prompts_changed_at || 0,
+        completions_changed_at: row.completions_changed_at || 0,
+        title: sessionTitle(row.titles),
+        recap: sessionRecap(row.recap),
+    };
 }
 
 function isSessionPr(value: unknown): value is SessionPr {
@@ -250,7 +306,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         `SELECT sp.owner, sp.repo, sp.number, sp.data, sp.updated_at, sp.session_id,
                 s.cwd, s.state AS session_state, s.is_active, s.last_seen_at,
                 s.prompts_changed_at, s.completions_changed_at,
-                s.titles, s.recap,
+                s.titles, s.recap, s.repo_owner, s.repo_name, s.branch,
                 o.disposition
          FROM session_prs sp
          JOIN sessions s ON s.id = sp.session_id
@@ -317,39 +373,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             entry.pr.ai_note = pr.ai_note;
             entry.pr.ai_confidence = pr.ai_confidence || '';
         }
-        const cwd = row.cwd || '';
-        let title = '';
-        try {
-            const titles = JSON.parse(row.titles || '[]');
-            if (Array.isArray(titles) && titles.length > 0) title = String(titles[titles.length - 1]);
-        } catch {
-            // Unparseable titles column contributes nothing.
-        }
-        let recap: SessionRecapBrief | null = null;
-        try {
-            const parsed = JSON.parse(row.recap || 'null');
-            if (parsed?.headline) {
-                recap = {
-                    headline: String(parsed.headline),
-                    generated_at: parsed.generated_at || 0,
-                    additions: parsed.additions || 0,
-                    deletions: parsed.deletions || 0,
-                };
-            }
-        } catch {
-            // Unparseable recap column contributes nothing.
-        }
-        entry.sessions.push({
-            session_id: row.session_id,
-            dir_name: cwd.split('/').filter(Boolean).pop() || cwd,
-            state: row.session_state || '',
-            active: !!row.is_active,
-            last_seen_at: row.last_seen_at || 0,
-            prompts_changed_at: row.prompts_changed_at || 0,
-            completions_changed_at: row.completions_changed_at || 0,
-            title,
-            recap,
-        });
+        entry.sessions.push(boardSession(row));
     }
 
     const lingerMs = lingerDays * 24 * 3600 * 1000;
@@ -369,5 +393,23 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         })
         .map(({ disposition: _disposition, ...entry }) => entry);
 
-    return jsonResponse({ prs });
+    // PR rows cannot represent a session until that session has mentioned a
+    // PR. Return every active account session separately so clients can show
+    // the remaining repositories as "no tracked PR" instead of dropping them.
+    const sessionRows = await env.DB.prepare(
+        `SELECT s.id AS session_id, s.cwd, s.state AS session_state,
+                s.is_active, s.last_seen_at,
+                s.prompts_changed_at, s.completions_changed_at,
+                s.titles, s.recap, s.repo_owner, s.repo_name, s.branch
+         FROM sessions s
+         JOIN devices d ON d.id = s.device_id
+         WHERE d.group_id = ? AND s.is_active = 1
+         ORDER BY s.last_seen_at DESC
+         LIMIT 200`
+    )
+        .bind(groupId)
+        .all<BoardSessionRow>();
+    const sessions = (sessionRows.results ?? []).map(boardSession);
+
+    return jsonResponse({ prs, sessions });
 }

@@ -62,6 +62,8 @@ export interface GitCommitInfo {
  */
 export interface GitEvent {
     type: 'git';
+    repo_owner?: string;
+    repo_name?: string;
     branch: string;
     files: GitFile[];
     recent_commits?: GitCommitInfo[];

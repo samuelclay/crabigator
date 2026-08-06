@@ -6,6 +6,7 @@ export const prBoardJs = `
         let prBoardVisible = false;
         let prBoardTimer = null;
         let prBoardEntries = [];
+        let prBoardSessions = [];
 
         function togglePrBoard() {
             prBoardVisible = !prBoardVisible;
@@ -36,29 +37,30 @@ export const prBoardJs = `
                 }
                 const data = await res.json();
                 prBoardEntries = data.prs || [];
+                prBoardSessions = data.sessions || [];
                 renderPrBoard();
             } catch (e) {
                 board.innerHTML = '<div class="pr-board-empty">Could not load the PR board.</div>';
             }
         }
 
-        // Pipeline position, most-attention-needed first (mirrors the TUI).
+        // Current pipeline status for the row's detail line.
         function prBoardStage(pr) {
             // No state = never enriched; the desktop is still fetching (and
             // retries failures automatically).
             if (!pr.state) return pr.fetch_error
-                ? { rank: 2, label: 'fetch failed, retrying', cls: 'bad' }
-                : { rank: 2, label: 'fetching', cls: 'dim' };
-            if (pr.state === 'MERGED') return { rank: 6, label: 'merged', cls: 'merged' };
-            if (pr.state !== 'OPEN') return { rank: 7, label: 'closed', cls: 'dim' };
-            if (pr.mergeable === 'CONFLICTING') return { rank: 0, label: 'conflicts', cls: 'bad' };
-            if ((pr.checks_failed || 0) > 0) return { rank: 0, label: 'CI failing', cls: 'bad' };
+                ? { label: 'fetch failed, retrying', cls: 'bad' }
+                : { label: 'fetching', cls: 'dim' };
+            if (pr.state === 'MERGED') return { label: 'merged', cls: 'merged' };
+            if (pr.state !== 'OPEN') return { label: 'closed', cls: 'dim' };
+            if (pr.mergeable === 'CONFLICTING') return { label: 'conflicts', cls: 'bad' };
+            if ((pr.checks_failed || 0) > 0) return { label: 'CI failing', cls: 'bad' };
             if (pr.review_decision === 'CHANGES_REQUESTED')
-                return { rank: 1, label: 'changes requested', cls: 'bad' };
-            if (pr.is_draft) return { rank: 2, label: 'draft', cls: 'dim' };
-            if ((pr.checks_pending || 0) > 0) return { rank: 3, label: 'CI running', cls: 'warn' };
-            if (pr.review_decision !== 'APPROVED') return { rank: 4, label: 'awaiting review', cls: 'warn' };
-            return { rank: 5, label: 'ready to merge', cls: 'good' };
+                return { label: 'changes requested', cls: 'bad' };
+            if (pr.is_draft) return { label: 'draft', cls: 'dim' };
+            if ((pr.checks_pending || 0) > 0) return { label: 'CI running', cls: 'warn' };
+            if (pr.review_decision !== 'APPROVED') return { label: 'awaiting review', cls: 'warn' };
+            return { label: 'ready to merge', cls: 'good' };
         }
 
         // Five-dot progress strip: draft → open → CI → review → merged.
@@ -85,6 +87,19 @@ export const prBoardJs = `
             return Math.floor(secs / 86400) + 'd';
         }
 
+        function prBoardActivityTime(sessions) {
+            const completed = Math.max(0, ...(sessions || []).map(s => s.completions_changed_at || 0));
+            if (completed) return completed;
+            return Math.max(0, ...(sessions || []).map(s => s.prompts_changed_at || 0));
+        }
+
+        function prBoardActivityLabel(sessions) {
+            const prompted = Math.max(0, ...(sessions || []).map(s => s.prompts_changed_at || 0));
+            const completed = Math.max(0, ...(sessions || []).map(s => s.completions_changed_at || 0));
+            return '⟩ ' + (prompted ? prBoardAge(prompted) : '—')
+                + ' · ⋖ ' + (completed ? prBoardAge(completed) : '—');
+        }
+
         function renderPrBoard() {
             const board = document.getElementById('pr-board-view');
             if (!board) return;
@@ -94,40 +109,84 @@ export const prBoardJs = `
             const entries = prBoardEntries
                 .filter(e => prDisposition(e.pr) !== 'dismissed')
                 .map(e => ({ ...e, primary: prDisposition(e.pr) === 'primary', stage: prBoardStage(e.pr) }));
-            entries.sort((a, b) =>
-                a.stage.rank - b.stage.rank
-                || (b.primary ? 1 : 0) - (a.primary ? 1 : 0)
-                || (b.pr.last_mentioned_at || 0) - (a.pr.last_mentioned_at || 0));
 
-            if (entries.length === 0) {
-                board.innerHTML = '<div class="pr-board-empty">No PRs tracked yet. They appear as sessions mention them.</div>';
+            const representedSessions = new Set();
+            for (const entry of entries) {
+                for (const session of entry.sessions || []) {
+                    if (session.session_id && prBoardSessionMatchesPr(session, entry.pr)) {
+                        representedSessions.add(session.session_id);
+                    }
+                }
+            }
+            const sessionRows = [];
+            for (const session of prBoardSessions) {
+                if (!session.active || representedSessions.has(session.session_id)) continue;
+                const repoName = session.repo_name || session.dir_name || 'Unknown repository';
+                const repo = session.repo_owner ? session.repo_owner + '/' + repoName : repoName;
+                const branch = session.branch || '(no branch)';
+                const activity = session.completions_changed_at || session.prompts_changed_at || 0;
+                sessionRows.push({ repo, branch, session, activity });
+            }
+
+            if (entries.length === 0 && sessionRows.length === 0) {
+                board.innerHTML = '<div class="pr-board-empty">No live sessions or tracked PRs.</div>';
                 return;
             }
 
-            const repoOrder = [];
             const groups = new Map();
             for (const entry of entries) {
                 const repo = entry.owner + '/' + entry.repo;
-                if (!groups.has(repo)) { groups.set(repo, []); repoOrder.push(repo); }
-                groups.get(repo).push(entry);
+                const key = repo.toLowerCase();
+                if (!groups.has(key)) groups.set(key, { repo, items: [] });
+                groups.get(key).items.push({ kind: 'pr', entry, activity: prBoardActivityTime(entry.sessions) });
             }
+            for (const sessionRow of sessionRows) {
+                const key = sessionRow.repo.toLowerCase();
+                if (!groups.has(key)) groups.set(key, { repo: sessionRow.repo, items: [] });
+                groups.get(key).items.push({ kind: 'session', sessionRow, activity: sessionRow.activity });
+            }
+            const repoGroups = [...groups.values()]
+                .map(group => ({
+                    repo: group.repo,
+                    items: group.items.sort((a, b) => b.activity - a.activity),
+                    activity: Math.max(0, ...group.items.map(item => item.activity))
+                }))
+                .sort((a, b) => b.activity - a.activity);
 
             let html = '<div class="pr-board-header">⑆ PR board <span class="pr-board-count">'
-                + entries.length + ' PRs</span></div>';
+                + entries.length + ' PRs · ' + prBoardSessions.length + ' live sessions</span></div>';
             const rendered = [];
-            for (const repo of repoOrder) {
-                const group = groups.get(repo);
-                html += '<div class="pr-board-repo">' + escapeHtml(repo)
-                    + ' <span class="pr-board-count">' + group.length + '</span></div>';
-                for (const entry of group) {
-                    html += prBoardRow(entry);
-                    rendered.push(entry);
+            for (const group of repoGroups) {
+                const sessionIds = new Set();
+                let prCount = 0;
+                for (const item of group.items) {
+                    if (item.kind === 'pr') {
+                        prCount += 1;
+                        for (const session of item.entry.sessions || []) {
+                            sessionIds.add(session.session_id || session.dir_name);
+                        }
+                    } else {
+                        const session = item.sessionRow.session;
+                        sessionIds.add(session.session_id || session.dir_name);
+                    }
+                }
+                html += '<div class="pr-board-repo">' + escapeHtml(group.repo)
+                    + ' <span class="pr-board-count">' + prCount + ' PR' + (prCount === 1 ? '' : 's')
+                    + ' · ' + sessionIds.size + ' session' + (sessionIds.size === 1 ? '' : 's') + '</span></div>';
+                for (const item of group.items) {
+                    if (item.kind === 'pr') {
+                        const index = rendered.length;
+                        rendered.push(item.entry);
+                        html += prBoardRow(item.entry, index);
+                    } else {
+                        html += prBoardSessionRow(item.sessionRow);
+                    }
                 }
             }
             board.innerHTML = html;
 
-            board.querySelectorAll('.pr-board-row').forEach((rowEl, i) => {
-                const entry = rendered[i];
+            board.querySelectorAll('.pr-board-row[data-pr-index]').forEach(rowEl => {
+                const entry = rendered[Number(rowEl.dataset.prIndex)];
                 if (!entry) return;
                 const star = rowEl.querySelector('.pr-primary-toggle');
                 if (star) star.onclick = () => {
@@ -144,7 +203,27 @@ export const prBoardJs = `
             });
         }
 
-        function prBoardRow(entry) {
+        function prBoardSessionMatchesPr(session, pr) {
+            return !!session.repo_name
+                && session.repo_owner.toLowerCase() === (pr.owner || '').toLowerCase()
+                && session.repo_name.toLowerCase() === (pr.repo || '').toLowerCase();
+        }
+
+        function prBoardSessionRow(sessionRow) {
+            const session = sessionRow.session;
+            const activity = prBoardActivityLabel([session]);
+            const title = (session.title || '').replace(/^⟁\s+/, '')
+                || session.dir_name || 'Untitled session';
+            return '<div class="pr-board-row">'
+                + '<div class="pr-row-top"><span class="pr-session-glyph">◇</span>'
+                + '<span class="pr-board-identity"><span class="pr-link">' + escapeHtml(title) + '</span></span>'
+                + '<span class="pr-diff"></span><span class="pr-files"></span>'
+                + '<span class="pr-branch">⎇ ' + escapeHtml(sessionRow.branch) + '</span>'
+                + '<span class="pr-activity">' + escapeHtml(activity) + '</span>'
+                + '<span class="pr-status"></span></div></div>';
+        }
+
+        function prBoardRow(entry, index) {
             const pr = entry.pr;
             const isPrimary = entry.primary;
             const star = '<span class="pr-primary-toggle ' + (isPrimary ? 'primary' : 'secondary')
@@ -152,15 +231,21 @@ export const prBoardJs = `
                 + '">' + (isPrimary ? '★' : '☆') + '</span>';
             const link = '<a class="pr-link" href="' + escapeHtml(pr.url)
                 + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(pr.repo + ' #' + pr.number) + '</a>';
-            const title = pr.title
-                ? '<span class="pr-board-title" title="' + escapeHtml(pr.title) + '">' + escapeHtml(pr.title) + '</span>'
-                : '';
+            const title = '<span class="pr-board-title"'
+                + (pr.title ? ' title="' + escapeHtml(pr.title) + '"' : '')
+                + '>' + escapeHtml(pr.title || '') + '</span>';
+            const identity = '<span class="pr-board-identity">' + link + title + '</span>';
             const diffParts = [];
             if (pr.additions) diffParts.push('<span class="rd-add">+' + pr.additions + '</span>');
             if (pr.deletions) diffParts.push('<span class="rd-del">-' + pr.deletions + '</span>');
             const diff = diffParts.length
                 ? prExternalLink(pr.url ? pr.url + '/files' : '', 'pr-diff', diffParts.join(' '))
-                : '';
+                : '<span class="pr-diff"></span>';
+            const files = '<span class="pr-files">'
+                + ((pr.changed_files || 0) ? pr.changed_files + ' file' + (pr.changed_files === 1 ? '' : 's') : '')
+                + '</span>';
+            const branch = '<span class="pr-branch">'
+                + (pr.branch ? '⎇ ' + escapeHtml(pr.branch) : '') + '</span>';
             const stateInfo = prStateInfo(pr);
             const badge = stateInfo.label
                 ? '<span class="pr-badge" style="color:' + stateInfo.color
@@ -171,6 +256,8 @@ export const prBoardJs = `
             const dismiss = '<span class="pr-dismiss" title="Dismiss this PR everywhere">✕</span>';
             const status = '<span class="pr-status">' + badge + prCiBadge(pr)
                 + prCommentsBadge(pr) + prMergeBadge(pr) + dismiss + '</span>';
+            const activity = '<span class="pr-activity">'
+                + escapeHtml(prBoardActivityLabel(entry.sessions)) + '</span>';
 
             const sessions = (entry.sessions || [])
                 .map(s => escapeHtml(s.dir_name) + (s.active ? '' : ' <span class="pb-dim">(ended)</span>'))
@@ -199,8 +286,9 @@ export const prBoardJs = `
                 extras += prExternalLink(pr.slack_comment_urls[i], 'pb-slack', label);
             }
 
-            return '<div class="pr-board-row' + (isPrimary ? '' : ' pr-secondary') + '">'
-                + '<div class="pr-row-top">' + star + link + title + diff + status + '</div>'
+            return '<div class="pr-board-row' + (isPrimary ? '' : ' pr-secondary')
+                + '" data-pr-index="' + index + '">'
+                + '<div class="pr-row-top">' + star + identity + diff + files + branch + activity + status + '</div>'
                 + '<div class="pr-board-meta">' + meta + '</div>'
                 + (extras ? '<div class="pr-board-extras">' + extras + '</div>' : '')
                 + '</div>';
