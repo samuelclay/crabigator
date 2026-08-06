@@ -376,10 +376,14 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             entry.pr.ai_note = pr.ai_note;
             entry.pr.ai_confidence = pr.ai_confidence || '';
         }
+        const cwdRepo = (row.cwd || '').split('/').filter(Boolean).pop() || '';
+        const currentRepo = row.repo_name || cwdRepo;
+        const ownerMatches = row.repo_owner
+            ? row.repo_owner.toLowerCase() === row.owner.toLowerCase()
+            : !!pr.created_here;
         const representsSession = row.is_primary === 1
-            && !!row.repo_name
-            && (row.repo_owner || '').toLowerCase() === row.owner.toLowerCase()
-            && row.repo_name.toLowerCase() === row.repo.toLowerCase()
+            && ownerMatches
+            && currentRepo.toLowerCase() === row.repo.toLowerCase()
             && (!!pr.created_here || (!!pr.branch && row.branch === pr.branch));
         if (representsSession) entry.sessions.push(boardSession(row));
     }
