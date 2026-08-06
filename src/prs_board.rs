@@ -1708,7 +1708,7 @@ fn render_pr_board_row(
 
 fn workspace_title(entry: &WorkspaceEntry) -> &str {
     let session = &entry.session;
-    let title = session.title.strip_prefix("⟁ ").unwrap_or(&session.title);
+    let title = crate::title::strip_generated_title_marker(&session.title);
     if title.is_empty() {
         session.dir_name.as_str()
     } else {
