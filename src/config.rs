@@ -36,6 +36,23 @@ pub struct Config {
     /// Anthropic model used for recap generation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recap_model: Option<String>,
+
+    /// Persistent view preferences for `crabigator prs`.
+    #[serde(default)]
+    pub pr_board: PrBoardPreferences,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PrBoardPreferences {
+    /// Whether the board opens with durable ended sessions included.
+    #[serde(default)]
+    pub include_ended: bool,
+    /// Detail level: compact, status, title, or recap (0 through 3).
+    #[serde(default = "default_pr_board_detail")]
+    pub detail: u8,
+    /// Number of days to keep completed PRs on the board.
+    #[serde(default = "default_pr_board_linger_days")]
+    pub linger_days: u64,
 }
 
 fn default_true() -> bool {
@@ -44,6 +61,24 @@ fn default_true() -> bool {
 
 fn default_platform() -> String {
     "claude".to_string()
+}
+
+fn default_pr_board_detail() -> u8 {
+    1
+}
+
+fn default_pr_board_linger_days() -> u64 {
+    1
+}
+
+impl Default for PrBoardPreferences {
+    fn default() -> Self {
+        Self {
+            include_ended: false,
+            detail: default_pr_board_detail(),
+            linger_days: default_pr_board_linger_days(),
+        }
+    }
 }
 
 impl Default for Config {
@@ -55,6 +90,7 @@ impl Default for Config {
             terminal: None,
             recap_enabled: true,
             recap_model: None,
+            pr_board: PrBoardPreferences::default(),
         }
     }
 }
@@ -165,5 +201,32 @@ impl Config {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e).with_context(|| format!("Failed to remove {}", path.display())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_pr_board_preferences_keep_the_existing_defaults() {
+        let config: Config = toml::from_str("default_platform = \"codex\"").unwrap();
+        assert!(!config.pr_board.include_ended);
+        assert_eq!(config.pr_board.detail, 1);
+        assert_eq!(config.pr_board.linger_days, 1);
+    }
+
+    #[test]
+    fn pr_board_preferences_round_trip() {
+        let mut config = Config::default();
+        config.pr_board.include_ended = true;
+        config.pr_board.detail = 3;
+        config.pr_board.linger_days = 7;
+
+        let encoded = toml::to_string(&config).unwrap();
+        let decoded: Config = toml::from_str(&encoded).unwrap();
+        assert!(decoded.pr_board.include_ended);
+        assert_eq!(decoded.pr_board.detail, 3);
+        assert_eq!(decoded.pr_board.linger_days, 7);
     }
 }

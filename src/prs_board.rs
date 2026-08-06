@@ -2063,6 +2063,16 @@ fn search_banner(query: &str, matched: usize, width: u16) -> String {
     format!("{}{}{}{}", escape::bg(color::YELLOW), fg(16), padded, RESET)
 }
 
+fn save_board_preferences(include_ended: bool, detail: u8, linger_days: u64) {
+    let Ok(mut config) = crate::config::Config::load() else {
+        return;
+    };
+    config.pr_board.include_ended = include_ended;
+    config.pr_board.detail = detail;
+    config.pr_board.linger_days = linger_days;
+    let _ = config.save();
+}
+
 async fn board_loop(
     out: &mut std::io::Stdout,
     overrides: &mut HashMap<String, PrDisposition>,
@@ -2083,9 +2093,10 @@ async fn board_loop(
     let mut transcripts = TranscriptCache::default();
     let mut activity_history = ActivityHistory::default();
     let mut expanded = false;
-    let mut detail = DEFAULT_DETAIL;
-    let mut linger_days = DEFAULT_LINGER_DAYS;
-    let mut include_ended = false;
+    let preferences = crate::config::Config::load().unwrap_or_default().pr_board;
+    let mut detail = preferences.detail.min(MAX_DETAIL);
+    let mut linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
+    let mut include_ended = preferences.include_ended;
     // Cloud fetches are throttled well below the local tick; toggling the
     // source or changing the day window forces one.
     let mut cloud_fetch_due = false;
@@ -2266,12 +2277,14 @@ async fn board_loop(
                             // rather than waiting out the tick.
                             KeyCode::Char('+') | KeyCode::Char('=') => {
                                 linger_days = (linger_days + 1).min(MAX_LINGER_DAYS);
+                                save_board_preferences(include_ended, detail, linger_days);
                                 cloud_fetch_due = true;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
                             KeyCode::Char('-') | KeyCode::Char('_') => {
                                 linger_days = linger_days.saturating_sub(1);
+                                save_board_preferences(include_ended, detail, linger_days);
                                 cloud_fetch_due = true;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
@@ -2281,11 +2294,13 @@ async fn board_loop(
                             // ↔ title ↔ recap.
                             KeyCode::Char('e') => {
                                 detail = (detail + 1).min(MAX_DETAIL);
+                                save_board_preferences(include_ended, detail, linger_days);
                                 needs_render = true;
                                 dirty = true;
                             }
                             KeyCode::Char('c') => {
                                 detail = detail.saturating_sub(1);
+                                save_board_preferences(include_ended, detail, linger_days);
                                 needs_render = true;
                                 dirty = true;
                             }
@@ -2293,6 +2308,7 @@ async fn board_loop(
                             // record, which includes ended sessions.
                             KeyCode::Char('a') => {
                                 include_ended = !include_ended;
+                                save_board_preferences(include_ended, detail, linger_days);
                                 cloud_fetch_due = true;
                                 scroll = 0;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
