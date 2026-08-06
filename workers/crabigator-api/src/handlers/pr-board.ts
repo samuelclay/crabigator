@@ -14,6 +14,8 @@ interface SessionPrRow {
     session_state: string | null;
     is_active: number | null;
     last_seen_at: number | null;
+    prompts_changed_at: number | null;
+    completions_changed_at: number | null;
     titles: string | null;
     recap: string | null;
     disposition: string | null;
@@ -129,6 +131,10 @@ interface BoardEntry {
         state: string;
         active: boolean;
         last_seen_at: number;
+        /** When the session last received a prompt, as Unix seconds. */
+        prompts_changed_at: number;
+        /** When the session's completion count last changed, as Unix seconds. */
+        completions_changed_at: number;
         /** The session's current terminal title (last of the titles history). */
         title: string;
         /** The session's latest recap brief, when one was recorded. */
@@ -243,6 +249,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     const rows = await env.DB.prepare(
         `SELECT sp.owner, sp.repo, sp.number, sp.data, sp.updated_at, sp.session_id,
                 s.cwd, s.state AS session_state, s.is_active, s.last_seen_at,
+                s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.recap,
                 o.disposition
          FROM session_prs sp
@@ -338,6 +345,8 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             state: row.session_state || '',
             active: !!row.is_active,
             last_seen_at: row.last_seen_at || 0,
+            prompts_changed_at: row.prompts_changed_at || 0,
+            completions_changed_at: row.completions_changed_at || 0,
             title,
             recap,
         });
