@@ -13,8 +13,9 @@
 //! includes ended sessions' PRs (tagged for resurrection) at ~1min lag.
 
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io::{stdout, Write};
+use std::io::{stdout, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -25,11 +26,13 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, size as terminal_size, EnterAlternateScreen,
     LeaveAlternateScreen,
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::pr::SessionPr;
 use crate::pr_rank::PrDisposition;
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG};
-use crate::ui::pr_cells::{pr_row_text, PrColumnWidths};
+use crate::ui::pr_cells::{pr_row_text_with_activity, PrColumnWidths, PR_COLUMN_GAP};
+use crate::ui::{COMPLETION_ICON, PROMPT_ICON};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const OVERRIDES_REFRESH: Duration = Duration::from_secs(60);
@@ -49,18 +52,27 @@ const PREVIEW_MATCHES: usize = 3;
 /// Transcript lines shown either side of a match in the expanded preview.
 const PREVIEW_CONTEXT: usize = 2;
 /// Detail levels `e`/`c` expand and collapse through: 0 = compact (one line
-/// per PR), 1 = standard (progress + sessions + judgment), 2 = + each
-/// session's terminal title, 3 = + each session's latest recap headline.
+/// per PR), 1 = status (progress + sessions + judgment), 2 = + each session's
+/// terminal title, 3 = + each session's latest recap headline.
 const MAX_DETAIL: u8 = 3;
 const DEFAULT_DETAIL: u8 = 1;
 
-/// Header name for a non-default detail level.
+/// Recency uses one cyan-blue hue at steadily lower intensities until old
+/// activity becomes neutral gray after a day.
+const RECENCY_1H: u8 = 51;
+const RECENCY_3H: u8 = 45;
+const RECENCY_6H: u8 = 39;
+const RECENCY_9H: u8 = 33;
+const RECENCY_12H: u8 = 27;
+const RECENCY_24H: u8 = 25;
+
+/// Header name for each detail level.
 fn detail_name(detail: u8) -> &'static str {
     match detail {
         0 => "compact",
-        2 => "titles",
-        3 => "recaps",
-        _ => "standard",
+        2 => "title",
+        3 => "recap",
+        _ => "status",
     }
 }
 
@@ -85,6 +97,10 @@ struct SessionSnapshot {
     title: String,
     /// The session's latest recap, when one has been generated.
     recap: Option<RecapBrief>,
+    /// Unix seconds when the prompt count last changed.
+    prompted_at: u64,
+    /// Unix seconds when the completion count last changed.
+    completed_at: u64,
     prs: Vec<SessionPr>,
 }
 
@@ -110,10 +126,45 @@ struct SessionRef {
     title: String,
     /// The session's latest recap (detail level 3).
     recap: Option<RecapBrief>,
+    /// Unix seconds when the session last received a prompt.
+    prompted_at: u64,
+    /// Unix seconds when the session's completion count last changed.
+    completed_at: u64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ActivityTimes {
+    prompted_at: u64,
+    completed_at: u64,
+}
+
+impl ActivityTimes {
+    fn merge(&mut self, other: Self) {
+        self.prompted_at = self.prompted_at.max(other.prompted_at);
+        self.completed_at = self.completed_at.max(other.completed_at);
+    }
+
+    fn complete(self) -> bool {
+        self.prompted_at > 0 && self.completed_at > 0
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct CachedActivity {
+    scanned_len: u64,
+    times: ActivityTimes,
+}
+
+/// Older live mirrors do not contain the activity fields. Their hook history
+/// and assistant transcript still do, so retain a small incremental cache
+/// rather than rescanning large JSONL files every two seconds.
+#[derive(Default)]
+struct ActivityHistory {
+    transcripts: HashMap<PathBuf, CachedActivity>,
 }
 
 /// Read every live mirror, one snapshot per session.
-fn gather() -> Result<Vec<SessionSnapshot>> {
+fn gather(activity_history: &mut ActivityHistory) -> Result<Vec<SessionSnapshot>> {
     let mut snapshots = Vec::new();
     for (path, data) in crate::inspect::discover_instances(&None)? {
         let prs: Vec<SessionPr> = data
@@ -125,6 +176,7 @@ fn gather() -> Result<Vec<SessionSnapshot>> {
             continue;
         }
         let git = data.pointer("/widgets/git/data");
+        let activity = activity_times(&data, activity_history);
         snapshots.push(SessionSnapshot {
             session_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
             dir_name: data
@@ -166,10 +218,212 @@ fn gather() -> Result<Vec<SessionSnapshot>> {
                         .and_then(|recaps| recaps.last())
                 })
                 .and_then(recap_brief_from),
+            prompted_at: activity.prompted_at,
+            completed_at: activity.completed_at,
             prs,
         });
     }
     Ok(snapshots)
+}
+
+fn activity_times(data: &serde_json::Value, history: &mut ActivityHistory) -> ActivityTimes {
+    let mut activity = ActivityTimes {
+        prompted_at: mirror_activity_timestamp(data, "prompts_changed_at"),
+        completed_at: mirror_activity_timestamp(data, "completions_changed_at"),
+    };
+    if activity.complete() {
+        return activity;
+    }
+
+    activity.merge(hook_activity_times(data));
+    if activity.complete() {
+        return activity;
+    }
+
+    let Some(path) = data
+        .get("transcript_path")
+        .and_then(|value| value.as_str())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+    else {
+        return activity;
+    };
+    history.transcript_activity(&path, activity)
+}
+
+fn hook_activity_times(data: &serde_json::Value) -> ActivityTimes {
+    let Some(session_id) = data.get("session_id").and_then(|value| value.as_str()) else {
+        return ActivityTimes::default();
+    };
+    let path = format!("/tmp/crabigator-stats-{session_id}.json");
+    let Ok(stats) = std::fs::read_to_string(path) else {
+        return ActivityTimes::default();
+    };
+    let Ok(stats) = serde_json::from_str::<serde_json::Value>(&stats) else {
+        return ActivityTimes::default();
+    };
+    hook_activity_from_stats(&stats)
+}
+
+fn hook_activity_from_stats(stats: &serde_json::Value) -> ActivityTimes {
+    let mut activity = ActivityTimes::default();
+    for event in stats
+        .get("event_history")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let timestamp = event
+            .get("ts")
+            .and_then(|value| value.as_f64())
+            .map(activity_timestamp_secs)
+            .unwrap_or(0);
+        match event.get("event").and_then(|value| value.as_str()) {
+            Some("UserPromptSubmit") => activity.prompted_at = activity.prompted_at.max(timestamp),
+            Some("Stop") => activity.completed_at = activity.completed_at.max(timestamp),
+            _ => {}
+        }
+    }
+    activity
+}
+
+impl ActivityHistory {
+    fn transcript_activity(&mut self, path: &Path, seed: ActivityTimes) -> ActivityTimes {
+        let Ok(file_len) = path.metadata().map(|metadata| metadata.len()) else {
+            return seed;
+        };
+        let cached = self.transcripts.entry(path.to_path_buf()).or_default();
+        cached.times.merge(seed);
+
+        if cached.scanned_len == 0 || file_len < cached.scanned_len {
+            cached.times = scan_transcript_backwards(path, cached.times).unwrap_or(cached.times);
+            cached.scanned_len = file_len;
+        } else if file_len > cached.scanned_len {
+            cached.times = scan_transcript_forward(path, cached.scanned_len, cached.times)
+                .unwrap_or(cached.times);
+            cached.scanned_len = file_len;
+        }
+        cached.times
+    }
+}
+
+const TRANSCRIPT_SCAN_CHUNK: u64 = 64 * 1024;
+
+fn scan_transcript_backwards(path: &Path, seed: ActivityTimes) -> std::io::Result<ActivityTimes> {
+    let mut file = File::open(path)?;
+    let mut position = file.metadata()?.len();
+    let mut suffix = Vec::new();
+    let mut activity = seed;
+
+    while position > 0 && !activity.complete() {
+        let chunk_len = position.min(TRANSCRIPT_SCAN_CHUNK);
+        position -= chunk_len;
+        file.seek(SeekFrom::Start(position))?;
+        let mut data = vec![0; chunk_len as usize];
+        file.read_exact(&mut data)?;
+        data.extend_from_slice(&suffix);
+
+        let complete_from = if position == 0 {
+            0
+        } else if let Some(newline) = data.iter().position(|byte| *byte == b'\n') {
+            suffix = data[..newline].to_vec();
+            newline + 1
+        } else {
+            suffix = data;
+            continue;
+        };
+
+        for line in data[complete_from..].split(|byte| *byte == b'\n').rev() {
+            update_activity_from_jsonl(line, &mut activity);
+            if activity.complete() {
+                break;
+            }
+        }
+    }
+    Ok(activity)
+}
+
+fn scan_transcript_forward(
+    path: &Path,
+    offset: u64,
+    seed: ActivityTimes,
+) -> std::io::Result<ActivityTimes> {
+    let mut file = File::open(path)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut data = Vec::new();
+    file.read_to_end(&mut data)?;
+    let mut activity = seed;
+    for line in data.split(|byte| *byte == b'\n') {
+        update_activity_from_jsonl(line, &mut activity);
+    }
+    Ok(activity)
+}
+
+fn update_activity_from_jsonl(line: &[u8], activity: &mut ActivityTimes) {
+    let Ok(line) = std::str::from_utf8(line) else {
+        return;
+    };
+    if !line.contains("user_message")
+        && !line.contains("agent_message")
+        && !line.contains("\"type\":\"user\"")
+        && !line.contains("\"type\":\"assistant\"")
+    {
+        return;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    let timestamp = value
+        .get("timestamp")
+        .and_then(|value| value.as_str())
+        .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(timestamp).ok())
+        .and_then(|timestamp| u64::try_from(timestamp.timestamp()).ok())
+        .unwrap_or(0);
+    if timestamp == 0 {
+        return;
+    }
+
+    match value.get("type").and_then(|value| value.as_str()) {
+        Some("event_msg") => match value
+            .pointer("/payload/type")
+            .and_then(|value| value.as_str())
+        {
+            Some("user_message") => activity.prompted_at = activity.prompted_at.max(timestamp),
+            Some("agent_message") => activity.completed_at = activity.completed_at.max(timestamp),
+            _ => {}
+        },
+        Some("user")
+            if value
+                .pointer("/message/content")
+                .is_some_and(|content| content.is_string()) =>
+        {
+            activity.prompted_at = activity.prompted_at.max(timestamp);
+        }
+        Some("assistant")
+            if value
+                .pointer("/message/stop_reason")
+                .and_then(|value| value.as_str())
+                == Some("end_turn") =>
+        {
+            activity.completed_at = activity.completed_at.max(timestamp);
+        }
+        _ => {}
+    }
+}
+
+fn mirror_activity_timestamp(data: &serde_json::Value, field: &str) -> u64 {
+    data.pointer(&format!("/widgets/stats/data/{field}"))
+        .and_then(|value| value.as_f64())
+        .map(activity_timestamp_secs)
+        .unwrap_or(0)
+}
+
+fn activity_timestamp_secs(timestamp: f64) -> u64 {
+    if timestamp.is_finite() && timestamp > 0.0 {
+        timestamp as u64
+    } else {
+        0
+    }
 }
 
 /// Parse the fields the board needs out of a mirrored TurnRecap value.
@@ -284,6 +538,8 @@ fn aggregate(
                 ended: false,
                 title: session.title.clone(),
                 recap: session.recap.clone(),
+                prompted_at: session.prompted_at,
+                completed_at: session.completed_at,
             });
         }
     }
@@ -411,6 +667,8 @@ fn cloud_entries_to_board(cloud: Vec<crate::cloud::CloudBoardEntry>) -> Vec<Boar
                                 },
                             })
                         }),
+                        prompted_at: activity_timestamp_secs(s.prompts_changed_at),
+                        completed_at: activity_timestamp_secs(s.completions_changed_at),
                     })
                     .collect(),
                 uncommitted: 0,
@@ -521,6 +779,57 @@ fn format_age(secs: u64) -> String {
         90..=3599 => format!("{}m", secs.div_ceil(60)),
         3600..=86399 => format!("{}h", secs / 3600),
         _ => format!("{}d", secs / 86400),
+    }
+}
+
+struct ActivityCell {
+    styled: String,
+    visible: usize,
+}
+
+/// The newest prompt and completion among every session attached to a PR.
+/// Each age keeps its own color because the two events can be hours apart.
+fn activity_cell(sessions: &[SessionRef], now: u64) -> ActivityCell {
+    let prompted_at = sessions
+        .iter()
+        .map(|session| session.prompted_at)
+        .max()
+        .unwrap_or(0);
+    let completed_at = sessions
+        .iter()
+        .map(|session| session.completed_at)
+        .max()
+        .unwrap_or(0);
+    let prompt = activity_part(PROMPT_ICON, prompted_at, now);
+    let completion = activity_part(COMPLETION_ICON, completed_at, now);
+    ActivityCell {
+        styled: format!("{}  {}", prompt.styled, completion.styled),
+        visible: prompt.visible + 2 + completion.visible,
+    }
+}
+
+fn activity_part(label: &str, timestamp: u64, now: u64) -> ActivityCell {
+    let (plain, part_color) = if timestamp == 0 {
+        (format!("{label} —"), color::DARK_GRAY)
+    } else {
+        let age = now.saturating_sub(timestamp);
+        (format!("{label} {}", format_age(age)), recency_color(age))
+    };
+    ActivityCell {
+        visible: plain.width(),
+        styled: format!("{}{}{}", fg(part_color), plain, RESET_FG),
+    }
+}
+
+fn recency_color(age_secs: u64) -> u8 {
+    match age_secs {
+        0..=3599 => RECENCY_1H,
+        3600..=10_799 => RECENCY_3H,
+        10_800..=21_599 => RECENCY_6H,
+        21_600..=32_399 => RECENCY_9H,
+        32_400..=43_199 => RECENCY_12H,
+        43_200..=86_400 => RECENCY_24H,
+        _ => color::DARK_GRAY,
     }
 }
 
@@ -1004,9 +1313,10 @@ fn render(
     } else {
         "live".to_string()
     };
-    // Non-default detail levels announce themselves the same way.
+    // Always name the level so `e` and `c` have a visible four-step model.
+    // Non-default levels use yellow to show that the view changed.
     let detail_label = if detail == DEFAULT_DETAIL {
-        String::new()
+        format!(" · {}", detail_name(detail))
     } else {
         format!(
             " · {}{}{}",
@@ -1068,10 +1378,32 @@ fn render(
         ));
 
         let refs: Vec<&SessionPr> = group.iter().map(|r| &r.entry.pr).collect();
-        let widths = PrColumnWidths::from_pr_refs(&refs, width as usize);
-        for board_row in group {
+        let activities: Vec<ActivityCell> = group
+            .iter()
+            .map(|row| activity_cell(&row.entry.sessions, now_ms / 1000))
+            .collect();
+        let activity_width = activities
+            .iter()
+            .map(|activity| activity.visible)
+            .max()
+            .unwrap_or(0);
+        // Reserve this board-only column before the shared PR layout decides
+        // how much branch text can remain. The activity cell itself is then
+        // inserted immediately before the GitHub status.
+        let shared_width = (width as usize)
+            .saturating_sub(activity_width + PR_COLUMN_GAP)
+            .min(u16::MAX as usize) as u16;
+        let widths = PrColumnWidths::from_pr_refs(&refs, shared_width as usize);
+        for (board_row, activity) in group.iter().zip(activities) {
             let entry = board_row.entry;
-            let mut row = pr_row_text(width, &entry.pr, &widths);
+            let mut row = pr_row_text_with_activity(
+                width,
+                &entry.pr,
+                &widths,
+                activity.styled,
+                activity.visible,
+                activity_width,
+            );
             if entry.stale {
                 row = format!("{}{row}", fg(color::DARK_GRAY));
             }
@@ -1195,7 +1527,12 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
 
     if once {
         let width = terminal_size().map(|(w, _)| w).unwrap_or(120);
-        let entries = aggregate(&gather()?, &overrides, DEFAULT_LINGER_DAYS);
+        let mut activity_history = ActivityHistory::default();
+        let entries = aggregate(
+            &gather(&mut activity_history)?,
+            &overrides,
+            DEFAULT_LINGER_DAYS,
+        );
         let rows: Vec<BoardRow> = entries
             .iter()
             .map(|entry| BoardRow {
@@ -1251,6 +1588,7 @@ async fn board_loop(
     // Transcript search state: cached scrollbacks plus the Tab-toggled
     // context view for the inline previews.
     let mut transcripts = TranscriptCache::default();
+    let mut activity_history = ActivityHistory::default();
     let mut expanded = false;
     let mut detail = DEFAULT_DETAIL;
     let mut linger_days = DEFAULT_LINGER_DAYS;
@@ -1278,11 +1616,14 @@ async fn board_loop(
                     cloud_fetched = Some(Instant::now());
                     match crate::cloud::fetch_pr_board_standalone(linger_days).await {
                         Ok(cloud) => entries = cloud_entries_to_board(cloud),
-                        Err(_) => entries = aggregate(&gather()?, overrides, linger_days),
+                        Err(_) => {
+                            entries =
+                                aggregate(&gather(&mut activity_history)?, overrides, linger_days)
+                        }
                     }
                 }
             } else {
-                entries = aggregate(&gather()?, overrides, linger_days);
+                entries = aggregate(&gather(&mut activity_history)?, overrides, linger_days);
             }
             needs_render = true;
         }
@@ -1414,8 +1755,8 @@ async fn board_loop(
                                 last_frame_hash = 0;
                             }
                             // Expand or collapse the detail level, one step
-                            // at a time like +/- for days: compact ↔ standard
-                            // ↔ titles ↔ recaps.
+                            // at a time like +/- for days: compact ↔ status
+                            // ↔ title ↔ recap.
                             KeyCode::Char('e') => {
                                 detail = (detail + 1).min(MAX_DETAIL);
                                 needs_render = true;
@@ -1513,6 +1854,8 @@ mod tests {
             uncommitted_files: 0,
             title: String::new(),
             recap: None,
+            prompted_at: 0,
+            completed_at: 0,
             prs,
         }
     }
@@ -1677,6 +2020,8 @@ mod tests {
             ended: false,
             title: String::new(),
             recap: None,
+            prompted_at: 0,
+            completed_at: 0,
         }];
         let text = sessions_text(&stale);
         assert!(text.contains("old-worktree"));
@@ -1903,6 +2248,8 @@ mod tests {
                 ended: false,
                 title: String::new(),
                 recap: None,
+                prompted_at: 0,
+                completed_at: 0,
             }],
             uncommitted: 0,
             stale: false,
@@ -1926,8 +2273,12 @@ mod tests {
 
     /// Sessions carrying a title and recap for the detail levels.
     fn titled_entries() -> Vec<BoardPr> {
-        let mut with_title = snapshot("portal", vec![board_pr(9, "portal")]);
+        let mut pr = board_pr(9, "portal");
+        pr.mergeable = "MERGEABLE".to_string();
+        let mut with_title = snapshot("portal", vec![pr.clone()]);
         with_title.title = "Wiring the PR board detail levels".to_string();
+        with_title.prompted_at = now_secs() as u64 - 30 * 60;
+        with_title.completed_at = now_secs() as u64 - 2 * 60 * 60;
         with_title.recap = Some(RecapBrief {
             headline: "Added e-cycled detail to the prs board".to_string(),
             generated_at: now_ms() - 42 * 60 * 1000,
@@ -1936,13 +2287,15 @@ mod tests {
                 deletions: 35,
             },
         });
-        let bare = snapshot("other-dir", vec![board_pr(9, "portal")]);
+        let mut bare = snapshot("other-dir", vec![pr]);
+        bare.prompted_at = now_secs() as u64 - 4 * 60 * 60;
+        bare.completed_at = now_secs() as u64 - 5 * 60 * 60;
         aggregate(&[with_title, bare], &HashMap::new(), DEFAULT_LINGER_DAYS)
     }
 
     /// `e` steps through four detail levels: compact keeps only the identity
-    /// row; standard adds progress; titles adds each session's terminal
-    /// title; recaps adds the latest recap headline.
+    /// row; status adds progress; title adds each session's terminal title;
+    /// recap adds the latest recap headline. Activity stays on the main row.
     #[test]
     fn detail_levels_reveal_titles_then_recaps() {
         let entries = titled_entries();
@@ -1952,16 +2305,27 @@ mod tests {
         assert!(!compact.contains("Wiring the PR board"), "no titles");
         assert!(compact.contains("#9"), "identity row stays");
         assert!(compact.contains("compact"), "header names the level");
+        assert!(compact.contains("⟩ 30m"));
+        assert!(compact.contains("⋖ 2h"));
 
-        let standard = render_frame_at(&entries, 1);
-        assert!(standard.contains('▓'), "progress bar returns");
+        let status = render_frame_at(&entries, 1);
+        assert!(status.contains('▓'), "progress bar returns");
+        assert!(status.contains("status"), "header names the default level");
         assert!(
-            !standard.contains("Wiring the PR board"),
+            !status.contains("Wiring the PR board"),
             "titles wait for level 2"
         );
+        assert!(status.contains("⟩ 30m"));
+        assert!(status.contains("⋖ 2h"));
 
         let titles = render_frame_at(&entries, 2);
         assert!(titles.contains("Wiring the PR board detail levels"));
+        assert!(
+            crate::parsers::strip_ansi_for_debug(&titles).contains(" · title"),
+            "header uses the level name"
+        );
+        assert!(titles.contains("⟩ 30m"));
+        assert!(titles.contains("⋖ 2h"));
         assert!(
             !titles.contains("Added e-cycled detail"),
             "recaps wait for level 3"
@@ -1974,6 +2338,189 @@ mod tests {
         assert!(recaps.contains("+120"), "recap shows the line delta");
         assert!(recaps.contains("-35"));
         assert!(recaps.contains("42m ago"), "recap shows its age");
+        assert!(
+            crate::parsers::strip_ansi_for_debug(&recaps).contains(" · recap"),
+            "header uses the level name"
+        );
+        assert!(recaps.contains("⟩ 30m"));
+        assert!(recaps.contains("⋖ 2h"));
+
+        let row = crate::parsers::strip_ansi_for_debug(&compact);
+        assert!(
+            row.find("⋖ 2h").unwrap() < row.find("open").unwrap(),
+            "activity belongs before the GitHub status"
+        );
+        let main_row = compact.lines().find(|line| line.contains("#9")).unwrap();
+        assert_eq!(
+            crate::ui::utils::strip_ansi_len(main_row),
+            159,
+            "row keeps the right-edge padding"
+        );
+    }
+
+    #[test]
+    fn activity_uses_independent_recency_bands_and_latest_session_times() {
+        let now = 1_000_000;
+        let sessions = vec![
+            SessionRef {
+                dir_name: "older".to_string(),
+                session_dir: None,
+                age_secs: 0,
+                ended: false,
+                title: String::new(),
+                recap: None,
+                prompted_at: now - 4 * 60 * 60,
+                completed_at: now - 8 * 60 * 60,
+            },
+            SessionRef {
+                dir_name: "newer".to_string(),
+                session_dir: None,
+                age_secs: 0,
+                ended: false,
+                title: String::new(),
+                recap: None,
+                prompted_at: now - 30 * 60,
+                completed_at: now - 2 * 60 * 60,
+            },
+        ];
+        let activity = activity_cell(&sessions, now);
+        assert!(activity.styled.contains("⟩ 30m"));
+        assert!(activity.styled.contains("⋖ 2h"));
+        assert!(activity.styled.contains(&fg(RECENCY_1H)));
+        assert!(activity.styled.contains(&fg(RECENCY_3H)));
+
+        assert_eq!(recency_color(0), RECENCY_1H);
+        assert_eq!(recency_color(3_600), RECENCY_3H);
+        assert_eq!(recency_color(10_800), RECENCY_6H);
+        assert_eq!(recency_color(21_600), RECENCY_9H);
+        assert_eq!(recency_color(32_400), RECENCY_12H);
+        assert_eq!(recency_color(43_200), RECENCY_24H);
+        assert_eq!(recency_color(86_400), RECENCY_24H);
+        assert_eq!(recency_color(86_401), color::DARK_GRAY);
+
+        let unknown = activity_cell(&[], now);
+        assert!(unknown.styled.contains("⟩ —"));
+        assert!(unknown.styled.contains("⋖ —"));
+    }
+
+    #[test]
+    fn live_mirror_activity_timestamps_are_read_from_stats() {
+        let data = serde_json::json!({
+            "widgets": {
+                "stats": {
+                    "data": {
+                        "prompts_changed_at": 1_234_567.75,
+                        "completions_changed_at": 1_234_890
+                    }
+                }
+            }
+        });
+        assert_eq!(
+            mirror_activity_timestamp(&data, "prompts_changed_at"),
+            1_234_567
+        );
+        assert_eq!(
+            mirror_activity_timestamp(&data, "completions_changed_at"),
+            1_234_890
+        );
+        assert_eq!(mirror_activity_timestamp(&data, "missing"), 0);
+        assert_eq!(activity_timestamp_secs(f64::NAN), 0);
+    }
+
+    #[test]
+    fn legacy_hook_history_supplies_activity_timestamps() {
+        let stats = serde_json::json!({
+            "event_history": [
+                {"ts": 100.25, "event": "UserPromptSubmit"},
+                {"ts": 120.5, "event": "Stop"},
+                {"ts": 200.75, "event": "UserPromptSubmit"},
+                {"ts": 240.5, "event": "PostToolUse"}
+            ]
+        });
+        let activity = hook_activity_from_stats(&stats);
+        assert_eq!(activity.prompted_at, 200);
+        assert_eq!(activity.completed_at, 120);
+    }
+
+    #[test]
+    fn legacy_transcripts_supply_and_increment_activity() {
+        use std::io::Write as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        let large_tool_line = format!(
+            "{{\"timestamp\":\"2026-08-06T12:01:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call_output\",\"output\":\"{}\"}}}}\n",
+            "x".repeat(TRANSCRIPT_SCAN_CHUNK as usize * 2)
+        );
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"timestamp\":\"2026-08-06T12:00:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\"}}}}\n{large_tool_line}{{\"timestamp\":\"2026-08-06T12:02:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"agent_message\",\"phase\":\"commentary\"}}}}\n"
+            ),
+        )
+        .unwrap();
+
+        let expected_prompt = chrono::DateTime::parse_from_rfc3339("2026-08-06T12:00:00Z")
+            .unwrap()
+            .timestamp() as u64;
+        let expected_completion = chrono::DateTime::parse_from_rfc3339("2026-08-06T12:02:00Z")
+            .unwrap()
+            .timestamp() as u64;
+        let mut cache = ActivityHistory::default();
+        let first = cache.transcript_activity(&path, ActivityTimes::default());
+        assert_eq!(first.prompted_at, expected_prompt);
+        assert_eq!(first.completed_at, expected_completion);
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(
+            file,
+            "{{\"timestamp\":\"2026-08-06T12:03:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"agent_message\",\"phase\":\"final\"}}}}"
+        )
+        .unwrap();
+        let second = cache.transcript_activity(&path, ActivityTimes::default());
+        assert_eq!(second.prompted_at, expected_prompt);
+        assert_eq!(
+            second.completed_at,
+            chrono::DateTime::parse_from_rfc3339("2026-08-06T12:03:00Z")
+                .unwrap()
+                .timestamp() as u64
+        );
+    }
+
+    #[test]
+    fn claude_transcript_distinguishes_prompts_and_end_turns() {
+        let mut activity = ActivityTimes::default();
+        update_activity_from_jsonl(
+            br#"{"timestamp":"2026-08-06T12:00:00Z","type":"user","message":{"content":"Ship it"}}"#,
+            &mut activity,
+        );
+        update_activity_from_jsonl(
+            br#"{"timestamp":"2026-08-06T12:01:00Z","type":"user","message":{"content":[{"type":"tool_result"}]}}"#,
+            &mut activity,
+        );
+        update_activity_from_jsonl(
+            br#"{"timestamp":"2026-08-06T12:02:00Z","type":"assistant","message":{"stop_reason":"tool_use"}}"#,
+            &mut activity,
+        );
+        update_activity_from_jsonl(
+            br#"{"timestamp":"2026-08-06T12:03:00Z","type":"assistant","message":{"stop_reason":"end_turn"}}"#,
+            &mut activity,
+        );
+        assert_eq!(
+            activity.prompted_at,
+            chrono::DateTime::parse_from_rfc3339("2026-08-06T12:00:00Z")
+                .unwrap()
+                .timestamp() as u64
+        );
+        assert_eq!(
+            activity.completed_at,
+            chrono::DateTime::parse_from_rfc3339("2026-08-06T12:03:00Z")
+                .unwrap()
+                .timestamp() as u64
+        );
     }
 
     /// Sessions with neither a title nor a recap contribute no detail lines,
@@ -1999,6 +2546,8 @@ mod tests {
                 ended: s.ended,
                 title: s.title.clone(),
                 recap: s.recap.clone(),
+                prompted_at: s.prompted_at,
+                completed_at: s.completed_at,
             })
             .collect();
         assert_eq!(session_detail_lines(&doubled, 160, 3, now).len(), 2);
@@ -2015,6 +2564,8 @@ mod tests {
                 generated_at: 0,
                 line_delta: crate::recap::TurnLineDelta::default(),
             }),
+            prompted_at: 0,
+            completed_at: 0,
         }];
         assert!(session_detail_lines(&recap_only, 160, 2, now).is_empty());
         let at_three = session_detail_lines(&recap_only, 160, 3, now);

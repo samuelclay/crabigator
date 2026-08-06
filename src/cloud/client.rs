@@ -64,6 +64,12 @@ pub struct CloudBoardSession {
     pub active: bool,
     #[serde(default)]
     pub last_seen_at: u64,
+    /// Unix timestamp when the session last received a prompt.
+    #[serde(default)]
+    pub prompts_changed_at: f64,
+    /// Unix timestamp when the session's completion count last changed.
+    #[serde(default)]
+    pub completions_changed_at: f64,
     /// The session's current terminal title.
     #[serde(default)]
     pub title: String,

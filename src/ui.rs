@@ -26,6 +26,9 @@ pub use status_bar::{
     compute_dynamic_status_rows, draw_status_bar, handoff_rows, split_terminal_rows, Layout,
 };
 
+pub(crate) const PROMPT_ICON: &str = "⟩";
+pub(crate) const COMPLETION_ICON: &str = "⋖";
+
 /// Common layout parameters for widget rendering
 #[derive(Clone, Copy)]
 pub struct WidgetArea {

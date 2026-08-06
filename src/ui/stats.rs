@@ -10,7 +10,7 @@ use anyhow::Result;
 use super::sparkline::render_sparkline;
 use super::time::{format_duration_compact, format_elapsed_age};
 use super::utils::strip_ansi_len;
-use super::WidgetArea;
+use super::{WidgetArea, COMPLETION_ICON, PROMPT_ICON};
 use crate::cloud::CloudStatus;
 use crate::hooks::SessionStats;
 use crate::platforms::SessionState;
@@ -458,7 +458,7 @@ fn draw_normal_row(
         4 => {
             // Prompts: count left-aligned after label, timer right-aligned
             let label = format!(
-                "{}⟩ Prompts{} {}{}{}",
+                "{}{PROMPT_ICON} Prompts{} {}{}{}",
                 fg(color::GRAY),
                 RESET,
                 fg(color::LIGHT_BLUE),
@@ -475,7 +475,7 @@ fn draw_normal_row(
         5 => {
             // Completions: count left-aligned after label, timer right-aligned
             let label = format!(
-                "{}⋖ Completions{} {}{}{}",
+                "{}{COMPLETION_ICON} Completions{} {}{}{}",
                 fg(color::GRAY),
                 RESET,
                 fg(color::LIGHT_BLUE),

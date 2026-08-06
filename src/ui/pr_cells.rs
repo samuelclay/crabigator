@@ -175,10 +175,37 @@ fn table_width(columns: &[usize]) -> usize {
 /// One styled row: left padding, the left columns, then a gap wide enough to
 /// anchor the status columns against the right edge.
 pub(crate) fn pr_row_text(width: u16, pr: &SessionPr, widths: &PrColumnWidths) -> String {
+    pr_row_text_with_optional_activity(width, pr, widths, None)
+}
+
+/// Render the PR row with a board-only activity cell before the GitHub status.
+/// The shared handoff row calls `pr_row_text` and keeps the original eight
+/// columns.
+pub(crate) fn pr_row_text_with_activity(
+    width: u16,
+    pr: &SessionPr,
+    widths: &PrColumnWidths,
+    styled: String,
+    visible: usize,
+    column_width: usize,
+) -> String {
+    pr_row_text_with_optional_activity(width, pr, widths, Some((styled, visible, column_width)))
+}
+
+fn pr_row_text_with_optional_activity(
+    width: u16,
+    pr: &SessionPr,
+    widths: &PrColumnWidths,
+    activity: Option<PrCell>,
+) -> String {
     let mut row = " ".repeat(PR_LEFT_PADDING);
     row.push_str(&cells_text(&pr_left_cells(pr, widths)));
 
-    let right_width = widths.right_width();
+    let mut right_cells = pr_right_cells(pr, widths).to_vec();
+    if let Some(activity) = activity {
+        right_cells.insert(0, activity);
+    }
+    let right_width = cells_width(&right_cells);
     if right_width > 0 {
         let gap = (width as usize)
             .saturating_sub(PR_LEFT_PADDING)
@@ -186,7 +213,7 @@ pub(crate) fn pr_row_text(width: u16, pr: &SessionPr, widths: &PrColumnWidths) -
             .saturating_sub(widths.left_width())
             .saturating_sub(right_width);
         row.push_str(&" ".repeat(gap));
-        row.push_str(&cells_text(&pr_right_cells(pr, widths)));
+        row.push_str(&cells_text(&right_cells));
     }
     row
 }
@@ -343,6 +370,12 @@ fn cells_text(cells: &[PrCell]) -> String {
         out.push_str(&" ".repeat(width.saturating_sub(*visible)));
     }
     out
+}
+
+fn cells_width(cells: &[PrCell]) -> usize {
+    let active = cells.iter().filter(|(_, _, width)| *width > 0).count();
+    cells.iter().map(|(_, _, width)| width).sum::<usize>()
+        + active.saturating_sub(1) * PR_COLUMN_GAP
 }
 
 /// `★` marks the session's primary PR; `☆` everything else.

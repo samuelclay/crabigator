@@ -101,7 +101,13 @@ pub struct StatsMirrorData {
     pub state: String,
     pub mode: String,
     pub prompts: u32,
+    /// Unix timestamp when the prompt count last changed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompts_changed_at: Option<f64>,
     pub completions: u32,
+    /// Unix timestamp when the completion count last changed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completions_changed_at: Option<f64>,
     pub tools: u32,
     pub compressions: u32,
     /// Unix timestamps of tool calls (for sparkline visualization)
@@ -465,7 +471,9 @@ impl MirrorPublisher {
                         state: format!("{:?}", stats.platform_stats.state).to_lowercase(),
                         mode: stats.platform_stats.mode.as_str().to_string(),
                         prompts: stats.platform_stats.prompts,
+                        prompts_changed_at: stats.prompts_changed_at,
                         completions: stats.platform_stats.completions,
+                        completions_changed_at: stats.completions_changed_at,
                         tools: stats.platform_stats.total_tool_calls(),
                         compressions: stats.platform_stats.compressions,
                         tool_timestamps: stats.platform_stats.tool_timestamps.clone(),
