@@ -353,7 +353,7 @@ impl MirrorPublisher {
         stats.platform_stats.completions.hash(&mut hasher);
         stats.platform_stats.total_tool_calls().hash(&mut hasher);
         stats.platform_stats.compressions.hash(&mut hasher);
-        format!("{:?}", stats.platform_stats.state).hash(&mut hasher);
+        format!("{:?}", stats.effective_state()).hash(&mut hasher);
         stats.platform_stats.mode.as_str().hash(&mut hasher);
 
         // Hash key fields from git
@@ -472,7 +472,7 @@ impl MirrorPublisher {
                     data: StatsMirrorData {
                         work_seconds: stats.work_seconds,
                         thinking_seconds: stats.thinking_seconds(),
-                        state: format!("{:?}", stats.platform_stats.state).to_lowercase(),
+                        state: format!("{:?}", stats.effective_state()).to_lowercase(),
                         mode: stats.platform_stats.mode.as_str().to_string(),
                         prompts: stats.platform_stats.prompts,
                         prompts_changed_at: stats.prompts_changed_at,
@@ -546,7 +546,7 @@ impl MirrorPublisher {
 
 fn render_stats_preview(stats: &SessionStats) -> Vec<String> {
     let mut lines = vec![
-        format!("Stats - {:?}", stats.platform_stats.state),
+        format!("Stats - {:?}", stats.effective_state()),
         format!("Session: {}", stats.format_work()),
     ];
     let thinking = stats.format_thinking().unwrap_or_else(|| "—".to_string());

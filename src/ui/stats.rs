@@ -35,6 +35,23 @@ fn throbber_char() -> char {
     THROBBER[throbber_frame_index()]
 }
 
+/// One-cell session state marker for dense cross-session views.
+///
+/// Keep these colors and symbols in step with the full state indicator below.
+/// The caller supplies the throbber frame so every thinking row in one board
+/// frame moves together.
+pub(crate) fn session_state_icon(state: SessionState, throbber_frame: usize) -> String {
+    let (icon, icon_color) = match state {
+        SessionState::Ready => ('○', color::GRAY),
+        SessionState::Thinking => (THROBBER[throbber_frame % THROBBER.len()], color::GREEN),
+        SessionState::Permission => ('!', color::YELLOW),
+        SessionState::Question => ('?', color::ORANGE),
+        SessionState::Complete => ('✓', color::PURPLE),
+        SessionState::Interrupted => ('⊘', color::RED),
+    };
+    format!("{}{}{}", fg(icon_color), icon, RESET)
+}
+
 /// Calculate idle seconds from idle_since timestamp
 fn idle_seconds(idle_since: Option<f64>) -> Option<u64> {
     let since = idle_since?;

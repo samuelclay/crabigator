@@ -28,6 +28,7 @@ use crossterm::terminal::{
 };
 use unicode_width::UnicodeWidthStr;
 
+use crate::platforms::SessionState;
 use crate::pr::SessionPr;
 use crate::pr_rank::PrDisposition;
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG};
@@ -104,6 +105,8 @@ struct SessionSnapshot {
     title: String,
     /// The session's latest recap, when one has been generated.
     recap: Option<RecapBrief>,
+    /// The session's current effective state.
+    state: SessionState,
     /// Unix seconds when the prompt count last changed.
     prompted_at: u64,
     /// Unix seconds when the completion count last changed.
@@ -135,6 +138,8 @@ struct SessionRef {
     title: String,
     /// The session's latest recap (detail level 3).
     recap: Option<RecapBrief>,
+    /// The session's current effective state.
+    state: SessionState,
     /// Unix seconds when the session last received a prompt.
     prompted_at: u64,
     /// Unix seconds when the session's completion count last changed.
@@ -261,12 +266,32 @@ fn gather(activity_history: &mut ActivityHistory) -> Result<Vec<SessionSnapshot>
                         .and_then(|recaps| recaps.last())
                 })
                 .and_then(recap_brief_from),
+            state: mirror_session_state(&data),
             prompted_at: activity.prompted_at,
             completed_at: activity.completed_at,
             prs,
         });
     }
     Ok(snapshots)
+}
+
+fn parse_session_state(value: &str) -> Option<SessionState> {
+    match value.to_ascii_lowercase().as_str() {
+        "ready" => Some(SessionState::Ready),
+        "thinking" => Some(SessionState::Thinking),
+        "permission" => Some(SessionState::Permission),
+        "question" => Some(SessionState::Question),
+        "complete" => Some(SessionState::Complete),
+        "interrupted" => Some(SessionState::Interrupted),
+        _ => None,
+    }
+}
+
+fn mirror_session_state(data: &serde_json::Value) -> SessionState {
+    data.pointer("/widgets/stats/data/state")
+        .and_then(|value| value.as_str())
+        .and_then(parse_session_state)
+        .unwrap_or_default()
 }
 
 fn activity_times(data: &serde_json::Value, history: &mut ActivityHistory) -> ActivityTimes {
@@ -624,6 +649,7 @@ fn aggregate(
                     ended: false,
                     title: session.title.clone(),
                     recap: session.recap.clone(),
+                    state: session.state,
                     prompted_at: session.prompted_at,
                     completed_at: session.completed_at,
                 });
@@ -674,6 +700,7 @@ fn local_workspaces(snapshots: &[SessionSnapshot], entries: &[BoardPr]) -> Vec<W
             ended: false,
             title: snapshot.title.clone(),
             recap: snapshot.recap.clone(),
+            state: snapshot.state,
             prompted_at: snapshot.prompted_at,
             completed_at: snapshot.completed_at,
         };
@@ -868,6 +895,11 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                 .into_iter()
                 .map(|s| {
                     represented.insert(s.session_id.clone());
+                    let state = parse_session_state(&s.state).unwrap_or(if s.active {
+                        SessionState::Ready
+                    } else {
+                        SessionState::Complete
+                    });
                     SessionRef {
                         session_id: s.session_id,
                         dir_name: s.dir_name,
@@ -885,6 +917,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                                 },
                             })
                         }),
+                        state,
                         prompted_at: activity_timestamp_secs(s.prompts_changed_at),
                         completed_at: activity_timestamp_secs(s.completions_changed_at),
                     }
@@ -911,6 +944,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
             session.repo_name.clone()
         };
         let session_ref = SessionRef {
+            state: parse_session_state(&session.state).unwrap_or(SessionState::Ready),
             session_id: session.session_id,
             dir_name: session.dir_name,
             session_dir: None,
@@ -1053,7 +1087,7 @@ struct ActivityCell {
 
 /// The newest prompt and completion among every session attached to a PR.
 /// Each age keeps its own color because the two events can be hours apart.
-fn activity_cell(sessions: &[SessionRef], now: u64) -> ActivityCell {
+fn activity_cell(sessions: &[SessionRef], now: u64, throbber_frame: usize) -> ActivityCell {
     let prompted_at = sessions
         .iter()
         .map(|session| session.prompted_at)
@@ -1066,10 +1100,38 @@ fn activity_cell(sessions: &[SessionRef], now: u64) -> ActivityCell {
         .unwrap_or(0);
     let prompt = activity_part(PROMPT_ICON, prompted_at, now);
     let completion = activity_part(COMPLETION_ICON, completed_at, now);
+    let state = activity_state(sessions)
+        .map(|state| crate::ui::session_state_icon(state, throbber_frame))
+        .unwrap_or_else(|| " ".to_string());
     ActivityCell {
-        styled: format!("{}  {}", prompt.styled, completion.styled),
-        visible: prompt.visible + 2 + completion.visible,
+        styled: format!("{}  {}  {}", state, prompt.styled, completion.styled),
+        visible: 1 + 2 + prompt.visible + 2 + completion.visible,
     }
+}
+
+/// Pick the state that needs the user's attention when a PR represents more
+/// than one session. Most PR rows have one session; this keeps aggregate rows
+/// useful when they do not.
+fn activity_state(sessions: &[SessionRef]) -> Option<SessionState> {
+    sessions
+        .iter()
+        .map(|session| session.state)
+        .max_by_key(|state| match state {
+            SessionState::Permission => 5,
+            SessionState::Question => 4,
+            SessionState::Thinking => 3,
+            SessionState::Interrupted => 2,
+            SessionState::Ready => 1,
+            SessionState::Complete => 0,
+        })
+}
+
+fn board_has_thinking(entries: &[BoardPr], workspaces: &[WorkspaceEntry]) -> bool {
+    entries
+        .iter()
+        .flat_map(|entry| entry.sessions.iter())
+        .chain(workspaces.iter().map(|entry| &entry.session))
+        .any(|session| session.state == SessionState::Thinking)
 }
 
 /// Sort completed work by its latest completion. A row that has not completed
@@ -1534,43 +1596,47 @@ fn session_detail_lines(
         header.push_str(RESET_FG);
         out.push(header);
         if let Some(recap) = recap {
-            let age = if recap.generated_at > 0 {
-                format!(
-                    " · {} ago",
-                    format_age(now_ms.saturating_sub(recap.generated_at) / 1000)
-                )
-            } else {
-                String::new()
-            };
-            // A zero delta says nothing here — leave it off rather than
-            // rendering the handoff strip's `Δ ·` placeholder.
-            let delta = if recap.line_delta.additions == 0 && recap.line_delta.deletions == 0 {
-                String::new()
-            } else {
-                format!(
-                    " · {}{}",
-                    crate::ui::handoff::format_line_delta(recap.line_delta),
-                    fg(color::DARK_GRAY)
-                )
-            };
-            // The delta carries its own colors; budget by its visible form.
-            let delta_width = crate::parsers::strip_ansi_for_debug(&delta).width();
-            let budget = (width as usize)
-                .saturating_sub(7 + delta_width + age.width())
-                .max(10);
-            out.push(format!(
-                "     {}↪ {}{}{}{}{}{}",
-                fg(color::DARK_GRAY),
-                fg(color::GRAY),
-                crate::ui::pr_cells::truncate_to_width(&recap.headline, budget),
-                fg(color::DARK_GRAY),
-                delta,
-                age,
-                RESET_FG,
-            ));
+            out.push(recap_detail_line(recap, width, now_ms));
         }
     }
     out
+}
+
+fn recap_detail_line(recap: &RecapBrief, width: u16, now_ms: u64) -> String {
+    let age = if recap.generated_at > 0 {
+        format!(
+            " · {} ago",
+            format_age(now_ms.saturating_sub(recap.generated_at) / 1000)
+        )
+    } else {
+        String::new()
+    };
+    // A zero delta says nothing here — leave it off rather than rendering the
+    // handoff strip's `Δ ·` placeholder.
+    let delta = if recap.line_delta.additions == 0 && recap.line_delta.deletions == 0 {
+        String::new()
+    } else {
+        format!(
+            " · {}{}",
+            crate::ui::handoff::format_line_delta(recap.line_delta),
+            fg(color::DARK_GRAY)
+        )
+    };
+    // The delta carries its own colors; budget by its visible form.
+    let delta_width = crate::parsers::strip_ansi_for_debug(&delta).width();
+    let budget = (width as usize)
+        .saturating_sub(7 + delta_width + age.width())
+        .max(10);
+    format!(
+        "     {}↪ {}{}{}{}{}{}",
+        fg(color::DARK_GRAY),
+        fg(color::GRAY),
+        crate::ui::pr_cells::truncate_to_width(&recap.headline, budget),
+        fg(color::DARK_GRAY),
+        delta,
+        age,
+        RESET_FG,
+    )
 }
 
 /// One board entry ready to draw: the PR plus any transcript preview lines
@@ -1592,9 +1658,10 @@ fn render_pr_board_row(
     now_ms: u64,
     activity_width: usize,
     widths: &PrColumnWidths,
+    throbber_frame: usize,
 ) -> Vec<String> {
     let entry = board_row.entry;
-    let activity = activity_cell(&entry.sessions, now_ms / 1000);
+    let activity = activity_cell(&entry.sessions, now_ms / 1000, throbber_frame);
     let mut row = pr_row_text_with_activity(
         width,
         &entry.pr,
@@ -1744,20 +1811,22 @@ fn workspace_branch_text(entry: &WorkspaceEntry) -> String {
 fn render_workspace_board_row(
     workspace_row: &WorkspaceRow<'_>,
     width: u16,
+    detail: u8,
     now_ms: u64,
     activity_width: usize,
     widths: &PrColumnWidths,
+    throbber_frame: usize,
 ) -> Vec<String> {
     let entry = workspace_row.entry;
     let title = workspace_title(entry);
     let branch = workspace_branch_text(entry);
-    let diff = workspace_diff_text(entry);
     let files = workspace_files_text(entry);
-    let activity = activity_cell(entry.sessions(), now_ms / 1000);
+    let activity = activity_cell(entry.sessions(), now_ms / 1000, throbber_frame);
     let row = session_row_text_with_activity(
         width,
         title,
-        &diff,
+        entry.additions,
+        entry.deletions,
         &files,
         &branch,
         widths,
@@ -1766,6 +1835,11 @@ fn render_workspace_board_row(
         activity_width,
     );
     let mut lines = vec![format!("{row}{RESET}")];
+    if detail >= 3 {
+        if let Some(recap) = entry.session.recap.as_ref() {
+            lines.push(recap_detail_line(recap, width, now_ms));
+        }
+    }
     lines.extend(workspace_row.preview_lines.iter().cloned());
     lines
 }
@@ -1780,6 +1854,7 @@ fn render(
     detail: u8,
 ) -> Vec<String> {
     let now_ms = (now_secs() * 1000.0) as u64;
+    let throbber_frame = crate::ui::throbber_frame_index();
     let session_count = rows
         .iter()
         .flat_map(|row| row.entry.sessions.iter())
@@ -1847,16 +1922,14 @@ fn render(
         return lines;
     }
 
-    let activity_width = rows
-        .iter()
-        .map(|row| activity_cell(&row.entry.sessions, now_ms / 1000).visible)
-        .chain(
-            workspace_rows
-                .iter()
-                .map(|row| activity_cell(row.entry.sessions(), now_ms / 1000).visible),
-        )
-        .max()
-        .unwrap_or(0);
+    let activity_width =
+        rows.iter()
+            .map(|row| activity_cell(&row.entry.sessions, now_ms / 1000, throbber_frame).visible)
+            .chain(workspace_rows.iter().map(|row| {
+                activity_cell(row.entry.sessions(), now_ms / 1000, throbber_frame).visible
+            }))
+            .max()
+            .unwrap_or(0);
     let shared_width = (width as usize)
         .saturating_sub(activity_width)
         .saturating_sub(usize::from(activity_width > 0) * PR_COLUMN_GAP)
@@ -1983,13 +2056,16 @@ fn render(
                     now_ms,
                     activity_width,
                     &widths,
+                    throbber_frame,
                 )),
                 SectionRow::Workspace(index) => lines.extend(render_workspace_board_row(
                     &workspace_rows[index],
                     width,
+                    detail,
                     now_ms,
                     activity_width,
                     &widths,
+                    throbber_frame,
                 )),
             }
         }
@@ -2103,6 +2179,7 @@ async fn board_loop(
     let mut cloud_fetched: Option<Instant> = None;
     let mut dirty = false;
     let mut needs_render = false;
+    let mut last_throbber_frame = crate::ui::throbber_frame_index();
 
     loop {
         if last_refresh.elapsed() >= REFRESH_INTERVAL {
@@ -2133,6 +2210,13 @@ async fn board_loop(
             } else {
                 (entries, workspaces) = local_board(&mut activity_history, overrides, linger_days)?;
             }
+            needs_render = true;
+        }
+
+        let animating = board_has_thinking(&entries, &workspaces);
+        let throbber_frame = crate::ui::throbber_frame_index();
+        if animating && throbber_frame != last_throbber_frame {
+            last_throbber_frame = throbber_frame;
             needs_render = true;
         }
 
@@ -2222,7 +2306,12 @@ async fn board_loop(
             out.flush()?;
         }
 
-        if poll(Duration::from_millis(250))? {
+        let poll_interval = if animating {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_millis(250)
+        };
+        if poll(poll_interval)? {
             match read()? {
                 Event::Key(key) => {
                     if key.code == KeyCode::Char('c')
@@ -2398,6 +2487,7 @@ mod tests {
             deletions: 0,
             title: String::new(),
             recap: None,
+            state: SessionState::Ready,
             prompted_at: 0,
             completed_at: 0,
             prs,
@@ -2462,13 +2552,20 @@ mod tests {
             })
             .collect();
         let frame = render(&[], &rows, 160, DEFAULT_LINGER_DAYS, false, DEFAULT_DETAIL).join("\n");
+        let plain = crate::parsers::strip_ansi_for_debug(&frame);
         assert!(frame.contains("samuelclay/crabigator"));
         assert!(frame.contains("sam/pr-board-session-rows"));
         assert!(frame.contains("2 sessions"));
         assert!(!frame.contains("no tracked PR"));
         assert!(frame.contains("First active session"));
         assert!(frame.contains("Second active session"));
-        assert!(frame.contains("+10 -2"));
+        assert!(plain.contains("+10 -2"));
+        assert!(frame.contains(&format!(
+            "{}{}+10",
+            crate::terminal::escape::BOLD,
+            fg(color::GREEN)
+        )));
+        assert!(frame.contains(&format!("{}-2", fg(color::RED))));
         assert!(frame.contains("3 files"));
     }
 
@@ -2932,6 +3029,7 @@ mod tests {
             ended: false,
             title: String::new(),
             recap: None,
+            state: SessionState::Ready,
             prompted_at: 0,
             completed_at: 0,
         }];
@@ -3161,6 +3259,7 @@ mod tests {
                 ended: false,
                 title: String::new(),
                 recap: None,
+                state: SessionState::Ready,
                 prompted_at: 0,
                 completed_at: 0,
             }],
@@ -3284,6 +3383,7 @@ mod tests {
                 ended: false,
                 title: String::new(),
                 recap: None,
+                state: SessionState::Complete,
                 prompted_at: now - 4 * 60 * 60,
                 completed_at: now - 8 * 60 * 60,
             },
@@ -3295,13 +3395,18 @@ mod tests {
                 ended: false,
                 title: String::new(),
                 recap: None,
+                state: SessionState::Thinking,
                 prompted_at: now - 30 * 60,
                 completed_at: now - 2 * 60 * 60,
             },
         ];
-        let activity = activity_cell(&sessions, now);
+        let activity = activity_cell(&sessions, now, 0);
         assert!(activity.styled.contains("⟩ 30m"));
         assert!(activity.styled.contains("⋖ 2h"));
+        assert!(
+            crate::parsers::strip_ansi_for_debug(&activity.styled).starts_with("⠋  ⟩"),
+            "thinking state sits directly before prompt activity"
+        );
         assert!(activity.styled.contains(&fg(RECENCY_1H)));
         assert!(activity.styled.contains(&fg(RECENCY_3H)));
 
@@ -3314,9 +3419,88 @@ mod tests {
         assert_eq!(recency_color(86_400), RECENCY_24H);
         assert_eq!(recency_color(86_401), color::DARK_GRAY);
 
-        let unknown = activity_cell(&[], now);
+        let unknown = activity_cell(&[], now, 0);
         assert!(unknown.styled.contains("⟩ —"));
         assert!(unknown.styled.contains("⋖ —"));
+    }
+
+    #[test]
+    fn activity_icons_cover_every_session_state_and_thinking_animates() {
+        let cases = [
+            (SessionState::Ready, "○", color::GRAY),
+            (SessionState::Permission, "!", color::YELLOW),
+            (SessionState::Question, "?", color::ORANGE),
+            (SessionState::Complete, "✓", color::PURPLE),
+            (SessionState::Interrupted, "⊘", color::RED),
+        ];
+        for (state, icon, icon_color) in cases {
+            let session = SessionRef {
+                session_id: "state".to_string(),
+                dir_name: "state".to_string(),
+                session_dir: None,
+                age_secs: 0,
+                ended: false,
+                title: String::new(),
+                recap: None,
+                state,
+                prompted_at: 1,
+                completed_at: 1,
+            };
+            let activity = activity_cell(&[session], 1, 0);
+            assert!(crate::parsers::strip_ansi_for_debug(&activity.styled)
+                .starts_with(&format!("{icon}  ⟩")));
+            assert!(activity.styled.contains(&fg(icon_color)));
+        }
+
+        let thinking = SessionRef {
+            session_id: "thinking".to_string(),
+            dir_name: "thinking".to_string(),
+            session_dir: None,
+            age_secs: 0,
+            ended: false,
+            title: String::new(),
+            recap: None,
+            state: SessionState::Thinking,
+            prompted_at: 1,
+            completed_at: 0,
+        };
+        let first = activity_cell(std::slice::from_ref(&thinking), 1, 0);
+        let second = activity_cell(&[thinking], 1, 1);
+        assert_ne!(
+            crate::parsers::strip_ansi_for_debug(&first.styled),
+            crate::parsers::strip_ansi_for_debug(&second.styled)
+        );
+        assert!(first.styled.contains(&fg(color::GREEN)));
+    }
+
+    #[test]
+    fn recap_view_shows_standalone_session_recap_without_repeating_its_title() {
+        let now = now_secs() as u64;
+        let mut session = snapshot("crabigator", Vec::new());
+        session.title = "Standalone work".to_string();
+        session.recap = Some(RecapBrief {
+            headline: "Kept standalone rows visible".to_string(),
+            generated_at: now * 1000,
+            line_delta: crate::recap::TurnLineDelta {
+                additions: 8,
+                deletions: 2,
+            },
+        });
+        let workspaces = local_workspaces(&[session], &[]);
+        let rows: Vec<WorkspaceRow<'_>> = workspaces
+            .iter()
+            .map(|entry| WorkspaceRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+
+        let frame = crate::parsers::strip_ansi_for_debug(
+            &render(&[], &rows, 160, DEFAULT_LINGER_DAYS, false, MAX_DETAIL).join("\n"),
+        );
+        assert_eq!(frame.matches("Standalone work").count(), 1);
+        assert!(frame.contains("↪ Kept standalone rows visible"));
+        assert!(frame.contains("+8 -2"));
     }
 
     #[test]
@@ -3329,6 +3513,7 @@ mod tests {
             ended: false,
             title: String::new(),
             recap: None,
+            state: SessionState::Ready,
             prompted_at: 200,
             completed_at: 0,
         };
@@ -3360,6 +3545,21 @@ mod tests {
         );
         assert_eq!(mirror_activity_timestamp(&data, "missing"), 0);
         assert_eq!(activity_timestamp_secs(f64::NAN), 0);
+    }
+
+    #[test]
+    fn live_mirror_state_includes_interrupted_sessions() {
+        let interrupted = serde_json::json!({
+            "widgets": { "stats": { "data": { "state": "interrupted" } } }
+        });
+        assert_eq!(
+            mirror_session_state(&interrupted),
+            SessionState::Interrupted
+        );
+        assert_eq!(
+            mirror_session_state(&serde_json::json!({})),
+            SessionState::Ready
+        );
     }
 
     #[test]
@@ -3482,6 +3682,7 @@ mod tests {
                 ended: s.ended,
                 title: s.title.clone(),
                 recap: s.recap.clone(),
+                state: s.state,
                 prompted_at: s.prompted_at,
                 completed_at: s.completed_at,
             })
@@ -3501,6 +3702,7 @@ mod tests {
                 generated_at: 0,
                 line_delta: crate::recap::TurnLineDelta::default(),
             }),
+            state: SessionState::Complete,
             prompted_at: 0,
             completed_at: 0,
         }];

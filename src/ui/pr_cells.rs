@@ -7,7 +7,7 @@
 use unicode_width::UnicodeWidthStr;
 
 use crate::pr::SessionPr;
-use crate::terminal::escape::{self, color, fg, RESET_FG};
+use crate::terminal::escape::{self, color, fg, BOLD, RESET, RESET_FG};
 
 pub(crate) const PR_COLUMN_GAP: usize = 2;
 pub(crate) const PR_LEFT_PADDING: usize = 1;
@@ -214,7 +214,8 @@ pub(crate) fn pr_row_text_with_activity(
 pub(crate) fn session_row_text_with_activity(
     width: u16,
     title: &str,
-    diff: &str,
+    additions: i64,
+    deletions: i64,
     files: &str,
     branch: &str,
     widths: &PrColumnWidths,
@@ -223,9 +224,17 @@ pub(crate) fn session_row_text_with_activity(
     activity_width: usize,
 ) -> String {
     let identity = truncate_to_width(&format!("◇ {title}"), widths.identity);
+    let diff = colored_diff_cell(
+        additions,
+        deletions,
+        color::GREEN,
+        color::RED,
+        color::GRAY,
+        widths.diff,
+    );
     let left_cells = [
         colored_cell(&identity, color::GRAY, widths.identity),
-        colored_cell(diff, color::DARK_GRAY, widths.diff),
+        diff,
         colored_cell(files, color::DARK_GRAY, widths.files),
         colored_cell_capped(branch, color::DARK_GRAY, widths.branch, PR_BRANCH_MAX),
     ];
@@ -307,30 +316,18 @@ pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell;
     // Both diff columns open the PR's Files-changed tab — the actual changes.
     let files_url = pr_files_url(pr);
 
-    let full_diff = pr_diff_text(pr);
-    let diff = truncate_to_width(&full_diff, widths.diff);
-    let diff_styled = if diff.is_empty() {
-        String::new()
-    } else if diff.width() == full_diff.width() {
-        format!(
-            "{}+{} {}-{}{}",
-            fg(row_color(pr, color::GREEN)),
-            pr.additions,
-            fg(row_color(pr, color::RED)),
-            pr.deletions,
-            RESET_FG
-        )
-    } else {
-        format!("{}{}{}", fg(row_color(pr, color::GRAY)), diff, RESET_FG)
-    };
+    let diff = colored_diff_cell(
+        pr.additions,
+        pr.deletions,
+        row_color(pr, color::GREEN),
+        row_color(pr, color::RED),
+        row_color(pr, color::GRAY),
+        widths.diff,
+    );
 
     [
         (identity_styled, identity.width(), widths.identity),
-        (
-            link_text(&files_url, diff_styled, diff.width()),
-            diff.width(),
-            widths.diff,
-        ),
+        (link_text(&files_url, diff.0, diff.1), diff.1, diff.2),
         linked_cell(
             &pr_files_text(pr),
             row_color(pr, color::DARK_GRAY),
@@ -344,6 +341,39 @@ pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell;
             PR_BRANCH_MAX,
         ),
     ]
+}
+
+/// Render additions and deletions with the same emphasis on PR and session
+/// rows. A diff that cannot fit keeps its shape but drops the split colors.
+fn colored_diff_cell(
+    additions: i64,
+    deletions: i64,
+    additions_color: u8,
+    deletions_color: u8,
+    fallback_color: u8,
+    width: usize,
+) -> PrCell {
+    let full = if additions == 0 && deletions == 0 {
+        String::new()
+    } else {
+        format!("+{additions} -{deletions}")
+    };
+    let visible = truncate_to_width(&full, width);
+    let styled = if visible.is_empty() {
+        String::new()
+    } else if visible.width() == full.width() {
+        format!(
+            "{BOLD}{}+{} {}-{}{}",
+            fg(additions_color),
+            additions,
+            fg(deletions_color),
+            deletions,
+            RESET,
+        )
+    } else {
+        format!("{BOLD}{}{}{}", fg(fallback_color), visible, RESET)
+    };
+    (styled, visible.width(), width)
 }
 
 pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 5] {

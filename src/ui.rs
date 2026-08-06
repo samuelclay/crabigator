@@ -21,6 +21,7 @@ pub use handoff::{
     recap_handoff_rows, total_handoff_rows, MAX_RECAP_ROWS,
 };
 pub use pairing::{draw_pairing_banner, draw_update_banner, PairingState};
+pub(crate) use stats::session_state_icon;
 pub use stats::{
     draw_stats_widget, stats_render_rows, stats_use_compact_layout, throbber_frame_index,
 };

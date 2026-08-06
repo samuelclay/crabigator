@@ -70,6 +70,9 @@ pub struct CloudBoardSession {
     pub branch: String,
     #[serde(default)]
     pub active: bool,
+    /// The session's latest effective desktop state.
+    #[serde(default)]
+    pub state: String,
     #[serde(default)]
     pub last_seen_at: u64,
     /// Unix timestamp when the session last received a prompt.
