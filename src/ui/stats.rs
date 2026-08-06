@@ -18,6 +18,8 @@ use crate::terminal::escape::{self, color, fg, RESET};
 
 /// Braille spinner frames for the thinking animation
 const THROBBER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const CORE_STATS_ROWS: u16 = 7;
+const COMPACT_STATS_ROWS: u16 = 4;
 
 /// Get current throbber frame index based on time (for hash comparison)
 pub fn throbber_frame_index() -> usize {
@@ -82,16 +84,29 @@ fn format_state_indicator(state: SessionState) -> String {
 /// Number of content rows the stats widget would render in normal mode,
 /// including the header. The Idle row only appears when the session is in
 /// an idle state and the idle timer has crossed the 60-second threshold.
-pub fn stats_natural_rows(stats: &SessionStats) -> u16 {
-    let base = 7; // header + Session + Thinking + Prompts + Completions + Tools + Compactions
+fn stats_natural_rows(stats: &SessionStats) -> u16 {
     let is_idle_state = matches!(
         stats.effective_state(),
         SessionState::Complete | SessionState::Question | SessionState::Interrupted
     );
     if is_idle_state && idle_seconds(stats.platform_stats.idle_since).is_some() {
-        base + 1
+        CORE_STATS_ROWS + 1
     } else {
-        base
+        CORE_STATS_ROWS
+    }
+}
+
+/// Use the compact grid whenever the normal stats list would lose a row.
+pub fn stats_use_compact_layout(available_rows: u16) -> bool {
+    available_rows < CORE_STATS_ROWS
+}
+
+/// Number of rows stats will use at the current height.
+pub fn stats_render_rows(available_rows: u16, stats: &SessionStats) -> u16 {
+    if stats_use_compact_layout(available_rows) {
+        COMPACT_STATS_ROWS
+    } else {
+        stats_natural_rows(stats)
     }
 }
 
@@ -112,10 +127,10 @@ pub fn draw_stats_widget(
     // 1-col left margin so content doesn't sit flush against the separator/edge.
     write!(stdout, " ")?;
 
-    // Compact mode triggers when the widget area has 4 or fewer rows total
-    // (header + 3 content). On a typical paired session that maps to terminals
-    // ~30 rows tall and shorter — anything roomier renders in normal mode.
-    let compact = area.height <= 4;
+    // `area.height` includes the separator above the widget data. Switch to the
+    // compact grid as soon as the normal list would be clipped, not only at the
+    // minimum terminal height.
+    let compact = stats_use_compact_layout(area.height.saturating_sub(1));
     let inner_width = area.width.saturating_sub(2);
 
     let content = if compact {
@@ -271,7 +286,88 @@ fn build_header_left(
     }
 }
 
-/// Draw a row in compact mode (two-column layout with separator)
+fn compact_metric_cell(labels: &[String], value: &str, width: usize) -> String {
+    let value_len = strip_ansi_len(value);
+    let value_gap = usize::from(!value.is_empty());
+    let label = labels
+        .iter()
+        .find(|label| strip_ansi_len(label) + value_gap + value_len <= width)
+        .unwrap_or_else(|| labels.last().expect("compact metric needs a label"));
+    let label_len = strip_ansi_len(label);
+    let gap = if value.is_empty() {
+        width.saturating_sub(label_len)
+    } else {
+        width.saturating_sub(label_len + value_len).max(1)
+    };
+
+    format!("{}{:gap$}{}", label, "", value, gap = gap)
+}
+
+fn compact_elapsed(timestamp: Option<f64>) -> String {
+    format_elapsed_age(timestamp)
+        .map(|elapsed| format!("{}{}{}", fg(color::GRAY), elapsed, RESET))
+        .unwrap_or_default()
+}
+
+fn compact_count_labels(
+    icon: &str,
+    full_label: &str,
+    short_label: &str,
+    count: u32,
+    count_color: u8,
+) -> [String; 3] {
+    let label = |text: &str| {
+        let space = if text.is_empty() { "" } else { " " };
+        format!(
+            "{}{icon}{space}{text}{} {}{count}{}",
+            fg(color::GRAY),
+            RESET,
+            fg(count_color),
+            RESET,
+        )
+    };
+
+    [label(full_label), label(short_label), label("")]
+}
+
+fn compact_tools_cell(stats: &SessionStats, width: usize) -> String {
+    let full_label = format!("{}⚒ Tools{}", fg(color::GRAY), RESET);
+    let short_label = format!("{}⚒{}", fg(color::GRAY), RESET);
+    let label = if strip_ansi_len(&full_label) + 2 <= width {
+        full_label
+    } else {
+        short_label
+    };
+    let label_len = strip_ansi_len(&label);
+    let gap = usize::from(label_len < width);
+    let sparkline_width = width.saturating_sub(label_len + gap);
+    let bins = stats.tool_usage_bins(sparkline_width);
+    let sparkline = render_sparkline(&bins, sparkline_width);
+
+    format!("{}{:gap$}{}", label, "", sparkline, gap = gap)
+}
+
+fn compact_columns(left: String, right: String, width: usize) -> String {
+    let content_width = width.saturating_sub(1);
+    let left_width = content_width / 2;
+    let right_width = content_width.saturating_sub(left_width);
+    let left_len = strip_ansi_len(&left);
+    let right_len = strip_ansi_len(&right);
+
+    format!(
+        "{}{:left_pad$}{}│{}{}{:right_pad$}",
+        left,
+        "",
+        fg(color::DARK_GRAY),
+        RESET,
+        right,
+        "",
+        left_pad = left_width.saturating_sub(left_len),
+        right_pad = right_width.saturating_sub(right_len),
+    )
+}
+
+/// Draw a row in compact mode (two metrics per row, each with label and value)
 fn draw_compact_row(
     row: u16,
     width: u16,
@@ -280,12 +376,9 @@ fn draw_compact_row(
     is_paired: bool,
     pairing_code: Option<&str>,
 ) -> String {
-    // Split width into two columns with a separator
-    let half = (width as usize) / 2;
-    // Full labels need ~30 cols per half ("Prompts N  Completions N" worst case).
-    // Below that, fall back to the abbreviated 4-char labels so two stats still
-    // fit side-by-side without overlapping the centre divider.
-    let full_labels = half >= 30;
+    let content_width = (width as usize).saturating_sub(1);
+    let left_width = content_width / 2;
+    let right_width = content_width.saturating_sub(left_width);
 
     match row {
         1 => {
@@ -303,110 +396,69 @@ fn draw_compact_row(
             format!("{}{:gap$}{}", header, "", state, gap = gap)
         }
         2 => {
-            // Row 2: Left column = Session + Thinking, Right column = Prompts + Completions
-            let (sess_label, think_label, pmt_label, fin_label) = if full_labels {
-                ("Session", "Thinking", "Prompts", "Completions")
-            } else {
-                ("Sess", "Thnk", "Pmt", "Fin")
-            };
+            let session_labels = [
+                format!("{}◉ Session{}", fg(color::GRAY), RESET),
+                format!("{}◉ Sess{}", fg(color::GRAY), RESET),
+                format!("{}◉{}", fg(color::GRAY), RESET),
+            ];
+            let session_value = format!("{}{}{}", fg(color::BLUE), stats.format_work(), RESET);
+            let session = compact_metric_cell(&session_labels, &session_value, left_width);
 
-            let sess = format!(
-                "{}◆ {}{} {}{}{}",
-                fg(color::GRAY),
-                sess_label,
-                RESET,
-                fg(color::BLUE),
-                stats.format_work(),
-                RESET
-            );
             let thinking_val = stats.format_thinking().unwrap_or_else(|| "—".to_string());
-            let think = format!(
-                "{}◇ {}{} {}{}{}",
-                fg(color::GRAY),
-                think_label,
-                RESET,
-                fg(color::GREEN),
-                thinking_val,
-                RESET
-            );
+            let thinking_labels = [
+                format!("{}◐ Thinking{}", fg(color::GRAY), RESET),
+                format!("{}◐ Thnk{}", fg(color::GRAY), RESET),
+                format!("{}◐{}", fg(color::GRAY), RESET),
+            ];
+            let thinking_value = format!("{}{}{}", fg(color::GREEN), thinking_val, RESET);
+            let thinking = compact_metric_cell(&thinking_labels, &thinking_value, right_width);
 
-            let prm = format!(
-                "{}▸ {}{} {}{}{}",
-                fg(color::GRAY),
-                pmt_label,
-                RESET,
-                fg(color::LIGHT_BLUE),
-                stats.platform_stats.prompts,
-                RESET
-            );
-            let cmp = format!(
-                "{}◂ {}{} {}{}{}",
-                fg(color::GRAY),
-                fin_label,
-                RESET,
-                fg(color::LIGHT_BLUE),
-                stats.platform_stats.completions,
-                RESET
-            );
-
-            // Left side: Session and Thinking with gap between
-            let sess_len = strip_ansi_len(&sess);
-            let think_len = strip_ansi_len(&think);
-            let left_gap = half.saturating_sub(sess_len + think_len + 1); // -1 for separator
-            let left = format!("{}{:gap$}{}", sess, "", think, gap = left_gap.max(1));
-
-            // Right side: Prompts and Completions with gap between
-            let prm_len = strip_ansi_len(&prm);
-            let cmp_len = strip_ansi_len(&cmp);
-            let right_gap = half.saturating_sub(prm_len + cmp_len);
-            let right = format!("{}{:gap$}{}", prm, "", cmp, gap = right_gap.max(1));
-
-            // Combine with separator
-            format!("{}{}│{}{}", left, fg(color::DARK_GRAY), RESET, right)
+            compact_columns(session, thinking, width as usize)
         }
         3 => {
-            // Row 3: Tools sparkline on left, compressions on right if any
-            let compressions = stats.platform_stats.compressions;
+            let prompt_labels = compact_count_labels(
+                PROMPT_ICON,
+                "Prompts",
+                "Pmt",
+                stats.platform_stats.prompts,
+                color::LIGHT_BLUE,
+            );
+            let prompts = compact_metric_cell(
+                &prompt_labels,
+                &compact_elapsed(stats.prompts_changed_at),
+                left_width,
+            );
+            let completion_labels = compact_count_labels(
+                COMPLETION_ICON,
+                "Completions",
+                "Fin",
+                stats.platform_stats.completions,
+                color::LIGHT_BLUE,
+            );
+            let completions = compact_metric_cell(
+                &completion_labels,
+                &compact_elapsed(stats.completions_changed_at),
+                right_width,
+            );
 
-            let label = format!("{}⚒{} ", fg(color::GRAY), RESET);
-            let label_len = strip_ansi_len(&label);
+            compact_columns(prompts, completions, width as usize)
+        }
+        4 => {
+            let tools = compact_tools_cell(stats, left_width);
+            let compaction_labels = compact_count_labels(
+                "⊜",
+                "Compactions",
+                "Cmp",
+                stats.platform_stats.compressions,
+                color::PINK,
+            );
+            let compactions = compact_metric_cell(
+                &compaction_labels,
+                &compact_elapsed(stats.compressions_changed_at),
+                right_width,
+            );
 
-            if compressions > 0 {
-                // Sparkline takes left half, compressions on right
-                let sparkline_width = half.saturating_sub(label_len + 1); // -1 for separator
-                let bins = stats.tool_usage_bins(sparkline_width);
-                let sparkline = render_sparkline(&bins, sparkline_width);
-
-                let elapsed = format_elapsed(stats.compressions_changed_at);
-                let comp_label_text = if full_labels { "Compactions" } else { "Cmp" };
-                let comp_label = format!(
-                    "{}⊜ {}{} {}{}{}{}{}{}",
-                    fg(color::GRAY),
-                    comp_label_text,
-                    RESET,
-                    fg(color::PINK),
-                    compressions,
-                    RESET,
-                    fg(color::GRAY),
-                    elapsed,
-                    RESET
-                );
-
-                format!(
-                    "{}{}{}│{}{}",
-                    label,
-                    sparkline,
-                    fg(color::DARK_GRAY),
-                    RESET,
-                    comp_label
-                )
-            } else {
-                // No compressions - sparkline spans full width
-                let sparkline_width = (width as usize).saturating_sub(label_len);
-                let bins = stats.tool_usage_bins(sparkline_width);
-                let sparkline = render_sparkline(&bins, sparkline_width);
-                format!("{}{}", label, sparkline)
-            }
+            compact_columns(tools, compactions, width as usize)
         }
         _ => String::new(),
     }
@@ -560,6 +612,37 @@ mod tests {
         let start = s.find("\x1b]8;;")? + "\x1b]8;;".len();
         let end = s[start..].find('\x07')? + start;
         Some(s[start..end].to_string())
+    }
+
+    #[test]
+    fn compact_layout_starts_before_normal_rows_are_clipped() {
+        let stats = SessionStats::default();
+
+        assert!(stats_use_compact_layout(6));
+        assert!(!stats_use_compact_layout(7));
+        assert_eq!(stats_render_rows(6, &stats), 4);
+        assert_eq!(stats_render_rows(7, &stats), 7);
+    }
+
+    #[test]
+    fn compact_grid_pairs_related_metrics() {
+        let stats = SessionStats::default();
+        let width = 70;
+
+        let first = draw_compact_row(2, width, &stats, None, false, None);
+        let second = draw_compact_row(3, width, &stats, None, false, None);
+        let third = draw_compact_row(4, width, &stats, None, false, None);
+
+        assert!(first.contains("Session"));
+        assert!(first.contains("Thinking"));
+        assert!(!first.contains("Prompts"));
+        assert!(second.contains("Prompts"));
+        assert!(second.contains("Completions"));
+        assert!(third.contains("Tools"));
+        assert!(third.contains("Compactions"));
+        assert_eq!(visible(&first), width as usize);
+        assert_eq!(visible(&second), width as usize);
+        assert_eq!(visible(&third), width as usize);
     }
 
     #[test]

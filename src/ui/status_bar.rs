@@ -21,8 +21,8 @@ use crate::update::UpdateState;
 use super::{
     changes_natural_rows, draw_changes_widget, draw_git_widget, draw_pairing_banner,
     draw_pr_handoff, draw_pr_separator, draw_recap_handoff, draw_stats_widget, draw_update_banner,
-    git_natural_rows, pr_handoff_rows, pr_separator_rows, recap_handoff_rows, stats_natural_rows,
-    total_handoff_rows, PairingState, WidgetArea, MAX_RECAP_ROWS,
+    git_natural_rows, pr_handoff_rows, pr_separator_rows, recap_handoff_rows, stats_render_rows,
+    stats_use_compact_layout, total_handoff_rows, PairingState, WidgetArea, MAX_RECAP_ROWS,
 };
 
 /// Layout information needed for rendering widgets
@@ -37,6 +37,14 @@ pub struct Layout {
 pub const MIN_WIDGET_DATA_ROWS: u16 = 4;
 /// Status rows include the separator plus widget data rows.
 pub const MIN_STATUS_ROWS: u16 = MIN_WIDGET_DATA_ROWS + 1;
+
+fn stats_widget_width(total_cols: u16, compact: bool) -> u16 {
+    if compact {
+        ((total_cols as f32) * 0.35).max(36.0) as u16
+    } else {
+        ((total_cols as f32) * 0.22).max(24.0) as u16
+    }
+}
 
 /// Split terminal height into assistant PTY rows and status widget rows.
 ///
@@ -109,8 +117,8 @@ pub fn handoff_rows(
 /// `(git_width, changes_width)`. The estimate ignores the multi-column flex
 /// path because that decision depends on how many rows we ultimately give git
 /// — a rough split is enough for the natural-row heuristics.
-fn estimate_column_widths(total_cols: u16) -> (u16, u16) {
-    let stats_width = ((total_cols as f32) * 0.22).max(24.0) as u16;
+fn estimate_column_widths(total_cols: u16, compact_stats: bool) -> (u16, u16) {
+    let stats_width = stats_widget_width(total_cols, compact_stats);
     let separators: u16 = 2;
     let remaining = total_cols.saturating_sub(stats_width + separators);
     let git_w = (remaining * 3) / 8;
@@ -134,9 +142,12 @@ pub fn compute_dynamic_status_rows(
     slack_threads: &[SlackThread],
     handoff_rows: u16,
 ) -> u16 {
-    let (git_w, changes_w) = estimate_column_widths(total_cols);
+    let preferred_max = preferred_status_rows_max(total_rows, handoff_rows);
+    let available_rows = preferred_max.saturating_sub(1);
+    let compact_stats = stats_use_compact_layout(available_rows);
+    let (git_w, changes_w) = estimate_column_widths(total_cols, compact_stats);
     let has_title = terminal_title.is_some_and(|t| !t.is_empty());
-    let natural = stats_natural_rows(session_stats)
+    let natural = stats_render_rows(available_rows, session_stats)
         .max(git_natural_rows(git_state, git_w))
         .max(changes_natural_rows(
             diff_summary,
@@ -145,7 +156,6 @@ pub fn compute_dynamic_status_rows(
             slack_threads.len(),
         ));
     let desired = natural.saturating_add(1); // +1 separator
-    let preferred_max = preferred_status_rows_max(total_rows, handoff_rows);
     desired.clamp(MIN_STATUS_ROWS, preferred_max)
 }
 
@@ -265,17 +275,10 @@ pub fn draw_status_bar(
     let widget_status_rows = layout.status_rows.max(1);
     let widget_data_rows = widget_status_rows.saturating_sub(1);
 
-    // Calculate column widths based on available height.
-    // In compact mode (short terminal), stats gets more width for two-column layout.
-    let compact = widget_status_rows <= MIN_STATUS_ROWS;
-
-    let stats_width = if compact {
-        // Wider stats for two-column layout: ~35% of width, min 36 chars
-        ((layout.total_cols as f32) * 0.35).max(36.0) as u16
-    } else {
-        // Normal: ~22% of width, min 24 chars
-        ((layout.total_cols as f32) * 0.22).max(24.0) as u16
-    };
+    // Widen stats as soon as its normal list would be clipped. The compact
+    // renderer uses the extra width to fit two complete metrics on each row.
+    let compact = stats_use_compact_layout(widget_data_rows);
+    let stats_width = stats_widget_width(layout.total_cols, compact);
 
     // Account for separators: 2 separators between 3 columns
     let num_separators = 2;
@@ -395,6 +398,23 @@ mod tests {
             pairing_code: Some("ABC-DEF-GHI".to_string()),
             ..PairingState::default()
         }
+    }
+
+    #[test]
+    fn compact_stats_get_more_width() {
+        assert_eq!(stats_widget_width(200, false), 44);
+        assert_eq!(stats_widget_width(200, true), 70);
+    }
+
+    #[test]
+    fn short_status_area_uses_compact_stats_height() {
+        let stats = SessionStats::default();
+        let git = GitState::default();
+        let diff = DiffSummary::default();
+
+        let rows = compute_dynamic_status_rows(35, 180, &stats, &git, &diff, None, &[], 0);
+
+        assert_eq!(rows, MIN_STATUS_ROWS);
     }
 
     #[test]
