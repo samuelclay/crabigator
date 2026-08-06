@@ -254,6 +254,8 @@ export interface SessionPr {
     owner: string;
     repo: string;
     url: string;
+    author_login?: string;        // GitHub login that opened the PR
+    authored_by_viewer?: boolean; // Whether the authenticated gh account opened it
     branch: string;
     title: string;
     state: string;          // OPEN / MERGED / CLOSED

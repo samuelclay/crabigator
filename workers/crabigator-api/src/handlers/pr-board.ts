@@ -1,4 +1,5 @@
 import type { Env } from '../types/env';
+import type { SessionPr } from '../types/session';
 import { jsonResponse } from '../router';
 import { requireDeviceAuth, requireMobileAuth } from '../auth/middleware';
 
@@ -76,10 +77,8 @@ export async function backfillSessionPrs(request: Request, env: Env): Promise<Re
                     const stub = env.SESSION.get(env.SESSION.idFromName(session.id));
                     const response = await stub.fetch(new Request('https://internal/prs'));
                     if (!response.ok) return;
-                    const data = (await response.json()) as { prs: any[] };
-                    const prs = (data.prs || []).filter(
-                        (pr) => pr && pr.owner && pr.repo && pr.number
-                    );
+                    const data: unknown = await response.json();
+                    const prs = prsFromPayload(data);
                     if (prs.length === 0) return;
                     const seenAt = session.seen_at || Math.floor(Date.now() / 1000);
                     await env.DB.batch(
@@ -122,7 +121,7 @@ interface BoardEntry {
     owner: string;
     repo: string;
     number: number;
-    pr: any;
+    pr: SessionPr;
     updated_at: number;
     sessions: {
         session_id: string;
@@ -137,13 +136,91 @@ interface BoardEntry {
     }[];
 }
 
+function isSessionPr(value: unknown): value is SessionPr {
+    if (!value || typeof value !== 'object') return false;
+    const pr = value as Record<string, unknown>;
+    return typeof pr.number === 'number'
+        && typeof pr.owner === 'string'
+        && typeof pr.repo === 'string'
+        && typeof pr.url === 'string'
+        && typeof pr.branch === 'string'
+        && typeof pr.title === 'string'
+        && typeof pr.state === 'string'
+        && typeof pr.is_draft === 'boolean'
+        && typeof pr.additions === 'number'
+        && typeof pr.deletions === 'number'
+        && typeof pr.changed_files === 'number'
+        && typeof pr.mergeable === 'string'
+        && typeof pr.merge_state_status === 'string'
+        && typeof pr.checks_passed === 'number'
+        && typeof pr.checks_failed === 'number'
+        && typeof pr.checks_pending === 'number'
+        && typeof pr.checks_total === 'number'
+        && typeof pr.created_here === 'boolean'
+        && typeof pr.refreshed_at === 'number';
+}
+
+function parseSessionPr(data: string): SessionPr | null {
+    try {
+        const parsed: unknown = JSON.parse(data);
+        return isSessionPr(parsed) ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+function prsFromPayload(payload: unknown): SessionPr[] {
+    if (!payload || typeof payload !== 'object') return [];
+    const prs = (payload as Record<string, unknown>).prs;
+    return Array.isArray(prs) ? prs.filter(isSessionPr) : [];
+}
+
+function primarySourceRank(source?: string): number {
+    if (source === 'override') return 3;
+    if (source === 'session') return 2;
+    if (source === 'auto') return 1;
+    return 0;
+}
+
+function combinedPrimarySource(existing: SessionPr, incoming: SessionPr): string {
+    if (existing.primary && incoming.primary) {
+        return primarySourceRank(incoming.primary_source) > primarySourceRank(existing.primary_source)
+            ? incoming.primary_source || ''
+            : existing.primary_source || '';
+    }
+    if (existing.primary) return existing.primary_source || '';
+    if (incoming.primary) return incoming.primary_source || '';
+    return '';
+}
+
+function foreignWithoutExplicitInterest(pr: SessionPr): boolean {
+    return pr.authored_by_viewer === false
+        && (pr.user_mentions || 0) === 0
+        && pr.primary_source !== 'session'
+        && pr.primary_source !== 'override';
+}
+
+function visiblePr(pr: SessionPr, lingerMs: number, nowMs: number, updatedAt: number): boolean {
+    if (pr.dismissed) return false;
+    // A classified primary remains actionable while GitHub enrichment retries.
+    if (!pr.refreshed_at) return !!pr.primary;
+    if (pr.state === 'OPEN') return true;
+    if (!pr.primary || foreignWithoutExplicitInterest(pr)) return false;
+    const latest = Math.max(
+        pr.closed_at || 0,
+        pr.last_mentioned_at || 0,
+        updatedAt * 1000
+    );
+    return !!lingerMs && !!latest && nowMs - latest <= lingerMs;
+}
+
 /**
  * GET /api/prs/board - Every PR the group's sessions have tracked, deduped
  * across sessions with the same merge rules the desktop board uses: newest
  * GitHub stats win, engagement counters sum, Slack links union, and stored
  * dispositions override classification (dismissed PRs are omitted).
  * Accepts dashboard bearer auth or desktop HMAC auth (the TUI's all-sessions
- * view). `?days=N` bounds how long finished PRs linger (default 1, max 90).
+ * view). `?days=N` bounds how long finished primary PRs linger (default 1, max 90).
  */
 export async function getPrBoard(request: Request, env: Env): Promise<Response> {
     const groupId = await boardGroupId(request, env);
@@ -182,12 +259,8 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
 
     const merged = new Map<string, BoardEntry & { disposition: string | null }>();
     for (const row of rows.results ?? []) {
-        let pr: any;
-        try {
-            pr = JSON.parse(row.data);
-        } catch {
-            continue;
-        }
+        const pr = parseSessionPr(row.data);
+        if (!pr) continue;
         const key = `${row.owner}/${row.repo}#${row.number}`;
         let entry = merged.get(key);
         if (!entry) {
@@ -203,16 +276,30 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             };
             merged.set(key, entry);
         }
+        const aggregatePrimary = !!entry.pr.primary || !!pr.primary;
+        const aggregatePrimarySource = combinedPrimarySource(entry.pr, pr);
+        const aggregateDismissed = !!entry.pr.dismissed || !!pr.dismissed;
         if (row.updated_at > entry.updated_at) {
-            const { mentions, user_mentions, last_mentioned_at } = entry.pr;
-            entry.pr = { ...pr, mentions, user_mentions, last_mentioned_at };
+            const previous = entry.pr;
+            entry.pr = {
+                ...pr,
+                mentions: previous.mentions,
+                user_mentions: previous.user_mentions,
+                last_mentioned_at: previous.last_mentioned_at,
+                author_login: pr.author_login || previous.author_login,
+                authored_by_viewer: pr.authored_by_viewer ?? previous.authored_by_viewer,
+            };
         }
         entry.updated_at = Math.max(entry.updated_at, row.updated_at);
-        entry.pr.mentions += pr.mentions || 0;
-        entry.pr.user_mentions += pr.user_mentions || 0;
-        entry.pr.last_mentioned_at = Math.max(entry.pr.last_mentioned_at, pr.last_mentioned_at || 0);
-        entry.pr.primary = entry.pr.primary || !!pr.primary;
-        entry.pr.dismissed = entry.pr.dismissed || !!pr.dismissed;
+        entry.pr.mentions = (entry.pr.mentions || 0) + (pr.mentions || 0);
+        entry.pr.user_mentions = (entry.pr.user_mentions || 0) + (pr.user_mentions || 0);
+        entry.pr.last_mentioned_at = Math.max(
+            entry.pr.last_mentioned_at || 0,
+            pr.last_mentioned_at || 0
+        );
+        entry.pr.primary = aggregatePrimary;
+        entry.pr.primary_source = aggregatePrimarySource;
+        entry.pr.dismissed = aggregateDismissed;
         if (!entry.pr.slack_origin_url) entry.pr.slack_origin_url = pr.slack_origin_url || '';
         const slackUrls: string[] = entry.pr.slack_comment_urls || [];
         for (const url of pr.slack_comment_urls || []) {
@@ -260,25 +347,16 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     const nowMs = Date.now();
     const prs = [...merged.values()]
         .filter((entry) => {
-            // PRs gh never confirmed are scanning artifacts (doc examples,
-            // wrapped shorthand) — same rule as the desktop board.
-            if (!entry.pr.refreshed_at) return false;
-            // Finished PRs age off after the window (0 = open only), by close
-            // time or last mention. Records from before those fields existed
-            // (backfilled sessions) fall back to when the row was last written
-            // — for a backfill, the session's final activity.
-            if (entry.pr.state !== 'OPEN') {
-                const latest = Math.max(
-                    entry.pr.closed_at || 0,
-                    entry.pr.last_mentioned_at || 0,
-                    entry.updated_at * 1000
-                );
-                if (!lingerMs || !latest || nowMs - latest > lingerMs) return false;
-            }
             if (entry.disposition === 'dismissed') return false;
-            if (entry.disposition === 'primary') entry.pr.primary = true;
-            if (entry.disposition === 'secondary') entry.pr.primary = false;
-            return !entry.pr.dismissed;
+            if (entry.disposition === 'primary') {
+                entry.pr.primary = true;
+                entry.pr.primary_source = 'override';
+            }
+            if (entry.disposition === 'secondary') {
+                entry.pr.primary = false;
+                entry.pr.primary_source = 'override';
+            }
+            return visiblePr(entry.pr, lingerMs, nowMs, entry.updated_at);
         })
         .map(({ disposition: _disposition, ...entry }) => entry);
 
