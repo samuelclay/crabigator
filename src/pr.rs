@@ -150,6 +150,14 @@ pub struct SessionPr {
     pub owner: String,
     pub repo: String,
     pub url: String,
+    /// GitHub login that opened the PR. Empty for mirrors written before
+    /// author tracking shipped or when GitHub no longer has an author.
+    #[serde(default)]
+    pub author_login: String,
+    /// Whether `author_login` matches the GitHub account authenticated in `gh`.
+    /// None means the comparison was unavailable, so legacy rows stay visible.
+    #[serde(default)]
+    pub authored_by_viewer: Option<bool>,
     /// Head branch name (`headRefName`). Empty until the first `gh` enrichment lands.
     pub branch: String,
     pub title: String,
@@ -258,6 +266,8 @@ impl SessionPr {
             owner: loc.owner.clone(),
             repo: loc.repo.clone(),
             url: loc.url.clone(),
+            author_login: String::new(),
+            authored_by_viewer: None,
             branch: String::new(),
             title: String::new(),
             state: String::new(),
@@ -360,6 +370,12 @@ struct GhPrJson {
     #[serde(default)]
     url: String,
     #[serde(default)]
+    author: Option<GhAuthor>,
+    /// Filled locally after deserialization; `gh pr view` does not expose the
+    /// authenticated viewer in its JSON fields.
+    #[serde(skip)]
+    viewer_login: String,
+    #[serde(default)]
     state: String,
     #[serde(default, rename = "isDraft")]
     is_draft: bool,
@@ -380,6 +396,12 @@ struct GhPrJson {
     closed_at: String,
     #[serde(default, rename = "statusCheckRollup")]
     status_check_rollup: Vec<CheckEntry>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct GhAuthor {
+    #[serde(default)]
+    login: String,
 }
 
 /// One entry in `statusCheckRollup`: either a CheckRun (uses `status`/`conclusion`
@@ -1326,6 +1348,11 @@ impl PrTracker {
         let total = passed + failed + pending;
         let ci_url = ci_link(&json.status_check_rollup, &url);
         let closed_at = parse_iso_ms(&json.closed_at);
+        let author_login = json.author.map(|author| author.login).unwrap_or_default();
+        let authored_by_viewer = match (author_login.is_empty(), json.viewer_login.is_empty()) {
+            (false, false) => Some(author_login == json.viewer_login),
+            _ => None,
+        };
 
         if let Some(existing) = self.prs.iter_mut().find(|p| p.url == url) {
             let before = existing.clone();
@@ -1341,6 +1368,12 @@ impl PrTracker {
             existing.merge_state_status = json.merge_state_status;
             existing.review_decision = json.review_decision;
             existing.closed_at = closed_at;
+            if !author_login.is_empty() {
+                existing.author_login = author_login;
+            }
+            if authored_by_viewer.is_some() {
+                existing.authored_by_viewer = authored_by_viewer;
+            }
             existing.checks_passed = passed;
             existing.checks_failed = failed;
             existing.checks_pending = pending;
@@ -1391,6 +1424,8 @@ impl PrTracker {
             checks_pending: pending,
             checks_total: total,
             ci_url,
+            author_login,
+            authored_by_viewer,
             slack_origin_url: origin_slack,
             refreshed_at: now,
             ..SessionPr::placeholder(&loc, created_here)
@@ -1813,7 +1848,8 @@ fn is_number_list_gap(gap: &str) -> bool {
         })
 }
 
-const GH_JSON_FIELDS: &str = "number,title,headRefName,url,state,isDraft,additions,deletions,\
+const GH_JSON_FIELDS: &str =
+    "number,title,headRefName,url,author,state,isDraft,additions,deletions,\
     changedFiles,mergeable,mergeStateStatus,reviewDecision,closedAt,statusCheckRollup";
 
 /// GitHub computes `mergeable` lazily, so the first read often returns UNKNOWN.
@@ -1855,8 +1891,9 @@ fn run_gh_pr_view(args: &[&str], cwd: Option<&Path>) -> Result<GhPrJson, String>
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
         }
-        let json: GhPrJson =
+        let mut json: GhPrJson =
             serde_json::from_slice(&output.stdout).map_err(|e| format!("gh json parse: {e}"))?;
+        json.viewer_login = gh_viewer_login().unwrap_or_default().to_string();
         let resolved = json.mergeable != "UNKNOWN";
         last = Some(json);
         if resolved || attempt == MERGEABLE_RETRIES {
@@ -1865,6 +1902,25 @@ fn run_gh_pr_view(args: &[&str], cwd: Option<&Path>) -> Result<GhPrJson, String>
         std::thread::sleep(MERGEABLE_RETRY_DELAY);
     }
     last.ok_or_else(|| "gh returned no data".to_string())
+}
+
+/// Resolve the account authenticated in `gh` once per Crabigator process.
+/// PR fetches already run on background threads, so this never blocks the UI.
+fn gh_viewer_login() -> Option<&'static str> {
+    static VIEWER_LOGIN: OnceLock<Option<String>> = OnceLock::new();
+    VIEWER_LOGIN
+        .get_or_init(|| {
+            let output = Command::new("gh")
+                .args(["api", "user", "--jq", ".login"])
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            (!login.is_empty()).then_some(login)
+        })
+        .as_deref()
 }
 
 /// Key under which a PR's review-thread job is tracked in `pending`.
@@ -1989,7 +2045,11 @@ mod tests {
         assert_eq!(brief_error("\n  spaced  \nrest"), "spaced");
         assert_eq!(brief_error(""), "gh pr view failed");
         let long = "x".repeat(300);
-        assert_eq!(brief_error(&long).chars().count(), 121, "120 chars + ellipsis");
+        assert_eq!(
+            brief_error(&long).chars().count(),
+            121,
+            "120 chars + ellipsis"
+        );
     }
 
     /// The PR numbers a chunk of text mentions in prose, in order.
@@ -2780,6 +2840,8 @@ mod tests {
             title: "T".into(),
             head_ref_name: "b".into(),
             url: url.to_string(),
+            author: None,
+            viewer_login: String::new(),
             state: state.to_string(),
             is_draft: false,
             additions: 1,
@@ -2841,6 +2903,10 @@ mod tests {
             title: "T".into(),
             head_ref_name: "feature/x".into(),
             url: loc.url.clone(),
+            author: Some(GhAuthor {
+                login: "octocat".into(),
+            }),
+            viewer_login: "octocat".into(),
             state: "OPEN".into(),
             is_draft: true,
             additions: 10,
@@ -2865,5 +2931,7 @@ mod tests {
         assert_eq!(tracker.prs()[0].ci_url, "https://github.com/o/r/actions/2");
         assert_eq!(tracker.prs()[0].branch, "feature/x");
         assert_eq!(tracker.prs()[0].additions, 10);
+        assert_eq!(tracker.prs()[0].author_login, "octocat");
+        assert_eq!(tracker.prs()[0].authored_by_viewer, Some(true));
     }
 }

@@ -704,6 +704,8 @@ mod tests {
             owner: "Tavus-Engineering".to_string(),
             repo: repo.to_string(),
             url: format!("https://github.com/Tavus-Engineering/{repo}/pull/{number}"),
+            author_login: String::new(),
+            authored_by_viewer: None,
             branch: branch.to_string(),
             title: String::new(),
             state: "OPEN".to_string(),

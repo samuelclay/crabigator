@@ -386,6 +386,8 @@ impl MirrorPublisher {
         prs.len().hash(&mut hasher);
         for pr in prs {
             pr.url.hash(&mut hasher);
+            pr.author_login.hash(&mut hasher);
+            pr.authored_by_viewer.hash(&mut hasher);
             pr.branch.hash(&mut hasher);
             pr.state.hash(&mut hasher);
             pr.is_draft.hash(&mut hasher);

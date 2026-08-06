@@ -37,7 +37,7 @@ const OVERRIDES_REFRESH: Duration = Duration::from_secs(60);
 const CLOUD_BOARD_REFRESH: Duration = Duration::from_secs(15);
 /// A mirror this old is a session that stopped updating; its rows dim.
 const STALE_SESSION_SECS: f64 = 300.0;
-/// How long merged/closed PRs linger by default; +/- adjusts at runtime.
+/// How long merged/closed primary PRs linger by default; +/- adjusts at runtime.
 const DEFAULT_LINGER_DAYS: u64 = 1;
 /// Ceiling for the +key so the window can't run away unbounded.
 const MAX_LINGER_DAYS: u64 = 90;
@@ -205,7 +205,7 @@ fn now_secs() -> f64 {
 }
 
 /// Merge session snapshots into deduped board entries, honoring overrides.
-/// `linger_days` bounds how long finished PRs stay visible (0 = open only).
+/// `linger_days` bounds how long finished primary PRs stay visible (0 = open only).
 fn aggregate(
     snapshots: &[SessionSnapshot],
     overrides: &HashMap<String, PrDisposition>,
@@ -235,8 +235,11 @@ fn aggregate(
                 }
             });
 
-            // Newest GitHub stats win, but the engagement counters belong to the
-            // merge rather than to any one session's copy, so carry them over.
+            // Newest GitHub stats win, but classification and engagement belong
+            // to the aggregate rather than to any one session's copy.
+            let aggregate_primary = entry.pr.primary || pr.primary;
+            let aggregate_primary_source = combined_primary_source(&entry.pr, pr);
+            let aggregate_dismissed = entry.pr.dismissed || pr.dismissed;
             if pr.refreshed_at > entry.pr.refreshed_at {
                 let previous = std::mem::replace(&mut entry.pr, pr.clone());
                 entry.pr.mentions = previous.mentions;
@@ -244,12 +247,19 @@ fn aggregate(
                 entry.pr.first_mentioned_at = previous.first_mentioned_at;
                 entry.pr.last_mentioned_at = previous.last_mentioned_at;
                 entry.pr.last_mention_prompt = previous.last_mention_prompt;
+                if entry.pr.author_login.is_empty() {
+                    entry.pr.author_login = previous.author_login;
+                }
+                if entry.pr.authored_by_viewer.is_none() {
+                    entry.pr.authored_by_viewer = previous.authored_by_viewer;
+                }
             }
             entry.pr.mentions += pr.mentions;
             entry.pr.user_mentions += pr.user_mentions;
             entry.pr.last_mentioned_at = entry.pr.last_mentioned_at.max(pr.last_mentioned_at);
-            entry.pr.primary |= pr.primary;
-            entry.pr.dismissed |= pr.dismissed;
+            entry.pr.primary = aggregate_primary;
+            entry.pr.primary_source = aggregate_primary_source;
+            entry.pr.dismissed = aggregate_dismissed;
             if entry.pr.slack_origin_url.is_empty() {
                 entry.pr.slack_origin_url = pr.slack_origin_url.clone();
             }
@@ -283,37 +293,81 @@ fn aggregate(
         .into_iter()
         .filter_map(|key| {
             let mut entry = merged.remove(&key)?;
-            // A PR gh never confirmed is a scanning artifact — a doc example
-            // like `o/r#500` or a line-wrapped `owner/repo#N` shorthand. The
-            // session's own strip may show it mid-enrichment; the board waits
-            // for verification.
-            if entry.pr.refreshed_at == 0 {
-                return None;
-            }
-            // Finished PRs age off after the linger window (0 = open only),
-            // judged by the close time when known, else by the last time any
-            // session spoke about them.
-            if entry.pr.state != "OPEN" {
-                let latest = entry.pr.closed_at.max(entry.pr.last_mentioned_at);
-                if linger_days == 0
-                    || latest == 0
-                    || now_ms.saturating_sub(latest) > linger_days * 24 * 3600 * 1000
-                {
-                    return None;
-                }
-            }
             match overrides.get(&key) {
                 Some(PrDisposition::Dismissed) => return None,
-                Some(PrDisposition::Primary) => entry.pr.primary = true,
-                Some(PrDisposition::Secondary) => entry.pr.primary = false,
+                Some(PrDisposition::Primary) => {
+                    entry.pr.primary = true;
+                    entry.pr.primary_source = "override".to_string();
+                }
+                Some(PrDisposition::Secondary) => {
+                    entry.pr.primary = false;
+                    entry.pr.primary_source = "override".to_string();
+                }
                 None => {}
             }
-            (!entry.pr.dismissed).then_some(entry)
+            visible_pr(&entry.pr, linger_days, now_ms).then_some(entry)
         })
         .collect();
 
     sort_entries(&mut out);
     out
+}
+
+/// Keep the strongest source among the session copies that called this PR
+/// primary. A newer metadata snapshot must not erase an older classification.
+fn combined_primary_source(existing: &SessionPr, incoming: &SessionPr) -> String {
+    match (existing.primary, incoming.primary) {
+        (true, true) => {
+            if primary_source_rank(&incoming.primary_source)
+                > primary_source_rank(&existing.primary_source)
+            {
+                incoming.primary_source.clone()
+            } else {
+                existing.primary_source.clone()
+            }
+        }
+        (true, false) => existing.primary_source.clone(),
+        (false, true) => incoming.primary_source.clone(),
+        (false, false) => String::new(),
+    }
+}
+
+fn primary_source_rank(source: &str) -> u8 {
+    match source {
+        "override" => 3,
+        "session" => 2,
+        "auto" => 1,
+        _ => 0,
+    }
+}
+
+fn visible_pr(pr: &SessionPr, linger_days: u64, now_ms: u64) -> bool {
+    if pr.dismissed {
+        return false;
+    }
+    // Unverified references are usually scanning artifacts. A primary is
+    // different: the session classifier has enough ownership evidence to keep
+    // it visible as "fetching" while enrichment retries.
+    if pr.refreshed_at == 0 {
+        return pr.primary;
+    }
+    if pr.state == "OPEN" {
+        return true;
+    }
+    // Finished secondaries disappear immediately. Finished primaries retain
+    // the adjustable grace window, except foreign-authored PRs the user never
+    // explicitly mentioned or promoted.
+    if !pr.primary || foreign_without_explicit_interest(pr) {
+        return false;
+    }
+    let latest = pr.closed_at.max(pr.last_mentioned_at);
+    linger_days > 0 && latest > 0 && now_ms.saturating_sub(latest) <= linger_days * 24 * 3600 * 1000
+}
+
+fn foreign_without_explicit_interest(pr: &SessionPr) -> bool {
+    pr.authored_by_viewer == Some(false)
+        && pr.user_mentions == 0
+        && !matches!(pr.primary_source.as_str(), "session" | "override")
 }
 
 /// Attention first, then primaries, then recency of discussion.
@@ -931,7 +985,7 @@ fn render(
     // unusual view never masquerades as the everyday one.
     let window_text = match linger_days {
         0 => "open only".to_string(),
-        days => format!("done ≤ {days}d"),
+        days => format!("primary done ≤ {days}d"),
     };
     let window = if linger_days == DEFAULT_LINGER_DAYS {
         window_text
@@ -1426,6 +1480,11 @@ mod tests {
         pr
     }
 
+    fn make_primary(pr: &mut SessionPr) {
+        pr.primary = true;
+        pr.primary_source = "auto".to_string();
+    }
+
     fn render_frame_at(entries: &[BoardPr], detail: u8) -> String {
         let rows: Vec<BoardRow> = entries
             .iter()
@@ -1484,6 +1543,28 @@ mod tests {
     }
 
     #[test]
+    fn aggregation_preserves_primary_from_an_older_placeholder() {
+        let mut placeholder = SessionPr::test_stub(22, "o", "mcp");
+        make_primary(&mut placeholder);
+        placeholder.mentions = 7;
+
+        let enriched = board_pr(22, "mcp");
+        let entries = aggregate(
+            &[
+                snapshot("active", vec![placeholder]),
+                snapshot("older", vec![enriched]),
+            ],
+            &HashMap::new(),
+            DEFAULT_LINGER_DAYS,
+        );
+
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].pr.primary);
+        assert_eq!(entries[0].pr.primary_source, "auto");
+        assert_eq!(entries[0].pr.mentions, 7);
+    }
+
+    #[test]
     fn overrides_reshape_the_board() {
         let primary_key = "o/portal#5".to_string();
         let dismissed_key = "o/portal#6".to_string();
@@ -1511,6 +1592,7 @@ mod tests {
         let mut merged = board_pr(2, "portal");
         merged.state = "MERGED".to_string();
         merged.closed_at = now_ms();
+        make_primary(&mut merged);
         let ready = {
             let mut pr = board_pr(3, "portal");
             pr.review_decision = "APPROVED".to_string();
@@ -1602,21 +1684,24 @@ mod tests {
         assert!(!text.contains('s'), "no second-level ages: {text}");
     }
 
-    /// Scanning artifacts (`o/r#500` doc examples, wrapped `owner/repo#N`
-    /// shorthand) never enrich; the board hides anything gh hasn't confirmed.
+    /// Scanning artifacts stay hidden, while a classified primary remains
+    /// visible so its failed or pending enrichment is actionable.
     #[test]
-    fn unverified_prs_stay_off_the_board() {
+    fn only_primary_unverified_prs_reach_the_board() {
         let mut phantom = SessionPr::test_stub(500, "o", "r");
         phantom.state = "OPEN".to_string(); // refreshed_at stays 0
+        let mut primary = SessionPr::test_stub(501, "o", "r");
+        make_primary(&mut primary);
         let entries = aggregate(
-            &[snapshot("one", vec![phantom])],
+            &[snapshot("one", vec![phantom, primary])],
             &HashMap::new(),
             DEFAULT_LINGER_DAYS,
         );
-        assert!(entries.is_empty());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].pr.number, 501);
     }
 
-    /// Merged and closed PRs linger for a day, judged by close time when
+    /// Merged and closed primaries linger for a day, judged by close time when
     /// known, else the last mention; with neither signal they hide at once.
     #[test]
     fn finished_prs_age_off_after_a_day() {
@@ -1633,7 +1718,9 @@ mod tests {
         let mut silent = board_pr(4, "portal");
         silent.state = "CLOSED".to_string(); // no close time, no mentions
 
-        silent.dismissed = false;
+        for pr in [&mut fresh, &mut old, &mut recently_discussed, &mut silent] {
+            make_primary(pr);
+        }
         let entries = aggregate(
             &[snapshot(
                 "one",
@@ -1656,6 +1743,7 @@ mod tests {
         let mut merged = board_pr(1, "portal");
         merged.state = "MERGED".to_string();
         merged.closed_at = now_ms() - 2 * 24 * 3600 * 1000; // two days ago
+        make_primary(&mut merged);
         let snapshots = [snapshot("one", vec![merged])];
 
         assert!(aggregate(&snapshots, &HashMap::new(), 1).is_empty());
@@ -1664,7 +1752,34 @@ mod tests {
         let mut fresh = board_pr(2, "portal");
         fresh.state = "MERGED".to_string();
         fresh.closed_at = now_ms();
+        make_primary(&mut fresh);
         assert!(aggregate(&[snapshot("one", vec![fresh])], &HashMap::new(), 0).is_empty());
+    }
+
+    #[test]
+    fn finished_secondaries_and_unmentioned_foreign_prs_hide_immediately() {
+        let mut secondary = board_pr(1, "portal");
+        secondary.state = "MERGED".to_string();
+        secondary.closed_at = now_ms();
+
+        let mut foreign = board_pr(2, "portal");
+        foreign.state = "MERGED".to_string();
+        foreign.closed_at = now_ms();
+        foreign.authored_by_viewer = Some(false);
+        make_primary(&mut foreign);
+
+        let mut mentioned = foreign.clone();
+        mentioned.number = 3;
+        mentioned.url = "https://github.com/o/portal/pull/3".to_string();
+        mentioned.user_mentions = 1;
+
+        let entries = aggregate(
+            &[snapshot("one", vec![secondary, foreign, mentioned])],
+            &HashMap::new(),
+            DEFAULT_LINGER_DAYS,
+        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].pr.number, 3);
     }
 
     #[test]
