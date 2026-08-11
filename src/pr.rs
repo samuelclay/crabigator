@@ -391,9 +391,9 @@ struct GhPrJson {
     merge_state_status: String,
     #[serde(default, rename = "reviewDecision")]
     review_decision: String,
-    /// ISO 8601; set once the PR is merged or closed, empty while open.
+    /// ISO 8601 once the PR is merged or closed; GitHub returns null while open.
     #[serde(default, rename = "closedAt")]
-    closed_at: String,
+    closed_at: Option<String>,
     #[serde(default, rename = "statusCheckRollup")]
     status_check_rollup: Vec<CheckEntry>,
 }
@@ -1347,7 +1347,7 @@ impl PrTracker {
         let (passed, failed, pending) = count_checks(&json.status_check_rollup);
         let total = passed + failed + pending;
         let ci_url = ci_link(&json.status_check_rollup, &url);
-        let closed_at = parse_iso_ms(&json.closed_at);
+        let closed_at = json.closed_at.as_deref().map_or(0, parse_iso_ms);
         let author_login = json.author.map(|author| author.login).unwrap_or_default();
         let authored_by_viewer = match (author_login.is_empty(), json.viewer_login.is_empty()) {
             (false, false) => Some(author_login == json.viewer_login),
@@ -2833,6 +2833,20 @@ mod tests {
         assert_eq!(tracker.prs()[0].unresolved_comments, 2);
     }
 
+    #[test]
+    fn open_pr_with_null_closed_at_enriches() {
+        let url = "https://github.com/o/r/pull/7";
+        let json: GhPrJson = serde_json::from_str(&format!(
+            r#"{{"number":7,"title":"Open PR","url":"{url}","state":"OPEN","closedAt":null}}"#
+        ))
+        .expect("open PR response should parse");
+        let mut tracker = PrTracker::new();
+
+        assert!(tracker.apply_fetch(json, None, false));
+        assert_eq!(tracker.prs()[0].title, "Open PR");
+        assert_eq!(tracker.prs()[0].closed_at, 0);
+    }
+
     /// Minimal `gh pr view` payload for a PR in the given state.
     fn gh_json(url: &str, state: &str) -> GhPrJson {
         GhPrJson {
@@ -2850,7 +2864,7 @@ mod tests {
             mergeable: "MERGEABLE".into(),
             merge_state_status: "CLEAN".into(),
             review_decision: String::new(),
-            closed_at: String::new(),
+            closed_at: None,
             status_check_rollup: Vec::new(),
         }
     }
@@ -2915,7 +2929,7 @@ mod tests {
             mergeable: "MERGEABLE".into(),
             merge_state_status: "CLEAN".into(),
             review_decision: String::new(),
-            closed_at: String::new(),
+            closed_at: None,
             status_check_rollup: vec![
                 check(CheckClass::Pass, Some("https://github.com/o/r/actions/1")),
                 check(CheckClass::Fail, Some("https://github.com/o/r/actions/2")),
