@@ -15,9 +15,9 @@ crabigator claude           # Use Claude Code
 crabigator --platform codex # Explicit flag
 ```
 
-Other subcommands: `inspect` (view running instances), `prs` (live cross-session PR board; `--once` prints one frame — only sessions with a live mirror under /tmp appear, the durable history lives on the web dashboard's PR board; `/` search also greps each live session's transcript and shows the matched excerpt inline, Tab toggles surrounding context; `e`/`c` expand or collapse detail — compact, standard, session titles, recap headlines with age and line delta), `pair` (dashboard auth code), `recap` (enable/disable/status for turn recaps), `install-launcher` (macOS crabigator:// URL handler), `resume`/`continue`.
+Other subcommands: `inspect` (view running instances), `prs` (live cross-session PR board; `--once` prints one frame — only sessions with a live mirror under /tmp appear, the durable history lives on the web dashboard's PR board; `/` search also greps each live session's transcript and shows the matched excerpt inline, Tab toggles surrounding context; `e`/`c` expand or collapse detail — compact, standard, session titles, recap headlines with age and line delta), `pair` (dashboard auth code), `recap` (enable/disable/status for turn recaps), `key` (save an Anthropic API key for recaps), `install-launcher` (macOS crabigator:// URL handler), `resume`/`continue`.
 
-Preferences live in `~/.crabigator/config.toml` (platform, `ide` for clickable file links, terminal emulator override).
+Preferences live in `~/.crabigator/config.toml` (default platform, `ide` for clickable file links, terminal emulator override, recap settings, and `[pr_board]` view preferences saved by the PR board).
 
 ## Ask Questions Liberally
 
@@ -41,7 +41,7 @@ Don't assume - ask. Multiple rounds of questions are better than one large batch
 
 ## Plain Language: ISO 24495-1
 
-All prose you write for humans - summaries of your work, PR descriptions, release notes, and **git commit messages** - must follow the ISO 24495-1 plain language principles:
+All prose you write for humans must follow the ISO 24495-1 plain language principles. This applies to everything, with no exceptions: summaries of your work, PR descriptions, **git commit messages**, and **everything in a release** — release notes, highlights, and the GitHub release description:
 
 1. **Relevant**: Include what the reader needs and nothing else. A commit message explains what changed and why it matters; it does not narrate the debugging journey or list every file touched.
 2. **Findable**: Put the most important information first. The commit subject line carries the change; the body adds the "why". Summaries lead with the outcome, then supporting detail.
@@ -73,6 +73,7 @@ make claude-yolo     # Claude with --dangerously-skip-permissions
 make codex-yolo      # Codex with --dangerously-bypass-approvals-and-sandbox
 make resume          # Resume last session
 make continue        # Continue last conversation
+make prs             # Build and run the cross-session PR board (alias: make pr)
 ```
 
 ## Testing
@@ -110,13 +111,15 @@ The application uses a **scroll region approach** to layer UI:
   - `claude_code/`: Claude Code hooks (`stats_hook.py`, `hook_script.rs`) and transcript parsing (writes to `~/.claude/crabigator/`)
   - `codex_cli/`: Codex CLI session log and transcript parsing (reads `~/.codex/sessions`)
 - **hooks/**: `SessionStats` for session time tracking and platform stats integration.
-- **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout; `git.rs`, `changes.rs`, `stats.rs` are the individual widgets; `handoff.rs` is the strip above the widgets (setup prompts, update notices, latest recap, tracked PRs); `pairing.rs` renders full-width pairing/update banners; `sparkline.rs` renders Unicode sparklines.
+- **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout; `git.rs`, `changes.rs`, `stats.rs` are the individual widgets; `handoff.rs` is the strip above the widgets (setup prompts, update notices, latest recap, tracked PRs); `pr_cells.rs` is the PR cell rendering shared by the handoff strip and the PR board; `pairing.rs` renders full-width pairing/update banners; `sparkline.rs` renders Unicode sparklines.
 - **cloud/**: Streaming to drinkcrabigator.com - device identity (`device.rs`), session registration (`client.rs`), event queue, and WebSocket connection with auto-reconnect.
 - **capture.rs**: Output capture. Writes the session transcript to `scrollback.log` (from platform JSONL) and periodic screen snapshots to `screen.txt`.
 - **mirror.rs**: Widget state mirroring. Publishes throttled JSON snapshots of all widget state to `inspect.json`.
 - **inspect.rs**: `crabigator inspect` implementation for viewing other running instances.
 - **recap.rs**: Automatic per-turn recaps, generated on the desktop from local transcripts; only the finished recap is sent to the cloud.
 - **pr.rs / pr_rank.rs**: GitHub PR tracking for the recap - scrapes the turn transcript for PR mentions, enriches via `gh pr view`, and classifies PRs as primary or secondary.
+- **prs_board.rs**: The `crabigator prs` cross-session PR board - reads every live session's `inspect.json`, groups PRs by repository, and renders the interactive board (search, detail levels, live/cloud toggle).
+- **slack.rs**: Captures Slack permalinks mentioned in session transcripts so PRs and recaps can link back to their Slack threads.
 - **mode.rs**: Detects Claude Code's operating mode (Normal, Auto-Accept, Plan) from screen content.
 - **title.rs**: Background generation of short terminal titles when the platform doesn't publish its own (Codex).
 - **update.rs**: Auto-update checks via the GitHub Releases API (npm, cargo, homebrew install methods).
@@ -256,7 +259,7 @@ workers/crabigator-api/
 │   ├── index.ts                # Worker entry point
 │   ├── router.ts               # Route dispatch
 │   ├── durable-objects/        # SessionDO, SessionListDO, UsageDO
-│   ├── handlers/               # sessions, devices, pairing, analytics, payments, telemetry, …
+│   ├── handlers/               # sessions, devices, pairing, pr-board, pr-overrides, analytics, payments, telemetry, …
 │   ├── auth/                   # Device auth, HMAC signing, middleware
 │   ├── dashboard.ts + dashboard/   # Dashboard HTML, CSS, JS, icons
 │   ├── landing.ts + landing/       # Landing page (incl. WebGL)
@@ -428,7 +431,7 @@ Each commit should:
 
 ## Releasing a New Version
 
-Use the `/release` command (`.claude/commands/release.md`) - it covers version selection, bumps, tagging, release notes, npm verification, and Worker deployment. Key invariants if releasing manually:
+Use the `/release` command (`.claude/commands/release.md`) - it covers version selection, bumps, tagging, release notes, npm verification, and Worker deployment. Release notes and the GitHub release description follow the ISO 24495-1 plain language rules above: highlights lead with user-visible outcomes in plain words, and every section is written for a reader deciding whether to upgrade. Key invariants if releasing manually:
 
 1. **Version sync is CI-enforced**: `Cargo.toml` and `npm/package.json` must carry the same version. Commit the bump ("Bump version to X.Y.Z"), push, then tag `vX.Y.Z` and push the tag.
 2. **Watch the workflow**: `gh run list --limit 1` then `gh run watch <run-id>`.
