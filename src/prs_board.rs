@@ -58,7 +58,7 @@ const PREVIEW_CONTEXT: usize = 2;
 /// per PR), 1 = status (progress + sessions + judgment), 2 = + each session's
 /// terminal title, 3 = + each session's latest recap headline.
 const MAX_DETAIL: u8 = 3;
-const DEFAULT_DETAIL: u8 = 1;
+const DEFAULT_DETAIL: u8 = 0;
 
 /// Recency uses one cyan-blue hue at steadily lower intensities until old
 /// activity becomes neutral gray after a day.
@@ -2139,12 +2139,41 @@ fn search_banner(query: &str, matched: usize, width: u16) -> String {
     format!("{}{}{}{}", escape::bg(color::YELLOW), fg(16), padded, RESET)
 }
 
-fn save_board_preferences(include_ended: bool, detail: u8, linger_days: u64) {
+fn draw_changed_lines<W: Write>(
+    out: &mut W,
+    previous: &mut Vec<String>,
+    current: &[String],
+) -> std::io::Result<bool> {
+    let changed: Vec<usize> = (0..previous.len().max(current.len()))
+        .filter(|&index| previous.get(index) != current.get(index))
+        .collect();
+    if changed.is_empty() {
+        return Ok(false);
+    }
+
+    write!(out, "{}", escape::SYNC_BEGIN)?;
+    for index in changed {
+        write!(
+            out,
+            "{}{}{}",
+            escape::cursor_to(index as u16 + 1, 1),
+            RESET,
+            escape::CLEAR_LINE,
+        )?;
+        if let Some(line) = current.get(index) {
+            write!(out, "{line}")?;
+        }
+    }
+    write!(out, "{}", escape::SYNC_END)?;
+    *previous = current.to_vec();
+    Ok(true)
+}
+
+fn save_board_preferences(include_ended: bool, linger_days: u64) {
     let Ok(mut config) = crate::config::Config::load() else {
         return;
     };
     config.pr_board.include_ended = include_ended;
-    config.pr_board.detail = detail;
     config.pr_board.linger_days = linger_days;
     let _ = config.save();
 }
@@ -2155,6 +2184,7 @@ async fn board_loop(
     overrides_fetched: &mut Instant,
 ) -> Result<()> {
     let mut last_frame_hash = 0u64;
+    let mut drawn_lines: Vec<String> = Vec::new();
     let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
     let mut entries: Vec<BoardPr> = Vec::new();
     let mut workspaces: Vec<WorkspaceEntry> = Vec::new();
@@ -2170,7 +2200,7 @@ async fn board_loop(
     let mut activity_history = ActivityHistory::default();
     let mut expanded = false;
     let preferences = crate::config::Config::load().unwrap_or_default().pr_board;
-    let mut detail = preferences.detail.min(MAX_DETAIL);
+    let mut detail = DEFAULT_DETAIL;
     let mut linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
     let mut include_ended = preferences.include_ended;
     // Cloud fetches are throttled well below the local tick; toggling the
@@ -2286,24 +2316,14 @@ async fn board_loop(
 
         if dirty {
             dirty = false;
-            write!(out, "{}", escape::CLEAR_SCREEN_HOME)?;
+            let mut visible_lines = Vec::new();
             if let Some(query) = &search {
-                write!(
-                    out,
-                    "{}{}",
-                    escape::cursor_to(1, 1),
-                    search_banner(query, matched, width)
-                )?;
+                visible_lines.push(search_banner(query, matched, width));
             }
-            for (i, line) in lines.iter().skip(scroll).take(page).enumerate() {
-                write!(
-                    out,
-                    "{}{}",
-                    escape::cursor_to((banner_rows + i) as u16 + 1, 1),
-                    line
-                )?;
+            visible_lines.extend(lines.iter().skip(scroll).take(page).cloned());
+            if draw_changed_lines(out, &mut drawn_lines, &visible_lines)? {
+                out.flush()?;
             }
-            out.flush()?;
         }
 
         let poll_interval = if animating {
@@ -2366,14 +2386,14 @@ async fn board_loop(
                             // rather than waiting out the tick.
                             KeyCode::Char('+') | KeyCode::Char('=') => {
                                 linger_days = (linger_days + 1).min(MAX_LINGER_DAYS);
-                                save_board_preferences(include_ended, detail, linger_days);
+                                save_board_preferences(include_ended, linger_days);
                                 cloud_fetch_due = true;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
                             KeyCode::Char('-') | KeyCode::Char('_') => {
                                 linger_days = linger_days.saturating_sub(1);
-                                save_board_preferences(include_ended, detail, linger_days);
+                                save_board_preferences(include_ended, linger_days);
                                 cloud_fetch_due = true;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
@@ -2383,13 +2403,11 @@ async fn board_loop(
                             // ↔ title ↔ recap.
                             KeyCode::Char('e') => {
                                 detail = (detail + 1).min(MAX_DETAIL);
-                                save_board_preferences(include_ended, detail, linger_days);
                                 needs_render = true;
                                 dirty = true;
                             }
                             KeyCode::Char('c') => {
                                 detail = detail.saturating_sub(1);
-                                save_board_preferences(include_ended, detail, linger_days);
                                 needs_render = true;
                                 dirty = true;
                             }
@@ -2397,7 +2415,7 @@ async fn board_loop(
                             // record, which includes ended sessions.
                             KeyCode::Char('a') => {
                                 include_ended = !include_ended;
-                                save_board_preferences(include_ended, detail, linger_days);
+                                save_board_preferences(include_ended, linger_days);
                                 cloud_fetch_due = true;
                                 scroll = 0;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
@@ -2971,7 +2989,7 @@ mod tests {
             &HashMap::new(),
             DEFAULT_LINGER_DAYS,
         );
-        let frame = render_frame(&entries);
+        let frame = render_frame_at(&entries, 1);
         assert!(frame.contains("o/portal"));
         assert!(frame.contains("CI green, awaiting review"));
         assert!(frame.contains("slack origin"));
@@ -2996,7 +3014,7 @@ mod tests {
             &HashMap::new(),
             DEFAULT_LINGER_DAYS,
         );
-        let frame = render_frame(&entries);
+        let frame = render_frame_at(&entries, 1);
         assert!(frame.contains("12 mentions (3 yours)"));
     }
 
@@ -3313,7 +3331,7 @@ mod tests {
     fn detail_levels_reveal_titles_then_recaps() {
         let entries = titled_entries();
 
-        let compact = render_frame_at(&entries, 0);
+        let compact = render_frame(&entries);
         assert!(!compact.contains('▓'), "no progress bar at compact");
         assert!(!compact.contains("Wiring the PR board"), "no titles");
         assert!(compact.contains("#9"), "identity row stays");
@@ -3369,6 +3387,32 @@ mod tests {
             159,
             "row keeps the right-edge padding"
         );
+    }
+
+    #[test]
+    fn changed_line_render_only_repaints_modified_and_removed_rows() {
+        let mut previous = vec![
+            "unchanged".to_string(),
+            "old value".to_string(),
+            "removed".to_string(),
+        ];
+        let current = vec!["unchanged".to_string(), "new value".to_string()];
+        let mut output = Vec::new();
+
+        assert!(draw_changed_lines(&mut output, &mut previous, &current).unwrap());
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.starts_with(escape::SYNC_BEGIN));
+        assert!(output.ends_with(escape::SYNC_END));
+        assert!(!output.contains(escape::CLEAR_SCREEN_HOME));
+        assert!(!output.contains(&escape::cursor_to(1, 1)));
+        assert!(output.contains(&escape::cursor_to(2, 1)));
+        assert!(output.contains(&escape::cursor_to(3, 1)));
+        assert!(output.contains("new value"));
+        assert_eq!(previous, current);
+
+        let mut no_output = Vec::new();
+        assert!(!draw_changed_lines(&mut no_output, &mut previous, &current).unwrap());
+        assert!(no_output.is_empty());
     }
 
     #[test]
