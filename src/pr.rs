@@ -28,8 +28,9 @@ use crate::slack::{extract_threads, SlackThread};
 /// Minimum time between `gh pr view` refreshes for a single PR.
 const REFRESH_THROTTLE: Duration = Duration::from_secs(30);
 /// PR status and review-thread counts stay responsive while a PR is being
-/// discussed or updated, then fall back sharply to conserve GitHub API quota.
+/// discussed or updated, then refresh hourly to remain eventually consistent.
 const PR_ACTIVE_THROTTLE: Duration = Duration::from_secs(60);
+const PR_IDLE_THROTTLE: Duration = Duration::from_secs(60 * 60);
 const COMMENTS_IDLE_THROTTLE: Duration = Duration::from_secs(60 * 60);
 const PR_ACTIVE_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// Safety cap on how long a `gh pr create` keeps claiming PR URLs, in case no
@@ -1244,7 +1245,7 @@ impl PrTracker {
 
         // A PR that just became known (or whose count aged out) queries here;
         // its result lands on a later poll.
-        self.refresh_active_prs();
+        self.refresh_open_prs();
         self.retry_unenriched();
         self.refresh_review_threads();
 
@@ -1259,16 +1260,16 @@ impl PrTracker {
     }
 
     /// Refresh open PR status every minute for 15 minutes after the latest
-    /// mention, push, or creation. Mentions themselves bypass the cadence and
-    /// refresh immediately; this keeps the row current afterward.
-    fn refresh_active_prs(&mut self) {
+    /// mention, push, or creation, then hourly while it remains open. Mentions
+    /// themselves bypass the cadence and refresh immediately.
+    fn refresh_open_prs(&mut self) {
         let now = now_unix_ms();
         let due: Vec<String> = self
             .prs
             .iter()
             .filter(|pr| pr.state == "OPEN" && !pr.url.is_empty())
             .filter(|pr| {
-                active_pr_refresh_due(
+                pr_status_refresh_due(
                     self.refresh_attempted_at.get(&pr.url).map(Instant::elapsed),
                     (pr.refreshed_at != 0)
                         .then(|| Duration::from_millis(now.saturating_sub(pr.refreshed_at))),
@@ -1283,7 +1284,7 @@ impl PrTracker {
     }
 
     /// Keep trying PRs that have never enriched. Their row is a bare identity
-    /// until `gh pr view` succeeds, and `refresh_active_prs` skips them (their
+    /// until `gh pr view` succeeds, and `refresh_open_prs` skips them (their
     /// state isn't OPEN yet), so without this a failed first fetch would wait
     /// for the next turn boundary — potentially the whole of a long turn.
     fn retry_unenriched(&mut self) {
@@ -1604,25 +1605,21 @@ fn review_threads_due(
     last_attempt_age.map(|age| age >= throttle).unwrap_or(true)
 }
 
-/// Whether an open PR is due for another status refresh during its active window.
-fn active_pr_refresh_due(
+/// Whether an open PR is due for another status refresh.
+fn pr_status_refresh_due(
     last_attempt_age: Option<Duration>,
     last_refresh_age: Option<Duration>,
     last_activity_age: Option<Duration>,
 ) -> bool {
-    if !last_activity_age
-        .map(|age| age < PR_ACTIVE_WINDOW)
-        .unwrap_or(false)
-    {
-        return false;
-    }
+    let throttle = match last_activity_age {
+        Some(age) if age < PR_ACTIVE_WINDOW => PR_ACTIVE_THROTTLE,
+        _ => PR_IDLE_THROTTLE,
+    };
     let freshest_age = match (last_attempt_age, last_refresh_age) {
         (Some(attempt), Some(refresh)) => Some(attempt.min(refresh)),
         (attempt, refresh) => attempt.or(refresh),
     };
-    freshest_age
-        .map(|age| age >= PR_ACTIVE_THROTTLE)
-        .unwrap_or(true)
+    freshest_age.map(|age| age >= throttle).unwrap_or(true)
 }
 
 /// Command-targeted references — never part of a listing line.
@@ -2738,28 +2735,43 @@ mod tests {
     }
 
     #[test]
-    fn active_pr_status_refreshes_for_fifteen_minutes() {
+    fn pr_status_refresh_uses_active_and_idle_cadences() {
         let just_under_a_minute = Duration::from_secs(59);
         let just_over_a_minute = Duration::from_secs(61);
         let recently_mentioned = Duration::from_secs(5 * 60);
         let inactive = Duration::from_secs(15 * 60);
 
-        assert!(!active_pr_refresh_due(
+        assert!(!pr_status_refresh_due(
             Some(just_under_a_minute),
             None,
             Some(recently_mentioned)
         ));
-        assert!(active_pr_refresh_due(
+        assert!(pr_status_refresh_due(
             Some(just_over_a_minute),
             None,
             Some(recently_mentioned)
         ));
-        assert!(!active_pr_refresh_due(
-            Some(just_over_a_minute),
+        assert!(!pr_status_refresh_due(
+            Some(Duration::from_secs(59 * 60)),
             None,
             Some(inactive)
         ));
-        assert!(!active_pr_refresh_due(None, None, None));
+        assert!(pr_status_refresh_due(
+            Some(Duration::from_secs(60 * 60)),
+            None,
+            Some(inactive)
+        ));
+        assert!(!pr_status_refresh_due(
+            None,
+            Some(Duration::from_secs(59 * 60)),
+            None
+        ));
+        assert!(pr_status_refresh_due(
+            None,
+            Some(Duration::from_secs(60 * 60)),
+            None
+        ));
+        assert!(pr_status_refresh_due(None, None, None));
     }
 
     #[test]
