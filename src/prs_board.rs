@@ -1,10 +1,10 @@
 //! `crabigator prs` — the live cross-session PR board.
 //!
 //! Aggregates every tracked PR from every running session's `inspect.json`
-//! mirror into one read-only, auto-refreshing view: grouped by repository,
-//! ordered by latest completion (or prompt while work is still running),
-//! cross-repo twins (same head branch) kept together, a progress checklist,
-//! the latest recap's judgment, and clickable GitHub/Slack/action links.
+//! mirror into one read-only, auto-refreshing view: grouped first by activity
+//! recency and then by repository, with cross-repo twins (same head branch)
+//! kept together, a progress checklist, the latest recap's judgment, and
+//! clickable GitHub/Slack/action links.
 //!
 //! The board never talks to `gh` itself — it renders what the sessions
 //! already know, with honest ages. Cloud dispositions are fetched once a
@@ -68,6 +68,55 @@ const RECENCY_6H: u8 = 39;
 const RECENCY_9H: u8 = 33;
 const RECENCY_12H: u8 = 27;
 const RECENCY_24H: u8 = 25;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum RecencyBucket {
+    LastHour,
+    LastThreeHours,
+    LastSixHours,
+    LastNineHours,
+    LastTwelveHours,
+    LastDay,
+    Older,
+}
+
+impl RecencyBucket {
+    fn from_age(age_secs: u64) -> Self {
+        match age_secs {
+            0..=3_599 => Self::LastHour,
+            3_600..=10_799 => Self::LastThreeHours,
+            10_800..=21_599 => Self::LastSixHours,
+            21_600..=32_399 => Self::LastNineHours,
+            32_400..=43_199 => Self::LastTwelveHours,
+            43_200..=86_400 => Self::LastDay,
+            _ => Self::Older,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::LastHour => "Last hour",
+            Self::LastThreeHours => "1–3 hours",
+            Self::LastSixHours => "3–6 hours",
+            Self::LastNineHours => "6–9 hours",
+            Self::LastTwelveHours => "9–12 hours",
+            Self::LastDay => "12–24 hours",
+            Self::Older => "Older",
+        }
+    }
+
+    fn color(self) -> u8 {
+        match self {
+            Self::LastHour => RECENCY_1H,
+            Self::LastThreeHours => RECENCY_3H,
+            Self::LastSixHours => RECENCY_6H,
+            Self::LastNineHours => RECENCY_9H,
+            Self::LastTwelveHours => RECENCY_12H,
+            Self::LastDay => RECENCY_24H,
+            Self::Older => color::DARK_GRAY,
+        }
+    }
+}
 
 /// Header name for each detail level.
 fn detail_name(detail: u8) -> &'static str {
@@ -1167,15 +1216,7 @@ fn activity_part(label: &str, timestamp: u64, now: u64) -> ActivityCell {
 }
 
 fn recency_color(age_secs: u64) -> u8 {
-    match age_secs {
-        0..=3599 => RECENCY_1H,
-        3600..=10_799 => RECENCY_3H,
-        10_800..=21_599 => RECENCY_6H,
-        21_600..=32_399 => RECENCY_9H,
-        32_400..=43_199 => RECENCY_12H,
-        43_200..=86_400 => RECENCY_24H,
-        _ => color::DARK_GRAY,
-    }
+    RecencyBucket::from_age(age_secs).color()
 }
 
 /// The sessions that mention a PR, deduped by directory name (several
@@ -1960,25 +2001,43 @@ fn render(
         pr_count: usize,
     }
 
-    let mut sections: Vec<RepositorySection> = Vec::new();
+    struct RecencySection {
+        bucket: RecencyBucket,
+        repositories: Vec<RepositorySection>,
+    }
+
+    let now = now_ms / 1000;
+    let mut sections: Vec<RecencySection> = Vec::new();
     {
         let mut add_row = |name: String, activity: u64, row: SectionRow| {
-            let key = name.to_ascii_lowercase();
-            let index = sections
+            let bucket = RecencyBucket::from_age(now.saturating_sub(activity));
+            let section_index = sections
                 .iter()
-                .position(|section| section.key == key)
+                .position(|section| section.bucket == bucket)
                 .unwrap_or_else(|| {
-                    sections.push(RepositorySection {
+                    sections.push(RecencySection {
+                        bucket,
+                        repositories: Vec::new(),
+                    });
+                    sections.len() - 1
+                });
+            let repositories = &mut sections[section_index].repositories;
+            let key = name.to_ascii_lowercase();
+            let repository_index = repositories
+                .iter()
+                .position(|repository| repository.key == key)
+                .unwrap_or_else(|| {
+                    repositories.push(RepositorySection {
                         key,
                         name,
                         rows: Vec::new(),
                         pr_count: 0,
                     });
-                    sections.len() - 1
+                    repositories.len() - 1
                 });
-            let section = &mut sections[index];
-            section.pr_count += usize::from(matches!(row, SectionRow::Pr(_)));
-            section.rows.push((activity, row));
+            let repository = &mut repositories[repository_index];
+            repository.pr_count += usize::from(matches!(row, SectionRow::Pr(_)));
+            repository.rows.push((activity, row));
         };
         for (index, row) in rows.iter().enumerate() {
             add_row(
@@ -2002,71 +2061,88 @@ fn render(
     }
 
     for section in &mut sections {
-        section.rows.sort_by(|a, b| b.0.cmp(&a.0));
+        for repository in &mut section.repositories {
+            repository.rows.sort_by_key(|row| std::cmp::Reverse(row.0));
+        }
+        section
+            .repositories
+            .sort_by(|a, b| b.rows[0].0.cmp(&a.rows[0].0));
     }
-    sections.sort_by(|a, b| b.rows[0].0.cmp(&a.rows[0].0));
+    sections.sort_by_key(|section| section.bucket);
 
     for (section_index, section) in sections.into_iter().enumerate() {
         if section_index > 0 {
             lines.push(String::new());
         }
-        let section_session_count = section
-            .rows
-            .iter()
-            .flat_map(|(_, row)| match *row {
-                SectionRow::Pr(index) => rows[index].entry.sessions.iter(),
-                SectionRow::Workspace(index) => workspace_rows[index].entry.sessions().iter(),
-            })
-            .map(|session| {
-                if session.session_id.is_empty() {
-                    session.dir_name.as_str()
-                } else {
-                    session.session_id.as_str()
-                }
-            })
-            .collect::<HashSet<_>>()
-            .len();
-        let pr_label = if section.pr_count == 1 {
-            "1 PR".to_string()
-        } else {
-            format!("{} PRs", section.pr_count)
-        };
-        let session_label = if section_session_count == 1 {
-            "1 session".to_string()
-        } else {
-            format!("{section_session_count} sessions")
-        };
         lines.push(format!(
-            "{}{}{}  {}{} · {}{}",
-            fg(color::CYAN),
-            section.name,
-            RESET_FG,
-            fg(color::DARK_GRAY),
-            pr_label,
-            session_label,
+            "{}● {}{}",
+            fg(section.bucket.color()),
+            section.bucket.label(),
             RESET_FG,
         ));
 
-        for (_, row) in section.rows {
-            match row {
-                SectionRow::Pr(index) => lines.extend(render_pr_board_row(
-                    &rows[index],
-                    width,
-                    detail,
-                    now_ms,
-                    activity_width,
-                    &widths,
-                    throbber_frame,
-                )),
-                SectionRow::Workspace(index) => lines.extend(render_workspace_board_row(
-                    &workspace_rows[index],
-                    width,
-                    detail,
-                    now_ms,
-                    activity_width,
-                    &widths,
-                    throbber_frame,
-                )),
+        for (repository_index, repository) in section.repositories.into_iter().enumerate() {
+            if repository_index > 0 {
+                lines.push(String::new());
+            }
+            let repository_session_count = repository
+                .rows
+                .iter()
+                .flat_map(|(_, row)| match *row {
+                    SectionRow::Pr(index) => rows[index].entry.sessions.iter(),
+                    SectionRow::Workspace(index) => workspace_rows[index].entry.sessions().iter(),
+                })
+                .map(|session| {
+                    if session.session_id.is_empty() {
+                        session.dir_name.as_str()
+                    } else {
+                        session.session_id.as_str()
+                    }
+                })
+                .collect::<HashSet<_>>()
+                .len();
+            let pr_label = if repository.pr_count == 1 {
+                "1 PR".to_string()
+            } else {
+                format!("{} PRs", repository.pr_count)
+            };
+            let session_label = if repository_session_count == 1 {
+                "1 session".to_string()
+            } else {
+                format!("{repository_session_count} sessions")
+            };
+            lines.push(format!(
+                "{}{}{}  {}{} · {}{}",
+                fg(color::CYAN),
+                repository.name,
+                RESET_FG,
+                fg(color::DARK_GRAY),
+                pr_label,
+                session_label,
+                RESET_FG,
+            ));
+
+            for (_, row) in repository.rows {
+                match row {
+                    SectionRow::Pr(index) => lines.extend(render_pr_board_row(
+                        &rows[index],
+                        width,
+                        detail,
+                        now_ms,
+                        activity_width,
+                        &widths,
+                        throbber_frame,
+                    )),
+                    SectionRow::Workspace(index) => lines.extend(render_workspace_board_row(
+                        &workspace_rows[index],
+                        width,
+                        detail,
+                        now_ms,
+                        activity_width,
+                        &widths,
+                        throbber_frame,
+                    )),
+                }
             }
         }
     }
@@ -2789,6 +2865,48 @@ mod tests {
             assert!(crabigator < pr_row && pr_row < peer_row && peer_row < portal);
             assert_eq!(blank_lines, vec![portal - 1]);
         }
+    }
+
+    #[test]
+    fn recency_buckets_repeat_repositories_and_skip_empty_ranges() {
+        let now = now_secs() as u64;
+        let cases = [
+            (1, "portal", 30 * 60),
+            (2, "crabigator", 2 * 60 * 60),
+            (3, "portal", 4 * 60 * 60),
+            (4, "crabigator", 2 * 24 * 60 * 60),
+        ];
+        let snapshots: Vec<SessionSnapshot> = cases
+            .into_iter()
+            .map(|(number, repo, age)| {
+                let mut pr = board_pr(number, repo);
+                make_primary(&mut pr);
+                let mut session = snapshot(repo, vec![pr]);
+                session.completed_at = now - age;
+                session
+            })
+            .collect();
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let frame = crate::parsers::strip_ansi_for_debug(&render_frame(&entries));
+
+        let last_hour = frame.find("● Last hour").unwrap();
+        let first_portal = frame[last_hour..].find("o/portal").unwrap() + last_hour;
+        let three_hours = frame.find("● 1–3 hours").unwrap();
+        let first_crabigator = frame[three_hours..].find("o/crabigator").unwrap() + three_hours;
+        let six_hours = frame.find("● 3–6 hours").unwrap();
+        let second_portal = frame[six_hours..].find("o/portal").unwrap() + six_hours;
+        let older = frame.find("● Older").unwrap();
+        let second_crabigator = frame[older..].find("o/crabigator").unwrap() + older;
+
+        assert!(last_hour < first_portal && first_portal < three_hours);
+        assert!(three_hours < first_crabigator && first_crabigator < six_hours);
+        assert!(six_hours < second_portal && second_portal < older);
+        assert!(older < second_crabigator);
+        assert_eq!(frame.matches("o/portal  1 PR").count(), 2);
+        assert_eq!(frame.matches("o/crabigator  1 PR").count(), 2);
+        assert!(!frame.contains("● 6–9 hours"));
+        assert!(!frame.contains("● 9–12 hours"));
+        assert!(!frame.contains("● 12–24 hours"));
     }
 
     #[test]
