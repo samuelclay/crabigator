@@ -23,7 +23,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::pr_rank::PrDisposition;
-use crate::slack::{extract_threads, SlackThread};
+use crate::slack::{extract_threads, has_only_channel_id, SlackDirectory, SlackThread};
 
 /// Minimum time between `gh pr view` refreshes for a single PR.
 const REFRESH_THROTTLE: Duration = Duration::from_secs(30);
@@ -611,6 +611,8 @@ pub struct PrTracker {
     latest_prompt_slack: Option<(String, Instant)>,
     /// Every Slack permalink pasted this session, oldest first.
     slack_threads: Vec<SlackThread>,
+    /// Readable Slack channel and user names from the local Slack MCP cache.
+    slack_directory: SlackDirectory,
 }
 
 impl Default for PrTracker {
@@ -641,6 +643,7 @@ impl PrTracker {
             overrides: HashMap::new(),
             latest_prompt_slack: None,
             slack_threads: Vec::new(),
+            slack_directory: load_slack_directory(),
         }
     }
 
@@ -704,7 +707,7 @@ impl PrTracker {
     /// Bare numbers are validated against the current repository before being
     /// added. Enrichment results land later via [`poll`].
     pub fn scan_text(&mut self, text: &str, cwd: &Path) -> bool {
-        self.scan_text_inner(text, cwd, true, "activity")
+        self.scan_slack_metadata(text) | self.scan_text_inner(text, cwd, true, "activity")
     }
 
     /// Scan a user prompt for PR references without treating text such as
@@ -723,7 +726,8 @@ impl PrTracker {
     /// which is sometimes the only tie between a session and its PR. Slack
     /// permalinks are also noted as the likely origin of upcoming work.
     fn note_prompt_urls(&mut self, text: &str) {
-        for thread in extract_threads(text) {
+        for mut thread in extract_threads(text) {
+            self.slack_directory.enrich_thread(&mut thread);
             self.latest_prompt_slack = Some((thread.url.clone(), Instant::now()));
             if !self
                 .slack_threads
@@ -770,8 +774,8 @@ impl PrTracker {
         &self.slack_threads
     }
 
-    /// Add channel and poster names learned by the recap model without allowing
-    /// it to add URLs that were never present in a user prompt.
+    /// Add recap-derived names only when exact Slack metadata is still absent.
+    /// Unknown or invented URLs never enter session state.
     pub fn apply_slack_metadata(&mut self, threads: &[SlackThread]) -> bool {
         let mut changed = false;
         for thread in threads {
@@ -781,7 +785,9 @@ impl PrTracker {
                 .find(|existing| existing.url == thread.url)
             {
                 if let Some(channel) = thread.channel.as_ref().filter(|channel| {
-                    !channel.is_empty() && existing.channel.as_ref() != Some(*channel)
+                    !channel.is_empty()
+                        && existing.channel.as_ref() != Some(*channel)
+                        && has_only_channel_id(existing)
                 }) {
                     existing.channel = Some(channel.clone());
                     changed = true;
@@ -790,6 +796,21 @@ impl PrTracker {
                     existing.author = thread.author.clone();
                     changed = true;
                 }
+            }
+        }
+        changed
+    }
+
+    fn scan_slack_metadata(&mut self, text: &str) -> bool {
+        let metadata = self.slack_directory.message_metadata(text);
+        let mut changed = false;
+        for metadata in metadata {
+            if let Some(thread) = self
+                .slack_threads
+                .iter_mut()
+                .find(|thread| metadata.matches(thread))
+            {
+                changed |= metadata.apply_to(thread);
             }
         }
         changed
@@ -1433,6 +1454,17 @@ impl PrTracker {
             ..SessionPr::placeholder(&loc, created_here)
         });
         true
+    }
+}
+
+fn load_slack_directory() -> SlackDirectory {
+    #[cfg(test)]
+    {
+        SlackDirectory::default()
+    }
+    #[cfg(not(test))]
+    {
+        SlackDirectory::load()
     }
 }
 
@@ -2705,6 +2737,42 @@ mod tests {
             Some("Sam Clay")
         );
         assert!(!tracker.apply_slack_metadata(&metadata));
+    }
+
+    #[test]
+    fn slack_tool_results_enrich_links_without_waiting_for_a_recap() {
+        let url = "https://tavus.slack.com/archives/C06J3D25T4H/p1786640707322729";
+        let mut tracker = PrTracker::new();
+        tracker.scan_prompt(&format!("Investigate {url}"), Path::new("/tmp"));
+
+        let result = "MsgID,UserID,UserName,RealName,Channel,ThreadTs,Text\n\
+            1786640707.322729,U067BG5GHT5,jared,Jared Vishno,C06J3D25T4H (#dogfood),,\"message\"";
+        assert!(tracker.scan_text(result, Path::new("/tmp")));
+
+        let thread = &tracker.slack_threads()[0];
+        assert_eq!(thread.url, url);
+        assert_eq!(thread.channel.as_deref(), Some("dogfood"));
+        assert_eq!(thread.author.as_deref(), Some("Jared Vishno"));
+    }
+
+    #[test]
+    fn exact_slack_result_replaces_recap_guesses() {
+        let url = "https://tavus.slack.com/archives/C06J3D25T4H/p1786640707322729";
+        let mut tracker = PrTracker::new();
+        tracker.scan_prompt(&format!("Investigate {url}"), Path::new("/tmp"));
+
+        let mut guessed = extract_threads(url);
+        guessed[0].channel = Some("guessed-channel".to_string());
+        guessed[0].author = Some("Guessed Author".to_string());
+        assert!(tracker.apply_slack_metadata(&guessed));
+
+        let result = "MsgID,UserID,UserName,RealName,Channel,ThreadTs,Text\n\
+            1786640707.322729,U067BG5GHT5,jared,Jared Vishno,C06J3D25T4H (#dogfood),,\"message\"";
+        assert!(tracker.scan_text(result, Path::new("/tmp")));
+
+        let thread = &tracker.slack_threads()[0];
+        assert_eq!(thread.channel.as_deref(), Some("dogfood"));
+        assert_eq!(thread.author.as_deref(), Some("Jared Vishno"));
     }
 
     #[test]

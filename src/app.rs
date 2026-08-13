@@ -1466,7 +1466,7 @@ impl App {
         // turn completion refresh tracked PRs so their diff stats stay current
         // ("where it starts" vs "where it ends"). Both may change the visible list.
         let mut prs_changed = recap_notes_changed;
-        prs_changed |= self.scan_prs_from_transcript();
+        prs_changed |= self.scan_session_links_from_transcript();
         self.send_cloud_slack_threads_event();
         prs_changed |= self.pr_tracker.poll();
         prs_changed |= self
@@ -1704,12 +1704,13 @@ impl App {
         }
     }
 
-    /// Scan the current turn's transcript for PR creates/updates.
+    /// Scan the current turn's transcript for PR activity and exact Slack
+    /// metadata returned by the assistant's Slack tools.
     ///
     /// Uses `collect_latest_turn_text`, which parses both Claude and Codex
     /// transcripts, rather than `scrollback.log` (which is only populated for
-    /// Claude). Returns true if the tracked PR list changed.
-    fn scan_prs_from_transcript(&mut self) -> bool {
+    /// Claude). Returns true if tracked session links changed.
+    fn scan_session_links_from_transcript(&mut self) -> bool {
         let Some(path) = self.session_stats.platform_stats.transcript_path.clone() else {
             return false;
         };
