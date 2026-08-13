@@ -223,6 +223,9 @@ pub const SYNC_END: &str = "\x1b[?2026l";
 /// Clear from cursor to end of screen (ED mode 0)
 pub const CLEAR_TO_END: &str = "\x1b[J";
 
+/// Clear the entire current line (EL mode 2)
+pub const CLEAR_LINE: &str = "\x1b[2K";
+
 /// Clear entire screen
 #[allow(dead_code)]
 pub const CLEAR_SCREEN: &str = "\x1b[2J";
