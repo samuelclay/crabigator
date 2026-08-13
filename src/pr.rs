@@ -12,7 +12,7 @@
 //! which encodes owner/repo/number, so refreshes are independent of the current
 //! working directory (handy across worktrees).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc;
@@ -391,9 +391,9 @@ struct GhPrJson {
     merge_state_status: String,
     #[serde(default, rename = "reviewDecision")]
     review_decision: String,
-    /// ISO 8601; set once the PR is merged or closed, empty while open.
+    /// ISO 8601 once the PR is merged or closed; GitHub returns null while open.
     #[serde(default, rename = "closedAt")]
-    closed_at: String,
+    closed_at: Option<String>,
     #[serde(default, rename = "statusCheckRollup")]
     status_check_rollup: Vec<CheckEntry>,
 }
@@ -880,7 +880,8 @@ impl PrTracker {
         let user_authored = mention_scope == "prompt";
         let mut update_occurrences = HashMap::<String, usize>::new();
         let mut mention_occurrences = HashMap::<String, usize>::new();
-        for event in scan_events(text) {
+        let known_pr_numbers: HashSet<u64> = self.prs.iter().map(|pr| pr.number).collect();
+        for event in scan_events_with_known_prs(text, &known_pr_numbers) {
             match event {
                 ScanEvent::Created => self.expect_created_since = Some(Instant::now()),
                 ScanEvent::Updated(command) if handle_updates => {
@@ -1347,7 +1348,7 @@ impl PrTracker {
         let (passed, failed, pending) = count_checks(&json.status_check_rollup);
         let total = passed + failed + pending;
         let ci_url = ci_link(&json.status_check_rollup, &url);
-        let closed_at = parse_iso_ms(&json.closed_at);
+        let closed_at = json.closed_at.as_deref().map_or(0, parse_iso_ms);
         let author_login = json.author.map(|author| author.login).unwrap_or_default();
         let authored_by_viewer = match (author_login.is_empty(), json.viewer_login.is_empty()) {
             (false, false) => Some(author_login == json.viewer_login),
@@ -1534,7 +1535,12 @@ const BULK_MENTION_LINE_THRESHOLD: usize = 4;
 ///
 /// Pure, so the channel rules can be tested (and replayed over real transcripts)
 /// without running `gh`. See [`PrTracker::scan_text`] for the rules themselves.
+#[cfg(test)]
 fn scan_events(text: &str) -> Vec<ScanEvent> {
+    scan_events_with_known_prs(text, &HashSet::new())
+}
+
+fn scan_events_with_known_prs(text: &str, known_pr_numbers: &HashSet<u64>) -> Vec<ScanEvent> {
     let mut events = Vec::new();
     // Set while the section that just ran was a `gh pr create`, so its output
     // (and only its output) is read for the new PR's URL.
@@ -1554,7 +1560,7 @@ fn scan_events(text: &str) -> Vec<ScanEvent> {
                         events.push(ScanEvent::Updated(line.trim().to_string()));
                     }
                     if channel == Channel::Prose {
-                        push_prose_line(&mut events, line);
+                        push_prose_line(&mut events, line, known_pr_numbers);
                     }
                 }
                 // Raw scrollback arrives unmarked, so repo-qualified commands land
@@ -1629,13 +1635,13 @@ fn push_located(events: &mut Vec<ScanEvent>, locations: Vec<PrLocation>) {
 /// Record every PR reference in one line of prose — URLs plus marked `#123`
 /// mentions — tagging them all `bulk` when the line enumerates enough distinct
 /// PRs to be a listing rather than engagement.
-fn push_prose_line(events: &mut Vec<ScanEvent>, line: &str) {
+fn push_prose_line(events: &mut Vec<ScanEvent>, line: &str, known_pr_numbers: &HashSet<u64>) {
     let urls = pr_urls(line);
     let mut mentions = Vec::new();
     // A `#123` inside a PR link is part of the URL (or a review-thread anchor),
     // and the URL scan already covers it.
     if !line.contains("/pull/") {
-        line_pr_mentions(line, &mut mentions);
+        line_pr_mentions(line, known_pr_numbers, &mut mentions);
     }
     let mut distinct: Vec<String> = urls.iter().map(|loc| loc.url.clone()).collect();
     for (marker, number) in &mentions {
@@ -1731,11 +1737,12 @@ fn split_channels(text: &str) -> Vec<(Channel, String)> {
 
 /// Collect marked PR mentions from one line of prose.
 ///
-/// A match either carries its own marker (`PR #972`) or continues a comma/`and`
-/// run started by one (`PRs #100, #101 and #102`). Anything else — including the
-/// numbers in `Skipped #2, #3, and #5` — is skipped, and skipping also breaks the
-/// run so a trailing list can't attach to an earlier marker.
-fn line_pr_mentions(line: &str, out: &mut Vec<(PrMarker, u64)>) {
+/// A match either carries its own marker (`PR #972`), continues a comma/`and`
+/// run started by one (`PRs #100, #101 and #102`), or names a PR the session
+/// already tracks. Anything else — including the numbers in `Skipped #2, #3,
+/// and #5` — is skipped, and skipping also breaks the run so a trailing list
+/// can't attach to an earlier marker.
+fn line_pr_mentions(line: &str, known_pr_numbers: &HashSet<u64>, out: &mut Vec<(PrMarker, u64)>) {
     // Byte offset just past the previously accepted `#N`, while a run is open.
     let mut run: Option<(usize, PrMarker)> = None;
 
@@ -1754,6 +1761,12 @@ fn line_pr_mentions(line: &str, out: &mut Vec<(PrMarker, u64)>) {
         };
         let Some(marker) = marker else {
             run = None;
+            if known_pr_numbers.contains(&number) {
+                let mention = (PrMarker::Unqualified, number);
+                if !out.contains(&mention) {
+                    out.push(mention);
+                }
+            }
             continue;
         };
         run = Some((matched.end(), marker.clone()));
@@ -2067,7 +2080,7 @@ mod tests {
                 continue;
             }
             for line in body.lines().filter(|l| !l.contains("/pull/")) {
-                line_pr_mentions(line, &mut mentions);
+                line_pr_mentions(line, &HashSet::new(), &mut mentions);
             }
         }
         mentions
@@ -2190,6 +2203,36 @@ mod tests {
                 .pr_active_at
                 .contains_key("https://github.com/o/r/pull/7"),
             "a bare mention of a tracked PR must restart its active window"
+        );
+    }
+
+    #[test]
+    fn titlecase_labels_keep_tracked_prs_recent() {
+        let mut portal = SessionPr::test_stub(1139, "o", "developer-portal");
+        portal.state = "OPEN".to_string();
+        portal.created_here = true;
+        portal.mentions = 1;
+        portal.last_mention_prompt = 30;
+        let mut rqh = SessionPr::test_stub(2642, "o", "request-handler");
+        rqh.state = "OPEN".to_string();
+        rqh.created_here = true;
+        rqh.mentions = 1;
+        rqh.last_mention_prompt = 30;
+        let mut tracker = PrTracker::new();
+        tracker.prs = vec![portal, rqh];
+        tracker.set_prompt_count(38);
+
+        tracker.scan_text(
+            "[assistant]\nPortal #1139 and RQH #2642 are both active. Finding #9876 is not a PR.",
+            Path::new("/tmp"),
+        );
+        tracker.reclassify("", Path::new("/tmp"));
+
+        assert!(tracker.prs.iter().all(|pr| pr.primary));
+        assert!(tracker.prs.iter().all(|pr| pr.last_mention_prompt == 38));
+        assert!(
+            !tracker.pending.contains_key("mention:/tmp#9876"),
+            "untracked findings stay ignored"
         );
     }
 
@@ -2833,6 +2876,20 @@ mod tests {
         assert_eq!(tracker.prs()[0].unresolved_comments, 2);
     }
 
+    #[test]
+    fn open_pr_with_null_closed_at_enriches() {
+        let url = "https://github.com/o/r/pull/7";
+        let json: GhPrJson = serde_json::from_str(&format!(
+            r#"{{"number":7,"title":"Open PR","url":"{url}","state":"OPEN","closedAt":null}}"#
+        ))
+        .expect("open PR response should parse");
+        let mut tracker = PrTracker::new();
+
+        assert!(tracker.apply_fetch(json, None, false));
+        assert_eq!(tracker.prs()[0].title, "Open PR");
+        assert_eq!(tracker.prs()[0].closed_at, 0);
+    }
+
     /// Minimal `gh pr view` payload for a PR in the given state.
     fn gh_json(url: &str, state: &str) -> GhPrJson {
         GhPrJson {
@@ -2850,7 +2907,7 @@ mod tests {
             mergeable: "MERGEABLE".into(),
             merge_state_status: "CLEAN".into(),
             review_decision: String::new(),
-            closed_at: String::new(),
+            closed_at: None,
             status_check_rollup: Vec::new(),
         }
     }
@@ -2915,7 +2972,7 @@ mod tests {
             mergeable: "MERGEABLE".into(),
             merge_state_status: "CLEAN".into(),
             review_decision: String::new(),
-            closed_at: String::new(),
+            closed_at: None,
             status_check_rollup: vec![
                 check(CheckClass::Pass, Some("https://github.com/o/r/actions/1")),
                 check(CheckClass::Fail, Some("https://github.com/o/r/actions/2")),
