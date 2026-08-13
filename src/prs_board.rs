@@ -1,10 +1,10 @@
 //! `crabigator prs` — the live cross-session PR board.
 //!
 //! Aggregates every tracked PR from every running session's `inspect.json`
-//! mirror into one read-only, auto-refreshing view: grouped by repository,
-//! ordered by latest completion (or prompt while work is still running),
-//! cross-repo twins (same head branch) kept together, a progress checklist,
-//! the latest recap's judgment, and clickable GitHub/Slack/action links.
+//! mirror into one read-only, auto-refreshing view: grouped first by activity
+//! recency and then by repository, with cross-repo twins (same head branch)
+//! kept together, a progress checklist, the latest recap's judgment, and
+//! clickable GitHub/Slack/action links.
 //!
 //! The board never talks to `gh` itself — it renders what the sessions
 //! already know, with honest ages. Cloud dispositions are fetched once a
@@ -58,7 +58,7 @@ const PREVIEW_CONTEXT: usize = 2;
 /// per PR), 1 = status (progress + sessions + judgment), 2 = + each session's
 /// terminal title, 3 = + each session's latest recap headline.
 const MAX_DETAIL: u8 = 3;
-const DEFAULT_DETAIL: u8 = 1;
+const DEFAULT_DETAIL: u8 = 0;
 
 /// Recency uses one cyan-blue hue at steadily lower intensities until old
 /// activity becomes neutral gray after a day.
@@ -68,6 +68,55 @@ const RECENCY_6H: u8 = 39;
 const RECENCY_9H: u8 = 33;
 const RECENCY_12H: u8 = 27;
 const RECENCY_24H: u8 = 25;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum RecencyBucket {
+    LastHour,
+    LastThreeHours,
+    LastSixHours,
+    LastNineHours,
+    LastTwelveHours,
+    LastDay,
+    Older,
+}
+
+impl RecencyBucket {
+    fn from_age(age_secs: u64) -> Self {
+        match age_secs {
+            0..=3_599 => Self::LastHour,
+            3_600..=10_799 => Self::LastThreeHours,
+            10_800..=21_599 => Self::LastSixHours,
+            21_600..=32_399 => Self::LastNineHours,
+            32_400..=43_199 => Self::LastTwelveHours,
+            43_200..=86_400 => Self::LastDay,
+            _ => Self::Older,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::LastHour => "Last hour",
+            Self::LastThreeHours => "1–3 hours",
+            Self::LastSixHours => "3–6 hours",
+            Self::LastNineHours => "6–9 hours",
+            Self::LastTwelveHours => "9–12 hours",
+            Self::LastDay => "12–24 hours",
+            Self::Older => "Older",
+        }
+    }
+
+    fn color(self) -> u8 {
+        match self {
+            Self::LastHour => RECENCY_1H,
+            Self::LastThreeHours => RECENCY_3H,
+            Self::LastSixHours => RECENCY_6H,
+            Self::LastNineHours => RECENCY_9H,
+            Self::LastTwelveHours => RECENCY_12H,
+            Self::LastDay => RECENCY_24H,
+            Self::Older => color::DARK_GRAY,
+        }
+    }
+}
 
 /// Header name for each detail level.
 fn detail_name(detail: u8) -> &'static str {
@@ -1167,15 +1216,7 @@ fn activity_part(label: &str, timestamp: u64, now: u64) -> ActivityCell {
 }
 
 fn recency_color(age_secs: u64) -> u8 {
-    match age_secs {
-        0..=3599 => RECENCY_1H,
-        3600..=10_799 => RECENCY_3H,
-        10_800..=21_599 => RECENCY_6H,
-        21_600..=32_399 => RECENCY_9H,
-        32_400..=43_199 => RECENCY_12H,
-        43_200..=86_400 => RECENCY_24H,
-        _ => color::DARK_GRAY,
-    }
+    RecencyBucket::from_age(age_secs).color()
 }
 
 /// The sessions that mention a PR, deduped by directory name (several
@@ -1960,25 +2001,43 @@ fn render(
         pr_count: usize,
     }
 
-    let mut sections: Vec<RepositorySection> = Vec::new();
+    struct RecencySection {
+        bucket: RecencyBucket,
+        repositories: Vec<RepositorySection>,
+    }
+
+    let now = now_ms / 1000;
+    let mut sections: Vec<RecencySection> = Vec::new();
     {
         let mut add_row = |name: String, activity: u64, row: SectionRow| {
-            let key = name.to_ascii_lowercase();
-            let index = sections
+            let bucket = RecencyBucket::from_age(now.saturating_sub(activity));
+            let section_index = sections
                 .iter()
-                .position(|section| section.key == key)
+                .position(|section| section.bucket == bucket)
                 .unwrap_or_else(|| {
-                    sections.push(RepositorySection {
+                    sections.push(RecencySection {
+                        bucket,
+                        repositories: Vec::new(),
+                    });
+                    sections.len() - 1
+                });
+            let repositories = &mut sections[section_index].repositories;
+            let key = name.to_ascii_lowercase();
+            let repository_index = repositories
+                .iter()
+                .position(|repository| repository.key == key)
+                .unwrap_or_else(|| {
+                    repositories.push(RepositorySection {
                         key,
                         name,
                         rows: Vec::new(),
                         pr_count: 0,
                     });
-                    sections.len() - 1
+                    repositories.len() - 1
                 });
-            let section = &mut sections[index];
-            section.pr_count += usize::from(matches!(row, SectionRow::Pr(_)));
-            section.rows.push((activity, row));
+            let repository = &mut repositories[repository_index];
+            repository.pr_count += usize::from(matches!(row, SectionRow::Pr(_)));
+            repository.rows.push((activity, row));
         };
         for (index, row) in rows.iter().enumerate() {
             add_row(
@@ -2002,71 +2061,88 @@ fn render(
     }
 
     for section in &mut sections {
-        section.rows.sort_by(|a, b| b.0.cmp(&a.0));
+        for repository in &mut section.repositories {
+            repository.rows.sort_by_key(|row| std::cmp::Reverse(row.0));
+        }
+        section
+            .repositories
+            .sort_by(|a, b| b.rows[0].0.cmp(&a.rows[0].0));
     }
-    sections.sort_by(|a, b| b.rows[0].0.cmp(&a.rows[0].0));
+    sections.sort_by_key(|section| section.bucket);
 
     for (section_index, section) in sections.into_iter().enumerate() {
         if section_index > 0 {
             lines.push(String::new());
         }
-        let section_session_count = section
-            .rows
-            .iter()
-            .flat_map(|(_, row)| match *row {
-                SectionRow::Pr(index) => rows[index].entry.sessions.iter(),
-                SectionRow::Workspace(index) => workspace_rows[index].entry.sessions().iter(),
-            })
-            .map(|session| {
-                if session.session_id.is_empty() {
-                    session.dir_name.as_str()
-                } else {
-                    session.session_id.as_str()
-                }
-            })
-            .collect::<HashSet<_>>()
-            .len();
-        let pr_label = if section.pr_count == 1 {
-            "1 PR".to_string()
-        } else {
-            format!("{} PRs", section.pr_count)
-        };
-        let session_label = if section_session_count == 1 {
-            "1 session".to_string()
-        } else {
-            format!("{section_session_count} sessions")
-        };
         lines.push(format!(
-            "{}{}{}  {}{} · {}{}",
-            fg(color::CYAN),
-            section.name,
-            RESET_FG,
-            fg(color::DARK_GRAY),
-            pr_label,
-            session_label,
+            "{}● {}{}",
+            fg(section.bucket.color()),
+            section.bucket.label(),
             RESET_FG,
         ));
 
-        for (_, row) in section.rows {
-            match row {
-                SectionRow::Pr(index) => lines.extend(render_pr_board_row(
-                    &rows[index],
-                    width,
-                    detail,
-                    now_ms,
-                    activity_width,
-                    &widths,
-                    throbber_frame,
-                )),
-                SectionRow::Workspace(index) => lines.extend(render_workspace_board_row(
-                    &workspace_rows[index],
-                    width,
-                    detail,
-                    now_ms,
-                    activity_width,
-                    &widths,
-                    throbber_frame,
-                )),
+        for (repository_index, repository) in section.repositories.into_iter().enumerate() {
+            if repository_index > 0 {
+                lines.push(String::new());
+            }
+            let repository_session_count = repository
+                .rows
+                .iter()
+                .flat_map(|(_, row)| match *row {
+                    SectionRow::Pr(index) => rows[index].entry.sessions.iter(),
+                    SectionRow::Workspace(index) => workspace_rows[index].entry.sessions().iter(),
+                })
+                .map(|session| {
+                    if session.session_id.is_empty() {
+                        session.dir_name.as_str()
+                    } else {
+                        session.session_id.as_str()
+                    }
+                })
+                .collect::<HashSet<_>>()
+                .len();
+            let pr_label = if repository.pr_count == 1 {
+                "1 PR".to_string()
+            } else {
+                format!("{} PRs", repository.pr_count)
+            };
+            let session_label = if repository_session_count == 1 {
+                "1 session".to_string()
+            } else {
+                format!("{repository_session_count} sessions")
+            };
+            lines.push(format!(
+                "{}{}{}  {}{} · {}{}",
+                fg(color::CYAN),
+                repository.name,
+                RESET_FG,
+                fg(color::DARK_GRAY),
+                pr_label,
+                session_label,
+                RESET_FG,
+            ));
+
+            for (_, row) in repository.rows {
+                match row {
+                    SectionRow::Pr(index) => lines.extend(render_pr_board_row(
+                        &rows[index],
+                        width,
+                        detail,
+                        now_ms,
+                        activity_width,
+                        &widths,
+                        throbber_frame,
+                    )),
+                    SectionRow::Workspace(index) => lines.extend(render_workspace_board_row(
+                        &workspace_rows[index],
+                        width,
+                        detail,
+                        now_ms,
+                        activity_width,
+                        &widths,
+                        throbber_frame,
+                    )),
+                }
             }
         }
     }
@@ -2139,12 +2215,41 @@ fn search_banner(query: &str, matched: usize, width: u16) -> String {
     format!("{}{}{}{}", escape::bg(color::YELLOW), fg(16), padded, RESET)
 }
 
-fn save_board_preferences(include_ended: bool, detail: u8, linger_days: u64) {
+fn draw_changed_lines<W: Write>(
+    out: &mut W,
+    previous: &mut Vec<String>,
+    current: &[String],
+) -> std::io::Result<bool> {
+    let changed: Vec<usize> = (0..previous.len().max(current.len()))
+        .filter(|&index| previous.get(index) != current.get(index))
+        .collect();
+    if changed.is_empty() {
+        return Ok(false);
+    }
+
+    write!(out, "{}", escape::SYNC_BEGIN)?;
+    for index in changed {
+        write!(
+            out,
+            "{}{}{}",
+            escape::cursor_to(index as u16 + 1, 1),
+            RESET,
+            escape::CLEAR_LINE,
+        )?;
+        if let Some(line) = current.get(index) {
+            write!(out, "{line}")?;
+        }
+    }
+    write!(out, "{}", escape::SYNC_END)?;
+    *previous = current.to_vec();
+    Ok(true)
+}
+
+fn save_board_preferences(include_ended: bool, linger_days: u64) {
     let Ok(mut config) = crate::config::Config::load() else {
         return;
     };
     config.pr_board.include_ended = include_ended;
-    config.pr_board.detail = detail;
     config.pr_board.linger_days = linger_days;
     let _ = config.save();
 }
@@ -2155,6 +2260,7 @@ async fn board_loop(
     overrides_fetched: &mut Instant,
 ) -> Result<()> {
     let mut last_frame_hash = 0u64;
+    let mut drawn_lines: Vec<String> = Vec::new();
     let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
     let mut entries: Vec<BoardPr> = Vec::new();
     let mut workspaces: Vec<WorkspaceEntry> = Vec::new();
@@ -2170,7 +2276,7 @@ async fn board_loop(
     let mut activity_history = ActivityHistory::default();
     let mut expanded = false;
     let preferences = crate::config::Config::load().unwrap_or_default().pr_board;
-    let mut detail = preferences.detail.min(MAX_DETAIL);
+    let mut detail = DEFAULT_DETAIL;
     let mut linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
     let mut include_ended = preferences.include_ended;
     // Cloud fetches are throttled well below the local tick; toggling the
@@ -2286,24 +2392,14 @@ async fn board_loop(
 
         if dirty {
             dirty = false;
-            write!(out, "{}", escape::CLEAR_SCREEN_HOME)?;
+            let mut visible_lines = Vec::new();
             if let Some(query) = &search {
-                write!(
-                    out,
-                    "{}{}",
-                    escape::cursor_to(1, 1),
-                    search_banner(query, matched, width)
-                )?;
+                visible_lines.push(search_banner(query, matched, width));
             }
-            for (i, line) in lines.iter().skip(scroll).take(page).enumerate() {
-                write!(
-                    out,
-                    "{}{}",
-                    escape::cursor_to((banner_rows + i) as u16 + 1, 1),
-                    line
-                )?;
+            visible_lines.extend(lines.iter().skip(scroll).take(page).cloned());
+            if draw_changed_lines(out, &mut drawn_lines, &visible_lines)? {
+                out.flush()?;
             }
-            out.flush()?;
         }
 
         let poll_interval = if animating {
@@ -2366,14 +2462,14 @@ async fn board_loop(
                             // rather than waiting out the tick.
                             KeyCode::Char('+') | KeyCode::Char('=') => {
                                 linger_days = (linger_days + 1).min(MAX_LINGER_DAYS);
-                                save_board_preferences(include_ended, detail, linger_days);
+                                save_board_preferences(include_ended, linger_days);
                                 cloud_fetch_due = true;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
                             KeyCode::Char('-') | KeyCode::Char('_') => {
                                 linger_days = linger_days.saturating_sub(1);
-                                save_board_preferences(include_ended, detail, linger_days);
+                                save_board_preferences(include_ended, linger_days);
                                 cloud_fetch_due = true;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
@@ -2383,13 +2479,11 @@ async fn board_loop(
                             // ↔ title ↔ recap.
                             KeyCode::Char('e') => {
                                 detail = (detail + 1).min(MAX_DETAIL);
-                                save_board_preferences(include_ended, detail, linger_days);
                                 needs_render = true;
                                 dirty = true;
                             }
                             KeyCode::Char('c') => {
                                 detail = detail.saturating_sub(1);
-                                save_board_preferences(include_ended, detail, linger_days);
                                 needs_render = true;
                                 dirty = true;
                             }
@@ -2397,7 +2491,7 @@ async fn board_loop(
                             // record, which includes ended sessions.
                             KeyCode::Char('a') => {
                                 include_ended = !include_ended;
-                                save_board_preferences(include_ended, detail, linger_days);
+                                save_board_preferences(include_ended, linger_days);
                                 cloud_fetch_due = true;
                                 scroll = 0;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
@@ -2774,6 +2868,48 @@ mod tests {
     }
 
     #[test]
+    fn recency_buckets_repeat_repositories_and_skip_empty_ranges() {
+        let now = now_secs() as u64;
+        let cases = [
+            (1, "portal", 30 * 60),
+            (2, "crabigator", 2 * 60 * 60),
+            (3, "portal", 4 * 60 * 60),
+            (4, "crabigator", 2 * 24 * 60 * 60),
+        ];
+        let snapshots: Vec<SessionSnapshot> = cases
+            .into_iter()
+            .map(|(number, repo, age)| {
+                let mut pr = board_pr(number, repo);
+                make_primary(&mut pr);
+                let mut session = snapshot(repo, vec![pr]);
+                session.completed_at = now - age;
+                session
+            })
+            .collect();
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let frame = crate::parsers::strip_ansi_for_debug(&render_frame(&entries));
+
+        let last_hour = frame.find("● Last hour").unwrap();
+        let first_portal = frame[last_hour..].find("o/portal").unwrap() + last_hour;
+        let three_hours = frame.find("● 1–3 hours").unwrap();
+        let first_crabigator = frame[three_hours..].find("o/crabigator").unwrap() + three_hours;
+        let six_hours = frame.find("● 3–6 hours").unwrap();
+        let second_portal = frame[six_hours..].find("o/portal").unwrap() + six_hours;
+        let older = frame.find("● Older").unwrap();
+        let second_crabigator = frame[older..].find("o/crabigator").unwrap() + older;
+
+        assert!(last_hour < first_portal && first_portal < three_hours);
+        assert!(three_hours < first_crabigator && first_crabigator < six_hours);
+        assert!(six_hours < second_portal && second_portal < older);
+        assert!(older < second_crabigator);
+        assert_eq!(frame.matches("o/portal  1 PR").count(), 2);
+        assert_eq!(frame.matches("o/crabigator  1 PR").count(), 2);
+        assert!(!frame.contains("● 6–9 hours"));
+        assert!(!frame.contains("● 9–12 hours"));
+        assert!(!frame.contains("● 12–24 hours"));
+    }
+
+    #[test]
     fn sessions_with_visible_prs_do_not_get_duplicate_workspace_rows() {
         let mut pr = board_pr(1, "crabigator");
         make_primary(&mut pr);
@@ -2971,7 +3107,7 @@ mod tests {
             &HashMap::new(),
             DEFAULT_LINGER_DAYS,
         );
-        let frame = render_frame(&entries);
+        let frame = render_frame_at(&entries, 1);
         assert!(frame.contains("o/portal"));
         assert!(frame.contains("CI green, awaiting review"));
         assert!(frame.contains("slack origin"));
@@ -2996,7 +3132,7 @@ mod tests {
             &HashMap::new(),
             DEFAULT_LINGER_DAYS,
         );
-        let frame = render_frame(&entries);
+        let frame = render_frame_at(&entries, 1);
         assert!(frame.contains("12 mentions (3 yours)"));
     }
 
@@ -3313,7 +3449,7 @@ mod tests {
     fn detail_levels_reveal_titles_then_recaps() {
         let entries = titled_entries();
 
-        let compact = render_frame_at(&entries, 0);
+        let compact = render_frame(&entries);
         assert!(!compact.contains('▓'), "no progress bar at compact");
         assert!(!compact.contains("Wiring the PR board"), "no titles");
         assert!(compact.contains("#9"), "identity row stays");
@@ -3369,6 +3505,32 @@ mod tests {
             159,
             "row keeps the right-edge padding"
         );
+    }
+
+    #[test]
+    fn changed_line_render_only_repaints_modified_and_removed_rows() {
+        let mut previous = vec![
+            "unchanged".to_string(),
+            "old value".to_string(),
+            "removed".to_string(),
+        ];
+        let current = vec!["unchanged".to_string(), "new value".to_string()];
+        let mut output = Vec::new();
+
+        assert!(draw_changed_lines(&mut output, &mut previous, &current).unwrap());
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.starts_with(escape::SYNC_BEGIN));
+        assert!(output.ends_with(escape::SYNC_END));
+        assert!(!output.contains(escape::CLEAR_SCREEN_HOME));
+        assert!(!output.contains(&escape::cursor_to(1, 1)));
+        assert!(output.contains(&escape::cursor_to(2, 1)));
+        assert!(output.contains(&escape::cursor_to(3, 1)));
+        assert!(output.contains("new value"));
+        assert_eq!(previous, current);
+
+        let mut no_output = Vec::new();
+        assert!(!draw_changed_lines(&mut no_output, &mut previous, &current).unwrap());
+        assert!(no_output.is_empty());
     }
 
     #[test]
