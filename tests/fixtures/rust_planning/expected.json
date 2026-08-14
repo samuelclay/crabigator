@@ -6,6 +6,7 @@
     "scrollback_path": "/tmp/crabigator-fixture-rust_planning/scrollback.log"
   },
   "cwd": "rust_planning",
+  "platform": "claude",
   "last_updated": 0.0,
   "launch_timing": {
     "diff_time_ms": 10,

@@ -137,6 +137,22 @@ impl PrColumnWidths {
         self.fit_left(total_width);
     }
 
+    /// Include a board-only provider marker in the PR identity measurement.
+    pub(crate) fn include_board_identity(
+        &mut self,
+        pr: &SessionPr,
+        marker: &str,
+        total_width: usize,
+    ) {
+        self.identity = self.identity.max(
+            pr_identity_text_with_marker(pr, marker)
+                .width()
+                .min(PR_IDENTITY_MAX),
+        );
+        self.fit_right(total_width);
+        self.fit_left(total_width);
+    }
+
     fn fit_left(&mut self, total_width: usize) {
         let right = self.right_width();
         let cluster_gap = usize::from(right > 0) * PR_COLUMN_GAP;
@@ -216,7 +232,7 @@ fn table_width(columns: &[usize]) -> usize {
 /// One styled row: left padding, the left columns, then a gap wide enough to
 /// anchor the status columns against the right edge.
 pub(crate) fn pr_row_text(width: u16, pr: &SessionPr, widths: &PrColumnWidths) -> String {
-    pr_row_text_with_optional_activity(width, pr, widths, None)
+    pr_row_text_with_optional_activity(width, pr, widths, "", None)
 }
 
 /// Render the PR row with a board-only activity cell before the GitHub status.
@@ -226,11 +242,18 @@ pub(crate) fn pr_row_text_with_activity(
     width: u16,
     pr: &SessionPr,
     widths: &PrColumnWidths,
+    identity_marker: &str,
     styled: String,
     visible: usize,
     column_width: usize,
 ) -> String {
-    pr_row_text_with_optional_activity(width, pr, widths, Some((styled, visible, column_width)))
+    pr_row_text_with_optional_activity(
+        width,
+        pr,
+        widths,
+        identity_marker,
+        Some((styled, visible, column_width)),
+    )
 }
 
 /// Render an active session without a PR in the same columns as PR rows.
@@ -325,10 +348,15 @@ fn pr_row_text_with_optional_activity(
     width: u16,
     pr: &SessionPr,
     widths: &PrColumnWidths,
+    identity_marker: &str,
     activity: Option<PrCell>,
 ) -> String {
     let mut row = " ".repeat(PR_LEFT_PADDING);
-    row.push_str(&cells_text(&pr_left_cells(pr, widths)));
+    row.push_str(&cells_text(&pr_left_cells_with_marker(
+        pr,
+        widths,
+        identity_marker,
+    )));
 
     let mut right_cells = pr_right_cells(pr, widths).to_vec();
     let status_width = cells_width(&right_cells);
@@ -361,8 +389,17 @@ fn pr_row_text_with_optional_activity(
 
 type PrCell = (String, usize, usize);
 
+#[cfg(test)]
 pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
-    let identity = truncate_identity(pr, widths.identity);
+    pr_left_cells_with_marker(pr, widths, "")
+}
+
+fn pr_left_cells_with_marker(
+    pr: &SessionPr,
+    widths: &PrColumnWidths,
+    identity_marker: &str,
+) -> [PrCell; 4] {
+    let identity = truncate_identity(pr, widths.identity, identity_marker);
     // The glyph is its own click target — it flips the PR's disposition —
     // while `repo #num` still opens the PR on GitHub. A column too narrow to
     // hold the glyph drops it and links the whole label instead.
@@ -637,21 +674,30 @@ fn pr_repo_label(pr: &SessionPr) -> &str {
     }
 }
 
-fn truncate_identity(pr: &SessionPr, width: usize) -> String {
+fn truncate_identity(pr: &SessionPr, width: usize, identity_marker: &str) -> String {
     let repo = pr_repo_label(pr);
     let glyph = pr_glyph(pr);
     let suffix = format!(" #{}", pr.number);
-    let fixed = 2 + suffix.width(); // glyph + space + number
+    let fixed = 2 + identity_marker.width() + suffix.width(); // glyph + space + marker + number
     if width <= fixed {
-        return truncate_to_width(&format!("{glyph} {repo}{suffix}"), width);
+        return truncate_to_width(&format!("{glyph} {identity_marker}{repo}{suffix}"), width);
     }
     let repo = truncate_to_width(repo, width - fixed);
-    format!("{glyph} {repo}{suffix}")
+    format!("{glyph} {identity_marker}{repo}{suffix}")
 }
 
 /// The identity column at full width, for column sizing.
 pub(crate) fn pr_identity_text(pr: &SessionPr) -> String {
-    format!("{} {} #{}", pr_glyph(pr), pr_repo_label(pr), pr.number)
+    pr_identity_text_with_marker(pr, "")
+}
+
+fn pr_identity_text_with_marker(pr: &SessionPr, identity_marker: &str) -> String {
+    format!(
+        "{} {identity_marker}{} #{}",
+        pr_glyph(pr),
+        pr_repo_label(pr),
+        pr.number
+    )
 }
 
 fn pr_diff_text(pr: &SessionPr) -> String {

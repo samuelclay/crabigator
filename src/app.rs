@@ -279,8 +279,13 @@ impl App {
 
         // Create mirror publisher (always enabled for inspection by other instances)
         let session_id = std::env::var("CRABIGATOR_SESSION_ID").unwrap_or_default();
-        let mirror_publisher =
-            MirrorPublisher::new(true, session_id.clone(), cwd_str.clone(), capture_enabled);
+        let mirror_publisher = MirrorPublisher::new(
+            true,
+            session_id.clone(),
+            platform.kind(),
+            cwd_str.clone(),
+            capture_enabled,
+        );
 
         // Create capture manager for output streaming
         // Must match PTY dimensions for escape sequences to work correctly
@@ -1772,8 +1777,9 @@ impl App {
         self.last_status_bar_hash = None;
 
         if let Some(title) = next {
-            let is_default = title == "Claude Code" || title == "Codex CLI";
-            if !title.is_empty() && !is_default && !self.title_history.contains(&title) {
+            let plain_title = crate::title::strip_provider_title_marker(&title);
+            let is_default = plain_title == "Claude Code" || plain_title == "Codex CLI";
+            if !is_default && !self.title_history.contains(&title) {
                 self.title_history.push(title.clone());
             }
             self.send_cloud_title_event(title);

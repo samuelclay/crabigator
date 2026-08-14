@@ -15,7 +15,7 @@ mod fixtures {
     use crate::hooks::SessionStats;
     use crate::mirror::MirrorPublisher;
     use crate::parsers::DiffSummary;
-    use crate::platforms::{PlatformStats, SessionState};
+    use crate::platforms::{PlatformKind, PlatformStats, SessionState};
 
     static INIT_ENV: Once = Once::new();
 
@@ -106,6 +106,7 @@ mod fixtures {
         let mut publisher = MirrorPublisher::new(
             true,
             format!("fixture-{}", fixture_name),
+            PlatformKind::Claude,
             fixture_name.to_string(),
             false,
         );

@@ -60,6 +60,9 @@ pub struct CloudBoardEntry {
 pub struct CloudBoardSession {
     #[serde(default)]
     pub session_id: String,
+    /// Provider is absent only when talking to an older Worker response.
+    #[serde(default)]
+    pub platform: Option<crate::platforms::PlatformKind>,
     #[serde(default)]
     pub dir_name: String,
     #[serde(default)]

@@ -6,6 +6,7 @@
     "scrollback_path": "/tmp/crabigator-fixture-multi_lang/scrollback.log"
   },
   "cwd": "multi_lang",
+  "platform": "claude",
   "last_updated": 0.0,
   "launch_timing": {
     "diff_time_ms": 10,

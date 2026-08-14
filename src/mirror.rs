@@ -15,6 +15,7 @@ use serde::Serialize;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::parsers::{ChangeType, DiffSummary};
+use crate::platforms::PlatformKind;
 use crate::pr::SessionPr;
 use crate::recap::{RecapState, TurnRecap};
 use crate::slack::SlackThread;
@@ -34,6 +35,7 @@ pub struct WidgetMirror<T: Serialize> {
 #[derive(Serialize)]
 pub struct MirrorState {
     pub session_id: String,
+    pub platform: PlatformKind,
     /// Cloud session id used for streaming — the status bar shows its first 8
     /// characters as "Streaming <id>", and `/tmp/crabigator-<cloud id>` links here.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,6 +173,7 @@ pub struct ChangeMirror {
 pub struct MirrorPublisher {
     enabled: bool,
     session_id: String,
+    platform: PlatformKind,
     cloud_session_id: Option<String>,
     transcript_path: Option<String>,
     slack_origin: Option<String>,
@@ -186,7 +189,13 @@ pub struct MirrorPublisher {
 }
 
 impl MirrorPublisher {
-    pub fn new(enabled: bool, session_id: String, cwd: String, capture_enabled: bool) -> Self {
+    pub fn new(
+        enabled: bool,
+        session_id: String,
+        platform: PlatformKind,
+        cwd: String,
+        capture_enabled: bool,
+    ) -> Self {
         let session_dir = format!("/tmp/crabigator-{}", session_id);
         let capture = CaptureMirror {
             enabled: capture_enabled,
@@ -198,6 +207,7 @@ impl MirrorPublisher {
         Self {
             enabled,
             session_id,
+            platform,
             cloud_session_id: None,
             transcript_path: None,
             slack_origin: None,
@@ -472,6 +482,7 @@ impl MirrorPublisher {
 
         MirrorState {
             session_id: self.session_id.clone(),
+            platform: self.platform,
             cloud_session_id: self.cloud_session_id.clone(),
             transcript_path: self.transcript_path.clone(),
             cwd: self.cwd.clone(),

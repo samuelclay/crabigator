@@ -30,7 +30,7 @@ use crossterm::terminal::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::platforms::SessionState;
+use crate::platforms::{PlatformKind, SessionState};
 use crate::pr::SessionPr;
 use crate::pr_rank::PrDisposition;
 use crate::slack::{SlackDirectory, SlackThread};
@@ -261,6 +261,7 @@ struct GhosttyTabRef {
 /// One live session's contribution to the board.
 struct SessionSnapshot {
     session_id: String,
+    platform: PlatformKind,
     dir_name: String,
     repo_owner: String,
     repo_name: String,
@@ -302,6 +303,7 @@ struct BoardPr {
 #[derive(Clone)]
 struct SessionRef {
     session_id: String,
+    platform: PlatformKind,
     dir_name: String,
     /// Local mirror directory holding scrollback.log; None for cloud records,
     /// whose transcripts aren't reachable from this machine.
@@ -439,6 +441,7 @@ fn snapshot_from_instance(
             .and_then(|v| v.as_array())
             .and_then(|recaps| recaps.last())
     });
+    let platform = mirror_platform(&data);
     let title_set_at = data
         .get("terminal_title_changed_at")
         .and_then(|value| value.as_u64())
@@ -482,6 +485,7 @@ fn snapshot_from_instance(
             .or_else(|| data.get("session_id").and_then(|v| v.as_str()))
             .unwrap_or_default()
             .to_string(),
+        platform,
         session_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
         dir_name: cwd.rsplit('/').next().unwrap_or_default().to_string(),
         repo_owner,
@@ -515,6 +519,29 @@ fn snapshot_from_instance(
         completed_at: activity.completed_at,
         prs,
     })
+}
+
+/// New mirrors publish the provider directly. Older mirrors can still be
+/// identified from their transcript path or their existing Codex title marker.
+fn mirror_platform(data: &serde_json::Value) -> PlatformKind {
+    data.get("platform")
+        .and_then(|value| value.as_str())
+        .and_then(PlatformKind::parse)
+        .or_else(|| {
+            let path = data.get("transcript_path")?.as_str()?;
+            path.split(['/', '\\'])
+                .find_map(|component| match component {
+                    ".codex" => Some(PlatformKind::Codex),
+                    ".claude" => Some(PlatformKind::Claude),
+                    _ => None,
+                })
+        })
+        .or_else(|| {
+            data.get("terminal_title")
+                .and_then(|value| value.as_str())
+                .and_then(crate::title::marked_title_platform)
+        })
+        .unwrap_or_default()
 }
 
 enum InitialLoadUpdate {
@@ -1005,6 +1032,7 @@ fn aggregate(
                 entry.stale &= session_age > STALE_SESSION_SECS;
                 entry.sessions.push(SessionRef {
                     session_id: session.session_id.clone(),
+                    platform: session.platform,
                     dir_name: session.dir_name.clone(),
                     session_dir: Some(session.session_dir.clone()),
                     title: session.title.clone(),
@@ -1056,6 +1084,7 @@ fn local_workspaces(snapshots: &[SessionSnapshot], entries: &[BoardPr]) -> Vec<W
         }
         let session = SessionRef {
             session_id: snapshot.session_id.clone(),
+            platform: snapshot.platform,
             dir_name: snapshot.dir_name.clone(),
             session_dir: Some(snapshot.session_dir.clone()),
             title: snapshot.title.clone(),
@@ -1275,6 +1304,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                     });
                     SessionRef {
                         session_id: s.session_id,
+                        platform: cloud_session_platform(s.platform, &s.title),
                         dir_name: s.dir_name,
                         session_dir: None,
                         title: s.title,
@@ -1319,6 +1349,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
         let session_ref = SessionRef {
             state: parse_session_state(&session.state).unwrap_or(SessionState::Ready),
             session_id: session.session_id,
+            platform: cloud_session_platform(session.platform, &session.title),
             dir_name: session.dir_name,
             session_dir: None,
             title: session.title,
@@ -1340,6 +1371,12 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
     }
     sort_workspaces(&mut workspaces);
     (out, workspaces)
+}
+
+fn cloud_session_platform(platform: Option<PlatformKind>, title: &str) -> PlatformKind {
+    platform
+        .or_else(|| crate::title::marked_title_platform(title))
+        .unwrap_or_default()
 }
 
 /// Sort rank for the GitHub state that needs the most attention.
@@ -1787,13 +1824,32 @@ fn ghostty_tab_text(tab: &GhosttyTabRef) -> String {
     }
 }
 
-fn latest_session_title(sessions: &[SessionRef]) -> Option<(&str, u64)> {
+fn provider_markers(sessions: &[SessionRef]) -> &'static str {
+    let has_codex = sessions
+        .iter()
+        .any(|session| session.platform == PlatformKind::Codex);
+    let has_claude = sessions
+        .iter()
+        .any(|session| session.platform == PlatformKind::Claude);
+    match (has_codex, has_claude) {
+        (true, true) => crate::title::MIXED_PROVIDER_TITLE_MARKER,
+        (true, false) => crate::title::CODEX_TITLE_MARKER,
+        (false, true) => crate::title::CLAUDE_TITLE_MARKER,
+        (false, false) => "",
+    }
+}
+
+fn latest_session_title(sessions: &[SessionRef]) -> Option<(String, u64)> {
     sessions
         .iter()
         .filter_map(|session| {
-            let plain = crate::title::strip_generated_title_marker(&session.title);
-            (!plain.is_empty() && plain != session.dir_name)
-                .then_some((session.title.as_str(), session.title_set_at))
+            let plain = crate::title::strip_provider_title_marker(&session.title);
+            (!plain.is_empty() && plain != session.dir_name).then(|| {
+                (
+                    crate::title::mark_provider_title(session.platform, plain),
+                    session.title_set_at,
+                )
+            })
         })
         .max_by_key(|(_, set_at)| *set_at)
 }
@@ -2094,10 +2150,12 @@ fn render_pr_board_row(
 ) -> Vec<String> {
     let entry = board_row.entry;
     let activity = activity_cell(&entry.sessions, now_ms / 1000, throbber_frame);
+    let identity_marker = provider_markers(&entry.sessions);
     let mut row = pr_row_text_with_activity(
         width,
         &entry.pr,
         widths,
+        identity_marker,
         activity.styled,
         activity.visible,
         activity_width,
@@ -2130,18 +2188,18 @@ fn render_pr_board_row(
 
 fn workspace_title(entry: &WorkspaceEntry) -> (String, u8) {
     let session = &entry.session;
-    let plain = crate::title::strip_generated_title_marker(&session.title);
-    let (title, title_color) = if plain.is_empty() {
-        (session.dir_name.clone(), color::PURPLE)
+    let plain = crate::title::strip_provider_title_marker(&session.title);
+    let title = if plain.is_empty() {
+        crate::title::mark_provider_title(session.platform, &session.dir_name)
     } else {
-        (session.title.clone(), color::PURPLE)
+        crate::title::mark_provider_title(session.platform, plain)
     };
     let text = if let Some(tab) = &entry.ghostty_tab {
         format!("{title} · {}", ghostty_tab_text(tab))
     } else {
         title
     };
-    (text, title_color)
+    (text, color::PURPLE)
 }
 
 fn workspace_diff_text(entry: &WorkspaceEntry) -> String {
@@ -2384,6 +2442,11 @@ fn render_at(
         .map(|&index| &rows[index].entry.pr)
         .collect();
     let mut widths = PrColumnWidths::from_pr_refs(&pr_refs, shared_width as usize);
+    for &index in &visible_row_indices {
+        let entry = rows[index].entry;
+        let marker = provider_markers(&entry.sessions);
+        widths.include_board_identity(&entry.pr, marker, shared_width as usize);
+    }
     for &index in &visible_workspace_indices {
         let entry = workspace_rows[index].entry;
         let (title, _) = workspace_title(entry);
@@ -3093,6 +3156,7 @@ mod tests {
     fn snapshot(dir: &str, prs: Vec<SessionPr>) -> SessionSnapshot {
         SessionSnapshot {
             session_id: dir.to_string(),
+            platform: PlatformKind::Claude,
             dir_name: dir.to_string(),
             repo_owner: "o".to_string(),
             repo_name: dir.to_string(),
@@ -3310,6 +3374,7 @@ mod tests {
         crab_pr.owner = "samuelclay".to_string();
         crab_pr.branch = "with-pr".to_string();
         let mut pr_session = snapshot("crabigator", vec![crab_pr]);
+        pr_session.platform = PlatformKind::Codex;
         pr_session.session_id = "with-pr".to_string();
         pr_session.repo_owner = "samuelclay".to_string();
         pr_session.repo_name = "crabigator".to_string();
@@ -3360,13 +3425,13 @@ mod tests {
         );
 
         assert_eq!(frame.matches("samuelclay/crabigator").count(), 1);
-        let no_pr_offset = frame.find("◇ Newest completed session").unwrap();
+        let no_pr_offset = frame.find("◇ ᛝ  Newest completed session").unwrap();
         let pr_offset = frame.find("crabigator #7").unwrap();
         assert!(no_pr_offset < pr_offset, "newer completion sorts first");
 
         let no_pr_row = frame
             .lines()
-            .find(|line| line.contains("◇ Newest completed session"))
+            .find(|line| line.contains("◇ ᛝ  Newest completed session"))
             .unwrap();
         let crab_pr_row = frame
             .lines()
@@ -3387,6 +3452,8 @@ mod tests {
             column(portal_pr_row, "a-much-longer-branch-name")
         );
         assert!(!no_pr_row.contains("no tracked PR"));
+        assert!(crab_pr_row.contains("⟁  crabigator #7"));
+        assert!(portal_pr_row.contains("ᛝ  developer-portal #9"));
     }
 
     #[test]
@@ -3456,7 +3523,7 @@ mod tests {
                 .unwrap();
             let peer_row = lines
                 .iter()
-                .position(|line| line.contains("◇ Peer session"))
+                .position(|line| line.contains("◇ ᛝ  Peer session"))
                 .unwrap();
             let blank_lines: Vec<usize> = lines[crabigator..]
                 .iter()
@@ -3737,7 +3804,7 @@ mod tests {
             assert!(pr_row.contains(COMPLETION_ICON));
             let session_row = frame
                 .lines()
-                .find(|line| line.contains("◇ Independent session"))
+                .find(|line| line.contains("◇ ᛝ  Independent session"))
                 .unwrap();
             assert!(session_row.contains(PROMPT_ICON));
             assert!(session_row.contains(COMPLETION_ICON));
@@ -4136,6 +4203,7 @@ mod tests {
             pr: entry_pr,
             sessions: vec![SessionRef {
                 session_id: "portal".to_string(),
+                platform: PlatformKind::Claude,
                 dir_name: "portal".to_string(),
                 session_dir: Some(dir.path().to_path_buf()),
                 title: String::new(),
@@ -4316,6 +4384,7 @@ mod tests {
         let sessions = vec![
             SessionRef {
                 session_id: "older".to_string(),
+                platform: PlatformKind::Claude,
                 dir_name: "older".to_string(),
                 session_dir: None,
                 title: String::new(),
@@ -4327,6 +4396,7 @@ mod tests {
             },
             SessionRef {
                 session_id: "newer".to_string(),
+                platform: PlatformKind::Codex,
                 dir_name: "newer".to_string(),
                 session_dir: None,
                 title: String::new(),
@@ -4375,6 +4445,7 @@ mod tests {
         for (state, icon, icon_color) in cases {
             let session = SessionRef {
                 session_id: "state".to_string(),
+                platform: PlatformKind::Claude,
                 dir_name: "state".to_string(),
                 session_dir: None,
                 title: String::new(),
@@ -4392,6 +4463,7 @@ mod tests {
 
         let thinking = SessionRef {
             session_id: "thinking".to_string(),
+            platform: PlatformKind::Codex,
             dir_name: "thinking".to_string(),
             session_dir: None,
             title: String::new(),
@@ -4414,6 +4486,7 @@ mod tests {
     fn recap_view_shows_standalone_session_recap_without_repeating_its_title() {
         let now = now_secs() as u64;
         let mut session = snapshot("crabigator", Vec::new());
+        session.platform = PlatformKind::Codex;
         session.title = "⟁  Standalone work".to_string();
         session.recap = Some(RecapBrief {
             headline: "Kept standalone rows visible".to_string(),
@@ -4466,7 +4539,7 @@ mod tests {
             BoardView::default(),
         )
         .join("\n");
-        assert!(styled.contains(&format!("{}◇ crabigator", fg(color::PURPLE))));
+        assert!(styled.contains(&format!("{}◇ ᛝ  crabigator", fg(color::PURPLE))));
     }
 
     #[test]
@@ -4474,6 +4547,7 @@ mod tests {
         let now = 100_000;
         let mut session = SessionRef {
             session_id: "one".to_string(),
+            platform: PlatformKind::Claude,
             dir_name: "crabigator".to_string(),
             session_dir: None,
             title: String::new(),
@@ -4535,6 +4609,26 @@ mod tests {
         assert_eq!(
             mirror_session_state(&serde_json::json!({})),
             SessionState::Ready
+        );
+    }
+
+    #[test]
+    fn legacy_mirrors_recover_the_provider_without_a_platform_field() {
+        assert_eq!(
+            mirror_platform(&serde_json::json!({
+                "transcript_path": "/Users/me/.codex/sessions/session.jsonl"
+            })),
+            PlatformKind::Codex
+        );
+        assert_eq!(
+            mirror_platform(&serde_json::json!({
+                "transcript_path": "/Users/me/.claude/projects/session.jsonl"
+            })),
+            PlatformKind::Claude
+        );
+        assert_eq!(
+            mirror_platform(&serde_json::json!({ "terminal_title": "⟁  Existing title" })),
+            PlatformKind::Codex
         );
     }
 
@@ -4676,6 +4770,7 @@ mod tests {
         let mut entries = titled_entries();
         let mut newer = entries[0].sessions[0].clone();
         newer.session_id = "newer-session".to_string();
+        newer.platform = PlatformKind::Codex;
         newer.dir_name = "other-worktree".to_string();
         newer.title = "⟁  A newer terminal title".to_string();
         newer.title_set_at = now_ms() - 30 * 60 * 1000;
