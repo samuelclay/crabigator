@@ -380,6 +380,22 @@ pub fn compact_display_label(thread: &SlackThread, max_width: usize) -> String {
     truncate_field(&compact, max_width)
 }
 
+/// PR-board label: the thread identity without repeating the word "Slack" or
+/// its timestamp. The permalink always supplies at least a channel ID.
+pub(crate) fn thread_identity_label(thread: &SlackThread) -> String {
+    let channel = thread
+        .channel
+        .as_deref()
+        .filter(|channel| !channel.is_empty())
+        .or_else(|| slack_channel_id(&thread.url))
+        .map(|channel| format!("#{}", channel.trim_start_matches('#')))
+        .unwrap_or_else(|| "#thread".to_string());
+    match thread.author.as_deref().filter(|author| !author.is_empty()) {
+        Some(author) => format!("{channel} · {author}"),
+        None => channel,
+    }
+}
+
 fn format_date(posted_at: u64, format: &str) -> String {
     Local
         .timestamp_opt(posted_at as i64, 0)
@@ -459,6 +475,29 @@ mod tests {
         assert!(channel_index < author_index);
         assert!(compact.ends_with('…'));
         assert!(compact.chars().count() <= 25);
+    }
+
+    #[test]
+    fn thread_identity_uses_channel_and_author_without_slack_prose() {
+        let named = SlackThread {
+            url: "https://t.slack.com/archives/C123/p1234567890000000".to_string(),
+            posted_at: 0,
+            channel: Some("#builder".to_string()),
+            author: Some("Sam Clay".to_string()),
+        };
+        assert_eq!(thread_identity_label(&named), "#builder · Sam Clay");
+
+        let channel_only = SlackThread {
+            author: None,
+            ..named
+        };
+        assert_eq!(thread_identity_label(&channel_only), "#builder");
+
+        let permalink_channel = SlackThread {
+            channel: None,
+            ..channel_only
+        };
+        assert_eq!(thread_identity_label(&permalink_channel), "#C123");
     }
 
     #[test]

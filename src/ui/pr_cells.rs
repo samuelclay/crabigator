@@ -45,6 +45,8 @@ pub(crate) struct PrColumnWidths {
     pub(crate) merge: usize,
     /// The `✕` dismiss action at the right edge (1 cell when shown).
     pub(crate) dismiss: usize,
+    /// Space reserved for PR-board detail links that replace GitHub status.
+    pub(crate) detail_right: usize,
 }
 
 impl PrColumnWidths {
@@ -89,10 +91,11 @@ impl PrColumnWidths {
     pub(crate) fn fit_right(&mut self, total_width: usize) {
         let right_budget = total_width
             .saturating_sub(PR_LEFT_PADDING + PR_IDENTITY_MIN + PR_COLUMN_GAP + PR_RIGHT_PADDING);
+        self.detail_right = self.detail_right.min(right_budget);
         // Dropped least-essential first: the dismiss action, merge cleanliness,
         // the unresolved thread count, then CI, leaving the PR's own state as
         // the last survivor.
-        while self.right_width() > right_budget {
+        while self.status_right_width() > right_budget {
             if self.dismiss > 0 {
                 self.dismiss = 0;
             } else if self.merge > 0 {
@@ -121,6 +124,14 @@ impl PrColumnWidths {
         self.diff = self.diff.max(diff.width().min(PR_DIFF_MAX));
         self.files = self.files.max(files.width().min(PR_FILES_MAX));
         self.branch = self.branch.max(branch.width().min(PR_BRANCH_MAX));
+        self.fit_right(total_width);
+        self.fit_left(total_width);
+    }
+
+    /// Reserve enough of the right edge for expanded board metadata while
+    /// keeping compact GitHub status anchored to the same edge.
+    pub(crate) fn include_board_detail_right(&mut self, width: usize, total_width: usize) {
+        self.detail_right = self.detail_right.max(width);
         self.fit_right(total_width);
         self.fit_left(total_width);
     }
@@ -168,7 +179,15 @@ impl PrColumnWidths {
         table_width(&[self.identity, self.diff, self.files, self.branch])
     }
 
+    pub(crate) fn board_left_width(&self) -> usize {
+        self.left_width()
+    }
+
     pub(crate) fn right_width(&self) -> usize {
+        self.status_right_width().max(self.detail_right)
+    }
+
+    fn status_right_width(&self) -> usize {
         table_width(&[self.state, self.ci, self.comments, self.merge, self.dismiss])
     }
 
@@ -214,6 +233,7 @@ pub(crate) fn pr_row_text_with_activity(
 pub(crate) fn session_row_text_with_activity(
     width: u16,
     title: &str,
+    identity_color: u8,
     additions: i64,
     deletions: i64,
     files: &str,
@@ -233,7 +253,7 @@ pub(crate) fn session_row_text_with_activity(
         widths.diff,
     );
     let left_cells = [
-        colored_cell(&identity, color::GRAY, widths.identity),
+        colored_cell(&identity, identity_color, widths.identity),
         diff,
         colored_cell(files, color::DARK_GRAY, widths.files),
         colored_cell_capped(branch, color::DARK_GRAY, widths.branch, PR_BRANCH_MAX),
@@ -258,6 +278,44 @@ pub(crate) fn session_row_text_with_activity(
     row
 }
 
+/// Render a PR-board detail row against the same left, activity, and GitHub
+/// status columns as its compact PR row.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn board_detail_row_text(
+    width: u16,
+    widths: &PrColumnWidths,
+    left_styled: String,
+    left_visible: usize,
+    activity_styled: String,
+    activity_visible: usize,
+    activity_width: usize,
+    right_styled: String,
+    right_visible: usize,
+) -> String {
+    let mut row = " ".repeat(PR_LEFT_PADDING);
+    row.push_str(&cells_text(&[(
+        left_styled,
+        left_visible,
+        widths.left_width(),
+    )]));
+
+    let right_cells = [
+        (activity_styled, activity_visible, activity_width),
+        (right_styled, right_visible, widths.right_width()),
+    ];
+    let right_width = cells_width(&right_cells);
+    if right_width > 0 {
+        let gap = (width as usize)
+            .saturating_sub(PR_LEFT_PADDING)
+            .saturating_sub(PR_RIGHT_PADDING)
+            .saturating_sub(widths.left_width())
+            .saturating_sub(right_width);
+        row.push_str(&" ".repeat(gap));
+        row.push_str(&cells_text(&right_cells));
+    }
+    row
+}
+
 fn pr_row_text_with_optional_activity(
     width: u16,
     pr: &SessionPr,
@@ -268,6 +326,18 @@ fn pr_row_text_with_optional_activity(
     row.push_str(&cells_text(&pr_left_cells(pr, widths)));
 
     let mut right_cells = pr_right_cells(pr, widths).to_vec();
+    let status_width = cells_width(&right_cells);
+    let filler = widths.right_width().saturating_sub(status_width);
+    if filler > 0 {
+        if let Some((styled, visible, width)) = right_cells
+            .iter_mut()
+            .find(|(_, _, cell_width)| *cell_width > 0)
+        {
+            styled.insert_str(0, &" ".repeat(filler));
+            *visible += filler;
+            *width += filler;
+        }
+    }
     if let Some(activity) = activity {
         right_cells.insert(0, activity);
     }

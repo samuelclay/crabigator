@@ -14,6 +14,12 @@ pub const CURSOR_SAVE: &str = "\x1b[s";
 /// Restore previously saved cursor position
 pub const CURSOR_RESTORE: &str = "\x1b[u";
 
+/// Hide the terminal cursor (DECTCEM reset)
+pub const CURSOR_HIDE: &str = "\x1b[?25l";
+
+/// Show the terminal cursor (DECTCEM set)
+pub const CURSOR_SHOW: &str = "\x1b[?25h";
+
 /// Move cursor to specific row and column (1-indexed)
 #[inline]
 pub fn cursor_to(row: u16, col: u16) -> String {

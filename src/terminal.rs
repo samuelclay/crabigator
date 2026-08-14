@@ -9,6 +9,7 @@
 
 pub mod dsr;
 pub mod escape;
+pub mod ghostty;
 pub mod input;
 pub mod osc;
 pub mod pty;

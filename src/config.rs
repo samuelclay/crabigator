@@ -50,6 +50,9 @@ pub struct PrBoardPreferences {
     /// Number of days to keep completed PRs on the board.
     #[serde(default = "default_pr_board_linger_days")]
     pub linger_days: u64,
+    /// Oldest activity shown by default, in hours. None means all activity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_visible_hours: Option<u64>,
 }
 
 fn default_true() -> bool {
@@ -69,6 +72,7 @@ impl Default for PrBoardPreferences {
         Self {
             include_ended: false,
             linger_days: default_pr_board_linger_days(),
+            oldest_visible_hours: None,
         }
     }
 }
@@ -205,6 +209,7 @@ mod tests {
         let config: Config = toml::from_str("default_platform = \"codex\"").unwrap();
         assert!(!config.pr_board.include_ended);
         assert_eq!(config.pr_board.linger_days, 1);
+        assert_eq!(config.pr_board.oldest_visible_hours, None);
     }
 
     #[test]
@@ -212,11 +217,13 @@ mod tests {
         let mut config = Config::default();
         config.pr_board.include_ended = true;
         config.pr_board.linger_days = 7;
+        config.pr_board.oldest_visible_hours = Some(9);
 
         let encoded = toml::to_string(&config).unwrap();
         let decoded: Config = toml::from_str(&encoded).unwrap();
         assert!(decoded.pr_board.include_ended);
         assert_eq!(decoded.pr_board.linger_days, 7);
+        assert_eq!(decoded.pr_board.oldest_visible_hours, Some(9));
     }
 
     #[test]
@@ -227,5 +234,6 @@ mod tests {
 
         assert!(config.pr_board.include_ended);
         assert_eq!(config.pr_board.linger_days, 7);
+        assert_eq!(config.pr_board.oldest_visible_hours, None);
     }
 }

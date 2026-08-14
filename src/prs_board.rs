@@ -3,8 +3,7 @@
 //! Aggregates every tracked PR from every running session's `inspect.json`
 //! mirror into one read-only, auto-refreshing view: grouped first by activity
 //! recency and then by repository, with cross-repo twins (same head branch)
-//! kept together, a progress checklist, the latest recap's judgment, and
-//! clickable GitHub/Slack/action links.
+//! kept together, with optional session titles, recaps, and clickable links.
 //!
 //! The board never talks to `gh` itself — it renders what the sessions
 //! already know, with honest ages. Cloud dispositions are fetched once a
@@ -20,7 +19,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use crossterm::event::{poll, read, Event, KeyCode, KeyModifiers};
+use crossterm::event::{
+    poll, read, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyModifiers,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, size as terminal_size, EnterAlternateScreen,
@@ -31,9 +32,11 @@ use unicode_width::UnicodeWidthStr;
 use crate::platforms::SessionState;
 use crate::pr::SessionPr;
 use crate::pr_rank::PrDisposition;
+use crate::slack::SlackThread;
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG};
 use crate::ui::pr_cells::{
-    pr_row_text_with_activity, session_row_text_with_activity, PrColumnWidths, PR_COLUMN_GAP,
+    board_detail_row_text, pr_row_text_with_activity, session_row_text_with_activity,
+    PrColumnWidths, PR_COLUMN_GAP,
 };
 use crate::ui::{COMPLETION_ICON, PROMPT_ICON};
 
@@ -55,9 +58,9 @@ const PREVIEW_MATCHES: usize = 3;
 /// Transcript lines shown either side of a match in the expanded preview.
 const PREVIEW_CONTEXT: usize = 2;
 /// Detail levels `e`/`c` expand and collapse through: 0 = compact (one line
-/// per PR), 1 = status (progress + sessions + judgment), 2 = + each session's
-/// terminal title, 3 = + each session's latest recap headline.
-const MAX_DETAIL: u8 = 3;
+/// per PR), 1 = + one title line, 2 = + one recap line. A step therefore adds
+/// at most one line to each row.
+const MAX_DETAIL: u8 = 2;
 const DEFAULT_DETAIL: u8 = 0;
 
 /// Recency uses one cyan-blue hue at steadily lower intensities until old
@@ -161,6 +164,30 @@ impl RecencyBucket {
             Self::Older => "all",
         }
     }
+
+    fn from_max_age_hours(hours: Option<u64>) -> Self {
+        match hours {
+            Some(0..=1) => Self::LastHour,
+            Some(2..=3) => Self::LastThreeHours,
+            Some(4..=6) => Self::LastSixHours,
+            Some(7..=9) => Self::LastNineHours,
+            Some(10..=12) => Self::LastTwelveHours,
+            Some(13..=24) => Self::LastDay,
+            Some(_) | None => Self::Older,
+        }
+    }
+
+    fn max_age_hours(self) -> Option<u64> {
+        match self {
+            Self::LastHour => Some(1),
+            Self::LastThreeHours => Some(3),
+            Self::LastSixHours => Some(6),
+            Self::LastNineHours => Some(9),
+            Self::LastTwelveHours => Some(12),
+            Self::LastDay => Some(24),
+            Self::Older => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -204,9 +231,9 @@ impl Default for BoardView {
 fn detail_name(detail: u8) -> &'static str {
     match detail {
         0 => "compact",
-        2 => "title",
-        3 => "recap",
-        _ => "status",
+        1 => "title",
+        2 => "recap",
+        _ => "compact",
     }
 }
 
@@ -217,6 +244,12 @@ struct RecapBrief {
     /// Unix ms when the recap was generated; 0 when unknown.
     generated_at: u64,
     line_delta: crate::recap::TurnLineDelta,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GhosttyTabRef {
+    id: String,
+    name: String,
 }
 
 /// One live session's contribution to the board.
@@ -234,6 +267,12 @@ struct SessionSnapshot {
     deletions: i64,
     /// The session's current terminal title (generated or OSC-published).
     title: String,
+    /// Unix ms when the current title was set; 0 for legacy mirrors.
+    title_set_at: u64,
+    /// The live Ghostty tab captured when Crabigator started.
+    ghostty_tab: Option<GhosttyTabRef>,
+    /// Slack thread metadata learned during this session.
+    slack_threads: Vec<SlackThread>,
     /// The session's latest recap, when one has been generated.
     recap: Option<RecapBrief>,
     /// The session's current effective state.
@@ -250,8 +289,7 @@ struct BoardPr {
     /// Freshest copy of the GitHub stats (newest `refreshed_at` wins).
     pr: SessionPr,
     sessions: Vec<SessionRef>,
-    /// Uncommitted files in a live session sitting on this PR's branch.
-    uncommitted: usize,
+    slack_threads: Vec<SlackThread>,
     stale: bool,
 }
 
@@ -262,12 +300,11 @@ struct SessionRef {
     /// Local mirror directory holding scrollback.log; None for cloud records,
     /// whose transcripts aren't reachable from this machine.
     session_dir: Option<PathBuf>,
-    age_secs: u64,
-    /// The session is gone (cloud record only) — a candidate to resurrect.
-    ended: bool,
-    /// The session's current terminal title (detail level 2+).
+    /// The session's current terminal title (detail level 1+).
     title: String,
-    /// The session's latest recap (detail level 3).
+    /// Unix ms when the current title was set; 0 when unknown.
+    title_set_at: u64,
+    /// The session's latest recap (detail level 2).
     recap: Option<RecapBrief>,
     /// The session's current effective state.
     state: SessionState,
@@ -284,6 +321,7 @@ struct WorkspaceEntry {
     repo_name: String,
     branch: String,
     session: SessionRef,
+    ghostty_tab: Option<GhosttyTabRef>,
     uncommitted: usize,
     additions: i64,
     deletions: i64,
@@ -348,6 +386,42 @@ fn gather(activity_history: &mut ActivityHistory) -> Result<Vec<SessionSnapshot>
         let activity = activity_times(&data, activity_history);
         let cwd = data.get("cwd").and_then(|v| v.as_str()).unwrap_or_default();
         let (repo_owner, repo_name) = activity_history.repository_identity(&data, cwd);
+        let title = data
+            .get("terminal_title")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                data.get("title_history")
+                    .and_then(|v| v.as_array())
+                    .and_then(|titles| titles.last())
+                    .and_then(|v| v.as_str())
+            })
+            .unwrap_or_default()
+            .to_string();
+        let latest_recap = data.pointer("/recap/latest").or_else(|| {
+            data.get("recap_history")
+                .and_then(|v| v.as_array())
+                .and_then(|recaps| recaps.last())
+        });
+        let title_set_at = data
+            .get("terminal_title_changed_at")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        let slack_threads: Vec<SlackThread> = data
+            .get("slack_threads")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        let ghostty_tab = data.get("ghostty").and_then(|ghostty| {
+            let id = ghostty.get("tab_id")?.as_str()?;
+            let name = ghostty
+                .get("tab_name")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            Some(GhosttyTabRef {
+                id: id.to_string(),
+                name: name.to_string(),
+            })
+        });
         snapshots.push(SessionSnapshot {
             session_id: data
                 .get("cloud_session_id")
@@ -378,25 +452,11 @@ fn gather(activity_history: &mut ActivityHistory) -> Result<Vec<SessionSnapshot>
                     .filter_map(|file| file.get("deletions").and_then(|value| value.as_i64()))
                     .sum()
             }),
-            title: data
-                .get("terminal_title")
-                .and_then(|v| v.as_str())
-                .or_else(|| {
-                    data.get("title_history")
-                        .and_then(|v| v.as_array())
-                        .and_then(|titles| titles.last())
-                        .and_then(|v| v.as_str())
-                })
-                .unwrap_or_default()
-                .to_string(),
-            recap: data
-                .pointer("/recap/latest")
-                .or_else(|| {
-                    data.get("recap_history")
-                        .and_then(|v| v.as_array())
-                        .and_then(|recaps| recaps.last())
-                })
-                .and_then(recap_brief_from),
+            title,
+            title_set_at,
+            ghostty_tab,
+            slack_threads,
+            recap: latest_recap.and_then(recap_brief_from),
             state: mirror_session_state(&data),
             prompted_at: activity.prompted_at,
             completed_at: activity.completed_at,
@@ -688,6 +748,38 @@ fn recap_brief_from(recap: &serde_json::Value) -> Option<RecapBrief> {
     })
 }
 
+fn merge_pr_slack_threads(
+    merged: &mut Vec<SlackThread>,
+    pr: &SessionPr,
+    session_threads: &[SlackThread],
+) {
+    let urls = std::iter::once(pr.slack_origin_url.as_str())
+        .chain(pr.slack_comment_urls.iter().map(String::as_str))
+        .filter(|url| !url.is_empty());
+    for url in urls {
+        let Some(candidate) = session_threads
+            .iter()
+            .find(|thread| thread.url == url)
+            .cloned()
+            .or_else(|| crate::slack::extract_threads(url).into_iter().next())
+        else {
+            continue;
+        };
+        if let Some(existing) = merged.iter_mut().find(|thread| thread.url == url) {
+            if crate::slack::has_only_channel_id(existing)
+                && !crate::slack::has_only_channel_id(&candidate)
+            {
+                existing.channel = candidate.channel.clone();
+            }
+            if existing.author.is_none() {
+                existing.author = candidate.author.clone();
+            }
+        } else {
+            merged.push(candidate);
+        }
+    }
+}
+
 fn now_secs() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -721,7 +813,7 @@ fn aggregate(
                 BoardPr {
                     pr: seed,
                     sessions: Vec::new(),
-                    uncommitted: 0,
+                    slack_threads: Vec::new(),
                     stale: true,
                 }
             });
@@ -763,22 +855,19 @@ fn aggregate(
                 entry.pr.ai_note = pr.ai_note.clone();
                 entry.pr.ai_confidence = pr.ai_confidence.clone();
             }
+            merge_pr_slack_threads(&mut entry.slack_threads, pr, &session.slack_threads);
 
             let represents_session = pr.primary
                 && repository_matches(&session.repo_owner, &session.repo_name, &pr.owner, &pr.repo)
                 && (pr.created_here || (!pr.branch.is_empty() && session.branch == pr.branch));
             if represents_session {
                 entry.stale &= session_age > STALE_SESSION_SECS;
-                if !pr.branch.is_empty() && session.branch == pr.branch {
-                    entry.uncommitted = entry.uncommitted.max(session.uncommitted_files);
-                }
                 entry.sessions.push(SessionRef {
                     session_id: session.session_id.clone(),
                     dir_name: session.dir_name.clone(),
                     session_dir: Some(session.session_dir.clone()),
-                    age_secs: session_age as u64,
-                    ended: false,
                     title: session.title.clone(),
+                    title_set_at: session.title_set_at,
                     recap: session.recap.clone(),
                     state: session.state,
                     prompted_at: session.prompted_at,
@@ -827,9 +916,8 @@ fn local_workspaces(snapshots: &[SessionSnapshot], entries: &[BoardPr]) -> Vec<W
             session_id: snapshot.session_id.clone(),
             dir_name: snapshot.dir_name.clone(),
             session_dir: Some(snapshot.session_dir.clone()),
-            age_secs,
-            ended: false,
             title: snapshot.title.clone(),
+            title_set_at: snapshot.title_set_at,
             recap: snapshot.recap.clone(),
             state: snapshot.state,
             prompted_at: snapshot.prompted_at,
@@ -840,6 +928,7 @@ fn local_workspaces(snapshots: &[SessionSnapshot], entries: &[BoardPr]) -> Vec<W
             repo_name: snapshot.repo_name.clone(),
             branch: snapshot.branch.clone(),
             session,
+            ghostty_tab: snapshot.ghostty_tab.clone(),
             uncommitted: snapshot.uncommitted_files,
             additions: snapshot.additions,
             deletions: snapshot.deletions,
@@ -1001,9 +1090,8 @@ fn foreign_without_explicit_interest(pr: &SessionPr) -> bool {
 /// Attention first, then primaries, then recency of discussion.
 fn sort_entries(entries: &mut [BoardPr]) {
     entries.sort_by(|a, b| {
-        stage(&a.pr)
-            .rank
-            .cmp(&stage(&b.pr).rank)
+        attention_rank(&a.pr)
+            .cmp(&attention_rank(&b.pr))
             .then(b.pr.primary.cmp(&a.pr.primary))
             .then(b.pr.last_mentioned_at.cmp(&a.pr.last_mentioned_at))
     });
@@ -1013,7 +1101,6 @@ fn sort_entries(entries: &mut [BoardPr]) {
 /// the same shape the live aggregation produces. Overrides and the linger
 /// window are already applied server-side.
 fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec<WorkspaceEntry>) {
-    let now = now_secs() as u64;
     let mut represented = HashSet::new();
     let mut out: Vec<BoardPr> = cloud
         .prs
@@ -1021,6 +1108,8 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
         .map(|entry| {
             let any_active = entry.sessions.iter().any(|s| s.active);
             let pr = entry.pr;
+            let mut slack_threads = Vec::new();
+            merge_pr_slack_threads(&mut slack_threads, &pr, &[]);
             let sessions = entry
                 .sessions
                 .into_iter()
@@ -1031,23 +1120,23 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                     } else {
                         SessionState::Complete
                     });
+                    let recap = s.recap.and_then(|r| {
+                        (!r.headline.is_empty()).then_some(RecapBrief {
+                            headline: r.headline,
+                            generated_at: r.generated_at,
+                            line_delta: crate::recap::TurnLineDelta {
+                                additions: r.additions,
+                                deletions: r.deletions,
+                            },
+                        })
+                    });
                     SessionRef {
                         session_id: s.session_id,
                         dir_name: s.dir_name,
                         session_dir: None,
-                        age_secs: now.saturating_sub(s.last_seen_at),
-                        ended: !s.active,
                         title: s.title,
-                        recap: s.recap.and_then(|r| {
-                            (!r.headline.is_empty()).then_some(RecapBrief {
-                                headline: r.headline,
-                                generated_at: r.generated_at,
-                                line_delta: crate::recap::TurnLineDelta {
-                                    additions: r.additions,
-                                    deletions: r.deletions,
-                                },
-                            })
-                        }),
+                        title_set_at: 0,
+                        recap,
                         state,
                         prompted_at: activity_timestamp_secs(s.prompts_changed_at),
                         completed_at: activity_timestamp_secs(s.completions_changed_at),
@@ -1057,7 +1146,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
             BoardPr {
                 pr,
                 sessions,
-                uncommitted: 0,
+                slack_threads,
                 stale: !any_active,
             }
         })
@@ -1074,24 +1163,24 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
         } else {
             session.repo_name.clone()
         };
+        let recap = session.recap.and_then(|recap| {
+            (!recap.headline.is_empty()).then_some(RecapBrief {
+                headline: recap.headline,
+                generated_at: recap.generated_at,
+                line_delta: crate::recap::TurnLineDelta {
+                    additions: recap.additions,
+                    deletions: recap.deletions,
+                },
+            })
+        });
         let session_ref = SessionRef {
             state: parse_session_state(&session.state).unwrap_or(SessionState::Ready),
             session_id: session.session_id,
             dir_name: session.dir_name,
             session_dir: None,
-            age_secs: now.saturating_sub(session.last_seen_at),
-            ended: false,
             title: session.title,
-            recap: session.recap.and_then(|recap| {
-                (!recap.headline.is_empty()).then_some(RecapBrief {
-                    headline: recap.headline,
-                    generated_at: recap.generated_at,
-                    line_delta: crate::recap::TurnLineDelta {
-                        additions: recap.additions,
-                        deletions: recap.deletions,
-                    },
-                })
-            }),
+            title_set_at: 0,
+            recap,
             prompted_at: activity_timestamp_secs(session.prompts_changed_at),
             completed_at: activity_timestamp_secs(session.completions_changed_at),
         };
@@ -1100,6 +1189,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
             repo_name,
             branch: session.branch,
             session: session_ref,
+            ghostty_tab: None,
             uncommitted: 0,
             additions: 0,
             deletions: 0,
@@ -1109,95 +1199,27 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
     (out, workspaces)
 }
 
-/// Where a PR sits in the pipeline: its sort rank (most attention needed
-/// first) plus the label and color the board renders for it.
-struct Stage {
-    rank: u8,
-    label: &'static str,
-    color: u8,
-}
-
-fn stage(pr: &SessionPr) -> Stage {
-    // A PR with no state yet was never enriched: show the fetch, not "closed".
-    let (rank, label, color) = if pr.state.is_empty() && !pr.fetch_error.is_empty() {
-        (2, "fetch failed, retrying", color::RED)
-    } else if pr.state.is_empty() {
-        (2, "fetching", color::GRAY)
-    } else if pr.state == "MERGED" {
-        (6, "merged", color::PURPLE)
-    } else if pr.state != "OPEN" {
-        (7, "closed", color::DARK_GRAY)
-    } else if pr.mergeable == "CONFLICTING" {
-        (0, "conflicts", color::RED)
-    } else if pr.checks_failed > 0 {
-        (0, "CI failing", color::RED)
-    } else if pr.review_decision == "CHANGES_REQUESTED" {
-        (1, "changes requested", color::RED)
-    } else if pr.is_draft {
-        (2, "draft", color::GRAY)
-    } else if pr.checks_pending > 0 {
-        (3, "CI running", color::YELLOW)
-    } else if pr.review_decision != "APPROVED" {
-        (4, "awaiting review", color::YELLOW)
-    } else {
-        (5, "ready to merge", color::GREEN)
-    };
-    Stage { rank, label, color }
-}
-
-/// How far along the PR is, as a percentage. The objective pipeline
-/// position sets the base; the recap's confidence nudges open PRs a step
-/// either way. Merged is always 100% — no model opinion overrides a merge.
-fn progress_percent(pr: &SessionPr) -> u8 {
+/// Sort rank for the GitHub state that needs the most attention.
+fn attention_rank(pr: &SessionPr) -> u8 {
     if pr.state.is_empty() {
-        // Not enriched yet — nothing is known, so the bar stays near empty.
-        return 5;
+        2
+    } else if pr.state == "MERGED" {
+        6
+    } else if pr.state != "OPEN" {
+        7
+    } else if pr.mergeable == "CONFLICTING" || pr.checks_failed > 0 {
+        0
+    } else if pr.review_decision == "CHANGES_REQUESTED" {
+        1
+    } else if pr.is_draft {
+        2
+    } else if pr.checks_pending > 0 {
+        3
+    } else if pr.review_decision != "APPROVED" {
+        4
+    } else {
+        5
     }
-    if pr.state != "OPEN" {
-        return 100;
-    }
-    let base: i32 = match stage(pr).rank {
-        0 => 35, // conflicts / CI failing
-        1 => 40, // changes requested
-        2 => 15, // draft
-        3 => 55, // CI running
-        4 => 70, // awaiting review
-        _ => 90, // ready to merge
-    };
-    let nudge = match pr.ai_confidence.as_str() {
-        "high" => 10,
-        "low" => -10,
-        _ => 0,
-    };
-    (base + nudge).clamp(5, 95) as u8
-}
-
-/// A muted variant of each stage color for the progress bar, so the gauge
-/// reads at a glance without outshining the text around it.
-fn dim_stage_color(stage_color: u8) -> u8 {
-    match stage_color {
-        color::RED => 131,    // muted brick
-        color::YELLOW => 136, // dark goldenrod
-        color::GREEN => 65,   // muted green
-        color::PURPLE => 97,  // muted violet
-        _ => 240,             // draft/closed grays fall back to dark gray
-    }
-}
-
-/// Ten-cell progress bar in a muted stage color: `▓▓▓▓▓▓▓░░░`. The bar is an
-/// approximation, so it shows no percentage — the shape is the signal.
-fn progress_bar(pr: &SessionPr) -> String {
-    let pct = progress_percent(pr);
-    let stage = stage(pr);
-    let filled = (usize::from(pct) + 5) / 10;
-    format!(
-        "{}{}{}{}{}",
-        fg(dim_stage_color(stage.color)),
-        "▓".repeat(filled),
-        fg(color::DARK_GRAY),
-        "░".repeat(10 - filled),
-        RESET_FG
-    )
 }
 
 /// Coarse ages only: second-level precision would tick on every repaint and
@@ -1303,57 +1325,6 @@ fn activity_part(label: &str, timestamp: u64, now: u64) -> ActivityCell {
 
 fn recency_color(age_secs: u64) -> u8 {
     RecencyBucket::from_age(age_secs).color()
-}
-
-/// The sessions that mention a PR, deduped by directory name (several
-/// sessions often share a cwd), with a dim idle tag for stopped mirrors.
-fn sessions_text(sessions: &[SessionRef]) -> String {
-    // (name, count, min age, every ref ended)
-    let mut seen: Vec<(String, usize, u64, bool)> = Vec::new();
-    for session in sessions {
-        match seen
-            .iter_mut()
-            .find(|(name, _, _, _)| *name == session.dir_name)
-        {
-            Some((_, count, min_age, ended)) => {
-                *count += 1;
-                *min_age = (*min_age).min(session.age_secs);
-                *ended &= session.ended;
-            }
-            None => seen.push((session.dir_name.clone(), 1, session.age_secs, session.ended)),
-        }
-    }
-    seen.iter()
-        .map(|(name, count, min_age, ended)| {
-            let times = if *count > 1 {
-                format!(" ×{count}")
-            } else {
-                String::new()
-            };
-            // Ended sessions (cloud records) read as resurrection candidates;
-            // a live mirror updates constantly, so only a stopped one gets a
-            // tag.
-            let tag = if *ended {
-                format!(
-                    " {}(ended {} ago){}",
-                    fg(color::DARK_GRAY),
-                    format_age(*min_age),
-                    fg(color::GRAY)
-                )
-            } else if *min_age as f64 > STALE_SESSION_SECS {
-                format!(
-                    " {}(idle {}){}",
-                    fg(color::DARK_GRAY),
-                    format_age(*min_age),
-                    fg(color::GRAY)
-                )
-            } else {
-                String::new()
-            };
-            format!("{name}{times}{tag}")
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 /// Case-insensitive substring filter across a PR's identifying text.
@@ -1665,104 +1636,296 @@ fn styled_preview_lines(
     out
 }
 
-/// Detail lines for one PR at level 2+: each contributing session's terminal
-/// title, and at level 3 its latest recap headline underneath. Sessions with
-/// nothing to show are skipped; exact duplicates collapse (cloud records
-/// often repeat a directory).
-fn session_detail_lines(
-    sessions: &[SessionRef],
-    width: u16,
-    detail: u8,
-    now_ms: u64,
-) -> Vec<String> {
-    use unicode_width::UnicodeWidthStr;
-    let mut seen: HashSet<(&str, &str, &str)> = HashSet::new();
-    let mut out = Vec::new();
-    for session in sessions {
-        let recap = if detail >= 3 {
-            session.recap.as_ref()
-        } else {
-            None
-        };
-        // A title that just repeats the directory name is the terminal's
-        // default, not a generated one — it says nothing the row doesn't.
-        let title = if session.title == session.dir_name {
-            ""
-        } else {
-            session.title.as_str()
-        };
-        if title.is_empty() && recap.is_none() {
-            continue;
-        }
-        let recap_key = recap.map_or("", |r| r.headline.as_str());
-        if !seen.insert((session.dir_name.as_str(), title, recap_key)) {
-            continue;
-        }
-        // The title is only as fresh as the session's last mirror update,
-        // so that age answers "current as of when?".
-        let title_age = format!(" · {} ago", format_age(session.age_secs));
-        let mut header = format!(
-            "   {}⌾ {}{}{}",
-            fg(color::DARK_GRAY),
-            fg(color::CYAN),
-            session.dir_name,
-            fg(color::DARK_GRAY),
-        );
-        if !title.is_empty() {
-            let budget = (width as usize)
-                .saturating_sub(5 + session.dir_name.width() + 3 + title_age.width())
-                .max(10);
-            header.push_str(&format!(
-                " · {}{}{}",
-                RESET_FG,
-                crate::ui::pr_cells::truncate_to_width(title, budget),
-                fg(color::DARK_GRAY),
-            ));
-        }
-        header.push_str(&title_age);
-        header.push_str(RESET_FG);
-        out.push(header);
-        if let Some(recap) = recap {
-            out.push(recap_detail_line(recap, width, now_ms));
-        }
+fn ghostty_tab_text(tab: &GhosttyTabRef) -> String {
+    let suffix = tab
+        .id
+        .chars()
+        .rev()
+        .take(5)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    if tab.name.is_empty() {
+        format!("tab {suffix}")
+    } else {
+        format!("tab {} [{suffix}]", tab.name)
     }
-    out
 }
 
-fn recap_detail_line(recap: &RecapBrief, width: u16, now_ms: u64) -> String {
-    let age = if recap.generated_at > 0 {
-        format!(
-            " · {} ago",
-            format_age(now_ms.saturating_sub(recap.generated_at) / 1000)
-        )
+fn latest_session_title(sessions: &[SessionRef]) -> Option<(&str, u64)> {
+    sessions
+        .iter()
+        .filter_map(|session| {
+            let plain = crate::title::strip_generated_title_marker(&session.title);
+            (!plain.is_empty() && plain != session.dir_name)
+                .then_some((session.title.as_str(), session.title_set_at))
+        })
+        .max_by_key(|(_, set_at)| *set_at)
+}
+
+fn timestamp_cell(timestamp_ms: u64, now_ms: u64, width: usize) -> ActivityCell {
+    if width == 0 {
+        return ActivityCell {
+            styled: String::new(),
+            visible: 0,
+        };
+    }
+    let (plain, age_color) = if timestamp_ms == 0 {
+        ("—".to_string(), color::DARK_GRAY)
     } else {
-        String::new()
+        let age_secs = now_ms.saturating_sub(timestamp_ms) / 1000;
+        (format_age(age_secs), recency_color(age_secs))
     };
-    // A zero delta says nothing here — leave it off rather than rendering the
-    // handoff strip's `Δ ·` placeholder.
-    let delta = if recap.line_delta.additions == 0 && recap.line_delta.deletions == 0 {
-        String::new()
-    } else {
-        format!(
-            " · {}{}",
-            crate::ui::handoff::format_line_delta(recap.line_delta),
-            fg(color::DARK_GRAY)
-        )
-    };
-    // The delta carries its own colors; budget by its visible form.
-    let delta_width = crate::parsers::strip_ansi_for_debug(&delta).width();
-    let budget = (width as usize)
-        .saturating_sub(7 + delta_width + age.width())
-        .max(10);
-    format!(
-        "     {}↪ {}{}{}{}{}{}",
-        fg(color::DARK_GRAY),
+    let plain = crate::ui::pr_cells::truncate_to_width(&plain, width);
+    let visible = plain.width();
+    ActivityCell {
+        styled: format!(
+            "{}{}{}{}",
+            " ".repeat(width.saturating_sub(visible)),
+            fg(age_color),
+            plain,
+            RESET_FG
+        ),
+        visible: width,
+    }
+}
+
+fn empty_cell(width: usize) -> ActivityCell {
+    ActivityCell {
+        styled: " ".repeat(width),
+        visible: width,
+    }
+}
+
+fn latest_recap(sessions: &[SessionRef]) -> Option<&RecapBrief> {
+    sessions
+        .iter()
+        .filter_map(|session| session.recap.as_ref())
+        .max_by_key(|recap| recap.generated_at)
+}
+
+fn slack_links_cell(threads: &[SlackThread], width: usize) -> ActivityCell {
+    let mut styled = String::new();
+    let mut visible = 0;
+    let mut seen = HashSet::new();
+    for thread in threads {
+        if !seen.insert(thread.url.as_str()) {
+            continue;
+        }
+        let separator = usize::from(visible > 0) * PR_COLUMN_GAP;
+        let remaining = width.saturating_sub(visible + separator);
+        if remaining == 0 {
+            break;
+        }
+        let full_label = crate::slack::thread_identity_label(thread);
+        let label = crate::ui::pr_cells::truncate_to_width(&full_label, remaining);
+        if label.is_empty() {
+            break;
+        }
+        if separator > 0 {
+            styled.push_str(&" ".repeat(separator));
+            visible += separator;
+        }
+        styled.push_str(&format!(
+            "{}{}{}",
+            fg(color::CYAN),
+            escape::hyperlink(&thread.url, &label),
+            RESET_FG
+        ));
+        visible += label.width();
+        if label != full_label {
+            break;
+        }
+    }
+    ActivityCell { styled, visible }
+}
+
+fn slack_links_width(threads: &[SlackThread]) -> usize {
+    let mut seen = HashSet::new();
+    let labels: Vec<String> = threads
+        .iter()
+        .filter(|thread| seen.insert(thread.url.as_str()))
+        .map(crate::slack::thread_identity_label)
+        .collect();
+    labels.iter().map(|label| label.width()).sum::<usize>()
+        + labels.len().saturating_sub(1) * PR_COLUMN_GAP
+}
+
+fn title_detail_line(
+    entry: &BoardPr,
+    width: u16,
+    now_ms: u64,
+    activity_width: usize,
+    widths: &PrColumnWidths,
+) -> Option<String> {
+    let title = latest_session_title(&entry.sessions);
+    let links = slack_links_cell(&entry.slack_threads, widths.right_width());
+    if title.is_none() && links.visible == 0 {
+        return None;
+    }
+
+    let (left_styled, left_visible, timestamp) = title.map_or_else(
+        || (String::new(), 0, None),
+        |(title, set_at)| {
+            let plain = crate::ui::pr_cells::truncate_to_width(
+                &format!("  ⌾ {title}"),
+                widths.board_left_width(),
+            );
+            (
+                format!("{}{}{}", fg(color::CYAN), plain, RESET_FG),
+                plain.width(),
+                Some(set_at),
+            )
+        },
+    );
+    let age = timestamp.map_or_else(
+        || empty_cell(activity_width),
+        |set_at| timestamp_cell(set_at, now_ms, activity_width),
+    );
+    Some(format!(
+        "{}{}",
+        board_detail_row_text(
+            width,
+            widths,
+            left_styled,
+            left_visible,
+            age.styled,
+            age.visible,
+            activity_width,
+            links.styled,
+            links.visible,
+        ),
+        RESET
+    ))
+}
+
+#[derive(Clone, Copy)]
+enum RecapLineKind {
+    Judgment,
+    Recap,
+}
+
+impl RecapLineKind {
+    fn style(self) -> (&'static str, u8) {
+        match self {
+            Self::Judgment => ("✦", color::YELLOW),
+            Self::Recap => ("↪", color::DARK_GRAY),
+        }
+    }
+}
+
+fn recap_line(
+    kind: RecapLineKind,
+    headline: &str,
+    recap: Option<&RecapBrief>,
+    width: u16,
+    now_ms: u64,
+    activity_width: usize,
+    widths: &PrColumnWidths,
+) -> String {
+    let (icon, icon_color) = kind.style();
+    let mut delta = recap.map_or_else(String::new, |recap| {
+        if recap.line_delta.additions == 0 && recap.line_delta.deletions == 0 {
+            String::new()
+        } else {
+            format!(
+                " · {}{}",
+                crate::ui::handoff::format_line_delta(recap.line_delta),
+                fg(color::DARK_GRAY)
+            )
+        }
+    });
+    let mut delta_width = crate::parsers::strip_ansi_for_debug(&delta).width();
+    let prefix_width = 2 + icon.width() + 1;
+    if prefix_width + delta_width >= widths.board_left_width() {
+        delta.clear();
+        delta_width = 0;
+    }
+    let headline = crate::ui::pr_cells::truncate_to_width(
+        headline,
+        widths
+            .board_left_width()
+            .saturating_sub(prefix_width + delta_width),
+    );
+    let left_visible = prefix_width + headline.width() + delta_width;
+    let left_styled = format!(
+        "  {}{} {}{}{}{}",
+        fg(icon_color),
+        icon,
         fg(color::GRAY),
-        crate::ui::pr_cells::truncate_to_width(&recap.headline, budget),
+        headline,
         fg(color::DARK_GRAY),
         delta,
-        age,
-        RESET_FG,
+    );
+    let age = recap.map_or_else(
+        || empty_cell(activity_width),
+        |recap| timestamp_cell(recap.generated_at, now_ms, activity_width),
+    );
+    format!(
+        "{}{}",
+        board_detail_row_text(
+            width,
+            widths,
+            left_styled,
+            left_visible,
+            age.styled,
+            age.visible,
+            activity_width,
+            String::new(),
+            0,
+        ),
+        RESET
+    )
+}
+
+fn pr_recap_detail_line(
+    entry: &BoardPr,
+    width: u16,
+    now_ms: u64,
+    activity_width: usize,
+    widths: &PrColumnWidths,
+) -> Option<String> {
+    let recap = latest_recap(&entry.sessions);
+    if !entry.pr.ai_note.is_empty() && entry.pr.state == "OPEN" {
+        return Some(recap_line(
+            RecapLineKind::Judgment,
+            &entry.pr.ai_note,
+            recap,
+            width,
+            now_ms,
+            activity_width,
+            widths,
+        ));
+    }
+    recap.map(|recap| {
+        recap_line(
+            RecapLineKind::Recap,
+            &recap.headline,
+            Some(recap),
+            width,
+            now_ms,
+            activity_width,
+            widths,
+        )
+    })
+}
+
+fn recap_detail_line(
+    recap: &RecapBrief,
+    width: u16,
+    now_ms: u64,
+    activity_width: usize,
+    widths: &PrColumnWidths,
+) -> String {
+    recap_line(
+        RecapLineKind::Recap,
+        &recap.headline,
+        Some(recap),
+        width,
+        now_ms,
+        activity_width,
+        widths,
     )
 }
 
@@ -1807,107 +1970,32 @@ fn render_pr_board_row(
         return lines;
     }
 
-    let stage = stage(&entry.pr);
-    let mentions = if entry.pr.mentions > 0 {
-        let yours = if entry.pr.user_mentions > 0 {
-            format!(" ({} yours)", entry.pr.user_mentions)
-        } else {
-            String::new()
-        };
-        format!(" · {} mentions{}", entry.pr.mentions, yours)
-    } else {
-        String::new()
-    };
-    let mention_age = if entry.pr.last_mentioned_at > 0 {
-        let secs = now_ms.saturating_sub(entry.pr.last_mentioned_at) / 1000;
-        if secs < 60 {
-            " · spoken just now".to_string()
-        } else {
-            format!(" · spoken {} ago", format_age(secs))
-        }
-    } else {
-        String::new()
-    };
-    let uncommitted = if entry.uncommitted > 0 {
-        format!(
-            " · {}⚠ {} uncommitted{}",
-            fg(color::YELLOW),
-            entry.uncommitted,
-            RESET_FG
-        )
-    } else {
-        String::new()
-    };
-    let location = if entry.sessions.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " · {}in {}",
-            fg(color::GRAY),
-            sessions_text(&entry.sessions)
-        )
-    };
-    lines.push(format!(
-        "   {} {}{}{}{}{}{}{}{}",
-        progress_bar(&entry.pr),
-        fg(stage.color),
-        stage.label,
-        RESET_FG,
-        location,
-        mentions,
-        mention_age,
-        RESET_FG,
-        uncommitted,
-    ));
-
-    let mut extras: Vec<String> = Vec::new();
-    if !entry.pr.ai_note.is_empty() && entry.pr.state == "OPEN" {
-        extras.push(format!(
-            "{}✦ {}{}",
-            fg(color::YELLOW),
-            entry.pr.ai_note,
-            RESET_FG
-        ));
-    }
-    if !entry.pr.slack_origin_url.is_empty() {
-        extras.push(format!(
-            "{}{}{}",
-            fg(color::CYAN),
-            escape::hyperlink(&entry.pr.slack_origin_url, "⛓ slack origin"),
-            RESET_FG
-        ));
-    }
-    for (i, url) in entry.pr.slack_comment_urls.iter().enumerate() {
-        let label = if entry.pr.slack_comment_urls.len() == 1 {
-            "⛓ slack".to_string()
-        } else {
-            format!("⛓ slack {}", i + 1)
-        };
-        extras.push(format!(
-            "{}{}{}",
-            fg(color::CYAN),
-            escape::hyperlink(url, &label),
-            RESET_FG
-        ));
-    }
-    if !extras.is_empty() {
-        lines.push(format!("   {}", extras.join("  ")));
+    if let Some(title) = title_detail_line(entry, width, now_ms, activity_width, widths) {
+        lines.push(title);
     }
     if detail >= 2 {
-        lines.extend(session_detail_lines(&entry.sessions, width, detail, now_ms));
+        if let Some(recap) = pr_recap_detail_line(entry, width, now_ms, activity_width, widths) {
+            lines.push(recap);
+        }
     }
     lines.extend(board_row.preview_lines.iter().cloned());
     lines
 }
 
-fn workspace_title(entry: &WorkspaceEntry) -> &str {
+fn workspace_title(entry: &WorkspaceEntry) -> (String, u8) {
     let session = &entry.session;
-    let title = crate::title::strip_generated_title_marker(&session.title);
-    if title.is_empty() {
-        session.dir_name.as_str()
+    let plain = crate::title::strip_generated_title_marker(&session.title);
+    let (title, title_color) = if plain.is_empty() {
+        (session.dir_name.clone(), color::PURPLE)
+    } else {
+        (session.title.clone(), color::PURPLE)
+    };
+    let text = if let Some(tab) = &entry.ghostty_tab {
+        format!("{title} · {}", ghostty_tab_text(tab))
     } else {
         title
-    }
+    };
+    (text, title_color)
 }
 
 fn workspace_diff_text(entry: &WorkspaceEntry) -> String {
@@ -1945,13 +2033,14 @@ fn render_workspace_board_row(
     throbber_frame: usize,
 ) -> Vec<String> {
     let entry = workspace_row.entry;
-    let title = workspace_title(entry);
+    let (title, title_color) = workspace_title(entry);
     let branch = workspace_branch_text(entry);
     let files = workspace_files_text(entry);
     let activity = activity_cell(entry.sessions(), now_ms / 1000, throbber_frame);
     let row = session_row_text_with_activity(
         width,
-        title,
+        &title,
+        title_color,
         entry.additions,
         entry.deletions,
         &files,
@@ -1962,9 +2051,15 @@ fn render_workspace_board_row(
         activity_width,
     );
     let mut lines = vec![format!("{row}{RESET}")];
-    if detail >= 3 {
+    if detail >= 2 {
         if let Some(recap) = entry.session.recap.as_ref() {
-            lines.push(recap_detail_line(recap, width, now_ms));
+            lines.push(recap_detail_line(
+                recap,
+                width,
+                now_ms,
+                activity_width,
+                widths,
+            ));
         }
     }
     lines.extend(workspace_row.preview_lines.iter().cloned());
@@ -2122,11 +2217,18 @@ fn render_at(
     let mut widths = PrColumnWidths::from_pr_refs(&pr_refs, shared_width as usize);
     for &index in &visible_workspace_indices {
         let entry = workspace_rows[index].entry;
+        let (title, _) = workspace_title(entry);
         widths.include_board_row(
-            &format!("◇ {}", workspace_title(entry)),
+            &format!("◇ {title}"),
             &workspace_diff_text(entry),
             &workspace_files_text(entry),
             &workspace_branch_text(entry),
+            shared_width as usize,
+        );
+    }
+    for &index in &visible_row_indices {
+        widths.include_board_detail_right(
+            slack_links_width(&rows[index].entry.slack_threads),
             shared_width as usize,
         );
     }
@@ -2230,7 +2332,7 @@ fn render_at(
             }
             lines.push(format!(
                 "{}{}{}",
-                fg(color::CYAN),
+                fg(color::YELLOW),
                 repository.name,
                 RESET_FG,
             ));
@@ -2260,6 +2362,18 @@ fn render_at(
         }
     }
     lines
+}
+
+struct PrBoardTerminalGuard;
+
+impl Drop for PrBoardTerminalGuard {
+    fn drop(&mut self) {
+        let mut out = stdout();
+        let _ = execute!(out, DisableBracketedPaste, LeaveAlternateScreen);
+        let _ = write!(out, "{}", escape::CURSOR_SHOW);
+        let _ = out.flush();
+        let _ = disable_raw_mode();
+    }
 }
 
 /// Entry point for `crabigator prs`.
@@ -2303,11 +2417,11 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
 
     let mut out = stdout();
     enable_raw_mode()?;
-    execute!(out, EnterAlternateScreen)?;
-    let result = board_loop(&mut out, &mut overrides, &mut overrides_fetched).await;
-    let _ = execute!(out, LeaveAlternateScreen);
-    let _ = disable_raw_mode();
-    result
+    let _terminal_guard = PrBoardTerminalGuard;
+    execute!(out, EnterAlternateScreen, EnableBracketedPaste)?;
+    write!(out, "{}", escape::CURSOR_HIDE)?;
+    out.flush()?;
+    board_loop(&mut out, &mut overrides, &mut overrides_fetched).await
 }
 
 /// Identity of one rendered frame, so an unchanged board isn't repainted.
@@ -2358,12 +2472,17 @@ fn draw_changed_lines<W: Write>(
     Ok(true)
 }
 
-fn save_board_preferences(include_ended: bool, linger_days: u64) {
+fn save_board_preferences(
+    include_ended: bool,
+    linger_days: u64,
+    oldest_visible_bucket: RecencyBucket,
+) {
     let Ok(mut config) = crate::config::Config::load() else {
         return;
     };
     config.pr_board.include_ended = include_ended;
     config.pr_board.linger_days = linger_days;
+    config.pr_board.oldest_visible_hours = oldest_visible_bucket.max_age_hours();
     let _ = config.save();
 }
 
@@ -2389,7 +2508,10 @@ async fn board_loop(
     let mut activity_history = ActivityHistory::default();
     let mut expanded = false;
     let preferences = crate::config::Config::load().unwrap_or_default().pr_board;
-    let mut view = BoardView::default();
+    let mut view = BoardView::new(
+        DEFAULT_DETAIL,
+        RecencyBucket::from_max_age_hours(preferences.oldest_visible_hours),
+    );
     let mut linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
     let mut include_ended = preferences.include_ended;
     // Cloud fetches are throttled well below the local tick; toggling the
@@ -2531,6 +2653,17 @@ async fn board_loop(
         };
         if poll(poll_interval)? {
             match read()? {
+                Event::Paste(text) => {
+                    // Bracketed paste arrives as one event. A paste outside
+                    // search is inert instead of firing every matching
+                    // shortcut in the pasted text.
+                    if let Some(query) = &mut search {
+                        query.push_str(&text);
+                        scroll = 0;
+                        needs_render = true;
+                        dirty = true;
+                    }
+                }
                 Event::Key(key) => {
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -2584,14 +2717,22 @@ async fn board_loop(
                             // rather than waiting out the tick.
                             KeyCode::Char('+') | KeyCode::Char('=') => {
                                 linger_days = (linger_days + 1).min(MAX_LINGER_DAYS);
-                                save_board_preferences(include_ended, linger_days);
+                                save_board_preferences(
+                                    include_ended,
+                                    linger_days,
+                                    view.oldest_visible_bucket,
+                                );
                                 cloud_fetch_due = true;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
                             KeyCode::Char('-') | KeyCode::Char('_') => {
                                 linger_days = linger_days.saturating_sub(1);
-                                save_board_preferences(include_ended, linger_days);
+                                save_board_preferences(
+                                    include_ended,
+                                    linger_days,
+                                    view.oldest_visible_bucket,
+                                );
                                 cloud_fetch_due = true;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
@@ -2600,12 +2741,28 @@ async fn board_loop(
                             // restores one older recency bucket; at compact,
                             // collapsing hides the oldest visible bucket.
                             KeyCode::Char('e') => {
+                                let previous_bucket = view.oldest_visible_bucket;
                                 view.expand();
+                                if view.oldest_visible_bucket != previous_bucket {
+                                    save_board_preferences(
+                                        include_ended,
+                                        linger_days,
+                                        view.oldest_visible_bucket,
+                                    );
+                                }
                                 needs_render = true;
                                 dirty = true;
                             }
                             KeyCode::Char('c') => {
+                                let previous_bucket = view.oldest_visible_bucket;
                                 view.collapse();
+                                if view.oldest_visible_bucket != previous_bucket {
+                                    save_board_preferences(
+                                        include_ended,
+                                        linger_days,
+                                        view.oldest_visible_bucket,
+                                    );
+                                }
                                 needs_render = true;
                                 dirty = true;
                             }
@@ -2613,7 +2770,11 @@ async fn board_loop(
                             // record, which includes ended sessions.
                             KeyCode::Char('a') => {
                                 include_ended = !include_ended;
-                                save_board_preferences(include_ended, linger_days);
+                                save_board_preferences(
+                                    include_ended,
+                                    linger_days,
+                                    view.oldest_visible_bucket,
+                                );
                                 cloud_fetch_due = true;
                                 scroll = 0;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
@@ -2718,6 +2879,9 @@ mod tests {
             additions: 0,
             deletions: 0,
             title: String::new(),
+            title_set_at: 0,
+            ghostty_tab: None,
+            slack_threads: Vec::new(),
             recap: None,
             state: SessionState::Ready,
             prompted_at: 0,
@@ -2794,6 +2958,7 @@ mod tests {
         .join("\n");
         let plain = crate::parsers::strip_ansi_for_debug(&frame);
         assert!(plain.lines().any(|line| line == "samuelclay/crabigator"));
+        assert!(frame.contains(&format!("{}samuelclay/crabigator", fg(color::YELLOW))));
         assert!(frame.contains("sam/pr-board-session-rows"));
         assert!(frame.contains("2 sessions"));
         assert!(!frame.contains("no tracked PR"));
@@ -2824,6 +2989,26 @@ mod tests {
         assert_eq!(cloud[0].session.session_id, "live-session");
         assert_eq!(cloud[0].additions, 12);
         assert_eq!(cloud[0].deletions, 3);
+    }
+
+    #[test]
+    fn cloud_titles_do_not_borrow_recap_timestamps() {
+        let cloud: crate::cloud::CloudBoard = serde_json::from_value(serde_json::json!({
+            "sessions": [{
+                "session_id": "cloud-session",
+                "dir_name": "crabigator",
+                "active": true,
+                "title": "A durable title",
+                "recap": {
+                    "headline": "A later recap",
+                    "generated_at": 1_234_567
+                }
+            }]
+        }))
+        .unwrap();
+
+        let (_, workspaces) = cloud_entries_to_board(cloud);
+        assert_eq!(workspaces[0].session.title_set_at, 0);
     }
 
     #[test]
@@ -3089,7 +3274,6 @@ mod tests {
         let mut view = BoardView::new(MAX_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET);
 
         for expected in [
-            (2, RecencyBucket::Older),
             (1, RecencyBucket::Older),
             (0, RecencyBucket::Older),
             (0, RecencyBucket::LastDay),
@@ -3111,13 +3295,12 @@ mod tests {
         for expected in [
             (1, RecencyBucket::LastHour),
             (2, RecencyBucket::LastHour),
-            (3, RecencyBucket::LastHour),
-            (3, RecencyBucket::LastThreeHours),
-            (3, RecencyBucket::LastSixHours),
-            (3, RecencyBucket::LastNineHours),
-            (3, RecencyBucket::LastTwelveHours),
-            (3, RecencyBucket::LastDay),
-            (3, RecencyBucket::Older),
+            (2, RecencyBucket::LastThreeHours),
+            (2, RecencyBucket::LastSixHours),
+            (2, RecencyBucket::LastNineHours),
+            (2, RecencyBucket::LastTwelveHours),
+            (2, RecencyBucket::LastDay),
+            (2, RecencyBucket::Older),
         ] {
             view.expand();
             assert_eq!((view.detail, view.oldest_visible_bucket), expected);
@@ -3125,7 +3308,33 @@ mod tests {
         view.expand();
         assert_eq!(
             (view.detail, view.oldest_visible_bucket),
-            (3, RecencyBucket::Older)
+            (2, RecencyBucket::Older)
+        );
+    }
+
+    #[test]
+    fn recency_preferences_round_trip_every_cutoff() {
+        for (hours, bucket) in [
+            (Some(1), RecencyBucket::LastHour),
+            (Some(3), RecencyBucket::LastThreeHours),
+            (Some(6), RecencyBucket::LastSixHours),
+            (Some(9), RecencyBucket::LastNineHours),
+            (Some(12), RecencyBucket::LastTwelveHours),
+            (Some(24), RecencyBucket::LastDay),
+            (None, RecencyBucket::Older),
+        ] {
+            assert_eq!(RecencyBucket::from_max_age_hours(hours), bucket);
+            assert_eq!(bucket.max_age_hours(), hours);
+        }
+        assert_eq!(
+            RecencyBucket::from_max_age_hours(Some(25)),
+            RecencyBucket::Older,
+            "invalid manual values safely show all ages"
+        );
+        assert_eq!(
+            BoardView::new(DEFAULT_DETAIL, RecencyBucket::from_max_age_hours(Some(9))),
+            BoardView::new(DEFAULT_DETAIL, RecencyBucket::LastNineHours),
+            "a saved cutoff still reopens in compact view"
         );
     }
 
@@ -3371,84 +3580,56 @@ mod tests {
     }
 
     #[test]
-    fn render_groups_by_repo_and_shows_the_judgment() {
+    fn title_carries_slack_and_recap_skips_the_removed_status_line() {
         let mut pr = board_pr(9, "portal");
+        make_primary(&mut pr);
         pr.title = "Fix the flow".to_string();
         pr.ai_note = "CI green, awaiting review".to_string();
         pr.ai_confidence = "medium".to_string();
-        pr.slack_origin_url = "https://t.slack.com/archives/C1/p1".to_string();
-
-        let entries = aggregate(
-            &[snapshot("one", vec![pr])],
-            &HashMap::new(),
-            DEFAULT_LINGER_DAYS,
-        );
-        let frame = render_frame_at(&entries, 1);
-        assert!(frame.contains("o/portal"));
-        assert!(frame.contains("CI green, awaiting review"));
-        assert!(frame.contains("slack origin"));
-        // Progress reads as a quiet bar — no percentage, no confidence prose.
-        assert!(frame.contains('▓'), "progress bar renders");
-        assert!(!frame.contains('%'), "bar carries no percentage");
-        assert!(
-            !frame.contains("confidence"),
-            "confidence prose replaced by the bar"
-        );
-        // Old-binary sessions report no mention counts; don't render "0 mentions".
-        assert!(!frame.contains("mentions"), "zero mentions stays silent");
-    }
-
-    #[test]
-    fn mention_counts_render_only_when_present() {
-        let mut pr = board_pr(9, "portal");
         pr.mentions = 12;
         pr.user_mentions = 3;
-        let entries = aggregate(
-            &[snapshot("one", vec![pr])],
-            &HashMap::new(),
-            DEFAULT_LINGER_DAYS,
-        );
-        let frame = render_frame_at(&entries, 1);
-        assert!(frame.contains("12 mentions (3 yours)"));
-    }
+        pr.slack_origin_url = "https://t.slack.com/archives/C1/p1723500000000000".to_string();
 
-    /// Several sessions often share a cwd; the board names each directory
-    /// once with a multiplier instead of a flickering per-session age list.
-    #[test]
-    fn sessions_dedupe_by_directory_without_ages() {
-        let mut pr = board_pr(9, "portal");
-        make_primary(&mut pr);
-        let mut first = snapshot("developer-portal", vec![pr.clone()]);
-        first.repo_name = "portal".to_string();
-        let mut second = snapshot("developer-portal", vec![pr.clone()]);
-        second.repo_name = "portal".to_string();
-        let mut builder = snapshot("builder-document-intent", vec![pr]);
-        builder.repo_name = "portal".to_string();
-        let entries = aggregate(
-            &[first, second, builder],
-            &HashMap::new(),
-            DEFAULT_LINGER_DAYS,
-        );
-        let text = sessions_text(&entries[0].sessions);
-        assert_eq!(text, "developer-portal ×2, builder-document-intent");
-
-        // A stopped mirror is tagged idle at minute granularity, never seconds.
-        let stale = vec![SessionRef {
-            session_id: "stale".to_string(),
-            dir_name: "old-worktree".to_string(),
-            session_dir: None,
-            age_secs: 1_260,
-            ended: false,
-            title: String::new(),
-            recap: None,
-            state: SessionState::Ready,
-            prompted_at: 0,
-            completed_at: 0,
+        let mut session = snapshot("one", vec![pr]);
+        session.repo_name = "portal".to_string();
+        session.title = "Builder Signals dashboard".to_string();
+        session.title_set_at = now_ms() - 2 * 60 * 60 * 1000;
+        session.uncommitted_files = 4;
+        session.slack_threads = vec![SlackThread {
+            url: "https://t.slack.com/archives/C1/p1723500000000000".to_string(),
+            posted_at: 1_723_500_000,
+            channel: Some("builder".to_string()),
+            author: Some("Sam Clay".to_string()),
         }];
-        let text = sessions_text(&stale);
-        assert!(text.contains("old-worktree"));
-        assert!(text.contains("idle 21m"));
-        assert!(!text.contains('s'), "no second-level ages: {text}");
+        let entries = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let title = render_frame_at(&entries, 1);
+        assert!(title.contains("Builder Signals"));
+        assert!(
+            title.contains("#builder"),
+            "{}",
+            crate::parsers::strip_ansi_for_debug(&title)
+        );
+        assert!(title.contains("https://t.slack.com/archives/C1/p1723500000000000"));
+        assert!(title.contains("2h"));
+        assert!(!title.contains("CI green, awaiting review"));
+        for removed in [
+            "slack origin",
+            "mentions",
+            "spoken",
+            "uncommitted",
+            "▓",
+            "%",
+        ] {
+            assert!(!title.contains(removed), "removed status text: {removed}");
+        }
+
+        let recap = render_frame_at(&entries, 2);
+        assert!(recap.contains("CI green, awaiting review"));
+        let judgment_line = recap
+            .lines()
+            .find(|line| line.contains("CI green, awaiting review"))
+            .unwrap();
+        assert!(!judgment_line.contains("#builder"));
     }
 
     /// Scanning artifacts stay hidden, while a classified primary remains
@@ -3547,22 +3728,6 @@ mod tests {
         );
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].pr.number, 3);
-    }
-
-    #[test]
-    fn merged_prs_show_a_full_bar_regardless_of_ai_opinion() {
-        let mut pr = board_pr(9, "portal");
-        pr.state = "MERGED".to_string();
-        pr.ai_confidence = "low".to_string();
-        assert_eq!(progress_percent(&pr), 100);
-
-        let mut open = board_pr(10, "portal");
-        open.review_decision = "APPROVED".to_string();
-        open.checks_total = 1;
-        open.checks_passed = 1;
-        assert_eq!(progress_percent(&open), 90, "ready to merge");
-        open.ai_confidence = "low".to_string();
-        assert_eq!(progress_percent(&open), 80, "low confidence nudges down");
     }
 
     #[test]
@@ -3667,15 +3832,14 @@ mod tests {
                 session_id: "portal".to_string(),
                 dir_name: "portal".to_string(),
                 session_dir: Some(dir.path().to_path_buf()),
-                age_secs: 10,
-                ended: false,
                 title: String::new(),
+                title_set_at: 0,
                 recap: None,
                 state: SessionState::Ready,
                 prompted_at: 0,
                 completed_at: 0,
             }],
-            uncommitted: 0,
+            slack_threads: Vec::new(),
             stale: false,
         };
 
@@ -3702,6 +3866,7 @@ mod tests {
         pr.mergeable = "MERGEABLE".to_string();
         let mut with_title = snapshot("portal", vec![pr.clone()]);
         with_title.title = "Wiring the PR board detail levels".to_string();
+        with_title.title_set_at = now_ms() - 2 * 60 * 60 * 1000;
         with_title.prompted_at = now_secs() as u64 - 30 * 60;
         with_title.completed_at = now_secs() as u64 - 2 * 60 * 60;
         with_title.recap = Some(RecapBrief {
@@ -3718,9 +3883,8 @@ mod tests {
         aggregate(&[with_title, bare], &HashMap::new(), DEFAULT_LINGER_DAYS)
     }
 
-    /// `e` steps through four detail levels: compact keeps only the identity
-    /// row; status adds progress; title adds each session's terminal title;
-    /// recap adds the latest recap headline. Activity stays on the main row.
+    /// `e` steps through compact, title, and recap. Each step adds at most one
+    /// line per PR, and expanded timestamps stay in the activity column.
     #[test]
     fn detail_levels_reveal_titles_then_recaps() {
         let entries = titled_entries();
@@ -3733,42 +3897,73 @@ mod tests {
         assert!(compact.contains("⟩ 30m"));
         assert!(compact.contains("⋖ 2h"));
 
-        let status = render_frame_at(&entries, 1);
-        assert!(status.contains('▓'), "progress bar returns");
-        assert!(status.contains("status"), "header names the default level");
+        let title = render_frame_at(&entries, 1);
+        assert!(title.contains("Wiring the PR board"));
         assert!(
-            !status.contains("Wiring the PR board"),
-            "titles wait for level 2"
-        );
-        assert!(status.contains("⟩ 30m"));
-        assert!(status.contains("⋖ 2h"));
-
-        let titles = render_frame_at(&entries, 2);
-        assert!(titles.contains("Wiring the PR board detail levels"));
-        assert!(
-            crate::parsers::strip_ansi_for_debug(&titles).contains(" · title"),
+            crate::parsers::strip_ansi_for_debug(&title).contains(" · title"),
             "header uses the level name"
         );
-        assert!(titles.contains("⟩ 30m"));
-        assert!(titles.contains("⋖ 2h"));
+        assert!(title.contains("⟩ 30m"));
+        assert!(title.contains("⋖ 2h"));
         assert!(
-            !titles.contains("Added e-cycled detail"),
-            "recaps wait for level 3"
+            !title.contains("Added e-cycled detail"),
+            "recaps wait for level 2"
         );
 
-        let recaps = render_frame_at(&entries, 3);
-        assert!(recaps.contains("Wiring the PR board detail levels"));
-        assert!(recaps.contains("Added e-cycled detail to the prs board"));
-        // The recap line carries the turn's diff and its staleness.
+        let recaps = render_frame_at(&entries, 2);
+        assert!(recaps.contains("Wiring the PR board"));
+        assert!(recaps.contains("Added e-cycled"));
+        // The recap line carries the turn's diff and compact age.
         assert!(recaps.contains("+120"), "recap shows the line delta");
         assert!(recaps.contains("-35"));
-        assert!(recaps.contains("42m ago"), "recap shows its age");
+        assert!(recaps.contains("42m"), "recap shows its age");
+        assert!(!recaps.contains("ago"), "expanded ages stay compact");
         assert!(
             crate::parsers::strip_ansi_for_debug(&recaps).contains(" · recap"),
             "header uses the level name"
         );
         assert!(recaps.contains("⟩ 30m"));
         assert!(recaps.contains("⋖ 2h"));
+
+        let counts = [
+            compact.lines().count(),
+            title.lines().count(),
+            recaps.lines().count(),
+        ];
+        assert_eq!(counts[1], counts[0] + 1, "title adds one line");
+        assert_eq!(counts[2], counts[1] + 1, "recap adds one line");
+
+        let compact_line = recaps.lines().find(|line| line.contains("#9")).unwrap();
+        let title_line = recaps
+            .lines()
+            .find(|line| line.contains("Wiring the PR board"))
+            .unwrap();
+        let recap_line = recaps
+            .lines()
+            .find(|line| line.contains("Added e-cycled"))
+            .unwrap();
+        assert!(
+            crate::parsers::strip_ansi_for_debug(title_line).starts_with("   ⌾ "),
+            "title starts three spaces in"
+        );
+        assert!(
+            crate::parsers::strip_ansi_for_debug(recap_line).starts_with("   ↪ "),
+            "recap shares the title indentation"
+        );
+        let visible_end = |line: &str, needle: &str| {
+            let byte = line.rfind(needle).unwrap();
+            crate::ui::utils::strip_ansi_len(&line[..byte]) + needle.width()
+        };
+        assert_eq!(
+            visible_end(compact_line, "2h"),
+            visible_end(title_line, "2h"),
+            "title age ends in the compact activity column"
+        );
+        assert_eq!(
+            visible_end(compact_line, "2h"),
+            visible_end(recap_line, "42m"),
+            "recap age ends in the compact activity column"
+        );
 
         let row = crate::parsers::strip_ansi_for_debug(&compact);
         assert!(
@@ -3817,9 +4012,8 @@ mod tests {
                 session_id: "older".to_string(),
                 dir_name: "older".to_string(),
                 session_dir: None,
-                age_secs: 0,
-                ended: false,
                 title: String::new(),
+                title_set_at: 0,
                 recap: None,
                 state: SessionState::Complete,
                 prompted_at: now - 4 * 60 * 60,
@@ -3829,9 +4023,8 @@ mod tests {
                 session_id: "newer".to_string(),
                 dir_name: "newer".to_string(),
                 session_dir: None,
-                age_secs: 0,
-                ended: false,
                 title: String::new(),
+                title_set_at: 0,
                 recap: None,
                 state: SessionState::Thinking,
                 prompted_at: now - 30 * 60,
@@ -3878,9 +4071,8 @@ mod tests {
                 session_id: "state".to_string(),
                 dir_name: "state".to_string(),
                 session_dir: None,
-                age_secs: 0,
-                ended: false,
                 title: String::new(),
+                title_set_at: 0,
                 recap: None,
                 state,
                 prompted_at: 1,
@@ -3896,9 +4088,8 @@ mod tests {
             session_id: "thinking".to_string(),
             dir_name: "thinking".to_string(),
             session_dir: None,
-            age_secs: 0,
-            ended: false,
             title: String::new(),
+            title_set_at: 0,
             recap: None,
             state: SessionState::Thinking,
             prompted_at: 1,
@@ -3917,7 +4108,7 @@ mod tests {
     fn recap_view_shows_standalone_session_recap_without_repeating_its_title() {
         let now = now_secs() as u64;
         let mut session = snapshot("crabigator", Vec::new());
-        session.title = "Standalone work".to_string();
+        session.title = "⟁  Standalone work".to_string();
         session.recap = Some(RecapBrief {
             headline: "Kept standalone rows visible".to_string(),
             generated_at: now * 1000,
@@ -3935,20 +4126,41 @@ mod tests {
             })
             .collect();
 
-        let frame = crate::parsers::strip_ansi_for_debug(
-            &render(
-                &[],
-                &rows,
-                160,
-                DEFAULT_LINGER_DAYS,
-                false,
-                BoardView::new(MAX_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET),
-            )
-            .join("\n"),
-        );
+        let styled = render(
+            &[],
+            &rows,
+            160,
+            DEFAULT_LINGER_DAYS,
+            false,
+            BoardView::new(MAX_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET),
+        )
+        .join("\n");
+        assert!(styled.contains(&format!("{}◇ ⟁  Standalone work", fg(color::PURPLE))));
+        assert!(styled.contains(&format!("{}Kept standalone rows visible", fg(color::GRAY))));
+        let frame = crate::parsers::strip_ansi_for_debug(&styled);
         assert_eq!(frame.matches("Standalone work").count(), 1);
+        assert!(frame.contains("⟁  Standalone work"));
         assert!(frame.contains("↪ Kept standalone rows visible"));
         assert!(frame.contains("+8 -2"));
+    }
+
+    #[test]
+    fn untitled_standalone_session_uses_primary_identity_color() {
+        let workspaces = local_workspaces(&[snapshot("crabigator", Vec::new())], &[]);
+        let rows = [WorkspaceRow {
+            entry: &workspaces[0],
+            preview_lines: Vec::new(),
+        }];
+        let styled = render(
+            &[],
+            &rows,
+            160,
+            DEFAULT_LINGER_DAYS,
+            false,
+            BoardView::default(),
+        )
+        .join("\n");
+        assert!(styled.contains(&format!("{}◇ crabigator", fg(color::PURPLE))));
     }
 
     #[test]
@@ -3957,9 +4169,8 @@ mod tests {
             session_id: "one".to_string(),
             dir_name: "crabigator".to_string(),
             session_dir: None,
-            age_secs: 0,
-            ended: false,
             title: String::new(),
+            title_set_at: 0,
             recap: None,
             state: SessionState::Ready,
             prompted_at: 200,
@@ -4106,57 +4317,37 @@ mod tests {
         );
     }
 
-    /// Sessions with neither a title nor a recap contribute no detail lines,
-    /// and duplicate (dir, title, recap) triples collapse to one.
     #[test]
-    fn session_detail_lines_skip_empty_and_dedupe() {
-        let entries = titled_entries();
-        let now = now_ms();
-        let lines = session_detail_lines(&entries[0].sessions, 160, 3, now);
-        assert_eq!(lines.len(), 2, "one title line + one recap line: {lines:?}");
-        assert!(lines[0].contains("portal"));
-        assert!(lines[0].contains("ago"), "title line carries its age");
-        assert!(lines[1].contains("Added e-cycled detail"));
+    fn title_expansion_uses_only_the_newest_title() {
+        let mut entries = titled_entries();
+        let mut newer = entries[0].sessions[0].clone();
+        newer.session_id = "newer-session".to_string();
+        newer.dir_name = "other-worktree".to_string();
+        newer.title = "⟁  A newer terminal title".to_string();
+        newer.title_set_at = now_ms() - 30 * 60 * 1000;
+        newer.recap = None;
+        entries[0].sessions.push(newer);
 
-        let doubled: Vec<SessionRef> = entries[0]
-            .sessions
-            .iter()
-            .chain(entries[0].sessions.iter())
-            .map(|s| SessionRef {
-                session_id: s.session_id.clone(),
-                dir_name: s.dir_name.clone(),
-                session_dir: s.session_dir.clone(),
-                age_secs: s.age_secs,
-                ended: s.ended,
-                title: s.title.clone(),
-                recap: s.recap.clone(),
-                state: s.state,
-                prompted_at: s.prompted_at,
-                completed_at: s.completed_at,
-            })
-            .collect();
-        assert_eq!(session_detail_lines(&doubled, 160, 3, now).len(), 2);
+        let frame = render_frame_at(&entries, 1);
+        assert!(frame.contains("A newer terminal title"));
+        assert!(frame.contains("⌾ ⟁  A newer terminal title"));
+        assert!(frame.contains(&format!("{}  ⌾ ⟁  A newer", fg(color::CYAN))));
+        assert!(!frame.contains("Wiring the PR board detail levels"));
+        assert!(!frame.contains("other-worktree"));
 
-        // At level 2 a recap-only session shows nothing yet.
-        let recap_only = vec![SessionRef {
-            session_id: "quiet".to_string(),
-            dir_name: "quiet".to_string(),
-            session_dir: None,
-            age_secs: 5,
-            ended: false,
-            title: String::new(),
-            recap: Some(RecapBrief {
-                headline: "Half-finished refactor".to_string(),
-                generated_at: 0,
-                line_delta: crate::recap::TurnLineDelta::default(),
-            }),
-            state: SessionState::Complete,
-            prompted_at: 0,
-            completed_at: 0,
-        }];
-        assert!(session_detail_lines(&recap_only, 160, 2, now).is_empty());
-        let at_three = session_detail_lines(&recap_only, 160, 3, now);
-        assert_eq!(at_three.len(), 2, "dir header plus recap line");
-        assert!(at_three[1].contains("Half-finished refactor"));
+        for session in &mut entries[0].sessions {
+            session.title.clear();
+        }
+        entries[0].slack_threads.clear();
+        assert_eq!(
+            render_frame_at(&entries, 1).lines().count(),
+            render_frame_at(&entries, 0).lines().count(),
+            "an empty title adds no blank row"
+        );
+        assert!(
+            render_frame_at(&entries, 2).contains("Added e-cycled"),
+            "recap remains available without a title: {}",
+            crate::parsers::strip_ansi_for_debug(&render_frame_at(&entries, 2))
+        );
     }
 }

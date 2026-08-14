@@ -18,6 +18,7 @@ use crate::parsers::{ChangeType, DiffSummary};
 use crate::pr::SessionPr;
 use crate::recap::{RecapState, TurnRecap};
 use crate::slack::SlackThread;
+use crate::terminal::ghostty::GhosttyContext;
 
 /// Minimum interval between publishes (1 second)
 const PUBLISH_INTERVAL: Duration = Duration::from_secs(1);
@@ -42,7 +43,13 @@ pub struct MirrorState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
     pub cwd: String,
+    /// Stable live Ghostty surface IDs captured when this session starts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ghostty: Option<GhosttyContext>,
     pub terminal_title: Option<String>,
+    /// Unix ms when `terminal_title` last changed in this session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_title_changed_at: Option<u64>,
     /// All terminal titles from this session (for history display)
     pub title_history: Vec<String>,
     /// Current recap state (status, latest, line delta).
@@ -169,6 +176,9 @@ pub struct MirrorPublisher {
     slack_origin: Option<String>,
     slack_threads: Vec<SlackThread>,
     cwd: String,
+    ghostty: Option<GhosttyContext>,
+    terminal_title: Option<String>,
+    terminal_title_changed_at: Option<u64>,
     capture: CaptureMirror,
     last_publish: Instant,
     last_hash: u64,
@@ -193,6 +203,9 @@ impl MirrorPublisher {
             slack_origin: None,
             slack_threads: Vec::new(),
             cwd,
+            ghostty: GhosttyContext::focused(),
+            terminal_title: None,
+            terminal_title_changed_at: None,
             capture,
             // Allow immediate first publish
             last_publish: Instant::now() - Duration::from_secs(10),
@@ -269,6 +282,11 @@ impl MirrorPublisher {
         initial_git_time_ms: Option<u64>,
         initial_diff_time_ms: Option<u64>,
     ) -> Result<bool> {
+        if self.terminal_title.as_deref() != terminal_title {
+            self.terminal_title = terminal_title.map(str::to_string);
+            self.terminal_title_changed_at = terminal_title.and_then(|_| title_changed_at_ms());
+            self.last_hash = 0;
+        }
         if !self.enabled {
             return Ok(false);
         }
@@ -457,7 +475,9 @@ impl MirrorPublisher {
             cloud_session_id: self.cloud_session_id.clone(),
             transcript_path: self.transcript_path.clone(),
             cwd: self.cwd.clone(),
+            ghostty: self.ghostty.clone(),
             terminal_title: terminal_title.map(String::from),
+            terminal_title_changed_at: self.terminal_title_changed_at,
             title_history: title_history.to_vec(),
             recap: recap.cloned(),
             recap_history: recap_history.to_vec(),
@@ -540,6 +560,23 @@ impl MirrorPublisher {
             let _ = fs::remove_file(self.mirror_path());
         }
     }
+}
+
+#[cfg(not(test))]
+fn title_changed_at_ms() -> Option<u64> {
+    Some(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+    )
+}
+
+// Fixture snapshots must stay deterministic. PR-board tests cover explicit
+// title timestamps without making every mirror fixture depend on the clock.
+#[cfg(test)]
+fn title_changed_at_ms() -> Option<u64> {
+    None
 }
 
 // Preview rendering functions (ANSI-stripped text)
