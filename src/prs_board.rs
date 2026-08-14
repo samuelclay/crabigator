@@ -61,7 +61,7 @@ const PREVIEW_CONTEXT: usize = 2;
 /// Keep the first load visibly progressive without stretching it out.
 const INITIAL_LOAD_BATCH: usize = 4;
 /// Detail levels `e`/`c` expand and collapse through: 0 = compact (one line
-/// per PR), 1 = + title and Slack link lines, 2 = + one recap line.
+/// per PR), 1 = + title and Slack link lines, 2 = + every available recap line.
 const MAX_DETAIL: u8 = 2;
 const DEFAULT_DETAIL: u8 = 0;
 
@@ -2077,27 +2077,28 @@ fn recap_line(
     )
 }
 
-fn pr_recap_detail_line(
+fn pr_recap_detail_lines(
     entry: &BoardPr,
     width: u16,
     now_ms: u64,
     activity_width: usize,
     widths: &PrColumnWidths,
-) -> Option<String> {
+) -> Vec<String> {
     let recap = latest_recap(&entry.sessions);
+    let mut lines = Vec::with_capacity(2);
     if !entry.pr.ai_note.is_empty() && entry.pr.state == "OPEN" {
-        return Some(recap_line(
+        lines.push(recap_line(
             RecapLineKind::Judgment,
             &entry.pr.ai_note,
-            recap,
+            None,
             width,
             now_ms,
             activity_width,
             widths,
         ));
     }
-    recap.map(|recap| {
-        recap_line(
+    if let Some(recap) = recap {
+        lines.push(recap_line(
             RecapLineKind::Recap,
             &recap.headline,
             Some(recap),
@@ -2105,8 +2106,9 @@ fn pr_recap_detail_line(
             now_ms,
             activity_width,
             widths,
-        )
-    })
+        ));
+    }
+    lines
 }
 
 fn recap_detail_line(
@@ -2178,9 +2180,13 @@ fn render_pr_board_row(
         widths,
     ));
     if detail >= 2 {
-        if let Some(recap) = pr_recap_detail_line(entry, width, now_ms, activity_width, widths) {
-            lines.push(recap);
-        }
+        lines.extend(pr_recap_detail_lines(
+            entry,
+            width,
+            now_ms,
+            activity_width,
+            widths,
+        ));
     }
     lines.extend(board_row.preview_lines.iter().cloned());
     lines
@@ -4238,6 +4244,7 @@ mod tests {
         let mut pr = board_pr(9, "portal");
         make_primary(&mut pr);
         pr.mergeable = "MERGEABLE".to_string();
+        pr.ai_note = "Open and ready for review".to_string();
         let mut with_title = snapshot("portal", vec![pr.clone()]);
         with_title.title = "Wiring the PR board detail levels".to_string();
         with_title.title_set_at = now_ms() - 2 * 60 * 60 * 1000;
@@ -4257,8 +4264,8 @@ mod tests {
         aggregate(&[with_title, bare], &HashMap::new(), DEFAULT_LINGER_DAYS)
     }
 
-    /// `e` steps through compact, title, and recap. Each step adds at most one
-    /// line per PR, and expanded timestamps stay in the activity column.
+    /// `e` steps through compact, title, and recap. The recap view keeps both
+    /// the PR judgment and session recap, with timestamps in the activity column.
     #[test]
     fn detail_levels_reveal_titles_then_recaps() {
         let entries = titled_entries();
@@ -4280,12 +4287,17 @@ mod tests {
         assert!(title.contains("⟩ 30m"));
         assert!(title.contains("⋖ 2h"));
         assert!(
+            !title.contains("Open and ready for review"),
+            "judgments wait for level 2"
+        );
+        assert!(
             !title.contains("Added e-cycled detail"),
             "recaps wait for level 2"
         );
 
         let recaps = render_frame_at(&entries, 2);
         assert!(recaps.contains("Wiring the PR board"));
+        assert!(recaps.contains("Open and ready for review"));
         assert!(recaps.contains("Added e-cycled"));
         // The recap line carries the turn's diff and compact age.
         assert!(recaps.contains("+120"), "recap shows the line delta");
@@ -4305,7 +4317,11 @@ mod tests {
             recaps.lines().count(),
         ];
         assert_eq!(counts[1], counts[0] + 1, "title adds one line");
-        assert_eq!(counts[2], counts[1] + 1, "recap adds one line");
+        assert_eq!(
+            counts[2],
+            counts[1] + 2,
+            "recap view keeps the judgment and recap"
+        );
 
         let compact_line = recaps.lines().find(|line| line.contains("#9")).unwrap();
         let title_line = recaps
@@ -4316,6 +4332,10 @@ mod tests {
             .lines()
             .find(|line| line.contains("Added e-cycled"))
             .unwrap();
+        let judgment_line = recaps
+            .lines()
+            .find(|line| line.contains("Open and ready for review"))
+            .unwrap();
         assert!(
             crate::parsers::strip_ansi_for_debug(title_line).starts_with("   ⌾ "),
             "title starts three spaces in"
@@ -4324,6 +4344,12 @@ mod tests {
             crate::parsers::strip_ansi_for_debug(recap_line).starts_with("   ↪ "),
             "recap shares the title indentation"
         );
+        assert!(
+            crate::parsers::strip_ansi_for_debug(judgment_line).starts_with("   ✦ "),
+            "the PR judgment remains a separate line"
+        );
+        assert!(!judgment_line.contains("+120"));
+        assert!(!judgment_line.contains("42m"));
         let visible_end = |line: &str, needle: &str| {
             let byte = line.rfind(needle).unwrap();
             crate::ui::utils::strip_ansi_len(&line[..byte]) + needle.width()
