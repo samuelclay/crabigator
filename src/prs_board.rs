@@ -16,6 +16,7 @@ use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::{stdout, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -57,6 +58,8 @@ const TRANSCRIPT_QUERY_MIN: usize = 3;
 const PREVIEW_MATCHES: usize = 3;
 /// Transcript lines shown either side of a match in the expanded preview.
 const PREVIEW_CONTEXT: usize = 2;
+/// Keep the first load visibly progressive without stretching it out.
+const INITIAL_LOAD_BATCH: usize = 4;
 /// Detail levels `e`/`c` expand and collapse through: 0 = compact (one line
 /// per PR), 1 = + title and Slack link lines, 2 = + one recap line.
 const MAX_DETAIL: u8 = 2;
@@ -380,108 +383,162 @@ impl Default for ActivityHistory {
 fn gather(activity_history: &mut ActivityHistory) -> Result<Vec<SessionSnapshot>> {
     let mut snapshots = Vec::new();
     for (path, data) in crate::inspect::discover_instances(&None)? {
-        let last_updated = data
-            .get("last_updated")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        if now_secs() - last_updated > STALE_SESSION_SECS {
-            continue;
+        if let Some(snapshot) = snapshot_from_instance(path, data, activity_history) {
+            snapshots.push(snapshot);
         }
-        if let Some(transcript_path) = data
-            .get("transcript_path")
-            .and_then(|value| value.as_str())
-            .filter(|path| !path.is_empty())
-        {
-            activity_history.scan_slack_metadata(Path::new(transcript_path));
-        }
-        let prs: Vec<SessionPr> = data
-            .get("prs")
-            .cloned()
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default();
-        let git = data.pointer("/widgets/git/data");
-        let files = git.and_then(|g| g.get("files")).and_then(|v| v.as_array());
-        let activity = activity_times(&data, activity_history);
-        let cwd = data.get("cwd").and_then(|v| v.as_str()).unwrap_or_default();
-        let (repo_owner, repo_name) = activity_history.repository_identity(&data, cwd);
-        let title = data
-            .get("terminal_title")
-            .and_then(|v| v.as_str())
-            .or_else(|| {
-                data.get("title_history")
-                    .and_then(|v| v.as_array())
-                    .and_then(|titles| titles.last())
-                    .and_then(|v| v.as_str())
-            })
-            .unwrap_or_default()
-            .to_string();
-        let latest_recap = data.pointer("/recap/latest").or_else(|| {
-            data.get("recap_history")
-                .and_then(|v| v.as_array())
-                .and_then(|recaps| recaps.last())
-        });
-        let title_set_at = data
-            .get("terminal_title_changed_at")
-            .and_then(|value| value.as_u64())
-            .unwrap_or(0);
-        let slack_threads: Vec<SlackThread> = data
-            .get("slack_threads")
-            .cloned()
-            .and_then(|value| serde_json::from_value(value).ok())
-            .unwrap_or_default();
-        let ghostty_tab = data.get("ghostty").and_then(|ghostty| {
-            let id = ghostty.get("tab_id")?.as_str()?;
-            let name = ghostty
-                .get("tab_name")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default();
-            Some(GhosttyTabRef {
-                id: id.to_string(),
-                name: name.to_string(),
-            })
-        });
-        snapshots.push(SessionSnapshot {
-            session_id: data
-                .get("cloud_session_id")
-                .and_then(|v| v.as_str())
-                .or_else(|| data.get("session_id").and_then(|v| v.as_str()))
-                .unwrap_or_default()
-                .to_string(),
-            session_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
-            dir_name: cwd.rsplit('/').next().unwrap_or_default().to_string(),
-            repo_owner,
-            repo_name,
-            last_updated,
-            branch: git
-                .and_then(|g| g.get("branch"))
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            uncommitted_files: files.map_or(0, Vec::len),
-            additions: files.map_or(0, |files| {
-                files
-                    .iter()
-                    .filter_map(|file| file.get("additions").and_then(|value| value.as_i64()))
-                    .sum()
-            }),
-            deletions: files.map_or(0, |files| {
-                files
-                    .iter()
-                    .filter_map(|file| file.get("deletions").and_then(|value| value.as_i64()))
-                    .sum()
-            }),
-            title,
-            title_set_at,
-            ghostty_tab,
-            slack_threads,
-            recap: latest_recap.and_then(recap_brief_from),
-            state: mirror_session_state(&data),
-            prompted_at: activity.prompted_at,
-            completed_at: activity.completed_at,
-            prs,
-        });
     }
     Ok(snapshots)
+}
+
+fn snapshot_from_instance(
+    path: PathBuf,
+    data: serde_json::Value,
+    activity_history: &mut ActivityHistory,
+) -> Option<SessionSnapshot> {
+    let last_updated = data
+        .get("last_updated")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    if now_secs() - last_updated > STALE_SESSION_SECS {
+        return None;
+    }
+    if let Some(transcript_path) = data
+        .get("transcript_path")
+        .and_then(|value| value.as_str())
+        .filter(|path| !path.is_empty())
+    {
+        activity_history.scan_slack_metadata(Path::new(transcript_path));
+    }
+    let prs: Vec<SessionPr> = data
+        .get("prs")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let git = data.pointer("/widgets/git/data");
+    let files = git.and_then(|g| g.get("files")).and_then(|v| v.as_array());
+    let activity = activity_times(&data, activity_history);
+    let cwd = data.get("cwd").and_then(|v| v.as_str()).unwrap_or_default();
+    let (repo_owner, repo_name) = activity_history.repository_identity(&data, cwd);
+    let title = data
+        .get("terminal_title")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            data.get("title_history")
+                .and_then(|v| v.as_array())
+                .and_then(|titles| titles.last())
+                .and_then(|v| v.as_str())
+        })
+        .unwrap_or_default()
+        .to_string();
+    let latest_recap = data.pointer("/recap/latest").or_else(|| {
+        data.get("recap_history")
+            .and_then(|v| v.as_array())
+            .and_then(|recaps| recaps.last())
+    });
+    let title_set_at = data
+        .get("terminal_title_changed_at")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let mut slack_threads: Vec<SlackThread> = data
+        .get("slack_threads")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default();
+    for pr in &prs {
+        let urls = std::iter::once(pr.slack_origin_url.as_str())
+            .chain(pr.slack_comment_urls.iter().map(String::as_str))
+            .filter(|url| !url.is_empty());
+        for url in urls {
+            if slack_threads.iter().any(|thread| thread.url == url) {
+                continue;
+            }
+            if let Some(thread) = crate::slack::extract_threads(url).into_iter().next() {
+                slack_threads.push(thread);
+            }
+        }
+    }
+    for thread in &mut slack_threads {
+        activity_history.slack_directory.enrich_thread(thread);
+    }
+    let ghostty_tab = data.get("ghostty").and_then(|ghostty| {
+        let id = ghostty.get("tab_id")?.as_str()?;
+        let name = ghostty
+            .get("tab_name")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        Some(GhosttyTabRef {
+            id: id.to_string(),
+            name: name.to_string(),
+        })
+    });
+    Some(SessionSnapshot {
+        session_id: data
+            .get("cloud_session_id")
+            .and_then(|v| v.as_str())
+            .or_else(|| data.get("session_id").and_then(|v| v.as_str()))
+            .unwrap_or_default()
+            .to_string(),
+        session_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
+        dir_name: cwd.rsplit('/').next().unwrap_or_default().to_string(),
+        repo_owner,
+        repo_name,
+        last_updated,
+        branch: git
+            .and_then(|g| g.get("branch"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        uncommitted_files: files.map_or(0, Vec::len),
+        additions: files.map_or(0, |files| {
+            files
+                .iter()
+                .filter_map(|file| file.get("additions").and_then(|value| value.as_i64()))
+                .sum()
+        }),
+        deletions: files.map_or(0, |files| {
+            files
+                .iter()
+                .filter_map(|file| file.get("deletions").and_then(|value| value.as_i64()))
+                .sum()
+        }),
+        title,
+        title_set_at,
+        ghostty_tab,
+        slack_threads,
+        recap: latest_recap.and_then(recap_brief_from),
+        state: mirror_session_state(&data),
+        prompted_at: activity.prompted_at,
+        completed_at: activity.completed_at,
+        prs,
+    })
+}
+
+enum InitialLoadUpdate {
+    Snapshot(Box<SessionSnapshot>),
+    Complete(Box<ActivityHistory>),
+}
+
+fn start_initial_local_load() -> mpsc::Receiver<InitialLoadUpdate> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut history = ActivityHistory::default();
+        let Ok(instances) = crate::inspect::discover_instances(&None) else {
+            let _ = tx.send(InitialLoadUpdate::Complete(Box::new(history)));
+            return;
+        };
+        for (path, data) in instances {
+            if let Some(snapshot) = snapshot_from_instance(path, data, &mut history) {
+                if tx
+                    .send(InitialLoadUpdate::Snapshot(Box::new(snapshot)))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+        let _ = tx.send(InitialLoadUpdate::Complete(Box::new(history)));
+    });
+    rx
 }
 
 fn parse_session_state(value: &str) -> Option<SessionState> {
@@ -2160,7 +2217,6 @@ fn render(
     include_ended: bool,
     view: BoardView,
 ) -> Vec<String> {
-    let now_ms = (now_secs() * 1000.0) as u64;
     render_at(
         rows,
         workspace_rows,
@@ -2168,8 +2224,17 @@ fn render(
         linger_days,
         include_ended,
         view,
-        now_ms,
+        RenderState {
+            now_ms: (now_secs() * 1000.0) as u64,
+            loading: false,
+        },
     )
+}
+
+#[derive(Clone, Copy)]
+struct RenderState {
+    now_ms: u64,
+    loading: bool,
 }
 
 fn render_at(
@@ -2179,8 +2244,9 @@ fn render_at(
     linger_days: u64,
     include_ended: bool,
     view: BoardView,
-    now_ms: u64,
+    state: RenderState,
 ) -> Vec<String> {
+    let RenderState { now_ms, loading } = state;
     let BoardView {
         detail,
         oldest_visible_bucket,
@@ -2274,7 +2340,21 @@ fn render_at(
         ),
         String::new(),
     ];
+    if loading {
+        let spinner = crate::ui::session_state_icon(SessionState::Thinking, throbber_frame);
+        lines.push(format!(
+            "{} {}Loading live sessions… {} found{}",
+            spinner,
+            fg(color::CYAN),
+            session_count,
+            RESET_FG,
+        ));
+        lines.push(String::new());
+    }
     if visible_row_indices.is_empty() && visible_workspace_indices.is_empty() {
+        if loading {
+            return lines;
+        }
         lines.push(format!(
             "{}No live sessions or tracked PRs.{}",
             fg(color::GRAY),
@@ -2463,12 +2543,10 @@ impl Drop for PrBoardTerminalGuard {
 
 /// Entry point for `crabigator prs`.
 pub async fn run_prs_board(once: bool) -> Result<()> {
-    let mut overrides = crate::cloud::fetch_pr_overrides_standalone()
-        .await
-        .unwrap_or_default();
-    let mut overrides_fetched = Instant::now();
-
     if once {
+        let overrides = crate::cloud::fetch_pr_overrides_standalone()
+            .await
+            .unwrap_or_default();
         let width = terminal_size().map(|(w, _)| w).unwrap_or(120);
         let mut activity_history = ActivityHistory::default();
         let (entries, workspaces) =
@@ -2506,7 +2584,19 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
     execute!(out, EnterAlternateScreen, EnableBracketedPaste)?;
     write!(out, "{}", escape::CURSOR_HIDE)?;
     out.flush()?;
-    board_loop(&mut out, &mut overrides, &mut overrides_fetched).await
+    let mut overrides = HashMap::new();
+    let overrides_fetch = start_overrides_fetch();
+    board_loop(&mut out, &mut overrides, overrides_fetch).await
+}
+
+fn start_overrides_fetch() -> mpsc::Receiver<HashMap<String, PrDisposition>> {
+    let (tx, rx) = mpsc::channel();
+    tokio::spawn(async move {
+        if let Ok(overrides) = crate::cloud::fetch_pr_overrides_standalone().await {
+            let _ = tx.send(overrides);
+        }
+    });
+    rx
 }
 
 /// Identity of one rendered frame, so an unchanged board isn't repainted.
@@ -2574,23 +2664,25 @@ fn save_board_preferences(
 async fn board_loop(
     out: &mut std::io::Stdout,
     overrides: &mut HashMap<String, PrDisposition>,
-    overrides_fetched: &mut Instant,
+    overrides_fetch: mpsc::Receiver<HashMap<String, PrDisposition>>,
 ) -> Result<()> {
-    let mut last_frame_hash = 0u64;
     let mut drawn_lines: Vec<String> = Vec::new();
-    let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
+    let mut last_refresh = Instant::now();
     let mut entries: Vec<BoardPr> = Vec::new();
     let mut workspaces: Vec<WorkspaceEntry> = Vec::new();
     let mut durable_workspaces: Vec<WorkspaceEntry> = Vec::new();
     let mut durable_history_loaded = false;
-    let mut lines: Vec<String> = Vec::new();
     let mut matched = 0usize;
     let mut scroll: usize = 0;
     let mut search: Option<String> = None;
     // Transcript search state: cached scrollbacks plus the Tab-toggled
     // context view for the inline previews.
     let mut transcripts = TranscriptCache::default();
-    let mut activity_history = ActivityHistory::default();
+    let mut activity_history = None;
+    let mut initial_snapshots = Vec::new();
+    let mut loading = true;
+    let mut pending_overrides = Some(overrides_fetch);
+    let mut overrides_fetched = Instant::now();
     let mut expanded = false;
     let preferences = crate::config::Config::load().unwrap_or_default().pr_board;
     let mut view = BoardView::new(
@@ -2607,15 +2699,80 @@ async fn board_loop(
     let mut needs_render = false;
     let mut last_throbber_frame = crate::ui::throbber_frame_index();
 
+    let (initial_width, _) = terminal_size().unwrap_or((120, 40));
+    let mut lines = render_at(
+        &[],
+        &[],
+        initial_width,
+        linger_days,
+        include_ended,
+        view,
+        RenderState {
+            now_ms: (now_secs() * 1000.0) as u64,
+            loading: true,
+        },
+    );
+    let mut last_frame_hash = frame_hash(&lines);
+    draw_changed_lines(out, &mut drawn_lines, &lines)?;
+    out.flush()?;
+    let mut initial_load = Some(start_initial_local_load());
+
     loop {
-        if last_refresh.elapsed() >= REFRESH_INTERVAL {
-            last_refresh = Instant::now();
-            if overrides_fetched.elapsed() >= OVERRIDES_REFRESH {
-                *overrides_fetched = Instant::now();
-                if let Ok(fresh) = crate::cloud::fetch_pr_overrides_standalone().await {
+        if let Some(rx) = pending_overrides.as_ref() {
+            match rx.try_recv() {
+                Ok(fresh) => {
                     *overrides = fresh;
+                    pending_overrides = None;
+                    if loading {
+                        entries = aggregate(&initial_snapshots, overrides, linger_days);
+                        workspaces = local_workspaces(&initial_snapshots, &entries);
+                        needs_render = true;
+                    } else {
+                        last_refresh = Instant::now() - REFRESH_INTERVAL;
+                    }
+                }
+                Err(mpsc::TryRecvError::Disconnected) => pending_overrides = None,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if pending_overrides.is_none() && overrides_fetched.elapsed() >= OVERRIDES_REFRESH {
+            overrides_fetched = Instant::now();
+            pending_overrides = Some(start_overrides_fetch());
+        }
+
+        let mut initial_finished = false;
+        if let Some(rx) = initial_load.as_ref() {
+            for _ in 0..INITIAL_LOAD_BATCH {
+                match rx.try_recv() {
+                    Ok(InitialLoadUpdate::Snapshot(snapshot)) => {
+                        initial_snapshots.push(*snapshot);
+                        entries = aggregate(&initial_snapshots, overrides, linger_days);
+                        workspaces = local_workspaces(&initial_snapshots, &entries);
+                        needs_render = true;
+                    }
+                    Ok(InitialLoadUpdate::Complete(history)) => {
+                        activity_history = Some(*history);
+                        initial_finished = true;
+                        break;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        activity_history = Some(ActivityHistory::default());
+                        initial_finished = true;
+                        break;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => break,
                 }
             }
+        }
+        if initial_finished {
+            initial_load = None;
+            loading = false;
+            last_refresh = Instant::now();
+            needs_render = true;
+        }
+
+        if !loading && last_refresh.elapsed() >= REFRESH_INTERVAL {
+            last_refresh = Instant::now();
             if include_ended {
                 let stale = cloud_fetched.is_none_or(|at| at.elapsed() >= CLOUD_BOARD_REFRESH);
                 if cloud_fetch_due || stale {
@@ -2627,20 +2784,24 @@ async fn board_loop(
                     }
                 }
                 let (live_entries, live_workspaces) =
-                    local_board(&mut activity_history, overrides, linger_days)?;
+                    local_board(activity_history.as_mut().unwrap(), overrides, linger_days)?;
                 if !durable_history_loaded {
                     entries = live_entries;
                 }
                 workspaces = durable_workspaces.clone();
                 merge_live_workspaces(&mut workspaces, live_workspaces, &entries);
             } else {
-                (entries, workspaces) = local_board(&mut activity_history, overrides, linger_days)?;
+                (entries, workspaces) =
+                    local_board(activity_history.as_mut().unwrap(), overrides, linger_days)?;
             }
-            activity_history.enrich_slack_threads(&mut entries);
+            activity_history
+                .as_mut()
+                .unwrap()
+                .enrich_slack_threads(&mut entries);
             needs_render = true;
         }
 
-        let animating = board_has_thinking(&entries, &workspaces);
+        let animating = loading || board_has_thinking(&entries, &workspaces);
         let throbber_frame = crate::ui::throbber_frame_index();
         if animating && throbber_frame != last_throbber_frame {
             last_throbber_frame = throbber_frame;
@@ -2701,7 +2862,7 @@ async fn board_loop(
                 linger_days,
                 include_ended,
                 view,
-                now_ms,
+                RenderState { now_ms, loading },
             );
             let hash = frame_hash(&fresh);
             if hash != last_frame_hash {
@@ -3028,6 +3189,26 @@ mod tests {
             ],
             "the original thread stays first and session-only links remain"
         );
+    }
+
+    #[test]
+    fn loading_frame_is_truthful_before_sessions_arrive() {
+        let loading = render_at(
+            &[],
+            &[],
+            120,
+            DEFAULT_LINGER_DAYS,
+            false,
+            BoardView::default(),
+            RenderState {
+                now_ms: now_ms(),
+                loading: true,
+            },
+        )
+        .join("\n");
+        let plain = crate::parsers::strip_ansi_for_debug(&loading);
+        assert!(plain.contains("Loading live sessions… 0 found"));
+        assert!(!plain.contains("No live sessions"));
     }
 
     #[test]
@@ -4448,20 +4629,29 @@ mod tests {
         )
         .unwrap();
 
+        let mut pr = board_pr(1175, "developer-portal");
+        pr.slack_comment_urls =
+            vec!["https://tavus.slack.com/archives/C0AGPSMKQ3Z/p1786679090037079".into()];
+        let data = serde_json::json!({
+            "last_updated": now_secs(),
+            "transcript_path": path,
+            "cwd": dir.path(),
+            "prs": [pr],
+            "widgets": {
+                "git": {
+                    "data": {
+                        "repo_owner": "o",
+                        "repo_name": "developer-portal"
+                    }
+                }
+            }
+        });
         let mut history = ActivityHistory::default();
-        history.scan_slack_metadata(&path);
-        let mut entry = BoardPr {
-            pr: board_pr(1175, "developer-portal"),
-            sessions: Vec::new(),
-            slack_threads: crate::slack::extract_threads(
-                "https://tavus.slack.com/archives/C0AGPSMKQ3Z/p1786679090037079",
-            ),
-            stale: false,
-        };
-        history.enrich_slack_threads(std::slice::from_mut(&mut entry));
+        let snapshot = snapshot_from_instance(dir.path().join("inspect.json"), data, &mut history)
+            .expect("fresh session snapshot");
 
         assert_eq!(
-            crate::slack::thread_identity_label(&entry.slack_threads[0]),
+            crate::slack::thread_identity_label(&snapshot.slack_threads[0]),
             "#pr-reviews · Mango"
         );
     }
