@@ -90,7 +90,7 @@ After each turn, Crabigator generates a short recap of what the assistant did �
 Board keys:
 
 - `/` — Search, including a grep of each live session's transcript with matched excerpts inline (Tab toggles surrounding context)
-- `e` / `c` — Expand or collapse detail: compact, status, session titles, recap headlines
+- `e` / `c` — Expand or collapse detail first, then show or hide older recency buckets at the limit
 - `+` / `-` — Widen or narrow the window of finished PRs kept on the board
 - Toggle between live sessions and the durable cloud record; the full history lives on the [dashboard's PR board](https://drinkcrabigator.com/dashboard)
 

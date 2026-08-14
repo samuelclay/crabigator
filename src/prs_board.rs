@@ -80,6 +80,8 @@ enum RecencyBucket {
     Older,
 }
 
+const DEFAULT_OLDEST_VISIBLE_BUCKET: RecencyBucket = RecencyBucket::Older;
+
 impl RecencyBucket {
     fn from_age(age_secs: u64) -> Self {
         match age_secs {
@@ -124,6 +126,56 @@ impl RecencyBucket {
             }
             Self::LastTwelveHours | Self::LastDay | Self::Older => color::WHITE,
         }
+    }
+
+    fn narrower(self) -> Self {
+        match self {
+            Self::Older => Self::LastDay,
+            Self::LastDay => Self::LastTwelveHours,
+            Self::LastTwelveHours => Self::LastNineHours,
+            Self::LastNineHours => Self::LastSixHours,
+            Self::LastSixHours => Self::LastThreeHours,
+            Self::LastThreeHours | Self::LastHour => Self::LastHour,
+        }
+    }
+
+    fn wider(self) -> Self {
+        match self {
+            Self::LastHour => Self::LastThreeHours,
+            Self::LastThreeHours => Self::LastSixHours,
+            Self::LastSixHours => Self::LastNineHours,
+            Self::LastNineHours => Self::LastTwelveHours,
+            Self::LastTwelveHours => Self::LastDay,
+            Self::LastDay | Self::Older => Self::Older,
+        }
+    }
+
+    fn max_age_label(self) -> &'static str {
+        match self {
+            Self::LastHour => "1h",
+            Self::LastThreeHours => "3h",
+            Self::LastSixHours => "6h",
+            Self::LastNineHours => "9h",
+            Self::LastTwelveHours => "12h",
+            Self::LastDay => "24h",
+            Self::Older => "all",
+        }
+    }
+}
+
+fn expand_board_view(detail: &mut u8, oldest_visible_bucket: &mut RecencyBucket) {
+    if *detail < MAX_DETAIL {
+        *detail += 1;
+    } else {
+        *oldest_visible_bucket = oldest_visible_bucket.wider();
+    }
+}
+
+fn collapse_board_view(detail: &mut u8, oldest_visible_bucket: &mut RecencyBucket) {
+    if *detail > DEFAULT_DETAIL {
+        *detail -= 1;
+    } else {
+        *oldest_visible_bucket = oldest_visible_bucket.narrower();
     }
 }
 
@@ -1211,6 +1263,10 @@ fn activity_sort_time(sessions: &[SessionRef]) -> u64 {
     }
 }
 
+fn activity_bucket(sessions: &[SessionRef], now: u64) -> RecencyBucket {
+    RecencyBucket::from_age(now.saturating_sub(activity_sort_time(sessions)))
+}
+
 fn activity_part(label: &str, timestamp: u64, now: u64) -> ActivityCell {
     let (plain, part_color) = if timestamp == 0 {
         (format!("{label} —"), color::DARK_GRAY)
@@ -1902,13 +1958,55 @@ fn render(
     linger_days: u64,
     include_ended: bool,
     detail: u8,
+    oldest_visible_bucket: RecencyBucket,
 ) -> Vec<String> {
     let now_ms = (now_secs() * 1000.0) as u64;
+    render_at(
+        rows,
+        workspace_rows,
+        width,
+        linger_days,
+        include_ended,
+        detail,
+        oldest_visible_bucket,
+        now_ms,
+    )
+}
+
+fn render_at(
+    rows: &[BoardRow],
+    workspace_rows: &[WorkspaceRow],
+    width: u16,
+    linger_days: u64,
+    include_ended: bool,
+    detail: u8,
+    oldest_visible_bucket: RecencyBucket,
+    now_ms: u64,
+) -> Vec<String> {
+    let now = now_ms / 1000;
     let throbber_frame = crate::ui::throbber_frame_index();
-    let session_count = rows
+    let visible_row_indices: Vec<usize> = rows
         .iter()
-        .flat_map(|row| row.entry.sessions.iter())
-        .chain(workspace_rows.iter().map(|row| &row.entry.session))
+        .enumerate()
+        .filter_map(|(index, row)| {
+            (activity_bucket(&row.entry.sessions, now) <= oldest_visible_bucket).then_some(index)
+        })
+        .collect();
+    let visible_workspace_indices: Vec<usize> = workspace_rows
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            (activity_bucket(row.entry.sessions(), now) <= oldest_visible_bucket).then_some(index)
+        })
+        .collect();
+    let session_count = visible_row_indices
+        .iter()
+        .flat_map(|&index| rows[index].entry.sessions.iter())
+        .chain(
+            visible_workspace_indices
+                .iter()
+                .map(|&index| &workspace_rows[index].entry.session),
+        )
         .map(|session| {
             if session.session_id.is_empty() {
                 session.dir_name.as_str()
@@ -1947,23 +2045,34 @@ fn render(
             fg(color::DARK_GRAY)
         )
     };
+    let age_label = if oldest_visible_bucket == DEFAULT_OLDEST_VISIBLE_BUCKET {
+        String::new()
+    } else {
+        format!(
+            " · {}age ≤ {}{}",
+            fg(color::YELLOW),
+            oldest_visible_bucket.max_age_label(),
+            fg(color::DARK_GRAY),
+        )
+    };
 
     let mut lines = vec![
         format!(
-            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{} · ↑↓ scroll · / search · +/- days · e/c detail · a all · q quit{}",
+            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{} · ↑↓ scroll · / search · +/- days · e/c detail/age · a all · q quit{}",
             fg(color::PURPLE),
             RESET_FG,
             fg(color::DARK_GRAY),
-            rows.len(),
+            visible_row_indices.len(),
             session_count,
             source,
             window,
             detail_label,
+            age_label,
             RESET_FG,
         ),
         String::new(),
     ];
-    if rows.is_empty() && workspace_rows.is_empty() {
+    if visible_row_indices.is_empty() && visible_workspace_indices.is_empty() {
         lines.push(format!(
             "{}No live sessions or tracked PRs.{}",
             fg(color::GRAY),
@@ -1972,22 +2081,25 @@ fn render(
         return lines;
     }
 
-    let activity_width =
-        rows.iter()
-            .map(|row| activity_cell(&row.entry.sessions, now_ms / 1000, throbber_frame).visible)
-            .chain(workspace_rows.iter().map(|row| {
-                activity_cell(row.entry.sessions(), now_ms / 1000, throbber_frame).visible
-            }))
-            .max()
-            .unwrap_or(0);
+    let activity_width = visible_row_indices
+        .iter()
+        .map(|&index| activity_cell(&rows[index].entry.sessions, now, throbber_frame).visible)
+        .chain(visible_workspace_indices.iter().map(|&index| {
+            activity_cell(workspace_rows[index].entry.sessions(), now, throbber_frame).visible
+        }))
+        .max()
+        .unwrap_or(0);
     let shared_width = (width as usize)
         .saturating_sub(activity_width)
         .saturating_sub(usize::from(activity_width > 0) * PR_COLUMN_GAP)
         .min(u16::MAX as usize) as u16;
-    let pr_refs: Vec<&SessionPr> = rows.iter().map(|row| &row.entry.pr).collect();
+    let pr_refs: Vec<&SessionPr> = visible_row_indices
+        .iter()
+        .map(|&index| &rows[index].entry.pr)
+        .collect();
     let mut widths = PrColumnWidths::from_pr_refs(&pr_refs, shared_width as usize);
-    for row in workspace_rows {
-        let entry = row.entry;
+    for &index in &visible_workspace_indices {
+        let entry = workspace_rows[index].entry;
         widths.include_board_row(
             &format!("◇ {}", workspace_title(entry)),
             &workspace_diff_text(entry),
@@ -2014,7 +2126,6 @@ fn render(
         repositories: Vec<RepositorySection>,
     }
 
-    let now = now_ms / 1000;
     let mut sections: Vec<RecencySection> = Vec::new();
     {
         let mut add_row = |name: String, activity: u64, row: SectionRow| {
@@ -2045,14 +2156,16 @@ fn render(
             let repository = &mut repositories[repository_index];
             repository.rows.push((activity, row));
         };
-        for (index, row) in rows.iter().enumerate() {
+        for &index in &visible_row_indices {
+            let row = &rows[index];
             add_row(
                 format!("{}/{}", row.entry.pr.owner, row.entry.pr.repo),
                 activity_sort_time(&row.entry.sessions),
                 SectionRow::Pr(index),
             );
         }
-        for (index, row) in workspace_rows.iter().enumerate() {
+        for &index in &visible_workspace_indices {
+            let row = &workspace_rows[index];
             let repo = if row.entry.repo_owner.is_empty() {
                 row.entry.repo_name.clone()
             } else {
@@ -2160,6 +2273,7 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             DEFAULT_LINGER_DAYS,
             false,
             DEFAULT_DETAIL,
+            DEFAULT_OLDEST_VISIBLE_BUCKET,
         ) {
             println!("{line}");
         }
@@ -2255,6 +2369,7 @@ async fn board_loop(
     let mut expanded = false;
     let preferences = crate::config::Config::load().unwrap_or_default().pr_board;
     let mut detail = DEFAULT_DETAIL;
+    let mut oldest_visible_bucket = DEFAULT_OLDEST_VISIBLE_BUCKET;
     let mut linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
     let mut include_ended = preferences.include_ended;
     // Cloud fetches are throttled well below the local tick; toggling the
@@ -2308,12 +2423,17 @@ async fn board_loop(
         if needs_render {
             needs_render = false;
             let query = search.as_deref().unwrap_or("");
+            let now_ms = (now_secs() * 1000.0) as u64;
+            let now = now_ms / 1000;
             // A PR stays visible when its metadata matches, or when any of
             // its sessions' transcripts contain the query — with the matched
             // excerpt shown inline so the hit can be confirmed.
             let filtered: Vec<BoardRow> = entries
                 .iter()
                 .filter_map(|entry| {
+                    if activity_bucket(&entry.sessions, now) > oldest_visible_bucket {
+                        return None;
+                    }
                     let preview_lines =
                         build_previews(entry, &mut transcripts, query, width, expanded);
                     (matches_search(&entry.pr, query) || !preview_lines.is_empty()).then_some(
@@ -2327,6 +2447,9 @@ async fn board_loop(
             let filtered_workspaces: Vec<WorkspaceRow> = workspaces
                 .iter()
                 .filter_map(|entry| {
+                    if activity_bucket(entry.sessions(), now) > oldest_visible_bucket {
+                        return None;
+                    }
                     let preview_lines = build_session_previews(
                         entry.sessions(),
                         &mut transcripts,
@@ -2343,13 +2466,15 @@ async fn board_loop(
                 })
                 .collect();
             matched = filtered.len() + filtered_workspaces.len();
-            let fresh = render(
+            let fresh = render_at(
                 &filtered,
                 &filtered_workspaces,
                 width,
                 linger_days,
                 include_ended,
                 detail,
+                oldest_visible_bucket,
+                now_ms,
             );
             let hash = frame_hash(&fresh);
             if hash != last_frame_hash {
@@ -2452,16 +2577,16 @@ async fn board_loop(
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
-                            // Expand or collapse the detail level, one step
-                            // at a time like +/- for days: compact ↔ status
-                            // ↔ title ↔ recap.
+                            // Detail changes first. At full detail, expanding
+                            // restores one older recency bucket; at compact,
+                            // collapsing hides the oldest visible bucket.
                             KeyCode::Char('e') => {
-                                detail = (detail + 1).min(MAX_DETAIL);
+                                expand_board_view(&mut detail, &mut oldest_visible_bucket);
                                 needs_render = true;
                                 dirty = true;
                             }
                             KeyCode::Char('c') => {
-                                detail = detail.saturating_sub(1);
+                                collapse_board_view(&mut detail, &mut oldest_visible_bucket);
                                 needs_render = true;
                                 dirty = true;
                             }
@@ -2527,6 +2652,14 @@ mod tests {
     }
 
     fn render_frame_at(entries: &[BoardPr], detail: u8) -> String {
+        render_frame_with_oldest(entries, detail, DEFAULT_OLDEST_VISIBLE_BUCKET)
+    }
+
+    fn render_frame_with_oldest(
+        entries: &[BoardPr],
+        detail: u8,
+        oldest_visible_bucket: RecencyBucket,
+    ) -> String {
         let rows: Vec<BoardRow> = entries
             .iter()
             .map(|entry| BoardRow {
@@ -2534,7 +2667,16 @@ mod tests {
                 preview_lines: Vec::new(),
             })
             .collect();
-        render(&rows, &[], 160, DEFAULT_LINGER_DAYS, false, detail).join("\n")
+        render(
+            &rows,
+            &[],
+            160,
+            DEFAULT_LINGER_DAYS,
+            false,
+            detail,
+            oldest_visible_bucket,
+        )
+        .join("\n")
     }
 
     fn render_frame(entries: &[BoardPr]) -> String {
@@ -2623,7 +2765,16 @@ mod tests {
                 preview_lines: Vec::new(),
             })
             .collect();
-        let frame = render(&[], &rows, 160, DEFAULT_LINGER_DAYS, false, DEFAULT_DETAIL).join("\n");
+        let frame = render(
+            &[],
+            &rows,
+            160,
+            DEFAULT_LINGER_DAYS,
+            false,
+            DEFAULT_DETAIL,
+            DEFAULT_OLDEST_VISIBLE_BUCKET,
+        )
+        .join("\n");
         let plain = crate::parsers::strip_ansi_for_debug(&frame);
         assert!(plain.lines().any(|line| line == "samuelclay/crabigator"));
         assert!(frame.contains("sam/pr-board-session-rows"));
@@ -2731,6 +2882,7 @@ mod tests {
                 DEFAULT_LINGER_DAYS,
                 false,
                 DEFAULT_DETAIL,
+                DEFAULT_OLDEST_VISIBLE_BUCKET,
             )
             .join("\n"),
         );
@@ -2814,6 +2966,7 @@ mod tests {
                 DEFAULT_LINGER_DAYS,
                 false,
                 detail,
+                DEFAULT_OLDEST_VISIBLE_BUCKET,
             )
             .into_iter()
             .map(|line| crate::parsers::strip_ansi_for_debug(&line))
@@ -2917,6 +3070,105 @@ mod tests {
     }
 
     #[test]
+    fn collapse_and_expand_move_from_detail_to_recency() {
+        let mut detail = MAX_DETAIL;
+        let mut oldest_visible_bucket = DEFAULT_OLDEST_VISIBLE_BUCKET;
+
+        for expected in [
+            (2, RecencyBucket::Older),
+            (1, RecencyBucket::Older),
+            (0, RecencyBucket::Older),
+            (0, RecencyBucket::LastDay),
+            (0, RecencyBucket::LastTwelveHours),
+            (0, RecencyBucket::LastNineHours),
+            (0, RecencyBucket::LastSixHours),
+            (0, RecencyBucket::LastThreeHours),
+            (0, RecencyBucket::LastHour),
+        ] {
+            collapse_board_view(&mut detail, &mut oldest_visible_bucket);
+            assert_eq!((detail, oldest_visible_bucket), expected);
+        }
+        collapse_board_view(&mut detail, &mut oldest_visible_bucket);
+        assert_eq!(
+            (detail, oldest_visible_bucket),
+            (0, RecencyBucket::LastHour)
+        );
+
+        for expected in [
+            (1, RecencyBucket::LastHour),
+            (2, RecencyBucket::LastHour),
+            (3, RecencyBucket::LastHour),
+            (3, RecencyBucket::LastThreeHours),
+            (3, RecencyBucket::LastSixHours),
+            (3, RecencyBucket::LastNineHours),
+            (3, RecencyBucket::LastTwelveHours),
+            (3, RecencyBucket::LastDay),
+            (3, RecencyBucket::Older),
+        ] {
+            expand_board_view(&mut detail, &mut oldest_visible_bucket);
+            assert_eq!((detail, oldest_visible_bucket), expected);
+        }
+        expand_board_view(&mut detail, &mut oldest_visible_bucket);
+        assert_eq!((detail, oldest_visible_bucket), (3, RecencyBucket::Older));
+    }
+
+    #[test]
+    fn recency_cutoff_hides_older_sections_and_updates_totals() {
+        let now = now_secs() as u64;
+        let snapshots: Vec<SessionSnapshot> = [
+            (1, 30 * 60),
+            (2, 2 * 60 * 60),
+            (3, 4 * 60 * 60),
+            (4, 7 * 60 * 60),
+            (5, 10 * 60 * 60),
+            (6, 18 * 60 * 60),
+            (7, 2 * 24 * 60 * 60),
+        ]
+        .into_iter()
+        .map(|(number, age)| {
+            let mut pr = board_pr(number, "repo");
+            make_primary(&mut pr);
+            let mut session = snapshot("repo", vec![pr]);
+            session.session_id = format!("session-{number}");
+            session.completed_at = now - age;
+            session
+        })
+        .collect();
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+
+        let six_hours = crate::parsers::strip_ansi_for_debug(&render_frame_with_oldest(
+            &entries,
+            DEFAULT_DETAIL,
+            RecencyBucket::LastSixHours,
+        ));
+        assert!(six_hours
+            .lines()
+            .next()
+            .unwrap()
+            .contains("3 PRs · 3 sessions"));
+        assert!(six_hours.contains("age ≤ 6h"));
+        assert!(six_hours.contains("● Last hour"));
+        assert!(six_hours.contains("● 1–3 hours"));
+        assert!(six_hours.contains("● 3–6 hours"));
+        assert!(!six_hours.contains("● 6–9 hours"));
+        assert!(!six_hours.contains("repo #4"));
+
+        let last_hour = crate::parsers::strip_ansi_for_debug(&render_frame_with_oldest(
+            &entries,
+            DEFAULT_DETAIL,
+            RecencyBucket::LastHour,
+        ));
+        assert!(last_hour
+            .lines()
+            .next()
+            .unwrap()
+            .contains("1 PRs · 1 sessions"));
+        assert!(last_hour.contains("age ≤ 1h"));
+        assert!(last_hour.contains("repo #1"));
+        assert!(!last_hour.contains("repo #2"));
+    }
+
+    #[test]
     fn sessions_with_visible_prs_do_not_get_duplicate_workspace_rows() {
         let mut pr = board_pr(1, "crabigator");
         make_primary(&mut pr);
@@ -2974,6 +3226,7 @@ mod tests {
                     DEFAULT_LINGER_DAYS,
                     false,
                     detail,
+                    DEFAULT_OLDEST_VISIBLE_BUCKET,
                 )
                 .join("\n"),
             );
@@ -3667,7 +3920,16 @@ mod tests {
             .collect();
 
         let frame = crate::parsers::strip_ansi_for_debug(
-            &render(&[], &rows, 160, DEFAULT_LINGER_DAYS, false, MAX_DETAIL).join("\n"),
+            &render(
+                &[],
+                &rows,
+                160,
+                DEFAULT_LINGER_DAYS,
+                false,
+                MAX_DETAIL,
+                DEFAULT_OLDEST_VISIBLE_BUCKET,
+            )
+            .join("\n"),
         );
         assert_eq!(frame.matches("Standalone work").count(), 1);
         assert!(frame.contains("↪ Kept standalone rows visible"));
