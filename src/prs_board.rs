@@ -60,9 +60,8 @@ const PREVIEW_MATCHES: usize = 3;
 const PREVIEW_CONTEXT: usize = 2;
 /// Keep the first load visibly progressive without stretching it out.
 const INITIAL_LOAD_BATCH: usize = 4;
-/// Detail levels `e`/`c` expand and collapse through: 0 = compact (one line
-/// per PR), 1 = + title and Slack link lines, 2 = + every available recap line.
-const MAX_DETAIL: u8 = 2;
+/// `e`/`c` switch between one titled row and the complete recap detail.
+const MAX_DETAIL: u8 = 1;
 const DEFAULT_DETAIL: u8 = 0;
 
 /// Recency uses one cyan-blue hue at steadily lower intensities until old
@@ -211,19 +210,19 @@ impl BoardView {
     }
 
     fn expand(&mut self) {
-        if self.detail < MAX_DETAIL {
-            self.detail += 1;
-        } else {
-            self.oldest_visible_bucket = self.oldest_visible_bucket.wider();
-        }
+        self.detail = MAX_DETAIL;
     }
 
     fn collapse(&mut self) {
-        if self.detail > DEFAULT_DETAIL {
-            self.detail -= 1;
-        } else {
-            self.oldest_visible_bucket = self.oldest_visible_bucket.narrower();
-        }
+        self.detail = DEFAULT_DETAIL;
+    }
+
+    fn hide_oldest_bucket(&mut self) {
+        self.oldest_visible_bucket = self.oldest_visible_bucket.narrower();
+    }
+
+    fn show_older_bucket(&mut self) {
+        self.oldest_visible_bucket = self.oldest_visible_bucket.wider();
     }
 }
 
@@ -237,8 +236,7 @@ impl Default for BoardView {
 fn detail_name(detail: u8) -> &'static str {
     match detail {
         0 => "compact",
-        1 => "title",
-        2 => "recap",
+        1 => "recap",
         _ => "compact",
     }
 }
@@ -1864,7 +1862,7 @@ fn provider_markers(sessions: &[SessionRef]) -> &'static str {
     }
 }
 
-fn latest_session_title(sessions: &[SessionRef]) -> Option<(String, u64)> {
+fn latest_session_title(sessions: &[SessionRef]) -> Option<String> {
     sessions
         .iter()
         .filter_map(|session| {
@@ -1877,6 +1875,7 @@ fn latest_session_title(sessions: &[SessionRef]) -> Option<(String, u64)> {
             })
         })
         .max_by_key(|(_, set_at)| *set_at)
+        .map(|(title, _)| title)
 }
 
 fn timestamp_cell(timestamp_ms: u64, now_ms: u64, width: usize) -> ActivityCell {
@@ -1950,77 +1949,51 @@ fn slack_links_width(threads: &[SlackThread]) -> usize {
         .unwrap_or(0)
 }
 
-fn title_detail_lines(
+fn pr_row_title(entry: &BoardPr) -> String {
+    latest_session_title(&entry.sessions).unwrap_or_else(|| {
+        let fallback = if entry.pr.title.trim().is_empty() {
+            if entry.pr.repo.is_empty() {
+                "PR"
+            } else {
+                entry.pr.repo.as_str()
+            }
+        } else {
+            entry.pr.title.trim()
+        };
+        format!("{}{fallback}", provider_markers(&entry.sessions))
+    })
+}
+
+fn slack_detail_lines(
     entry: &BoardPr,
     width: u16,
-    now_ms: u64,
     activity_width: usize,
     widths: &PrColumnWidths,
 ) -> Vec<String> {
-    let title = latest_session_title(&entry.sessions);
     let mut seen = HashSet::new();
-    let mut links = entry
+    entry
         .slack_threads
         .iter()
         .filter(|thread| seen.insert(thread.url.as_str()))
-        .map(|thread| slack_link_cell(thread, widths.right_width()));
-    let first_link = links.next();
-    if title.is_none() && first_link.is_none() {
-        return Vec::new();
-    }
-
-    let (left_styled, left_visible, timestamp) = title.map_or_else(
-        || (String::new(), 0, None),
-        |(title, set_at)| {
-            let plain = crate::ui::pr_cells::truncate_to_width(
-                &format!("  ⌾ {title}"),
-                widths.board_left_width(),
-            );
-            (
-                format!("{}{}{}", fg(color::CYAN), plain, RESET_FG),
-                plain.width(),
-                Some(set_at),
+        .map(|thread| slack_link_cell(thread, widths.right_width()))
+        .map(|link| {
+            format!(
+                "{}{}",
+                board_detail_row_text(
+                    width,
+                    widths,
+                    String::new(),
+                    0,
+                    String::new(),
+                    0,
+                    activity_width,
+                    link.styled,
+                    link.visible,
+                ),
+                RESET
             )
-        },
-    );
-    let age = timestamp.map_or_else(
-        || empty_cell(activity_width),
-        |set_at| timestamp_cell(set_at, now_ms, activity_width),
-    );
-    let first_link = first_link.unwrap_or_else(|| empty_cell(0));
-    let mut lines = vec![format!(
-        "{}{}",
-        board_detail_row_text(
-            width,
-            widths,
-            left_styled,
-            left_visible,
-            age.styled,
-            age.visible,
-            activity_width,
-            first_link.styled,
-            first_link.visible,
-        ),
-        RESET
-    )];
-    lines.extend(links.map(|link| {
-        format!(
-            "{}{}",
-            board_detail_row_text(
-                width,
-                widths,
-                String::new(),
-                0,
-                String::new(),
-                0,
-                activity_width,
-                link.styled,
-                link.visible,
-            ),
-            RESET
-        )
-    }));
-    lines
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -2212,12 +2185,12 @@ fn render_pr_board_row(
 ) -> Vec<String> {
     let entry = board_row.entry;
     let activity = activity_cell(&entry.sessions, now_ms / 1000, throbber_frame);
-    let identity_marker = provider_markers(&entry.sessions);
+    let title = pr_row_title(entry);
     let mut row = pr_row_text_with_activity(
         width,
         &entry.pr,
         widths,
-        identity_marker,
+        &title,
         activity.styled,
         activity.visible,
         activity_width,
@@ -2232,22 +2205,14 @@ fn render_pr_board_row(
         return lines;
     }
 
-    lines.extend(title_detail_lines(
+    lines.extend(slack_detail_lines(entry, width, activity_width, widths));
+    lines.extend(pr_recap_detail_lines(
         entry,
         width,
         now_ms,
         activity_width,
         widths,
     ));
-    if detail >= 2 {
-        lines.extend(pr_recap_detail_lines(
-            entry,
-            width,
-            now_ms,
-            activity_width,
-            widths,
-        ));
-    }
     lines.extend(board_row.preview_lines.iter().cloned());
     lines
 }
@@ -2321,7 +2286,7 @@ fn render_workspace_board_row(
         activity_width,
     );
     let mut lines = vec![format!("{row}{RESET}")];
-    if detail >= 2 {
+    if detail > DEFAULT_DETAIL {
         if let Some(recap) = entry.session.recap.as_ref() {
             lines.extend(recap_detail_lines(
                 recap,
@@ -2454,7 +2419,7 @@ fn render_at(
 
     let mut lines = vec![
         format!(
-            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{} · ↑↓ scroll · / search · +/- days · e/c detail/age · a all · q quit{}",
+            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{} · ↑↓ scroll · / search · +/- days · e/c recap/compact · [/] age · a all · q quit{}",
             fg(color::PURPLE),
             RESET_FG,
             fg(color::DARK_GRAY),
@@ -2510,8 +2475,7 @@ fn render_at(
     let mut widths = PrColumnWidths::from_pr_refs(&pr_refs, shared_width as usize);
     for &index in &visible_row_indices {
         let entry = rows[index].entry;
-        let marker = provider_markers(&entry.sessions);
-        widths.include_board_identity(&entry.pr, marker, shared_width as usize);
+        widths.include_board_identity(&entry.pr, &pr_row_title(entry), shared_width as usize);
     }
     for &index in &visible_workspace_indices {
         let entry = workspace_rows[index].entry;
@@ -3108,9 +3072,7 @@ async fn board_loop(
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
-                            // Detail changes first. At full detail, expanding
-                            // restores one older recency bucket; at compact,
-                            // collapsing hides the oldest visible bucket.
+                            // Recap expansion and age filtering are independent.
                             KeyCode::Char('e') => {
                                 view.expand();
                                 save_board_preferences(include_ended, linger_days, view)?;
@@ -3119,6 +3081,18 @@ async fn board_loop(
                             }
                             KeyCode::Char('c') => {
                                 view.collapse();
+                                save_board_preferences(include_ended, linger_days, view)?;
+                                needs_render = true;
+                                dirty = true;
+                            }
+                            KeyCode::Char('[') => {
+                                view.hide_oldest_bucket();
+                                save_board_preferences(include_ended, linger_days, view)?;
+                                needs_render = true;
+                                dirty = true;
+                            }
+                            KeyCode::Char(']') => {
+                                view.show_older_bucket();
                                 save_board_preferences(include_ended, linger_days, view)?;
                                 needs_render = true;
                                 dirty = true;
@@ -3598,7 +3572,7 @@ mod tests {
                 .unwrap();
             let pr_row = lines
                 .iter()
-                .position(|line| line.contains("crabigator #2"))
+                .position(|line| line.contains("PR session #2"))
                 .unwrap();
             let peer_row = lines
                 .iter()
@@ -3687,51 +3661,30 @@ mod tests {
     }
 
     #[test]
-    fn collapse_and_expand_move_from_detail_to_recency() {
+    fn collapse_and_expand_toggle_recaps_without_changing_age() {
         assert_eq!(
             BoardView::new(u8::MAX, DEFAULT_OLDEST_VISIBLE_BUCKET).detail,
             MAX_DETAIL,
             "invalid saved detail opens at the highest supported level"
         );
-        let mut view = BoardView::new(MAX_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET);
-
-        for expected in [
-            (1, RecencyBucket::Older),
-            (0, RecencyBucket::Older),
-            (0, RecencyBucket::LastDay),
-            (0, RecencyBucket::LastTwelveHours),
-            (0, RecencyBucket::LastNineHours),
-            (0, RecencyBucket::LastSixHours),
-            (0, RecencyBucket::LastThreeHours),
-            (0, RecencyBucket::LastHour),
-        ] {
-            view.collapse();
-            assert_eq!((view.detail, view.oldest_visible_bucket), expected);
-        }
+        let mut view = BoardView::new(MAX_DETAIL, RecencyBucket::LastNineHours);
         view.collapse();
         assert_eq!(
             (view.detail, view.oldest_visible_bucket),
-            (0, RecencyBucket::LastHour)
+            (DEFAULT_DETAIL, RecencyBucket::LastNineHours)
         );
-
-        for expected in [
-            (1, RecencyBucket::LastHour),
-            (2, RecencyBucket::LastHour),
-            (2, RecencyBucket::LastThreeHours),
-            (2, RecencyBucket::LastSixHours),
-            (2, RecencyBucket::LastNineHours),
-            (2, RecencyBucket::LastTwelveHours),
-            (2, RecencyBucket::LastDay),
-            (2, RecencyBucket::Older),
-        ] {
-            view.expand();
-            assert_eq!((view.detail, view.oldest_visible_bucket), expected);
-        }
         view.expand();
         assert_eq!(
             (view.detail, view.oldest_visible_bucket),
-            (2, RecencyBucket::Older)
+            (MAX_DETAIL, RecencyBucket::LastNineHours)
         );
+
+        view.hide_oldest_bucket();
+        assert_eq!(view.oldest_visible_bucket, RecencyBucket::LastSixHours);
+        assert_eq!(view.detail, MAX_DETAIL);
+        view.show_older_bucket();
+        assert_eq!(view.oldest_visible_bucket, RecencyBucket::LastNineHours);
+        assert_eq!(view.detail, MAX_DETAIL);
     }
 
     #[test]
@@ -4002,7 +3955,7 @@ mod tests {
     }
 
     #[test]
-    fn title_carries_slack_and_recap_skips_the_removed_status_line() {
+    fn titled_row_stays_compact_and_recap_view_carries_slack() {
         let mut pr = board_pr(9, "portal");
         make_primary(&mut pr);
         pr.title = "Fix the flow".to_string();
@@ -4040,30 +3993,32 @@ mod tests {
             },
         ];
         let entries = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
-        let title = render_frame_at(&entries, 1);
-        assert!(title.contains("Builder Signals"));
+        let compact = render_frame_at(&entries, 0);
+        assert!(compact.contains("Builder Signals dashboard #9"));
+        assert!(!compact.contains("#builder"));
+        assert!(!compact.contains("CI green, awaiting review"));
+
+        let recap = render_frame_at(&entries, 1);
         assert!(
-            title.contains("#builder"),
+            recap.contains("#builder"),
             "{}",
-            crate::parsers::strip_ansi_for_debug(&title)
+            crate::parsers::strip_ansi_for_debug(&recap)
         );
-        assert!(title.contains("https://t.slack.com/archives/C1/p1723500000000000"));
-        assert!(title.contains("https://t.slack.com/archives/C2/p1723500000000001"));
-        assert!(title.contains("https://t.slack.com/archives/C3/p1723500000000002"));
+        assert!(recap.contains("https://t.slack.com/archives/C1/p1723500000000000"));
+        assert!(recap.contains("https://t.slack.com/archives/C2/p1723500000000001"));
+        assert!(recap.contains("https://t.slack.com/archives/C3/p1723500000000002"));
         assert!(
-            title.find("archives/C1").unwrap() < title.find("archives/C2").unwrap(),
+            recap.find("archives/C1").unwrap() < recap.find("archives/C2").unwrap(),
             "the original thread renders first"
         );
         assert_eq!(
-            title
+            recap
                 .lines()
                 .filter(|line| line.contains("slack.com"))
                 .count(),
             3,
             "each Slack target gets a clickable row"
         );
-        assert!(title.contains("2h"));
-        assert!(!title.contains("CI green, awaiting review"));
         for removed in [
             "slack origin",
             "mentions",
@@ -4072,10 +4027,9 @@ mod tests {
             "▓",
             "%",
         ] {
-            assert!(!title.contains(removed), "removed status text: {removed}");
+            assert!(!recap.contains(removed), "removed status text: {removed}");
         }
 
-        let recap = render_frame_at(&entries, 2);
         assert!(recap.contains("CI green, awaiting review"));
         let judgment_line = recap
             .lines()
@@ -4316,6 +4270,9 @@ mod tests {
     fn titled_entries() -> Vec<BoardPr> {
         let mut pr = board_pr(9, "portal");
         make_primary(&mut pr);
+        pr.additions = 49;
+        pr.deletions = 5;
+        pr.changed_files = 3;
         pr.mergeable = "MERGEABLE".to_string();
         pr.ai_note = "Open and ready for review".to_string();
         let mut with_title = snapshot("portal", vec![pr.clone()]);
@@ -4340,38 +4297,27 @@ mod tests {
         aggregate(&[with_title, bare], &HashMap::new(), DEFAULT_LINGER_DAYS)
     }
 
-    /// `e` steps through compact, title, and recap. The recap view keeps the
-    /// PR judgment and every session recap row, with metadata on the headline.
+    /// The title stays on the PR row; `e` adds the complete recap beneath it.
     #[test]
-    fn detail_levels_reveal_titles_then_recaps() {
+    fn compact_and_recap_views_keep_one_titled_pr_row() {
         let entries = titled_entries();
 
         let compact = render_frame(&entries);
         assert!(!compact.contains('▓'), "no progress bar at compact");
-        assert!(!compact.contains("Wiring the PR board"), "no titles");
-        assert!(compact.contains("#9"), "identity row stays");
+        assert!(compact.contains("Wiring the PR board detail levels #9"));
         assert!(compact.contains("compact"), "header names the level");
         assert!(compact.contains("⟩ 30m"));
         assert!(compact.contains("⋖ 2h"));
-
-        let title = render_frame_at(&entries, 1);
-        assert!(title.contains("Wiring the PR board"));
         assert!(
-            crate::parsers::strip_ansi_for_debug(&title).contains(" · title"),
-            "header uses the level name"
-        );
-        assert!(title.contains("⟩ 30m"));
-        assert!(title.contains("⋖ 2h"));
-        assert!(
-            !title.contains("Open and ready for review"),
-            "judgments wait for level 2"
+            !compact.contains("Open and ready for review"),
+            "judgments wait for recap view"
         );
         assert!(
-            !title.contains("Added e-cycled detail"),
-            "recaps wait for level 2"
+            !compact.contains("Added e-cycled detail"),
+            "recaps wait for recap view"
         );
 
-        let recaps = render_frame_at(&entries, 2);
+        let recaps = render_frame_at(&entries, 1);
         assert!(recaps.contains("Wiring the PR board"));
         assert!(recaps.contains("Open and ready for review"));
         assert!(recaps.contains("Added e-cycled"));
@@ -4388,23 +4334,13 @@ mod tests {
         assert!(recaps.contains("⟩ 30m"));
         assert!(recaps.contains("⋖ 2h"));
 
-        let counts = [
-            compact.lines().count(),
-            title.lines().count(),
-            recaps.lines().count(),
-        ];
-        assert_eq!(counts[1], counts[0] + 1, "title adds one line");
         assert_eq!(
-            counts[2],
-            counts[1] + 3,
+            recaps.lines().count(),
+            compact.lines().count() + 3,
             "recap view keeps the judgment, headline, and next step"
         );
 
         let compact_line = recaps.lines().find(|line| line.contains("#9")).unwrap();
-        let title_line = recaps
-            .lines()
-            .find(|line| line.contains("Wiring the PR board"))
-            .unwrap();
         let recap_line = recaps
             .lines()
             .find(|line| line.contains("Added e-cycled"))
@@ -4417,13 +4353,24 @@ mod tests {
             .lines()
             .find(|line| line.contains("Next: Ready to merge once checks finish"))
             .unwrap();
+        let compact_plain = crate::parsers::strip_ansi_for_debug(compact_line);
         assert!(
-            crate::parsers::strip_ansi_for_debug(title_line).starts_with("   ⌾ "),
-            "title starts three spaces in"
+            compact_plain.contains("ᛝ  Wiring the PR board detail levels #9"),
+            "{compact_plain}"
         );
+        assert_eq!(
+            compact_plain.matches('ᛝ').count(),
+            1,
+            "provider marker is not duplicated"
+        );
+        assert!(compact_plain.find("#9").unwrap() < compact_plain.find("+49 -5").unwrap());
+        assert!(compact_line.contains(&escape::hyperlink(
+            &entries[0].pr.url,
+            "ᛝ  Wiring the PR board detail levels #9"
+        )));
         assert!(
             crate::parsers::strip_ansi_for_debug(recap_line).starts_with("   ↪ "),
-            "recap shares the title indentation"
+            "recap stays indented beneath the titled row"
         );
         assert!(
             crate::parsers::strip_ansi_for_debug(judgment_line).starts_with("   ✦ "),
@@ -4441,11 +4388,6 @@ mod tests {
             let byte = line.rfind(needle).unwrap();
             crate::ui::utils::strip_ansi_len(&line[..byte]) + needle.width()
         };
-        assert_eq!(
-            visible_end(compact_line, "2h"),
-            visible_end(title_line, "2h"),
-            "title age ends in the compact activity column"
-        );
         assert_eq!(
             visible_end(compact_line, "2h"),
             visible_end(recap_line, "42m"),
@@ -4909,7 +4851,7 @@ mod tests {
     }
 
     #[test]
-    fn title_expansion_uses_only_the_newest_title() {
+    fn pr_row_uses_only_the_newest_session_title() {
         let mut entries = titled_entries();
         let mut newer = entries[0].sessions[0].clone();
         newer.session_id = "newer-session".to_string();
@@ -4920,10 +4862,14 @@ mod tests {
         newer.recap = None;
         entries[0].sessions.push(newer);
 
-        let frame = render_frame_at(&entries, 1);
+        let frame = render_frame_at(&entries, 0);
         assert!(frame.contains("A newer terminal title"));
-        assert!(frame.contains("⌾ ⟁  A newer terminal title"));
-        assert!(frame.contains(&format!("{}  ⌾ ⟁  A newer", fg(color::CYAN))));
+        assert!(
+            frame.contains("⟁  A newer terminal title #9"),
+            "{}",
+            crate::parsers::strip_ansi_for_debug(&frame)
+        );
+        assert!(!frame.contains('⌾'));
         assert!(!frame.contains("Wiring the PR board detail levels"));
         assert!(!frame.contains("other-worktree"));
 
@@ -4931,15 +4877,13 @@ mod tests {
             session.title.clear();
         }
         entries[0].slack_threads.clear();
-        assert_eq!(
-            render_frame_at(&entries, 1).lines().count(),
-            render_frame_at(&entries, 0).lines().count(),
-            "an empty title adds no blank row"
-        );
+        let fallback = render_frame_at(&entries, 0);
+        assert!(fallback.contains("ᛝ  portal #9"));
+        assert!(!fallback.contains('⌾'));
         assert!(
-            render_frame_at(&entries, 2).contains("Added e-cycled"),
+            render_frame_at(&entries, 1).contains("Added e-cycled"),
             "recap remains available without a title: {}",
-            crate::parsers::strip_ansi_for_debug(&render_frame_at(&entries, 2))
+            crate::parsers::strip_ansi_for_debug(&render_frame_at(&entries, 1))
         );
     }
 }

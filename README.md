@@ -90,7 +90,8 @@ After each turn, Crabigator generates a short recap of what the assistant did �
 Board keys:
 
 - `/` — Search, including a grep of each live session's transcript with matched excerpts inline (Tab toggles surrounding context)
-- `e` / `c` — Expand or collapse detail first, then show or hide older recency buckets at the limit
+- `e` / `c` — Show complete recaps or return to compact rows
+- `[` / `]` — Hide or show older recency buckets
 - `+` / `-` — Widen or narrow the window of finished PRs kept on the board
 - Toggle between live sessions and the durable cloud record; the full history lives on the [dashboard's PR board](https://drinkcrabigator.com/dashboard)
 
@@ -175,7 +176,7 @@ recap_model = "claude-haiku-4-5"  # optional model override for recaps
 
 [pr_board]                    # crabigator prs view preferences (saved automatically)
 include_ended = false         # open with durable ended sessions included
-detail = 1                    # 0 compact, 1 status, 2 titles, 3 recaps
+detail = 1                    # 0 compact, 1 complete recaps
 linger_days = 1               # how long finished PRs stay on the board
 ```
 
