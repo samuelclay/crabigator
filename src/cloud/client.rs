@@ -95,6 +95,12 @@ pub struct CloudBoardSession {
 pub struct CloudSessionRecap {
     #[serde(default)]
     pub headline: String,
+    #[serde(default)]
+    pub bullets: Vec<String>,
+    #[serde(default)]
+    pub next_prompt_notes: Vec<String>,
+    #[serde(default)]
+    pub artifacts: Vec<String>,
     /// Unix ms when the recap was generated; 0 when unknown.
     #[serde(default)]
     pub generated_at: u64,

@@ -247,6 +247,9 @@ fn detail_name(detail: u8) -> &'static str {
 #[derive(Clone)]
 struct RecapBrief {
     headline: String,
+    bullets: Vec<String>,
+    next_prompt_notes: Vec<String>,
+    artifacts: Vec<String>,
     /// Unix ms when the recap was generated; 0 when unknown.
     generated_at: u64,
     line_delta: crate::recap::TurnLineDelta,
@@ -877,6 +880,9 @@ fn recap_brief_from(recap: &serde_json::Value) -> Option<RecapBrief> {
     }
     Some(RecapBrief {
         headline: headline.to_string(),
+        bullets: recap_string_array(recap, "bullets"),
+        next_prompt_notes: recap_string_array(recap, "next_prompt_notes"),
+        artifacts: recap_string_array(recap, "artifacts"),
         generated_at: recap
             .get("generated_at")
             .and_then(|v| v.as_u64())
@@ -892,6 +898,19 @@ fn recap_brief_from(recap: &serde_json::Value) -> Option<RecapBrief> {
                 .unwrap_or(0),
         },
     })
+}
+
+fn recap_string_array(recap: &serde_json::Value, field: &str) -> Vec<String> {
+    recap
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn merge_pr_slack_threads(
@@ -1295,6 +1314,9 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                     let recap = s.recap.and_then(|r| {
                         (!r.headline.is_empty()).then_some(RecapBrief {
                             headline: r.headline,
+                            bullets: r.bullets,
+                            next_prompt_notes: r.next_prompt_notes,
+                            artifacts: r.artifacts,
                             generated_at: r.generated_at,
                             line_delta: crate::recap::TurnLineDelta {
                                 additions: r.additions,
@@ -1339,6 +1361,9 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
         let recap = session.recap.and_then(|recap| {
             (!recap.headline.is_empty()).then_some(RecapBrief {
                 headline: recap.headline,
+                bullets: recap.bullets,
+                next_prompt_notes: recap.next_prompt_notes,
+                artifacts: recap.artifacts,
                 generated_at: recap.generated_at,
                 line_delta: crate::recap::TurnLineDelta {
                     additions: recap.additions,
@@ -2002,6 +2027,8 @@ fn title_detail_lines(
 enum RecapLineKind {
     Judgment,
     Recap,
+    Bullet,
+    Detail,
 }
 
 impl RecapLineKind {
@@ -2009,6 +2036,8 @@ impl RecapLineKind {
         match self {
             Self::Judgment => ("✦", color::YELLOW),
             Self::Recap => ("↪", color::DARK_GRAY),
+            Self::Bullet => ("•", color::DARK_GRAY),
+            Self::Detail => (" ", color::DARK_GRAY),
         }
     }
 }
@@ -2098,10 +2127,8 @@ fn pr_recap_detail_lines(
         ));
     }
     if let Some(recap) = recap {
-        lines.push(recap_line(
-            RecapLineKind::Recap,
-            &recap.headline,
-            Some(recap),
+        lines.extend(recap_detail_lines(
+            recap,
             width,
             now_ms,
             activity_width,
@@ -2111,14 +2138,14 @@ fn pr_recap_detail_lines(
     lines
 }
 
-fn recap_detail_line(
+fn recap_detail_lines(
     recap: &RecapBrief,
     width: u16,
     now_ms: u64,
     activity_width: usize,
     widths: &PrColumnWidths,
-) -> String {
-    recap_line(
+) -> Vec<String> {
+    let mut lines = vec![recap_line(
         RecapLineKind::Recap,
         &recap.headline,
         Some(recap),
@@ -2126,7 +2153,40 @@ fn recap_detail_line(
         now_ms,
         activity_width,
         widths,
-    )
+    )];
+    let detail_line =
+        |kind, text: &str| recap_line(kind, text, None, width, now_ms, activity_width, widths);
+    lines.extend(
+        recap
+            .bullets
+            .iter()
+            .map(|bullet| detail_line(RecapLineKind::Bullet, bullet)),
+    );
+    lines.extend(
+        recap
+            .next_prompt_notes
+            .iter()
+            .map(|note| detail_line(RecapLineKind::Detail, &labeled_recap_detail("Next:", note))),
+    );
+    lines.extend(recap.artifacts.iter().map(|artifact| {
+        detail_line(
+            RecapLineKind::Detail,
+            &labeled_recap_detail("Artifact:", artifact),
+        )
+    }));
+    lines
+}
+
+fn labeled_recap_detail(label: &str, value: &str) -> String {
+    let value = value.trim();
+    if value
+        .get(..label.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(label))
+    {
+        value.to_string()
+    } else {
+        format!("{label} {value}")
+    }
 }
 
 /// One board entry ready to draw: the PR plus any transcript preview lines
@@ -2263,7 +2323,7 @@ fn render_workspace_board_row(
     let mut lines = vec![format!("{row}{RESET}")];
     if detail >= 2 {
         if let Some(recap) = entry.session.recap.as_ref() {
-            lines.push(recap_detail_line(
+            lines.extend(recap_detail_lines(
                 recap,
                 width,
                 now_ms,
@@ -3342,6 +3402,7 @@ mod tests {
                 "title": "A durable title",
                 "recap": {
                     "headline": "A later recap",
+                    "next_prompt_notes": ["Continue from the durable session"],
                     "generated_at": 1_234_567
                 }
             }]
@@ -3350,6 +3411,15 @@ mod tests {
 
         let (_, workspaces) = cloud_entries_to_board(cloud);
         assert_eq!(workspaces[0].session.title_set_at, 0);
+        assert_eq!(
+            workspaces[0]
+                .session
+                .recap
+                .as_ref()
+                .unwrap()
+                .next_prompt_notes,
+            ["Continue from the durable session"]
+        );
     }
 
     #[test]
@@ -3472,6 +3542,9 @@ mod tests {
         pr_session.completed_at = now - 60;
         pr_session.recap = Some(RecapBrief {
             headline: "Finished the PR work".to_string(),
+            bullets: Vec::new(),
+            next_prompt_notes: Vec::new(),
+            artifacts: Vec::new(),
             generated_at: now * 1000,
             line_delta: crate::recap::TurnLineDelta::default(),
         });
@@ -4252,6 +4325,9 @@ mod tests {
         with_title.completed_at = now_secs() as u64 - 2 * 60 * 60;
         with_title.recap = Some(RecapBrief {
             headline: "Added e-cycled detail to the prs board".to_string(),
+            bullets: Vec::new(),
+            next_prompt_notes: vec!["Next: Ready to merge once checks finish".to_string()],
+            artifacts: Vec::new(),
             generated_at: now_ms() - 42 * 60 * 1000,
             line_delta: crate::recap::TurnLineDelta {
                 additions: 120,
@@ -4264,8 +4340,8 @@ mod tests {
         aggregate(&[with_title, bare], &HashMap::new(), DEFAULT_LINGER_DAYS)
     }
 
-    /// `e` steps through compact, title, and recap. The recap view keeps both
-    /// the PR judgment and session recap, with timestamps in the activity column.
+    /// `e` steps through compact, title, and recap. The recap view keeps the
+    /// PR judgment and every session recap row, with metadata on the headline.
     #[test]
     fn detail_levels_reveal_titles_then_recaps() {
         let entries = titled_entries();
@@ -4299,6 +4375,7 @@ mod tests {
         assert!(recaps.contains("Wiring the PR board"));
         assert!(recaps.contains("Open and ready for review"));
         assert!(recaps.contains("Added e-cycled"));
+        assert!(recaps.contains("Next: Ready to merge once checks finish"));
         // The recap line carries the turn's diff and compact age.
         assert!(recaps.contains("+120"), "recap shows the line delta");
         assert!(recaps.contains("-35"));
@@ -4319,8 +4396,8 @@ mod tests {
         assert_eq!(counts[1], counts[0] + 1, "title adds one line");
         assert_eq!(
             counts[2],
-            counts[1] + 2,
-            "recap view keeps the judgment and recap"
+            counts[1] + 3,
+            "recap view keeps the judgment, headline, and next step"
         );
 
         let compact_line = recaps.lines().find(|line| line.contains("#9")).unwrap();
@@ -4336,6 +4413,10 @@ mod tests {
             .lines()
             .find(|line| line.contains("Open and ready for review"))
             .unwrap();
+        let next_line = recaps
+            .lines()
+            .find(|line| line.contains("Next: Ready to merge once checks finish"))
+            .unwrap();
         assert!(
             crate::parsers::strip_ansi_for_debug(title_line).starts_with("   ⌾ "),
             "title starts three spaces in"
@@ -4350,6 +4431,12 @@ mod tests {
         );
         assert!(!judgment_line.contains("+120"));
         assert!(!judgment_line.contains("42m"));
+        assert!(
+            crate::parsers::strip_ansi_for_debug(next_line).starts_with("     Next: "),
+            "the next step remains a separate recap line"
+        );
+        assert!(!next_line.contains("+120"));
+        assert!(!next_line.contains("42m"));
         let visible_end = |line: &str, needle: &str| {
             let byte = line.rfind(needle).unwrap();
             crate::ui::utils::strip_ansi_len(&line[..byte]) + needle.width()
@@ -4375,6 +4462,22 @@ mod tests {
             crate::ui::utils::strip_ansi_len(main_row),
             159,
             "row keeps the right-edge padding"
+        );
+    }
+
+    #[test]
+    fn recap_detail_labels_are_added_once() {
+        assert_eq!(
+            labeled_recap_detail("Next:", "Continue from the last check"),
+            "Next: Continue from the last check"
+        );
+        assert_eq!(
+            labeled_recap_detail("Next:", "next: Continue from the last check"),
+            "next: Continue from the last check"
+        );
+        assert_eq!(
+            labeled_recap_detail("Artifact:", "Artifact: report.txt"),
+            "Artifact: report.txt"
         );
     }
 
@@ -4516,6 +4619,15 @@ mod tests {
         session.title = "⟁  Standalone work".to_string();
         session.recap = Some(RecapBrief {
             headline: "Kept standalone rows visible".to_string(),
+            bullets: vec![
+                "Preserved the first recap bullet".to_string(),
+                "Preserved the second recap bullet".to_string(),
+            ],
+            next_prompt_notes: vec!["Verify the standalone recap".to_string()],
+            artifacts: vec![
+                "first-report.txt".to_string(),
+                "second-report.txt".to_string(),
+            ],
             generated_at: now * 1000,
             line_delta: crate::recap::TurnLineDelta {
                 additions: 8,
@@ -4546,6 +4658,11 @@ mod tests {
         assert_eq!(frame.matches("Standalone work").count(), 1);
         assert!(frame.contains("⟁  Standalone work"));
         assert!(frame.contains("↪ Kept standalone rows visible"));
+        assert!(frame.contains("• Preserved the first recap bullet"));
+        assert!(frame.contains("• Preserved the second recap bullet"));
+        assert!(frame.contains("Next: Verify the standalone recap"));
+        assert!(frame.contains("Artifact: first-report.txt"));
+        assert!(frame.contains("Artifact: second-report.txt"));
         assert!(frame.contains("+8 -2"));
     }
 
