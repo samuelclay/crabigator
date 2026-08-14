@@ -32,7 +32,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::platforms::SessionState;
 use crate::pr::SessionPr;
 use crate::pr_rank::PrDisposition;
-use crate::slack::SlackThread;
+use crate::slack::{SlackDirectory, SlackThread};
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG};
 use crate::ui::pr_cells::{
     board_detail_row_text, pr_row_text_with_activity, session_row_text_with_activity,
@@ -359,10 +359,22 @@ struct CachedActivity {
 /// Older live mirrors do not contain the activity fields. Their hook history
 /// and assistant transcript still do, so retain a small incremental cache
 /// rather than rescanning large JSONL files every two seconds.
-#[derive(Default)]
 struct ActivityHistory {
     transcripts: HashMap<PathBuf, CachedActivity>,
     repositories: HashMap<PathBuf, (String, String)>,
+    slack_transcripts: HashMap<PathBuf, u64>,
+    slack_directory: SlackDirectory,
+}
+
+impl Default for ActivityHistory {
+    fn default() -> Self {
+        Self {
+            transcripts: HashMap::new(),
+            repositories: HashMap::new(),
+            slack_transcripts: HashMap::new(),
+            slack_directory: SlackDirectory::load(),
+        }
+    }
 }
 
 /// Read every live mirror, one snapshot per session.
@@ -375,6 +387,13 @@ fn gather(activity_history: &mut ActivityHistory) -> Result<Vec<SessionSnapshot>
             .unwrap_or(0.0);
         if now_secs() - last_updated > STALE_SESSION_SECS {
             continue;
+        }
+        if let Some(transcript_path) = data
+            .get("transcript_path")
+            .and_then(|value| value.as_str())
+            .filter(|path| !path.is_empty())
+        {
+            activity_history.scan_slack_metadata(Path::new(transcript_path));
         }
         let prs: Vec<SessionPr> = data
             .get("prs")
@@ -547,6 +566,46 @@ fn hook_activity_from_stats(stats: &serde_json::Value) -> ActivityTimes {
 }
 
 impl ActivityHistory {
+    fn scan_slack_metadata(&mut self, path: &Path) {
+        let Ok(file_len) = path.metadata().map(|metadata| metadata.len()) else {
+            return;
+        };
+        let scanned_len = self
+            .slack_transcripts
+            .get(path)
+            .copied()
+            .unwrap_or_default();
+        if file_len == scanned_len {
+            return;
+        }
+        let offset = if file_len < scanned_len {
+            0
+        } else {
+            scanned_len
+        };
+        let Ok(mut file) = File::open(path) else {
+            return;
+        };
+        if file.seek(SeekFrom::Start(offset)).is_err() {
+            return;
+        }
+        let mut text = String::new();
+        if file.read_to_string(&mut text).is_err() {
+            return;
+        }
+        self.slack_directory.message_metadata(&text);
+        self.slack_transcripts.insert(path.to_path_buf(), file_len);
+    }
+
+    fn enrich_slack_threads(&mut self, entries: &mut [BoardPr]) {
+        for thread in entries
+            .iter_mut()
+            .flat_map(|entry| entry.slack_threads.iter_mut())
+        {
+            self.slack_directory.enrich_thread(thread);
+        }
+    }
+
     fn transcript_activity(&mut self, path: &Path, seed: ActivityTimes) -> ActivityTimes {
         let Ok(file_len) = path.metadata().map(|metadata| metadata.len()) else {
             return seed;
@@ -979,7 +1038,8 @@ fn local_board(
     linger_days: u64,
 ) -> Result<(Vec<BoardPr>, Vec<WorkspaceEntry>)> {
     let snapshots = gather(history)?;
-    let entries = aggregate(&snapshots, overrides, linger_days);
+    let mut entries = aggregate(&snapshots, overrides, linger_days);
+    history.enrich_slack_threads(&mut entries);
     let workspaces = local_workspaces(&snapshots, &entries);
     Ok((entries, workspaces))
 }
@@ -2542,6 +2602,7 @@ async fn board_loop(
             } else {
                 (entries, workspaces) = local_board(&mut activity_history, overrides, linger_days)?;
             }
+            activity_history.enrich_slack_threads(&mut entries);
             needs_render = true;
         }
 
@@ -4283,6 +4344,34 @@ mod tests {
             chrono::DateTime::parse_from_rfc3339("2026-08-06T12:03:00Z")
                 .unwrap()
                 .timestamp() as u64
+        );
+    }
+
+    #[test]
+    fn slack_metadata_from_one_transcript_enriches_board_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"response_item","output":"MsgID,UserID,UserName,RealName,Channel,ThreadTs,Text\n1786679090.037079,U0AEVB0102V,mango,Mango,C0AGPSMKQ3Z (#pr-reviews),,\"message\""}"#,
+        )
+        .unwrap();
+
+        let mut history = ActivityHistory::default();
+        history.scan_slack_metadata(&path);
+        let mut entry = BoardPr {
+            pr: board_pr(1175, "developer-portal"),
+            sessions: Vec::new(),
+            slack_threads: crate::slack::extract_threads(
+                "https://tavus.slack.com/archives/C0AGPSMKQ3Z/p1786679090037079",
+            ),
+            stale: false,
+        };
+        history.enrich_slack_threads(std::slice::from_mut(&mut entry));
+
+        assert_eq!(
+            crate::slack::thread_identity_label(&entry.slack_threads[0]),
+            "#pr-reviews · Mango"
         );
     }
 

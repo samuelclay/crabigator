@@ -56,6 +56,7 @@ fn slack_message_row_re() -> &'static Regex {
 pub(crate) struct SlackDirectory {
     channels: HashMap<String, String>,
     users: HashMap<String, String>,
+    messages: HashMap<(String, String), SlackMessageMetadata>,
 }
 
 #[derive(Deserialize)]
@@ -83,6 +84,7 @@ struct CachedUser {
     profile: CachedUserProfile,
 }
 
+#[derive(Clone)]
 pub(crate) struct SlackMessageMetadata {
     message_id: String,
     channel_id: String,
@@ -100,11 +102,17 @@ struct SlackMessageRow {
 }
 
 impl SlackDirectory {
-    #[cfg(not(test))]
     pub fn load() -> Self {
-        let mut directory = Self::default();
-        directory.reload();
-        directory
+        #[cfg(not(test))]
+        {
+            let mut directory = Self::default();
+            directory.reload();
+            directory
+        }
+        #[cfg(test)]
+        {
+            Self::default()
+        }
     }
 
     #[cfg(not(test))]
@@ -138,6 +146,15 @@ impl SlackDirectory {
         if let Some(channel) = self.channels.get(channel_id) {
             thread.channel = Some(channel.clone());
         }
+        let Some(message_id) = slack_message_id(&thread.url) else {
+            return;
+        };
+        if let Some(metadata) = self
+            .messages
+            .get(&(channel_id.to_string(), message_id.to_string()))
+        {
+            metadata.apply_to(thread);
+        }
     }
 
     /// Read exact channel and poster metadata from Slack MCP message results.
@@ -157,7 +174,8 @@ impl SlackDirectory {
             }
         }
 
-        rows.into_iter()
+        let metadata = rows
+            .into_iter()
             .map(|row| {
                 let channel = self.channels.get(&row.channel_id).cloned().or(row.channel);
                 let author = self
@@ -173,7 +191,21 @@ impl SlackDirectory {
                     author,
                 }
             })
-            .collect()
+            .collect::<Vec<_>>();
+        for item in &metadata {
+            let key = (item.channel_id.clone(), item.message_id.clone());
+            if let Some(existing) = self.messages.get_mut(&key) {
+                if item.channel.is_some() {
+                    existing.channel = item.channel.clone();
+                }
+                if item.author.is_some() {
+                    existing.author = item.author.clone();
+                }
+            } else {
+                self.messages.insert(key, item.clone());
+            }
+        }
+        metadata
     }
 
     fn add_channels(&mut self, text: &str) {
@@ -542,6 +574,21 @@ mod tests {
         assert!(matching.apply_to(&mut thread));
         assert_eq!(thread.channel.as_deref(), Some("dogfood"));
         assert_eq!(thread.author.as_deref(), Some("Jared Vishno"));
+    }
+
+    #[test]
+    fn metadata_seen_before_a_permalink_enriches_it_later() {
+        let url = "https://tavus.slack.com/archives/C0AGPSMKQ3Z/p1786679090037079";
+        let mut directory = SlackDirectory::default();
+        let result = "MsgID,UserID,UserName,RealName,Channel,ThreadTs,Text\n\
+            1786679090.037079,U0AEVB0102V,mango,Mango,C0AGPSMKQ3Z (#pr-reviews),,\"message\"";
+
+        directory.message_metadata(result);
+        let mut thread = extract_threads(url).remove(0);
+        directory.enrich_thread(&mut thread);
+
+        assert_eq!(thread.channel.as_deref(), Some("pr-reviews"));
+        assert_eq!(thread.author.as_deref(), Some("Mango"));
     }
 
     #[test]
