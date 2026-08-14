@@ -32,6 +32,9 @@ interface SessionPrRow extends BoardSessionRow {
 /** Per-session recap brief stored in sessions.recap (see SessionDO). */
 interface SessionRecapBrief {
     headline: string;
+    bullets: string[];
+    next_prompt_notes: string[];
+    artifacts: string[];
     generated_at: number;
     additions: number;
     deletions: number;
@@ -174,6 +177,9 @@ function sessionRecap(raw: string | null): SessionRecapBrief | null {
         if (!parsed?.headline) return null;
         return {
             headline: String(parsed.headline),
+            bullets: stringArray(parsed.bullets),
+            next_prompt_notes: stringArray(parsed.next_prompt_notes),
+            artifacts: stringArray(parsed.artifacts),
             generated_at: parsed.generated_at || 0,
             additions: parsed.additions || 0,
             deletions: parsed.deletions || 0,
@@ -181,6 +187,12 @@ function sessionRecap(raw: string | null): SessionRecapBrief | null {
     } catch {
         return null;
     }
+}
+
+function stringArray(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+        : [];
 }
 
 function boardSession(row: BoardSessionRow): BoardSession {

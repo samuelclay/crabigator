@@ -53,7 +53,7 @@ interface EphemeralState {
 
 /**
  * The slice of a recap event the PR board needs, as the JSON string stored
- * in sessions.recap: headline, generation time, and the turn's line delta.
+ * in sessions.recap: display text, generation time, and the turn's line delta.
  * Null when the event carries no finished recap.
  */
 function recapBrief(event: any): string | null {
@@ -61,6 +61,11 @@ function recapBrief(event: any): string | null {
     if (!latest?.headline) return null;
     return JSON.stringify({
         headline: latest.headline,
+        bullets: Array.isArray(latest.bullets) ? latest.bullets : [],
+        next_prompt_notes: Array.isArray(latest.next_prompt_notes)
+            ? latest.next_prompt_notes
+            : [],
+        artifacts: Array.isArray(latest.artifacts) ? latest.artifacts : [],
         generated_at: latest.generated_at || 0,
         additions: latest.line_delta?.additions || 0,
         deletions: latest.line_delta?.deletions || 0,
