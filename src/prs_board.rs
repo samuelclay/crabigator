@@ -163,19 +163,40 @@ impl RecencyBucket {
     }
 }
 
-fn expand_board_view(detail: &mut u8, oldest_visible_bucket: &mut RecencyBucket) {
-    if *detail < MAX_DETAIL {
-        *detail += 1;
-    } else {
-        *oldest_visible_bucket = oldest_visible_bucket.wider();
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BoardView {
+    detail: u8,
+    oldest_visible_bucket: RecencyBucket,
+}
+
+impl BoardView {
+    const fn new(detail: u8, oldest_visible_bucket: RecencyBucket) -> Self {
+        Self {
+            detail,
+            oldest_visible_bucket,
+        }
+    }
+
+    fn expand(&mut self) {
+        if self.detail < MAX_DETAIL {
+            self.detail += 1;
+        } else {
+            self.oldest_visible_bucket = self.oldest_visible_bucket.wider();
+        }
+    }
+
+    fn collapse(&mut self) {
+        if self.detail > DEFAULT_DETAIL {
+            self.detail -= 1;
+        } else {
+            self.oldest_visible_bucket = self.oldest_visible_bucket.narrower();
+        }
     }
 }
 
-fn collapse_board_view(detail: &mut u8, oldest_visible_bucket: &mut RecencyBucket) {
-    if *detail > DEFAULT_DETAIL {
-        *detail -= 1;
-    } else {
-        *oldest_visible_bucket = oldest_visible_bucket.narrower();
+impl Default for BoardView {
+    fn default() -> Self {
+        Self::new(DEFAULT_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET)
     }
 }
 
@@ -1957,8 +1978,7 @@ fn render(
     width: u16,
     linger_days: u64,
     include_ended: bool,
-    detail: u8,
-    oldest_visible_bucket: RecencyBucket,
+    view: BoardView,
 ) -> Vec<String> {
     let now_ms = (now_secs() * 1000.0) as u64;
     render_at(
@@ -1967,8 +1987,7 @@ fn render(
         width,
         linger_days,
         include_ended,
-        detail,
-        oldest_visible_bucket,
+        view,
         now_ms,
     )
 }
@@ -1979,10 +1998,13 @@ fn render_at(
     width: u16,
     linger_days: u64,
     include_ended: bool,
-    detail: u8,
-    oldest_visible_bucket: RecencyBucket,
+    view: BoardView,
     now_ms: u64,
 ) -> Vec<String> {
+    let BoardView {
+        detail,
+        oldest_visible_bucket,
+    } = view;
     let now = now_ms / 1000;
     let throbber_frame = crate::ui::throbber_frame_index();
     let visible_row_indices: Vec<usize> = rows
@@ -2272,8 +2294,7 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             width,
             DEFAULT_LINGER_DAYS,
             false,
-            DEFAULT_DETAIL,
-            DEFAULT_OLDEST_VISIBLE_BUCKET,
+            BoardView::default(),
         ) {
             println!("{line}");
         }
@@ -2368,8 +2389,7 @@ async fn board_loop(
     let mut activity_history = ActivityHistory::default();
     let mut expanded = false;
     let preferences = crate::config::Config::load().unwrap_or_default().pr_board;
-    let mut detail = DEFAULT_DETAIL;
-    let mut oldest_visible_bucket = DEFAULT_OLDEST_VISIBLE_BUCKET;
+    let mut view = BoardView::default();
     let mut linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
     let mut include_ended = preferences.include_ended;
     // Cloud fetches are throttled well below the local tick; toggling the
@@ -2431,7 +2451,7 @@ async fn board_loop(
             let filtered: Vec<BoardRow> = entries
                 .iter()
                 .filter_map(|entry| {
-                    if activity_bucket(&entry.sessions, now) > oldest_visible_bucket {
+                    if activity_bucket(&entry.sessions, now) > view.oldest_visible_bucket {
                         return None;
                     }
                     let preview_lines =
@@ -2447,7 +2467,7 @@ async fn board_loop(
             let filtered_workspaces: Vec<WorkspaceRow> = workspaces
                 .iter()
                 .filter_map(|entry| {
-                    if activity_bucket(entry.sessions(), now) > oldest_visible_bucket {
+                    if activity_bucket(entry.sessions(), now) > view.oldest_visible_bucket {
                         return None;
                     }
                     let preview_lines = build_session_previews(
@@ -2472,8 +2492,7 @@ async fn board_loop(
                 width,
                 linger_days,
                 include_ended,
-                detail,
-                oldest_visible_bucket,
+                view,
                 now_ms,
             );
             let hash = frame_hash(&fresh);
@@ -2581,12 +2600,12 @@ async fn board_loop(
                             // restores one older recency bucket; at compact,
                             // collapsing hides the oldest visible bucket.
                             KeyCode::Char('e') => {
-                                expand_board_view(&mut detail, &mut oldest_visible_bucket);
+                                view.expand();
                                 needs_render = true;
                                 dirty = true;
                             }
                             KeyCode::Char('c') => {
-                                collapse_board_view(&mut detail, &mut oldest_visible_bucket);
+                                view.collapse();
                                 needs_render = true;
                                 dirty = true;
                             }
@@ -2673,8 +2692,7 @@ mod tests {
             160,
             DEFAULT_LINGER_DAYS,
             false,
-            detail,
-            oldest_visible_bucket,
+            BoardView::new(detail, oldest_visible_bucket),
         )
         .join("\n")
     }
@@ -2771,8 +2789,7 @@ mod tests {
             160,
             DEFAULT_LINGER_DAYS,
             false,
-            DEFAULT_DETAIL,
-            DEFAULT_OLDEST_VISIBLE_BUCKET,
+            BoardView::default(),
         )
         .join("\n");
         let plain = crate::parsers::strip_ansi_for_debug(&frame);
@@ -2881,8 +2898,7 @@ mod tests {
                 160,
                 DEFAULT_LINGER_DAYS,
                 false,
-                DEFAULT_DETAIL,
-                DEFAULT_OLDEST_VISIBLE_BUCKET,
+                BoardView::default(),
             )
             .join("\n"),
         );
@@ -2965,8 +2981,7 @@ mod tests {
                 160,
                 DEFAULT_LINGER_DAYS,
                 false,
-                detail,
-                DEFAULT_OLDEST_VISIBLE_BUCKET,
+                BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET),
             )
             .into_iter()
             .map(|line| crate::parsers::strip_ansi_for_debug(&line))
@@ -3071,8 +3086,7 @@ mod tests {
 
     #[test]
     fn collapse_and_expand_move_from_detail_to_recency() {
-        let mut detail = MAX_DETAIL;
-        let mut oldest_visible_bucket = DEFAULT_OLDEST_VISIBLE_BUCKET;
+        let mut view = BoardView::new(MAX_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET);
 
         for expected in [
             (2, RecencyBucket::Older),
@@ -3085,12 +3099,12 @@ mod tests {
             (0, RecencyBucket::LastThreeHours),
             (0, RecencyBucket::LastHour),
         ] {
-            collapse_board_view(&mut detail, &mut oldest_visible_bucket);
-            assert_eq!((detail, oldest_visible_bucket), expected);
+            view.collapse();
+            assert_eq!((view.detail, view.oldest_visible_bucket), expected);
         }
-        collapse_board_view(&mut detail, &mut oldest_visible_bucket);
+        view.collapse();
         assert_eq!(
-            (detail, oldest_visible_bucket),
+            (view.detail, view.oldest_visible_bucket),
             (0, RecencyBucket::LastHour)
         );
 
@@ -3105,11 +3119,14 @@ mod tests {
             (3, RecencyBucket::LastDay),
             (3, RecencyBucket::Older),
         ] {
-            expand_board_view(&mut detail, &mut oldest_visible_bucket);
-            assert_eq!((detail, oldest_visible_bucket), expected);
+            view.expand();
+            assert_eq!((view.detail, view.oldest_visible_bucket), expected);
         }
-        expand_board_view(&mut detail, &mut oldest_visible_bucket);
-        assert_eq!((detail, oldest_visible_bucket), (3, RecencyBucket::Older));
+        view.expand();
+        assert_eq!(
+            (view.detail, view.oldest_visible_bucket),
+            (3, RecencyBucket::Older)
+        );
     }
 
     #[test]
@@ -3225,8 +3242,7 @@ mod tests {
                     160,
                     DEFAULT_LINGER_DAYS,
                     false,
-                    detail,
-                    DEFAULT_OLDEST_VISIBLE_BUCKET,
+                    BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET),
                 )
                 .join("\n"),
             );
@@ -3926,8 +3942,7 @@ mod tests {
                 160,
                 DEFAULT_LINGER_DAYS,
                 false,
-                MAX_DETAIL,
-                DEFAULT_OLDEST_VISIBLE_BUCKET,
+                BoardView::new(MAX_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET),
             )
             .join("\n"),
         );
