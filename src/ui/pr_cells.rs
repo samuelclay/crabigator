@@ -13,10 +13,11 @@ pub(crate) const PR_COLUMN_GAP: usize = 2;
 pub(crate) const PR_LEFT_PADDING: usize = 1;
 pub(crate) const PR_RIGHT_PADDING: usize = 1;
 
-pub(crate) const PR_IDENTITY_MAX: usize = 32;
+pub(crate) const PR_IDENTITY_MAX: usize = 44;
+const PR_IDENTITY_EXTRA: usize = 12;
 const PR_DIFF_MAX: usize = 18;
 const PR_FILES_MAX: usize = 11;
-pub(crate) const PR_BRANCH_MAX: usize = 40;
+pub(crate) const PR_BRANCH_MAX: usize = 28;
 const PR_STATE_MAX: usize = 6;
 const PR_CI_MAX: usize = 10;
 /// `💬` is two cells wide, leaving room for a four-digit thread count.
@@ -161,10 +162,14 @@ impl PrColumnWidths {
             }
         }
 
-        // The branch is the flexible middle column. Once every required column
-        // fits, give it all remaining room so the status columns stay anchored
-        // at the right edge without becoming right-aligned themselves.
+        // Favor session titles over branches, whose distinguishing text is
+        // preserved at the right edge when the label is truncated.
         if self.branch > 0 {
+            let identity_growth = left_budget
+                .saturating_sub(self.left_width())
+                .min(PR_IDENTITY_EXTRA)
+                .min(PR_IDENTITY_MAX.saturating_sub(self.identity));
+            self.identity += identity_growth;
             self.branch += left_budget.saturating_sub(self.left_width());
         } else {
             // A branch too narrow to be worth reading is dropped whole, which
@@ -256,7 +261,7 @@ pub(crate) fn session_row_text_with_activity(
         colored_cell(&identity, identity_color, widths.identity),
         diff,
         colored_cell(files, color::DARK_GRAY, widths.files),
-        colored_cell_capped(branch, color::DARK_GRAY, widths.branch, PR_BRANCH_MAX),
+        colored_branch_cell(branch, color::DARK_GRAY, widths.branch),
     ];
     let mut row = " ".repeat(PR_LEFT_PADDING);
     row.push_str(&cells_text(&left_cells));
@@ -404,11 +409,10 @@ pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell;
             widths.files,
             &files_url,
         ),
-        colored_cell_capped(
+        colored_branch_cell(
             &pr_branch_text(pr),
             row_color(pr, color::DARK_GRAY),
             widths.branch,
-            PR_BRANCH_MAX,
         ),
     ]
 }
@@ -513,6 +517,63 @@ fn colored_cell_capped(label: &str, color: u8, width: usize, max_content: usize)
         visible,
         width,
     )
+}
+
+fn colored_branch_cell(label: &str, color: u8, width: usize) -> PrCell {
+    let label = truncate_branch_to_width(label, width.min(PR_BRANCH_MAX));
+    let visible = label.width();
+    (
+        format!("{}{}{}", fg(color), label, RESET_FG),
+        visible,
+        width,
+    )
+}
+
+/// Keep the branch suffix because it usually carries the ticket or feature
+/// name that distinguishes similar worktrees.
+fn truncate_branch_to_width(label: &str, max_width: usize) -> String {
+    const PREFIX: &str = "⎇ ";
+    let Some(branch) = label.strip_prefix(PREFIX) else {
+        return truncate_left_to_width(label, max_width);
+    };
+    let prefix_width = PREFIX.width();
+    if label.width() <= max_width {
+        return label.to_string();
+    }
+    if max_width <= prefix_width {
+        return truncate_to_width(PREFIX, max_width);
+    }
+    format!(
+        "{PREFIX}{}",
+        truncate_left_to_width(branch, max_width - prefix_width)
+    )
+}
+
+fn truncate_left_to_width(text: &str, max_width: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+
+    if text.width() <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "…".to_string();
+    }
+
+    let suffix_width = max_width - 1;
+    let mut width = 0;
+    let mut suffix_start = text.len();
+    for (index, ch) in text.char_indices().rev() {
+        let ch_width = ch.width().unwrap_or(0);
+        if width + ch_width > suffix_width {
+            break;
+        }
+        width += ch_width;
+        suffix_start = index;
+    }
+    format!("…{}", &text[suffix_start..])
 }
 
 /// Lay cells out side by side, padding each to its column and separating

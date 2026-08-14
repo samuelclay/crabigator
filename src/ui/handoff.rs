@@ -861,6 +861,10 @@ mod tests {
         assert!(widths.branch > PR_BRANCH_MAX);
         assert_eq!(long_cells[3].1, PR_BRANCH_MAX);
         assert_eq!(long_cells[3].2, widths.branch);
+        assert_eq!(
+            crate::parsers::strip_ansi_for_debug(&long_cells[3].0),
+            "⎇ …callback-with-more-detail"
+        );
         assert_eq!(widths.files, "48 files".width());
         assert_eq!(widths.state, "open".width());
         assert_eq!(widths.ci, "✗4 CI".width());
