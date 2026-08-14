@@ -201,7 +201,11 @@ struct BoardView {
 impl BoardView {
     const fn new(detail: u8, oldest_visible_bucket: RecencyBucket) -> Self {
         Self {
-            detail,
+            detail: if detail > MAX_DETAIL {
+                MAX_DETAIL
+            } else {
+                detail
+            },
             oldest_visible_bucket,
         }
     }
@@ -2647,18 +2651,13 @@ fn draw_changed_lines<W: Write>(
     Ok(true)
 }
 
-fn save_board_preferences(
-    include_ended: bool,
-    linger_days: u64,
-    oldest_visible_bucket: RecencyBucket,
-) {
-    let Ok(mut config) = crate::config::Config::load() else {
-        return;
-    };
+fn save_board_preferences(include_ended: bool, linger_days: u64, view: BoardView) -> Result<()> {
+    let mut config = crate::config::Config::load()?;
     config.pr_board.include_ended = include_ended;
+    config.pr_board.detail = view.detail;
     config.pr_board.linger_days = linger_days;
-    config.pr_board.oldest_visible_hours = oldest_visible_bucket.max_age_hours();
-    let _ = config.save();
+    config.pr_board.oldest_visible_hours = view.oldest_visible_bucket.max_age_hours();
+    config.save()
 }
 
 async fn board_loop(
@@ -2686,7 +2685,7 @@ async fn board_loop(
     let mut expanded = false;
     let preferences = crate::config::Config::load().unwrap_or_default().pr_board;
     let mut view = BoardView::new(
-        DEFAULT_DETAIL,
+        preferences.detail,
         RecencyBucket::from_max_age_hours(preferences.oldest_visible_hours),
     );
     let mut linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
@@ -2915,6 +2914,7 @@ async fn board_loop(
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
+                        save_board_preferences(include_ended, linger_days, view)?;
                         return Ok(());
                     }
                     // While a filter is active, printable keys edit the query
@@ -2951,7 +2951,10 @@ async fn board_loop(
                         }
                     } else {
                         match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                save_board_preferences(include_ended, linger_days, view)?;
+                                return Ok(());
+                            }
                             KeyCode::Char('/') => {
                                 search = Some(String::new());
                                 scroll = 0;
@@ -2964,22 +2967,14 @@ async fn board_loop(
                             // rather than waiting out the tick.
                             KeyCode::Char('+') | KeyCode::Char('=') => {
                                 linger_days = (linger_days + 1).min(MAX_LINGER_DAYS);
-                                save_board_preferences(
-                                    include_ended,
-                                    linger_days,
-                                    view.oldest_visible_bucket,
-                                );
+                                save_board_preferences(include_ended, linger_days, view)?;
                                 cloud_fetch_due = true;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
                             KeyCode::Char('-') | KeyCode::Char('_') => {
                                 linger_days = linger_days.saturating_sub(1);
-                                save_board_preferences(
-                                    include_ended,
-                                    linger_days,
-                                    view.oldest_visible_bucket,
-                                );
+                                save_board_preferences(include_ended, linger_days, view)?;
                                 cloud_fetch_due = true;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
@@ -2988,28 +2983,14 @@ async fn board_loop(
                             // restores one older recency bucket; at compact,
                             // collapsing hides the oldest visible bucket.
                             KeyCode::Char('e') => {
-                                let previous_bucket = view.oldest_visible_bucket;
                                 view.expand();
-                                if view.oldest_visible_bucket != previous_bucket {
-                                    save_board_preferences(
-                                        include_ended,
-                                        linger_days,
-                                        view.oldest_visible_bucket,
-                                    );
-                                }
+                                save_board_preferences(include_ended, linger_days, view)?;
                                 needs_render = true;
                                 dirty = true;
                             }
                             KeyCode::Char('c') => {
-                                let previous_bucket = view.oldest_visible_bucket;
                                 view.collapse();
-                                if view.oldest_visible_bucket != previous_bucket {
-                                    save_board_preferences(
-                                        include_ended,
-                                        linger_days,
-                                        view.oldest_visible_bucket,
-                                    );
-                                }
+                                save_board_preferences(include_ended, linger_days, view)?;
                                 needs_render = true;
                                 dirty = true;
                             }
@@ -3017,11 +2998,7 @@ async fn board_loop(
                             // record, which includes ended sessions.
                             KeyCode::Char('a') => {
                                 include_ended = !include_ended;
-                                save_board_preferences(
-                                    include_ended,
-                                    linger_days,
-                                    view.oldest_visible_bucket,
-                                );
+                                save_board_preferences(include_ended, linger_days, view)?;
                                 cloud_fetch_due = true;
                                 scroll = 0;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
@@ -3565,6 +3542,11 @@ mod tests {
 
     #[test]
     fn collapse_and_expand_move_from_detail_to_recency() {
+        assert_eq!(
+            BoardView::new(u8::MAX, DEFAULT_OLDEST_VISIBLE_BUCKET).detail,
+            MAX_DETAIL,
+            "invalid saved detail opens at the highest supported level"
+        );
         let mut view = BoardView::new(MAX_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET);
 
         for expected in [
