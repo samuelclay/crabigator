@@ -1287,23 +1287,14 @@ fn board_has_thinking(entries: &[BoardPr], workspaces: &[WorkspaceEntry]) -> boo
         .any(|session| session.state == SessionState::Thinking)
 }
 
-/// Sort completed work by its latest completion. A row that has not completed
-/// yet falls back to its latest prompt so new work still rises immediately.
+/// Sort each row by its newest prompt or completion. New prompts rise
+/// immediately, and their completions move the row again when the turn ends.
 fn activity_sort_time(sessions: &[SessionRef]) -> u64 {
-    let completed = sessions
+    sessions
         .iter()
-        .map(|session| session.completed_at)
+        .map(|session| session.prompted_at.max(session.completed_at))
         .max()
-        .unwrap_or(0);
-    if completed > 0 {
-        completed
-    } else {
-        sessions
-            .iter()
-            .map(|session| session.prompted_at)
-            .max()
-            .unwrap_or(0)
-    }
+        .unwrap_or(0)
 }
 
 fn activity_bucket(sessions: &[SessionRef], now: u64) -> RecencyBucket {
@@ -4164,7 +4155,8 @@ mod tests {
     }
 
     #[test]
-    fn activity_sort_uses_prompts_only_until_a_completion_exists() {
+    fn activity_sort_uses_the_newest_prompt_or_completion() {
+        let now = 100_000;
         let mut session = SessionRef {
             session_id: "one".to_string(),
             dir_name: "crabigator".to_string(),
@@ -4173,13 +4165,23 @@ mod tests {
             title_set_at: 0,
             recap: None,
             state: SessionState::Ready,
-            prompted_at: 200,
-            completed_at: 0,
+            prompted_at: now - 8 * 60,
+            completed_at: now - 13 * 60 * 60,
         };
-        assert_eq!(activity_sort_time(std::slice::from_ref(&session)), 200);
+        assert_eq!(
+            activity_sort_time(std::slice::from_ref(&session)),
+            session.prompted_at
+        );
+        assert_eq!(
+            activity_bucket(std::slice::from_ref(&session), now),
+            RecencyBucket::LastHour
+        );
 
-        session.completed_at = 150;
-        assert_eq!(activity_sort_time(&[session]), 150);
+        session.completed_at = now - 30;
+        assert_eq!(
+            activity_sort_time(std::slice::from_ref(&session)),
+            session.completed_at
+        );
     }
 
     #[test]
