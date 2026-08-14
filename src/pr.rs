@@ -726,9 +726,10 @@ impl PrTracker {
     /// which is sometimes the only tie between a session and its PR. Slack
     /// permalinks are also noted as the likely origin of upcoming work.
     fn note_prompt_urls(&mut self, text: &str) {
+        let mut prompt_origin = None;
         for mut thread in extract_threads(text) {
             self.slack_directory.enrich_thread(&mut thread);
-            self.latest_prompt_slack = Some((thread.url.clone(), Instant::now()));
+            prompt_origin.get_or_insert_with(|| thread.url.clone());
             if !self
                 .slack_threads
                 .iter()
@@ -736,6 +737,9 @@ impl PrTracker {
             {
                 self.slack_threads.push(thread);
             }
+        }
+        if let Some(origin) = prompt_origin {
+            self.latest_prompt_slack = Some((origin, Instant::now()));
         }
         for found in any_url_re().find_iter(text) {
             let url = found
@@ -2723,6 +2727,7 @@ mod tests {
         assert_eq!(tracker.slack_threads().len(), 2);
         assert_eq!(tracker.slack_threads()[0].url, first);
         assert_eq!(tracker.slack_threads()[1].url, second);
+        assert_eq!(tracker.session_slack_origin(), Some(first));
 
         let mut metadata = extract_threads(first);
         metadata[0].channel = Some("builder".to_string());

@@ -58,8 +58,7 @@ const PREVIEW_MATCHES: usize = 3;
 /// Transcript lines shown either side of a match in the expanded preview.
 const PREVIEW_CONTEXT: usize = 2;
 /// Detail levels `e`/`c` expand and collapse through: 0 = compact (one line
-/// per PR), 1 = + one title line, 2 = + one recap line. A step therefore adds
-/// at most one line to each row.
+/// per PR), 1 = + title and Slack link lines, 2 = + one recap line.
 const MAX_DETAIL: u8 = 2;
 const DEFAULT_DETAIL: u8 = 0;
 
@@ -824,19 +823,30 @@ fn merge_pr_slack_threads(
         else {
             continue;
         };
-        if let Some(existing) = merged.iter_mut().find(|thread| thread.url == url) {
-            if crate::slack::has_only_channel_id(existing)
-                && !crate::slack::has_only_channel_id(&candidate)
-            {
-                existing.channel = candidate.channel.clone();
-            }
-            if existing.author.is_none() {
-                existing.author = candidate.author.clone();
-            }
-        } else {
-            merged.push(candidate);
-        }
+        merge_slack_thread(merged, candidate);
     }
+}
+
+fn merge_slack_thread(merged: &mut Vec<SlackThread>, candidate: SlackThread) {
+    if let Some(existing) = merged.iter_mut().find(|thread| thread.url == candidate.url) {
+        if crate::slack::has_only_channel_id(existing)
+            && !crate::slack::has_only_channel_id(&candidate)
+        {
+            existing.channel = candidate.channel.clone();
+        }
+        if existing.author.is_none() {
+            existing.author = candidate.author;
+        }
+    } else {
+        merged.push(candidate);
+    }
+}
+
+fn order_pr_slack_threads(entry: &mut BoardPr) {
+    let origin = entry.pr.slack_origin_url.as_str();
+    entry
+        .slack_threads
+        .sort_by_key(|thread| (origin.is_empty() || thread.url != origin, thread.posted_at));
 }
 
 fn now_secs() -> f64 {
@@ -895,6 +905,14 @@ fn aggregate(
                 if entry.pr.authored_by_viewer.is_none() {
                     entry.pr.authored_by_viewer = previous.authored_by_viewer;
                 }
+                if entry.pr.slack_origin_url.is_empty() {
+                    entry.pr.slack_origin_url = previous.slack_origin_url;
+                }
+                for url in previous.slack_comment_urls {
+                    if !entry.pr.slack_comment_urls.contains(&url) {
+                        entry.pr.slack_comment_urls.push(url);
+                    }
+                }
             }
             entry.pr.mentions += pr.mentions;
             entry.pr.user_mentions += pr.user_mentions;
@@ -920,6 +938,9 @@ fn aggregate(
                 && repository_matches(&session.repo_owner, &session.repo_name, &pr.owner, &pr.repo)
                 && (pr.created_here || (!pr.branch.is_empty() && session.branch == pr.branch));
             if represents_session {
+                for thread in &session.slack_threads {
+                    merge_slack_thread(&mut entry.slack_threads, thread.clone());
+                }
                 entry.stale &= session_age > STALE_SESSION_SECS;
                 entry.sessions.push(SessionRef {
                     session_id: session.session_id.clone(),
@@ -941,6 +962,7 @@ fn aggregate(
         .into_iter()
         .filter_map(|key| {
             let mut entry = merged.remove(&key)?;
+            order_pr_slack_threads(&mut entry);
             match overrides.get(&key) {
                 Some(PrDisposition::Dismissed) => return None,
                 Some(PrDisposition::Primary) => {
@@ -1756,64 +1778,53 @@ fn latest_recap(sessions: &[SessionRef]) -> Option<&RecapBrief> {
         .max_by_key(|recap| recap.generated_at)
 }
 
-fn slack_links_cell(threads: &[SlackThread], width: usize) -> ActivityCell {
-    let mut styled = String::new();
-    let mut visible = 0;
-    let mut seen = HashSet::new();
-    for thread in threads {
-        if !seen.insert(thread.url.as_str()) {
-            continue;
-        }
-        let separator = usize::from(visible > 0) * PR_COLUMN_GAP;
-        let remaining = width.saturating_sub(visible + separator);
-        if remaining == 0 {
-            break;
-        }
-        let full_label = crate::slack::thread_identity_label(thread);
-        let label = crate::ui::pr_cells::truncate_to_width(&full_label, remaining);
-        if label.is_empty() {
-            break;
-        }
-        if separator > 0 {
-            styled.push_str(&" ".repeat(separator));
-            visible += separator;
-        }
-        styled.push_str(&format!(
-            "{}{}{}",
-            fg(color::CYAN),
-            escape::hyperlink(&thread.url, &label),
-            RESET_FG
-        ));
-        visible += label.width();
-        if label != full_label {
-            break;
-        }
+fn slack_link_cell(thread: &SlackThread, width: usize) -> ActivityCell {
+    let full_label = crate::slack::thread_identity_label(thread);
+    let label = crate::ui::pr_cells::truncate_to_width(&full_label, width);
+    let visible = label.width();
+    ActivityCell {
+        styled: if label.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "{}{}{}",
+                fg(color::CYAN),
+                escape::hyperlink(&thread.url, &label),
+                RESET_FG
+            )
+        },
+        visible,
     }
-    ActivityCell { styled, visible }
 }
 
 fn slack_links_width(threads: &[SlackThread]) -> usize {
     let mut seen = HashSet::new();
-    let labels: Vec<String> = threads
+    threads
         .iter()
         .filter(|thread| seen.insert(thread.url.as_str()))
         .map(crate::slack::thread_identity_label)
-        .collect();
-    labels.iter().map(|label| label.width()).sum::<usize>()
-        + labels.len().saturating_sub(1) * PR_COLUMN_GAP
+        .map(|label| label.width())
+        .max()
+        .unwrap_or(0)
 }
 
-fn title_detail_line(
+fn title_detail_lines(
     entry: &BoardPr,
     width: u16,
     now_ms: u64,
     activity_width: usize,
     widths: &PrColumnWidths,
-) -> Option<String> {
+) -> Vec<String> {
     let title = latest_session_title(&entry.sessions);
-    let links = slack_links_cell(&entry.slack_threads, widths.right_width());
-    if title.is_none() && links.visible == 0 {
-        return None;
+    let mut seen = HashSet::new();
+    let mut links = entry
+        .slack_threads
+        .iter()
+        .filter(|thread| seen.insert(thread.url.as_str()))
+        .map(|thread| slack_link_cell(thread, widths.right_width()));
+    let first_link = links.next();
+    if title.is_none() && first_link.is_none() {
+        return Vec::new();
     }
 
     let (left_styled, left_visible, timestamp) = title.map_or_else(
@@ -1834,7 +1845,8 @@ fn title_detail_line(
         || empty_cell(activity_width),
         |set_at| timestamp_cell(set_at, now_ms, activity_width),
     );
-    Some(format!(
+    let first_link = first_link.unwrap_or_else(|| empty_cell(0));
+    let mut lines = vec![format!(
         "{}{}",
         board_detail_row_text(
             width,
@@ -1844,11 +1856,29 @@ fn title_detail_line(
             age.styled,
             age.visible,
             activity_width,
-            links.styled,
-            links.visible,
+            first_link.styled,
+            first_link.visible,
         ),
         RESET
-    ))
+    )];
+    lines.extend(links.map(|link| {
+        format!(
+            "{}{}",
+            board_detail_row_text(
+                width,
+                widths,
+                String::new(),
+                0,
+                String::new(),
+                0,
+                activity_width,
+                link.styled,
+                link.visible,
+            ),
+            RESET
+        )
+    }));
+    lines
 }
 
 #[derive(Clone, Copy)]
@@ -2021,9 +2051,13 @@ fn render_pr_board_row(
         return lines;
     }
 
-    if let Some(title) = title_detail_line(entry, width, now_ms, activity_width, widths) {
-        lines.push(title);
-    }
+    lines.extend(title_detail_lines(
+        entry,
+        width,
+        now_ms,
+        activity_width,
+        widths,
+    ));
     if detail >= 2 {
         if let Some(recap) = pr_recap_detail_line(entry, width, now_ms, activity_width, widths) {
             lines.push(recap);
@@ -2950,23 +2984,50 @@ mod tests {
         a.user_mentions = 1;
         a.refreshed_at = 2_000;
         a.additions = 42;
+        a.slack_comment_urls =
+            vec!["https://t.slack.com/archives/C2/p1723500002000000".to_string()];
         let mut b = board_pr(5, "portal");
         make_primary(&mut b);
         b.mentions = 3;
         b.refreshed_at = 1_000;
-        b.slack_comment_urls = vec!["https://t.slack.com/archives/C1/p1".to_string()];
+        b.slack_origin_url = "https://t.slack.com/archives/C0/p1723500000000000".to_string();
+        b.slack_comment_urls =
+            vec!["https://t.slack.com/archives/C1/p1723500001000000".to_string()];
 
         let mut one = snapshot("one", vec![a]);
         one.repo_name = "portal".to_string();
+        one.slack_threads =
+            crate::slack::extract_threads("https://t.slack.com/archives/C2/p1723500002000000");
         let mut two = snapshot("two", vec![b]);
         two.repo_name = "portal".to_string();
-        let entries = aggregate(&[one, two], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        two.slack_threads = crate::slack::extract_threads(
+            "https://t.slack.com/archives/C0/p1723500000000000 https://t.slack.com/archives/C1/p1723500001000000 https://t.slack.com/archives/C4/p1723500003000000",
+        );
+        let entries = aggregate(&[two, one], &HashMap::new(), DEFAULT_LINGER_DAYS);
         assert_eq!(entries.len(), 1);
         let entry = &entries[0];
         assert_eq!(entry.pr.mentions, 13, "mentions sum across sessions");
         assert_eq!(entry.pr.additions, 42, "newest gh stats win");
         assert_eq!(entry.sessions.len(), 2);
-        assert_eq!(entry.pr.slack_comment_urls.len(), 1);
+        assert_eq!(
+            entry.pr.slack_origin_url, "https://t.slack.com/archives/C0/p1723500000000000",
+            "a newer snapshot cannot erase the original thread"
+        );
+        assert_eq!(entry.pr.slack_comment_urls.len(), 2);
+        assert_eq!(
+            entry
+                .slack_threads
+                .iter()
+                .map(|thread| thread.url.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "https://t.slack.com/archives/C0/p1723500000000000",
+                "https://t.slack.com/archives/C1/p1723500001000000",
+                "https://t.slack.com/archives/C2/p1723500002000000",
+                "https://t.slack.com/archives/C4/p1723500003000000",
+            ],
+            "the original thread stays first and session-only links remain"
+        );
     }
 
     #[test]
@@ -3641,18 +3702,34 @@ mod tests {
         pr.mentions = 12;
         pr.user_mentions = 3;
         pr.slack_origin_url = "https://t.slack.com/archives/C1/p1723500000000000".to_string();
+        pr.slack_comment_urls =
+            vec!["https://t.slack.com/archives/C2/p1723500000000001".to_string()];
 
         let mut session = snapshot("one", vec![pr]);
         session.repo_name = "portal".to_string();
         session.title = "Builder Signals dashboard".to_string();
         session.title_set_at = now_ms() - 2 * 60 * 60 * 1000;
         session.uncommitted_files = 4;
-        session.slack_threads = vec![SlackThread {
-            url: "https://t.slack.com/archives/C1/p1723500000000000".to_string(),
-            posted_at: 1_723_500_000,
-            channel: Some("builder".to_string()),
-            author: Some("Sam Clay".to_string()),
-        }];
+        session.slack_threads = vec![
+            SlackThread {
+                url: "https://t.slack.com/archives/C1/p1723500000000000".to_string(),
+                posted_at: 1_723_500_000,
+                channel: Some("builder".to_string()),
+                author: Some("Sam Clay".to_string()),
+            },
+            SlackThread {
+                url: "https://t.slack.com/archives/C2/p1723500000000001".to_string(),
+                posted_at: 1_723_500_001,
+                channel: Some("pr-reviews".to_string()),
+                author: Some("Mango".to_string()),
+            },
+            SlackThread {
+                url: "https://t.slack.com/archives/C3/p1723500000000002".to_string(),
+                posted_at: 1_723_500_002,
+                channel: Some("builder-dev".to_string()),
+                author: Some("Kapil".to_string()),
+            },
+        ];
         let entries = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
         let title = render_frame_at(&entries, 1);
         assert!(title.contains("Builder Signals"));
@@ -3662,6 +3739,20 @@ mod tests {
             crate::parsers::strip_ansi_for_debug(&title)
         );
         assert!(title.contains("https://t.slack.com/archives/C1/p1723500000000000"));
+        assert!(title.contains("https://t.slack.com/archives/C2/p1723500000000001"));
+        assert!(title.contains("https://t.slack.com/archives/C3/p1723500000000002"));
+        assert!(
+            title.find("archives/C1").unwrap() < title.find("archives/C2").unwrap(),
+            "the original thread renders first"
+        );
+        assert_eq!(
+            title
+                .lines()
+                .filter(|line| line.contains("slack.com"))
+                .count(),
+            3,
+            "each Slack target gets a clickable row"
+        );
         assert!(title.contains("2h"));
         assert!(!title.contains("CI green, awaiting review"));
         for removed in [

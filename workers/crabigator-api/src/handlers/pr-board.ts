@@ -257,6 +257,14 @@ function combinedPrimarySource(existing: SessionPr, incoming: SessionPr): string
     return '';
 }
 
+function mergeSlackUrls(existing?: string[], incoming?: string[]): string[] {
+    const merged = [...(existing || [])];
+    for (const url of incoming || []) {
+        if (!merged.includes(url)) merged.push(url);
+    }
+    return merged;
+}
+
 function foreignWithoutExplicitInterest(pr: SessionPr): boolean {
     return pr.authored_by_viewer === false
         && (pr.user_mentions || 0) === 0
@@ -354,7 +362,14 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
                 last_mentioned_at: previous.last_mentioned_at,
                 author_login: pr.author_login || previous.author_login,
                 authored_by_viewer: pr.authored_by_viewer ?? previous.authored_by_viewer,
+                slack_comment_urls: mergeSlackUrls(
+                    pr.slack_comment_urls,
+                    previous.slack_comment_urls
+                ),
             };
+            if (!entry.pr.slack_origin_url) {
+                entry.pr.slack_origin_url = previous.slack_origin_url || '';
+            }
         }
         entry.updated_at = Math.max(entry.updated_at, row.updated_at);
         entry.pr.mentions = (entry.pr.mentions || 0) + (pr.mentions || 0);
@@ -367,11 +382,10 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         entry.pr.primary_source = aggregatePrimarySource;
         entry.pr.dismissed = aggregateDismissed;
         if (!entry.pr.slack_origin_url) entry.pr.slack_origin_url = pr.slack_origin_url || '';
-        const slackUrls: string[] = entry.pr.slack_comment_urls || [];
-        for (const url of pr.slack_comment_urls || []) {
-            if (!slackUrls.includes(url)) slackUrls.push(url);
-        }
-        entry.pr.slack_comment_urls = slackUrls;
+        entry.pr.slack_comment_urls = mergeSlackUrls(
+            entry.pr.slack_comment_urls,
+            pr.slack_comment_urls
+        );
         if (!entry.pr.ai_note && pr.ai_note) {
             entry.pr.ai_note = pr.ai_note;
             entry.pr.ai_confidence = pr.ai_confidence || '';
