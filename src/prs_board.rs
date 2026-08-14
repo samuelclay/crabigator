@@ -116,6 +116,15 @@ impl RecencyBucket {
             Self::Older => color::DARK_GRAY,
         }
     }
+
+    fn heading_text_color(self) -> u8 {
+        match self {
+            Self::LastHour | Self::LastThreeHours | Self::LastSixHours | Self::LastNineHours => {
+                color::BLACK
+            }
+            Self::LastTwelveHours | Self::LastDay | Self::Older => color::WHITE,
+        }
+    }
 }
 
 /// Header name for each detail level.
@@ -1998,7 +2007,6 @@ fn render(
         key: String,
         name: String,
         rows: Vec<(u64, SectionRow)>,
-        pr_count: usize,
     }
 
     struct RecencySection {
@@ -2031,12 +2039,10 @@ fn render(
                         key,
                         name,
                         rows: Vec::new(),
-                        pr_count: 0,
                     });
                     repositories.len() - 1
                 });
             let repository = &mut repositories[repository_index];
-            repository.pr_count += usize::from(matches!(row, SectionRow::Pr(_)));
             repository.rows.push((activity, row));
         };
         for (index, row) in rows.iter().enumerate() {
@@ -2074,51 +2080,23 @@ fn render(
         if section_index > 0 {
             lines.push(String::new());
         }
+        let heading = format!("● {}", section.bucket.label());
         lines.push(format!(
-            "{}● {}{}",
-            fg(section.bucket.color()),
-            section.bucket.label(),
-            RESET_FG,
+            "{}{}{heading:<width$}{}",
+            escape::bg(section.bucket.color()),
+            fg(section.bucket.heading_text_color()),
+            RESET,
+            width = width as usize,
         ));
 
         for (repository_index, repository) in section.repositories.into_iter().enumerate() {
             if repository_index > 0 {
                 lines.push(String::new());
             }
-            let repository_session_count = repository
-                .rows
-                .iter()
-                .flat_map(|(_, row)| match *row {
-                    SectionRow::Pr(index) => rows[index].entry.sessions.iter(),
-                    SectionRow::Workspace(index) => workspace_rows[index].entry.sessions().iter(),
-                })
-                .map(|session| {
-                    if session.session_id.is_empty() {
-                        session.dir_name.as_str()
-                    } else {
-                        session.session_id.as_str()
-                    }
-                })
-                .collect::<HashSet<_>>()
-                .len();
-            let pr_label = if repository.pr_count == 1 {
-                "1 PR".to_string()
-            } else {
-                format!("{} PRs", repository.pr_count)
-            };
-            let session_label = if repository_session_count == 1 {
-                "1 session".to_string()
-            } else {
-                format!("{repository_session_count} sessions")
-            };
             lines.push(format!(
-                "{}{}{}  {}{} · {}{}",
+                "{}{}{}",
                 fg(color::CYAN),
                 repository.name,
-                RESET_FG,
-                fg(color::DARK_GRAY),
-                pr_label,
-                session_label,
                 RESET_FG,
             ));
 
@@ -2647,7 +2625,7 @@ mod tests {
             .collect();
         let frame = render(&[], &rows, 160, DEFAULT_LINGER_DAYS, false, DEFAULT_DETAIL).join("\n");
         let plain = crate::parsers::strip_ansi_for_debug(&frame);
-        assert!(frame.contains("samuelclay/crabigator"));
+        assert!(plain.lines().any(|line| line == "samuelclay/crabigator"));
         assert!(frame.contains("sam/pr-board-session-rows"));
         assert!(frame.contains("2 sessions"));
         assert!(!frame.contains("no tracked PR"));
@@ -2887,7 +2865,18 @@ mod tests {
             })
             .collect();
         let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
-        let frame = crate::parsers::strip_ansi_for_debug(&render_frame(&entries));
+        let rendered = render_frame(&entries);
+        for (label, bucket_color, text_color) in [
+            ("● Last hour", RECENCY_1H, color::BLACK),
+            ("● 1–3 hours", RECENCY_3H, color::BLACK),
+            ("● 3–6 hours", RECENCY_6H, color::BLACK),
+            ("● Older", color::DARK_GRAY, color::WHITE),
+        ] {
+            let header = rendered.lines().find(|line| line.contains(label)).unwrap();
+            assert!(header.starts_with(&format!("{}{}", escape::bg(bucket_color), fg(text_color))));
+            assert_eq!(crate::ui::utils::strip_ansi_len(header), 160);
+        }
+        let frame = crate::parsers::strip_ansi_for_debug(&rendered);
 
         let last_hour = frame.find("● Last hour").unwrap();
         let first_portal = frame[last_hour..].find("o/portal").unwrap() + last_hour;
@@ -2902,11 +2891,29 @@ mod tests {
         assert!(three_hours < first_crabigator && first_crabigator < six_hours);
         assert!(six_hours < second_portal && second_portal < older);
         assert!(older < second_crabigator);
-        assert_eq!(frame.matches("o/portal  1 PR").count(), 2);
-        assert_eq!(frame.matches("o/crabigator  1 PR").count(), 2);
+        assert_eq!(frame.lines().filter(|line| *line == "o/portal").count(), 2);
+        assert_eq!(
+            frame.lines().filter(|line| *line == "o/crabigator").count(),
+            2
+        );
         assert!(!frame.contains("● 6–9 hours"));
         assert!(!frame.contains("● 9–12 hours"));
         assert!(!frame.contains("● 12–24 hours"));
+    }
+
+    #[test]
+    fn recency_headers_choose_contrasting_text() {
+        for (bucket, text_color) in [
+            (RecencyBucket::LastHour, color::BLACK),
+            (RecencyBucket::LastThreeHours, color::BLACK),
+            (RecencyBucket::LastSixHours, color::BLACK),
+            (RecencyBucket::LastNineHours, color::BLACK),
+            (RecencyBucket::LastTwelveHours, color::WHITE),
+            (RecencyBucket::LastDay, color::WHITE),
+            (RecencyBucket::Older, color::WHITE),
+        ] {
+            assert_eq!(bucket.heading_text_color(), text_color);
+        }
     }
 
     #[test]
@@ -3571,6 +3578,7 @@ mod tests {
         );
         assert!(activity.styled.contains(&fg(RECENCY_1H)));
         assert!(activity.styled.contains(&fg(RECENCY_3H)));
+        assert!(!activity.styled.contains("\x1b[48;5;"));
 
         assert_eq!(recency_color(0), RECENCY_1H);
         assert_eq!(recency_color(3_600), RECENCY_3H);
@@ -3584,6 +3592,7 @@ mod tests {
         let unknown = activity_cell(&[], now, 0);
         assert!(unknown.styled.contains("⟩ —"));
         assert!(unknown.styled.contains("⋖ —"));
+        assert!(!unknown.styled.contains("\x1b[48;5;"));
     }
 
     #[test]
