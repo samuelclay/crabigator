@@ -5,6 +5,7 @@ import { requireDeviceAuth, requireMobileAuth } from '../auth/middleware';
 
 interface BoardSessionRow {
     session_id: string;
+    platform: 'claude' | 'codex' | null;
     cwd: string | null;
     session_state: string | null;
     is_active: number | null;
@@ -135,6 +136,7 @@ interface BoardEntry {
     /** Sessions created with this PR or currently working on its branch. */
     sessions: {
         session_id: string;
+        platform: 'claude' | 'codex';
         dir_name: string;
         repo_owner: string;
         repo_name: string;
@@ -186,6 +188,7 @@ function boardSession(row: BoardSessionRow): BoardSession {
     const dirName = cwd.split('/').filter(Boolean).pop() || cwd;
     return {
         session_id: row.session_id,
+        platform: row.platform || 'claude',
         dir_name: dirName,
         repo_owner: row.repo_owner || '',
         repo_name: row.repo_name || dirName,
@@ -315,7 +318,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     const rows = await env.DB.prepare(
         `SELECT sp.owner, sp.repo, sp.number, sp.data, sp.updated_at, sp.session_id,
                 sp.is_primary,
-                s.cwd, s.state AS session_state, s.is_active, s.last_seen_at,
+                s.platform, s.cwd, s.state AS session_state, s.is_active, s.last_seen_at,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.recap, s.repo_owner, s.repo_name, s.branch,
                 o.disposition
@@ -422,7 +425,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     // Return every active account session separately. Clients keep any session
     // without a same-repository primary PR as its own peer row.
     const sessionRows = await env.DB.prepare(
-        `SELECT s.id AS session_id, s.cwd, s.state AS session_state,
+        `SELECT s.id AS session_id, s.platform, s.cwd, s.state AS session_state,
                 s.is_active, s.last_seen_at,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.recap, s.repo_owner, s.repo_name, s.branch
