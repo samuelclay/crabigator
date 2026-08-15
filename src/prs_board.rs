@@ -11,6 +11,7 @@
 //! session mirrors under /tmp; `a` flips to the durable cloud record, which
 //! includes ended sessions' PRs (tagged for resurrection) at ~1min lag.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::hash::{Hash, Hasher};
@@ -1964,35 +1965,13 @@ fn pr_row_title(entry: &BoardPr) -> String {
     })
 }
 
-fn slack_detail_lines(
-    entry: &BoardPr,
-    width: u16,
-    activity_width: usize,
-    widths: &PrColumnWidths,
-) -> Vec<String> {
+fn slack_detail_cells(entry: &BoardPr, widths: &PrColumnWidths) -> Vec<ActivityCell> {
     let mut seen = HashSet::new();
     entry
         .slack_threads
         .iter()
         .filter(|thread| seen.insert(thread.url.as_str()))
         .map(|thread| slack_link_cell(thread, widths.right_width()))
-        .map(|link| {
-            format!(
-                "{}{}",
-                board_detail_row_text(
-                    width,
-                    widths,
-                    String::new(),
-                    0,
-                    String::new(),
-                    0,
-                    activity_width,
-                    link.styled,
-                    link.visible,
-                ),
-                RESET
-            )
-        })
         .collect()
 }
 
@@ -2002,6 +1981,19 @@ enum RecapLineKind {
     Recap,
     Bullet,
     Detail,
+}
+
+struct RecapDetailRow<'a> {
+    kind: RecapLineKind,
+    text: Cow<'a, str>,
+    recap: Option<&'a RecapBrief>,
+}
+
+struct DetailLayout<'a> {
+    width: u16,
+    now_ms: u64,
+    activity_width: usize,
+    widths: &'a PrColumnWidths,
 }
 
 impl RecapLineKind {
@@ -2019,10 +2011,8 @@ fn recap_line(
     kind: RecapLineKind,
     headline: &str,
     recap: Option<&RecapBrief>,
-    width: u16,
-    now_ms: u64,
-    activity_width: usize,
-    widths: &PrColumnWidths,
+    layout: &DetailLayout<'_>,
+    right: Option<&ActivityCell>,
 ) -> String {
     let (icon, icon_color) = kind.style();
     let mut delta = recap.map_or_else(String::new, |recap| {
@@ -2038,13 +2028,14 @@ fn recap_line(
     });
     let mut delta_width = crate::parsers::strip_ansi_for_debug(&delta).width();
     let prefix_width = 2 + icon.width() + 1;
-    if prefix_width + delta_width >= widths.board_left_width() {
+    if prefix_width + delta_width >= layout.widths.board_left_width() {
         delta.clear();
         delta_width = 0;
     }
     let headline = crate::ui::pr_cells::truncate_to_width(
         headline,
-        widths
+        layout
+            .widths
             .board_left_width()
             .saturating_sub(prefix_width + delta_width),
     );
@@ -2059,24 +2050,63 @@ fn recap_line(
         delta,
     );
     let age = recap.map_or_else(
-        || empty_cell(activity_width),
-        |recap| timestamp_cell(recap.generated_at, now_ms, activity_width),
+        || empty_cell(layout.activity_width),
+        |recap| timestamp_cell(recap.generated_at, layout.now_ms, layout.activity_width),
     );
+    let right_styled = right.map_or_else(String::new, |cell| cell.styled.clone());
+    let right_visible = right.map_or(0, |cell| cell.visible);
     format!(
         "{}{}",
         board_detail_row_text(
-            width,
-            widths,
+            layout.width,
+            layout.widths,
             left_styled,
             left_visible,
             age.styled,
             age.visible,
-            activity_width,
-            String::new(),
-            0,
+            layout.activity_width,
+            right_styled,
+            right_visible,
         ),
         RESET
     )
+}
+
+fn detail_lines(
+    recap_rows: &[RecapDetailRow<'_>],
+    slack_cells: &[ActivityCell],
+    layout: &DetailLayout<'_>,
+) -> Vec<String> {
+    let height = recap_rows.len().max(slack_cells.len());
+    (0..height)
+        .map(|index| match recap_rows.get(index) {
+            Some(row) => recap_line(
+                row.kind,
+                &row.text,
+                row.recap,
+                layout,
+                slack_cells.get(index),
+            ),
+            None => {
+                let right = &slack_cells[index];
+                format!(
+                    "{}{}",
+                    board_detail_row_text(
+                        layout.width,
+                        layout.widths,
+                        String::new(),
+                        0,
+                        String::new(),
+                        0,
+                        layout.activity_width,
+                        right.styled.clone(),
+                        right.visible,
+                    ),
+                    RESET
+                )
+            }
+        })
+        .collect()
 }
 
 fn pr_recap_detail_lines(
@@ -2087,28 +2117,48 @@ fn pr_recap_detail_lines(
     widths: &PrColumnWidths,
 ) -> Vec<String> {
     let recap = latest_recap(&entry.sessions);
-    let mut lines = Vec::with_capacity(2);
+    let mut recap_rows = Vec::new();
     if !entry.pr.ai_note.is_empty() && entry.pr.state == "OPEN" {
-        lines.push(recap_line(
-            RecapLineKind::Judgment,
-            &entry.pr.ai_note,
-            None,
-            width,
-            now_ms,
-            activity_width,
-            widths,
-        ));
+        recap_rows.push(RecapDetailRow {
+            kind: RecapLineKind::Judgment,
+            text: Cow::Borrowed(&entry.pr.ai_note),
+            recap: None,
+        });
     }
     if let Some(recap) = recap {
-        lines.extend(recap_detail_lines(
-            recap,
-            width,
-            now_ms,
-            activity_width,
-            widths,
-        ));
+        recap_rows.extend(recap_detail_rows(recap));
     }
-    lines
+    let layout = DetailLayout {
+        width,
+        now_ms,
+        activity_width,
+        widths,
+    };
+    detail_lines(&recap_rows, &slack_detail_cells(entry, widths), &layout)
+}
+
+fn recap_detail_rows(recap: &RecapBrief) -> Vec<RecapDetailRow<'_>> {
+    let mut rows = vec![RecapDetailRow {
+        kind: RecapLineKind::Recap,
+        text: Cow::Borrowed(&recap.headline),
+        recap: Some(recap),
+    }];
+    rows.extend(recap.bullets.iter().map(|bullet| RecapDetailRow {
+        kind: RecapLineKind::Bullet,
+        text: Cow::Borrowed(bullet),
+        recap: None,
+    }));
+    rows.extend(recap.next_prompt_notes.iter().map(|note| RecapDetailRow {
+        kind: RecapLineKind::Detail,
+        text: labeled_recap_detail("Next:", note),
+        recap: None,
+    }));
+    rows.extend(recap.artifacts.iter().map(|artifact| RecapDetailRow {
+        kind: RecapLineKind::Detail,
+        text: labeled_recap_detail("Artifact:", artifact),
+        recap: None,
+    }));
+    rows
 }
 
 fn recap_detail_lines(
@@ -2118,47 +2168,24 @@ fn recap_detail_lines(
     activity_width: usize,
     widths: &PrColumnWidths,
 ) -> Vec<String> {
-    let mut lines = vec![recap_line(
-        RecapLineKind::Recap,
-        &recap.headline,
-        Some(recap),
+    let layout = DetailLayout {
         width,
         now_ms,
         activity_width,
         widths,
-    )];
-    let detail_line =
-        |kind, text: &str| recap_line(kind, text, None, width, now_ms, activity_width, widths);
-    lines.extend(
-        recap
-            .bullets
-            .iter()
-            .map(|bullet| detail_line(RecapLineKind::Bullet, bullet)),
-    );
-    lines.extend(
-        recap
-            .next_prompt_notes
-            .iter()
-            .map(|note| detail_line(RecapLineKind::Detail, &labeled_recap_detail("Next:", note))),
-    );
-    lines.extend(recap.artifacts.iter().map(|artifact| {
-        detail_line(
-            RecapLineKind::Detail,
-            &labeled_recap_detail("Artifact:", artifact),
-        )
-    }));
-    lines
+    };
+    detail_lines(&recap_detail_rows(recap), &[], &layout)
 }
 
-fn labeled_recap_detail(label: &str, value: &str) -> String {
+fn labeled_recap_detail<'a>(label: &str, value: &'a str) -> Cow<'a, str> {
     let value = value.trim();
     if value
         .get(..label.len())
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(label))
     {
-        value.to_string()
+        Cow::Borrowed(value)
     } else {
-        format!("{label} {value}")
+        Cow::Owned(format!("{label} {value}"))
     }
 }
 
@@ -2205,7 +2232,6 @@ fn render_pr_board_row(
         return lines;
     }
 
-    lines.extend(slack_detail_lines(entry, width, activity_width, widths));
     lines.extend(pr_recap_detail_lines(
         entry,
         width,
@@ -3972,6 +3998,14 @@ mod tests {
         session.title = "Builder Signals dashboard".to_string();
         session.title_set_at = now_ms() - 2 * 60 * 60 * 1000;
         session.uncommitted_files = 4;
+        session.recap = Some(RecapBrief {
+            headline: "Finished the dashboard changes".to_string(),
+            bullets: Vec::new(),
+            next_prompt_notes: vec!["Wait for approval".to_string()],
+            artifacts: Vec::new(),
+            generated_at: now_ms() - 60_000,
+            line_delta: crate::recap::TurnLineDelta::default(),
+        });
         session.slack_threads = vec![
             SlackThread {
                 url: "https://t.slack.com/archives/C1/p1723500000000000".to_string(),
@@ -3991,6 +4025,12 @@ mod tests {
                 channel: Some("builder-dev".to_string()),
                 author: Some("Kapil".to_string()),
             },
+            SlackThread {
+                url: "https://t.slack.com/archives/C4/p1723500000000003".to_string(),
+                posted_at: 1_723_500_003,
+                channel: Some("deployments".to_string()),
+                author: Some("Ivy".to_string()),
+            },
         ];
         let entries = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
         let compact = render_frame_at(&entries, 0);
@@ -4007,6 +4047,7 @@ mod tests {
         assert!(recap.contains("https://t.slack.com/archives/C1/p1723500000000000"));
         assert!(recap.contains("https://t.slack.com/archives/C2/p1723500000000001"));
         assert!(recap.contains("https://t.slack.com/archives/C3/p1723500000000002"));
+        assert!(recap.contains("https://t.slack.com/archives/C4/p1723500000000003"));
         assert!(
             recap.find("archives/C1").unwrap() < recap.find("archives/C2").unwrap(),
             "the original thread renders first"
@@ -4016,7 +4057,7 @@ mod tests {
                 .lines()
                 .filter(|line| line.contains("slack.com"))
                 .count(),
-            3,
+            4,
             "each Slack target gets a clickable row"
         );
         for removed in [
@@ -4035,7 +4076,31 @@ mod tests {
             .lines()
             .find(|line| line.contains("CI green, awaiting review"))
             .unwrap();
-        assert!(!judgment_line.contains("#builder"));
+        assert!(
+            judgment_line.contains("#builder"),
+            "the first Slack link shares the first recap detail row"
+        );
+        let headline_line = recap
+            .lines()
+            .find(|line| line.contains("Finished the dashboard changes"))
+            .unwrap();
+        assert!(
+            headline_line.contains("#pr-reviews"),
+            "the second Slack link shares the recap headline row"
+        );
+        let next_line = recap
+            .lines()
+            .find(|line| line.contains("Next: Wait for approval"))
+            .unwrap();
+        assert!(
+            next_line.contains("#builder-dev"),
+            "the third Slack link shares the final recap row"
+        );
+        assert_eq!(
+            recap.lines().count(),
+            compact.lines().count() + 4,
+            "three recap rows and four Slack links add only four rows"
+        );
     }
 
     /// Scanning artifacts stay hidden, while a classified primary remains
