@@ -1,6 +1,6 @@
 //! Shared PR row rendering.
 //!
-//! The eight-column PR cell engine — column sizing with graceful width
+//! The shared PR cell engine — column sizing with graceful width
 //! degradation, per-cell styling, OSC 8 links, and the primary/secondary
 //! glyphs — used by the handoff strip and the cross-session PR board.
 
@@ -10,6 +10,7 @@ use crate::pr::SessionPr;
 use crate::terminal::escape::{self, color, fg, BOLD, RESET, RESET_FG};
 
 pub(crate) const PR_COLUMN_GAP: usize = 2;
+pub(crate) const PR_RIGHT_COLUMN_GAP: usize = 1;
 pub(crate) const PR_LEFT_PADDING: usize = 1;
 pub(crate) const PR_RIGHT_PADDING: usize = 1;
 
@@ -37,6 +38,7 @@ pub(crate) fn display_prs(prs: &[SessionPr]) -> Vec<&SessionPr> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PrColumnWidths {
     pub(crate) identity: usize,
+    pub(crate) number: usize,
     pub(crate) diff: usize,
     pub(crate) files: usize,
     pub(crate) branch: usize,
@@ -62,6 +64,7 @@ impl PrColumnWidths {
             widths.identity = widths
                 .identity
                 .max(pr_identity_text(pr).width().min(PR_IDENTITY_MAX));
+            widths.number = widths.number.max(pr_number_text(pr).width());
             widths.diff = widths.diff.max(pr_diff_text(pr).width().min(PR_DIFF_MAX));
             widths.files = widths
                 .files
@@ -90,8 +93,9 @@ impl PrColumnWidths {
     }
 
     pub(crate) fn fit_right(&mut self, total_width: usize) {
+        let essential_left = table_width(&[PR_IDENTITY_MIN, self.number]);
         let right_budget = total_width
-            .saturating_sub(PR_LEFT_PADDING + PR_IDENTITY_MIN + PR_COLUMN_GAP + PR_RIGHT_PADDING);
+            .saturating_sub(PR_LEFT_PADDING + essential_left + PR_COLUMN_GAP + PR_RIGHT_PADDING);
         self.detail_right = self.detail_right.min(right_budget);
         // Dropped least-essential first: the dismiss action, merge cleanliness,
         // the unresolved thread count, then CI, leaving the PR's own state as
@@ -137,7 +141,7 @@ impl PrColumnWidths {
         self.fit_left(total_width);
     }
 
-    /// Include the board's session title and PR number in the identity measurement.
+    /// Include the board's session title in the identity measurement.
     pub(crate) fn include_board_identity(
         &mut self,
         pr: &SessionPr,
@@ -173,7 +177,12 @@ impl PrColumnWidths {
             } else if self.diff > 0 {
                 self.diff = 0;
             } else {
-                self.identity = self.identity.min(left_budget);
+                let number_space =
+                    self.number + usize::from(self.identity > 0 && self.number > 0) * PR_COLUMN_GAP;
+                self.identity = self.identity.min(left_budget.saturating_sub(number_space));
+                if self.left_width() > left_budget {
+                    self.number = self.number.min(left_budget);
+                }
                 break;
             }
         }
@@ -197,7 +206,13 @@ impl PrColumnWidths {
     }
 
     fn left_width(&self) -> usize {
-        table_width(&[self.identity, self.diff, self.files, self.branch])
+        table_width(&[
+            self.identity,
+            self.number,
+            self.diff,
+            self.files,
+            self.branch,
+        ])
     }
 
     pub(crate) fn board_left_width(&self) -> usize {
@@ -209,7 +224,10 @@ impl PrColumnWidths {
     }
 
     fn status_right_width(&self) -> usize {
-        table_width(&[self.state, self.ci, self.comments, self.merge, self.dismiss])
+        table_width_with_gap(
+            &[self.state, self.ci, self.comments, self.merge, self.dismiss],
+            PR_RIGHT_COLUMN_GAP,
+        )
     }
 
     #[cfg(test)]
@@ -225,8 +243,12 @@ impl PrColumnWidths {
 }
 
 fn table_width(columns: &[usize]) -> usize {
+    table_width_with_gap(columns, PR_COLUMN_GAP)
+}
+
+fn table_width_with_gap(columns: &[usize], gap: usize) -> usize {
     let active = columns.iter().filter(|&&width| width > 0).count();
-    columns.iter().sum::<usize>() + active.saturating_sub(1) * PR_COLUMN_GAP
+    columns.iter().sum::<usize>() + active.saturating_sub(1) * gap
 }
 
 /// One styled row: left padding, the left columns, then a gap wide enough to
@@ -236,8 +258,7 @@ pub(crate) fn pr_row_text(width: u16, pr: &SessionPr, widths: &PrColumnWidths) -
 }
 
 /// Render the PR board's titled row with activity before the GitHub status.
-/// The shared handoff row calls `pr_row_text` and keeps the original eight
-/// columns.
+/// The shared handoff row calls `pr_row_text` with the same columns.
 pub(crate) fn pr_row_text_with_activity(
     width: u16,
     pr: &SessionPr,
@@ -282,6 +303,7 @@ pub(crate) fn session_row_text_with_activity(
     );
     let left_cells = [
         colored_cell(&identity, identity_color, widths.identity),
+        (String::new(), 0, widths.number),
         diff,
         colored_cell(files, color::DARK_GRAY, widths.files),
         colored_branch_cell(branch, color::DARK_GRAY, widths.branch),
@@ -293,7 +315,7 @@ pub(crate) fn session_row_text_with_activity(
         (styled_activity, activity_visible, activity_width),
         (String::new(), 0, widths.right_width()),
     ];
-    let right_width = cells_width(&right_cells);
+    let right_width = right_cells_width(&right_cells);
     if right_width > 0 {
         let gap = (width as usize)
             .saturating_sub(PR_LEFT_PADDING)
@@ -301,7 +323,7 @@ pub(crate) fn session_row_text_with_activity(
             .saturating_sub(widths.left_width())
             .saturating_sub(right_width);
         row.push_str(&" ".repeat(gap));
-        row.push_str(&cells_text(&right_cells));
+        row.push_str(&right_cells_text(&right_cells));
     }
     row
 }
@@ -331,7 +353,7 @@ pub(crate) fn board_detail_row_text(
         (activity_styled, activity_visible, activity_width),
         (right_styled, right_visible, widths.right_width()),
     ];
-    let right_width = cells_width(&right_cells);
+    let right_width = right_cells_width(&right_cells);
     if right_width > 0 {
         let gap = (width as usize)
             .saturating_sub(PR_LEFT_PADDING)
@@ -339,7 +361,7 @@ pub(crate) fn board_detail_row_text(
             .saturating_sub(widths.left_width())
             .saturating_sub(right_width);
         row.push_str(&" ".repeat(gap));
-        row.push_str(&cells_text(&right_cells));
+        row.push_str(&right_cells_text(&right_cells));
     }
     row
 }
@@ -359,7 +381,7 @@ fn pr_row_text_with_optional_activity(
     row.push_str(&cells_text(&left_cells));
 
     let mut right_cells = pr_right_cells(pr, widths).to_vec();
-    let status_width = cells_width(&right_cells);
+    let status_width = right_cells_width(&right_cells);
     let filler = widths.right_width().saturating_sub(status_width);
     if filler > 0 {
         if let Some((styled, visible, width)) = right_cells
@@ -374,7 +396,7 @@ fn pr_row_text_with_optional_activity(
     if let Some(activity) = activity {
         right_cells.insert(0, activity);
     }
-    let right_width = cells_width(&right_cells);
+    let right_width = right_cells_width(&right_cells);
     if right_width > 0 {
         let gap = (width as usize)
             .saturating_sub(PR_LEFT_PADDING)
@@ -382,14 +404,14 @@ fn pr_row_text_with_optional_activity(
             .saturating_sub(widths.left_width())
             .saturating_sub(right_width);
         row.push_str(&" ".repeat(gap));
-        row.push_str(&cells_text(&right_cells));
+        row.push_str(&right_cells_text(&right_cells));
     }
     row
 }
 
 type PrCell = (String, usize, usize);
 
-pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 4] {
+pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 5] {
     let identity = truncate_identity(pr, widths.identity);
     pr_left_cells_with_identity(pr, widths, identity)
 }
@@ -398,7 +420,7 @@ fn pr_left_cells_with_board_title(
     pr: &SessionPr,
     widths: &PrColumnWidths,
     title: &str,
-) -> [PrCell; 4] {
+) -> [PrCell; 5] {
     let identity = truncate_board_pr_identity(pr, title, widths.identity);
     pr_left_cells_with_identity(pr, widths, identity)
 }
@@ -407,7 +429,7 @@ fn pr_left_cells_with_identity(
     pr: &SessionPr,
     widths: &PrColumnWidths,
     identity: String,
-) -> [PrCell; 4] {
+) -> [PrCell; 5] {
     // The glyph is its own click target — it flips the PR's disposition —
     // while the remaining identity still opens the PR on GitHub. A column too
     // narrow to hold the glyph drops it and links the whole label instead.
@@ -433,6 +455,13 @@ fn pr_left_cells_with_identity(
         RESET_FG
     );
 
+    let number = linked_cell(
+        &pr_number_text(pr),
+        row_color(pr, color::PURPLE),
+        widths.number,
+        &pr.url,
+    );
+
     // Both diff columns open the PR's Files-changed tab — the actual changes.
     let files_url = pr_files_url(pr);
 
@@ -447,6 +476,7 @@ fn pr_left_cells_with_identity(
 
     [
         (identity_styled, identity.width(), widths.identity),
+        number,
         (link_text(&files_url, diff.0, diff.1), diff.1, diff.2),
         linked_cell(
             &pr_files_text(pr),
@@ -624,10 +654,14 @@ fn truncate_left_to_width(text: &str, max_width: usize) -> String {
 /// Lay cells out side by side, padding each to its column and separating
 /// adjacent ones. Cells with a zero width are skipped entirely.
 fn cells_text(cells: &[PrCell]) -> String {
+    cells_text_with_gap(cells, PR_COLUMN_GAP)
+}
+
+fn cells_text_with_gap(cells: &[PrCell], gap: usize) -> String {
     let mut out = String::new();
     for (styled, visible, width) in cells.iter().filter(|(_, _, width)| *width > 0) {
         if !out.is_empty() {
-            out.push_str(&" ".repeat(PR_COLUMN_GAP));
+            out.push_str(&" ".repeat(gap));
         }
         out.push_str(styled);
         out.push_str(&" ".repeat(width.saturating_sub(*visible)));
@@ -635,10 +669,14 @@ fn cells_text(cells: &[PrCell]) -> String {
     out
 }
 
-fn cells_width(cells: &[PrCell]) -> usize {
+fn right_cells_text(cells: &[PrCell]) -> String {
+    cells_text_with_gap(cells, PR_RIGHT_COLUMN_GAP)
+}
+
+fn right_cells_width(cells: &[PrCell]) -> usize {
     let active = cells.iter().filter(|(_, _, width)| *width > 0).count();
     cells.iter().map(|(_, _, width)| width).sum::<usize>()
-        + active.saturating_sub(1) * PR_COLUMN_GAP
+        + active.saturating_sub(1) * PR_RIGHT_COLUMN_GAP
 }
 
 /// `★` marks the session's primary PR; `☆` everything else.
@@ -685,34 +723,25 @@ fn pr_repo_label(pr: &SessionPr) -> &str {
 fn truncate_identity(pr: &SessionPr, width: usize) -> String {
     let repo = pr_repo_label(pr);
     let glyph = pr_glyph(pr);
-    let suffix = format!(" #{}", pr.number);
-    let fixed = 2 + suffix.width(); // glyph + space + number
-    if width <= fixed {
-        return truncate_to_width(&format!("{glyph} {repo}{suffix}"), width);
-    }
-    let repo = truncate_to_width(repo, width - fixed);
-    format!("{glyph} {repo}{suffix}")
+    truncate_to_width(&format!("{glyph} {repo}"), width)
 }
 
-/// Keep the linked PR number visible while the session title gives up space.
 fn truncate_board_pr_identity(pr: &SessionPr, title: &str, width: usize) -> String {
     let glyph = pr_glyph(pr);
-    let number = format!("#{}", pr.number);
-    let fixed = glyph.width() + 2 + number.width(); // glyph + two spaces + number
-    if width <= fixed {
-        return truncate_to_width(&format!("{glyph} {number}"), width);
-    }
-    let title = truncate_to_width(title, width - fixed);
-    format!("{glyph} {title} {number}")
+    truncate_to_width(&format!("{glyph} {title}"), width)
 }
 
 /// The identity column at full width, for column sizing.
 pub(crate) fn pr_identity_text(pr: &SessionPr) -> String {
-    format!("{} {} #{}", pr_glyph(pr), pr_repo_label(pr), pr.number)
+    format!("{} {}", pr_glyph(pr), pr_repo_label(pr))
 }
 
 fn board_pr_identity_text(pr: &SessionPr, title: &str) -> String {
-    format!("{} {title} #{}", pr_glyph(pr), pr.number)
+    format!("{} {title}", pr_glyph(pr))
+}
+
+fn pr_number_text(pr: &SessionPr) -> String {
+    format!("#{}", pr.number)
 }
 
 fn pr_diff_text(pr: &SessionPr) -> String {

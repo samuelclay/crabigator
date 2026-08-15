@@ -38,7 +38,7 @@ use crate::slack::{SlackDirectory, SlackThread};
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG};
 use crate::ui::pr_cells::{
     board_detail_row_text, pr_row_text_with_activity, session_row_text_with_activity,
-    PrColumnWidths, PR_COLUMN_GAP,
+    PrColumnWidths, PR_RIGHT_COLUMN_GAP,
 };
 use crate::ui::{COMPLETION_ICON, PROMPT_ICON};
 
@@ -2492,7 +2492,7 @@ fn render_at(
         .unwrap_or(0);
     let shared_width = (width as usize)
         .saturating_sub(activity_width)
-        .saturating_sub(usize::from(activity_width > 0) * PR_COLUMN_GAP)
+        .saturating_sub(usize::from(activity_width > 0) * PR_RIGHT_COLUMN_GAP)
         .min(u16::MAX as usize) as u16;
     let pr_refs: Vec<&SessionPr> = visible_row_indices
         .iter()
@@ -3502,21 +3502,15 @@ mod tests {
 
         assert_eq!(frame.matches("samuelclay/crabigator").count(), 1);
         let no_pr_offset = frame.find("◇ ᛝ  Newest completed session").unwrap();
-        let pr_offset = frame.find("crabigator #7").unwrap();
+        let pr_offset = frame.find("#7").unwrap();
         assert!(no_pr_offset < pr_offset, "newer completion sorts first");
 
         let no_pr_row = frame
             .lines()
             .find(|line| line.contains("◇ ᛝ  Newest completed session"))
             .unwrap();
-        let crab_pr_row = frame
-            .lines()
-            .find(|line| line.contains("crabigator #7"))
-            .unwrap();
-        let portal_pr_row = frame
-            .lines()
-            .find(|line| line.contains("developer-portal #9"))
-            .unwrap();
+        let crab_pr_row = frame.lines().find(|line| line.contains("#7")).unwrap();
+        let portal_pr_row = frame.lines().find(|line| line.contains("#9")).unwrap();
         let column = |line: &str, text: &str| {
             crate::ui::utils::strip_ansi_len(&line[..line.find(text).unwrap()])
         };
@@ -3528,8 +3522,10 @@ mod tests {
             column(portal_pr_row, "a-much-longer-branch-name")
         );
         assert!(!no_pr_row.contains("no tracked PR"));
-        assert!(crab_pr_row.contains("⟁  crabigator #7"));
-        assert!(portal_pr_row.contains("ᛝ  developer-portal #9"));
+        assert!(crab_pr_row.contains("⟁  crabigator"));
+        assert!(crab_pr_row.contains("#7"));
+        assert!(portal_pr_row.contains("ᛝ  developer-portal"));
+        assert!(portal_pr_row.contains("#9"));
     }
 
     #[test]
@@ -3598,7 +3594,7 @@ mod tests {
                 .unwrap();
             let pr_row = lines
                 .iter()
-                .position(|line| line.contains("PR session #2"))
+                .position(|line| line.contains("PR session") && line.contains("#2"))
                 .unwrap();
             let peer_row = lines
                 .iter()
@@ -3778,7 +3774,7 @@ mod tests {
         assert!(six_hours.contains("● 1–3 hours"));
         assert!(six_hours.contains("● 3–6 hours"));
         assert!(!six_hours.contains("● 6–9 hours"));
-        assert!(!six_hours.contains("repo #4"));
+        assert!(!six_hours.contains("#4"));
 
         let last_hour = crate::parsers::strip_ansi_for_debug(&render_frame_with_oldest(
             &entries,
@@ -3791,8 +3787,10 @@ mod tests {
             .unwrap()
             .contains("1 PRs · 1 sessions"));
         assert!(last_hour.contains("age ≤ 1h"));
-        assert!(last_hour.contains("repo #1"));
-        assert!(!last_hour.contains("repo #2"));
+        assert!(last_hour
+            .lines()
+            .any(|line| line.contains("repo") && line.contains("#1")));
+        assert!(!last_hour.contains("#2"));
     }
 
     #[test]
@@ -4034,7 +4032,8 @@ mod tests {
         ];
         let entries = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
         let compact = render_frame_at(&entries, 0);
-        assert!(compact.contains("Builder Signals dashboard #9"));
+        assert!(compact.contains("Builder Signals dashboard"));
+        assert!(compact.contains("#9"));
         assert!(!compact.contains("#builder"));
         assert!(!compact.contains("CI green, awaiting review"));
 
@@ -4369,7 +4368,8 @@ mod tests {
 
         let compact = render_frame(&entries);
         assert!(!compact.contains('▓'), "no progress bar at compact");
-        assert!(compact.contains("Wiring the PR board detail levels #9"));
+        assert!(compact.contains("Wiring the PR board detail levels"));
+        assert!(compact.contains("#9"));
         assert!(compact.contains("compact"), "header names the level");
         assert!(compact.contains("⟩ 30m"));
         assert!(compact.contains("⋖ 2h"));
@@ -4419,19 +4419,20 @@ mod tests {
             .find(|line| line.contains("Next: Ready to merge once checks finish"))
             .unwrap();
         let compact_plain = crate::parsers::strip_ansi_for_debug(compact_line);
-        assert!(
-            compact_plain.contains("ᛝ  Wiring the PR board detail levels #9"),
-            "{compact_plain}"
-        );
+        assert!(compact_plain.contains("ᛝ  Wiring the PR board detail levels"));
+        assert!(compact_plain.contains("#9"), "{compact_plain}");
         assert_eq!(
             compact_plain.matches('ᛝ').count(),
             1,
             "provider marker is not duplicated"
         );
-        assert!(compact_plain.find("#9").unwrap() < compact_plain.find("+49 -5").unwrap());
+        assert!(
+            compact_plain.find("#9").unwrap() < compact_plain.find("+49 -5").unwrap(),
+            "the PR number precedes the diff: {compact_plain}"
+        );
         assert!(compact_line.contains(&escape::hyperlink(
             &entries[0].pr.url,
-            "ᛝ  Wiring the PR board detail levels #9"
+            "ᛝ  Wiring the PR board detail levels"
         )));
         assert!(
             crate::parsers::strip_ansi_for_debug(recap_line).starts_with("   ↪ "),
@@ -4929,11 +4930,12 @@ mod tests {
 
         let frame = render_frame_at(&entries, 0);
         assert!(frame.contains("A newer terminal title"));
-        assert!(
-            frame.contains("⟁  A newer terminal title #9"),
-            "{}",
-            crate::parsers::strip_ansi_for_debug(&frame)
-        );
+        let plain = crate::parsers::strip_ansi_for_debug(&frame);
+        let title_row = plain
+            .lines()
+            .find(|line| line.contains("⟁  A newer terminal title"))
+            .unwrap();
+        assert!(title_row.contains("#9"), "{plain}");
         assert!(!frame.contains('⌾'));
         assert!(!frame.contains("Wiring the PR board detail levels"));
         assert!(!frame.contains("other-worktree"));
@@ -4943,7 +4945,8 @@ mod tests {
         }
         entries[0].slack_threads.clear();
         let fallback = render_frame_at(&entries, 0);
-        assert!(fallback.contains("ᛝ  portal #9"));
+        assert!(fallback.contains("ᛝ  portal"));
+        assert!(fallback.contains("#9"));
         assert!(!fallback.contains('⌾'));
         assert!(
             render_frame_at(&entries, 1).contains("Added e-cycled"),

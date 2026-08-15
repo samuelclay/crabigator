@@ -72,12 +72,11 @@ fn pr_separator_rule_width(width: u16) -> usize {
 }
 
 /// Draw the session's PR list, one PR per row, on the dark handoff background.
-/// Each row uses eight shared columns:
-/// `☆ repo #num  +A -D  N files  ⎇ branch  state  CI  💬N  merge`.
-/// The first four are left-aligned, with the branch column flexing across the
-/// middle. The final four are anchored at the right edge but remain
-/// left-aligned within their shared widths. Adjacent columns use a two-space gap,
-/// and the table leaves one cell of breathing room at the right window edge.
+/// Each row uses shared columns:
+/// `☆ repo  #num  +A -D  N files  ⎇ branch  state CI 💬N merge`.
+/// The first five are left-aligned, with the branch column flexing across the
+/// middle. Status columns are anchored at the right edge with a tighter
+/// one-space rhythm. The table leaves one cell at the right window edge.
 pub fn draw_pr_handoff(
     stdout: &mut Stdout,
     row: u16,
@@ -858,11 +857,12 @@ mod tests {
         let long_cells = pr_left_cells(&prs[0], &widths);
 
         assert_eq!(widths.identity, PR_IDENTITY_MAX);
+        assert_eq!(widths.number, "#2475".width());
         assert!(widths.branch > PR_BRANCH_MAX);
-        assert_eq!(long_cells[3].1, PR_BRANCH_MAX);
-        assert_eq!(long_cells[3].2, widths.branch);
+        assert_eq!(long_cells[4].1, PR_BRANCH_MAX);
+        assert_eq!(long_cells[4].2, widths.branch);
         assert_eq!(
-            crate::parsers::strip_ansi_for_debug(&long_cells[3].0),
+            crate::parsers::strip_ansi_for_debug(&long_cells[4].0),
             "⎇ …callback-with-more-detail"
         );
         assert_eq!(widths.files, "48 files".width());
@@ -906,10 +906,13 @@ mod tests {
         // the PR to primary via the web action page.
         assert!(left[0].0.contains(&link_to(&pr.url)));
         assert!(left[0].0.contains(&link_to(&pr_action_url(&pr, "primary"))));
-        // Diff and file count → the Files-changed tab.
+        // Number → the PR; diff and file count → the Files-changed tab.
+        assert!(left[1].0.contains("#2412"));
+        assert_eq!(left[1].1, "#2412".width());
+        assert!(left[1].0.contains(&link_to(&pr.url)));
         let files = link_to(&format!("{}/files", pr.url));
-        assert!(left[1].0.contains(&files));
         assert!(left[2].0.contains(&files));
+        assert!(left[3].0.contains(&files));
         // CI and the thread count → wherever they pointed; state and merge plain.
         assert!(right[1].0.contains(&link_to(&pr.ci_url)));
         assert!(right[2].0.contains(&link_to(&pr.comments_url)));
@@ -941,8 +944,8 @@ mod tests {
         let left = pr_left_cells(&pending, &widths);
         let right = pr_right_cells(&pending, &widths);
 
-        assert!(!left[1].0.contains("\x1b]8;;"));
         assert!(!left[2].0.contains("\x1b]8;;"));
+        assert!(!left[3].0.contains("\x1b]8;;"));
         assert!(!right[1].0.contains("\x1b]8;;"));
         assert!(!right[2].0.contains("\x1b]8;;"));
     }
@@ -981,13 +984,24 @@ mod tests {
             crate::ui::utils::strip_ansi_len(&row),
             120 - PR_RIGHT_PADDING
         );
+        assert_eq!(
+            widths.right_width(),
+            widths.state
+                + widths.ci
+                + widths.comments
+                + widths.merge
+                + widths.dismiss
+                + 4 * PR_RIGHT_COLUMN_GAP,
+            "the five status columns use four one-cell gaps"
+        );
 
         let at = |needle: &str| {
             row.find(needle)
                 .unwrap_or_else(|| panic!("{needle} missing"))
         };
         let order = [
-            at("request-handler #2412"),
+            at("request-handler"),
+            at("#2412"),
             at("+1869"),
             at("13 files"),
             at("⎇ sam/pal-fanout-fable"),
@@ -1014,18 +1028,26 @@ mod tests {
 
         // The width at which the right cluster gets exactly `budget` columns.
         let total_for = |budget: usize| {
-            PR_LEFT_PADDING + PR_IDENTITY_MIN + PR_COLUMN_GAP + PR_RIGHT_PADDING + budget
+            PR_LEFT_PADDING
+                + PR_IDENTITY_MIN
+                + PR_COLUMN_GAP
+                + roomy.number
+                + PR_COLUMN_GAP
+                + PR_RIGHT_PADDING
+                + budget
         };
         // Enough for everything but merge cleanliness.
         let mut tight = roomy;
-        tight.fit_right(total_for(roomy.right_width() - roomy.merge - PR_COLUMN_GAP));
+        tight.fit_right(total_for(
+            roomy.right_width() - roomy.merge - PR_RIGHT_COLUMN_GAP,
+        ));
         assert_eq!(tight.merge, 0);
         assert!(tight.comments > 0 && tight.ci > 0);
 
         // Tighter still: the thread count goes next, CI and state hold on.
         let mut tighter = roomy;
         tighter.fit_right(total_for(
-            tight.right_width() - tight.comments - PR_COLUMN_GAP,
+            tight.right_width() - tight.comments - PR_RIGHT_COLUMN_GAP,
         ));
         assert_eq!((tighter.merge, tighter.comments), (0, 0));
         assert!(tighter.ci > 0 && tighter.state > 0);
@@ -1042,10 +1064,10 @@ mod tests {
         let widths = PrColumnWidths::from_prs(&[full, pending.clone()], 160);
         let cells = pr_left_cells(&pending, &widths);
 
-        assert_eq!(cells[1].1, 0);
         assert_eq!(cells[2].1, 0);
         assert_eq!(cells[3].1, 0);
-        assert_eq!(crate::ui::utils::strip_ansi_len(&cells[1].0), 0);
+        assert_eq!(cells[4].1, 0);
+        assert_eq!(crate::ui::utils::strip_ansi_len(&cells[2].0), 0);
     }
 
     #[test]
