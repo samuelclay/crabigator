@@ -131,9 +131,9 @@ fn apply_disposition(
     }
 }
 
-/// The audited conjunction (F1 0.83): recent AND (ownership OR dominance),
-/// with hard vetoes for closed and superseded PRs. Recency as a hard gate is
-/// what demotes an early primary when the session pivots to new work.
+/// A current-worktree PR stays primary unless it is closed. Other PRs use the
+/// audited conjunction (F1 0.83): recent AND (ownership OR dominance), with a
+/// supersession veto.
 fn auto_primary(
     pr: &SessionPr,
     ctx: &RankContext,
@@ -144,6 +144,9 @@ fn auto_primary(
     // closed PR with 2.7× the primary's mentions that the user had rejected.
     if pr.state == "CLOSED" {
         return false;
+    }
+    if attached_to_worktree(pr, &ctx.current_branch, &ctx.worktree_dir) {
+        return true;
     }
     if is_superseded(pr, created) {
         return false;
@@ -176,17 +179,13 @@ fn is_superseded(pr: &SessionPr, created: &[(String, u64, u64)]) -> bool {
 /// branch, the worktree directory named after it, or a URL the user pasted
 /// that embeds it (preview deployments).
 fn branch_matches(pr: &SessionPr, ctx: &RankContext) -> bool {
+    if attached_to_worktree(pr, &ctx.current_branch, &ctx.worktree_dir) {
+        return true;
+    }
     if pr.branch.is_empty() {
         return false;
     }
     let branch = pr.branch.as_str();
-    if !is_default_branch(branch) && branch == ctx.current_branch {
-        return true;
-    }
-    let dir = ctx.worktree_dir.as_str();
-    if !dir.is_empty() && (branch == dir || branch.ends_with(&format!("/{dir}"))) {
-        return true;
-    }
     // `sam/pal-test-video-receive-cap` inside
     // `https://pal-test-video-receive-cap.tavus-preview.io/…`.
     let segment = branch.rsplit('/').next().unwrap_or(branch);
@@ -194,6 +193,24 @@ fn branch_matches(pr: &SessionPr, ctx: &RankContext) -> bool {
         .iter()
         .filter(|candidate| candidate.len() >= 8)
         .any(|candidate| ctx.prompt_urls.iter().any(|url| url.contains(*candidate)))
+}
+
+/// Whether this PR is attached to the branch checked out in a session's
+/// worktree. This is public within the crate so readers of older session
+/// mirrors can derive the same automatic-primary result retroactively.
+pub(crate) fn attached_to_worktree(
+    pr: &SessionPr,
+    current_branch: &str,
+    worktree_dir: &str,
+) -> bool {
+    if pr.branch.is_empty() || is_default_branch(&pr.branch) {
+        return false;
+    }
+    if pr.branch == current_branch {
+        return true;
+    }
+    !worktree_dir.is_empty()
+        && (pr.branch == worktree_dir || pr.branch.ends_with(&format!("/{worktree_dir}")))
 }
 
 fn is_default_branch(branch: &str) -> bool {
@@ -341,6 +358,37 @@ mod tests {
         context.worktree_dir = "pal-maker-sol-fast".to_string();
         classify(&mut prs, &context);
         assert!(prs[0].primary);
+    }
+
+    #[test]
+    fn attached_worktree_pr_stays_primary_after_mentions_age_out() {
+        let mut prs = vec![pr(1078, "portal")];
+        prs[0].branch = "sam/pal-maker-sol-fast".to_string();
+        prs[0].mentions = 1;
+        prs[0].last_mention_prompt = 1;
+        let mut context = ctx(20);
+        context.current_branch = prs[0].branch.clone();
+
+        classify(&mut prs, &context);
+
+        assert!(prs[0].primary);
+        assert_eq!(prs[0].primary_source, "auto");
+    }
+
+    #[test]
+    fn explicit_secondary_beats_attached_worktree() {
+        let mut prs = vec![pr(1078, "portal")];
+        prs[0].branch = "sam/pal-maker-sol-fast".to_string();
+        let mut context = ctx(20);
+        context.current_branch = prs[0].branch.clone();
+        context
+            .declared_numbers
+            .insert(1078, PrDisposition::Secondary);
+
+        classify(&mut prs, &context);
+
+        assert!(!prs[0].primary);
+        assert_eq!(prs[0].primary_source, "session");
     }
 
     #[test]

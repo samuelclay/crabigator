@@ -8,7 +8,7 @@
 //! The board never talks to `gh` itself — it renders what the sessions
 //! already know, with honest ages. Cloud dispositions are fetched once a
 //! minute so dashboard toggles apply here too. The default view reads live
-//! session mirrors under /tmp; `a` flips to the durable cloud record, which
+//! session mirrors under /tmp; `s` flips to the durable cloud record, which
 //! includes ended sessions' PRs (tagged for resurrection) at ~1min lag.
 
 use std::borrow::Cow;
@@ -33,12 +33,12 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::platforms::{PlatformKind, SessionState};
 use crate::pr::SessionPr;
-use crate::pr_rank::PrDisposition;
+use crate::pr_rank::{attached_to_worktree, PrDisposition};
 use crate::slack::{SlackDirectory, SlackThread};
-use crate::terminal::escape::{self, color, fg, RESET, RESET_FG};
+use crate::terminal::escape::{self, color, fg, RESET, RESET_FG, RESET_UNDERLINE, UNDERLINE};
 use crate::ui::pr_cells::{
-    board_detail_row_text, pr_row_text_with_activity, session_row_text_with_activity,
-    PrColumnWidths, PR_RIGHT_COLUMN_GAP,
+    board_detail_row_text, pr_board_metadata_row_text, pr_board_metadata_width,
+    pr_row_text_with_activity, session_row_text_with_activity, PrColumnWidths, PR_RIGHT_COLUMN_GAP,
 };
 use crate::ui::{COMPLETION_ICON, PROMPT_ICON};
 
@@ -61,7 +61,7 @@ const PREVIEW_MATCHES: usize = 3;
 const PREVIEW_CONTEXT: usize = 2;
 /// Keep the first load visibly progressive without stretching it out.
 const INITIAL_LOAD_BATCH: usize = 4;
-/// `e`/`c` switch between one titled row and the complete recap detail.
+/// `r` toggles between one titled row and the complete recap detail.
 const MAX_DETAIL: u8 = 1;
 const DEFAULT_DETAIL: u8 = 0;
 
@@ -133,25 +133,15 @@ impl RecencyBucket {
         }
     }
 
-    fn narrower(self) -> Self {
+    fn next_cutoff(self) -> Self {
         match self {
-            Self::Older => Self::LastDay,
-            Self::LastDay => Self::LastTwelveHours,
-            Self::LastTwelveHours => Self::LastNineHours,
-            Self::LastNineHours => Self::LastSixHours,
-            Self::LastSixHours => Self::LastThreeHours,
-            Self::LastThreeHours | Self::LastHour => Self::LastHour,
-        }
-    }
-
-    fn wider(self) -> Self {
-        match self {
+            Self::Older => Self::LastHour,
             Self::LastHour => Self::LastThreeHours,
             Self::LastThreeHours => Self::LastSixHours,
             Self::LastSixHours => Self::LastNineHours,
             Self::LastNineHours => Self::LastTwelveHours,
             Self::LastTwelveHours => Self::LastDay,
-            Self::LastDay | Self::Older => Self::Older,
+            Self::LastDay => Self::Older,
         }
     }
 
@@ -210,20 +200,16 @@ impl BoardView {
         }
     }
 
-    fn expand(&mut self) {
-        self.detail = MAX_DETAIL;
+    fn toggle_recap(&mut self) {
+        self.detail = if self.detail == MAX_DETAIL {
+            DEFAULT_DETAIL
+        } else {
+            MAX_DETAIL
+        };
     }
 
-    fn collapse(&mut self) {
-        self.detail = DEFAULT_DETAIL;
-    }
-
-    fn hide_oldest_bucket(&mut self) {
-        self.oldest_visible_bucket = self.oldest_visible_bucket.narrower();
-    }
-
-    fn show_older_bucket(&mut self) {
-        self.oldest_visible_bucket = self.oldest_visible_bucket.wider();
+    fn cycle_age(&mut self) {
+        self.oldest_visible_bucket = self.oldest_visible_bucket.next_cutoff();
     }
 }
 
@@ -975,8 +961,13 @@ fn aggregate(
 
     for session in snapshots {
         let session_age = (now - session.last_updated).max(0.0);
-        for pr in &session.prs {
-            let key = format!("{}/{}#{}", pr.owner, pr.repo, pr.number);
+        for stored_pr in &session.prs {
+            let key = format!(
+                "{}/{}#{}",
+                stored_pr.owner, stored_pr.repo, stored_pr.number
+            );
+            let effective_pr = effective_session_pr(session, stored_pr, overrides.get(&key));
+            let pr = &effective_pr;
             let entry = merged.entry(key.clone()).or_insert_with(|| {
                 order.push(key);
                 // Engagement counters accumulate below, per contributing
@@ -1041,8 +1032,9 @@ fn aggregate(
             merge_pr_slack_threads(&mut entry.slack_threads, pr, &session.slack_threads);
 
             let represents_session = pr.primary
-                && repository_matches(&session.repo_owner, &session.repo_name, &pr.owner, &pr.repo)
-                && (pr.created_here || (!pr.branch.is_empty() && session.branch == pr.branch));
+                && session_repository_matches_pr(session, pr)
+                && (pr.created_here
+                    || attached_to_worktree(pr, &session.branch, &session.dir_name));
             if represents_session {
                 for thread in &session.slack_threads {
                     merge_slack_thread(&mut entry.slack_threads, thread.clone());
@@ -1088,6 +1080,53 @@ fn aggregate(
 
     sort_entries(&mut out);
     out
+}
+
+/// Apply current worktree ownership while reading a session snapshot. Older
+/// Crabigator processes keep writing their original classification, so the
+/// board derives this one fact from branch data that is already in the mirror.
+fn effective_session_pr(
+    session: &SessionSnapshot,
+    stored: &SessionPr,
+    disposition: Option<&PrDisposition>,
+) -> SessionPr {
+    let mut pr = stored.clone();
+    match disposition {
+        Some(PrDisposition::Primary) => {
+            pr.primary = true;
+            pr.primary_source = "override".to_string();
+            pr.dismissed = false;
+        }
+        Some(PrDisposition::Secondary) => {
+            pr.primary = false;
+            pr.primary_source = "override".to_string();
+            pr.dismissed = false;
+        }
+        Some(PrDisposition::Dismissed) => {
+            pr.primary = false;
+            pr.primary_source = "override".to_string();
+            pr.dismissed = true;
+        }
+        None => {
+            let explicitly_secondary =
+                !pr.primary && matches!(pr.primary_source.as_str(), "session" | "override");
+            let attached = pr_attached_to_session(session, &pr);
+            if attached && !explicitly_secondary && !pr.dismissed && pr.state != "CLOSED" {
+                pr.primary = true;
+                pr.primary_source = "auto".to_string();
+            }
+        }
+    }
+    pr
+}
+
+fn pr_attached_to_session(session: &SessionSnapshot, pr: &SessionPr) -> bool {
+    session_repository_matches_pr(session, pr)
+        && attached_to_worktree(pr, &session.branch, &session.dir_name)
+}
+
+fn session_repository_matches_pr(session: &SessionSnapshot, pr: &SessionPr) -> bool {
+    repository_matches(&session.repo_owner, &session.repo_name, &pr.owner, &pr.repo)
 }
 
 /// Keep one row for every active session that has no visible PR in its current
@@ -1950,19 +1989,24 @@ fn slack_links_width(threads: &[SlackThread]) -> usize {
         .unwrap_or(0)
 }
 
-fn pr_row_title(entry: &BoardPr) -> String {
-    latest_session_title(&entry.sessions).unwrap_or_else(|| {
-        let fallback = if entry.pr.title.trim().is_empty() {
-            if entry.pr.repo.is_empty() {
+fn pr_row_titles(entry: &BoardPr) -> (String, Option<String>) {
+    let generated_title = latest_session_title(&entry.sessions);
+    let pr_title = entry.pr.title.trim();
+    if pr_title.is_empty() {
+        let title = generated_title.unwrap_or_else(|| {
+            let fallback = if entry.pr.repo.is_empty() {
                 "PR"
             } else {
                 entry.pr.repo.as_str()
-            }
-        } else {
-            entry.pr.title.trim()
-        };
-        format!("{}{fallback}", provider_markers(&entry.sessions))
-    })
+            };
+            format!("{}{fallback}", provider_markers(&entry.sessions))
+        });
+        return (title, None);
+    }
+
+    let generated_title = generated_title
+        .filter(|title| crate::title::strip_provider_title_marker(title).trim() != pr_title);
+    (pr_title.to_string(), generated_title)
 }
 
 fn slack_detail_cells(entry: &BoardPr, widths: &PrColumnWidths) -> Vec<ActivityCell> {
@@ -2212,7 +2256,7 @@ fn render_pr_board_row(
 ) -> Vec<String> {
     let entry = board_row.entry;
     let activity = activity_cell(&entry.sessions, now_ms / 1000, throbber_frame);
-    let title = pr_row_title(entry);
+    let (title, generated_title) = pr_row_titles(entry);
     let mut row = pr_row_text_with_activity(
         width,
         &entry.pr,
@@ -2227,6 +2271,24 @@ fn render_pr_board_row(
     }
 
     let mut lines = vec![format!("{row}{RESET}")];
+    if generated_title.is_some()
+        || !entry.pr.branch.is_empty()
+        || entry.pr.additions != 0
+        || entry.pr.deletions != 0
+        || entry.pr.changed_files != 0
+    {
+        lines.push(format!(
+            "{}{}",
+            pr_board_metadata_row_text(
+                width,
+                &entry.pr,
+                widths,
+                generated_title.as_deref().unwrap_or_default(),
+                activity_width,
+            ),
+            RESET
+        ));
+    }
     if detail == 0 {
         lines.extend(board_row.preview_lines.iter().cloned());
         return lines;
@@ -2418,25 +2480,29 @@ fn render_at(
         )
     };
     let source = if include_ended {
-        format!("{}all sessions{}", fg(color::YELLOW), fg(color::DARK_GRAY))
+        format!(
+            "{}{UNDERLINE}s{RESET_UNDERLINE} all sessions{}",
+            fg(color::YELLOW),
+            fg(color::DARK_GRAY)
+        )
     } else {
-        "live".to_string()
+        format!("{UNDERLINE}s{RESET_UNDERLINE} live")
     };
     let detail_label = if detail == DEFAULT_DETAIL {
-        format!(" · {}", detail_name(detail))
+        format!(" · {UNDERLINE}r{RESET_UNDERLINE} {}", detail_name(detail))
     } else {
         format!(
-            " · {}{}{}",
+            " · {}{UNDERLINE}r{RESET_UNDERLINE} {}{}",
             fg(color::YELLOW),
             detail_name(detail),
             fg(color::DARK_GRAY)
         )
     };
     let age_label = if oldest_visible_bucket == DEFAULT_OLDEST_VISIBLE_BUCKET {
-        String::new()
+        format!(" · {UNDERLINE}a{RESET_UNDERLINE} all ages")
     } else {
         format!(
-            " · {}age ≤ {}{}",
+            " · {}{UNDERLINE}a{RESET_UNDERLINE} age ≤ {}{}",
             fg(color::YELLOW),
             oldest_visible_bucket.max_age_label(),
             fg(color::DARK_GRAY),
@@ -2445,7 +2511,7 @@ fn render_at(
 
     let mut lines = vec![
         format!(
-            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{} · ↑↓ scroll · / search · +/- days · e/c recap/compact · [/] age · a all · q quit{}",
+            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{} · {UNDERLINE}↑↓{RESET_UNDERLINE} scroll · {UNDERLINE}/{RESET_UNDERLINE} search · {UNDERLINE}+/-{RESET_UNDERLINE} days · {UNDERLINE}q{RESET_UNDERLINE} quit{}",
             fg(color::PURPLE),
             RESET_FG,
             fg(color::DARK_GRAY),
@@ -2484,7 +2550,12 @@ fn render_at(
 
     let activity_width = visible_row_indices
         .iter()
-        .map(|&index| activity_cell(&rows[index].entry.sessions, now, throbber_frame).visible)
+        .map(|&index| {
+            let entry = rows[index].entry;
+            activity_cell(&entry.sessions, now, throbber_frame)
+                .visible
+                .max(pr_board_metadata_width(&entry.pr))
+        })
         .chain(visible_workspace_indices.iter().map(|&index| {
             activity_cell(workspace_rows[index].entry.sessions(), now, throbber_frame).visible
         }))
@@ -2501,7 +2572,8 @@ fn render_at(
     let mut widths = PrColumnWidths::from_pr_refs(&pr_refs, shared_width as usize);
     for &index in &visible_row_indices {
         let entry = rows[index].entry;
-        widths.include_board_identity(&entry.pr, &pr_row_title(entry), shared_width as usize);
+        let (title, _) = pr_row_titles(entry);
+        widths.include_board_identity(&entry.pr, &title, shared_width as usize);
     }
     for &index in &visible_workspace_indices {
         let entry = workspace_rows[index].entry;
@@ -3098,34 +3170,23 @@ async fn board_loop(
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
-                            // Recap expansion and age filtering are independent.
-                            KeyCode::Char('e') => {
-                                view.expand();
+                            // Recap visibility and age filtering are independent.
+                            KeyCode::Char('r') => {
+                                view.toggle_recap();
                                 save_board_preferences(include_ended, linger_days, view)?;
                                 needs_render = true;
                                 dirty = true;
                             }
-                            KeyCode::Char('c') => {
-                                view.collapse();
+                            KeyCode::Char('a') => {
+                                view.cycle_age();
                                 save_board_preferences(include_ended, linger_days, view)?;
-                                needs_render = true;
-                                dirty = true;
-                            }
-                            KeyCode::Char('[') => {
-                                view.hide_oldest_bucket();
-                                save_board_preferences(include_ended, linger_days, view)?;
-                                needs_render = true;
-                                dirty = true;
-                            }
-                            KeyCode::Char(']') => {
-                                view.show_older_bucket();
-                                save_board_preferences(include_ended, linger_days, view)?;
+                                scroll = 0;
                                 needs_render = true;
                                 dirty = true;
                             }
                             // Flip between live mirrors and the durable cloud
                             // record, which includes ended sessions.
-                            KeyCode::Char('a') => {
+                            KeyCode::Char('s') => {
                                 include_ended = !include_ended;
                                 save_board_preferences(include_ended, linger_days, view)?;
                                 cloud_fetch_due = true;
@@ -3213,6 +3274,43 @@ mod tests {
 
     fn render_frame(entries: &[BoardPr]) -> String {
         render_frame_at(entries, DEFAULT_DETAIL)
+    }
+
+    #[test]
+    fn header_shows_the_saved_view_controls() {
+        let styled = render_frame(&[]);
+        for (shortcut, label) in [
+            ("s", "live"),
+            ("r", "compact"),
+            ("a", "all ages"),
+            ("↑↓", "scroll"),
+            ("/", "search"),
+            ("+/-", "days"),
+            ("q", "quit"),
+        ] {
+            assert!(styled.contains(&format!("{UNDERLINE}{shortcut}{RESET_UNDERLINE} {label}")));
+        }
+
+        let frame = crate::parsers::strip_ansi_for_debug(&styled);
+        assert!(frame.contains("s live · primary done ≤ 1d · r compact · a all ages"));
+        assert!(!frame.contains("r recap · a age · s live/all"));
+        assert!(!frame.contains("e/c recap/compact"));
+        assert!(!frame.contains("[/] age"));
+
+        let recap = render_frame_with_oldest(&[], MAX_DETAIL, RecencyBucket::LastSixHours);
+        assert!(recap.contains(&format!("{UNDERLINE}r{RESET_UNDERLINE} recap")));
+        assert!(recap.contains(&format!("{UNDERLINE}a{RESET_UNDERLINE} age ≤ 6h")));
+
+        let all_sessions = render(
+            &[],
+            &[],
+            160,
+            DEFAULT_LINGER_DAYS,
+            true,
+            BoardView::default(),
+        )
+        .join("\n");
+        assert!(all_sessions.contains(&format!("{UNDERLINE}s{RESET_UNDERLINE} all sessions")));
     }
 
     fn now_ms() -> u64 {
@@ -3502,30 +3600,42 @@ mod tests {
 
         assert_eq!(frame.matches("samuelclay/crabigator").count(), 1);
         let no_pr_offset = frame.find("◇ ᛝ  Newest completed session").unwrap();
-        let pr_offset = frame.find("#7").unwrap();
+        let pr_offset = frame.find("7:").unwrap();
         assert!(no_pr_offset < pr_offset, "newer completion sorts first");
 
         let no_pr_row = frame
             .lines()
             .find(|line| line.contains("◇ ᛝ  Newest completed session"))
             .unwrap();
-        let crab_pr_row = frame.lines().find(|line| line.contains("#7")).unwrap();
-        let portal_pr_row = frame.lines().find(|line| line.contains("#9")).unwrap();
+        let crab_pr_row = frame.lines().find(|line| line.contains("7:")).unwrap();
+        let portal_pr_row = frame.lines().find(|line| line.contains("9:")).unwrap();
+        let crab_metadata_row = frame.lines().find(|line| line.contains("with-pr")).unwrap();
+        let portal_metadata_row = frame
+            .lines()
+            .find(|line| line.contains("a-much-longer-branch-name"))
+            .unwrap();
         let column = |line: &str, text: &str| {
             crate::ui::utils::strip_ansi_len(&line[..line.find(text).unwrap()])
         };
         assert_eq!(column(no_pr_row, "⟩"), column(crab_pr_row, "⟩"));
         assert_eq!(column(crab_pr_row, "⟩"), column(portal_pr_row, "⟩"));
-        assert_eq!(column(no_pr_row, "main"), column(crab_pr_row, "with-pr"));
         assert_eq!(
-            column(crab_pr_row, "with-pr"),
-            column(portal_pr_row, "a-much-longer-branch-name")
+            column(no_pr_row, "main"),
+            column(crab_metadata_row, "with-pr")
+        );
+        assert_eq!(
+            column(crab_metadata_row, "with-pr"),
+            column(portal_metadata_row, "a-much-longer-branch-name")
         );
         assert!(!no_pr_row.contains("no tracked PR"));
         assert!(crab_pr_row.contains("⟁  crabigator"));
-        assert!(crab_pr_row.contains("#7"));
+        assert!(crab_pr_row.contains("7: ⟁  crabigator"));
+        assert!(!crab_pr_row.contains("with-pr"));
+        assert!(crab_metadata_row.contains("⎇ with-pr"));
         assert!(portal_pr_row.contains("ᛝ  developer-portal"));
-        assert!(portal_pr_row.contains("#9"));
+        assert!(portal_pr_row.contains("9: ᛝ  developer-portal"));
+        assert!(!portal_pr_row.contains("a-much-longer-branch-name"));
+        assert!(portal_metadata_row.contains("⎇ a-much-longer-branch-name"));
     }
 
     #[test]
@@ -3594,7 +3704,7 @@ mod tests {
                 .unwrap();
             let pr_row = lines
                 .iter()
-                .position(|line| line.contains("PR session") && line.contains("#2"))
+                .position(|line| line.contains("2:") && line.contains("PR session"))
                 .unwrap();
             let peer_row = lines
                 .iter()
@@ -3683,30 +3793,37 @@ mod tests {
     }
 
     #[test]
-    fn collapse_and_expand_toggle_recaps_without_changing_age() {
+    fn recap_and_age_controls_cycle_without_changing_each_other() {
         assert_eq!(
             BoardView::new(u8::MAX, DEFAULT_OLDEST_VISIBLE_BUCKET).detail,
             MAX_DETAIL,
             "invalid saved detail opens at the highest supported level"
         );
         let mut view = BoardView::new(MAX_DETAIL, RecencyBucket::LastNineHours);
-        view.collapse();
+        view.toggle_recap();
         assert_eq!(
             (view.detail, view.oldest_visible_bucket),
             (DEFAULT_DETAIL, RecencyBucket::LastNineHours)
         );
-        view.expand();
+        view.toggle_recap();
         assert_eq!(
             (view.detail, view.oldest_visible_bucket),
             (MAX_DETAIL, RecencyBucket::LastNineHours)
         );
 
-        view.hide_oldest_bucket();
-        assert_eq!(view.oldest_visible_bucket, RecencyBucket::LastSixHours);
-        assert_eq!(view.detail, MAX_DETAIL);
-        view.show_older_bucket();
-        assert_eq!(view.oldest_visible_bucket, RecencyBucket::LastNineHours);
-        assert_eq!(view.detail, MAX_DETAIL);
+        for expected in [
+            RecencyBucket::LastTwelveHours,
+            RecencyBucket::LastDay,
+            RecencyBucket::Older,
+            RecencyBucket::LastHour,
+            RecencyBucket::LastThreeHours,
+            RecencyBucket::LastSixHours,
+            RecencyBucket::LastNineHours,
+        ] {
+            view.cycle_age();
+            assert_eq!(view.oldest_visible_bucket, expected);
+            assert_eq!(view.detail, MAX_DETAIL);
+        }
     }
 
     #[test]
@@ -3774,7 +3891,7 @@ mod tests {
         assert!(six_hours.contains("● 1–3 hours"));
         assert!(six_hours.contains("● 3–6 hours"));
         assert!(!six_hours.contains("● 6–9 hours"));
-        assert!(!six_hours.contains("#4"));
+        assert!(!six_hours.contains("4: repo"));
 
         let last_hour = crate::parsers::strip_ansi_for_debug(&render_frame_with_oldest(
             &entries,
@@ -3789,8 +3906,8 @@ mod tests {
         assert!(last_hour.contains("age ≤ 1h"));
         assert!(last_hour
             .lines()
-            .any(|line| line.contains("repo") && line.contains("#1")));
-        assert!(!last_hour.contains("#2"));
+            .any(|line| line.contains("repo") && line.contains("1:")));
+        assert!(!last_hour.contains("2: repo"));
     }
 
     #[test]
@@ -3855,7 +3972,7 @@ mod tests {
                 .join("\n"),
             );
             assert!(frame.contains("2 sessions"));
-            let pr_row = frame.lines().find(|line| line.contains("#2")).unwrap();
+            let pr_row = frame.lines().find(|line| line.contains("2:")).unwrap();
             assert!(pr_row.contains(PROMPT_ICON));
             assert!(pr_row.contains(COMPLETION_ICON));
             let session_row = frame
@@ -3930,6 +4047,42 @@ mod tests {
         assert!(entries[0].pr.primary);
         assert_eq!(entries[0].pr.primary_source, "auto");
         assert_eq!(entries[0].pr.mentions, 7);
+    }
+
+    #[test]
+    fn aggregation_promotes_a_worktree_directory_match_from_an_older_mirror() {
+        let mut attached = board_pr(1206, "portal");
+        attached.branch = "sam/keep-draft-values".to_string();
+        attached.title = "Keep draft values during autosave".to_string();
+        let mut old_mirror = snapshot("keep-draft-values", vec![attached]);
+        old_mirror.repo_name = "portal".to_string();
+        old_mirror.title = "⟁ Fix builder autosave".to_string();
+
+        let entries = aggregate(&[old_mirror], &HashMap::new(), DEFAULT_LINGER_DAYS);
+
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].pr.primary);
+        assert_eq!(entries[0].pr.primary_source, "auto");
+        assert_eq!(entries[0].sessions.len(), 1);
+        assert_eq!(entries[0].pr.title, "Keep draft values during autosave");
+        assert_eq!(entries[0].sessions[0].title, "⟁ Fix builder autosave");
+    }
+
+    #[test]
+    fn secondary_override_beats_retroactive_worktree_ownership() {
+        let mut attached = board_pr(1206, "portal");
+        attached.branch = "sam/keep-draft-values".to_string();
+        let mut old_mirror = snapshot("keep-draft-values", vec![attached]);
+        old_mirror.repo_name = "portal".to_string();
+        old_mirror.branch = "sam/keep-draft-values".to_string();
+        let mut overrides = HashMap::new();
+        overrides.insert("o/portal#1206".to_string(), PrDisposition::Secondary);
+
+        let entries = aggregate(&[old_mirror], &overrides, DEFAULT_LINGER_DAYS);
+
+        assert_eq!(entries.len(), 1);
+        assert!(!entries[0].pr.primary);
+        assert!(entries[0].sessions.is_empty());
     }
 
     #[test]
@@ -4033,7 +4186,7 @@ mod tests {
         let entries = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
         let compact = render_frame_at(&entries, 0);
         assert!(compact.contains("Builder Signals dashboard"));
-        assert!(compact.contains("#9"));
+        assert!(compact.contains("9: Fix the flow"));
         assert!(!compact.contains("#builder"));
         assert!(!compact.contains("CI green, awaiting review"));
 
@@ -4339,13 +4492,15 @@ mod tests {
         pr.changed_files = 3;
         pr.mergeable = "MERGEABLE".to_string();
         pr.ai_note = "Open and ready for review".to_string();
+        pr.title = "Make PR titles official".to_string();
+        pr.branch = "sam/pr-title-layout".to_string();
         let mut with_title = snapshot("portal", vec![pr.clone()]);
         with_title.title = "Wiring the PR board detail levels".to_string();
         with_title.title_set_at = now_ms() - 2 * 60 * 60 * 1000;
         with_title.prompted_at = now_secs() as u64 - 30 * 60;
         with_title.completed_at = now_secs() as u64 - 2 * 60 * 60;
         with_title.recap = Some(RecapBrief {
-            headline: "Added e-cycled detail to the prs board".to_string(),
+            headline: "Added r-toggled recaps to the PR board".to_string(),
             bullets: Vec::new(),
             next_prompt_notes: vec!["Next: Ready to merge once checks finish".to_string()],
             artifacts: Vec::new(),
@@ -4361,15 +4516,16 @@ mod tests {
         aggregate(&[with_title, bare], &HashMap::new(), DEFAULT_LINGER_DAYS)
     }
 
-    /// The title stays on the PR row; `e` adds the complete recap beneath it.
+    /// The title stays on the PR row; `r` adds the complete recap beneath it.
     #[test]
     fn compact_and_recap_views_keep_one_titled_pr_row() {
         let entries = titled_entries();
 
         let compact = render_frame(&entries);
         assert!(!compact.contains('▓'), "no progress bar at compact");
+        assert!(compact.contains("Make PR titles official"));
         assert!(compact.contains("Wiring the PR board detail levels"));
-        assert!(compact.contains("#9"));
+        assert!(compact.contains("9: Make PR titles official"));
         assert!(compact.contains("compact"), "header names the level");
         assert!(compact.contains("⟩ 30m"));
         assert!(compact.contains("⋖ 2h"));
@@ -4378,14 +4534,14 @@ mod tests {
             "judgments wait for recap view"
         );
         assert!(
-            !compact.contains("Added e-cycled detail"),
+            !compact.contains("Added r-toggled recaps"),
             "recaps wait for recap view"
         );
 
         let recaps = render_frame_at(&entries, 1);
         assert!(recaps.contains("Wiring the PR board"));
         assert!(recaps.contains("Open and ready for review"));
-        assert!(recaps.contains("Added e-cycled"));
+        assert!(recaps.contains("Added r-toggled"));
         assert!(recaps.contains("Next: Ready to merge once checks finish"));
         // The recap line carries the turn's diff and compact age.
         assert!(recaps.contains("+120"), "recap shows the line delta");
@@ -4393,7 +4549,7 @@ mod tests {
         assert!(recaps.contains("42m"), "recap shows its age");
         assert!(!recaps.contains("ago"), "expanded ages stay compact");
         assert!(
-            crate::parsers::strip_ansi_for_debug(&recaps).contains(" · recap"),
+            crate::parsers::strip_ansi_for_debug(&recaps).contains(" · r recap"),
             "header uses the level name"
         );
         assert!(recaps.contains("⟩ 30m"));
@@ -4405,10 +4561,13 @@ mod tests {
             "recap view keeps the judgment, headline, and next step"
         );
 
-        let compact_line = recaps.lines().find(|line| line.contains("#9")).unwrap();
+        let compact_line = recaps
+            .lines()
+            .find(|line| line.contains("9: Make PR titles official"))
+            .unwrap();
         let recap_line = recaps
             .lines()
-            .find(|line| line.contains("Added e-cycled"))
+            .find(|line| line.contains("Added r-toggled"))
             .unwrap();
         let judgment_line = recaps
             .lines()
@@ -4419,20 +4578,29 @@ mod tests {
             .find(|line| line.contains("Next: Ready to merge once checks finish"))
             .unwrap();
         let compact_plain = crate::parsers::strip_ansi_for_debug(compact_line);
-        assert!(compact_plain.contains("ᛝ  Wiring the PR board detail levels"));
-        assert!(compact_plain.contains("#9"), "{compact_plain}");
-        assert_eq!(
-            compact_plain.matches('ᛝ').count(),
-            1,
-            "provider marker is not duplicated"
-        );
+        assert!(compact_plain.contains("Make PR titles official"));
         assert!(
-            compact_plain.find("#9").unwrap() < compact_plain.find("+49 -5").unwrap(),
-            "the PR number precedes the diff: {compact_plain}"
+            compact_plain.contains("9: Make PR titles official"),
+            "{compact_plain}"
         );
+        let generated_line = recaps
+            .lines()
+            .find(|line| line.contains("ᛝ  Wiring the PR board detail levels"))
+            .unwrap();
+        let generated_plain = crate::parsers::strip_ansi_for_debug(generated_line);
+        assert!(
+            generated_plain.starts_with("   ᛝ  "),
+            "the generated title stays below the PR title"
+        );
+        assert!(generated_plain.contains("⎇ sam/pr-title-layout"));
+        assert!(generated_plain.contains("+49 -5"));
+        assert!(generated_plain.contains("3 files"));
+        assert!(!compact_plain.contains("sam/pr-title-layout"));
+        assert!(!compact_plain.contains("+49 -5"));
+        assert!(!compact_plain.contains("3 files"));
         assert!(compact_line.contains(&escape::hyperlink(
             &entries[0].pr.url,
-            "ᛝ  Wiring the PR board detail levels"
+            "9: Make PR titles official"
         )));
         assert!(
             crate::parsers::strip_ansi_for_debug(recap_line).starts_with("   ↪ "),
@@ -4450,14 +4618,10 @@ mod tests {
         );
         assert!(!next_line.contains("+120"));
         assert!(!next_line.contains("42m"));
-        let visible_end = |line: &str, needle: &str| {
-            let byte = line.rfind(needle).unwrap();
-            crate::ui::utils::strip_ansi_len(&line[..byte]) + needle.width()
-        };
-        assert_eq!(
-            visible_end(compact_line, "2h"),
-            visible_end(recap_line, "42m"),
-            "recap age ends in the compact activity column"
+        assert!(
+            generated_plain.find("⎇ sam/pr-title-layout").unwrap()
+                < generated_plain.find("+49 -5").unwrap(),
+            "git metadata sits to the right of the blue title and branch"
         );
 
         let row = crate::parsers::strip_ansi_for_debug(&compact);
@@ -4465,7 +4629,10 @@ mod tests {
             row.find("⋖ 2h").unwrap() < row.find("open").unwrap(),
             "activity belongs before the GitHub status"
         );
-        let main_row = compact.lines().find(|line| line.contains("#9")).unwrap();
+        let main_row = compact
+            .lines()
+            .find(|line| line.contains("9: Make PR titles official"))
+            .unwrap();
         assert_eq!(
             crate::ui::utils::strip_ansi_len(main_row),
             159,
@@ -4917,7 +5084,7 @@ mod tests {
     }
 
     #[test]
-    fn pr_row_uses_only_the_newest_session_title() {
+    fn pr_row_keeps_the_pr_title_and_uses_only_the_newest_generated_subtitle() {
         let mut entries = titled_entries();
         let mut newer = entries[0].sessions[0].clone();
         newer.session_id = "newer-session".to_string();
@@ -4929,13 +5096,19 @@ mod tests {
         entries[0].sessions.push(newer);
 
         let frame = render_frame_at(&entries, 0);
+        assert!(frame.contains("Make PR titles official"));
         assert!(frame.contains("A newer terminal title"));
         let plain = crate::parsers::strip_ansi_for_debug(&frame);
         let title_row = plain
             .lines()
+            .find(|line| line.contains("Make PR titles official"))
+            .unwrap();
+        assert!(title_row.contains("9: Make PR titles official"), "{plain}");
+        let generated_row = plain
+            .lines()
             .find(|line| line.contains("⟁  A newer terminal title"))
             .unwrap();
-        assert!(title_row.contains("#9"), "{plain}");
+        assert!(!generated_row.contains("9:"), "{plain}");
         assert!(!frame.contains('⌾'));
         assert!(!frame.contains("Wiring the PR board detail levels"));
         assert!(!frame.contains("other-worktree"));
@@ -4945,11 +5118,11 @@ mod tests {
         }
         entries[0].slack_threads.clear();
         let fallback = render_frame_at(&entries, 0);
-        assert!(fallback.contains("ᛝ  portal"));
-        assert!(fallback.contains("#9"));
+        assert!(fallback.contains("Make PR titles official"));
+        assert!(fallback.contains("9: Make PR titles official"));
         assert!(!fallback.contains('⌾'));
         assert!(
-            render_frame_at(&entries, 1).contains("Added e-cycled"),
+            render_frame_at(&entries, 1).contains("Added r-toggled"),
             "recap remains available without a title: {}",
             crate::parsers::strip_ansi_for_debug(&render_frame_at(&entries, 1))
         );

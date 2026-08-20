@@ -74,6 +74,7 @@ Real-time widgets below the assistant's interface show:
 - <img src="assets/clock.svg" width="14" height="14"> **Session stats** — Time elapsed, prompts sent, tool calls, tokens used
 - <img src="assets/folder.svg" width="14" height="14"> **Git status** — Modified, added, and deleted files
 - <img src="assets/dna.svg" width="14" height="14"> **Semantic diff** — Changes organized by the functions and classes they touch (Rust, TypeScript, Python, Swift, Objective-C)
+- <img src="assets/git-pull-request.svg" width="14" height="14"> **Session titles** — The primary PR title is official; Claude's or Codex's automatic title stays visible below it
 
 ### <img src="assets/scroll.svg" width="20" height="20"> Turn Recaps
 
@@ -90,10 +91,12 @@ After each turn, Crabigator generates a short recap of what the assistant did �
 Board keys:
 
 - `/` — Search, including a grep of each live session's transcript with matched excerpts inline (Tab toggles surrounding context)
-- `e` / `c` — Show complete recaps or return to compact rows
-- `[` / `]` — Hide or show older recency buckets
+- `r` — Show or hide complete recaps
+- `a` — Cycle through activity age filters
+- `s` — Toggle between live sessions and the durable cloud record
 - `+` / `-` — Widen or narrow the window of finished PRs kept on the board
-- Toggle between live sessions and the durable cloud record; the full history lives on the [dashboard's PR board](https://drinkcrabigator.com/dashboard)
+
+The board saves these view choices between sessions. The full history also lives on the [dashboard's PR board](https://drinkcrabigator.com/dashboard).
 
 ### <img src="assets/terminal.svg" width="20" height="20"> Native Terminal Experience
 
@@ -178,6 +181,7 @@ recap_model = "claude-haiku-4-5"  # optional model override for recaps
 include_ended = false         # open with durable ended sessions included
 detail = 1                    # 0 compact, 1 complete recaps
 linger_days = 1               # how long finished PRs stay on the board
+oldest_visible_hours = 9      # activity age filter; omit to show every age
 ```
 
 Claude Code hooks are installed to `~/.claude/crabigator/` for tracking session state and statistics. They are versioned and reinstall themselves automatically when Crabigator updates.

@@ -1077,6 +1077,7 @@ impl App {
             &self.git_state,
             &self.diff_summary,
             self.display_title.as_deref(),
+            self.pr_tracker.prs(),
             self.pr_tracker.slack_threads(),
             handoff,
         );
@@ -1159,7 +1160,7 @@ impl App {
             self.diff_summary.files.len().hash(&mut hasher);
             self.diff_summary.loading.hash(&mut hasher);
 
-            // Terminal title (the displayed one — native or generated)
+            // Automatic title plus the PR fields that choose the official title.
             self.display_title.hash(&mut hasher);
             self.pr_tracker.slack_threads().hash(&mut hasher);
 
@@ -1183,6 +1184,7 @@ impl App {
             // refreshes redraw.
             for pr in self.pr_tracker.prs() {
                 pr.url.hash(&mut hasher);
+                pr.title.hash(&mut hasher);
                 pr.branch.hash(&mut hasher);
                 pr.state.hash(&mut hasher);
                 pr.is_draft.hash(&mut hasher);
@@ -1195,6 +1197,8 @@ impl App {
                 pr.checks_pending.hash(&mut hasher);
                 pr.primary.hash(&mut hasher);
                 pr.dismissed.hash(&mut hasher);
+                pr.last_mentioned_at.hash(&mut hasher);
+                pr.refreshed_at.hash(&mut hasher);
             }
 
             // Include throbber frame when animating to trigger redraws on frame change
@@ -1635,6 +1639,7 @@ impl App {
             &self.git_state,
             &self.diff_summary,
             self.display_title.as_deref(),
+            self.pr_tracker.prs(),
             self.pr_tracker.slack_threads(),
             new_handoff_rows,
         );

@@ -15,7 +15,7 @@ crabigator claude           # Use Claude Code
 crabigator --platform codex # Explicit flag
 ```
 
-Other subcommands: `inspect` (view running instances), `prs` (live cross-session PR board; `--once` prints one frame — only sessions with a live mirror under /tmp appear, the durable history lives on the web dashboard's PR board; `/` search also greps each live session's transcript and shows the matched excerpt inline, Tab toggles surrounding context; `e`/`c` expand or collapse detail — compact, standard, session titles, recap headlines with age and line delta), `pair` (dashboard auth code), `recap` (enable/disable/status for turn recaps), `key` (save an Anthropic API key for recaps), `install-launcher` (macOS crabigator:// URL handler), `resume`/`continue`.
+Other subcommands: `inspect` (view running instances), `prs` (live cross-session PR board; `--once` prints one frame — only sessions with a live mirror under /tmp appear, the durable history lives on the web dashboard's PR board; `/` search also greps each live session's transcript and shows the matched excerpt inline, Tab toggles surrounding context; `r` shows or hides recaps, `a` cycles activity ages, and `s` toggles live/all sessions), `pair` (dashboard auth code), `recap` (enable/disable/status for turn recaps), `key` (save an Anthropic API key for recaps), `install-launcher` (macOS crabigator:// URL handler), `resume`/`continue`.
 
 Preferences live in `~/.crabigator/config.toml` (default platform, `ide` for clickable file links, terminal emulator override, recap settings, and `[pr_board]` view preferences saved by the PR board).
 
@@ -121,7 +121,7 @@ The application uses a **scroll region approach** to layer UI:
 - **prs_board.rs**: The `crabigator prs` cross-session PR board - reads every live session's `inspect.json`, groups PRs by repository, and renders the interactive board (search, detail levels, live/cloud toggle).
 - **slack.rs**: Captures Slack permalinks mentioned in session transcripts so PRs and recaps can link back to their Slack threads.
 - **mode.rs**: Detects Claude Code's operating mode (Normal, Auto-Accept, Plan) from screen content.
-- **title.rs**: Background generation of short terminal titles when the platform doesn't publish its own (Codex).
+- **title.rs**: Automatic Claude/Codex title handling and official session-title selection from the primary PR.
 - **update.rs**: Auto-update checks via the GitHub Releases API (npm, cargo, homebrew install methods).
 - **ide.rs / launcher.rs / terminal_spawner.rs**: IDE hyperlink URLs (OSC 8), macOS crabigator:// URL handler, and new-terminal-window spawning.
 - **pair.rs**: Pairing code generation for dashboard auto-login.

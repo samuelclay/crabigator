@@ -47,7 +47,7 @@ pub struct PrBoardPreferences {
     /// Whether the board opens with durable ended sessions included.
     #[serde(default)]
     pub include_ended: bool,
-    /// Detail level: 0 = compact, 1 = titles, 2 = recaps.
+    /// Recap visibility: 0 = hidden, 1 = shown.
     #[serde(default)]
     pub detail: u8,
     /// Number of days to keep completed PRs on the board.
@@ -221,14 +221,14 @@ mod tests {
     fn pr_board_preferences_round_trip() {
         let mut config = Config::default();
         config.pr_board.include_ended = true;
-        config.pr_board.detail = 2;
+        config.pr_board.detail = 1;
         config.pr_board.linger_days = 7;
         config.pr_board.oldest_visible_hours = Some(9);
 
         let encoded = toml::to_string(&config).unwrap();
         let decoded: Config = toml::from_str(&encoded).unwrap();
         assert!(decoded.pr_board.include_ended);
-        assert_eq!(decoded.pr_board.detail, 2);
+        assert_eq!(decoded.pr_board.detail, 1);
         assert_eq!(decoded.pr_board.linger_days, 7);
         assert_eq!(decoded.pr_board.oldest_visible_hours, Some(9));
     }

@@ -268,12 +268,64 @@ pub(crate) fn pr_row_text_with_activity(
     visible: usize,
     column_width: usize,
 ) -> String {
-    pr_row_text_with_optional_activity(
+    let left_cells = [board_pr_title_cell(pr, title, widths.left_width())];
+    pr_row_text_with_left_cells(
         width,
         pr,
         widths,
-        Some(title),
+        &left_cells,
         Some((styled, visible, column_width)),
+    )
+}
+
+/// Width needed for a PR's diff and file count on the board metadata row.
+pub(crate) fn pr_board_metadata_width(pr: &SessionPr) -> usize {
+    table_width(&[
+        pr_diff_text(pr).width().min(PR_DIFF_MAX),
+        pr_files_text(pr).width().min(PR_FILES_MAX),
+    ])
+}
+
+/// Put the generated session title and branch below the official PR title,
+/// with diff and file count aligned below the prompt/completion activity.
+pub(crate) fn pr_board_metadata_row_text(
+    width: u16,
+    pr: &SessionPr,
+    widths: &PrColumnWidths,
+    generated_title: &str,
+    activity_width: usize,
+) -> String {
+    let left_width = widths.left_width();
+    let prefix = "  ";
+    let available = left_width.saturating_sub(prefix.width());
+    let branch_label = pr_branch_text(pr);
+    let branch_width = widths.branch.min(available);
+    let gap = if branch_width > 0 {
+        PR_COLUMN_GAP.min(available.saturating_sub(branch_width))
+    } else {
+        0
+    };
+    let title_width = available.saturating_sub(branch_width + gap);
+    let title = truncate_to_width(generated_title, title_width);
+    let branch = truncate_branch_to_width(&branch_label, branch_width);
+    let mut left_styled = format!("{prefix}{}{}{}", fg(color::LIGHT_BLUE), title, RESET_FG);
+    left_styled.push_str(&" ".repeat(title_width.saturating_sub(title.width()) + gap));
+    if !branch.is_empty() {
+        left_styled.push_str(&format!("{}{}{}", fg(color::DARK_GRAY), branch, RESET_FG));
+    }
+    let left_visible = prefix.width() + title_width + gap + branch.width();
+
+    let metadata = board_pr_metadata_cell(pr, activity_width);
+    board_detail_row_text(
+        width,
+        widths,
+        left_styled,
+        left_visible,
+        metadata.0,
+        metadata.1,
+        activity_width,
+        String::new(),
+        0,
     )
 }
 
@@ -373,12 +425,22 @@ fn pr_row_text_with_optional_activity(
     board_title: Option<&str>,
     activity: Option<PrCell>,
 ) -> String {
-    let mut row = " ".repeat(PR_LEFT_PADDING);
     let left_cells = board_title.map_or_else(
         || pr_left_cells(pr, widths),
         |title| pr_left_cells_with_board_title(pr, widths, title),
     );
-    row.push_str(&cells_text(&left_cells));
+    pr_row_text_with_left_cells(width, pr, widths, &left_cells, activity)
+}
+
+fn pr_row_text_with_left_cells(
+    width: u16,
+    pr: &SessionPr,
+    widths: &PrColumnWidths,
+    left_cells: &[PrCell],
+    activity: Option<PrCell>,
+) -> String {
+    let mut row = " ".repeat(PR_LEFT_PADDING);
+    row.push_str(&cells_text(left_cells));
 
     let mut right_cells = pr_right_cells(pr, widths).to_vec();
     let status_width = right_cells_width(&right_cells);
@@ -409,6 +471,63 @@ fn pr_row_text_with_optional_activity(
     row
 }
 
+fn board_pr_title_cell(pr: &SessionPr, title: &str, width: usize) -> PrCell {
+    let glyph = pr_glyph(pr);
+    let identity = truncate_to_width(&format!("{glyph} {}: {title}", pr.number), width);
+    let styled = styled_pr_identity(pr, &identity);
+    (styled, identity.width(), width)
+}
+
+fn styled_pr_identity(pr: &SessionPr, identity: &str) -> String {
+    let glyph = pr_glyph(pr);
+    let (glyph_kept, identity_label) = match identity.strip_prefix(&format!("{glyph} ")) {
+        Some(label) => (true, label),
+        None => (false, identity),
+    };
+    let flip = if pr.primary { "secondary" } else { "primary" };
+    let glyph_styled = if glyph_kept {
+        format!(
+            "{} ",
+            link_text(&pr_action_url(pr, flip), glyph.to_string(), 1)
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "{}{}{}{}",
+        fg(pr_identity_color(pr)),
+        glyph_styled,
+        escape::hyperlink(&pr.url, identity_label),
+        RESET_FG
+    )
+}
+
+fn board_pr_metadata_cell(pr: &SessionPr, width: usize) -> PrCell {
+    let files_url = pr_files_url(pr);
+    let diff_width = pr_diff_text(pr).width().min(PR_DIFF_MAX);
+    let files_width = pr_files_text(pr).width().min(PR_FILES_MAX);
+    let diff = colored_diff_cell(
+        pr.additions,
+        pr.deletions,
+        row_color(pr, color::GREEN),
+        row_color(pr, color::RED),
+        row_color(pr, color::GRAY),
+        diff_width,
+    );
+    let files = linked_cell(
+        &pr_files_text(pr),
+        row_color(pr, color::DARK_GRAY),
+        files_width,
+        &files_url,
+    );
+    let content = [
+        (link_text(&files_url, diff.0, diff.1), diff.1, diff.2),
+        files,
+    ];
+    let visible = table_width(&[diff.1, content[1].1]);
+    (cells_text(&content), visible, width)
+}
+
 type PrCell = (String, usize, usize);
 
 pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 5] {
@@ -430,30 +549,8 @@ fn pr_left_cells_with_identity(
     widths: &PrColumnWidths,
     identity: String,
 ) -> [PrCell; 5] {
-    // The glyph is its own click target — it flips the PR's disposition —
-    // while the remaining identity still opens the PR on GitHub. A column too
-    // narrow to hold the glyph drops it and links the whole label instead.
-    let glyph = pr_glyph(pr);
-    let (glyph_kept, identity_label) = match identity.strip_prefix(&format!("{glyph} ")) {
-        Some(label) => (true, label),
-        None => (false, identity.as_str()),
-    };
-    let flip = if pr.primary { "secondary" } else { "primary" };
-    let glyph_styled = if glyph_kept {
-        format!(
-            "{} ",
-            link_text(&pr_action_url(pr, flip), glyph.to_string(), 1)
-        )
-    } else {
-        String::new()
-    };
-    let identity_styled = format!(
-        "{}{}{}{}",
-        fg(pr_identity_color(pr)),
-        glyph_styled,
-        escape::hyperlink(&pr.url, identity_label),
-        RESET_FG
-    );
+    // The glyph is its own click target; the remaining identity opens GitHub.
+    let identity_styled = styled_pr_identity(pr, &identity);
 
     let number = linked_cell(
         &pr_number_text(pr),
@@ -737,7 +834,7 @@ pub(crate) fn pr_identity_text(pr: &SessionPr) -> String {
 }
 
 fn board_pr_identity_text(pr: &SessionPr, title: &str) -> String {
-    format!("{} {title}", pr_glyph(pr))
+    format!("{} {}: {title}", pr_glyph(pr), pr.number)
 }
 
 fn pr_number_text(pr: &SessionPr) -> String {
