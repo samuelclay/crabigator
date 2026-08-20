@@ -56,6 +56,18 @@ export const sessionCardCss = `
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.session-header .title.official {
+    color: #bc8cff;
+}
+.session-header .generated-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #58a6ff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.session-header .generated-title:empty { display: none; }
 .session-header .cwd {
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;

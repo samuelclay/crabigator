@@ -187,6 +187,13 @@ export const eventsJs = `
                     if (sessionData) {
                         sessionData.git = event;
                         updateSessionSummary(sessionId, sessionData);
+                        if (sessionData.prs?.length) {
+                            updatePrList(sessionId, sessionData.prs);
+                        } else {
+                            updateSessionTitleHierarchy(sessionId);
+                            updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
+                            scheduleSidebarUpdate();
+                        }
                     }
                     updateGitWidget(sessionId, event);
                     break;
@@ -215,17 +222,17 @@ export const eventsJs = `
                     scheduleSidebarUpdate();
                     break;
                 case 'title':
-                    // Update title in header
-                    const titleEl = document.getElementById('title-' + sessionId);
-                    if (titleEl) {
-                        titleEl.textContent = event.title;
-                    }
-                    // Store in session data
+                    // Keep the assistant's title separately. A primary PR title,
+                    // when present, is the official title shown above it.
                     if (sessionData) {
                         sessionData.title = event.title;
+                        sessionData.generatedTitle = event.title;
                     }
-                    // Update titles widget with single title if no history yet
+                    updateSessionTitleHierarchy(sessionId);
                     updateTitlesWidget(sessionId, [event.title]);
+                    if (sessionData) {
+                        updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
+                    }
                     scheduleSidebarUpdate();
                     break;
                 case 'desktop_status':
@@ -275,6 +282,10 @@ export const eventsJs = `
                     break;
                 case 'title_history':
                     updateTitlesWidget(sessionId, event.history);
+                    if (sessionData) {
+                        updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
+                    }
+                    scheduleSidebarUpdate();
                     break;
                 case 'slack_threads':
                     if (sessionData) {

@@ -407,6 +407,7 @@ export const sessionJs = `
                 <div class="session-header">
                     <div class="session-info">
                         <span class="title" id="title-\${session.id}"></span>
+                        <span class="generated-title" id="generated-title-\${session.id}"></span>
                         <span class="cwd">\${session.cwd}</span>
                         <span class="branch" id="branch-\${session.id}" style="color:#7ee787; font-size:11px;"></span>
                     </div>
@@ -603,6 +604,8 @@ export const sessionJs = `
                 element: card,
                 state: session.state,
                 title: null,
+                generatedTitle: null,
+                prs: [],
                 git: null,
                 changes: null,
                 stats: null,

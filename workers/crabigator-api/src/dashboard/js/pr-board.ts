@@ -100,6 +100,15 @@ export const prBoardJs = `
                 + ' · ⋖ ' + (completed ? prBoardAge(completed) : '—');
         }
 
+        function prBoardGeneratedTitle(entry) {
+            const sessionsByActivity = [...(entry.sessions || [])].sort((a, b) =>
+                Math.max(b.completions_changed_at || 0, b.prompts_changed_at || 0)
+                - Math.max(a.completions_changed_at || 0, a.prompts_changed_at || 0));
+            const title = String(sessionsByActivity.find(session => session.title)?.title || '').trim();
+            if (!title || !String(entry.pr?.title || '').trim()) return '';
+            return stripGeneratedTitleMarker(title) === String(entry.pr.title).trim() ? '' : title;
+        }
+
         function renderPrBoard() {
             const board = document.getElementById('pr-board-view');
             if (!board) return;
@@ -258,6 +267,7 @@ export const prBoardJs = `
                 + prCommentsBadge(pr) + prMergeBadge(pr) + dismiss + '</span>';
             const activity = '<span class="pr-activity">'
                 + escapeHtml(prBoardActivityLabel(entry.sessions)) + '</span>';
+            const generatedTitle = prBoardGeneratedTitle(entry);
 
             const sessions = (entry.sessions || [])
                 .map(s => escapeHtml(s.dir_name) + (s.active ? '' : ' <span class="pb-dim">(ended)</span>'))
@@ -289,6 +299,9 @@ export const prBoardJs = `
             return '<div class="pr-board-row' + (isPrimary ? '' : ' pr-secondary')
                 + '" data-pr-index="' + index + '">'
                 + '<div class="pr-row-top">' + star + identity + diff + files + branch + activity + status + '</div>'
+                + (generatedTitle
+                    ? '<div class="pr-board-generated-title">' + escapeHtml(generatedTitle) + '</div>'
+                    : '')
                 + '<div class="pr-board-meta">' + meta + '</div>'
                 + (extras ? '<div class="pr-board-extras">' + extras + '</div>' : '')
                 + '</div>';
