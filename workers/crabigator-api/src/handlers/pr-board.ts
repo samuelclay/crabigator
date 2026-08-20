@@ -287,6 +287,50 @@ function foreignWithoutExplicitInterest(pr: SessionPr): boolean {
         && pr.primary_source !== 'override';
 }
 
+function sessionRepositoryMatchesPr(row: BoardSessionRow, pr: SessionPr): boolean {
+    const cwdRepo = (row.cwd || '').split('/').filter(Boolean).pop() || '';
+    const currentRepo = row.repo_name || cwdRepo;
+    const ownerMatches = row.repo_owner
+        ? row.repo_owner.toLowerCase() === pr.owner.toLowerCase()
+        : !!pr.created_here;
+    return ownerMatches && currentRepo.toLowerCase() === pr.repo.toLowerCase();
+}
+
+function prAttachedToSession(row: BoardSessionRow, pr: SessionPr): boolean {
+    if (!pr.branch || ['main', 'master', 'develop'].includes(pr.branch)) return false;
+    if (!sessionRepositoryMatchesPr(row, pr)) return false;
+    if (row.branch === pr.branch) return true;
+    const worktree = (row.cwd || '').split('/').filter(Boolean).pop() || '';
+    return !!worktree && (pr.branch === worktree || pr.branch.endsWith(`/${worktree}`));
+}
+
+/** Derive worktree ownership from durable session data written by older clients. */
+function effectiveSessionPr(row: SessionPrRow, stored: SessionPr): SessionPr {
+    const pr = { ...stored };
+    if (row.disposition === 'primary') {
+        return { ...pr, primary: true, primary_source: 'override', dismissed: false };
+    }
+    if (row.disposition === 'secondary') {
+        return { ...pr, primary: false, primary_source: 'override', dismissed: false };
+    }
+    if (row.disposition === 'dismissed') {
+        return { ...pr, primary: false, primary_source: 'override', dismissed: true };
+    }
+
+    const explicitlySecondary = !pr.primary
+        && (pr.primary_source === 'session' || pr.primary_source === 'override');
+    if (
+        !explicitlySecondary
+        && !pr.dismissed
+        && pr.state !== 'CLOSED'
+        && prAttachedToSession(row, pr)
+    ) {
+        pr.primary = true;
+        pr.primary_source = 'auto';
+    }
+    return pr;
+}
+
 function visiblePr(pr: SessionPr, lingerMs: number, nowMs: number, updatedAt: number): boolean {
     if (pr.dismissed) return false;
     // A classified primary remains actionable while GitHub enrichment retries.
@@ -348,8 +392,9 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
 
     const merged = new Map<string, BoardEntry & { disposition: string | null }>();
     for (const row of rows.results ?? []) {
-        const pr = parseSessionPr(row.data);
-        if (!pr) continue;
+        const storedPr = parseSessionPr(row.data);
+        if (!storedPr) continue;
+        const pr = effectiveSessionPr(row, storedPr);
         const key = `${row.owner}/${row.repo}#${row.number}`;
         let entry = merged.get(key);
         if (!entry) {
@@ -405,15 +450,9 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             entry.pr.ai_note = pr.ai_note;
             entry.pr.ai_confidence = pr.ai_confidence || '';
         }
-        const cwdRepo = (row.cwd || '').split('/').filter(Boolean).pop() || '';
-        const currentRepo = row.repo_name || cwdRepo;
-        const ownerMatches = row.repo_owner
-            ? row.repo_owner.toLowerCase() === row.owner.toLowerCase()
-            : !!pr.created_here;
-        const representsSession = row.is_primary === 1
-            && ownerMatches
-            && currentRepo.toLowerCase() === row.repo.toLowerCase()
-            && (!!pr.created_here || (!!pr.branch && row.branch === pr.branch));
+        const representsSession = !!pr.primary
+            && sessionRepositoryMatchesPr(row, pr)
+            && (!!pr.created_here || prAttachedToSession(row, pr));
         if (representsSession) entry.sessions.push(boardSession(row));
     }
 

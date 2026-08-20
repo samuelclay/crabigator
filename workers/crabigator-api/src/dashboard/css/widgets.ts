@@ -40,6 +40,7 @@ export const widgetsCss = `
     white-space: nowrap;
     min-width: 0;
 }
+.widgets-title.official { color: #bc8cff; }
 .widgets-state {
     color: var(--text-mid);
     flex-shrink: 0;
@@ -186,6 +187,33 @@ export const widgetsCss = `
 
 /* Hide empty changes widget */
 .widget.hidden-changes { display: none; }
+
+.changes-session-titles {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-bottom: 10px;
+    min-width: 0;
+}
+.changes-pr-title,
+.changes-generated-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.changes-pr-title {
+    color: #bc8cff;
+    font-size: 12px;
+    font-weight: 600;
+}
+.changes-generated-title {
+    color: #58a6ff;
+    font-size: 10px;
+}
+.changes-generated-title.main {
+    font-size: 12px;
+    font-weight: 600;
+}
 
 /* Single column when changes hidden (Git spans full width) */
 .widgets-content.no-changes { grid-template-columns: 1fr; }

@@ -12,6 +12,7 @@ use crate::ide::IdeKind;
 use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges, NodeKind};
 use crate::slack::{compact_display_label, SlackThread};
 use crate::terminal::escape::{self, color, fg, hyperlink, RESET};
+use crate::title::SessionTitleHierarchy;
 
 use super::utils::{digit_count, strip_ansi_len, truncate_middle, truncate_path};
 use super::WidgetArea;
@@ -95,12 +96,12 @@ impl StatsColumnWidths {
 pub fn changes_natural_rows(
     diff_summary: &DiffSummary,
     available_width: u16,
-    has_title: bool,
+    title_rows: u16,
     slack_thread_count: usize,
 ) -> u16 {
     let langs = diff_summary.by_language();
     if langs.is_empty() {
-        return (u16::from(has_title) + slack_thread_count as u16).max(1);
+        return (title_rows + slack_thread_count as u16).max(1);
     }
 
     // Average packed-item width: modifier + icon + truncated name (≤20) + " ±N".
@@ -122,11 +123,9 @@ pub fn changes_natural_rows(
         // and the widget will honour whichever the area allows.
         rows = rows.saturating_add(n.min(packed));
     }
-    // The title claims its own top row. Without it the first language header
+    // Titles claim their own top rows. Without them the first language header
     // doubles as the top row, so no extra row is needed.
-    if has_title {
-        rows = rows.saturating_add(1);
-    }
+    rows = rows.saturating_add(title_rows);
     rows = rows.saturating_add(slack_thread_count as u16);
     rows
 }
@@ -136,7 +135,7 @@ pub fn draw_changes_widget(
     stdout: &mut Stdout,
     area: WidgetArea,
     diff_summary: &DiffSummary,
-    terminal_title: Option<&str>,
+    titles: SessionTitleHierarchy<'_>,
     slack_threads: &[SlackThread],
     ide: IdeKind,
     cwd: &Path,
@@ -154,26 +153,37 @@ pub fn draw_changes_widget(
     // Get changes grouped by language
     let by_language = diff_summary.by_language();
 
-    let has_title = terminal_title.is_some_and(|t| !t.is_empty());
-    let prefix_rows = u16::from(has_title).saturating_add(slack_threads.len() as u16);
+    let title_rows = titles.row_count();
+    let prefix_rows = title_rows.saturating_add(slack_threads.len() as u16);
 
-    // The top row carries the terminal OSC title across the full width when
-    // we have one — the language label ("JavaScript 16 changes") then drops to
-    // the row below as the first body row. Without a title, fall back to
-    // showing that language header on the top row so it isn't left blank.
-    if area.row == 1 && has_title {
-        let title = terminal_title.unwrap();
+    // The primary PR title is the official top line. The assistant's automatic
+    // title stays directly below it, or takes the top line when there is no PR.
+    let title_row = match area.row {
+        1 => titles
+            .pr_title
+            .map(|title| (title, color::PURPLE))
+            .or_else(|| {
+                titles
+                    .generated_title
+                    .map(|title| (title, color::LIGHT_BLUE))
+            }),
+        2 if titles.pr_title.is_some() => titles
+            .generated_title
+            .map(|title| (title, color::LIGHT_BLUE)),
+        _ => None,
+    };
+    if let Some((title, title_color)) = title_row {
         let trimmed = if title.chars().count() > inner_width_usize {
             truncate_path(title, inner_width_usize)
         } else {
             title.to_string()
         };
-        let header = format!("{}{}{}", fg(color::LIGHT_BLUE), trimmed, RESET);
+        let header = format!("{}{}{}", fg(title_color), trimmed, RESET);
         write_padded_row(stdout, &header, inner_width_usize)?;
         return Ok(());
     }
 
-    let slack_start_row = u16::from(has_title) + 1;
+    let slack_start_row = title_rows + 1;
     if area.row >= slack_start_row {
         let slack_idx = (area.row - slack_start_row) as usize;
         if let Some(thread) = slack_threads.get(slack_idx) {

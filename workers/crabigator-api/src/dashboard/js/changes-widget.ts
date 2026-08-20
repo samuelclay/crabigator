@@ -98,19 +98,21 @@ export const changesWidgetJs = `
             const sessionData = sessions.get(sessionId);
             const commitHistory = visibleSections.commits ? (sessionData?.commitHistory || []) : [];
             const slackThreads = sessionData?.slackThreads || [];
+            const titleHierarchy = sessionTitleHierarchy(sessionData);
             const totalChanges = byLanguage.reduce((sum, lang) => sum + (lang.changes?.length || 0), 0);
             const hasChanges = totalChanges > 0;
             const hasCommits = commitHistory.length > 0;
             const hasSlackThreads = slackThreads.length > 0;
+            const hasTitle = !!titleHierarchy.main;
 
-            if (!hasChanges && !hasCommits && !hasSlackThreads) {
-                // Hide widget entirely when it has no links, changes, or commits.
+            if (!hasChanges && !hasCommits && !hasSlackThreads && !hasTitle) {
+                // Hide widget entirely when it has no title, links, changes, or commits.
                 widget.classList.add('hidden-changes');
                 widgetsContent?.classList.add('no-changes');
                 return;
             }
 
-            // Show the widget when it has a Slack link, change, or commit.
+            // Show the widget when it has a title, Slack link, change, or commit.
             widget.classList.remove('hidden-changes');
             widgetsContent?.classList.remove('no-changes');
 
@@ -175,13 +177,26 @@ export const changesWidgetJs = `
 
             const slackThreadsHtml = renderSlackThreads(slackThreads);
             const commitHistoryHtml = renderCommitHistory(commitHistory, hasChanges || hasSlackThreads);
+            const mainTitleClass = titleHierarchy.hasOfficial
+                ? 'changes-pr-title'
+                : 'changes-generated-title main';
+            const generatedTitleHtml = titleHierarchy.generated
+                ? '<div class="changes-generated-title">' + escapeHtml(titleHierarchy.generated) + '</div>'
+                : '';
+            const sessionTitlesHtml = titleHierarchy.main
+                ? '<div class="changes-session-titles">'
+                    + '<div class="' + mainTitleClass + '">' + escapeHtml(titleHierarchy.main) + '</div>'
+                    + generatedTitleHtml
+                    + '</div>'
+                : '';
             const bodyHtml = slackThreadsHtml
                 + (hasChanges ? \`<div class="changes-list\${hasSlackThreads ? ' with-divider' : ''}">\${changesHtml}</div>\` : '')
                 + commitHistoryHtml;
-            const newHtml = \`
-                <div class="widget-title"><span style="color:#db6d28">\${headerLabel}</span> <span style="float:right;color:#8b949e">\${headerCount}</span></div>
-                \${bodyHtml}
-            \`;
+            const contentHeaderHtml = hasChanges || hasSlackThreads || hasCommits
+                ? '<div class="widget-title"><span style="color:#db6d28">' + escapeHtml(headerLabel)
+                    + '</span> <span style="float:right;color:#8b949e">' + escapeHtml(headerCount) + '</span></div>'
+                : '';
+            const newHtml = sessionTitlesHtml + contentHeaderHtml + bodyHtml;
 
             // Only update if content changed (prevents flicker)
             if (widget.innerHTML !== newHtml) {
@@ -194,11 +209,13 @@ export const changesWidgetJs = `
             const widgetsContent = document.getElementById('widgets-content-' + sessionId);
             if (!widget) return;
 
-            // Update widgets header with latest title
-            const titleSummaryEl = document.getElementById('widgets-title-' + sessionId);
-            if (titleSummaryEl && titleHistory && titleHistory.length > 0) {
-                titleSummaryEl.textContent = titleHistory[titleHistory.length - 1];
+            const sessionData = sessions.get(sessionId);
+            if (sessionData && titleHistory && titleHistory.length > 0) {
+                const latest = titleHistory[titleHistory.length - 1];
+                sessionData.title = latest;
+                sessionData.generatedTitle = latest;
             }
+            updateSessionTitleHierarchy(sessionId);
 
             // Hide title history widget if no titles or only one title
             if (!titleHistory || titleHistory.length <= 1) {
@@ -507,12 +524,82 @@ export const changesWidgetJs = `
             }
         }
 
-        // Override wins; otherwise whatever the session's classifier decided.
-        function prDisposition(pr) {
+        function sessionRepositoryMatchesPr(sessionData, pr) {
+            const git = sessionData?.git || {};
+            const cwdDir = String(sessionData?.cwd || '').split('/').filter(Boolean).pop() || '';
+            const repoName = git.repo_name || cwdDir;
+            const ownerMatches = git.repo_owner
+                ? String(git.repo_owner).toLowerCase() === String(pr.owner || '').toLowerCase()
+                : !!pr.created_here;
+            return ownerMatches
+                && String(repoName).toLowerCase() === String(pr.repo || '').toLowerCase();
+        }
+
+        function prAttachedToSession(sessionData, pr) {
+            const branch = String(pr.branch || '');
+            if (!branch || ['main', 'master', 'develop'].includes(branch)) return false;
+            if (!sessionRepositoryMatchesPr(sessionData, pr)) return false;
+            if (branch === String(sessionData?.git?.branch || '')) return true;
+            const worktree = String(sessionData?.cwd || '').split('/').filter(Boolean).pop() || '';
+            return !!worktree && (branch === worktree || branch.endsWith('/' + worktree));
+        }
+
+        // Override wins. Current worktree ownership fills in automatic-primary
+        // for sessions that started before this classification shipped.
+        function prDisposition(pr, sessionData = null) {
             const override = prOverrides.get(prKey(pr));
             if (override) return override;
             if (pr.dismissed) return 'dismissed';
-            return pr.primary ? 'primary' : 'secondary';
+            if (pr.primary) return 'primary';
+            if (pr.primary_source === 'session' || pr.primary_source === 'override') {
+                return 'secondary';
+            }
+            return sessionData && pr.state !== 'CLOSED' && prAttachedToSession(sessionData, pr)
+                ? 'primary'
+                : 'secondary';
+        }
+
+        function primaryPrForSession(sessionData) {
+            const primaryPrs = (sessionData?.prs || []).filter(pr =>
+                prDisposition(pr, sessionData) === 'primary' && String(pr.title || '').trim());
+            primaryPrs.sort((a, b) =>
+                (b.last_mentioned_at || 0) - (a.last_mentioned_at || 0)
+                || (b.refreshed_at || 0) - (a.refreshed_at || 0)
+                || (b.number || 0) - (a.number || 0));
+            return primaryPrs[0] || null;
+        }
+
+        function stripGeneratedTitleMarker(title) {
+            return String(title || '').replace(/^[⟁ᛝ]\s+/, '').trim();
+        }
+
+        function sessionTitleHierarchy(sessionData, fallbackTitle = '') {
+            const generated = String(
+                sessionData?.generatedTitle || sessionData?.title || fallbackTitle || ''
+            ).trim();
+            const primaryPr = primaryPrForSession(sessionData);
+            const official = String(primaryPr?.title || '').trim();
+            return {
+                main: official || generated,
+                generated: official && stripGeneratedTitleMarker(generated) !== official ? generated : '',
+                hasOfficial: !!official,
+            };
+        }
+
+        function updateSessionTitleHierarchy(sessionId) {
+            const hierarchy = sessionTitleHierarchy(sessions.get(sessionId));
+            const titleEl = document.getElementById('title-' + sessionId);
+            if (titleEl) {
+                titleEl.textContent = hierarchy.main;
+                titleEl.classList.toggle('official', hierarchy.hasOfficial);
+            }
+            const generatedEl = document.getElementById('generated-title-' + sessionId);
+            if (generatedEl) generatedEl.textContent = hierarchy.generated;
+            const widgetsTitleEl = document.getElementById('widgets-title-' + sessionId);
+            if (widgetsTitleEl) {
+                widgetsTitleEl.textContent = hierarchy.main;
+                widgetsTitleEl.classList.toggle('official', hierarchy.hasOfficial);
+            }
         }
 
         async function postPrOverride(pr, disposition) {
@@ -532,10 +619,15 @@ export const changesWidgetJs = `
         }
 
         function updatePrList(sessionId, prs) {
-            const widget = document.getElementById('recap-prs-' + sessionId);
-            if (!widget) return;
             const sessionData = sessions.get(sessionId);
             if (sessionData) sessionData.prs = prs || [];
+            updateSessionTitleHierarchy(sessionId);
+            if (sessionData) {
+                updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
+            }
+            scheduleSidebarUpdate();
+            const widget = document.getElementById('recap-prs-' + sessionId);
+            if (!widget) return;
             if (!prOverridesLoadStarted) {
                 prOverridesLoadStarted = true;
                 loadPrOverrides();
@@ -545,9 +637,10 @@ export const changesWidgetJs = `
             const expanded = !!(sessionData && sessionData.prsExpanded);
 
             // Dismissed PRs disappear; primaries render above secondaries.
-            const visible = (prs || []).filter(pr => prDisposition(pr) !== 'dismissed');
+            const disposition = pr => prDisposition(pr, sessionData);
+            const visible = (prs || []).filter(pr => disposition(pr) !== 'dismissed');
             visible.sort((a, b) =>
-                (prDisposition(b) === 'primary' ? 1 : 0) - (prDisposition(a) === 'primary' ? 1 : 0));
+                (disposition(b) === 'primary' ? 1 : 0) - (disposition(a) === 'primary' ? 1 : 0));
 
             if (visible.length === 0) {
                 widget.style.display = 'none';
@@ -577,7 +670,7 @@ export const changesWidgetJs = `
                         diffParts.join(' ') + (diffParts.length && files ? ' ' : '') + files)
                     : '';
                 const link = '<a class="pr-link" href="' + escapeHtml(pr.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(repoLabel) + '</a>';
-                const isPrimary = prDisposition(pr) === 'primary';
+                const isPrimary = disposition(pr) === 'primary';
                 const star = '<span class="pr-primary-toggle ' + (isPrimary ? 'primary' : 'secondary')
                     + '" title="' + (isPrimary ? 'Primary — click to make secondary' : 'Secondary — click to make primary')
                     + '">' + (isPrimary ? '★' : '☆') + '</span>';
@@ -616,7 +709,7 @@ export const changesWidgetJs = `
                 if (!pr) return;
                 const starEl = rowEl.querySelector('.pr-primary-toggle');
                 if (starEl) starEl.onclick = () => {
-                    postPrOverride(pr, prDisposition(pr) === 'primary' ? 'secondary' : 'primary');
+                    postPrOverride(pr, disposition(pr) === 'primary' ? 'secondary' : 'primary');
                     rerenderAllPrLists();
                 };
                 const dismissEl = rowEl.querySelector('.pr-dismiss');

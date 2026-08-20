@@ -384,8 +384,14 @@ export const popoversCss = `
 }
 .session-item-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
+    min-width: 0;
+}
+.session-item-titles {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
     min-width: 0;
 }
 .session-item-title {
@@ -395,8 +401,16 @@ export const popoversCss = `
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    flex: 1;
     min-width: 0;
+}
+.session-item-title.official { color: #bc8cff; }
+.session-item-generated-title {
+    color: #58a6ff;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .session-item-state {
     font-family: 'JetBrains Mono', monospace;

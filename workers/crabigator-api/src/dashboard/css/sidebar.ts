@@ -353,6 +353,9 @@ export const sidebarCss = `
 .sidebar.compact .session-item-title {
     font-size: 10px;
 }
+.sidebar.compact .session-item-generated-title {
+    font-size: 8px;
+}
 .sidebar.compact .session-item-stats {
     font-size: 8px;
     gap: 8px;

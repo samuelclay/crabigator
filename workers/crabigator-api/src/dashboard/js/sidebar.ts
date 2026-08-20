@@ -352,7 +352,13 @@ export const sidebarJs = `
             const isLoading = session.title === 'Untitled' && !sessions.has(session.id);
             const titleHtml = isLoading
                 ? '<span class="session-item-title sidebar-shimmer"></span>'
-                : '<span class="session-item-title">' + escapeHtml(session.title) + '</span>';
+                : '<span class="session-item-titles">'
+                    + '<span class="session-item-title' + (session.hasOfficialTitle ? ' official' : '') + '">'
+                    + escapeHtml(session.title) + '</span>'
+                    + (session.generatedTitle
+                        ? '<span class="session-item-generated-title">' + escapeHtml(session.generatedTitle) + '</span>'
+                        : '')
+                    + '</span>';
 
             return \`
                 <div class="\${classes.join(' ')}" data-session-id="\${session.id}" onclick="handleSessionClick('\${session.id}')">
@@ -388,13 +394,16 @@ export const sidebarJs = `
                 if (!groups.has(cwd)) groups.set(cwd, { sessions: [], mostRecentTime: 0 });
 
                 const liveData = sessions.get(session.id);
+                const titleHierarchy = sessionTitleHierarchy(liveData, session.title || 'Untitled');
                 const startedAt = getSessionStartedTime(session);
                 const activityAt = getSessionActivityTime(session);
                 const g = groups.get(cwd);
                 g.sessions.push({
                     id: session.id,
                     client_session_id: session.client_session_id,
-                    title: liveData?.title || session.title || 'Untitled',
+                    title: titleHierarchy.main || 'Untitled',
+                    generatedTitle: titleHierarchy.generated,
+                    hasOfficialTitle: titleHierarchy.hasOfficial,
                     state: liveData?.state || session.state || 'ready',
                     stats: liveData?.stats || session.stats || null,
                     deviceName: session.device_name || liveData?.deviceName || null,

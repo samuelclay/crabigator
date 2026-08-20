@@ -88,11 +88,20 @@ export const prBoardCss = `
 .pr-board-identity { min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
 .pr-board-title {
     font-size: 12px;
-    color: var(--text-secondary, #8b949e);
+    color: #bc8cff;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 34ch;
+}
+.pr-board-generated-title {
+    grid-column: 2 / -1;
+    color: #58a6ff;
+    font-size: 11px;
+    margin-top: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .pr-board-row .pr-diff { font-size: 10px; white-space: nowrap; text-decoration: none; }
 .pr-board-row .pr-diff .rd-add { color: var(--accent-green, #3fb950); }

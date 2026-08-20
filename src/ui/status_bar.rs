@@ -16,6 +16,7 @@ use crate::pr::SessionPr;
 use crate::recap::RecapState;
 use crate::slack::SlackThread;
 use crate::terminal::escape::{self, color, RESET};
+use crate::title::session_title_hierarchy;
 use crate::update::UpdateState;
 
 use super::{
@@ -139,6 +140,7 @@ pub fn compute_dynamic_status_rows(
     git_state: &GitState,
     diff_summary: &DiffSummary,
     terminal_title: Option<&str>,
+    prs: &[SessionPr],
     slack_threads: &[SlackThread],
     handoff_rows: u16,
 ) -> u16 {
@@ -146,13 +148,13 @@ pub fn compute_dynamic_status_rows(
     let available_rows = preferred_max.saturating_sub(1);
     let compact_stats = stats_use_compact_layout(available_rows);
     let (git_w, changes_w) = estimate_column_widths(total_cols, compact_stats);
-    let has_title = terminal_title.is_some_and(|t| !t.is_empty());
+    let titles = session_title_hierarchy(prs, terminal_title);
     let natural = stats_render_rows(available_rows, session_stats)
         .max(git_natural_rows(git_state, git_w))
         .max(changes_natural_rows(
             diff_summary,
             changes_w,
-            has_title,
+            titles.row_count(),
             slack_threads.len(),
         ));
     let desired = natural.saturating_add(1); // +1 separator
@@ -300,6 +302,7 @@ pub fn draw_status_bar(
         let git_w = (remaining * 3) / 8;
         (git_w, remaining - git_w)
     };
+    let titles = session_title_hierarchy(prs, terminal_title);
 
     // Draw content rows (after reserved handoff space + separator).
     let widget_pty_rows = layout.pty_rows + layout.handoff_rows;
@@ -356,7 +359,7 @@ pub fn draw_status_bar(
                 height: widget_status_rows,
             },
             diff_summary,
-            terminal_title,
+            titles,
             slack_threads,
             ide,
             cwd,
@@ -412,7 +415,7 @@ mod tests {
         let git = GitState::default();
         let diff = DiffSummary::default();
 
-        let rows = compute_dynamic_status_rows(35, 180, &stats, &git, &diff, None, &[], 0);
+        let rows = compute_dynamic_status_rows(35, 180, &stats, &git, &diff, None, &[], &[], 0);
 
         assert_eq!(rows, MIN_STATUS_ROWS);
     }
@@ -425,7 +428,7 @@ mod tests {
         let stats = SessionStats::default();
         let git = GitState::default();
         let diff = DiffSummary::default();
-        let rows = compute_dynamic_status_rows(60, 200, &stats, &git, &diff, None, &[], 0);
+        let rows = compute_dynamic_status_rows(60, 200, &stats, &git, &diff, None, &[], &[], 0);
         assert_eq!(rows, 8);
     }
 
@@ -446,8 +449,17 @@ mod tests {
             })
             .collect();
         let diff = DiffSummary::default();
-        let rows =
-            compute_dynamic_status_rows(60, 120, &stats, &git, &diff, None, &[], MAX_RECAP_ROWS);
+        let rows = compute_dynamic_status_rows(
+            60,
+            120,
+            &stats,
+            &git,
+            &diff,
+            None,
+            &[],
+            &[],
+            MAX_RECAP_ROWS,
+        );
         assert_eq!(rows, preferred_status_rows_max(60, MAX_RECAP_ROWS));
     }
 
@@ -468,7 +480,8 @@ mod tests {
             false,
             &[],
         );
-        let rows = compute_dynamic_status_rows(80, 200, &stats, &git, &diff, None, &[], handoff);
+        let rows =
+            compute_dynamic_status_rows(80, 200, &stats, &git, &diff, None, &[], &[], handoff);
         assert_eq!(rows, 8);
     }
 
@@ -479,8 +492,17 @@ mod tests {
         let stats = SessionStats::default();
         let git = GitState::default();
         let diff = DiffSummary::default();
-        let rows =
-            compute_dynamic_status_rows(15, 100, &stats, &git, &diff, None, &[], MAX_RECAP_ROWS);
+        let rows = compute_dynamic_status_rows(
+            15,
+            100,
+            &stats,
+            &git,
+            &diff,
+            None,
+            &[],
+            &[],
+            MAX_RECAP_ROWS,
+        );
         assert!(rows >= MIN_STATUS_ROWS);
         assert!(rows <= preferred_status_rows_max(15, MAX_RECAP_ROWS));
     }
@@ -520,7 +542,7 @@ mod tests {
         // packed layout for stats(7) and changes(~7) plus separator should
         // come in well under that — typical of the user's bottom-screenshot
         // resize complaint.
-        let rows = compute_dynamic_status_rows(100, 250, &stats, &git, &diff, None, &[], 0);
+        let rows = compute_dynamic_status_rows(100, 250, &stats, &git, &diff, None, &[], &[], 0);
         assert!(
             rows < 12,
             "expected packed layout to keep status_rows under 12, got {}",

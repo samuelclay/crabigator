@@ -53,6 +53,12 @@ pub const BOLD: &str = "\x1b[1m";
 /// Dim/faint text
 pub const DIM: &str = "\x1b[2m";
 
+/// Underline text
+pub const UNDERLINE: &str = "\x1b[4m";
+
+/// Stop underlining without changing other text attributes
+pub const RESET_UNDERLINE: &str = "\x1b[24m";
+
 /// Reset all text attributes
 pub const RESET: &str = "\x1b[0m";
 
