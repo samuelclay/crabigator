@@ -71,7 +71,8 @@ fn pr_separator_rule_width(width: u16) -> usize {
     (width as usize).saturating_sub(2)
 }
 
-/// Draw the session's PR list, one PR per row, on the dark handoff background.
+/// Draw the session's PR list, one PR per row, on the terminal's own
+/// background so the strip reads as part of the session, not a panel.
 /// Each row uses shared columns:
 /// `☆ repo  #num  +A -D  N files  ⎇ branch  state CI 💬N merge`.
 /// The first five are left-aligned, with the branch column flexing across the
@@ -107,12 +108,10 @@ fn draw_pr_row(
     pr: &SessionPr,
     widths: &PrColumnWidths,
 ) -> Result<()> {
-    fill_row(stdout, row, width)?;
     write!(
         stdout,
-        "{}{}{}",
+        "{}{}",
         escape::cursor_to(row, 1),
-        bg(color::BG_DARK),
         pr_row_text(width, pr, widths)
     )?;
     Ok(())
