@@ -21,6 +21,31 @@ use log_parser::{
     SessionMetaInfo,
 };
 
+/// How long the tracked rollout must be quiet before crabigator considers
+/// that the pane may have switched to a resumed conversation.
+const RESUME_QUIET: Duration = Duration::from_secs(120);
+
+/// A switch candidate counts only while it is being actively written. The
+/// follow scan runs every couple of seconds, so any real resume is observed
+/// well inside this window; it exists to reject long-dead rollouts.
+const RESUME_FRESH: Duration = Duration::from_secs(300);
+
+/// Resumed conversations keep appending to the rollout in the date directory
+/// where they were created, so the follow scan looks further back than the
+/// two days the launch scan covers.
+const RESUME_SCAN_DAYS: i64 = 30;
+
+/// The filters a rollout must pass to count as an in-pane conversation
+/// switch, gathered once per follow scan so every candidate is judged
+/// against the same clock reading.
+struct ResumeScan<'a> {
+    cwd: &'a str,
+    tracked: &'a Path,
+    tracked_mtime: SystemTime,
+    app_start: SystemTime,
+    now: SystemTime,
+}
+
 pub struct CodexPlatform {
     sessions_dir: PathBuf,
     state: Mutex<CodexState>,
@@ -67,12 +92,25 @@ impl CodexPlatform {
             .checked_sub(Duration::from_secs(2))
             .unwrap_or(state.app_start);
 
-        if let (Some(path), Some(session_start)) =
-            (state.session_path.as_ref(), state.session_started_at)
-        {
-            if path.exists() && session_start >= threshold {
-                return Ok(Some((path.clone(), Some(session_start))));
+        if let Some(path) = state.session_path.clone().filter(|path| path.exists()) {
+            // A conversation adopted after an in-pane resume predates app
+            // start, so the start-time lock would reject it. Hold it
+            // explicitly; otherwise hold the launch rollout while its start
+            // time is still current.
+            let keep_tracked = state.resume_followed
+                || matches!(state.session_started_at, Some(start) if start >= threshold);
+            if keep_tracked {
+                // The tracked rollout going quiet while another same-cwd
+                // rollout is written usually means the user resumed an older
+                // conversation inside the pane. Follow the switch so stats,
+                // recaps, and PR tracking stay live.
+                if let Some(switched) = self.follow_resumed_session(cwd, state, &path) {
+                    return Ok(Some(switched));
+                }
+                return Ok(Some((path, state.session_started_at)));
             }
+        } else {
+            state.resume_followed = false;
         }
 
         if !Self::should_rescan(state) {
@@ -215,6 +253,120 @@ impl CodexPlatform {
         }
         None
     }
+
+    /// Detect an in-pane `/resume`: Codex switches to appending the resumed
+    /// conversation's original rollout file and the launch rollout goes
+    /// silent, so a session locked to the launch rollout would stop seeing
+    /// prompts, recaps, and PR mentions. Once the tracked rollout has been
+    /// quiet for [`RESUME_QUIET`], adopt the same-cwd rollout most recently
+    /// written during this session. The launch rollout keeps priority: if it
+    /// is ever written again (the pane resumed back), re-adopt it immediately.
+    fn follow_resumed_session(
+        &self,
+        cwd: &str,
+        state: &mut CodexState,
+        tracked: &Path,
+    ) -> Option<(PathBuf, Option<SystemTime>)> {
+        let now = SystemTime::now();
+
+        if state.resume_followed {
+            if let (Some(native), Some(mtime_at_switch)) = (
+                state.native_session_path.as_ref(),
+                state.native_mtime_at_switch,
+            ) {
+                let woke = fs::metadata(native)
+                    .and_then(|m| m.modified())
+                    .is_ok_and(|mtime| mtime > mtime_at_switch);
+                if woke {
+                    let native = native.clone();
+                    state.resume_followed = false;
+                    return Some((native, state.native_session_started_at));
+                }
+            }
+        }
+
+        let tracked_mtime = fs::metadata(tracked).and_then(|m| m.modified()).ok()?;
+        if now.duration_since(tracked_mtime).unwrap_or_default() < RESUME_QUIET {
+            return None;
+        }
+
+        if !Self::should_rescan(state) {
+            return None;
+        }
+        state.last_scan = Some(now);
+
+        let scan = ResumeScan {
+            cwd,
+            tracked,
+            tracked_mtime,
+            app_start: state.app_start,
+            now,
+        };
+        let today = Local::now();
+        let mut best: Option<SessionCandidate> = None;
+        for offset in 0..RESUME_SCAN_DAYS {
+            let dir = self.sessions_dir_for_date(today - chrono::Duration::days(offset));
+            self.collect_switch_candidates(&dir, &scan, &mut best);
+        }
+        let best = best?;
+
+        if !state.resume_followed {
+            state.native_session_path = Some(tracked.to_path_buf());
+            state.native_session_started_at = state.session_started_at;
+            state.native_mtime_at_switch = Some(tracked_mtime);
+        }
+        state.resume_followed = true;
+        Some((best.path, best.session_start))
+    }
+
+    /// Collect rollouts in `dir` that an in-pane conversation switch could
+    /// have moved the pane to: same cwd, written during this session, more
+    /// recently than the tracked rollout, and still actively written. A date
+    /// directory that does not exist reads as empty. The mtime filters run
+    /// before the file is opened so the wide scan stays cheap. A concurrent
+    /// same-cwd session in another pane can slip through these filters while
+    /// this pane idles; the native-rollout priority in
+    /// [`Self::follow_resumed_session`] recovers from that as soon as this
+    /// pane's own conversation is written again.
+    fn collect_switch_candidates(
+        &self,
+        dir: &Path,
+        scan: &ResumeScan,
+        best: &mut Option<SessionCandidate>,
+    ) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl")
+                || path == scan.tracked
+            {
+                continue;
+            }
+            let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
+                continue;
+            };
+            let best_mtime = best.as_ref().map(|found| found.modified);
+            if modified <= scan.tracked_mtime
+                || modified < scan.app_start
+                || scan.now.duration_since(modified).unwrap_or_default() > RESUME_FRESH
+                || best_mtime.is_some_and(|seen| seen >= modified)
+            {
+                continue;
+            }
+            let Ok(meta) = Self::session_meta_info(&path, scan.cwd) else {
+                continue;
+            };
+            if meta.matches {
+                *best = Some(SessionCandidate {
+                    path,
+                    modified,
+                    session_start: meta.session_start,
+                });
+            }
+        }
+    }
 }
 
 impl Default for CodexPlatform {
@@ -266,7 +418,18 @@ impl Platform for CodexPlatform {
         let mut reader = BufReader::new(file);
         let mut line = String::new();
         let mut saw_update = false;
-        while reader.read_line(&mut line)? > 0 {
+        // Adopting a resumed conversation can point this at a rollout with
+        // hours of history. Parse at most a few MB per call so catch-up
+        // spreads across ticks instead of stalling the UI; the saved offset
+        // resumes where this call stopped.
+        const MAX_PARSE_BYTES_PER_CALL: u64 = 4 * 1024 * 1024;
+        let mut parsed_bytes: u64 = 0;
+        while parsed_bytes < MAX_PARSE_BYTES_PER_CALL {
+            let read = reader.read_line(&mut line)?;
+            if read == 0 {
+                break;
+            }
+            parsed_bytes += read as u64;
             update_from_log(&mut state, line.trim_end());
             saw_update = true;
             line.clear();
@@ -315,5 +478,152 @@ mod tests {
             .expect("current session should be selected");
         assert_eq!(selected.0, path);
         assert_eq!(selected.1, app_start);
+    }
+
+    const CWD: &str = "/Users/example/project";
+
+    fn platform_in(dir: &Path) -> CodexPlatform {
+        CodexPlatform {
+            sessions_dir: dir.to_path_buf(),
+            state: Mutex::new(CodexState::default()),
+        }
+    }
+
+    fn write_rollout(
+        platform: &CodexPlatform,
+        days_ago: i64,
+        name: &str,
+        started: SystemTime,
+    ) -> PathBuf {
+        let dir = platform.sessions_dir_for_date(Local::now() - chrono::Duration::days(days_ago));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        let stamp = chrono::DateTime::<chrono::Utc>::from(started).to_rfc3339();
+        fs::write(
+            &path,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"cwd\":\"{CWD}\",\"timestamp\":\"{stamp}\"}}}}\n"
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    fn set_mtime(path: &Path, mtime: SystemTime) {
+        File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+    }
+
+    /// State locked to a launch rollout that has been quiet past RESUME_QUIET.
+    fn quiet_locked_state(native: &Path, app_start: SystemTime) -> CodexState {
+        set_mtime(
+            native,
+            SystemTime::now() - RESUME_QUIET - Duration::from_secs(60),
+        );
+        let mut state = CodexState::default();
+        state.session_path = Some(native.to_path_buf());
+        state.session_started_at = Some(app_start);
+        state.app_start = app_start;
+        state
+    }
+
+    #[test]
+    fn follows_in_pane_resume_to_older_rollout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(tmp.path());
+        let app_start = SystemTime::now() - Duration::from_secs(3600);
+
+        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
+        // Whole seconds: the rollout header stores millisecond precision.
+        let resumed_start_secs = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 3 * 86_400;
+        let resumed_start = SystemTime::UNIX_EPOCH + Duration::from_secs(resumed_start_secs);
+        let resumed = write_rollout(&platform, 3, "resumed.jsonl", resumed_start);
+        let mut state = quiet_locked_state(&native, app_start);
+        set_mtime(&resumed, SystemTime::now() - Duration::from_secs(30));
+
+        let (path, started) = platform
+            .resolve_session_path(CWD, &mut state)
+            .unwrap()
+            .expect("should resolve a session");
+        assert_eq!(path, resumed);
+        assert_eq!(started, Some(resumed_start));
+        assert!(state.resume_followed);
+        assert_eq!(state.native_session_path.as_deref(), Some(native.as_path()));
+    }
+
+    #[test]
+    fn resume_follow_returns_to_native_rollout_when_it_wakes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(tmp.path());
+        let app_start = SystemTime::now() - Duration::from_secs(3600);
+
+        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
+        let resumed = write_rollout(&platform, 3, "resumed.jsonl", app_start);
+        let mut state = quiet_locked_state(&native, app_start);
+        set_mtime(&resumed, SystemTime::now() - Duration::from_secs(30));
+
+        platform.resolve_session_path(CWD, &mut state).unwrap();
+        assert!(state.resume_followed);
+        state.session_path = Some(resumed);
+
+        // The pane resumed back: the native rollout is written again.
+        set_mtime(&native, SystemTime::now());
+        let (path, started) = platform
+            .resolve_session_path(CWD, &mut state)
+            .unwrap()
+            .expect("should resolve a session");
+        assert_eq!(path, native);
+        assert_eq!(started, Some(app_start));
+        assert!(!state.resume_followed);
+    }
+
+    #[test]
+    fn quiet_rollout_without_switch_stays_locked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(tmp.path());
+        let app_start = SystemTime::now() - Duration::from_secs(3600);
+
+        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
+        let mut state = quiet_locked_state(&native, app_start);
+
+        let (path, _) = platform
+            .resolve_session_path(CWD, &mut state)
+            .unwrap()
+            .expect("should resolve a session");
+        assert_eq!(path, native);
+        assert!(!state.resume_followed);
+    }
+
+    #[test]
+    fn ignores_rollouts_not_actively_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(tmp.path());
+        let app_start = SystemTime::now() - Duration::from_secs(3600);
+
+        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
+        let mut state = quiet_locked_state(&native, app_start);
+        set_mtime(&native, SystemTime::now() - Duration::from_secs(1000));
+
+        // Newer than the tracked rollout, but no longer actively written.
+        let stale = write_rollout(&platform, 3, "stale.jsonl", app_start);
+        set_mtime(
+            &stale,
+            SystemTime::now() - RESUME_FRESH - Duration::from_secs(100),
+        );
+
+        let (path, _) = platform
+            .resolve_session_path(CWD, &mut state)
+            .unwrap()
+            .expect("should resolve a session");
+        assert_eq!(path, native);
+        assert!(!state.resume_followed);
     }
 }

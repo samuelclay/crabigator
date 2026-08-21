@@ -57,6 +57,16 @@ pub struct CodexState {
     pub last_scan: Option<SystemTime>,
     pub app_start: SystemTime,
     pub session_started_at: Option<SystemTime>,
+    /// True when `session_path` is a conversation adopted after an in-pane
+    /// resume rather than the rollout that started with this pane.
+    pub resume_followed: bool,
+    /// The rollout that started with this pane, kept while following a resume
+    /// so a resume back to the original conversation is preferred.
+    pub native_session_path: Option<PathBuf>,
+    pub native_session_started_at: Option<SystemTime>,
+    /// The native rollout's mtime when the pane switched away from it; a
+    /// newer write means the pane resumed back.
+    pub native_mtime_at_switch: Option<SystemTime>,
     pub prompt_counts: MessageCounters,
     pub completion_counts: MessageCounters,
     pub stats: PlatformStats,
@@ -71,6 +81,10 @@ impl Default for CodexState {
             last_scan: None,
             app_start: SystemTime::now(),
             session_started_at: None,
+            resume_followed: false,
+            native_session_path: None,
+            native_session_started_at: None,
+            native_mtime_at_switch: None,
             prompt_counts: MessageCounters::default(),
             completion_counts: MessageCounters::default(),
             stats: PlatformStats::default(),
