@@ -2,6 +2,7 @@
 export const sidebarJs = `
         let sidebarActiveSessionId = null;
         let sidebarUpdateTimer = null;
+        let sidebarLastRenderedHtml = null;
 
         // Throttled sidebar update - batches rapid SSE events into single re-renders
         function scheduleSidebarUpdate() {
@@ -41,6 +42,30 @@ export const sidebarJs = `
 
             // Init scroll spy
             initSidebarScrollSpy();
+
+            // Session-item taps are delegated to the (stable) content element
+            // instead of inline onclick on each item. The list re-renders while
+            // live sessions stream, and if the tapped element is replaced
+            // between finger-down and the browser's synthesized click, the
+            // click never fires — so capture the session at pointerdown and
+            // act on pointerup.
+            const sidebarContent = document.getElementById('sidebar-content');
+            if (sidebarContent) {
+                let tap = null;
+                sidebarContent.addEventListener('pointerdown', (e) => {
+                    const item = e.target.closest('.session-item');
+                    tap = item ? { id: item.dataset.sessionId, x: e.clientX, y: e.clientY } : null;
+                });
+                sidebarContent.addEventListener('pointerup', (e) => {
+                    const started = tap;
+                    tap = null;
+                    if (!started || !started.id) return;
+                    // A drag (scrolling the list) is not a tap.
+                    if (Math.abs(e.clientX - started.x) > 10 || Math.abs(e.clientY - started.y) > 10) return;
+                    handleSessionClick(started.id);
+                });
+                sidebarContent.addEventListener('pointercancel', () => { tap = null; });
+            }
 
             // Any click inside a session card highlights it in the sidebar
             const sessionsContainer = document.getElementById('sessions');
@@ -361,7 +386,7 @@ export const sidebarJs = `
                     + '</span>';
 
             return \`
-                <div class="\${classes.join(' ')}" data-session-id="\${session.id}" onclick="handleSessionClick('\${session.id}')">
+                <div class="\${classes.join(' ')}" data-session-id="\${session.id}">
                     <div class="session-item-row">
                         \${titleHtml}
                         <span class="session-item-state \${session.state}">\${session.state}</span>
@@ -375,10 +400,20 @@ export const sidebarJs = `
             const content = document.getElementById('sidebar-content');
             if (!content) return;
 
+            // Replacing innerHTML destroys every session item, which kills any
+            // tap in progress on mobile — so skip the write when nothing
+            // visible changed.
+            const render = (html) => {
+                if (html === sidebarLastRenderedHtml) return false;
+                sidebarLastRenderedHtml = html;
+                content.innerHTML = html;
+                return true;
+            };
+
             const sidebarSessions = getSidebarSessions(allSessions);
 
             if (sidebarSessions.length === 0) {
-                content.innerHTML = '<div class="sessions-empty">' + getSessionsEmptyMessage(allSessions.length > 0) + '</div>';
+                render('<div class="sessions-empty">' + getSessionsEmptyMessage(allSessions.length > 0) + '</div>');
                 return;
             }
 
@@ -503,9 +538,7 @@ export const sidebarJs = `
                 }
             }
 
-            content.innerHTML = html;
-            updateSidebarActiveState();
-
+            if (render(html)) updateSidebarActiveState();
         }
 
         function initSidebarScrollSpy() {
