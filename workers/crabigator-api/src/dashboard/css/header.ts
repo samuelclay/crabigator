@@ -146,6 +146,20 @@ export const headerCss = `
         width: 14px;
         height: 14px;
     }
+    /* Icon-only PR board button, matching its style/settings neighbors */
+    .header .pr-board-btn {
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        justify-content: center;
+        flex: 0 0 30px;
+        gap: 0;
+        font-size: 0;
+    }
+    .header .pr-board-btn .pr-board-btn-icon {
+        font-size: 13px;
+        line-height: 1;
+    }
     .header .sessions-container,
     .header .style-container,
     .header .settings-container {

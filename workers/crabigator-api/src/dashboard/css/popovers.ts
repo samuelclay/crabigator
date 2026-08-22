@@ -249,10 +249,13 @@ export const popoversCss = `
     box-shadow: 0 0 15px rgba(248, 113, 113, 0.2);
 }
 
-/* Sessions popover container */
+/* Sessions popover container: PR board button + sessions button in a row */
 .sessions-container {
     position: relative;
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 .sessions-btn {
     font-family: 'JetBrains Mono', monospace;
