@@ -1076,10 +1076,36 @@ fn aggregate(
             }
             visible_pr(&entry.pr, linger_days, now_ms).then_some(entry)
         })
+        .flat_map(fan_out_per_session)
         .collect();
 
     sort_entries(&mut out);
     out
+}
+
+/// Split a merged PR entry into one board row per contributing session, so
+/// each row shows a single session's title, activity, and recap. The merged
+/// GitHub stats are shared by every row; a PR with no attached session keeps
+/// its single session-less row.
+fn fan_out_per_session(entry: BoardPr) -> Vec<BoardPr> {
+    if entry.sessions.len() <= 1 {
+        return vec![entry];
+    }
+    let BoardPr {
+        pr,
+        sessions,
+        slack_threads,
+        stale,
+    } = entry;
+    sessions
+        .into_iter()
+        .map(|session| BoardPr {
+            pr: pr.clone(),
+            sessions: vec![session],
+            slack_threads: slack_threads.clone(),
+            stale,
+        })
+        .collect()
 }
 
 /// Apply current worktree ownership while reading a session snapshot. Older
@@ -1205,12 +1231,36 @@ fn local_board(
     history: &mut ActivityHistory,
     overrides: &HashMap<String, PrDisposition>,
     linger_days: u64,
-) -> Result<(Vec<BoardPr>, Vec<WorkspaceEntry>)> {
+) -> Result<(Vec<BoardPr>, Vec<WorkspaceEntry>, HashMap<String, PathBuf>)> {
     let snapshots = gather(history)?;
     let mut entries = aggregate(&snapshots, overrides, linger_days);
     history.enrich_slack_threads(&mut entries);
     let workspaces = local_workspaces(&snapshots, &entries);
-    Ok((entries, workspaces))
+    // Live mirror directories by session id (the cloud id once registered),
+    // so the all-sessions view can point cloud rows back at local screens.
+    let mirrors = snapshots
+        .iter()
+        .map(|snapshot| (snapshot.session_id.clone(), snapshot.session_dir.clone()))
+        .collect();
+    Ok((entries, workspaces, mirrors))
+}
+
+/// Point cloud-sourced rows at their local mirror when the session is still
+/// running here. Cloud records carry no `session_dir`, which would make a
+/// live session unselectable in the all-sessions view; sessions with no live
+/// mirror are cleared so a dead row can't show a stale screen.
+fn attach_live_mirrors(
+    entries: &mut [BoardPr],
+    workspaces: &mut [WorkspaceEntry],
+    mirrors: &HashMap<String, PathBuf>,
+) {
+    let sessions = entries
+        .iter_mut()
+        .flat_map(|entry| entry.sessions.iter_mut())
+        .chain(workspaces.iter_mut().map(|entry| &mut entry.session));
+    for session in sessions {
+        session.session_dir = mirrors.get(&session.session_id).cloned();
+    }
 }
 
 fn sort_workspaces(workspaces: &mut [WorkspaceEntry]) {
@@ -1331,59 +1381,68 @@ fn sort_entries(entries: &mut [BoardPr]) {
 /// window are already applied server-side.
 fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec<WorkspaceEntry>) {
     let mut represented = HashSet::new();
-    let mut out: Vec<BoardPr> = cloud
-        .prs
-        .into_iter()
-        .map(|entry| {
-            let any_active = entry.sessions.iter().any(|s| s.active);
-            let pr = entry.pr;
-            let mut slack_threads = Vec::new();
-            merge_pr_slack_threads(&mut slack_threads, &pr, &[]);
-            let sessions = entry
-                .sessions
-                .into_iter()
-                .map(|s| {
-                    represented.insert(s.session_id.clone());
-                    let state = parse_session_state(&s.state).unwrap_or(if s.active {
-                        SessionState::Ready
-                    } else {
-                        SessionState::Complete
-                    });
-                    let recap = s.recap.and_then(|r| {
-                        (!r.headline.is_empty()).then_some(RecapBrief {
-                            headline: r.headline,
-                            bullets: r.bullets,
-                            next_prompt_notes: r.next_prompt_notes,
-                            artifacts: r.artifacts,
-                            generated_at: r.generated_at,
-                            line_delta: crate::recap::TurnLineDelta {
-                                additions: r.additions,
-                                deletions: r.deletions,
-                            },
-                        })
-                    });
-                    SessionRef {
-                        session_id: s.session_id,
-                        platform: cloud_session_platform(s.platform, &s.title),
-                        dir_name: s.dir_name,
-                        session_dir: None,
-                        title: s.title,
-                        title_set_at: 0,
-                        recap,
-                        state,
-                        prompted_at: activity_timestamp_secs(s.prompts_changed_at),
-                        completed_at: activity_timestamp_secs(s.completions_changed_at),
-                    }
-                })
-                .collect();
-            BoardPr {
+    let mut out: Vec<BoardPr> = Vec::new();
+    for entry in cloud.prs {
+        let pr = entry.pr;
+        let mut slack_threads = Vec::new();
+        merge_pr_slack_threads(&mut slack_threads, &pr, &[]);
+        let sessions: Vec<(SessionRef, bool)> = entry
+            .sessions
+            .into_iter()
+            .map(|s| {
+                represented.insert(s.session_id.clone());
+                let active = s.active;
+                let state = parse_session_state(&s.state).unwrap_or(if active {
+                    SessionState::Ready
+                } else {
+                    SessionState::Complete
+                });
+                let recap = s.recap.and_then(|r| {
+                    (!r.headline.is_empty()).then_some(RecapBrief {
+                        headline: r.headline,
+                        bullets: r.bullets,
+                        next_prompt_notes: r.next_prompt_notes,
+                        artifacts: r.artifacts,
+                        generated_at: r.generated_at,
+                        line_delta: crate::recap::TurnLineDelta {
+                            additions: r.additions,
+                            deletions: r.deletions,
+                        },
+                    })
+                });
+                let session = SessionRef {
+                    session_id: s.session_id,
+                    platform: cloud_session_platform(s.platform, &s.title),
+                    dir_name: s.dir_name,
+                    session_dir: None,
+                    title: s.title,
+                    title_set_at: 0,
+                    recap,
+                    state,
+                    prompted_at: activity_timestamp_secs(s.prompts_changed_at),
+                    completed_at: activity_timestamp_secs(s.completions_changed_at),
+                };
+                (session, active)
+            })
+            .collect();
+        // One row per session, like the local board; sessions that ended
+        // render stale so the live one stands out.
+        if sessions.is_empty() {
+            out.push(BoardPr {
                 pr,
-                sessions,
+                sessions: Vec::new(),
                 slack_threads,
-                stale: !any_active,
-            }
-        })
-        .collect();
+                stale: true,
+            });
+            continue;
+        }
+        out.extend(sessions.into_iter().map(|(session, active)| BoardPr {
+            pr: pr.clone(),
+            sessions: vec![session],
+            slack_threads: slack_threads.clone(),
+            stale: !active,
+        }));
+    }
     sort_entries(&mut out);
 
     let mut workspaces: Vec<WorkspaceEntry> = Vec::new();
@@ -2245,6 +2304,67 @@ struct WorkspaceRow<'a> {
     preview_lines: Vec<String>,
 }
 
+/// One board row's place in the rendered frame, for selection and quick look.
+struct RowSpan {
+    /// Stable identity across refreshes: the PR key plus its session, or the
+    /// workspace session alone.
+    key: String,
+    /// First line of the row block, as an index into the rendered frame.
+    start: usize,
+    /// One past the row block's last line.
+    end: usize,
+    /// The live session mirror this row can preview, when it has one.
+    peek: Option<PeekTarget>,
+}
+
+/// A session whose live screen the quick look pane can show.
+struct PeekTarget {
+    title: String,
+    dir_name: String,
+    screen_path: PathBuf,
+}
+
+/// The identity a session contributes to a row key: the session id, or the
+/// directory name for mirrors that predate ids.
+fn session_key(session: &SessionRef) -> &str {
+    if session.session_id.is_empty() {
+        &session.dir_name
+    } else {
+        &session.session_id
+    }
+}
+
+/// A row is previewable when its session has a local mirror with a live
+/// screen snapshot; cloud records and `--no-capture` sessions are not.
+fn peek_target(session: &SessionRef) -> Option<PeekTarget> {
+    let dir = session.session_dir.as_ref()?;
+    let screen_path = dir.join("screen.txt");
+    screen_path.exists().then(|| {
+        let plain = crate::title::strip_provider_title_marker(&session.title);
+        let title = if plain.is_empty() {
+            session.dir_name.clone()
+        } else {
+            plain.to_string()
+        };
+        PeekTarget {
+            title,
+            dir_name: session.dir_name.clone(),
+            screen_path,
+        }
+    })
+}
+
+/// A PR row's stable identity: the PR itself plus the session it stands for.
+fn pr_span_key(entry: &BoardPr) -> String {
+    format!(
+        "{}/{}#{}@{}",
+        entry.pr.owner,
+        entry.pr.repo,
+        entry.pr.number,
+        entry.sessions.first().map(session_key).unwrap_or_default()
+    )
+}
+
 fn render_pr_board_row(
     board_row: &BoardRow<'_>,
     width: u16,
@@ -2397,7 +2517,7 @@ fn render(
     linger_days: u64,
     include_ended: bool,
     view: BoardView,
-) -> Vec<String> {
+) -> RenderedBoard {
     render_at(
         rows,
         workspace_rows,
@@ -2418,6 +2538,13 @@ struct RenderState {
     loading: bool,
 }
 
+/// One rendered frame: the styled lines plus where each board row landed,
+/// so selection and the quick look pane can address rows by frame position.
+struct RenderedBoard {
+    lines: Vec<String>,
+    spans: Vec<RowSpan>,
+}
+
 fn render_at(
     rows: &[BoardRow],
     workspace_rows: &[WorkspaceRow],
@@ -2426,7 +2553,7 @@ fn render_at(
     include_ended: bool,
     view: BoardView,
     state: RenderState,
-) -> Vec<String> {
+) -> RenderedBoard {
     let RenderState { now_ms, loading } = state;
     let BoardView {
         detail,
@@ -2509,9 +2636,10 @@ fn render_at(
         )
     };
 
+    let mut spans: Vec<RowSpan> = Vec::new();
     let mut lines = vec![
         format!(
-            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{} · {UNDERLINE}↑↓{RESET_UNDERLINE} scroll · {UNDERLINE}/{RESET_UNDERLINE} search · {UNDERLINE}+/-{RESET_UNDERLINE} days · {UNDERLINE}q{RESET_UNDERLINE} quit{}",
+            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{} · {UNDERLINE}↑↓{RESET_UNDERLINE} select · {UNDERLINE}⏎{RESET_UNDERLINE} peek · {UNDERLINE}/{RESET_UNDERLINE} search · {UNDERLINE}+/-{RESET_UNDERLINE} days · {UNDERLINE}q{RESET_UNDERLINE} quit{}",
             fg(color::PURPLE),
             RESET_FG,
             fg(color::DARK_GRAY),
@@ -2537,15 +2665,15 @@ fn render_at(
         lines.push(String::new());
     }
     if visible_row_indices.is_empty() && visible_workspace_indices.is_empty() {
-        if loading {
-            return lines;
+        // No rows drawn, so `spans` is still empty: nothing to select.
+        if !loading {
+            lines.push(format!(
+                "{}No live sessions or tracked PRs.{}",
+                fg(color::GRAY),
+                RESET_FG
+            ));
         }
-        lines.push(format!(
-            "{}No live sessions or tracked PRs.{}",
-            fg(color::GRAY),
-            RESET_FG
-        ));
-        return lines;
+        return RenderedBoard { lines, spans };
     }
 
     let activity_width = visible_row_indices
@@ -2698,30 +2826,51 @@ fn render_at(
             ));
 
             for (_, row) in repository.rows {
-                match row {
-                    SectionRow::Pr(index) => lines.extend(render_pr_board_row(
-                        &rows[index],
-                        width,
-                        detail,
-                        now_ms,
-                        activity_width,
-                        &widths,
-                        throbber_frame,
-                    )),
-                    SectionRow::Workspace(index) => lines.extend(render_workspace_board_row(
-                        &workspace_rows[index],
-                        width,
-                        detail,
-                        now_ms,
-                        activity_width,
-                        &widths,
-                        throbber_frame,
-                    )),
-                }
+                let start = lines.len();
+                let (key, peek) = match row {
+                    SectionRow::Pr(index) => {
+                        let board_row = &rows[index];
+                        lines.extend(render_pr_board_row(
+                            board_row,
+                            width,
+                            detail,
+                            now_ms,
+                            activity_width,
+                            &widths,
+                            throbber_frame,
+                        ));
+                        (
+                            pr_span_key(board_row.entry),
+                            board_row.entry.sessions.first().and_then(peek_target),
+                        )
+                    }
+                    SectionRow::Workspace(index) => {
+                        let workspace_row = &workspace_rows[index];
+                        lines.extend(render_workspace_board_row(
+                            workspace_row,
+                            width,
+                            detail,
+                            now_ms,
+                            activity_width,
+                            &widths,
+                            throbber_frame,
+                        ));
+                        (
+                            format!("ws:{}", session_key(&workspace_row.entry.session)),
+                            peek_target(&workspace_row.entry.session),
+                        )
+                    }
+                };
+                spans.push(RowSpan {
+                    key,
+                    start,
+                    end: lines.len(),
+                    peek,
+                });
             }
         }
     }
-    lines
+    RenderedBoard { lines, spans }
 }
 
 struct PrBoardTerminalGuard;
@@ -2729,6 +2878,7 @@ struct PrBoardTerminalGuard;
 impl Drop for PrBoardTerminalGuard {
     fn drop(&mut self) {
         let mut out = stdout();
+        let _ = write!(out, "{}", escape::WRAP_ON);
         let _ = execute!(out, DisableBracketedPaste, LeaveAlternateScreen);
         let _ = write!(out, "{}", escape::CURSOR_SHOW);
         let _ = out.flush();
@@ -2744,7 +2894,7 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             .unwrap_or_default();
         let width = terminal_size().map(|(w, _)| w).unwrap_or(120);
         let mut activity_history = ActivityHistory::default();
-        let (entries, workspaces) =
+        let (entries, workspaces, _) =
             local_board(&mut activity_history, &overrides, DEFAULT_LINGER_DAYS)?;
         let rows: Vec<BoardRow> = entries
             .iter()
@@ -2767,7 +2917,9 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             DEFAULT_LINGER_DAYS,
             false,
             BoardView::default(),
-        ) {
+        )
+        .lines
+        {
             println!("{line}");
         }
         return Ok(());
@@ -2777,7 +2929,10 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
     enable_raw_mode()?;
     let _terminal_guard = PrBoardTerminalGuard;
     execute!(out, EnterAlternateScreen, EnableBracketedPaste)?;
-    write!(out, "{}", escape::CURSOR_HIDE)?;
+    // Auto-wrap stays off for the whole board: the quick look pane replays
+    // another session's screen, whose lines can be wider than this terminal,
+    // and clipping them at the margin beats corrupting the layout.
+    write!(out, "{}{}", escape::CURSOR_HIDE, escape::WRAP_OFF)?;
     out.flush()?;
     let mut overrides = HashMap::new();
     let overrides_fetch = start_overrides_fetch();
@@ -2799,6 +2954,160 @@ fn frame_hash(lines: &[String]) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     lines.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Positions in `spans` the selection can land on: rows with a live screen.
+fn selectable_positions(spans: &[RowSpan]) -> Vec<usize> {
+    spans
+        .iter()
+        .enumerate()
+        .filter_map(|(index, span)| span.peek.is_some().then_some(index))
+        .collect()
+}
+
+/// Where the current selection sits among `selectable`, when its row is still
+/// on the board with a live screen.
+fn selected_position(
+    spans: &[RowSpan],
+    selectable: &[usize],
+    selected: Option<&str>,
+) -> Option<usize> {
+    let key = selected?;
+    selectable.iter().position(|&index| spans[index].key == key)
+}
+
+/// Repaint one already-styled frame line onto the selection band. Every full
+/// SGR reset inside the line is followed by re-asserting the band background,
+/// so a mid-line reset can't cut the band off partway; the tail is padded so
+/// the band covers the full row width.
+fn selection_band_line(line: &str, width: u16) -> String {
+    let band = escape::bg(color::BG_SELECTED);
+    let rebanded = line.replace(RESET, &format!("{RESET}{band}"));
+    let pad = (width as usize).saturating_sub(crate::ui::utils::strip_ansi_len(line));
+    format!("{band}{rebanded}{}{RESET}", " ".repeat(pad))
+}
+
+/// Scroll just enough to bring the span fully into the visible page; a block
+/// taller than the page aligns its top edge.
+fn scroll_to_reveal(scroll: usize, page: usize, span: &RowSpan) -> usize {
+    if span.start < scroll {
+        span.start
+    } else if span.end > scroll + page {
+        span.end.saturating_sub(page).min(span.start)
+    } else {
+        scroll
+    }
+}
+
+/// Rows the quick look pane occupies: the bottom half of the terminal.
+fn peek_pane_rows(height: u16) -> usize {
+    (height as usize) / 2
+}
+
+/// The quick look pane: the previewed session's live screen tail boxed in a
+/// bright border on all four sides, so it reads as a temporary read-only
+/// overlay rather than more board content. `rows` is the pane height
+/// including both border rows; screen lines wider than the interior clip at
+/// the right border, which is pinned by column addressing because auto-wrap
+/// is off.
+fn build_peek_pane(
+    spans: &[RowSpan],
+    selected: Option<&str>,
+    width: u16,
+    rows: usize,
+) -> Vec<String> {
+    if rows == 0 {
+        return Vec::new();
+    }
+    let target = selected
+        .and_then(|key| spans.iter().find(|span| span.key == key))
+        .and_then(|span| span.peek.as_ref());
+    let mut lines = vec![peek_top_border(target, width)];
+    if rows == 1 {
+        return lines;
+    }
+
+    let interior = rows - 2;
+    let screen = target.and_then(|target| std::fs::read(&target.screen_path).ok());
+    let mut content: Vec<String> = match screen {
+        Some(bytes) => {
+            let content = String::from_utf8_lossy(&bytes);
+            let skip = content.lines().count().saturating_sub(interior);
+            content.lines().skip(skip).map(String::from).collect()
+        }
+        None => vec![format!(
+            "{} no live screen — the session ended or isn't captured{}",
+            fg(color::GRAY),
+            RESET_FG
+        )],
+    };
+    // Fill the box to the bottom so the frame doesn't jump with content.
+    content.truncate(interior);
+    content.resize(interior, String::new());
+    lines.extend(
+        content
+            .into_iter()
+            .map(|row| peek_interior_row(&row, width)),
+    );
+    lines.push(peek_bottom_border(width));
+    lines
+}
+
+/// The box's top edge, carrying the pane title and its keys:
+/// `┏━ ▶ title · dir ━━…━━ ↑↓ switch · ⏎ close ━┓`.
+fn peek_top_border(target: Option<&PeekTarget>, width: u16) -> String {
+    let width = width as usize;
+    let (title, dir) = match target {
+        Some(target) if target.dir_name.is_empty() || target.title == target.dir_name => {
+            (target.title.as_str(), String::new())
+        }
+        Some(target) => (target.title.as_str(), format!(" · {}", target.dir_name)),
+        None => ("quick look", String::new()),
+    };
+    const HINT: &str = "↑↓ switch · ⏎ close";
+    // `┏━ ` + label (+ dir) + ` ` + ━ fill (+ ` hint `) + `━┓`
+    let label = crate::ui::pr_cells::truncate_to_width(
+        &format!("▶ {title}"),
+        width.saturating_sub(6),
+    );
+    let dir = if 6 + label.width() + dir.width() > width {
+        String::new()
+    } else {
+        dir
+    };
+    let used = 3 + label.width() + dir.width() + 1 + 2;
+    let hint = if used + HINT.width() + 2 <= width {
+        format!(" {HINT} ")
+    } else {
+        String::new()
+    };
+    let fill = "━".repeat(width.saturating_sub(used + hint.width()));
+    format!(
+        "{border}┏━ {RESET_FG}{label}{dim}{dir}{border} {fill}{dim}{hint}{border}━┓{RESET_FG}",
+        border = fg(color::CYAN),
+        dim = fg(color::DARK_GRAY),
+    )
+}
+
+/// One boxed screen row. The right edge is drawn at the last column with
+/// cursor addressing, on top of whatever the (possibly overlong, arbitrarily
+/// styled) screen line left there.
+fn peek_interior_row(content: &str, width: u16) -> String {
+    format!(
+        "{}┃{RESET} {content}{RESET}{}{}┃{RESET}",
+        fg(color::CYAN),
+        escape::cursor_col(width.max(1)),
+        fg(color::CYAN),
+    )
+}
+
+fn peek_bottom_border(width: u16) -> String {
+    format!(
+        "{}┗{}┛{}",
+        fg(color::CYAN),
+        "━".repeat((width as usize).saturating_sub(2)),
+        RESET_FG
+    )
 }
 
 /// The sticky search banner: unmistakable yellow-on-black, pinned above the
@@ -2865,6 +3174,11 @@ async fn board_loop(
     let mut matched = 0usize;
     let mut scroll: usize = 0;
     let mut search: Option<String> = None;
+    // Session selection and the Enter-toggled quick look pane.
+    let mut spans: Vec<RowSpan> = Vec::new();
+    let mut selected: Option<String> = None;
+    let mut peek_open = false;
+    let mut pane_lines: Vec<String> = Vec::new();
     // Transcript search state: cached scrollbacks plus the Tab-toggled
     // context view for the inline previews.
     let mut transcripts = TranscriptCache::default();
@@ -2901,7 +3215,8 @@ async fn board_loop(
             now_ms: (now_secs() * 1000.0) as u64,
             loading: true,
         },
-    );
+    )
+    .lines;
     let mut last_frame_hash = frame_hash(&lines);
     draw_changed_lines(out, &mut drawn_lines, &lines)?;
     out.flush()?;
@@ -2973,15 +3288,16 @@ async fn board_loop(
                         durable_history_loaded = true;
                     }
                 }
-                let (live_entries, live_workspaces) =
+                let (live_entries, live_workspaces, live_mirrors) =
                     local_board(activity_history.as_mut().unwrap(), overrides, linger_days)?;
                 if !durable_history_loaded {
                     entries = live_entries;
                 }
                 workspaces = durable_workspaces.clone();
                 merge_live_workspaces(&mut workspaces, live_workspaces, &entries);
+                attach_live_mirrors(&mut entries, &mut workspaces, &live_mirrors);
             } else {
-                (entries, workspaces) =
+                (entries, workspaces, _) =
                     local_board(activity_history.as_mut().unwrap(), overrides, linger_days)?;
             }
             activity_history
@@ -3054,20 +3370,41 @@ async fn board_loop(
                 view,
                 RenderState { now_ms, loading },
             );
-            let hash = frame_hash(&fresh);
+            // Spans track the fresh frame even when the lines are unchanged:
+            // a session's screen can appear or vanish without moving a row.
+            spans = fresh.spans;
+            let hash = frame_hash(&fresh.lines);
             if hash != last_frame_hash {
                 last_frame_hash = hash;
-                lines = fresh;
+                lines = fresh.lines;
                 dirty = true;
             }
         }
 
-        // The banner is pinned above the scrolled content while searching.
+        // The banner is pinned above the scrolled content while searching;
+        // the quick look pane claims the bottom half of the terminal.
         let banner_rows = usize::from(search.is_some());
-        let page = (height as usize).saturating_sub(banner_rows).max(1);
+        let pane_rows = if peek_open { peek_pane_rows(height) } else { 0 };
+        let page = (height as usize)
+            .saturating_sub(banner_rows)
+            .saturating_sub(pane_rows)
+            .max(1);
         let max_scroll = lines.len().saturating_sub(page);
         if scroll > max_scroll {
             scroll = max_scroll;
+            dirty = true;
+        }
+
+        // Re-read the previewed screen every pass; the diff-drawing below
+        // only repaints when its content actually changed.
+        if peek_open {
+            let fresh_pane = build_peek_pane(&spans, selected.as_deref(), width, pane_rows);
+            if fresh_pane != pane_lines {
+                pane_lines = fresh_pane;
+                dirty = true;
+            }
+        } else if !pane_lines.is_empty() {
+            pane_lines.clear();
             dirty = true;
         }
 
@@ -3077,13 +3414,30 @@ async fn board_loop(
             if let Some(query) = &search {
                 visible_lines.push(search_banner(query, matched, width));
             }
-            visible_lines.extend(lines.iter().skip(scroll).take(page).cloned());
+            let band = selected
+                .as_deref()
+                .and_then(|key| spans.iter().find(|span| span.key == key));
+            for (offset, line) in lines.iter().skip(scroll).take(page).enumerate() {
+                let index = scroll + offset;
+                let on_selected_row =
+                    band.is_some_and(|span| (span.start..span.end).contains(&index));
+                visible_lines.push(if on_selected_row {
+                    selection_band_line(line, width)
+                } else {
+                    line.clone()
+                });
+            }
+            if peek_open {
+                // Pin the pane to the bottom half even when the board is short.
+                visible_lines.resize(banner_rows + page, String::new());
+                visible_lines.extend(pane_lines.iter().cloned());
+            }
             if draw_changed_lines(out, &mut drawn_lines, &visible_lines)? {
                 out.flush()?;
             }
         }
 
-        let poll_interval = if animating {
+        let poll_interval = if animating || peek_open {
             Duration::from_millis(100)
         } else {
             Duration::from_millis(250)
@@ -3112,6 +3466,12 @@ async fn board_loop(
                     // and Esc clears it; outside one, they're the shortcuts.
                     if let Some(query) = &mut search {
                         match key.code {
+                            // Esc peels back one layer: the pane first, then
+                            // the filter.
+                            KeyCode::Esc if peek_open => {
+                                peek_open = false;
+                                dirty = true;
+                            }
                             KeyCode::Esc => {
                                 search = None;
                                 expanded = false;
@@ -3142,6 +3502,10 @@ async fn board_loop(
                         }
                     } else {
                         match key.code {
+                            KeyCode::Esc if peek_open => {
+                                peek_open = false;
+                                dirty = true;
+                            }
                             KeyCode::Char('q') | KeyCode::Esc => {
                                 save_board_preferences(include_ended, linger_days, view)?;
                                 return Ok(());
@@ -3197,15 +3561,80 @@ async fn board_loop(
                             _ => {}
                         }
                     }
+                    // Enter toggles the quick look pane on the selected
+                    // session (selecting the first live one if none is yet).
+                    let selectable = selectable_positions(&spans);
+                    if key.code == KeyCode::Enter {
+                        if peek_open {
+                            peek_open = false;
+                            dirty = true;
+                        } else if !selectable.is_empty() {
+                            // A selection that has gone away falls back to the
+                            // first live row.
+                            let position =
+                                selected_position(&spans, &selectable, selected.as_deref())
+                                    .unwrap_or(0);
+                            let span = &spans[selectable[position]];
+                            selected = Some(span.key.clone());
+                            peek_open = true;
+                            // The pane shrinks the page; keep the selection
+                            // in view within the new top half.
+                            let page = (height as usize)
+                                .saturating_sub(banner_rows)
+                                .saturating_sub(peek_pane_rows(height))
+                                .max(1);
+                            scroll = scroll_to_reveal(scroll, page, span);
+                            dirty = true;
+                        }
+                    }
+
+                    // ↑↓ (plus j/k outside search) step the selection through
+                    // live sessions and the view follows; with nothing
+                    // selectable they fall back to plain line scrolling.
+                    let step: Option<isize> = match key.code {
+                        KeyCode::Up => Some(-1),
+                        KeyCode::Down => Some(1),
+                        KeyCode::Char('k') if search.is_none() => Some(-1),
+                        KeyCode::Char('j') if search.is_none() => Some(1),
+                        _ => None,
+                    };
+                    if let Some(step) = step {
+                        if selectable.is_empty() {
+                            let target = if step < 0 {
+                                scroll.saturating_sub(1)
+                            } else {
+                                (scroll + 1).min(max_scroll)
+                            };
+                            if target != scroll {
+                                scroll = target;
+                                dirty = true;
+                            }
+                        } else {
+                            let current =
+                                selected_position(&spans, &selectable, selected.as_deref());
+                            let next = match current {
+                                Some(position) => (position as isize + step)
+                                    .clamp(0, selectable.len() as isize - 1)
+                                    as usize,
+                                None if step > 0 => 0,
+                                None => selectable.len() - 1,
+                            };
+                            let span = &spans[selectable[next]];
+                            let moved = selected.as_deref() != Some(span.key.as_str());
+                            let target = scroll_to_reveal(scroll, page, span).min(max_scroll);
+                            if moved || target != scroll {
+                                selected = Some(span.key.clone());
+                                scroll = target;
+                                dirty = true;
+                            }
+                        }
+                    }
+
                     let target = match key.code {
-                        KeyCode::Up => scroll.saturating_sub(1),
-                        KeyCode::Down => scroll + 1,
                         KeyCode::PageUp => scroll.saturating_sub(page.saturating_sub(2)),
                         KeyCode::PageDown => scroll + page.saturating_sub(2),
                         KeyCode::Home if search.is_none() => 0,
                         KeyCode::End if search.is_none() => max_scroll,
-                        KeyCode::Char('k') if search.is_none() => scroll.saturating_sub(1),
-                        KeyCode::Char('j') if search.is_none() => scroll + 1,
                         KeyCode::Char('g') if search.is_none() => 0,
                         KeyCode::Char('G') if search.is_none() => max_scroll,
                         _ => scroll,
@@ -3269,6 +3698,7 @@ mod tests {
             false,
             BoardView::new(detail, oldest_visible_bucket),
         )
+        .lines
         .join("\n")
     }
 
@@ -3283,7 +3713,8 @@ mod tests {
             ("s", "live"),
             ("r", "compact"),
             ("a", "all ages"),
-            ("↑↓", "scroll"),
+            ("↑↓", "select"),
+            ("⏎", "peek"),
             ("/", "search"),
             ("+/-", "days"),
             ("q", "quit"),
@@ -3309,6 +3740,7 @@ mod tests {
             true,
             BoardView::default(),
         )
+        .lines
         .join("\n");
         assert!(all_sessions.contains(&format!("{UNDERLINE}s{RESET_UNDERLINE} all sessions")));
     }
@@ -3343,7 +3775,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregation_merges_the_same_pr_across_sessions() {
+    fn aggregation_fans_the_same_pr_out_to_one_row_per_session() {
         let mut a = board_pr(5, "portal");
         make_primary(&mut a);
         a.mentions = 10;
@@ -3370,29 +3802,203 @@ mod tests {
             "https://t.slack.com/archives/C0/p1723500000000000 https://t.slack.com/archives/C1/p1723500001000000 https://t.slack.com/archives/C4/p1723500003000000",
         );
         let entries = aggregate(&[two, one], &HashMap::new(), DEFAULT_LINGER_DAYS);
-        assert_eq!(entries.len(), 1);
-        let entry = &entries[0];
-        assert_eq!(entry.pr.mentions, 13, "mentions sum across sessions");
-        assert_eq!(entry.pr.additions, 42, "newest gh stats win");
-        assert_eq!(entry.sessions.len(), 2);
-        assert_eq!(
-            entry.pr.slack_origin_url, "https://t.slack.com/archives/C0/p1723500000000000",
-            "a newer snapshot cannot erase the original thread"
+        assert_eq!(entries.len(), 2, "one row per contributing session");
+        let mut session_dirs: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry.sessions[0].dir_name.as_str())
+            .collect();
+        session_dirs.sort_unstable();
+        assert_eq!(session_dirs, ["one", "two"]);
+        for entry in &entries {
+            assert_eq!(entry.sessions.len(), 1, "each row carries one session");
+            assert_eq!(entry.pr.mentions, 13, "mentions sum across sessions");
+            assert_eq!(entry.pr.additions, 42, "newest gh stats win");
+            assert_eq!(
+                entry.pr.slack_origin_url, "https://t.slack.com/archives/C0/p1723500000000000",
+                "a newer snapshot cannot erase the original thread"
+            );
+            assert_eq!(entry.pr.slack_comment_urls.len(), 2);
+            assert_eq!(
+                entry
+                    .slack_threads
+                    .iter()
+                    .map(|thread| thread.url.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "https://t.slack.com/archives/C0/p1723500000000000",
+                    "https://t.slack.com/archives/C1/p1723500001000000",
+                    "https://t.slack.com/archives/C2/p1723500002000000",
+                    "https://t.slack.com/archives/C4/p1723500003000000",
+                ],
+                "the original thread stays first and session-only links remain"
+            );
+        }
+    }
+
+    #[test]
+    fn selection_band_survives_mid_line_resets_and_fills_the_width() {
+        let line = format!("{}text{RESET} tail", fg(color::GREEN));
+        let banded = selection_band_line(&line, 20);
+        let band = escape::bg(color::BG_SELECTED);
+        assert!(banded.starts_with(&band));
+        assert!(
+            banded.contains(&format!("{RESET}{band}")),
+            "the band background is re-asserted after a mid-line reset"
         );
-        assert_eq!(entry.pr.slack_comment_urls.len(), 2);
+        assert!(banded.ends_with(RESET));
         assert_eq!(
-            entry
-                .slack_threads
-                .iter()
-                .map(|thread| thread.url.as_str())
-                .collect::<Vec<_>>(),
-            [
-                "https://t.slack.com/archives/C0/p1723500000000000",
-                "https://t.slack.com/archives/C1/p1723500001000000",
-                "https://t.slack.com/archives/C2/p1723500002000000",
-                "https://t.slack.com/archives/C4/p1723500003000000",
-            ],
-            "the original thread stays first and session-only links remain"
+            crate::ui::utils::strip_ansi_len(&banded),
+            20,
+            "the band pads to the full width"
+        );
+    }
+
+    #[test]
+    fn scroll_reveals_the_selected_row_with_minimal_movement() {
+        let span = |start, end| RowSpan {
+            key: "k".to_string(),
+            start,
+            end,
+            peek: None,
+        };
+        assert_eq!(scroll_to_reveal(10, 5, &span(3, 5)), 3, "scrolls up");
+        assert_eq!(
+            scroll_to_reveal(0, 5, &span(8, 10)),
+            5,
+            "scrolls down just enough"
+        );
+        assert_eq!(
+            scroll_to_reveal(2, 5, &span(3, 5)),
+            2,
+            "visible rows stay put"
+        );
+        assert_eq!(
+            scroll_to_reveal(0, 3, &span(4, 10)),
+            4,
+            "a tall block aligns its top"
+        );
+    }
+
+    #[test]
+    fn only_rows_with_a_live_screen_are_selectable() {
+        let capture = tempfile::tempdir().unwrap();
+        std::fs::write(capture.path().join("screen.txt"), "hello\n").unwrap();
+
+        let mut live_pr = board_pr(7, "portal");
+        make_primary(&mut live_pr);
+        let mut live = snapshot("live", vec![live_pr]);
+        live.repo_name = "portal".to_string();
+        live.session_dir = capture.path().to_path_buf();
+
+        let mut captureless_pr = board_pr(8, "portal");
+        make_primary(&mut captureless_pr);
+        let mut captureless = snapshot("captureless", vec![captureless_pr]);
+        captureless.repo_name = "portal".to_string();
+        captureless.session_dir = capture.path().join("missing");
+
+        let entries = aggregate(&[live, captureless], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let rows: Vec<BoardRow> = entries
+            .iter()
+            .map(|entry| BoardRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        let rendered = render(
+            &rows,
+            &[],
+            160,
+            DEFAULT_LINGER_DAYS,
+            false,
+            BoardView::default(),
+        );
+        assert_eq!(rendered.spans.len(), 2, "every row gets a span");
+
+        let selectable = selectable_positions(&rendered.spans);
+        assert_eq!(
+            selectable.len(),
+            1,
+            "only the captured session is selectable"
+        );
+        let span = &rendered.spans[selectable[0]];
+        assert_eq!(span.key, "o/portal#7@live");
+        assert_eq!(
+            span.peek.as_ref().unwrap().screen_path,
+            capture.path().join("screen.txt")
+        );
+        let block =
+            crate::parsers::strip_ansi_for_debug(&rendered.lines[span.start..span.end].join("\n"));
+        assert!(
+            block.contains("7:"),
+            "the span brackets its own row: {block}"
+        );
+    }
+
+    #[test]
+    fn peek_pane_shows_the_screen_tail_under_a_titled_header() {
+        let capture = tempfile::tempdir().unwrap();
+        let screen_path = capture.path().join("screen.txt");
+        std::fs::write(&screen_path, "one\ntwo\nthree\nfour\n").unwrap();
+        let spans = vec![RowSpan {
+            key: "k".to_string(),
+            start: 0,
+            end: 1,
+            peek: Some(PeekTarget {
+                title: "Fix the flaky test".to_string(),
+                dir_name: "portal".to_string(),
+                screen_path,
+            }),
+        }];
+
+        let pane = build_peek_pane(&spans, Some("k"), 80, 4);
+        assert_eq!(pane.len(), 4, "borders plus the screen rows that fit");
+        assert!(pane[0].contains('┏') && pane[0].contains('┓'));
+        assert_eq!(
+            crate::ui::utils::strip_ansi_len(&pane[0]),
+            80,
+            "the top border spans the full width"
+        );
+        assert!(pane[0].contains("Fix the flaky test"));
+        assert!(pane[0].contains("portal"));
+        for row in &pane[1..3] {
+            assert!(row.contains('┃'), "screen rows are boxed: {row}");
+        }
+        assert!(pane[1].contains("three"));
+        assert!(pane[2].contains("four"));
+        assert!(pane[3].contains('┗') && pane[3].contains('┛'));
+
+        let missing = build_peek_pane(&spans, Some("unknown"), 80, 4);
+        assert!(
+            missing[1].contains("no live screen"),
+            "a vanished session reads as such instead of a stale screen"
+        );
+        assert_eq!(missing.len(), 4, "the box keeps its size without content");
+    }
+
+    /// The all-sessions view builds rows from the cloud record, which has no
+    /// local paths; live sessions get their mirror re-attached so they stay
+    /// selectable, and sessions with no live mirror stay unselectable.
+    #[test]
+    fn live_mirrors_reattach_to_cloud_rows() {
+        let mut pr = board_pr(9, "portal");
+        make_primary(&mut pr);
+        let mut snapshot = snapshot("cloudid", vec![pr]);
+        snapshot.repo_name = "portal".to_string();
+        let mut entries = aggregate(&[snapshot], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        entries[0].sessions[0].session_dir = None;
+
+        let mirrors: HashMap<String, PathBuf> =
+            [("cloudid".to_string(), PathBuf::from("/tmp/crabigator-cloudid"))].into();
+        attach_live_mirrors(&mut entries, &mut [], &mirrors);
+        assert_eq!(
+            entries[0].sessions[0].session_dir.as_deref(),
+            Some(Path::new("/tmp/crabigator-cloudid"))
+        );
+
+        attach_live_mirrors(&mut entries, &mut [], &HashMap::new());
+        assert_eq!(
+            entries[0].sessions[0].session_dir, None,
+            "a session with no live mirror is cleared, not left stale"
         );
     }
 
@@ -3410,6 +4016,7 @@ mod tests {
                 loading: true,
             },
         )
+        .lines
         .join("\n");
         let plain = crate::parsers::strip_ansi_for_debug(&loading);
         assert!(plain.contains("Loading live sessions… 0 found"));
@@ -3454,6 +4061,7 @@ mod tests {
             false,
             BoardView::default(),
         )
+        .lines
         .join("\n");
         let plain = crate::parsers::strip_ansi_for_debug(&frame);
         assert!(plain.lines().any(|line| line == "samuelclay/crabigator"));
@@ -3595,6 +4203,7 @@ mod tests {
                 false,
                 BoardView::default(),
             )
+            .lines
             .join("\n"),
         );
 
@@ -3691,6 +4300,7 @@ mod tests {
                 false,
                 BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET),
             )
+            .lines
             .into_iter()
             .map(|line| crate::parsers::strip_ansi_for_debug(&line))
             .collect();
@@ -3969,6 +4579,7 @@ mod tests {
                     false,
                     BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET),
                 )
+                .lines
                 .join("\n"),
             );
             assert!(frame.contains("2 sessions"));
@@ -4826,6 +5437,7 @@ mod tests {
             false,
             BoardView::new(MAX_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET),
         )
+        .lines
         .join("\n");
         assert!(styled.contains(&format!("{}◇ ⟁  Standalone work", fg(color::PURPLE))));
         assert!(styled.contains(&format!("{}Kept standalone rows visible", fg(color::GRAY))));
@@ -4856,6 +5468,7 @@ mod tests {
             false,
             BoardView::default(),
         )
+        .lines
         .join("\n");
         assert!(styled.contains(&format!("{}◇ ᛝ  crabigator", fg(color::PURPLE))));
     }

@@ -26,6 +26,12 @@ pub fn cursor_to(row: u16, col: u16) -> String {
     format!("\x1b[{};{}H", row, col)
 }
 
+/// Move cursor to a column on the current row (CHA, 1-indexed)
+#[inline]
+pub fn cursor_col(col: u16) -> String {
+    format!("\x1b[{}G", col)
+}
+
 // === Scroll Region ===
 
 /// Reset scroll region to full screen
@@ -156,6 +162,10 @@ pub mod color {
     /// Dark background (236)
     pub const BG_DARK: u8 = 236;
 
+    /// Selection band background (238) - one step lighter than BG_DARK so a
+    /// highlighted row reads against both the default and dark backgrounds
+    pub const BG_SELECTED: u8 = 238;
+
     /// Black (16) - For text on colored backgrounds
     #[allow(dead_code)]
     pub const BLACK: u8 = 16;
@@ -231,6 +241,13 @@ pub const SYNC_BEGIN: &str = "\x1b[?2026h";
 /// End synchronized update
 /// Terminal renders all batched output atomically
 pub const SYNC_END: &str = "\x1b[?2026l";
+
+/// Disable auto-wrap (DECAWM reset): overlong lines clip at the right margin
+/// instead of wrapping onto the next row.
+pub const WRAP_OFF: &str = "\x1b[?7l";
+
+/// Re-enable auto-wrap (DECAWM set)
+pub const WRAP_ON: &str = "\x1b[?7h";
 
 /// Clear from cursor to end of screen (ED mode 0)
 pub const CLEAR_TO_END: &str = "\x1b[J";
