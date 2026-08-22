@@ -2321,7 +2321,8 @@ struct RowSpan {
 struct PeekTarget {
     title: String,
     dir_name: String,
-    screen_path: PathBuf,
+    /// The session's /tmp mirror, holding screen.txt and scrollback.log.
+    session_dir: PathBuf,
 }
 
 /// The identity a session contributes to a row key: the session id, or the
@@ -2338,8 +2339,7 @@ fn session_key(session: &SessionRef) -> &str {
 /// screen snapshot; cloud records and `--no-capture` sessions are not.
 fn peek_target(session: &SessionRef) -> Option<PeekTarget> {
     let dir = session.session_dir.as_ref()?;
-    let screen_path = dir.join("screen.txt");
-    screen_path.exists().then(|| {
+    dir.join("screen.txt").exists().then(|| {
         let plain = crate::title::strip_provider_title_marker(&session.title);
         let title = if plain.is_empty() {
             session.dir_name.clone()
@@ -2349,7 +2349,7 @@ fn peek_target(session: &SessionRef) -> Option<PeekTarget> {
         PeekTarget {
             title,
             dir_name: session.dir_name.clone(),
-            screen_path,
+            session_dir: dir.clone(),
         }
     })
 }
@@ -2976,6 +2976,27 @@ fn selected_position(
     selectable.iter().position(|&index| spans[index].key == key)
 }
 
+/// The selectable row `step` away from the current selection, clamped at the
+/// list's ends; entering the list from nowhere starts at the nearer edge.
+fn step_selection<'a>(
+    spans: &'a [RowSpan],
+    selectable: &[usize],
+    selected: Option<&str>,
+    step: isize,
+) -> Option<&'a RowSpan> {
+    if selectable.is_empty() {
+        return None;
+    }
+    let next = match selected_position(spans, selectable, selected) {
+        Some(position) => {
+            (position as isize + step).clamp(0, selectable.len() as isize - 1) as usize
+        }
+        None if step > 0 => 0,
+        None => selectable.len() - 1,
+    };
+    Some(&spans[selectable[next]])
+}
+
 /// Repaint one already-styled frame line onto the selection band. Every full
 /// SGR reset inside the line is followed by re-asserting the band background,
 /// so a mid-line reset can't cut the band off partway; the tail is padded so
@@ -3004,43 +3025,81 @@ fn peek_pane_rows(height: u16) -> usize {
     (height as usize) / 2
 }
 
-/// The quick look pane: the previewed session's live screen tail boxed in a
-/// bright border on all four sides, so it reads as a temporary read-only
-/// overlay rather than more board content. `rows` is the pane height
-/// including both border rows; screen lines wider than the interior clip at
-/// the right border, which is pinned by column addressing because auto-wrap
-/// is off.
+/// The peeked session, resolved from the current selection.
+fn selected_peek<'a>(spans: &'a [RowSpan], selected: Option<&str>) -> Option<&'a PeekTarget> {
+    selected
+        .and_then(|key| spans.iter().find(|span| span.key == key))
+        .and_then(|span| span.peek.as_ref())
+}
+
+/// Step the pane's scrollback anchor by `delta` lines. `None` is the live
+/// screen; scrolling up anchors a window into the transcript at a fixed top
+/// line so new output can't shift what's being read. Scrolling down past the
+/// transcript's tail returns to the live screen.
+fn step_peek_scroll(
+    current: Option<usize>,
+    delta: isize,
+    total_lines: usize,
+    interior: usize,
+) -> Option<usize> {
+    let tail_top = total_lines.saturating_sub(interior);
+    match current {
+        None if delta < 0 && tail_top > 0 => Some(tail_top.saturating_sub(delta.unsigned_abs())),
+        None => None,
+        Some(top) if delta < 0 => Some(top.saturating_sub(delta.unsigned_abs())),
+        Some(top) => {
+            let next = top.saturating_add(delta.unsigned_abs());
+            (next < tail_top).then_some(next)
+        }
+    }
+}
+
+/// The quick look pane: the previewed session boxed in a bright border on
+/// all four sides, so it reads as a temporary read-only overlay rather than
+/// more board content. At `scroll: None` the pane mirrors the live screen;
+/// with an anchor it shows a window into the session's transcript starting
+/// at that line. `rows` is the pane height including both border rows;
+/// lines wider than the interior clip at the right border, which is pinned
+/// by column addressing because auto-wrap is off.
 fn build_peek_pane(
     spans: &[RowSpan],
     selected: Option<&str>,
     width: u16,
     rows: usize,
+    scroll: Option<usize>,
+    transcripts: &mut TranscriptCache,
 ) -> Vec<String> {
     if rows == 0 {
         return Vec::new();
     }
-    let target = selected
-        .and_then(|key| spans.iter().find(|span| span.key == key))
-        .and_then(|span| span.peek.as_ref());
-    let mut lines = vec![peek_top_border(target, width)];
+    let target = selected_peek(spans, selected);
+    let interior = rows.saturating_sub(2);
+
+    let (mut content, lines_back) = match (target, scroll) {
+        (Some(target), Some(top)) => {
+            let transcript = transcripts.lines(&target.session_dir).unwrap_or(&[]);
+            let back = transcript.len().saturating_sub(top + interior);
+            let window = transcript.iter().skip(top).take(interior).cloned().collect();
+            (window, Some(back))
+        }
+        (Some(target), None) => {
+            let screen = std::fs::read(target.session_dir.join("screen.txt")).ok();
+            match screen {
+                Some(bytes) => {
+                    let content = String::from_utf8_lossy(&bytes);
+                    let skip = content.lines().count().saturating_sub(interior);
+                    (content.lines().skip(skip).map(String::from).collect(), None)
+                }
+                None => (vec![peek_placeholder()], None),
+            }
+        }
+        (None, _) => (vec![peek_placeholder()], None),
+    };
+
+    let mut lines = vec![peek_top_border(target, width, lines_back)];
     if rows == 1 {
         return lines;
     }
-
-    let interior = rows - 2;
-    let screen = target.and_then(|target| std::fs::read(&target.screen_path).ok());
-    let mut content: Vec<String> = match screen {
-        Some(bytes) => {
-            let content = String::from_utf8_lossy(&bytes);
-            let skip = content.lines().count().saturating_sub(interior);
-            content.lines().skip(skip).map(String::from).collect()
-        }
-        None => vec![format!(
-            "{} no live screen — the session ended or isn't captured{}",
-            fg(color::GRAY),
-            RESET_FG
-        )],
-    };
     // Fill the box to the bottom so the frame doesn't jump with content.
     content.truncate(interior);
     content.resize(interior, String::new());
@@ -3053,9 +3112,19 @@ fn build_peek_pane(
     lines
 }
 
+fn peek_placeholder() -> String {
+    format!(
+        "{} no live screen — the session ended or isn't captured{}",
+        fg(color::GRAY),
+        RESET_FG
+    )
+}
+
 /// The box's top edge, carrying the pane title and its keys:
-/// `┏━ ▶ title · dir ━━…━━ ↑↓ switch · ⏎ close ━┓`.
-fn peek_top_border(target: Option<&PeekTarget>, width: u16) -> String {
+/// `┏━ ▶ title · dir ━━…━━ ←→ switch · ↑↓ scroll · ⏎ close ━┓`.
+/// While scrolled into the transcript, the glyph flips to `≡` and the keys
+/// give way to how far back the view is anchored.
+fn peek_top_border(target: Option<&PeekTarget>, width: u16, lines_back: Option<usize>) -> String {
     let width = width as usize;
     let (title, dir) = match target {
         Some(target) if target.dir_name.is_empty() || target.title == target.dir_name => {
@@ -3064,10 +3133,13 @@ fn peek_top_border(target: Option<&PeekTarget>, width: u16) -> String {
         Some(target) => (target.title.as_str(), format!(" · {}", target.dir_name)),
         None => ("quick look", String::new()),
     };
-    const HINT: &str = "↑↓ switch · ⏎ close";
+    let (glyph, hint_text) = match lines_back {
+        Some(back) => ("≡", format!("{back} back · ↓ live · ⏎ close")),
+        None => ("▶", "←→ switch · ↑↓ scroll · ⏎ close".to_string()),
+    };
     // `┏━ ` + label (+ dir) + ` ` + ━ fill (+ ` hint `) + `━┓`
     let label = crate::ui::pr_cells::truncate_to_width(
-        &format!("▶ {title}"),
+        &format!("{glyph} {title}"),
         width.saturating_sub(6),
     );
     let dir = if 6 + label.width() + dir.width() > width {
@@ -3076,8 +3148,8 @@ fn peek_top_border(target: Option<&PeekTarget>, width: u16) -> String {
         dir
     };
     let used = 3 + label.width() + dir.width() + 1 + 2;
-    let hint = if used + HINT.width() + 2 <= width {
-        format!(" {HINT} ")
+    let hint = if used + hint_text.width() + 2 <= width {
+        format!(" {hint_text} ")
     } else {
         String::new()
     };
@@ -3174,10 +3246,13 @@ async fn board_loop(
     let mut matched = 0usize;
     let mut scroll: usize = 0;
     let mut search: Option<String> = None;
-    // Session selection and the Enter-toggled quick look pane.
+    // Session selection and the Enter-toggled quick look pane. `peek_scroll`
+    // anchors the pane into the session's transcript; None mirrors the live
+    // screen.
     let mut spans: Vec<RowSpan> = Vec::new();
     let mut selected: Option<String> = None;
     let mut peek_open = false;
+    let mut peek_scroll: Option<usize> = None;
     let mut pane_lines: Vec<String> = Vec::new();
     // Transcript search state: cached scrollbacks plus the Tab-toggled
     // context view for the inline previews.
@@ -3398,7 +3473,14 @@ async fn board_loop(
         // Re-read the previewed screen every pass; the diff-drawing below
         // only repaints when its content actually changed.
         if peek_open {
-            let fresh_pane = build_peek_pane(&spans, selected.as_deref(), width, pane_rows);
+            let fresh_pane = build_peek_pane(
+                &spans,
+                selected.as_deref(),
+                width,
+                pane_rows,
+                peek_scroll,
+                &mut transcripts,
+            );
             if fresh_pane != pane_lines {
                 pane_lines = fresh_pane;
                 dirty = true;
@@ -3470,6 +3552,7 @@ async fn board_loop(
                             // the filter.
                             KeyCode::Esc if peek_open => {
                                 peek_open = false;
+                                peek_scroll = None;
                                 dirty = true;
                             }
                             KeyCode::Esc => {
@@ -3504,6 +3587,7 @@ async fn board_loop(
                         match key.code {
                             KeyCode::Esc if peek_open => {
                                 peek_open = false;
+                                peek_scroll = None;
                                 dirty = true;
                             }
                             KeyCode::Char('q') | KeyCode::Esc => {
@@ -3567,6 +3651,7 @@ async fn board_loop(
                     if key.code == KeyCode::Enter {
                         if peek_open {
                             peek_open = false;
+                            peek_scroll = None;
                             dirty = true;
                         } else if !selectable.is_empty() {
                             // A selection that has gone away falls back to the
@@ -3577,6 +3662,7 @@ async fn board_loop(
                             let span = &spans[selectable[position]];
                             selected = Some(span.key.clone());
                             peek_open = true;
+                            peek_scroll = None;
                             // The pane shrinks the page; keep the selection
                             // in view within the new top half.
                             let page = (height as usize)
@@ -3588,61 +3674,109 @@ async fn board_loop(
                         }
                     }
 
-                    // ↑↓ (plus j/k outside search) step the selection through
-                    // live sessions and the view follows; with nothing
-                    // selectable they fall back to plain line scrolling.
-                    let step: Option<isize> = match key.code {
-                        KeyCode::Up => Some(-1),
-                        KeyCode::Down => Some(1),
-                        KeyCode::Char('k') if search.is_none() => Some(-1),
-                        KeyCode::Char('j') if search.is_none() => Some(1),
-                        _ => None,
-                    };
-                    if let Some(step) = step {
-                        if selectable.is_empty() {
-                            let target = if step < 0 {
-                                scroll.saturating_sub(1)
-                            } else {
-                                (scroll + 1).min(max_scroll)
+                    if peek_open {
+                        // While the pane is open, ↑↓ scroll the peeked
+                        // session's transcript and ←→ switch which session
+                        // the pane mirrors.
+                        let interior = peek_pane_rows(height).saturating_sub(2);
+                        let page_step = interior.saturating_sub(1).max(1) as isize;
+                        let delta: Option<isize> = match key.code {
+                            KeyCode::Up => Some(-1),
+                            KeyCode::Down => Some(1),
+                            KeyCode::PageUp => Some(-page_step),
+                            KeyCode::PageDown => Some(page_step),
+                            KeyCode::Char('k') if search.is_none() => Some(-1),
+                            KeyCode::Char('j') if search.is_none() => Some(1),
+                            _ => None,
+                        };
+                        if delta.is_some()
+                            || key.code == KeyCode::Home
+                            || key.code == KeyCode::End
+                        {
+                            let total = selected_peek(&spans, selected.as_deref())
+                                .and_then(|target| transcripts.lines(&target.session_dir))
+                                .map_or(0, <[String]>::len);
+                            let next = match (key.code, delta) {
+                                (KeyCode::Home, _) => (total > interior).then_some(0),
+                                (KeyCode::End, _) => None,
+                                (_, Some(delta)) => {
+                                    step_peek_scroll(peek_scroll, delta, total, interior)
+                                }
+                                _ => peek_scroll,
                             };
-                            if target != scroll {
-                                scroll = target;
-                                dirty = true;
-                            }
-                        } else {
-                            let current =
-                                selected_position(&spans, &selectable, selected.as_deref());
-                            let next = match current {
-                                Some(position) => (position as isize + step)
-                                    .clamp(0, selectable.len() as isize - 1)
-                                    as usize,
-                                None if step > 0 => 0,
-                                None => selectable.len() - 1,
-                            };
-                            let span = &spans[selectable[next]];
-                            let moved = selected.as_deref() != Some(span.key.as_str());
-                            let target = scroll_to_reveal(scroll, page, span).min(max_scroll);
-                            if moved || target != scroll {
-                                selected = Some(span.key.clone());
-                                scroll = target;
+                            if next != peek_scroll {
+                                peek_scroll = next;
                                 dirty = true;
                             }
                         }
-                    }
+                        let switch: Option<isize> = match key.code {
+                            KeyCode::Left => Some(-1),
+                            KeyCode::Right => Some(1),
+                            _ => None,
+                        };
+                        if let Some(step) = switch {
+                            if let Some(span) =
+                                step_selection(&spans, &selectable, selected.as_deref(), step)
+                            {
+                                if selected.as_deref() != Some(span.key.as_str()) {
+                                    selected = Some(span.key.clone());
+                                    peek_scroll = None;
+                                    scroll = scroll_to_reveal(scroll, page, span).min(max_scroll);
+                                    dirty = true;
+                                }
+                            }
+                        }
+                    } else {
+                        // ↑↓ (plus j/k outside search) step the selection
+                        // through live sessions and the view follows; with
+                        // nothing selectable they fall back to line scrolling.
+                        let step: Option<isize> = match key.code {
+                            KeyCode::Up => Some(-1),
+                            KeyCode::Down => Some(1),
+                            KeyCode::Char('k') if search.is_none() => Some(-1),
+                            KeyCode::Char('j') if search.is_none() => Some(1),
+                            _ => None,
+                        };
+                        if let Some(step) = step {
+                            match step_selection(&spans, &selectable, selected.as_deref(), step) {
+                                Some(span) => {
+                                    let moved = selected.as_deref() != Some(span.key.as_str());
+                                    let target =
+                                        scroll_to_reveal(scroll, page, span).min(max_scroll);
+                                    if moved || target != scroll {
+                                        selected = Some(span.key.clone());
+                                        scroll = target;
+                                        dirty = true;
+                                    }
+                                }
+                                None => {
+                                    let target = if step < 0 {
+                                        scroll.saturating_sub(1)
+                                    } else {
+                                        (scroll + 1).min(max_scroll)
+                                    };
+                                    if target != scroll {
+                                        scroll = target;
+                                        dirty = true;
+                                    }
+                                }
+                            }
+                        }
 
-                    let target = match key.code {
-                        KeyCode::PageUp => scroll.saturating_sub(page.saturating_sub(2)),
-                        KeyCode::PageDown => scroll + page.saturating_sub(2),
-                        KeyCode::Home if search.is_none() => 0,
-                        KeyCode::End if search.is_none() => max_scroll,
-                        KeyCode::Char('g') if search.is_none() => 0,
-                        KeyCode::Char('G') if search.is_none() => max_scroll,
-                        _ => scroll,
-                    };
-                    let target = target.min(max_scroll);
-                    if target != scroll {
-                        scroll = target;
-                        dirty = true;
+                        let target = match key.code {
+                            KeyCode::PageUp => scroll.saturating_sub(page.saturating_sub(2)),
+                            KeyCode::PageDown => scroll + page.saturating_sub(2),
+                            KeyCode::Home if search.is_none() => 0,
+                            KeyCode::End if search.is_none() => max_scroll,
+                            KeyCode::Char('g') if search.is_none() => 0,
+                            KeyCode::Char('G') if search.is_none() => max_scroll,
+                            _ => scroll,
+                        };
+                        let target = target.min(max_scroll);
+                        if target != scroll {
+                            scroll = target;
+                            dirty = true;
+                        }
                     }
                 }
                 Event::Resize(..) => {
@@ -3922,10 +4056,7 @@ mod tests {
         );
         let span = &rendered.spans[selectable[0]];
         assert_eq!(span.key, "o/portal#7@live");
-        assert_eq!(
-            span.peek.as_ref().unwrap().screen_path,
-            capture.path().join("screen.txt")
-        );
+        assert_eq!(span.peek.as_ref().unwrap().session_dir, capture.path());
         let block =
             crate::parsers::strip_ansi_for_debug(&rendered.lines[span.start..span.end].join("\n"));
         assert!(
@@ -3934,23 +4065,27 @@ mod tests {
         );
     }
 
-    #[test]
-    fn peek_pane_shows_the_screen_tail_under_a_titled_header() {
-        let capture = tempfile::tempdir().unwrap();
-        let screen_path = capture.path().join("screen.txt");
-        std::fs::write(&screen_path, "one\ntwo\nthree\nfour\n").unwrap();
-        let spans = vec![RowSpan {
+    fn peek_spans(capture: &tempfile::TempDir) -> Vec<RowSpan> {
+        vec![RowSpan {
             key: "k".to_string(),
             start: 0,
             end: 1,
             peek: Some(PeekTarget {
                 title: "Fix the flaky test".to_string(),
                 dir_name: "portal".to_string(),
-                screen_path,
+                session_dir: capture.path().to_path_buf(),
             }),
-        }];
+        }]
+    }
 
-        let pane = build_peek_pane(&spans, Some("k"), 80, 4);
+    #[test]
+    fn peek_pane_shows_the_screen_tail_under_a_titled_header() {
+        let capture = tempfile::tempdir().unwrap();
+        std::fs::write(capture.path().join("screen.txt"), "one\ntwo\nthree\nfour\n").unwrap();
+        let spans = peek_spans(&capture);
+        let mut transcripts = TranscriptCache::default();
+
+        let pane = build_peek_pane(&spans, Some("k"), 80, 4, None, &mut transcripts);
         assert_eq!(pane.len(), 4, "borders plus the screen rows that fit");
         assert!(pane[0].contains('┏') && pane[0].contains('┓'));
         assert_eq!(
@@ -3967,12 +4102,52 @@ mod tests {
         assert!(pane[2].contains("four"));
         assert!(pane[3].contains('┗') && pane[3].contains('┛'));
 
-        let missing = build_peek_pane(&spans, Some("unknown"), 80, 4);
+        let missing = build_peek_pane(&spans, Some("unknown"), 80, 4, None, &mut transcripts);
         assert!(
             missing[1].contains("no live screen"),
             "a vanished session reads as such instead of a stale screen"
         );
         assert_eq!(missing.len(), 4, "the box keeps its size without content");
+    }
+
+    #[test]
+    fn scrolled_peek_pane_windows_the_transcript_and_says_how_far_back() {
+        let capture = tempfile::tempdir().unwrap();
+        std::fs::write(capture.path().join("screen.txt"), "live\n").unwrap();
+        let transcript: String = (1..=10).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(capture.path().join("scrollback.log"), transcript).unwrap();
+        let spans = peek_spans(&capture);
+        let mut transcripts = TranscriptCache::default();
+
+        let pane = build_peek_pane(&spans, Some("k"), 80, 4, Some(3), &mut transcripts);
+        assert!(pane[1].contains("line 4"), "window starts at the anchor");
+        assert!(pane[2].contains("line 5"));
+        assert!(
+            pane[0].contains("5 back"),
+            "the header says how far back the view is: {}",
+            pane[0]
+        );
+        assert!(pane[0].contains('≡'));
+    }
+
+    #[test]
+    fn peek_scroll_anchors_climbs_and_returns_to_live() {
+        // 10 transcript lines, a 4-line interior: the tail anchors at 6.
+        assert_eq!(step_peek_scroll(None, -1, 10, 4), Some(5), "first ↑ anchors and moves");
+        assert_eq!(step_peek_scroll(Some(5), -1, 10, 4), Some(4));
+        assert_eq!(step_peek_scroll(Some(0), -1, 10, 4), Some(0), "clamped at the top");
+        assert_eq!(step_peek_scroll(Some(4), 1, 10, 4), Some(5));
+        assert_eq!(
+            step_peek_scroll(Some(5), 1, 10, 4),
+            None,
+            "reaching the tail returns to the live screen"
+        );
+        assert_eq!(step_peek_scroll(None, 1, 10, 4), None, "↓ while live stays live");
+        assert_eq!(
+            step_peek_scroll(None, -1, 3, 4),
+            None,
+            "a transcript that fits the window has nothing to scroll into"
+        );
     }
 
     /// The all-sessions view builds rows from the cloud record, which has no
