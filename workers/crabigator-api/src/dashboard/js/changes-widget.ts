@@ -632,8 +632,9 @@ export const changesWidgetJs = `
                 prOverridesLoadStarted = true;
                 loadPrOverrides();
             }
-            // Collapsed by default: one line per PR. Click the header to expand
-            // into the full view (PR title + branch).
+            // Collapsed by default: only primary PRs, one compact line each.
+            // Clicking the header reveals the secondary PRs and the full view
+            // (PR title + branch).
             const expanded = !!(sessionData && sessionData.prsExpanded);
 
             // Dismissed PRs disappear; primaries render above secondaries.
@@ -648,8 +649,18 @@ export const changesWidgetJs = `
                 return;
             }
 
-            const label = visible.length === 1 ? '1 PR' : visible.length + ' PRs';
-            const rows = visible.map(pr => {
+            const primaries = visible.filter(pr => disposition(pr) === 'primary');
+            const secondaries = visible.filter(pr => disposition(pr) !== 'primary');
+            const shown = expanded ? visible : primaries;
+
+            const countLabel = n => n === 1 ? '1 PR' : n + ' PRs';
+            // Collapsed with hidden secondaries: show what's hidden so the
+            // chevron has a reason to be tapped.
+            const label = expanded || !secondaries.length || !primaries.length
+                ? countLabel(visible.length)
+                : countLabel(primaries.length)
+                    + ' <span class="pr-list-more">+' + secondaries.length + ' more</span>';
+            const rows = shown.map(pr => {
                 const stateInfo = prStateInfo(pr);
                 const repoLabel = (pr.repo || 'PR') + ' #' + pr.number;
                 const badge = stateInfo.label
@@ -702,18 +713,26 @@ export const changesWidgetJs = `
                 + '<span class="pr-list-count">' + label + '</span></div>' + rows;
             // Attach handlers via JS (avoids escaping quotes inside the outer
             // template literal, which broke an inline onclick).
+            // Every tap stops here: the session card behind this section has
+            // its own tap targets and must not react to PR-section taps.
+            widget.onclick = ev => ev.stopPropagation();
             const titleEl = widget.querySelector('.pr-list-title');
-            if (titleEl) titleEl.onclick = () => togglePrs(sessionId);
+            if (titleEl) titleEl.onclick = ev => {
+                ev.stopPropagation();
+                togglePrs(sessionId);
+            };
             widget.querySelectorAll('.pr-row').forEach((rowEl, i) => {
-                const pr = visible[i];
+                const pr = shown[i];
                 if (!pr) return;
                 const starEl = rowEl.querySelector('.pr-primary-toggle');
-                if (starEl) starEl.onclick = () => {
+                if (starEl) starEl.onclick = ev => {
+                    ev.stopPropagation();
                     postPrOverride(pr, disposition(pr) === 'primary' ? 'secondary' : 'primary');
                     rerenderAllPrLists();
                 };
                 const dismissEl = rowEl.querySelector('.pr-dismiss');
-                if (dismissEl) dismissEl.onclick = () => {
+                if (dismissEl) dismissEl.onclick = ev => {
+                    ev.stopPropagation();
                     postPrOverride(pr, 'dismissed');
                     rerenderAllPrLists();
                 };

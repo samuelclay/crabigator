@@ -258,6 +258,9 @@ body.hide-section-prs .session-prs { display: none !important; }
     background: linear-gradient(180deg, #a371f7, rgba(163, 113, 247, 0.05));
     opacity: 0.85;
 }
+/* Header is its own full-width tap target. The padding/negative-margin pair
+   grows the touch area into the surrounding whitespace without moving
+   anything, so a tap near the title can't land on a PR row's controls. */
 .session-prs .pr-list-title {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 10px;
@@ -267,6 +270,9 @@ body.hide-section-prs .session-prs { display: none !important; }
     font-weight: 600;
     cursor: pointer;
     user-select: none;
+    padding: 6px 0;
+    margin: -6px 0;
+    -webkit-tap-highlight-color: transparent;
 }
 .session-prs .pr-list-title:hover { color: #d6bffb; }
 .session-prs .pr-list-chevron {
@@ -280,6 +286,10 @@ body.hide-section-prs .session-prs { display: none !important; }
     margin-left: 6px;
     text-transform: none;
     letter-spacing: 0;
+}
+/* Hidden-secondaries hint next to the count while collapsed. */
+.session-prs .pr-list-more {
+    opacity: 0.75;
 }
 /* Collapsed rows are a single tight line. */
 .session-prs .pr-row.pr-collapsed {
