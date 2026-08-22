@@ -221,15 +221,17 @@ body.hide-section-prs .session-prs { display: none !important; }
 .recap-history-widget .rh-delta .rd-add { color: var(--accent-green); }
 .recap-history-widget .rh-delta .rd-del { color: var(--accent-red); }
 
-/* Slightly tighter recap header on narrow cards. */
+/* Narrow cards: the status label ("Latest recap" / "Previous recap") sits
+   above the headline instead of beside it — there isn't enough width on a
+   phone for a side-by-side layout. Meta shares the status row, right-aligned. */
 @media (max-width: 720px) {
     .session-recap {
-        grid-template-columns: auto 1fr;
+        grid-template-columns: 1fr auto;
         grid-template-areas:
-            "status headline"
-            ".      bullets"
-            "meta   meta";
-        max-height: 110px;
+            "status   meta"
+            "headline headline"
+            "bullets  bullets";
+        max-height: 128px;
     }
     .session-recap.expanded {
         max-height: none;
