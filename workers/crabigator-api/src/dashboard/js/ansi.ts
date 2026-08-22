@@ -22,6 +22,13 @@ export const ansiJs = `
 
             text = text.split('\\n').map(trimLineEndPreserveAnsi).join('\\n');
 
+            // Claude Code's paragraph bullet ⏺ (and friends ⏸ ⏹, plus the
+            // ✳ spinner) are single-width in the terminal, but browsers give
+            // them double-width color emoji glyphs by default. That makes text
+            // bounce sideways when the bullet blinks. Variation selector 15
+            // (U+FE0E) forces the single-width monochrome text glyph.
+            text = text.replace(/[\\u23F8-\\u23FA\\u2733]/g, '$&\\uFE0E');
+
             const colors = {
                 30: '#0d1117', 31: '#f85149', 32: '#3fb950', 33: '#d29922',
                 34: '#58a6ff', 35: '#bc8cff', 36: '#39c5cf', 37: '#c9d1d9',
