@@ -632,9 +632,9 @@ export const changesWidgetJs = `
                 prOverridesLoadStarted = true;
                 loadPrOverrides();
             }
-            // Collapsed by default: only primary PRs, one compact line each.
-            // Clicking the header reveals the secondary PRs and the full view
-            // (PR title + branch).
+            // Collapsed by default: only primary PRs. Clicking the header
+            // reveals the secondary PRs too. Every row shows full detail
+            // (PR title + branch) in both states.
             const expanded = !!(sessionData && sessionData.prsExpanded);
 
             // Dismissed PRs disappear; primaries render above secondaries.
@@ -691,10 +691,6 @@ export const changesWidgetJs = `
                     + prCommentsBadge(pr) + prMergeBadge(pr) + dismiss + '</span>';
 
                 const secondary = isPrimary ? '' : ' pr-secondary';
-                if (!expanded) {
-                    // One compact line: repo #num + diff on the left, status on the right.
-                    return '<div class="pr-row pr-collapsed' + secondary + '"><div class="pr-row-top">' + star + link + diff + status + '</div></div>';
-                }
                 const branch = pr.branch
                     ? '<span class="pr-branch" title="' + escapeHtml(pr.branch) + '">⎇ ' + escapeHtml(pr.branch) + '</span>'
                     : '';

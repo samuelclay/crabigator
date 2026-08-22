@@ -293,10 +293,6 @@ body.hide-section-prs .session-prs { display: none !important; }
 .session-prs .pr-list-more {
     opacity: 0.75;
 }
-/* Collapsed rows are a single tight line. */
-.session-prs .pr-row.pr-collapsed {
-    padding: 4px 8px;
-}
 .session-prs .pr-row {
     display: flex;
     flex-direction: column;
