@@ -353,6 +353,23 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     }
 }
 
+/* Phones: sessions run edge-to-edge (tablets keep the small margin above) */
+@media (max-width: 600px) {
+    .container {
+        padding-left: 0;
+        padding-right: 0;
+    }
+    .session-card {
+        border-left: none;
+        border-right: none;
+        border-radius: 0;
+    }
+    .session-header,
+    .input-area {
+        border-radius: 0;
+    }
+}
+
 /* Git files list */
 .git-file {
     display: flex;
