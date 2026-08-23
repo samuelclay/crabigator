@@ -134,6 +134,75 @@ export async function backfillSessionPrs(request: Request, env: Env): Promise<Re
     });
 }
 
+/** One session's scrollback matches, as SessionDO's /search returns them. */
+interface ScrollbackHit {
+    session_id: string;
+    total: number;
+    /** The newest matching line, for the collapsed one-line preview. */
+    collapsed: string;
+    /** The last few matches with context, for the expanded preview. */
+    rows: { text: string; is_match: boolean; gap_before: boolean }[];
+}
+
+/** The desktop board needs three characters before it greps transcripts. */
+const SEARCH_QUERY_MIN = 3;
+/** Enough live sessions to cover any real board without a runaway fan-out. */
+const SEARCH_SESSION_LIMIT = 60;
+
+/**
+ * GET /api/prs/search?q= - Grep the group's live session scrollback, so the
+ * web PR board's search reaches the same text the desktop board greps in each
+ * session's local scrollback.log. Only running sessions hold scrollback, so
+ * ended sessions contribute nothing.
+ */
+export async function searchSessionScrollback(request: Request, env: Env): Promise<Response> {
+    const groupId = await boardGroupId(request, env);
+    if (groupId instanceof Response) return groupId;
+
+    const query = (new URL(request.url).searchParams.get('q') || '').trim();
+    if (query.length < SEARCH_QUERY_MIN) return jsonResponse({ results: [] });
+
+    const sessions = await env.DB.prepare(
+        `SELECT s.id
+         FROM sessions s
+         JOIN devices d ON d.id = s.device_id
+         WHERE d.group_id = ? AND s.is_active = 1
+         ORDER BY s.last_seen_at DESC
+         LIMIT ?`
+    )
+        .bind(groupId, SEARCH_SESSION_LIMIT)
+        .all<{ id: string }>();
+
+    const rows = sessions.results ?? [];
+    const results: ScrollbackHit[] = [];
+    // Small batches keep DO wakes and subrequests well inside limits.
+    for (let i = 0; i < rows.length; i += 10) {
+        const chunk = rows.slice(i, i + 10);
+        const hits = await Promise.all(
+            chunk.map(async (session): Promise<ScrollbackHit | null> => {
+                try {
+                    const stub = env.SESSION.get(env.SESSION.idFromName(session.id));
+                    const response = await stub.fetch(
+                        new Request(`https://internal/search?q=${encodeURIComponent(query)}`)
+                    );
+                    if (!response.ok) return null;
+                    const data = (await response.json()) as Omit<ScrollbackHit, 'session_id'>;
+                    if (!data?.total) return null;
+                    return { session_id: session.id, ...data };
+                } catch {
+                    // A dead or unreachable DO just contributes no matches.
+                    return null;
+                }
+            })
+        );
+        for (const hit of hits) {
+            if (hit) results.push(hit);
+        }
+    }
+
+    return jsonResponse({ results });
+}
+
 /** One aggregated PR on the board: freshest data + per-session engagement. */
 interface BoardEntry {
     owner: string;

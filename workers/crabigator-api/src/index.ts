@@ -3,7 +3,7 @@ import type { Env } from './types/env';
 import type { SessionInfo } from './types/session';
 import { registerDevice, deviceHeartbeat, getLinkedDevices, revokeLinkedDevice } from './handlers/devices';
 import { getPrOverrides, setPrOverride, getPrActionPage } from './handlers/pr-overrides';
-import { getPrBoard, backfillSessionPrs } from './handlers/pr-board';
+import { getPrBoard, backfillSessionPrs, searchSessionScrollback } from './handlers/pr-board';
 import { createSession, getSession, updateSession, deleteSession } from './handlers/sessions';
 import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCodePage, generateInviteCode } from './handlers/pairing';
 import { requireAuth, requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
@@ -153,6 +153,7 @@ router.post('/api/pr-overrides', setPrOverride);
 router.get('/pr-action', getPrActionPage);
 // Cross-session PR board (durable, D1-backed)
 router.get('/api/prs/board', getPrBoard);
+router.get('/api/prs/search', searchSessionScrollback);
 // One-shot: pull stored PR lists out of pre-write-through SessionDOs into D1
 router.post('/api/prs/backfill', backfillSessionPrs);
 

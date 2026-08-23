@@ -72,6 +72,70 @@ function recapBrief(event: any): string | null {
     });
 }
 
+/**
+ * Scrollback search, matching the desktop board's transcript search: one or
+ * two letters hit nearly every line, so a query needs three characters; the
+ * expanded preview shows the last few matches with a little context each.
+ */
+const SCROLLBACK_QUERY_MIN = 3;
+const SCROLLBACK_PREVIEW_MATCHES = 3;
+const SCROLLBACK_PREVIEW_CONTEXT = 2;
+
+/** One line of a scrollback preview, before the client styles it. */
+interface ScrollbackPreviewRow {
+    text: string;
+    is_match: boolean;
+    /** This row opens a new context group — the client draws a `⋯` first. */
+    gap_before: boolean;
+}
+
+/**
+ * Terminal styling has no meaning in a text search, so drop it first: OSC
+ * strings (including hyperlinks), then CSI and other escape sequences.
+ */
+function stripAnsi(text: string): string {
+    return text
+        .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+        .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+        .replace(/\x1b[@-Z\\-_]/g, '')
+        .replace(/\r/g, '');
+}
+
+/** JSON body for the DO's internal search route. */
+function searchResponse(data: unknown): Response {
+    return new Response(JSON.stringify(data), {
+        headers: { 'Content-Type': 'application/json' },
+    });
+}
+
+/**
+ * Context windows around the last few matches, merged where they touch —
+ * the same shape the desktop board's expanded preview uses.
+ */
+function previewRows(lines: string[], matches: number[]): ScrollbackPreviewRow[] {
+    const recent = matches.slice(-SCROLLBACK_PREVIEW_MATCHES);
+    const ranges: [number, number][] = [];
+    for (const index of recent) {
+        const start = Math.max(0, index - SCROLLBACK_PREVIEW_CONTEXT);
+        const end = Math.min(lines.length - 1, index + SCROLLBACK_PREVIEW_CONTEXT);
+        const last = ranges[ranges.length - 1];
+        if (last && start <= last[1] + 1) last[1] = Math.max(last[1], end);
+        else ranges.push([start, end]);
+    }
+    const matched = new Set(matches);
+    const rows: ScrollbackPreviewRow[] = [];
+    ranges.forEach(([start, end], group) => {
+        for (let index = start; index <= end; index++) {
+            rows.push({
+                text: lines[index],
+                is_match: matched.has(index),
+                gap_before: group > 0 && index === start,
+            });
+        }
+    });
+    return rows;
+}
+
 /** Viewer activity timeout - 35s to allow for 5s heartbeat intervals */
 const VIEWER_ACTIVITY_TIMEOUT_MS = 35_000;
 /** Desktop heartbeat cadence is 2h; allow multiple missed beats before culling. */
@@ -223,6 +287,11 @@ export class SessionDO implements DurableObject {
                     JSON.stringify({ prs: this.persistentState.lastPrs || [] }),
                     { headers: { 'Content-Type': 'application/json' } }
                 );
+            case '/search':
+                // Grep this session's accumulated scrollback — the web PR
+                // board's search, standing in for the desktop board's read of
+                // the session's local scrollback.log.
+                return this.handleScrollbackSearch(request);
             case '/viewer-active':
                 return this.handleViewerActive();
             case '/spawn':
@@ -433,6 +502,30 @@ export class SessionDO implements DurableObject {
         if (statements.length > 0) {
             this.env.DB.batch(statements).catch(() => {});
         }
+    }
+
+    /**
+     * Search this session's scrollback and return the same preview rows the
+     * desktop board builds: the newest matching line on its own, plus the
+     * last few matches with surrounding context for the expanded view.
+     */
+    private handleScrollbackSearch(request: Request): Response {
+        const query = (new URL(request.url).searchParams.get('q') || '').toLowerCase();
+        const empty = { total: 0, collapsed: '', rows: [] as ScrollbackPreviewRow[] };
+        if (query.length < SCROLLBACK_QUERY_MIN || !this.ephemeralState.scrollbackContent) {
+            return searchResponse(empty);
+        }
+        const lines = stripAnsi(this.ephemeralState.scrollbackContent).split('\n');
+        const matches: number[] = [];
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].toLowerCase().includes(query)) matches.push(i);
+        }
+        if (matches.length === 0) return searchResponse(empty);
+        return searchResponse({
+            total: matches.length,
+            collapsed: lines[matches[matches.length - 1]],
+            rows: previewRows(lines, matches),
+        });
     }
 
     /**
