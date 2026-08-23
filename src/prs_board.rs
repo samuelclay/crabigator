@@ -1415,8 +1415,8 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                     platform: cloud_session_platform(s.platform, &s.title),
                     dir_name: s.dir_name,
                     session_dir: None,
+                    title_set_at: s.title_set_at,
                     title: s.title,
-                    title_set_at: 0,
                     recap,
                     state,
                     prompted_at: activity_timestamp_secs(s.prompts_changed_at),
@@ -1474,8 +1474,8 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
             platform: cloud_session_platform(session.platform, &session.title),
             dir_name: session.dir_name,
             session_dir: None,
+            title_set_at: session.title_set_at,
             title: session.title,
-            title_set_at: 0,
             recap,
             prompted_at: activity_timestamp_secs(session.prompts_changed_at),
             completed_at: activity_timestamp_secs(session.completions_changed_at),
@@ -1485,10 +1485,12 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
             repo_name,
             branch: session.branch,
             session: session_ref,
+            // Ghostty tabs are a fact about this machine, so a session that
+            // is running elsewhere has none to point at.
             ghostty_tab: None,
-            uncommitted: 0,
-            additions: 0,
-            deletions: 0,
+            uncommitted: session.uncommitted,
+            additions: session.additions,
+            deletions: session.deletions,
         });
     }
     sort_workspaces(&mut workspaces);

@@ -85,6 +85,18 @@ pub struct CloudBoardSession {
     /// The session's current terminal title.
     #[serde(default)]
     pub title: String,
+    /// Unix ms when that title was set; 0 when unknown.
+    #[serde(default)]
+    pub title_set_at: u64,
+    /// Uncommitted files in the session's worktree.
+    #[serde(default)]
+    pub uncommitted: usize,
+    /// Lines added across those uncommitted files.
+    #[serde(default)]
+    pub additions: i64,
+    /// Lines removed across those uncommitted files.
+    #[serde(default)]
+    pub deletions: i64,
     /// The session's latest recap brief, when one was recorded.
     #[serde(default)]
     pub recap: Option<CloudSessionRecap>,
