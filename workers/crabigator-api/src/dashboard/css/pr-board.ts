@@ -23,11 +23,15 @@ export const prBoardCss = `
 
 /* The board pane replaces the session grid while open */
 .pr-board {
-    flex: 1;
+    /* The board owns the viewport below the fixed header so its rows scroll
+       inside it and the quick look pane can hold the bottom half. */
+    height: calc(100vh - var(--header-height, 67px));
+    height: calc(100dvh - var(--header-height, 67px));
     min-width: 0;
-    padding: 14px 18px 48px;
-    overflow-x: hidden;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 14px 18px 14px;
+    overflow: hidden;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 11px;
     line-height: 1.6;
@@ -51,6 +55,8 @@ export const prBoardCss = `
 .prb-ctl u { text-underline-offset: 2px; }
 .prb-step { padding: 0 2px; }
 .prb-step:hover { color: #ffd700; }
+.prb-keys { color: #585858; white-space: nowrap; }
+.prb-keys u { text-underline-offset: 2px; }
 .prb-searchwrap { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 #prb-search {
     background: rgba(255, 255, 255, 0.04);
@@ -71,6 +77,11 @@ export const prBoardCss = `
     grid-template-columns: minmax(0, 1fr) max-content max-content;
     column-gap: 16px;
     align-content: start;
+    flex: 1;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-bottom: 34px;
 }
 .prb-bucket {
     grid-column: 1 / -1;
@@ -130,9 +141,15 @@ a.prb-ident:hover { text-decoration: underline; }
     min-width: 0;
 }
 .prb-activity { white-space: nowrap; justify-self: end; }
-/* The web quick look: an activity cell that can focus its live session */
-.prb-peek { cursor: pointer; border-radius: 3px; }
-.prb-peek:hover { background: rgba(0, 215, 255, 0.12); }
+/* The activity cell of a live session opens the quick look pane. */
+.prb-peek-open { cursor: pointer; border-radius: 3px; }
+.prb-peek-open:hover { background: rgba(0, 215, 255, 0.12); }
+/* The selection band: the ↑↓ cursor, matching the CLI's highlighted row. */
+.prb-row.prb-sel { background: rgba(0, 215, 255, 0.14); }
+.prb-row.prb-sel:hover { background: rgba(0, 215, 255, 0.18); }
+/* A session row's uncommitted diff and file count, in the PR columns. */
+.prb-wsdiff, .prb-wsfiles { white-space: nowrap; flex-shrink: 0; }
+.prb-wsfiles { color: #585858; }
 .prb-status {
     white-space: nowrap;
     justify-self: end;
@@ -174,7 +191,47 @@ a.prb-difffiles:hover { text-decoration: underline; }
 .prb-pv-dir { color: #00d7ff; }
 .prb-pv-text { color: #8a8a8a; }
 .prb-pv-ctx { padding-left: 31px; }
+.prb-pv-dim { color: #585858; }
+.prb-pv-gap { color: #585858; }
 .prb-mark { background: #ffd700; color: #000; border-radius: 2px; padding: 0 1px; }
+
+/* Quick look pane: the selected session's live screen (or a window into its
+   transcript) boxed in the bottom half, so it reads as a temporary read-only
+   overlay rather than more board content. */
+.prb-peek {
+    flex: 0 0 50%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin-top: 8px;
+    border: 1px solid #00d7ff;
+    border-radius: 4px;
+    overflow: hidden;
+}
+.prb-peek[hidden] { display: none !important; }
+.prb-peek-top {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 2px 8px;
+    border-bottom: 1px solid rgba(0, 215, 255, 0.35);
+    color: #c9d1d9;
+    white-space: nowrap;
+}
+.prb-peek-glyph { color: #00d7ff; }
+.prb-peek-title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.prb-peek-dir { color: #585858; }
+.prb-peek-keys { margin-left: auto; color: #585858; }
+.prb-peek-body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 2px 8px;
+    white-space: pre;
+    color: #c9d1d9;
+}
+.prb-peek-line { overflow: hidden; text-overflow: clip; }
+.prb-peek-empty { color: #8a8a8a; }
 
 /* Narrow screens: aligned columns collapse into wrapped lines so the board
    never scrolls horizontally. */
@@ -189,5 +246,7 @@ a.prb-difffiles:hover { text-decoration: underline; }
     .prb-activity { margin-left: 19px; }
     .prb-status { margin-left: auto; }
     .prb-l2-right, .prb-dl-right { margin-left: auto; }
+    .prb-keys { display: none; }
+    .prb-peek { flex-basis: 45%; }
 }
 `;
