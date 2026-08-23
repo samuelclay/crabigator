@@ -13,10 +13,15 @@ interface BoardSessionRow {
     prompts_changed_at: number | null;
     completions_changed_at: number | null;
     titles: string | null;
+    titles_changed_at: number | null;
     recap: string | null;
     repo_owner: string | null;
     repo_name: string | null;
     branch: string | null;
+    uncommitted_files: number | null;
+    additions: number | null;
+    deletions: number | null;
+    slack_threads: string | null;
 }
 
 interface SessionPrRow extends BoardSessionRow {
@@ -153,6 +158,14 @@ interface BoardEntry {
         completions_changed_at: number;
         /** The session's current terminal title (last of the titles history). */
         title: string;
+        /** Unix ms when that title was set; 0 when unknown. */
+        title_set_at: number;
+        /** Uncommitted files in the session's worktree. */
+        uncommitted: number;
+        /** Lines added across those uncommitted files. */
+        additions: number;
+        /** Lines removed across those uncommitted files. */
+        deletions: number;
         /** The session's latest recap brief, when one was recorded. */
         recap: SessionRecapBrief | null;
     }[];
@@ -189,6 +202,46 @@ function sessionRecap(raw: string | null): SessionRecapBrief | null {
     }
 }
 
+/**
+ * A Slack permalink's display identity, as the desktop learned it. The board
+ * labels links `#channel · Author`, falling back to the channel ID in the
+ * permalink when a session never carried the enriched metadata.
+ */
+interface BoardSlackThread {
+    url: string;
+    channel?: string;
+    author?: string;
+}
+
+/** Collect every session's enriched Slack threads, newest label winning. */
+function collectSlackThreads(
+    rows: BoardSessionRow[],
+    into: Map<string, BoardSlackThread>
+): void {
+    for (const row of rows) {
+        if (!row.slack_threads) continue;
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(row.slack_threads);
+        } catch {
+            continue;
+        }
+        if (!Array.isArray(parsed)) continue;
+        for (const thread of parsed) {
+            const url = typeof thread?.url === 'string' ? thread.url : '';
+            if (!url) continue;
+            const existing = into.get(url);
+            const channel = typeof thread.channel === 'string' ? thread.channel : '';
+            const author = typeof thread.author === 'string' ? thread.author : '';
+            into.set(url, {
+                url,
+                channel: channel || existing?.channel || '',
+                author: author || existing?.author || '',
+            });
+        }
+    }
+}
+
 function stringArray(value: unknown): string[] {
     return Array.isArray(value)
         ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
@@ -211,6 +264,10 @@ function boardSession(row: BoardSessionRow): BoardSession {
         prompts_changed_at: row.prompts_changed_at || 0,
         completions_changed_at: row.completions_changed_at || 0,
         title: sessionTitle(row.titles),
+        title_set_at: row.titles_changed_at || 0,
+        uncommitted: row.uncommitted_files || 0,
+        additions: row.additions || 0,
+        deletions: row.deletions || 0,
         recap: sessionRecap(row.recap),
     };
 }
@@ -376,7 +433,9 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
                 sp.is_primary,
                 s.platform, s.cwd, s.state AS session_state, s.is_active, s.last_seen_at,
                 s.prompts_changed_at, s.completions_changed_at,
-                s.titles, s.recap, s.repo_owner, s.repo_name, s.branch,
+                s.titles, s.titles_changed_at, s.recap,
+                s.repo_owner, s.repo_name, s.branch,
+                s.uncommitted_files, s.additions, s.deletions, s.slack_threads,
                 o.disposition
          FROM session_prs sp
          JOIN sessions s ON s.id = sp.session_id
@@ -479,7 +538,9 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         `SELECT s.id AS session_id, s.platform, s.cwd, s.state AS session_state,
                 s.is_active, s.last_seen_at,
                 s.prompts_changed_at, s.completions_changed_at,
-                s.titles, s.recap, s.repo_owner, s.repo_name, s.branch
+                s.titles, s.titles_changed_at, s.recap,
+                s.repo_owner, s.repo_name, s.branch,
+                s.uncommitted_files, s.additions, s.deletions, s.slack_threads
          FROM sessions s
          JOIN devices d ON d.id = s.device_id
          WHERE d.group_id = ? AND s.is_active = 1
@@ -490,5 +551,9 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         .all<BoardSessionRow>();
     const sessions = (sessionRows.results ?? []).map(boardSession);
 
-    return jsonResponse({ prs, sessions });
+    const slack = new Map<string, BoardSlackThread>();
+    collectSlackThreads(rows.results ?? [], slack);
+    collectSlackThreads(sessionRows.results ?? [], slack);
+
+    return jsonResponse({ prs, sessions, slack: [...slack.values()] });
 }

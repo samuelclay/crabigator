@@ -123,8 +123,10 @@ export class SessionDO implements DurableObject {
     private lastD1PrsUpdate: number = 0;
     /** Serialized form of the last session_prs write, to skip no-op writes */
     private lastD1PrsSnapshot: string = '';
-    /** Last repository identity written to the session row. */
+    /** Last repository identity and worktree numbers written to the session row. */
     private lastD1RepositorySnapshot: string = '';
+    /** Last Slack thread list written to the session row. */
+    private lastD1SlackSnapshot: string = '';
     /** Serializes stats persistence so external D1 I/O cannot reorder updates. */
     private statsUpdateQueue: Promise<void> = Promise.resolve();
 
@@ -434,27 +436,58 @@ export class SessionDO implements DurableObject {
     }
 
     /**
-     * Keep the session's repository and branch beside its durable session
-     * record. This lets the PR board retain active sessions before they have
-     * created or mentioned a pull request.
+     * Keep the Slack threads seen in this session beside its durable record.
+     * The desktop enriches each permalink with its channel name and author
+     * from local Slack metadata; storing the enriched thread lets the web PR
+     * board label Slack links the same way instead of showing channel IDs.
+     */
+    private persistSlackThreadsToD1(threads: SlackThread[]): void {
+        const sessionId = this.persistentState.sessionId || this.sessionInfo?.id;
+        if (!sessionId || threads.length === 0) return;
+        const snapshot = JSON.stringify(threads);
+        if (snapshot === this.lastD1SlackSnapshot) return;
+        this.env.DB.prepare('UPDATE sessions SET slack_threads = ? WHERE id = ?')
+            .bind(snapshot, sessionId)
+            .run()
+            .then(() => {
+                this.lastD1SlackSnapshot = snapshot;
+            })
+            .catch(() => {});
+    }
+
+    /**
+     * Keep the session's repository, branch, and working-tree numbers beside
+     * its durable session record. This lets the PR board retain active
+     * sessions before they have created or mentioned a pull request, and draw
+     * their uncommitted diff the way the desktop board does.
      */
     private persistRepositoryToD1(event: GitEvent): void {
         const sessionId = this.persistentState.sessionId || this.sessionInfo?.id;
         if (!sessionId) return;
+        const files = event.files || [];
+        const additions = files.reduce((sum, file) => sum + (file.additions || 0), 0);
+        const deletions = files.reduce((sum, file) => sum + (file.deletions || 0), 0);
         const snapshot = JSON.stringify([
             event.repo_owner || '',
             event.repo_name || '',
             event.branch || '',
+            files.length,
+            additions,
+            deletions,
         ]);
         if (snapshot === this.lastD1RepositorySnapshot) return;
         this.env.DB.prepare(
             `UPDATE sessions
-             SET repo_owner = ?, repo_name = ?, branch = ?
+             SET repo_owner = ?, repo_name = ?, branch = ?,
+                 uncommitted_files = ?, additions = ?, deletions = ?
              WHERE id = ?`
         ).bind(
             event.repo_owner || '',
             event.repo_name || '',
             event.branch || '',
+            files.length,
+            additions,
+            deletions,
             sessionId
         ).run()
             .then(() => {
@@ -613,17 +646,25 @@ export class SessionDO implements DurableObject {
                     persistentChanged = true;
                 }
                 break;
-            case 'title_history':
+            case 'title_history': {
+                const history = JSON.stringify(event.history || []);
+                const changed = history !== JSON.stringify(this.persistentState.lastTitleHistory);
                 this.persistentState.lastTitleHistory = event.history;
                 persistentChanged = true;
-                // Persist to D1 for analytics
-                if (event.history && event.history.length > 0 && this.persistentState.sessionId) {
-                    this.env.DB.prepare('UPDATE sessions SET titles = ? WHERE id = ?')
-                        .bind(JSON.stringify(event.history), this.persistentState.sessionId)
+                // Persist to D1 for analytics. The change time rides along so
+                // the PR board can pick the newest title among a PR's sessions
+                // the way the desktop board does — which means only a real
+                // change may move it.
+                if (changed && event.history?.length && this.persistentState.sessionId) {
+                    this.env.DB.prepare(
+                        'UPDATE sessions SET titles = ?, titles_changed_at = ? WHERE id = ?'
+                    )
+                        .bind(history, Date.now(), this.persistentState.sessionId)
                         .run()
                         .catch(() => {});
                 }
                 break;
+            }
             case 'recap': {
                 // Store the most recent recap state for late-joining SSE viewers.
                 const incoming = JSON.stringify(event);
@@ -653,6 +694,7 @@ export class SessionDO implements DurableObject {
             case 'slack_threads': {
                 this.persistentState.lastSlackThreads = event.threads;
                 persistentChanged = true;
+                this.persistSlackThreadsToD1(event.threads || []);
                 break;
             }
             case 'prs': {
