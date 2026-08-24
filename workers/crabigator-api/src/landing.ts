@@ -65,16 +65,16 @@ export const landingHtml = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crabigator - control Claude Code from anywhere</title>
-    <meta name="description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code sessions.">
-    <meta property="og:title" content="Crabigator - Control Claude Code from anywhere">
-    <meta property="og:description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code sessions.">
+    <title>Crabigator - control Claude Code, Codex, and opencode from anywhere</title>
+    <meta name="description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code, Codex, and opencode sessions.">
+    <meta property="og:title" content="Crabigator - Control Claude Code, Codex, and opencode from anywhere">
+    <meta property="og:description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code, Codex, and opencode sessions.">
     <meta property="og:image" content="https://drinkcrabigator.com/assets/og-landing.png">
     <meta property="og:url" content="https://drinkcrabigator.com/">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Crabigator">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Crabigator - Control Claude Code from anywhere">
+    <meta name="twitter:title" content="Crabigator - Control Claude Code, Codex, and opencode from anywhere">
     <meta name="twitter:description" content="Answer permissions, approve plans, and respond to questions from your phone.">
     <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-landing.png">
     <link rel="icon" href="data:image/svg+xml,${iconCrabigatorEncoded}">
@@ -122,11 +122,11 @@ export const landingHtml = `<!DOCTYPE html>
             <div class="hero-text">
                 <p class="hero-tagline">${iconPhone} Remote AI Control</p>
                 <h1 class="hero-headline">
-                    Control <span class="highlight">Claude Code</span> from anywhere
+                    Control <span class="highlight">Claude Code</span>, Codex &amp; opencode from anywhere
                 </h1>
                 <p class="hero-subheadline">
                     Answer permissions, approve plans, and respond to questions—all from your phone.
-                    Claude Code runs natively on Mac, Windows, or Linux—exactly as intended.
+                    Claude Code, Codex, and opencode run natively on Mac, Windows, or Linux—exactly as intended.
                 </p>
                 <div class="hero-install">
                     <div class="hero-install-command">
@@ -357,7 +357,7 @@ export const landingHtml = `<!DOCTYPE html>
                 <p class="section-label">${iconMultiDevice} Multi-device</p>
                 <h2 class="section-title">Check in from phone or desktop</h2>
                 <p class="section-subtitle">
-                    No Tmux. No Tailscale. No Termius. Native integration built for Claude Code.
+                    No Tmux. No Tailscale. No Termius. Native integration built for Claude Code, Codex, and opencode.
                     Pair any device in seconds—monitor progress and respond to prompts on the go.
                 </p>
                 <div class="showcase-status">
@@ -480,7 +480,7 @@ export const landingHtml = `<!DOCTYPE html>
                 <h2 class="section-title">Respond from anywhere</h2>
                 <p class="section-subtitle">
                     Answer permissions, review plans, and respond to questions—all from your phone or any browser.
-                    Add custom instructions before approving to guide Claude's next steps.
+                    Add custom instructions before approving to guide your agent's next steps.
                 </p>
                 <ul class="interactive-features">
                     <li>
@@ -489,15 +489,15 @@ export const landingHtml = `<!DOCTYPE html>
                     </li>
                     <li>
                         <span class="feature-icon">${iconCheck}</span>
-                        <span class="feature-text"><strong>Add instructions</strong> before approving—guide Claude's approach</span>
+                        <span class="feature-text"><strong>Add instructions</strong> before approving—guide the agent's approach</span>
                     </li>
                     <li>
                         <span class="feature-icon">${iconCheck}</span>
-                        <span class="feature-text"><strong>Answer questions</strong> when Claude needs clarification</span>
+                        <span class="feature-text"><strong>Answer questions</strong> when your agent needs clarification</span>
                     </li>
                     <li>
                         <span class="feature-icon">${iconCheck}</span>
-                        <span class="feature-text"><strong>Review plans</strong> before Claude starts implementing</span>
+                        <span class="feature-text"><strong>Review plans</strong> before your agent starts implementing</span>
                     </li>
                 </ul>
             </div>
@@ -515,7 +515,7 @@ export const landingHtml = `<!DOCTYPE html>
             <div class="bento-card tall">
                 <div class="bento-icon">${iconChartBento}</div>
                 <h3 class="bento-title">Session Statistics</h3>
-                <p class="bento-desc">Real-time metrics that update as Claude works. Track prompts, completions, tool calls, and session duration at a glance.</p>
+                <p class="bento-desc">Real-time metrics that update as your agent works. Track prompts, completions, tool calls, and session duration at a glance.</p>
                 <div class="bento-visual">
                     <div class="mini-widget">
                         <div class="widget-header-mini">${iconChart} Session Stats</div>
@@ -558,7 +558,7 @@ export const landingHtml = `<!DOCTYPE html>
             <div class="bento-card tall">
                 <div class="bento-icon">${iconFolderBento}</div>
                 <h3 class="bento-title">Git Changes</h3>
-                <p class="bento-desc">See every file Claude modifies with visual diff bars. Additions in green, deletions in red—know exactly what's changing.</p>
+                <p class="bento-desc">See every file your agent modifies with visual diff bars. Additions in green, deletions in red—know exactly what's changing.</p>
                 <div class="bento-visual">
                     <div class="mini-widget">
                         <div class="widget-header-mini">${iconFolder} 6 files</div>
@@ -602,8 +602,8 @@ export const landingHtml = `<!DOCTYPE html>
             </div>
             <div class="bento-card small">
                 <div class="bento-icon openai">${iconDiamond}</div>
-                <h3 class="bento-title">Codex CLI</h3>
-                <p class="bento-desc">Works seamlessly with OpenAI's Codex CLI.</p>
+                <h3 class="bento-title">Codex &amp; opencode</h3>
+                <p class="bento-desc">Works seamlessly with OpenAI's Codex CLI and opencode.</p>
             </div>
 
             <!-- Row 3-4: Semantic Diff (wide + tall) + File Links (tall) -->
@@ -773,7 +773,7 @@ export const landingHtml = `<!DOCTYPE html>
                     <div class="pricing-tier">Free</div>
                     <div class="pricing-amount">$0<span class="pricing-period">/month</span></div>
                     <ul class="pricing-features">
-                        <li><span class="check">${iconCheck}</span> Unlimited Claude Code sessions</li>
+                        <li><span class="check">${iconCheck}</span> Unlimited Claude Code, Codex &amp; opencode sessions</li>
                         <li><span class="check">${iconCheck}</span> Answer permissions & questions</li>
                         <li><span class="check">${iconCheck}</span> Unlimited web and mobile access</li>
                         <li><span class="check">${iconCheck}</span> Real-time sync</li>
@@ -787,7 +787,7 @@ export const landingHtml = `<!DOCTYPE html>
                     <div class="pricing-tier">Pro</div>
                     <div class="pricing-amount">$3<span class="pricing-period">/month</span></div>
                     <ul class="pricing-features">
-                        <li><span class="check">${iconCheck}</span> Unlimited Claude Code sessions</li>
+                        <li><span class="check">${iconCheck}</span> Unlimited Claude Code, Codex &amp; opencode sessions</li>
                         <li><span class="check">${iconCheck}</span> Answer permissions & questions</li>
                         <li><span class="check">${iconCheck}</span> Unlimited web and mobile access</li>
                         <li><span class="check">${iconCheck}</span> Real-time sync</li>
@@ -850,7 +850,7 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
             </div>
             <p class="github-desc">
-                A Rust TUI wrapper for Claude Code with real-time mobile streaming. MIT licensed.
+                A Rust TUI wrapper for Claude Code, Codex, and opencode with real-time mobile streaming. MIT licensed.
             </p>
             <div class="github-meta">
                 <span class="github-lang">
