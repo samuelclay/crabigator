@@ -468,6 +468,18 @@ export const changesWidgetJs = `
             return prExternalLink(pr.comments_url, 'pr-comments', '💬' + pr.unresolved_comments);
         }
 
+        // Review approval state, open PRs only: ✓ approved, ✗ changes
+        // requested, ⊘ a review dismissed by new commits, ◌ awaiting review.
+        function prReviewBadge(pr) {
+            if (pr.state !== 'OPEN') return '';
+            let review = ['◌', 'waiting', 'Awaiting review'];
+            if (pr.review_decision === 'APPROVED') review = ['✓', 'approved', 'Approved'];
+            else if (pr.review_decision === 'CHANGES_REQUESTED') review = ['✗', 'changes', 'Changes requested'];
+            else if (pr.review_dismissed) review = ['⊘', 'dismissed', 'Approval dismissed by new commits'];
+            return '<span class="pr-review ' + review[1] + '" title="' + review[2] + '">'
+                + review[0] + '</span>';
+        }
+
         // A badge that opens a GitHub page when one is known, else plain text.
         function prExternalLink(url, className, innerHtml) {
             if (!url) return '<span class="' + className + '">' + innerHtml + '</span>';
@@ -688,7 +700,7 @@ export const changesWidgetJs = `
                 const dismiss = '<span class="pr-dismiss" title="Dismiss this PR everywhere">✕</span>';
                 // Right-hand status cluster: state, CI, merge cleanliness.
                 const status = '<span class="pr-status">' + badge + prCiBadge(pr)
-                    + prCommentsBadge(pr) + prMergeBadge(pr) + dismiss + '</span>';
+                    + prCommentsBadge(pr) + prReviewBadge(pr) + prMergeBadge(pr) + dismiss + '</span>';
 
                 const secondary = isPrimary ? '' : ' pr-secondary';
                 const branch = pr.branch

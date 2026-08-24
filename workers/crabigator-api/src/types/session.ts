@@ -283,6 +283,7 @@ export interface SessionPr {
     last_mention_prompt?: number; // Session prompt counter at the latest mention
     branch_matched?: boolean; // Head branch matched session branch/worktree/pasted URL
     review_decision?: string; // APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED / ''
+    review_dismissed?: boolean; // A review was dismissed by new commits and never redone
     closed_at?: number;       // Unix ms of the merge/close (0 while open)
     primary?: boolean;        // The PR this session is actually working on
     primary_source?: string;  // 'auto' | 'session' | 'override'

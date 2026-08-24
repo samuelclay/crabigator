@@ -385,6 +385,7 @@ a.pr-diff:hover, a.pr-ci:hover, a.pr-comments:hover { text-decoration: underline
 }
 .session-prs .pr-ci,
 .session-prs .pr-comments,
+.session-prs .pr-review,
 .session-prs .pr-merge {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 10px;
@@ -401,6 +402,12 @@ a.pr-diff:hover, a.pr-ci:hover, a.pr-comments:hover { text-decoration: underline
 .session-prs .pr-merge.clean { color: var(--accent-green); }
 .session-prs .pr-merge.conflict { color: var(--accent-red); }
 .session-prs .pr-merge.behind { color: #d29922; }
+/* Review approval glyph: green approved, red changes requested, orange for
+   an approval dismissed by new commits, dim while still awaiting review. */
+.session-prs .pr-review.approved { color: var(--accent-green); }
+.session-prs .pr-review.changes { color: var(--accent-red); }
+.session-prs .pr-review.dismissed { color: #f0883e; }
+.session-prs .pr-review.waiting { color: #6e7681; }
 .session-prs .pr-title {
     color: var(--text-mid);
     font-size: 11.5px;

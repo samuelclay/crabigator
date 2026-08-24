@@ -447,6 +447,15 @@ export const prBoardJs = `
                 cells.push(prbLink(pr.comments_url,
                     '<span style="color:' + PRB_C.orange + '">💬' + pr.unresolved_comments + '</span>'));
             }
+            // Review approval state, open PRs only: approved, changes
+            // requested, a review dismissed by new commits, or still waiting.
+            if (pr.state === 'OPEN') {
+                let review = ['◌', PRB_C.darkGray, 'Awaiting review'];
+                if (pr.review_decision === 'APPROVED') review = ['✓', PRB_C.green, 'Approved'];
+                else if (pr.review_decision === 'CHANGES_REQUESTED') review = ['✗', PRB_C.red, 'Changes requested'];
+                else if (pr.review_dismissed) review = ['⊘', PRB_C.orange, 'Approval dismissed by new commits'];
+                cells.push('<span style="color:' + review[1] + '" title="' + review[2] + '">' + review[0] + '</span>');
+            }
             if (pr.mergeable === 'CONFLICTING') {
                 cells.push('<span style="color:' + PRB_C.red + '">conflicts</span>');
             } else if (pr.mergeable === 'MERGEABLE') {
