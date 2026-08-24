@@ -958,9 +958,16 @@ fn aggregate(
     let now = now_secs();
     let mut merged: HashMap<String, BoardPr> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
+    // PRs a session holds a verified claim on, and the sessions the strict
+    // ownership gate below left unrepresented paired with the primary PR their
+    // own classifier picked (cross-repo reviews, replying to someone else's
+    // branch). Both are resolved after the merge pass.
+    let mut owned: HashSet<String> = HashSet::new();
+    let mut fallbacks: Vec<(&SessionSnapshot, String)> = Vec::new();
 
     for session in snapshots {
-        let session_age = (now - session.last_updated).max(0.0);
+        let mut represented = false;
+        let mut fallback: Option<(String, u64)> = None;
         for stored_pr in &session.prs {
             let key = format!(
                 "{}/{}#{}",
@@ -969,7 +976,7 @@ fn aggregate(
             let effective_pr = effective_session_pr(session, stored_pr, overrides.get(&key));
             let pr = &effective_pr;
             let entry = merged.entry(key.clone()).or_insert_with(|| {
-                order.push(key);
+                order.push(key.clone());
                 // Engagement counters accumulate below, per contributing
                 // session — start the merged copy from zero.
                 let mut seed = pr.clone();
@@ -1036,23 +1043,39 @@ fn aggregate(
                 && (pr.created_here
                     || attached_to_worktree(pr, &session.branch, &session.dir_name));
             if represents_session {
-                for thread in &session.slack_threads {
-                    merge_slack_thread(&mut entry.slack_threads, thread.clone());
+                represented = true;
+                attach_session(entry, session, now);
+                owned.insert(key);
+            } else if pr.primary
+                && !pr.dismissed
+                && !session.repo_owner.is_empty()
+                && session.repo_owner.eq_ignore_ascii_case(&pr.owner)
+            {
+                // Same-org only: a session that merely discusses another
+                // org's PR must not migrate into that repository's group.
+                let rank = pr.last_mentioned_at;
+                if fallback.as_ref().is_none_or(|(_, best)| rank > *best) {
+                    fallback = Some((key, rank));
                 }
-                entry.stale &= session_age > STALE_SESSION_SECS;
-                entry.sessions.push(SessionRef {
-                    session_id: session.session_id.clone(),
-                    platform: session.platform,
-                    dir_name: session.dir_name.clone(),
-                    session_dir: Some(session.session_dir.clone()),
-                    title: session.title.clone(),
-                    title_set_at: session.title_set_at,
-                    recap: session.recap.clone(),
-                    state: session.state,
-                    prompted_at: session.prompted_at,
-                    completed_at: session.completed_at,
-                });
             }
+        }
+        if !represented {
+            if let Some((key, _)) = fallback {
+                fallbacks.push((session, key));
+            }
+        }
+    }
+
+    // A session whose primary PR failed the strict gate would otherwise fall
+    // back to a bare workspace row even though its own status bar names the
+    // PR. Trust the session's classification — but only while no session
+    // holds a verified claim on that PR.
+    for (session, key) in fallbacks {
+        if owned.contains(&key) {
+            continue;
+        }
+        if let Some(entry) = merged.get_mut(&key) {
+            attach_session(entry, session, now);
         }
     }
 
@@ -1146,6 +1169,31 @@ fn effective_session_pr(
     pr
 }
 
+/// Record a session on a PR row: its Slack threads join the row, and the row
+/// stays stale only while every session on it is stale.
+fn attach_session(entry: &mut BoardPr, session: &SessionSnapshot, now: f64) {
+    for thread in &session.slack_threads {
+        merge_slack_thread(&mut entry.slack_threads, thread.clone());
+    }
+    entry.stale &= (now - session.last_updated).max(0.0) > STALE_SESSION_SECS;
+    entry.sessions.push(board_session_ref(session));
+}
+
+fn board_session_ref(session: &SessionSnapshot) -> SessionRef {
+    SessionRef {
+        session_id: session.session_id.clone(),
+        platform: session.platform,
+        dir_name: session.dir_name.clone(),
+        session_dir: Some(session.session_dir.clone()),
+        title: session.title.clone(),
+        title_set_at: session.title_set_at,
+        recap: session.recap.clone(),
+        state: session.state,
+        prompted_at: session.prompted_at,
+        completed_at: session.completed_at,
+    }
+}
+
 fn pr_attached_to_session(session: &SessionSnapshot, pr: &SessionPr) -> bool {
     session_repository_matches_pr(session, pr)
         && attached_to_worktree(pr, &session.branch, &session.dir_name)
@@ -1155,8 +1203,8 @@ fn session_repository_matches_pr(session: &SessionSnapshot, pr: &SessionPr) -> b
     repository_matches(&session.repo_owner, &session.repo_name, &pr.owner, &pr.repo)
 }
 
-/// Keep one row for every active session that has no visible PR in its current
-/// repository. Sessions remain distinct even when they share a branch.
+/// Keep one row for every active session no visible PR row represents.
+/// Sessions remain distinct even when they share a branch.
 fn local_workspaces(snapshots: &[SessionSnapshot], entries: &[BoardPr]) -> Vec<WorkspaceEntry> {
     let now = now_secs();
     let mut workspaces: Vec<WorkspaceEntry> = Vec::new();
@@ -1165,23 +1213,11 @@ fn local_workspaces(snapshots: &[SessionSnapshot], entries: &[BoardPr]) -> Vec<W
         if age_secs > STALE_SESSION_SECS as u64 || session_has_matching_pr(snapshot, entries) {
             continue;
         }
-        let session = SessionRef {
-            session_id: snapshot.session_id.clone(),
-            platform: snapshot.platform,
-            dir_name: snapshot.dir_name.clone(),
-            session_dir: Some(snapshot.session_dir.clone()),
-            title: snapshot.title.clone(),
-            title_set_at: snapshot.title_set_at,
-            recap: snapshot.recap.clone(),
-            state: snapshot.state,
-            prompted_at: snapshot.prompted_at,
-            completed_at: snapshot.completed_at,
-        };
         workspaces.push(WorkspaceEntry {
             repo_owner: snapshot.repo_owner.clone(),
             repo_name: snapshot.repo_name.clone(),
             branch: snapshot.branch.clone(),
-            session,
+            session: board_session_ref(snapshot),
             ghostty_tab: snapshot.ghostty_tab.clone(),
             uncommitted: snapshot.uncommitted_files,
             additions: snapshot.additions,
@@ -1209,15 +1245,24 @@ fn entries_represent_session(
     dir_name: &str,
     entries: &[BoardPr],
 ) -> bool {
+    // Attachment can be cross-repo (a session working someone else's PR), so
+    // an id match anywhere represents the session.
+    if !session_id.is_empty() {
+        return entries.iter().any(|entry| {
+            entry
+                .sessions
+                .iter()
+                .any(|session| session.session_id == session_id)
+        });
+    }
+    // Without an id, a dir-name match only counts inside the session's own
+    // repository.
     entries.iter().any(|entry| {
         repository_matches(repo_owner, repo_name, &entry.pr.owner, &entry.pr.repo)
-            && entry.sessions.iter().any(|session| {
-                if session_id.is_empty() {
-                    session.session_id.is_empty() && session.dir_name == dir_name
-                } else {
-                    session.session_id == session_id
-                }
-            })
+            && entry
+                .sessions
+                .iter()
+                .any(|session| session.session_id.is_empty() && session.dir_name == dir_name)
     })
 }
 
@@ -4780,29 +4825,78 @@ mod tests {
     }
 
     #[test]
-    fn unrelated_visible_prs_do_not_hide_the_current_workspace() {
-        let mut cross_repo_pr = board_pr(1, "portal");
-        make_primary(&mut cross_repo_pr);
-        cross_repo_pr.branch = "feature".to_string();
-        let mut cross_repo = snapshot("crabigator", vec![cross_repo_pr]);
-        cross_repo.session_id = "cross-repo".to_string();
-        cross_repo.repo_name = "crabigator".to_string();
-        cross_repo.branch = "feature".to_string();
+    fn cross_repo_primary_prs_identify_otherwise_unrepresented_sessions() {
+        // A session working someone else's PR in another repository: the
+        // strict ownership gate fails (repo and branch both differ), but no
+        // session owns the PR, so its own primary classification stands.
+        let mut review_pr = board_pr(1, "portal");
+        make_primary(&mut review_pr);
+        review_pr.created_here = false;
+        review_pr.branch = "ryan/feature".to_string();
+        let mut reviewer = snapshot("crabigator", vec![review_pr]);
+        reviewer.session_id = "reviewer".to_string();
+        reviewer.branch = "main".to_string();
 
-        let mut other_branch_pr = board_pr(2, "crabigator");
-        make_primary(&mut other_branch_pr);
-        other_branch_pr.branch = "other".to_string();
-        let mut other_branch = snapshot("crabigator", vec![other_branch_pr]);
-        other_branch.session_id = "other-branch".to_string();
-        other_branch.branch = "feature".to_string();
-
-        let snapshots = vec![cross_repo, other_branch];
+        let snapshots = vec![reviewer];
         let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
 
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].sessions.len(), 1);
+        assert_eq!(entries[0].sessions[0].session_id, "reviewer");
+        assert!(
+            workspaces.is_empty(),
+            "the attached session needs no workspace row"
+        );
+    }
+
+    #[test]
+    fn cross_org_primaries_never_identify_sessions() {
+        // A session in a personal repo that heavily discusses another org's
+        // PR must keep its workspace row instead of migrating into that
+        // organization's group.
+        let mut discussed_pr = board_pr(1, "portal");
+        make_primary(&mut discussed_pr);
+        discussed_pr.created_here = false;
+        discussed_pr.branch = "ryan/feature".to_string();
+        let mut bystander = snapshot("crabigator", vec![discussed_pr]);
+        bystander.session_id = "bystander".to_string();
+        bystander.repo_owner = "someone-else".to_string();
+        bystander.branch = "main".to_string();
+
+        let snapshots = vec![bystander];
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let workspaces = local_workspaces(&snapshots, &entries);
+
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].sessions.is_empty());
         assert_eq!(workspaces.len(), 1);
-        assert_eq!(workspaces[0].session.session_id, "cross-repo");
+        assert_eq!(workspaces[0].session.session_id, "bystander");
+    }
+
+    #[test]
+    fn cross_repo_primaries_defer_to_a_session_that_owns_the_pr() {
+        let mut review_pr = board_pr(1, "portal");
+        make_primary(&mut review_pr);
+        review_pr.created_here = false;
+        review_pr.branch = "ryan/feature".to_string();
+        let mut reviewer = snapshot("crabigator", vec![review_pr.clone()]);
+        reviewer.session_id = "reviewer".to_string();
+        reviewer.branch = "main".to_string();
+
+        let mut owner = snapshot("portal", vec![review_pr]);
+        owner.session_id = "owner".to_string();
+        owner.branch = "ryan/feature".to_string();
+
+        let snapshots = vec![reviewer, owner];
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let workspaces = local_workspaces(&snapshots, &entries);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].sessions.len(), 1);
+        assert_eq!(entries[0].sessions[0].session_id, "owner");
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].session.session_id, "reviewer");
     }
 
     #[test]
