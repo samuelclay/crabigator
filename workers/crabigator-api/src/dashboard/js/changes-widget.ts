@@ -472,12 +472,16 @@ export const changesWidgetJs = `
         // requested, ⊘ a review dismissed by new commits, ◌ awaiting review.
         function prReviewBadge(pr) {
             if (pr.state !== 'OPEN') return '';
-            let review = ['◌', 'waiting', 'Awaiting review'];
-            if (pr.review_decision === 'APPROVED') review = ['✓', 'approved', 'Approved'];
-            else if (pr.review_decision === 'CHANGES_REQUESTED') review = ['✗', 'changes', 'Changes requested'];
-            else if (pr.review_dismissed) review = ['⊘', 'dismissed', 'Approval dismissed by new commits'];
-            return '<span class="pr-review ' + review[1] + '" title="' + review[2] + '">'
-                + review[0] + '</span>';
+            let review = { glyph: '◌', cls: 'waiting', title: 'Awaiting review' };
+            if (pr.review_decision === 'APPROVED') {
+                review = { glyph: '✓', cls: 'approved', title: 'Approved' };
+            } else if (pr.review_decision === 'CHANGES_REQUESTED') {
+                review = { glyph: '✗', cls: 'changes', title: 'Changes requested' };
+            } else if (pr.review_dismissed) {
+                review = { glyph: '⊘', cls: 'dismissed', title: 'Approval dismissed by new commits' };
+            }
+            return '<span class="pr-review ' + review.cls + '" title="' + review.title + '">'
+                + review.glyph + '</span>';
         }
 
         // A badge that opens a GitHub page when one is known, else plain text.

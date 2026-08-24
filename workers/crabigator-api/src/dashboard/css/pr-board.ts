@@ -110,7 +110,7 @@ export const prBoardCss = `
 .prb-row.prb-stale:hover { opacity: 0.8; }
 
 /* Every line inside a row rides the same three columns */
-.prb-l1, .prb-l2, .prb-dl {
+.prb-l1, .prb-l2, .prb-dl, .prb-sub {
     display: grid;
     grid-template-columns: subgrid;
     grid-column: 1 / -1;
@@ -180,12 +180,6 @@ a.prb-difffiles:hover { text-decoration: underline; }
 .prb-slack:hover { text-decoration: underline; }
 
 /* PR view (p): session sub-rows beneath each primary PR's header */
-.prb-sub {
-    display: grid;
-    grid-template-columns: subgrid;
-    grid-column: 1 / -1;
-    align-items: baseline;
-}
 .prb-sub-left { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding-left: 19px; }
 .prb-sub-bullet { color: #585858; flex-shrink: 0; }
 .prb-sub-title { color: #5fafff; white-space: nowrap; flex-shrink: 0; }

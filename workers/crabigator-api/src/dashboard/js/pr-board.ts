@@ -365,6 +365,10 @@ export const prBoardJs = `
         function prbMarker(platform) {
             return platform === 'codex' ? '⟁ ' : 'ᛝ ';
         }
+        // A session's own marked title, falling back to its directory name.
+        function prbSessionTitle(s) {
+            return prbMarker(s.platform) + (prbStripMarker(s.title) || s.dir_name || 'session');
+        }
         function prbProviderMarkers(sessions) {
             const codex = sessions.some(s => s.platform === 'codex');
             const claude = sessions.some(s => s.platform !== 'codex');
@@ -475,11 +479,16 @@ export const prBoardJs = `
             // Review approval state, open PRs only: approved, changes
             // requested, a review dismissed by new commits, or still waiting.
             if (pr.state === 'OPEN') {
-                let review = ['◌', PRB_C.darkGray, 'Awaiting review'];
-                if (pr.review_decision === 'APPROVED') review = ['✓', PRB_C.green, 'Approved'];
-                else if (pr.review_decision === 'CHANGES_REQUESTED') review = ['✗', PRB_C.red, 'Changes requested'];
-                else if (pr.review_dismissed) review = ['⊘', PRB_C.orange, 'Approval dismissed by new commits'];
-                cells.push('<span style="color:' + review[1] + '" title="' + review[2] + '">' + review[0] + '</span>');
+                let review = { glyph: '◌', color: PRB_C.darkGray, title: 'Awaiting review' };
+                if (pr.review_decision === 'APPROVED') {
+                    review = { glyph: '✓', color: PRB_C.green, title: 'Approved' };
+                } else if (pr.review_decision === 'CHANGES_REQUESTED') {
+                    review = { glyph: '✗', color: PRB_C.red, title: 'Changes requested' };
+                } else if (pr.review_dismissed) {
+                    review = { glyph: '⊘', color: PRB_C.orange, title: 'Approval dismissed by new commits' };
+                }
+                cells.push('<span style="color:' + review.color + '" title="' + review.title + '">'
+                    + review.glyph + '</span>');
             }
             if (pr.mergeable === 'CONFLICTING') {
                 cells.push('<span style="color:' + PRB_C.red + '">conflicts</span>');
@@ -598,23 +607,29 @@ export const prBoardJs = `
             return urls.map(u => '<a class="prb-slack" href="' + escapeHtml(u)
                 + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(prbSlackLabel(u)) + '</a>');
         }
-        function prbPrDetailHtml(pr, sessions, now) {
-            const rows = [];
-            if (pr.ai_note && pr.state === 'OPEN') {
-                rows.push({
-                    icon: '✦', iconColor: PRB_C.yellow, html: escapeHtml(pr.ai_note),
-                    title: pr.ai_confidence ? pr.ai_confidence + ' confidence it is done' : '',
-                });
-            }
-            const recap = prbLatestRecap(sessions);
-            if (recap) rows.push(...prbRecapRows(recap, now));
-            const slack = prbSlackLinks(pr);
+        // The ✦ judgment row, which only open PRs with a note carry.
+        function prbJudgmentRows(pr) {
+            if (!pr.ai_note || pr.state !== 'OPEN') return [];
+            return [{
+                icon: '✦', iconColor: PRB_C.yellow, html: escapeHtml(pr.ai_note),
+                title: pr.ai_confidence ? pr.ai_confidence + ' confidence it is done' : '',
+            }];
+        }
+        // Detail rows and Slack links share the same lines: each row keeps its
+        // own right-hand cell, and leftover links get lines of their own.
+        function prbDetailRowsHtml(rows, slack) {
             let html = '';
             for (let i = 0; i < Math.max(rows.length, slack.length); i++) {
                 const row = rows[i];
                 html += prbDlRowHtml(row, ((row && row.right) || '') + (slack[i] || ''));
             }
             return html;
+        }
+        function prbPrDetailHtml(pr, sessions, now) {
+            const rows = prbJudgmentRows(pr);
+            const recap = prbLatestRecap(sessions);
+            if (recap) rows.push(...prbRecapRows(recap, now));
+            return prbDetailRowsHtml(rows, prbSlackLinks(pr));
         }
 
         // ── Search (scrollback, with recaps for ended sessions) ────────
@@ -742,17 +757,26 @@ export const prBoardJs = `
 
         // ── Rows ───────────────────────────────────────────────────────
 
+        // The ★/☆ toggle that flips a PR between primary and secondary.
+        function prbStarHtml(idx, primary) {
+            return '<span class="prb-star ' + (primary ? 'primary' : 'secondary')
+                + '" data-act="flip" data-idx="' + idx + '" title="'
+                + (primary ? 'Primary — click to make secondary' : 'Secondary — click to make primary')
+                + '">' + (primary ? '★' : '☆') + '</span>';
+        }
+        // The "number: title" identity, linking to the PR on GitHub.
+        function prbIdentHtml(pr, title) {
+            return '<a class="prb-ident" href="' + escapeHtml(pr.url || '')
+                + '" target="_blank" rel="noopener noreferrer">'
+                + escapeHtml(pr.number + ': ' + title) + '</a>';
+        }
+
         function prbPrRowHtml(item, idx, now) {
             const pr = item.entry.pr;
             const sessions = item.sessions;
             const titles = prbPrTitles(pr, sessions);
-            const star = '<span class="prb-star ' + (item.primary ? 'primary' : 'secondary')
-                + '" data-act="flip" data-idx="' + idx + '" title="'
-                + (item.primary ? 'Primary — click to make secondary' : 'Secondary — click to make primary')
-                + '">' + (item.primary ? '★' : '☆') + '</span>';
-            const ident = '<a class="prb-ident" href="' + escapeHtml(pr.url || '')
-                + '" target="_blank" rel="noopener noreferrer">'
-                + escapeHtml(pr.number + ': ' + titles.title) + '</a>';
+            const star = prbStarHtml(idx, item.primary);
+            const ident = prbIdentHtml(pr, titles.title);
             let html = '<div class="prb-row' + (item.primary ? '' : ' prb-secondary')
                 + (item.stale ? ' prb-stale' : '')
                 + (item.key === prBoardSelected ? ' prb-sel' : '')
@@ -781,11 +805,9 @@ export const prBoardJs = `
         function prbPrViewRowHtml(item, idx, now) {
             const pr = item.entry.pr;
             const titles = prbPrTitles(pr, item.sessions);
-            const star = '<span class="prb-star primary" data-act="flip" data-idx="' + idx
-                + '" title="Primary — click to make secondary">★</span>';
-            const ident = '<a class="prb-ident" href="' + escapeHtml(pr.url || '')
-                + '" target="_blank" rel="noopener noreferrer">'
-                + escapeHtml(pr.number + ': ' + titles.title) + '</a>';
+            // PR view lists primaries only, so the star is always filled.
+            const star = prbStarHtml(idx, true);
+            const ident = prbIdentHtml(pr, titles.title);
             const ageSecs = Math.max(0, now - item.activity);
             const age = item.activity
                 ? '<span class="prb-activity" style="color:' + prbRecencyColor(ageSecs) + '">'
@@ -822,26 +844,13 @@ export const prBoardJs = `
         // The PR-view header's detail rows: the ✦ judgment and Slack links.
         // Recaps belong to the session sub-rows in this view.
         function prbPrViewDetailHtml(pr) {
-            const rows = [];
-            if (pr.ai_note && pr.state === 'OPEN') {
-                rows.push({
-                    icon: '✦', iconColor: PRB_C.yellow, html: escapeHtml(pr.ai_note),
-                    title: pr.ai_confidence ? pr.ai_confidence + ' confidence it is done' : '',
-                });
-            }
-            const slack = prbSlackLinks(pr);
-            let html = '';
-            for (let i = 0; i < Math.max(rows.length, slack.length); i++) {
-                html += prbDlRowHtml(rows[i], ((rows[i] && rows[i].right) || '') + (slack[i] || ''));
-            }
-            return html;
+            return prbDetailRowsHtml(prbJudgmentRows(pr), prbSlackLinks(pr));
         }
 
         // One session beneath a PR-view header: ◆ title — recap headline, the
         // session's own state and ages right-aligned. Ended sessions dim.
         function prbPrViewSessionHtml(s, idx, sIdx, now) {
-            const plain = prbStripMarker(s.title) || s.dir_name || 'session';
-            const title = prbMarker(s.platform) + plain;
+            const title = prbSessionTitle(s);
             const headline = s.recap && s.recap.headline ? s.recap.headline : '';
             const ended = !s.active;
             const agePart = (icon, ts) =>
@@ -868,8 +877,7 @@ export const prBoardJs = `
 
         function prbSessionRowHtml(item, idx, now) {
             const s = item.session;
-            const plain = prbStripMarker(s.title) || s.dir_name || 'session';
-            const title = prbMarker(s.platform) + plain;
+            const title = prbSessionTitle(s);
             // Session rows carry the same diff and file-count columns as PR
             // rows, filled from the session's uncommitted worktree changes.
             const diff = prbDiffText(s.additions, s.deletions);
@@ -1299,11 +1307,12 @@ export const prBoardJs = `
                 // PR view keeps sessions without a PR at the end of their
                 // repo section; session view interleaves by recency.
                 for (const repo of repos) {
-                    repo.rows.sort((a, b) =>
-                        (prView
-                            ? (a.kind === 'session' ? 1 : 0) - (b.kind === 'session' ? 1 : 0)
-                            : 0)
-                        || b.activity - a.activity);
+                    repo.rows.sort((a, b) => {
+                        if (prView && (a.kind === 'session') !== (b.kind === 'session')) {
+                            return a.kind === 'session' ? 1 : -1;
+                        }
+                        return b.activity - a.activity;
+                    });
                 }
                 repos.sort((a, b) => b.rows[0].activity - a.rows[0].activity);
                 for (const repo of repos) {
@@ -1311,9 +1320,9 @@ export const prBoardJs = `
                     for (const item of repo.rows) {
                         const idx = prBoardRendered.length;
                         prBoardRendered.push(item);
-                        html += item.kind === 'pr' ? prbPrRowHtml(item, idx, now)
-                            : item.kind === 'prview' ? prbPrViewRowHtml(item, idx, now)
-                            : prbSessionRowHtml(item, idx, now);
+                        if (item.kind === 'pr') html += prbPrRowHtml(item, idx, now);
+                        else if (item.kind === 'prview') html += prbPrViewRowHtml(item, idx, now);
+                        else html += prbSessionRowHtml(item, idx, now);
                     }
                 }
             }

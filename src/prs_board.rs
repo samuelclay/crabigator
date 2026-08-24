@@ -268,6 +268,20 @@ fn detail_name(detail: u8) -> &'static str {
     }
 }
 
+/// One of the header's view toggles, as ` · <key> <state>`. A setting that is
+/// off its default turns yellow so a changed view is obvious at a glance.
+fn header_control(key: char, state: &str, changed: bool) -> String {
+    if changed {
+        format!(
+            " · {}{UNDERLINE}{key}{RESET_UNDERLINE} {state}{}",
+            fg(color::YELLOW),
+            fg(color::DARK_GRAY)
+        )
+    } else {
+        format!(" · {UNDERLINE}{key}{RESET_UNDERLINE} {state}")
+    }
+}
+
 /// The slice of a session's latest recap the detail view renders.
 #[derive(Clone)]
 struct RecapBrief {
@@ -1149,17 +1163,12 @@ fn aggregate(
     out
 }
 
-/// Expand merged PR entries into the session view's one-row-per-session shape.
-fn fan_out(entries: Vec<BoardPr>) -> Vec<BoardPr> {
-    entries.into_iter().flat_map(fan_out_per_session).collect()
-}
-
 /// Shape merged entries for the active view: session view fans out one row
 /// per session; PR view keeps one block per primary PR, its sessions sorted
 /// live-first then freshest-first (the sub-row and ←→ order).
 fn entries_for_mode(entries: Vec<BoardPr>, mode: BoardMode) -> Vec<BoardPr> {
     match mode {
-        BoardMode::Sessions => fan_out(entries),
+        BoardMode::Sessions => entries.into_iter().flat_map(fan_out_per_session).collect(),
         BoardMode::Prs => entries
             .into_iter()
             .filter(|entry| entry.pr.primary)
@@ -1724,13 +1733,18 @@ fn pr_recency_time(entry: &BoardPr) -> u64 {
         .max(entry.pr.closed_at / 1000)
 }
 
-/// The recency band a PR row belongs to, honoring the view's clock: session
+/// The clock a PR row sorts and buckets by, honoring the view: session
 /// activity alone in session view, session + PR events in PR view.
-fn entry_bucket(entry: &BoardPr, now: u64, mode: BoardMode) -> RecencyBucket {
+fn entry_recency_time(entry: &BoardPr, mode: BoardMode) -> u64 {
     match mode {
-        BoardMode::Sessions => activity_bucket(&entry.sessions, now),
-        BoardMode::Prs => RecencyBucket::from_age(now.saturating_sub(pr_recency_time(entry))),
+        BoardMode::Sessions => activity_sort_time(&entry.sessions),
+        BoardMode::Prs => pr_recency_time(entry),
     }
+}
+
+/// The recency band a PR row belongs to on that same clock.
+fn entry_bucket(entry: &BoardPr, now: u64, mode: BoardMode) -> RecencyBucket {
+    RecencyBucket::from_age(now.saturating_sub(entry_recency_time(entry, mode)))
 }
 
 fn activity_part(label: &str, timestamp: u64, now: u64) -> ActivityCell {
@@ -2350,14 +2364,7 @@ fn pr_recap_detail_lines(
     widths: &PrColumnWidths,
 ) -> Vec<String> {
     let recap = latest_recap(&entry.sessions);
-    let mut recap_rows = Vec::new();
-    if !entry.pr.ai_note.is_empty() && entry.pr.state == "OPEN" {
-        recap_rows.push(RecapDetailRow {
-            kind: RecapLineKind::Judgment,
-            text: Cow::Borrowed(&entry.pr.ai_note),
-            recap: None,
-        });
-    }
+    let mut recap_rows: Vec<RecapDetailRow<'_>> = judgment_row(&entry.pr).into_iter().collect();
     if let Some(recap) = recap {
         recap_rows.extend(recap_detail_rows(recap));
     }
@@ -2368,6 +2375,15 @@ fn pr_recap_detail_lines(
         widths,
     };
     detail_lines(&recap_rows, &slack_detail_cells(entry, widths), &layout)
+}
+
+/// The ✦ judgment row, which only open PRs with a note carry.
+fn judgment_row(pr: &SessionPr) -> Option<RecapDetailRow<'_>> {
+    (!pr.ai_note.is_empty() && pr.state == "OPEN").then(|| RecapDetailRow {
+        kind: RecapLineKind::Judgment,
+        text: Cow::Borrowed(&pr.ai_note),
+        recap: None,
+    })
 }
 
 fn recap_detail_rows(recap: &RecapBrief) -> Vec<RecapDetailRow<'_>> {
@@ -2600,18 +2616,9 @@ fn render_pr_view_block(
         widths,
     };
     if detail > DEFAULT_DETAIL {
-        let mut judgment = Vec::new();
-        if !entry.pr.ai_note.is_empty() && entry.pr.state == "OPEN" {
-            judgment.push(RecapDetailRow {
-                kind: RecapLineKind::Judgment,
-                text: Cow::Borrowed(&entry.pr.ai_note),
-                recap: None,
-            });
-        }
+        let judgment: Vec<RecapDetailRow<'_>> = judgment_row(&entry.pr).into_iter().collect();
         let slack = slack_detail_cells(entry, widths);
-        if !judgment.is_empty() || !slack.is_empty() {
-            lines.extend(detail_lines(&judgment, &slack, &layout));
-        }
+        lines.extend(detail_lines(&judgment, &slack, &layout));
     }
 
     for session in &entry.sessions {
@@ -2644,13 +2651,7 @@ fn pr_view_session_row(
     widths: &PrColumnWidths,
     throbber_frame: usize,
 ) -> String {
-    let plain = crate::title::strip_provider_title_marker(&session.title);
-    let name = if plain.is_empty() {
-        session.dir_name.as_str()
-    } else {
-        plain
-    };
-    let title = crate::title::mark_provider_title(session.platform, name);
+    let title = marked_session_title(session);
     let headline = session
         .recap
         .as_ref()
@@ -2720,14 +2721,20 @@ fn session_activity_cell(session: &SessionRef, now: u64, throbber_frame: usize) 
     }
 }
 
-fn workspace_title(entry: &WorkspaceEntry) -> (String, u8) {
-    let session = &entry.session;
+/// A session's own title carrying its provider marker, falling back to the
+/// working directory when the assistant has not titled the session yet.
+fn marked_session_title(session: &SessionRef) -> String {
     let plain = crate::title::strip_provider_title_marker(&session.title);
-    let title = if plain.is_empty() {
-        crate::title::mark_provider_title(session.platform, &session.dir_name)
+    let name = if plain.is_empty() {
+        session.dir_name.as_str()
     } else {
-        crate::title::mark_provider_title(session.platform, plain)
+        plain
     };
+    crate::title::mark_provider_title(session.platform, name)
+}
+
+fn workspace_title(entry: &WorkspaceEntry) -> (String, u8) {
+    let title = marked_session_title(&entry.session);
     let text = if let Some(tab) = &entry.ghostty_tab {
         format!("{title} · {}", ghostty_tab_text(tab))
     } else {
@@ -2911,35 +2918,13 @@ fn render_at(
     } else {
         format!("{UNDERLINE}s{RESET_UNDERLINE} live")
     };
-    let mode_label = if mode == BoardMode::default() {
-        format!(" · {UNDERLINE}p{RESET_UNDERLINE} {}", mode.label())
-    } else {
-        format!(
-            " · {}{UNDERLINE}p{RESET_UNDERLINE} {}{}",
-            fg(color::YELLOW),
-            mode.label(),
-            fg(color::DARK_GRAY)
-        )
-    };
-    let detail_label = if detail == DEFAULT_DETAIL {
-        format!(" · {UNDERLINE}r{RESET_UNDERLINE} {}", detail_name(detail))
-    } else {
-        format!(
-            " · {}{UNDERLINE}r{RESET_UNDERLINE} {}{}",
-            fg(color::YELLOW),
-            detail_name(detail),
-            fg(color::DARK_GRAY)
-        )
-    };
+    let mode_label = header_control('p', mode.label(), mode != BoardMode::default());
+    let detail_label = header_control('r', detail_name(detail), detail != DEFAULT_DETAIL);
     let age_label = if oldest_visible_bucket == DEFAULT_OLDEST_VISIBLE_BUCKET {
-        format!(" · {UNDERLINE}a{RESET_UNDERLINE} all ages")
+        header_control('a', "all ages", false)
     } else {
-        format!(
-            " · {}{UNDERLINE}a{RESET_UNDERLINE} age ≤ {}{}",
-            fg(color::YELLOW),
-            oldest_visible_bucket.max_age_label(),
-            fg(color::DARK_GRAY),
-        )
+        let label = format!("age ≤ {}", oldest_visible_bucket.max_age_label());
+        header_control('a', &label, true)
     };
 
     let mut spans: Vec<RowSpan> = Vec::new();
@@ -3091,13 +3076,9 @@ fn render_at(
         };
         for &index in &visible_row_indices {
             let row = &rows[index];
-            let activity = match mode {
-                BoardMode::Sessions => activity_sort_time(&row.entry.sessions),
-                BoardMode::Prs => pr_recency_time(row.entry),
-            };
             add_row(
                 format!("{}/{}", row.entry.pr.owner, row.entry.pr.repo),
-                activity,
+                entry_recency_time(row.entry, mode),
                 SectionRow::Pr(index),
             );
         }
@@ -4588,7 +4569,10 @@ mod tests {
         two.slack_threads = crate::slack::extract_threads(
             "https://t.slack.com/archives/C0/p1723500000000000 https://t.slack.com/archives/C1/p1723500001000000 https://t.slack.com/archives/C4/p1723500003000000",
         );
-        let entries = fan_out(aggregate(&[two, one], &HashMap::new(), DEFAULT_LINGER_DAYS));
+        let entries = entries_for_mode(
+            aggregate(&[two, one], &HashMap::new(), DEFAULT_LINGER_DAYS),
+            BoardMode::Sessions,
+        );
         assert_eq!(entries.len(), 2, "one row per contributing session");
         let mut session_dirs: Vec<&str> = entries
             .iter()

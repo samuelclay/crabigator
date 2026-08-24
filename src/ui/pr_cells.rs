@@ -517,8 +517,7 @@ fn pr_row_text_with_left_cells(
 }
 
 fn board_pr_title_cell(pr: &SessionPr, title: &str, width: usize) -> PrCell {
-    let glyph = pr_glyph(pr);
-    let identity = truncate_to_width(&format!("{glyph} {}: {title}", pr.number), width);
+    let identity = truncate_board_pr_identity(pr, title, width);
     let styled = styled_pr_identity(pr, &identity);
     (styled, identity.width(), width)
 }
@@ -871,8 +870,7 @@ fn truncate_identity(pr: &SessionPr, width: usize) -> String {
 }
 
 fn truncate_board_pr_identity(pr: &SessionPr, title: &str, width: usize) -> String {
-    let glyph = pr_glyph(pr);
-    truncate_to_width(&format!("{glyph} {}: {title}", pr.number), width)
+    truncate_to_width(&board_pr_identity_text(pr, title), width)
 }
 
 /// The identity column at full width, for column sizing.
