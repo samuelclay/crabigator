@@ -1,7 +1,7 @@
 {
   "name": "crabigator",
   "version": "0.9.1",
-  "description": "A TUI wrapper for Claude Code with real-time status widgets",
+  "description": "A TUI wrapper for Claude Code, Codex, and opencode with real-time status widgets",
   "bin": {
     "crabigator": "bin/crabigator.js"
   },
