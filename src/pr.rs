@@ -86,6 +86,26 @@ fn decl_keyword_first_re() -> &'static Regex {
     })
 }
 
+/// `track PR <url>` / `watch <url>` — explicit watch-list adds by URL.
+fn decl_watch_url_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?i)\b(?:track|watch)\s+(?:pr\s+)?(https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+)",
+        )
+        .expect("valid watch url regex")
+    })
+}
+
+/// The same statement as `track owner/repo#123`.
+fn decl_watch_repo_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)\b(?:track|watch)\s+(?:pr\s+)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#(\d+)\b")
+            .expect("valid watch repo regex")
+    })
+}
+
 /// `dismiss PR #123` — the verb must target the PR directly; a wider window
 /// would turn "remove the flag from PR #123" into a dismissal.
 fn decl_dismiss_re() -> &'static Regex {
@@ -245,6 +265,11 @@ pub struct SessionPr {
     /// it, but nothing should render it.
     #[serde(default)]
     pub dismissed: bool,
+    /// Explicitly added to the boards' watch list ("track PR <url>", the
+    /// board's w key, or the dashboard). Watched PRs render like primaries
+    /// and stay visible without any session working them.
+    #[serde(default)]
+    pub watched: bool,
     /// The Slack permalink the user pasted into the prompt that led to this
     /// PR — the conversation the work came from. Empty when none was seen.
     #[serde(default)]
@@ -309,6 +334,7 @@ impl SessionPr {
             primary: false,
             primary_source: String::new(),
             dismissed: false,
+            watched: false,
             slack_origin_url: String::new(),
             slack_comment_urls: Vec::new(),
             ai_note: String::new(),
@@ -325,6 +351,16 @@ impl SessionPr {
     }
 }
 
+/// One explicit watch request from an in-session "track PR <url>" statement,
+/// waiting to be posted to the cloud watch list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WatchAdd {
+    pub owner: String,
+    pub repo: String,
+    pub number: u64,
+    pub url: String,
+}
+
 /// Parsed owner/repo/number identity for a PR URL.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PrLocation {
@@ -332,6 +368,12 @@ struct PrLocation {
     repo: String,
     number: u64,
     url: String,
+}
+
+/// The location a full PR URL names, when it parses as one.
+fn location_from_url(url: &str) -> Option<PrLocation> {
+    let caps = pr_url_re().captures(url)?;
+    Some(PrLocation::new(&caps[1], &caps[2], caps[3].parse().ok()?))
 }
 
 impl PrLocation {
@@ -630,6 +672,9 @@ pub struct PrTracker {
     declared_urls: HashMap<String, PrDisposition>,
     /// Cloud-stored dispositions keyed `owner/repo#number`.
     overrides: HashMap<String, PrDisposition>,
+    /// Watch requests typed this session ("track PR <url>") that still need
+    /// posting to the cloud watch list.
+    pending_watch_adds: Vec<WatchAdd>,
     /// The most recent Slack permalink pasted into a user prompt, and when.
     /// A PR that appears shortly after inherits it as its origin.
     latest_prompt_slack: Option<(String, Instant)>,
@@ -665,6 +710,7 @@ impl PrTracker {
             declared_numbers: HashMap::new(),
             declared_urls: HashMap::new(),
             overrides: HashMap::new(),
+            pending_watch_adds: Vec::new(),
             latest_prompt_slack: None,
             slack_threads: Vec::new(),
             slack_directory: load_slack_directory(),
@@ -872,6 +918,39 @@ impl PrTracker {
                     .insert(url.as_str().to_string(), parse_disposition(word.as_str()));
             }
         }
+        for caps in decl_watch_url_re().captures_iter(text) {
+            if let Some(loc) = location_from_url(&caps[1]) {
+                self.note_watch(loc);
+            }
+        }
+        for caps in decl_watch_repo_re().captures_iter(text) {
+            if let Ok(number) = caps[3].parse::<u64>() {
+                self.note_watch(PrLocation::new(&caps[1], &caps[2], number));
+            }
+        }
+    }
+
+    /// Record an explicit watch: track the PR in this session, flag it
+    /// watched, and queue the cloud watch-list add.
+    fn note_watch(&mut self, loc: PrLocation) {
+        self.observe_url(&loc);
+        if let Some(pr) = self.prs.iter_mut().find(|p| p.url == loc.url) {
+            pr.watched = true;
+        }
+        let add = WatchAdd {
+            owner: loc.owner,
+            repo: loc.repo,
+            number: loc.number,
+            url: loc.url,
+        };
+        if !self.pending_watch_adds.contains(&add) {
+            self.pending_watch_adds.push(add);
+        }
+    }
+
+    /// Watch requests typed this session that still need posting to the cloud.
+    pub fn take_watch_adds(&mut self) -> Vec<WatchAdd> {
+        std::mem::take(&mut self.pending_watch_adds)
     }
 
     /// Replace the cloud-stored dispositions (dashboard toggles / action links).
@@ -1392,54 +1471,43 @@ impl PrTracker {
             return false;
         }
         let (owner, repo) = split_owner_repo(&url).unwrap_or_default();
-        let now = now_unix_ms();
         self.fetch_failures.remove(&url);
         let origin_slack = self.current_origin_slack();
-        let (passed, failed, pending) = count_checks(&json.status_check_rollup);
-        let total = passed + failed + pending;
-        let ci_url = ci_link(&json.status_check_rollup, &url);
-        let closed_at = json.closed_at.as_deref().map_or(0, parse_iso_ms);
-        let updated_at = json.updated_at.as_deref().map_or(0, parse_iso_ms);
-        // Only meaningful while open: after a merge or close the dismissal
-        // history no longer needs attention.
-        let review_dismissed = json.state == "OPEN"
-            && json
-                .latest_reviews
-                .iter()
-                .any(|review| review.state == "DISMISSED");
-        let author_login = json.author.map(|author| author.login).unwrap_or_default();
-        let authored_by_viewer = match (author_login.is_empty(), json.viewer_login.is_empty()) {
-            (false, false) => Some(author_login == json.viewer_login),
-            _ => None,
+        let loc = PrLocation {
+            owner,
+            repo,
+            number: json.number,
+            url: url.clone(),
         };
+        let fetched = session_pr_from_fetch(&loc, json, created_here);
 
         if let Some(existing) = self.prs.iter_mut().find(|p| p.url == url) {
             let before = existing.clone();
-            existing.number = json.number;
-            existing.branch = json.head_ref_name;
-            existing.title = json.title;
-            existing.state = json.state;
-            existing.is_draft = json.is_draft;
-            existing.additions = json.additions;
-            existing.deletions = json.deletions;
-            existing.changed_files = json.changed_files;
-            existing.mergeable = json.mergeable;
-            existing.merge_state_status = json.merge_state_status;
-            existing.review_decision = json.review_decision;
-            existing.review_dismissed = review_dismissed;
-            existing.closed_at = closed_at;
-            existing.updated_at = updated_at;
-            if !author_login.is_empty() {
-                existing.author_login = author_login;
+            existing.number = fetched.number;
+            existing.branch = fetched.branch;
+            existing.title = fetched.title;
+            existing.state = fetched.state;
+            existing.is_draft = fetched.is_draft;
+            existing.additions = fetched.additions;
+            existing.deletions = fetched.deletions;
+            existing.changed_files = fetched.changed_files;
+            existing.mergeable = fetched.mergeable;
+            existing.merge_state_status = fetched.merge_state_status;
+            existing.review_decision = fetched.review_decision;
+            existing.review_dismissed = fetched.review_dismissed;
+            existing.closed_at = fetched.closed_at;
+            existing.updated_at = fetched.updated_at;
+            if !fetched.author_login.is_empty() {
+                existing.author_login = fetched.author_login;
             }
-            if authored_by_viewer.is_some() {
-                existing.authored_by_viewer = authored_by_viewer;
+            if fetched.authored_by_viewer.is_some() {
+                existing.authored_by_viewer = fetched.authored_by_viewer;
             }
-            existing.checks_passed = passed;
-            existing.checks_failed = failed;
-            existing.checks_pending = pending;
-            existing.checks_total = total;
-            existing.ci_url = ci_url;
+            existing.checks_passed = fetched.checks_passed;
+            existing.checks_failed = fetched.checks_failed;
+            existing.checks_pending = fetched.checks_pending;
+            existing.checks_total = fetched.checks_total;
+            existing.ci_url = fetched.ci_url;
             // Unresolved threads are only tracked while a PR is open; once it
             // merges or closes the count would freeze at a stale value, so drop
             // it rather than leave a badge that no longer refreshes.
@@ -1449,7 +1517,7 @@ impl PrTracker {
                 existing.comments_refreshed_at = 0;
             }
             existing.fetch_error.clear();
-            existing.refreshed_at = now;
+            existing.refreshed_at = fetched.refreshed_at;
             let changed = *existing != before;
             if existing.state != "OPEN" {
                 self.pr_active_at.remove(&url);
@@ -1458,43 +1526,89 @@ impl PrTracker {
             return changed;
         }
 
-        // Everything the fetch didn't answer for — mention counters, review
-        // threads (filled in by the job this insert makes eligible), and the
-        // classification — comes from the placeholder, so a new field only
-        // needs a default in one place.
-        let loc = PrLocation {
-            owner,
-            repo,
-            number: json.number,
-            url,
-        };
         self.prs.push(SessionPr {
-            branch: json.head_ref_name,
-            title: json.title,
-            state: json.state,
-            is_draft: json.is_draft,
-            additions: json.additions,
-            deletions: json.deletions,
-            changed_files: json.changed_files,
-            mergeable: json.mergeable,
-            merge_state_status: json.merge_state_status,
-            review_decision: json.review_decision,
-            review_dismissed,
-            closed_at,
-            updated_at,
-            checks_passed: passed,
-            checks_failed: failed,
-            checks_pending: pending,
-            checks_total: total,
-            ci_url,
-            author_login,
-            authored_by_viewer,
             slack_origin_url: origin_slack,
-            refreshed_at: now,
-            ..SessionPr::placeholder(&loc, created_here)
+            ..fetched
         });
         true
     }
+}
+
+/// Build a fresh SessionPr from one `gh pr view` payload. Everything the
+/// fetch didn't answer for — mention counters, review threads, and the
+/// classification — comes from the placeholder, so a new field only needs a
+/// default in one place. Shared by the tracker's insert path and the board's
+/// watched-PR enrichment.
+fn session_pr_from_fetch(loc: &PrLocation, json: GhPrJson, created_here: bool) -> SessionPr {
+    let (passed, failed, pending) = count_checks(&json.status_check_rollup);
+    let ci_url = ci_link(&json.status_check_rollup, &loc.url);
+    let closed_at = json.closed_at.as_deref().map_or(0, parse_iso_ms);
+    let updated_at = json.updated_at.as_deref().map_or(0, parse_iso_ms);
+    // Only meaningful while open: after a merge or close the dismissal
+    // history no longer needs attention.
+    let review_dismissed = json.state == "OPEN"
+        && json
+            .latest_reviews
+            .iter()
+            .any(|review| review.state == "DISMISSED");
+    let author_login = json.author.map(|author| author.login).unwrap_or_default();
+    let authored_by_viewer = match (author_login.is_empty(), json.viewer_login.is_empty()) {
+        (false, false) => Some(author_login == json.viewer_login),
+        _ => None,
+    };
+    SessionPr {
+        branch: json.head_ref_name,
+        title: json.title,
+        state: json.state,
+        is_draft: json.is_draft,
+        additions: json.additions,
+        deletions: json.deletions,
+        changed_files: json.changed_files,
+        mergeable: json.mergeable,
+        merge_state_status: json.merge_state_status,
+        review_decision: json.review_decision,
+        review_dismissed,
+        closed_at,
+        updated_at,
+        checks_passed: passed,
+        checks_failed: failed,
+        checks_pending: pending,
+        checks_total: passed + failed + pending,
+        ci_url,
+        author_login,
+        authored_by_viewer,
+        refreshed_at: now_unix_ms(),
+        ..SessionPr::placeholder(loc, created_here)
+    }
+}
+
+/// One-shot enrichment for a board-watched PR: `gh pr view` plus the
+/// review-thread count while it is open, combined into a standalone
+/// SessionPr flagged `watched`. Runs `gh`, so call from a background thread.
+pub fn fetch_watched_session_pr(url: &str) -> Result<SessionPr, String> {
+    let json = fetch_pr(url)?;
+    let (owner, repo) = split_owner_repo(url).unwrap_or_default();
+    let loc = PrLocation {
+        owner,
+        repo,
+        number: json.number,
+        url: url.to_string(),
+    };
+    let mut pr = session_pr_from_fetch(&loc, json, false);
+    pr.watched = true;
+    if pr.state == "OPEN" {
+        if let Ok(threads) = fetch_review_threads(url) {
+            pr.unresolved_comments = threads.unresolved;
+            pr.comments_url = threads.first_url;
+            pr.comments_refreshed_at = now_unix_ms();
+            for slack_url in threads.slack_urls {
+                if !pr.slack_comment_urls.contains(&slack_url) {
+                    pr.slack_comment_urls.push(slack_url);
+                }
+            }
+        }
+    }
+    Ok(pr)
 }
 
 fn load_slack_directory() -> SlackDirectory {
@@ -2390,6 +2504,44 @@ mod tests {
         tracker.scan_prompt("remove the flag from PR #500", Path::new("/tmp"));
         tracker.reclassify("", Path::new("/tmp"));
         assert!(!tracker.prs()[0].dismissed);
+    }
+
+    /// "track PR <url>" and "watch owner/repo#N" track the PR, flag it
+    /// watched, and queue exactly one cloud watch-list add each.
+    #[test]
+    fn track_statements_watch_the_pr_and_queue_a_cloud_add() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_prompt(
+            "track PR https://github.com/o/r/pull/812 for me",
+            Path::new("/tmp"),
+        );
+        assert!(tracker.prs()[0].watched, "the tracked PR is flagged watched");
+
+        tracker.scan_prompt("also watch other/repo#4102 please", Path::new("/tmp"));
+        let adds = tracker.take_watch_adds();
+        assert_eq!(
+            adds,
+            vec![
+                WatchAdd {
+                    owner: "o".to_string(),
+                    repo: "r".to_string(),
+                    number: 812,
+                    url: "https://github.com/o/r/pull/812".to_string(),
+                },
+                WatchAdd {
+                    owner: "other".to_string(),
+                    repo: "repo".to_string(),
+                    number: 4102,
+                    url: "https://github.com/other/repo/pull/4102".to_string(),
+                },
+            ],
+        );
+        assert!(tracker.take_watch_adds().is_empty(), "adds drain once");
+
+        // Prose that merely contains the words never queues a watch.
+        let mut tracker = PrTracker::new();
+        tracker.scan_prompt("watch the tests and track progress", Path::new("/tmp"));
+        assert!(tracker.take_watch_adds().is_empty());
     }
 
     #[test]

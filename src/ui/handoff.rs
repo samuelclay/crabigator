@@ -737,6 +737,7 @@ mod tests {
             primary: false,
             primary_source: String::new(),
             dismissed: false,
+            watched: false,
             slack_origin_url: String::new(),
             slack_comment_urls: Vec::new(),
             ai_note: String::new(),

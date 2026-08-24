@@ -148,6 +148,95 @@ pub async fn fetch_pr_board_standalone(linger_days: u64) -> Result<CloudBoard> {
     Ok(response.json().await?)
 }
 
+/// One watched PR from GET /api/prs/watched.
+#[derive(Debug, Deserialize)]
+pub struct CloudWatchedPr {
+    pub owner: String,
+    pub repo: String,
+    pub number: u64,
+    #[serde(default)]
+    pub url: String,
+    /// Unix seconds when the watch was added.
+    #[serde(default)]
+    pub added_at: u64,
+    /// The stats an open board relayed last; None until first enrichment.
+    #[serde(default)]
+    pub pr: Option<crate::pr::SessionPr>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchedPrsResponse {
+    #[serde(default)]
+    watched: Vec<CloudWatchedPr>,
+}
+
+/// One-shot fetch of the group's explicitly watched PRs, for the prs board.
+pub async fn fetch_watched_prs_standalone() -> Result<Vec<CloudWatchedPr>> {
+    let device = DeviceIdentity::load_or_create()?;
+    let url = format!("{}/prs/watched", DEFAULT_API_URL);
+    let headers = device.auth_headers("GET", "/api/prs/watched")?;
+    let mut req = HttpClient::new().get(&url);
+    for (key, value) in headers {
+        req = req.header(&key, &value);
+    }
+    let response = req.send().await?;
+    if !response.status().is_success() {
+        anyhow::bail!("Failed to fetch watched PRs: {}", response.status());
+    }
+    let data: WatchedPrsResponse = response.json().await?;
+    Ok(data.watched)
+}
+
+/// Add one PR to the group's cloud watch list (idempotent).
+pub async fn add_watched_pr_standalone(
+    owner: &str,
+    repo: &str,
+    number: u64,
+    url: &str,
+) -> Result<()> {
+    let device = DeviceIdentity::load_or_create()?;
+    let body = serde_json::json!({ "owner": owner, "repo": repo, "number": number, "url": url });
+    post_watched_pr(device, HttpClient::new(), DEFAULT_API_URL.to_string(), body).await
+}
+
+/// Relay locally fetched GitHub stats for watched PRs, so the web board and
+/// other machines see them without running `gh` themselves.
+pub async fn relay_watched_pr_stats_standalone(prs: &[crate::pr::SessionPr]) -> Result<()> {
+    let device = DeviceIdentity::load_or_create()?;
+    let url = format!("{}/prs/watched/stats", DEFAULT_API_URL);
+    let headers = device.auth_headers("POST", "/api/prs/watched/stats")?;
+    let mut req = HttpClient::new()
+        .post(&url)
+        .json(&serde_json::json!({ "prs": prs }));
+    for (key, value) in headers {
+        req = req.header(&key, &value);
+    }
+    let response = req.send().await?;
+    if !response.status().is_success() {
+        anyhow::bail!("Failed to relay watched PR stats: {}", response.status());
+    }
+    Ok(())
+}
+
+async fn post_watched_pr(
+    device: DeviceIdentity,
+    http: HttpClient,
+    api_url: String,
+    body: serde_json::Value,
+) -> Result<()> {
+    let url = format!("{}/prs/watched", api_url);
+    let headers = device.auth_headers("POST", "/api/prs/watched")?;
+    let mut req = http.post(&url).json(&body);
+    for (key, value) in headers {
+        req = req.header(&key, &value);
+    }
+    let response = req.send().await?;
+    if !response.status().is_success() {
+        anyhow::bail!("Failed to update watched PRs: {}", response.status());
+    }
+    Ok(())
+}
+
 fn parse_pr_disposition(value: &str) -> Option<PrDisposition> {
     match value {
         "primary" => Some(PrDisposition::Primary),
@@ -738,6 +827,23 @@ impl CloudClient {
             if let Ok(map) = Self::fetch_pr_overrides_with(device, http, api_url).await {
                 let _ = tx.send(map);
             }
+        });
+    }
+
+    /// Fire-and-forget add of one PR to the group's cloud watch list, for
+    /// in-session "track PR <url>" statements.
+    pub fn spawn_add_watched_pr(&self, add: crate::pr::WatchAdd) {
+        let device = self.device.clone();
+        let http = self.http.clone();
+        let api_url = self.api_url.clone();
+        tokio::spawn(async move {
+            let body = serde_json::json!({
+                "owner": add.owner,
+                "repo": add.repo,
+                "number": add.number,
+                "url": add.url,
+            });
+            let _ = post_watched_pr(device, http, api_url, body).await;
         });
     }
 

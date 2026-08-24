@@ -874,6 +874,10 @@ impl App {
                     // Keep the group's PR dispositions fresh (60s cadence) and
                     // apply any that landed since the last tick.
                     if let Some(ref mut client) = self.cloud_client {
+                        // Post any "track PR <url>" watch requests the user typed.
+                        for add in self.pr_tracker.take_watch_adds() {
+                            client.spawn_add_watched_pr(add);
+                        }
                         client.maybe_fetch_pr_overrides();
                         if let Some(overrides) = client.try_recv_pr_overrides() {
                             self.pr_tracker.set_overrides(overrides);
