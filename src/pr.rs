@@ -228,6 +228,11 @@ pub struct SessionPr {
     /// Unix ms of the merge/close (0 while open or unknown).
     #[serde(default)]
     pub closed_at: u64,
+    /// Unix ms of GitHub's `updatedAt` — the newest activity of any kind on
+    /// the PR (push, comment, review, label). 0 on rows fetched before this
+    /// field shipped.
+    #[serde(default)]
+    pub updated_at: u64,
     /// The PR this session is actually working on, as opposed to one that
     /// merely came up. Computed by [`crate::pr_rank::classify`].
     #[serde(default)]
@@ -300,6 +305,7 @@ impl SessionPr {
             review_decision: String::new(),
             review_dismissed: false,
             closed_at: 0,
+            updated_at: 0,
             primary: false,
             primary_source: String::new(),
             dismissed: false,
@@ -404,6 +410,9 @@ struct GhPrJson {
     /// ISO 8601 once the PR is merged or closed; GitHub returns null while open.
     #[serde(default, rename = "closedAt")]
     closed_at: Option<String>,
+    /// ISO 8601 of the newest activity of any kind on the PR.
+    #[serde(default, rename = "updatedAt")]
+    updated_at: Option<String>,
     #[serde(default, rename = "statusCheckRollup")]
     status_check_rollup: Vec<CheckEntry>,
 }
@@ -1390,6 +1399,7 @@ impl PrTracker {
         let total = passed + failed + pending;
         let ci_url = ci_link(&json.status_check_rollup, &url);
         let closed_at = json.closed_at.as_deref().map_or(0, parse_iso_ms);
+        let updated_at = json.updated_at.as_deref().map_or(0, parse_iso_ms);
         // Only meaningful while open: after a merge or close the dismissal
         // history no longer needs attention.
         let review_dismissed = json.state == "OPEN"
@@ -1418,6 +1428,7 @@ impl PrTracker {
             existing.review_decision = json.review_decision;
             existing.review_dismissed = review_dismissed;
             existing.closed_at = closed_at;
+            existing.updated_at = updated_at;
             if !author_login.is_empty() {
                 existing.author_login = author_login;
             }
@@ -1470,6 +1481,7 @@ impl PrTracker {
             review_decision: json.review_decision,
             review_dismissed,
             closed_at,
+            updated_at,
             checks_passed: passed,
             checks_failed: failed,
             checks_pending: pending,
@@ -1921,7 +1933,7 @@ fn is_number_list_gap(gap: &str) -> bool {
 const GH_JSON_FIELDS: &str =
     "number,title,headRefName,url,author,state,isDraft,additions,deletions,\
     changedFiles,mergeable,mergeStateStatus,reviewDecision,latestReviews,closedAt,\
-    statusCheckRollup";
+    updatedAt,statusCheckRollup";
 
 /// GitHub computes `mergeable` lazily, so the first read often returns UNKNOWN.
 /// Re-query up to this many times (with a short sleep) to get a resolved value.
@@ -3019,6 +3031,7 @@ mod tests {
             review_decision: String::new(),
             latest_reviews: Vec::new(),
             closed_at: None,
+            updated_at: None,
             status_check_rollup: Vec::new(),
         }
     }
@@ -3087,6 +3100,7 @@ mod tests {
                 state: "DISMISSED".into(),
             }],
             closed_at: None,
+            updated_at: Some("2026-08-24T10:00:00Z".into()),
             status_check_rollup: vec![
                 check(CheckClass::Pass, Some("https://github.com/o/r/actions/1")),
                 check(CheckClass::Fail, Some("https://github.com/o/r/actions/2")),

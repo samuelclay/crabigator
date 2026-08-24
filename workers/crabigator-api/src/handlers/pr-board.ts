@@ -466,6 +466,7 @@ function visiblePr(pr: SessionPr, lingerMs: number, nowMs: number, updatedAt: nu
     const latest = Math.max(
         pr.closed_at || 0,
         pr.last_mentioned_at || 0,
+        pr.updated_at || 0,
         updatedAt * 1000
     );
     return !!lingerMs && !!latest && nowMs - latest <= lingerMs;

@@ -1484,7 +1484,7 @@ fn visible_pr(pr: &SessionPr, linger_days: u64, now_ms: u64) -> bool {
     if !pr.primary || foreign_without_explicit_interest(pr) {
         return false;
     }
-    let latest = pr.closed_at.max(pr.last_mentioned_at);
+    let latest = pr.closed_at.max(pr.last_mentioned_at).max(pr.updated_at);
     linger_days > 0 && latest > 0 && now_ms.saturating_sub(latest) <= linger_days * 24 * 3600 * 1000
 }
 
@@ -1725,12 +1725,13 @@ fn activity_bucket(sessions: &[SessionRef], now: u64) -> RecencyBucket {
 }
 
 /// PR-view recency, in unix seconds: the freshest of the sessions' activity
-/// and the PR's own last mention or merge/close. A PR whose sessions ended
-/// but that was merged an hour ago still sorts fresh.
+/// and the PR's own events — a mention here, the merge/close, or GitHub's
+/// updatedAt, which moves on any activity at all (push, comment, review).
 fn pr_recency_time(entry: &BoardPr) -> u64 {
     activity_sort_time(&entry.sessions)
         .max(entry.pr.last_mentioned_at / 1000)
         .max(entry.pr.closed_at / 1000)
+        .max(entry.pr.updated_at / 1000)
 }
 
 /// The clock a PR row sorts and buckets by, honoring the view: session

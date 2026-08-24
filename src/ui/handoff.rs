@@ -733,6 +733,7 @@ mod tests {
             review_decision: String::new(),
             review_dismissed: false,
             closed_at: 0,
+            updated_at: 0,
             primary: false,
             primary_source: String::new(),
             dismissed: false,

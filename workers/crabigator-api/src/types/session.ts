@@ -285,6 +285,7 @@ export interface SessionPr {
     review_decision?: string; // APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED / ''
     review_dismissed?: boolean; // A review was dismissed by new commits and never redone
     closed_at?: number;       // Unix ms of the merge/close (0 while open)
+    updated_at?: number;      // Unix ms of GitHub's updatedAt — any activity at all
     primary?: boolean;        // The PR this session is actually working on
     primary_source?: string;  // 'auto' | 'session' | 'override'
     dismissed?: boolean;      // User dismissed — do not render

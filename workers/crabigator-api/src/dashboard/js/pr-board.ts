@@ -350,12 +350,13 @@ export const prBoardJs = `
             return Math.max(0, ...sessions.map(s => prbSessionFreshness(s)));
         }
         // PR-view recency, unix seconds: the freshest of session activity and
-        // the PR's own last mention or merge/close, so a PR merged an hour
-        // ago stays near the top even after its sessions end.
+        // the PR's own events — a mention here, the merge/close, or GitHub's
+        // updatedAt, which moves on any activity at all (push, comment, review).
         function prbPrViewRecency(e, sessions) {
             return Math.max(prbActivityTime(sessions),
                 Math.floor((e.pr.last_mentioned_at || 0) / 1000),
-                Math.floor((e.pr.closed_at || 0) / 1000));
+                Math.floor((e.pr.closed_at || 0) / 1000),
+                Math.floor((e.pr.updated_at || 0) / 1000));
         }
 
         // Provider markers: ⟁ Codex, ᛝ Claude, both when sessions mix.
