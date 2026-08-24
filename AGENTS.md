@@ -12,6 +12,7 @@ Platform selection:
 crabigator                  # Uses default platform (config/env/claude)
 crabigator codex            # Use Codex CLI
 crabigator claude           # Use Claude Code
+crabigator opencode         # Use opencode
 crabigator --platform codex # Explicit flag
 ```
 
@@ -110,6 +111,7 @@ The application uses a **scroll region approach** to layer UI:
 - **platforms/**: Platform abstraction layer:
   - `claude_code/`: Claude Code hooks (`stats_hook.py`, `hook_script.rs`) and transcript parsing (writes to `~/.claude/crabigator/`)
   - `codex_cli/`: Codex CLI session log and transcript parsing (reads `~/.codex/sessions`)
+  - `opencode/`: opencode integration. Spawns the CLI with `--port` and follows the server's SSE `/event` stream for state, permissions, and the model; writes a normalized transcript log to `/tmp/crabigator-opencode-{session_id}.jsonl` for scrollback, recaps, and PR tracking. opencode's full-screen TUI runs on the alternate screen, which crabigator strips (see `ScrollRegionFilter`) so it paints inside the scroll region on the primary buffer.
 - **hooks/**: `SessionStats` for session time tracking and platform stats integration.
 - **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout; `git.rs`, `changes.rs`, `stats.rs` are the individual widgets; `handoff.rs` is the strip above the widgets (setup prompts, update notices, latest recap, tracked PRs); `pr_cells.rs` is the PR cell rendering shared by the handoff strip and the PR board; `pairing.rs` renders full-width pairing/update banners; `sparkline.rs` renders Unicode sparklines.
 - **cloud/**: Streaming to drinkcrabigator.com - device identity (`device.rs`), session registration (`client.rs`), event queue, and WebSocket connection with auto-reconnect.

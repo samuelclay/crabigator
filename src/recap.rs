@@ -631,6 +631,7 @@ pub(crate) fn collect_latest_turn_text(
     let mut transcript = match platform {
         PlatformKind::Claude => collect_claude_latest_turn(&content),
         PlatformKind::Codex => collect_codex_latest_turn(&content),
+        PlatformKind::Opencode => collect_opencode_latest_turn(&content),
     };
     transcript.activity =
         redact_sensitive(&truncate_start(&transcript.activity, MAX_TRANSCRIPT_CHARS));
@@ -832,6 +833,61 @@ fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
                 }
                 _ => {}
             },
+            _ => {}
+        }
+    }
+
+    TurnTranscript {
+        user_prompt,
+        activity,
+    }
+}
+
+/// The opencode transcript log is written by crabigator itself as normalized
+/// entries: {"kind":"user"|"assistant","text":..} and
+/// {"kind":"tool","name":..,"title":..,"output":..}.
+fn collect_opencode_latest_turn(content: &str) -> TurnTranscript {
+    let mut user_prompt = None;
+    let mut activity = String::new();
+    let mut after_user_prompt = false;
+
+    for line in content.lines() {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let text = entry
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        match entry.get("kind").and_then(|v| v.as_str()) {
+            Some("user") => {
+                if !text.trim().is_empty() {
+                    user_prompt = Some(text.trim().to_string());
+                    activity.clear();
+                    after_user_prompt = true;
+                }
+            }
+            Some("assistant") if after_user_prompt => {
+                if !text.trim().is_empty() {
+                    push_section(&mut activity, "assistant", text.trim());
+                }
+            }
+            Some("tool") if after_user_prompt => {
+                let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                let title = entry.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                push_section(&mut activity, "tool", &format!("{} {}", name, title));
+                let output = entry
+                    .get("output")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if !output.trim().is_empty() {
+                    push_section(
+                        &mut activity,
+                        "tool_result",
+                        &truncate_end(output.trim(), MAX_TOOL_RESULT_CHARS),
+                    );
+                }
+            }
             _ => {}
         }
     }

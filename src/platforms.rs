@@ -5,6 +5,7 @@
 
 pub mod claude_code;
 pub mod codex_cli;
+pub mod opencode;
 
 use std::collections::HashMap;
 
@@ -17,6 +18,7 @@ pub enum PlatformKind {
     #[default]
     Claude,
     Codex,
+    Opencode,
 }
 
 impl PlatformKind {
@@ -24,6 +26,7 @@ impl PlatformKind {
         match value.to_ascii_lowercase().as_str() {
             "claude" | "claude-code" | "claude_code" => Some(Self::Claude),
             "codex" | "codecs" | "openai" => Some(Self::Codex),
+            "opencode" | "open-code" | "open_code" => Some(Self::Opencode),
             _ => None,
         }
     }
@@ -32,6 +35,7 @@ impl PlatformKind {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Opencode => "opencode",
         }
     }
 
@@ -43,6 +47,7 @@ impl PlatformKind {
         match self {
             Self::Claude => "Claude",
             Self::Codex => "Codex",
+            Self::Opencode => "opencode",
         }
     }
 }
@@ -237,11 +242,27 @@ impl PlatformStats {
 /// Trait for platform-specific implementations
 pub trait Platform {
     /// Platform identifier
-    #[allow(dead_code)]
     fn kind(&self) -> PlatformKind;
 
     /// Command to launch the platform CLI
     fn command(&self) -> &'static str;
+
+    /// Adjust the pass-through CLI arguments for this platform's flag
+    /// dialect and prepend any arguments the platform needs to be
+    /// observable (default: unchanged).
+    fn spawn_args(&self, user_args: Vec<String>) -> Vec<String> {
+        user_args
+    }
+
+    /// Whether the platform CLI is a full-screen TUI that renders on the
+    /// alternate screen. Crabigator strips the buffer switch so the CLI
+    /// paints inside the scroll region on the primary buffer (its final
+    /// frame survives in scrollback), and answers the CLI's terminal
+    /// capability queries, which would otherwise go unanswered and block
+    /// its first paint.
+    fn uses_alt_screen(&self) -> bool {
+        false
+    }
 
     /// Ensure hooks are installed and up-to-date
     fn ensure_hooks_installed(&self) -> Result<()>;
@@ -257,5 +278,6 @@ pub fn platform_for(kind: PlatformKind) -> Box<dyn Platform> {
     match kind {
         PlatformKind::Claude => Box::new(claude_code::ClaudeCodePlatform::new()),
         PlatformKind::Codex => Box::new(codex_cli::CodexPlatform::new()),
+        PlatformKind::Opencode => Box::new(opencode::OpencodePlatform::new()),
     }
 }

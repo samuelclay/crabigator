@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use crate::platforms::claude_code::transcript as claude_transcript;
 use crate::platforms::codex_cli::transcript as codex_transcript;
+use crate::platforms::opencode::transcript as opencode_transcript;
 use crate::platforms::PlatformKind;
 
 /// Maximum size for raw PTY log before rotation (50MB)
@@ -289,6 +290,9 @@ impl CaptureManager {
                 self.transcript_offset,
                 &mut self.codex_pending_tools,
             )?,
+            PlatformKind::Opencode => {
+                opencode_transcript::read_transcript(transcript_path, self.transcript_offset)?
+            }
         };
 
         if new_content.is_empty() {

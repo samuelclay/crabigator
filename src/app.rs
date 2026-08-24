@@ -28,7 +28,8 @@ use crate::pr::PrTracker;
 use crate::recap::RecapManager;
 use crate::slack::SlackThread;
 use crate::terminal::{
-    escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, ScrollRegionFilter,
+    escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, QueryResponder,
+    ScrollRegionFilter,
 };
 use crate::ui::{
     compute_dynamic_status_rows, draw_status_bar, handoff_rows, split_terminal_rows,
@@ -69,7 +70,7 @@ const CODEX_REMOTE_ANSWER_SUBMIT_DELAY: Duration = Duration::from_millis(75);
 fn remote_answer_submit_delay(platform: PlatformKind) -> Duration {
     match platform {
         PlatformKind::Codex => CODEX_REMOTE_ANSWER_SUBMIT_DELAY,
-        PlatformKind::Claude => DEFAULT_REMOTE_ANSWER_SUBMIT_DELAY,
+        PlatformKind::Claude | PlatformKind::Opencode => DEFAULT_REMOTE_ANSWER_SUBMIT_DELAY,
     }
 }
 
@@ -155,6 +156,7 @@ pub struct App {
     capture_manager: CaptureManager,
     /// Handles terminal DSR responses for CLIs that request cursor position
     dsr_handler: DsrHandler,
+    query_responder: QueryResponder,
     /// Scans for OSC title sequences from the CLI
     osc_scanner: OscScanner,
     /// Keeps child PTY scroll-region resets constrained to Crabigator's PTY area
@@ -260,6 +262,7 @@ impl App {
         let (pty_rows, status_rows) = split_terminal_rows(rows, initial_handoff_rows);
 
         // Give the assistant CLI only the top portion
+        let platform_args = platform.spawn_args(platform_args);
         let platform_pty =
             PlatformPty::new(pty_tx, cols, pty_rows, platform.command(), platform_args).await?;
         let git_state = GitState::new();
@@ -294,6 +297,7 @@ impl App {
             session_id: session_id.clone(),
         };
         let capture_manager = CaptureManager::new(capture_config, platform.kind(), cols, pty_rows)?;
+        let platform_strips_alt_screen = platform.uses_alt_screen();
 
         // Note: We don't pre-initialize transcript_path on startup because we can't
         // reliably determine which session is being resumed. Platform stats provide
@@ -321,8 +325,10 @@ impl App {
             mirror_publisher,
             capture_manager,
             dsr_handler: DsrHandler::new(),
+            query_responder: QueryResponder::new(platform_strips_alt_screen),
             osc_scanner: OscScanner::new(),
-            scroll_region_filter: ScrollRegionFilter::new(pty_rows),
+            scroll_region_filter: ScrollRegionFilter::new(pty_rows)
+                .with_alt_screen_strip(platform_strips_alt_screen),
             terminal_title: None,
             display_title: None,
             title_history: Vec::new(),
@@ -1017,6 +1023,18 @@ impl App {
                         continue;
                     }
 
+                    // Answer terminal capability queries for full-screen TUI
+                    // platforms; the host's own answers arrive through
+                    // crossterm's event stream and would never reach the PTY.
+                    let query_result = self.query_responder.scan(&passthrough);
+                    if !query_result.responses.is_empty() {
+                        self.platform_pty.write(&query_result.responses)?;
+                    }
+                    let passthrough = query_result.output;
+                    if passthrough.is_empty() {
+                        continue;
+                    }
+
                     // Keep debug capture tied to the real PTY stream, then
                     // render/process the virtualized stream that the user's
                     // terminal actually sees.
@@ -1311,11 +1329,15 @@ impl App {
         };
 
         if let Some(screen) = screen_to_send {
-            // Detect mode from screen content
-            let new_mode = crate::mode::detect_mode(&screen);
-            if new_mode != self.session_stats.platform_stats.mode {
-                self.session_stats.platform_stats.mode = new_mode;
-                self.send_cloud_stats_event();
+            // Detect mode from screen content. opencode reports its agent
+            // (Build/Plan) through its event stream instead, so screen
+            // detection would stomp it with Normal.
+            if self.platform.kind() != crate::platforms::PlatformKind::Opencode {
+                let new_mode = crate::mode::detect_mode(&screen);
+                if new_mode != self.session_stats.platform_stats.mode {
+                    self.session_stats.platform_stats.mode = new_mode;
+                    self.send_cloud_stats_event();
+                }
             }
 
             // Detect interrupted state from screen

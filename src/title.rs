@@ -12,6 +12,8 @@ use crate::pr::SessionPr;
 pub const CODEX_TITLE_MARKER: &str = "⟁  ";
 /// Marker prefixed to Claude session titles.
 pub const CLAUDE_TITLE_MARKER: &str = "ᛝ  ";
+/// Marker prefixed to opencode session titles.
+pub const OPENCODE_TITLE_MARKER: &str = "▣  ";
 /// Marker used when a PR aggregates both Codex and Claude sessions.
 pub(crate) const MIXED_PROVIDER_TITLE_MARKER: &str = "⟁ᛝ  ";
 
@@ -19,6 +21,7 @@ pub(crate) const fn provider_title_marker(platform: PlatformKind) -> &'static st
     match platform {
         PlatformKind::Claude => CLAUDE_TITLE_MARKER,
         PlatformKind::Codex => CODEX_TITLE_MARKER,
+        PlatformKind::Opencode => OPENCODE_TITLE_MARKER,
     }
 }
 
@@ -87,6 +90,9 @@ pub(crate) fn display_title(
     let title = match platform {
         PlatformKind::Claude => native_title,
         PlatformKind::Codex => recap_title.or(native_title),
+        // opencode titles its sessions natively ("OC | ..."), with the
+        // recap title as fallback if the user turns terminal titles off.
+        PlatformKind::Opencode => native_title.or(recap_title),
     };
     title.map(|title| mark_provider_title(platform, title))
 }

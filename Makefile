@@ -1,4 +1,4 @@
-.PHONY: run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo pr prs reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux
+.PHONY: run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo opencode pr prs reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux
 
 PROVIDER_FILE := .crabigator-provider
 DEFAULT_PROVIDER := claude
@@ -37,6 +37,10 @@ codex-yolo:
 
 claude:
 	@echo "claude" > $(PROVIDER_FILE)
+	@$(MAKE) run
+
+opencode:
+	@echo "opencode" > $(PROVIDER_FILE)
 	@$(MAKE) run
 
 claude-yolo:

@@ -236,6 +236,9 @@ fn find_in_fallbacks(command: &str) -> Option<PathBuf> {
         dirs.push(home.join(".yarn/bin"));
         dirs.push(home.join(".volta/bin"));
         dirs.push(home.join("bin"));
+        // opencode's installer puts its launcher here
+        dirs.push(home.join(".opencode/bin"));
+        dirs.push(home.join(".cache/opencode/bin"));
     }
 
     dirs.push(PathBuf::from("/opt/homebrew/bin"));
