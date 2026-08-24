@@ -182,10 +182,37 @@ impl RecencyBucket {
     }
 }
 
+/// What one board row stands for: a session (the default view) or a primary
+/// PR with every touching session grouped beneath it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum BoardMode {
+    #[default]
+    Sessions,
+    Prs,
+}
+
+impl BoardMode {
+    fn parse(value: &str) -> Self {
+        if value.eq_ignore_ascii_case("prs") {
+            Self::Prs
+        } else {
+            Self::Sessions
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Sessions => "sessions",
+            Self::Prs => "prs",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct BoardView {
     detail: u8,
     oldest_visible_bucket: RecencyBucket,
+    mode: BoardMode,
 }
 
 impl BoardView {
@@ -197,7 +224,13 @@ impl BoardView {
                 detail
             },
             oldest_visible_bucket,
+            mode: BoardMode::Sessions,
         }
+    }
+
+    const fn with_mode(mut self, mode: BoardMode) -> Self {
+        self.mode = mode;
+        self
     }
 
     fn toggle_recap(&mut self) {
@@ -210,6 +243,13 @@ impl BoardView {
 
     fn cycle_age(&mut self) {
         self.oldest_visible_bucket = self.oldest_visible_bucket.next_cutoff();
+    }
+
+    fn toggle_mode(&mut self) {
+        self.mode = match self.mode {
+            BoardMode::Sessions => BoardMode::Prs,
+            BoardMode::Prs => BoardMode::Sessions,
+        };
     }
 }
 
@@ -280,6 +320,7 @@ struct SessionSnapshot {
 }
 
 /// One PR aggregated across every session that mentions it.
+#[derive(Clone)]
 struct BoardPr {
     /// Freshest copy of the GitHub stats (newest `refreshed_at` wins).
     pr: SessionPr,
@@ -308,6 +349,9 @@ struct SessionRef {
     prompted_at: u64,
     /// Unix seconds when the session's completion count last changed.
     completed_at: u64,
+    /// The session is over. Always false for live local mirrors; cloud
+    /// records carry the durable answer.
+    ended: bool,
 }
 
 /// Active sessions in a repository/branch that has no matching visible PR row.
@@ -1099,19 +1143,48 @@ fn aggregate(
             }
             visible_pr(&entry.pr, linger_days, now_ms).then_some(entry)
         })
-        .flat_map(fan_out_per_session)
         .collect();
 
     sort_entries(&mut out);
     out
 }
 
+/// Expand merged PR entries into the session view's one-row-per-session shape.
+fn fan_out(entries: Vec<BoardPr>) -> Vec<BoardPr> {
+    entries.into_iter().flat_map(fan_out_per_session).collect()
+}
+
+/// Shape merged entries for the active view: session view fans out one row
+/// per session; PR view keeps one block per primary PR, its sessions sorted
+/// live-first then freshest-first (the sub-row and ←→ order).
+fn entries_for_mode(entries: Vec<BoardPr>, mode: BoardMode) -> Vec<BoardPr> {
+    match mode {
+        BoardMode::Sessions => fan_out(entries),
+        BoardMode::Prs => entries
+            .into_iter()
+            .filter(|entry| entry.pr.primary)
+            .map(|mut entry| {
+                entry.sessions.sort_by_key(|session| {
+                    (
+                        session.ended,
+                        std::cmp::Reverse(session.prompted_at.max(session.completed_at)),
+                    )
+                });
+                entry
+            })
+            .collect(),
+    }
+}
+
 /// Split a merged PR entry into one board row per contributing session, so
 /// each row shows a single session's title, activity, and recap. The merged
 /// GitHub stats are shared by every row; a PR with no attached session keeps
-/// its single session-less row.
+/// its single session-less row. Rows for sessions that ended render stale so
+/// a live one stands out.
 fn fan_out_per_session(entry: BoardPr) -> Vec<BoardPr> {
     if entry.sessions.len() <= 1 {
+        let mut entry = entry;
+        entry.stale |= entry.sessions.first().is_some_and(|session| session.ended);
         return vec![entry];
     }
     let BoardPr {
@@ -1124,9 +1197,9 @@ fn fan_out_per_session(entry: BoardPr) -> Vec<BoardPr> {
         .into_iter()
         .map(|session| BoardPr {
             pr: pr.clone(),
+            stale: stale || session.ended,
             sessions: vec![session],
             slack_threads: slack_threads.clone(),
-            stale,
         })
         .collect()
 }
@@ -1191,6 +1264,7 @@ fn board_session_ref(session: &SessionSnapshot) -> SessionRef {
         state: session.state,
         prompted_at: session.prompted_at,
         completed_at: session.completed_at,
+        ended: false,
     }
 }
 
@@ -1431,7 +1505,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
         let pr = entry.pr;
         let mut slack_threads = Vec::new();
         merge_pr_slack_threads(&mut slack_threads, &pr, &[]);
-        let sessions: Vec<(SessionRef, bool)> = entry
+        let sessions: Vec<SessionRef> = entry
             .sessions
             .into_iter()
             .map(|s| {
@@ -1455,7 +1529,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                         },
                     })
                 });
-                let session = SessionRef {
+                SessionRef {
                     session_id: s.session_id,
                     platform: cloud_session_platform(s.platform, &s.title),
                     dir_name: s.dir_name,
@@ -1466,27 +1540,17 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                     state,
                     prompted_at: activity_timestamp_secs(s.prompts_changed_at),
                     completed_at: activity_timestamp_secs(s.completions_changed_at),
-                };
-                (session, active)
+                    ended: !active,
+                }
             })
             .collect();
-        // One row per session, like the local board; sessions that ended
-        // render stale so the live one stands out.
-        if sessions.is_empty() {
-            out.push(BoardPr {
-                pr,
-                sessions: Vec::new(),
-                slack_threads,
-                stale: true,
-            });
-            continue;
-        }
-        out.extend(sessions.into_iter().map(|(session, active)| BoardPr {
-            pr: pr.clone(),
-            sessions: vec![session],
-            slack_threads: slack_threads.clone(),
-            stale: !active,
-        }));
+        let stale = sessions.iter().all(|session| session.ended);
+        out.push(BoardPr {
+            pr,
+            sessions,
+            slack_threads,
+            stale,
+        });
     }
     sort_entries(&mut out);
 
@@ -1524,6 +1588,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
             recap,
             prompted_at: activity_timestamp_secs(session.prompts_changed_at),
             completed_at: activity_timestamp_secs(session.completions_changed_at),
+            ended: !session.active,
         };
         workspaces.push(WorkspaceEntry {
             repo_owner: session.repo_owner,
@@ -1648,6 +1713,24 @@ fn activity_sort_time(sessions: &[SessionRef]) -> u64 {
 
 fn activity_bucket(sessions: &[SessionRef], now: u64) -> RecencyBucket {
     RecencyBucket::from_age(now.saturating_sub(activity_sort_time(sessions)))
+}
+
+/// PR-view recency, in unix seconds: the freshest of the sessions' activity
+/// and the PR's own last mention or merge/close. A PR whose sessions ended
+/// but that was merged an hour ago still sorts fresh.
+fn pr_recency_time(entry: &BoardPr) -> u64 {
+    activity_sort_time(&entry.sessions)
+        .max(entry.pr.last_mentioned_at / 1000)
+        .max(entry.pr.closed_at / 1000)
+}
+
+/// The recency band a PR row belongs to, honoring the view's clock: session
+/// activity alone in session view, session + PR events in PR view.
+fn entry_bucket(entry: &BoardPr, now: u64, mode: BoardMode) -> RecencyBucket {
+    match mode {
+        BoardMode::Sessions => activity_bucket(&entry.sessions, now),
+        BoardMode::Prs => RecencyBucket::from_age(now.saturating_sub(pr_recency_time(entry))),
+    }
 }
 
 fn activity_part(label: &str, timestamp: u64, now: u64) -> ActivityCell {
@@ -2293,6 +2376,14 @@ fn recap_detail_rows(recap: &RecapBrief) -> Vec<RecapDetailRow<'_>> {
         text: Cow::Borrowed(&recap.headline),
         recap: Some(recap),
     }];
+    rows.extend(recap_extra_rows(recap));
+    rows
+}
+
+/// The recap's detail rows below the headline — for PR-view sub-rows, whose
+/// headline is already inline on the session row.
+fn recap_extra_rows(recap: &RecapBrief) -> Vec<RecapDetailRow<'_>> {
+    let mut rows = Vec::new();
     rows.extend(recap.bullets.iter().map(|bullet| RecapDetailRow {
         kind: RecapLineKind::Bullet,
         text: Cow::Borrowed(bullet),
@@ -2353,15 +2444,16 @@ struct WorkspaceRow<'a> {
 
 /// One board row's place in the rendered frame, for selection and quick look.
 struct RowSpan {
-    /// Stable identity across refreshes: the PR key plus its session, or the
-    /// workspace session alone.
+    /// Stable identity across refreshes: the PR key plus its session (session
+    /// view), the PR alone (PR view), or the workspace session.
     key: String,
     /// First line of the row block, as an index into the rendered frame.
     start: usize,
     /// One past the row block's last line.
     end: usize,
-    /// The live session mirror this row can preview, when it has one.
-    peek: Option<PeekTarget>,
+    /// The live session mirrors this row can preview: at most one in session
+    /// view, one per live session in PR view (freshest first).
+    peeks: Vec<PeekTarget>,
 }
 
 /// A session whose live screen the quick look pane can show.
@@ -2470,6 +2562,162 @@ fn render_pr_board_row(
     ));
     lines.extend(board_row.preview_lines.iter().cloned());
     lines
+}
+
+/// One PR-view block: the PR header row with its stats inline, the ✦
+/// judgment and Slack links when detail is on, then one sub-row per touching
+/// session with its recap headline (and full recap at detail).
+fn render_pr_view_block(
+    board_row: &BoardRow<'_>,
+    width: u16,
+    detail: u8,
+    now_ms: u64,
+    activity_width: usize,
+    widths: &PrColumnWidths,
+    throbber_frame: usize,
+) -> Vec<String> {
+    let entry = board_row.entry;
+    let (title, _) = pr_row_titles(entry);
+    let age = timestamp_cell(pr_recency_time(entry) * 1000, now_ms, activity_width);
+    let mut row = crate::ui::pr_cells::pr_view_row_text(
+        width,
+        &entry.pr,
+        widths,
+        &title,
+        age.styled,
+        age.visible,
+        activity_width,
+    );
+    if entry.stale {
+        row = format!("{}{row}", fg(color::DARK_GRAY));
+    }
+    let mut lines = vec![format!("{row}{RESET}")];
+
+    let layout = DetailLayout {
+        width,
+        now_ms,
+        activity_width,
+        widths,
+    };
+    if detail > DEFAULT_DETAIL {
+        let mut judgment = Vec::new();
+        if !entry.pr.ai_note.is_empty() && entry.pr.state == "OPEN" {
+            judgment.push(RecapDetailRow {
+                kind: RecapLineKind::Judgment,
+                text: Cow::Borrowed(&entry.pr.ai_note),
+                recap: None,
+            });
+        }
+        let slack = slack_detail_cells(entry, widths);
+        if !judgment.is_empty() || !slack.is_empty() {
+            lines.extend(detail_lines(&judgment, &slack, &layout));
+        }
+    }
+
+    for session in &entry.sessions {
+        lines.push(pr_view_session_row(
+            session,
+            width,
+            now_ms,
+            activity_width,
+            widths,
+            throbber_frame,
+        ));
+        if detail > DEFAULT_DETAIL {
+            if let Some(recap) = session.recap.as_ref() {
+                lines.extend(detail_lines(&recap_extra_rows(recap), &[], &layout));
+            }
+        }
+    }
+    lines.extend(board_row.preview_lines.iter().cloned());
+    lines
+}
+
+/// One session beneath a PR-view header: `◆ title — recap headline` with the
+/// session's own state and activity ages right-aligned. Ended sessions render
+/// entirely dim so the live ones stand out.
+fn pr_view_session_row(
+    session: &SessionRef,
+    width: u16,
+    now_ms: u64,
+    activity_width: usize,
+    widths: &PrColumnWidths,
+    throbber_frame: usize,
+) -> String {
+    let plain = crate::title::strip_provider_title_marker(&session.title);
+    let name = if plain.is_empty() {
+        session.dir_name.as_str()
+    } else {
+        plain
+    };
+    let title = crate::title::mark_provider_title(session.platform, name);
+    let headline = session
+        .recap
+        .as_ref()
+        .map(|recap| recap.headline.as_str())
+        .unwrap_or("");
+    let (title_color, text_color) = if session.ended {
+        (color::DARK_GRAY, color::DARK_GRAY)
+    } else {
+        (color::LIGHT_BLUE, color::GRAY)
+    };
+
+    let prefix = "  ◆ ";
+    let budget = widths.board_left_width().saturating_sub(prefix.width());
+    let title_text = crate::ui::pr_cells::truncate_to_width(&title, budget);
+    let separator = if headline.is_empty() { "" } else { " — " };
+    let headline_text = crate::ui::pr_cells::truncate_to_width(
+        headline,
+        budget.saturating_sub(title_text.width() + separator.width()),
+    );
+    let left_visible =
+        prefix.width() + title_text.width() + separator.width() + headline_text.width();
+    let left_styled = format!(
+        "{dim}{prefix}{}{title_text}{dim}{separator}{}{headline_text}{RESET_FG}",
+        fg(title_color),
+        fg(text_color),
+        dim = fg(color::DARK_GRAY),
+    );
+
+    let activity = session_activity_cell(session, now_ms / 1000, throbber_frame);
+    format!(
+        "{}{RESET}",
+        board_detail_row_text(
+            width,
+            widths,
+            left_styled,
+            left_visible,
+            activity.styled,
+            activity.visible,
+            activity_width,
+            String::new(),
+            0,
+        )
+    )
+}
+
+/// A single session's state and ages for its PR-view sub-row. Ended sessions
+/// show the same shape in unbroken dim gray.
+fn session_activity_cell(session: &SessionRef, now: u64, throbber_frame: usize) -> ActivityCell {
+    if !session.ended {
+        return activity_cell(std::slice::from_ref(session), now, throbber_frame);
+    }
+    let part = |icon: &str, timestamp: u64| {
+        if timestamp == 0 {
+            format!("{icon} —")
+        } else {
+            format!("{icon} {}", format_age(now.saturating_sub(timestamp)))
+        }
+    };
+    let plain = format!(
+        "✓  {}  {}",
+        part(PROMPT_ICON, session.prompted_at),
+        part(COMPLETION_ICON, session.completed_at)
+    );
+    ActivityCell {
+        visible: plain.width(),
+        styled: format!("{}{plain}{RESET_FG}", fg(color::DARK_GRAY)),
+    }
 }
 
 fn workspace_title(entry: &WorkspaceEntry) -> (String, u8) {
@@ -2605,6 +2853,7 @@ fn render_at(
     let BoardView {
         detail,
         oldest_visible_bucket,
+        mode,
     } = view;
     let now = now_ms / 1000;
     let throbber_frame = crate::ui::throbber_frame_index();
@@ -2612,7 +2861,7 @@ fn render_at(
         .iter()
         .enumerate()
         .filter_map(|(index, row)| {
-            (activity_bucket(&row.entry.sessions, now) <= oldest_visible_bucket).then_some(index)
+            (entry_bucket(row.entry, now, mode) <= oldest_visible_bucket).then_some(index)
         })
         .collect();
     let visible_workspace_indices: Vec<usize> = workspace_rows
@@ -2662,6 +2911,16 @@ fn render_at(
     } else {
         format!("{UNDERLINE}s{RESET_UNDERLINE} live")
     };
+    let mode_label = if mode == BoardMode::default() {
+        format!(" · {UNDERLINE}p{RESET_UNDERLINE} {}", mode.label())
+    } else {
+        format!(
+            " · {}{UNDERLINE}p{RESET_UNDERLINE} {}{}",
+            fg(color::YELLOW),
+            mode.label(),
+            fg(color::DARK_GRAY)
+        )
+    };
     let detail_label = if detail == DEFAULT_DETAIL {
         format!(" · {UNDERLINE}r{RESET_UNDERLINE} {}", detail_name(detail))
     } else {
@@ -2686,7 +2945,7 @@ fn render_at(
     let mut spans: Vec<RowSpan> = Vec::new();
     let mut lines = vec![
         format!(
-            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{} · {UNDERLINE}↑↓{RESET_UNDERLINE} select · {UNDERLINE}⏎{RESET_UNDERLINE} peek · {UNDERLINE}/{RESET_UNDERLINE} search · {UNDERLINE}+/-{RESET_UNDERLINE} days · {UNDERLINE}q{RESET_UNDERLINE} quit{}",
+            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{}{} · {UNDERLINE}↑↓{RESET_UNDERLINE} select · {UNDERLINE}⏎{RESET_UNDERLINE} peek · {UNDERLINE}/{RESET_UNDERLINE} search · {UNDERLINE}+/-{RESET_UNDERLINE} days · {UNDERLINE}q{RESET_UNDERLINE} quit{}",
             fg(color::PURPLE),
             RESET_FG,
             fg(color::DARK_GRAY),
@@ -2694,6 +2953,7 @@ fn render_at(
             session_count,
             source,
             window,
+            mode_label,
             detail_label,
             age_label,
             RESET_FG,
@@ -2727,9 +2987,20 @@ fn render_at(
         .iter()
         .map(|&index| {
             let entry = rows[index].entry;
-            activity_cell(&entry.sessions, now, throbber_frame)
-                .visible
-                .max(pr_board_metadata_width(&entry.pr))
+            match mode {
+                BoardMode::Sessions => activity_cell(&entry.sessions, now, throbber_frame)
+                    .visible
+                    .max(pr_board_metadata_width(&entry.pr)),
+                // PR-view headers only carry a right-aligned age stamp; the
+                // session sub-rows set the real column width.
+                BoardMode::Prs => entry
+                    .sessions
+                    .iter()
+                    .map(|session| session_activity_cell(session, now, throbber_frame).visible)
+                    .max()
+                    .unwrap_or(0)
+                    .max(4),
+            }
         })
         .chain(visible_workspace_indices.iter().map(|&index| {
             activity_cell(workspace_rows[index].entry.sessions(), now, throbber_frame).visible
@@ -2766,6 +3037,9 @@ fn render_at(
             slack_links_width(&rows[index].entry.slack_threads),
             shared_width as usize,
         );
+    }
+    if mode == BoardMode::Prs {
+        widths.drop_number_column(shared_width as usize);
     }
 
     #[derive(Clone, Copy)]
@@ -2817,9 +3091,13 @@ fn render_at(
         };
         for &index in &visible_row_indices {
             let row = &rows[index];
+            let activity = match mode {
+                BoardMode::Sessions => activity_sort_time(&row.entry.sessions),
+                BoardMode::Prs => pr_recency_time(row.entry),
+            };
             add_row(
                 format!("{}/{}", row.entry.pr.owner, row.entry.pr.repo),
-                activity_sort_time(&row.entry.sessions),
+                activity,
                 SectionRow::Pr(index),
             );
         }
@@ -2840,7 +3118,13 @@ fn render_at(
 
     for section in &mut sections {
         for repository in &mut section.repositories {
-            repository.rows.sort_by_key(|row| std::cmp::Reverse(row.0));
+            // PR view keeps sessions without a PR at the end of their repo
+            // section; session view interleaves everything by recency.
+            repository.rows.sort_by_key(|row| {
+                let workspace_last =
+                    mode == BoardMode::Prs && matches!(row.1, SectionRow::Workspace(_));
+                (workspace_last, std::cmp::Reverse(row.0))
+            });
         }
         section
             .repositories
@@ -2874,22 +3158,55 @@ fn render_at(
 
             for (_, row) in repository.rows {
                 let start = lines.len();
-                let (key, peek) = match row {
+                let (key, peeks) = match row {
                     SectionRow::Pr(index) => {
                         let board_row = &rows[index];
-                        lines.extend(render_pr_board_row(
-                            board_row,
-                            width,
-                            detail,
-                            now_ms,
-                            activity_width,
-                            &widths,
-                            throbber_frame,
-                        ));
-                        (
-                            pr_span_key(board_row.entry),
-                            board_row.entry.sessions.first().and_then(peek_target),
-                        )
+                        match mode {
+                            BoardMode::Sessions => {
+                                lines.extend(render_pr_board_row(
+                                    board_row,
+                                    width,
+                                    detail,
+                                    now_ms,
+                                    activity_width,
+                                    &widths,
+                                    throbber_frame,
+                                ));
+                                (
+                                    pr_span_key(board_row.entry),
+                                    board_row
+                                        .entry
+                                        .sessions
+                                        .first()
+                                        .and_then(peek_target)
+                                        .into_iter()
+                                        .collect(),
+                                )
+                            }
+                            BoardMode::Prs => {
+                                lines.extend(render_pr_view_block(
+                                    board_row,
+                                    width,
+                                    detail,
+                                    now_ms,
+                                    activity_width,
+                                    &widths,
+                                    throbber_frame,
+                                ));
+                                let pr = &board_row.entry.pr;
+                                (
+                                    format!("{}/{}#{}", pr.owner, pr.repo, pr.number),
+                                    // Sub-row order: sessions were sorted live
+                                    // first, so ←→ walks them top to bottom.
+                                    board_row
+                                        .entry
+                                        .sessions
+                                        .iter()
+                                        .filter_map(peek_target)
+                                        .collect(),
+                                )
+                            }
+                        }
                     }
                     SectionRow::Workspace(index) => {
                         let workspace_row = &workspace_rows[index];
@@ -2904,7 +3221,9 @@ fn render_at(
                         ));
                         (
                             format!("ws:{}", session_key(&workspace_row.entry.session)),
-                            peek_target(&workspace_row.entry.session),
+                            peek_target(&workspace_row.entry.session)
+                                .into_iter()
+                                .collect(),
                         )
                     }
                 };
@@ -2912,7 +3231,7 @@ fn render_at(
                     key,
                     start,
                     end: lines.len(),
-                    peek,
+                    peeks,
                 });
             }
         }
@@ -2941,8 +3260,16 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             .unwrap_or_default();
         let width = terminal_size().map(|(w, _)| w).unwrap_or(120);
         let mut activity_history = ActivityHistory::default();
-        let (entries, workspaces, _) =
-            local_board(&mut activity_history, &overrides, DEFAULT_LINGER_DAYS)?;
+        // One frame in the same view the interactive board last used.
+        let preferences = crate::config::Config::load().unwrap_or_default().pr_board;
+        let view = BoardView::new(
+            preferences.detail,
+            RecencyBucket::from_max_age_hours(preferences.oldest_visible_hours),
+        )
+        .with_mode(BoardMode::parse(&preferences.view));
+        let linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
+        let (entries, workspaces, _) = local_board(&mut activity_history, &overrides, linger_days)?;
+        let entries = entries_for_mode(entries, view.mode);
         let rows: Vec<BoardRow> = entries
             .iter()
             .map(|entry| BoardRow {
@@ -2957,16 +3284,7 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
                 preview_lines: Vec::new(),
             })
             .collect();
-        for line in render(
-            &rows,
-            &workspace_rows,
-            width,
-            DEFAULT_LINGER_DAYS,
-            false,
-            BoardView::default(),
-        )
-        .lines
-        {
+        for line in render(&rows, &workspace_rows, width, linger_days, false, view).lines {
             println!("{line}");
         }
         return Ok(());
@@ -3008,8 +3326,49 @@ fn selectable_positions(spans: &[RowSpan]) -> Vec<usize> {
     spans
         .iter()
         .enumerate()
-        .filter_map(|(index, span)| span.peek.is_some().then_some(index))
+        .filter_map(|(index, span)| (!span.peeks.is_empty()).then_some(index))
         .collect()
+}
+
+/// Every peekable (row, session) pair in board order, so ←→ can walk through
+/// a PR row's sessions and continue into the neighboring rows.
+fn peek_positions(spans: &[RowSpan], selectable: &[usize]) -> Vec<(usize, usize)> {
+    selectable
+        .iter()
+        .flat_map(|&span_index| {
+            (0..spans[span_index].peeks.len()).map(move |peek_index| (span_index, peek_index))
+        })
+        .collect()
+}
+
+/// The peekable session `step` away from the current one, walking within a
+/// row's sessions before crossing into the next row, clamped at the ends.
+fn step_peek_target<'a>(
+    spans: &'a [RowSpan],
+    selectable: &[usize],
+    selected: Option<&str>,
+    peek_index: usize,
+    step: isize,
+) -> Option<(&'a RowSpan, usize)> {
+    let positions = peek_positions(spans, selectable);
+    if positions.is_empty() {
+        return None;
+    }
+    let current = selected.and_then(|key| {
+        positions.iter().position(|&(span_index, index)| {
+            let span = &spans[span_index];
+            span.key == key && index == peek_index.min(span.peeks.len().saturating_sub(1))
+        })
+    });
+    let next = match current {
+        Some(position) => {
+            (position as isize + step).clamp(0, positions.len() as isize - 1) as usize
+        }
+        None if step > 0 => 0,
+        None => positions.len() - 1,
+    };
+    let (span_index, index) = positions[next];
+    Some((&spans[span_index], index))
 }
 
 /// Where the current selection sits among `selectable`, when its row is still
@@ -3072,11 +3431,16 @@ fn peek_pane_rows(height: u16) -> usize {
     (height as usize) / 2
 }
 
-/// The peeked session, resolved from the current selection.
-fn selected_peek<'a>(spans: &'a [RowSpan], selected: Option<&str>) -> Option<&'a PeekTarget> {
-    selected
-        .and_then(|key| spans.iter().find(|span| span.key == key))
-        .and_then(|span| span.peek.as_ref())
+/// The peeked session, resolved from the current selection. A `peek_index`
+/// past the row's list (the row changed under the selection) falls back to
+/// its first session.
+fn selected_peek<'a>(
+    spans: &'a [RowSpan],
+    selected: Option<&str>,
+    peek_index: usize,
+) -> Option<&'a PeekTarget> {
+    let span = selected.and_then(|key| spans.iter().find(|span| span.key == key))?;
+    span.peeks.get(peek_index).or_else(|| span.peeks.first())
 }
 
 /// Step the pane's scrollback anchor by `delta` lines. `None` is the live
@@ -3108,9 +3472,11 @@ fn step_peek_scroll(
 /// at that line. `rows` is the pane height including both border rows;
 /// lines wider than the interior clip at the right border, which is pinned
 /// by column addressing because auto-wrap is off.
+#[allow(clippy::too_many_arguments)]
 fn build_peek_pane(
     spans: &[RowSpan],
     selected: Option<&str>,
+    peek_index: usize,
     width: u16,
     rows: usize,
     scroll: Option<usize>,
@@ -3119,7 +3485,7 @@ fn build_peek_pane(
     if rows == 0 {
         return Vec::new();
     }
-    let target = selected_peek(spans, selected);
+    let target = selected_peek(spans, selected, peek_index);
     let interior = rows.saturating_sub(2);
 
     let (mut content, lines_back) = match (target, scroll) {
@@ -3276,6 +3642,7 @@ fn save_board_preferences(include_ended: bool, linger_days: u64, view: BoardView
     config.pr_board.detail = view.detail;
     config.pr_board.linger_days = linger_days;
     config.pr_board.oldest_visible_hours = view.oldest_visible_bucket.max_age_hours();
+    config.pr_board.view = view.mode.label().to_string();
     config.save()
 }
 
@@ -3300,6 +3667,9 @@ async fn board_loop(
     let mut selected: Option<String> = None;
     let mut peek_open = false;
     let mut peek_scroll: Option<usize> = None;
+    // Which of the selected row's sessions the pane mirrors (PR view rows
+    // can hold several; session view rows at most one).
+    let mut peek_index: usize = 0;
     let mut pane_lines: Vec<String> = Vec::new();
     // Transcript search state: cached scrollbacks plus the Tab-toggled
     // context view for the inline previews.
@@ -3314,7 +3684,8 @@ async fn board_loop(
     let mut view = BoardView::new(
         preferences.detail,
         RecencyBucket::from_max_age_hours(preferences.oldest_visible_hours),
-    );
+    )
+    .with_mode(BoardMode::parse(&preferences.view));
     let mut linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
     let mut include_ended = preferences.include_ended;
     // Cloud fetches are throttled well below the local tick; toggling the
@@ -3442,13 +3813,16 @@ async fn board_loop(
             let query = search.as_deref().unwrap_or("");
             let now_ms = (now_secs() * 1000.0) as u64;
             let now = now_ms / 1000;
+            // The canonical entries stay merged (one per PR); the active view
+            // shapes them into its own rows here.
+            let view_entries = entries_for_mode(entries.clone(), view.mode);
             // A PR stays visible when its metadata matches, or when any of
             // its sessions' transcripts contain the query — with the matched
             // excerpt shown inline so the hit can be confirmed.
-            let filtered: Vec<BoardRow> = entries
+            let filtered: Vec<BoardRow> = view_entries
                 .iter()
                 .filter_map(|entry| {
-                    if activity_bucket(&entry.sessions, now) > view.oldest_visible_bucket {
+                    if entry_bucket(entry, now, view.mode) > view.oldest_visible_bucket {
                         return None;
                     }
                     let preview_lines =
@@ -3523,6 +3897,7 @@ async fn board_loop(
             let fresh_pane = build_peek_pane(
                 &spans,
                 selected.as_deref(),
+                peek_index,
                 width,
                 pane_rows,
                 peek_scroll,
@@ -3665,6 +4040,20 @@ async fn board_loop(
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
+                            // Flip between one row per session and one block
+                            // per primary PR. Selection keys differ between
+                            // the views, so it starts fresh.
+                            KeyCode::Char('p') => {
+                                view.toggle_mode();
+                                save_board_preferences(include_ended, linger_days, view)?;
+                                selected = None;
+                                peek_open = false;
+                                peek_scroll = None;
+                                peek_index = 0;
+                                scroll = 0;
+                                needs_render = true;
+                                dirty = true;
+                            }
                             // Recap visibility and age filtering are independent.
                             KeyCode::Char('r') => {
                                 view.toggle_recap();
@@ -3710,6 +4099,7 @@ async fn board_loop(
                             selected = Some(span.key.clone());
                             peek_open = true;
                             peek_scroll = None;
+                            peek_index = 0;
                             // The pane shrinks the page; keep the selection
                             // in view within the new top half.
                             let page = (height as usize)
@@ -3740,7 +4130,7 @@ async fn board_loop(
                             || key.code == KeyCode::Home
                             || key.code == KeyCode::End
                         {
-                            let total = selected_peek(&spans, selected.as_deref())
+                            let total = selected_peek(&spans, selected.as_deref(), peek_index)
                                 .and_then(|target| transcripts.lines(&target.session_dir))
                                 .map_or(0, <[String]>::len);
                             let next = match (key.code, delta) {
@@ -3762,11 +4152,20 @@ async fn board_loop(
                             _ => None,
                         };
                         if let Some(step) = switch {
-                            if let Some(span) =
-                                step_selection(&spans, &selectable, selected.as_deref(), step)
-                            {
-                                if selected.as_deref() != Some(span.key.as_str()) {
+                            // ←→ walk peekable sessions: within a PR-view
+                            // row's sub-rows first, then into the neighbors.
+                            if let Some((span, next_index)) = step_peek_target(
+                                &spans,
+                                &selectable,
+                                selected.as_deref(),
+                                peek_index,
+                                step,
+                            ) {
+                                if selected.as_deref() != Some(span.key.as_str())
+                                    || next_index != peek_index
+                                {
                                     selected = Some(span.key.clone());
+                                    peek_index = next_index;
                                     peek_scroll = None;
                                     scroll = scroll_to_reveal(scroll, page, span).min(max_scroll);
                                     dirty = true;
@@ -3792,6 +4191,7 @@ async fn board_loop(
                                         scroll_to_reveal(scroll, page, span).min(max_scroll);
                                     if moved || target != scroll {
                                         selected = Some(span.key.clone());
+                                        peek_index = 0;
                                         scroll = target;
                                         dirty = true;
                                     }
@@ -3892,6 +4292,7 @@ mod tests {
         let styled = render_frame(&[]);
         for (shortcut, label) in [
             ("s", "live"),
+            ("p", "sessions"),
             ("r", "compact"),
             ("a", "all ages"),
             ("↑↓", "select"),
@@ -3904,7 +4305,7 @@ mod tests {
         }
 
         let frame = crate::parsers::strip_ansi_for_debug(&styled);
-        assert!(frame.contains("s live · primary done ≤ 1d · r compact · a all ages"));
+        assert!(frame.contains("s live · primary done ≤ 1d · p sessions · r compact · a all ages"));
         assert!(!frame.contains("r recap · a age · s live/all"));
         assert!(!frame.contains("e/c recap/compact"));
         assert!(!frame.contains("[/] age"));
@@ -3955,6 +4356,211 @@ mod tests {
         }
     }
 
+    fn render_prs_frame(entries: &[BoardPr], detail: u8) -> RenderedBoard {
+        let rows: Vec<BoardRow> = entries
+            .iter()
+            .map(|entry| BoardRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        render(
+            &rows,
+            &[],
+            160,
+            DEFAULT_LINGER_DAYS,
+            false,
+            BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET).with_mode(BoardMode::Prs),
+        )
+    }
+
+    fn test_session_ref(name: &str, prompted_at: u64, ended: bool) -> SessionRef {
+        SessionRef {
+            session_id: name.to_string(),
+            platform: PlatformKind::Claude,
+            dir_name: name.to_string(),
+            session_dir: None,
+            title: String::new(),
+            title_set_at: 0,
+            recap: None,
+            state: SessionState::Ready,
+            prompted_at,
+            completed_at: 0,
+            ended,
+        }
+    }
+
+    #[test]
+    fn pr_view_groups_sessions_under_one_pr_block() {
+        let mut pr = board_pr(5, "portal");
+        make_primary(&mut pr);
+        pr.title = "Ship the fallback".to_string();
+        pr.branch = "fallback".to_string();
+        let twin = pr.clone();
+
+        let mut one = snapshot("one", vec![pr]);
+        one.repo_name = "portal".to_string();
+        one.recap = Some(RecapBrief {
+            headline: "Ported the fallback".to_string(),
+            bullets: vec!["Moved the mirror logic".to_string()],
+            next_prompt_notes: Vec::new(),
+            artifacts: Vec::new(),
+            generated_at: 0,
+            line_delta: crate::recap::TurnLineDelta::default(),
+        });
+        let mut two = snapshot("two", vec![twin]);
+        two.repo_name = "portal".to_string();
+
+        let merged = aggregate(&[one, two], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = entries_for_mode(merged, BoardMode::Prs);
+        assert_eq!(entries.len(), 1, "one block per PR, not one row per session");
+        assert_eq!(entries[0].sessions.len(), 2);
+
+        let rendered = render_prs_frame(&entries, DEFAULT_DETAIL);
+        assert_eq!(rendered.spans.len(), 1, "the block is one selectable span");
+        assert_eq!(rendered.spans[0].key, "o/portal#5");
+        let frame = crate::parsers::strip_ansi_for_debug(&rendered.lines.join("\n"));
+        assert!(frame.contains("5: Ship the fallback"), "{frame}");
+        assert!(frame.contains("◆"), "session sub-rows sit under the PR");
+        assert!(frame.contains("one") && frame.contains("two"));
+        assert!(
+            frame.contains("— Ported the fallback"),
+            "the recap headline rides the sub-row: {frame}"
+        );
+        assert!(
+            !frame.contains("Moved the mirror logic"),
+            "bullets wait for the recap detail toggle"
+        );
+
+        let detailed = render_prs_frame(&entries, MAX_DETAIL);
+        let frame = crate::parsers::strip_ansi_for_debug(&detailed.lines.join("\n"));
+        assert!(frame.contains("Moved the mirror logic"), "{frame}");
+    }
+
+    #[test]
+    fn pr_view_lists_only_primary_prs() {
+        let mut primary = board_pr(1, "portal");
+        make_primary(&mut primary);
+        let secondary = board_pr(2, "portal");
+        let mut session = snapshot("one", vec![primary, secondary]);
+        session.repo_name = "portal".to_string();
+
+        let merged = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        assert_eq!(merged.len(), 2, "session view shows the open secondary");
+
+        let prs = entries_for_mode(merged, BoardMode::Prs);
+        assert_eq!(prs.len(), 1, "PR view watches primaries only");
+        assert_eq!(prs[0].pr.number, 1);
+    }
+
+    #[test]
+    fn pr_view_recency_counts_pr_events_not_just_sessions() {
+        let now_ms = now_ms();
+        let now = now_ms / 1000;
+        let mut pr = board_pr(9, "portal");
+        make_primary(&mut pr);
+        pr.state = "MERGED".to_string();
+        pr.closed_at = now_ms - 60_000;
+        let entry = BoardPr {
+            pr,
+            sessions: vec![test_session_ref("old", now - 30 * 3600, false)],
+            slack_threads: Vec::new(),
+            stale: false,
+        };
+
+        assert_eq!(
+            entry_bucket(&entry, now, BoardMode::Sessions),
+            RecencyBucket::Older,
+            "session view only sees the stale session"
+        );
+        assert_eq!(
+            entry_bucket(&entry, now, BoardMode::Prs),
+            RecencyBucket::LastHour,
+            "PR view keeps the fresh merge in the newest band"
+        );
+    }
+
+    #[test]
+    fn pr_view_sorts_ended_sessions_below_live_ones_and_dims_them() {
+        let now = (now_secs()) as u64;
+        let mut pr = board_pr(3, "portal");
+        make_primary(&mut pr);
+        let entry = BoardPr {
+            pr,
+            sessions: vec![
+                test_session_ref("ended-fresh", now - 60, true),
+                test_session_ref("live-old", now - 7200, false),
+            ],
+            slack_threads: Vec::new(),
+            stale: false,
+        };
+
+        let shaped = entries_for_mode(vec![entry], BoardMode::Prs);
+        let names: Vec<&str> = shaped[0]
+            .sessions
+            .iter()
+            .map(|session| session.dir_name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["live-old", "ended-fresh"],
+            "live sessions come first even when older"
+        );
+
+        let widths = PrColumnWidths::from_pr_refs(&[&shaped[0].pr], 120);
+        let ended_row = pr_view_session_row(
+            &shaped[0].sessions[1],
+            120,
+            now * 1000,
+            12,
+            &widths,
+            0,
+        );
+        assert!(
+            ended_row.trim_start().starts_with(&fg(color::DARK_GRAY)),
+            "ended sub-rows dim: {ended_row:?}"
+        );
+    }
+
+    #[test]
+    fn peek_stepping_walks_a_rows_sessions_then_crosses_rows() {
+        let target = |name: &str| PeekTarget {
+            title: name.to_string(),
+            dir_name: name.to_string(),
+            session_dir: PathBuf::from(name),
+        };
+        let spans = vec![
+            RowSpan {
+                key: "a".to_string(),
+                start: 0,
+                end: 1,
+                peeks: vec![target("a1"), target("a2")],
+            },
+            RowSpan {
+                key: "b".to_string(),
+                start: 1,
+                end: 2,
+                peeks: vec![target("b1")],
+            },
+        ];
+        let selectable = selectable_positions(&spans);
+
+        let step = |selected: Option<&str>, peek_index, step| {
+            step_peek_target(&spans, &selectable, selected, peek_index, step)
+                .map(|(span, index)| (span.key.as_str(), index))
+        };
+        assert_eq!(step(None, 0, 1), Some(("a", 0)), "enters at the top");
+        assert_eq!(step(Some("a"), 0, 1), Some(("a", 1)), "walks within the PR");
+        assert_eq!(step(Some("a"), 1, 1), Some(("b", 0)), "then crosses rows");
+        assert_eq!(step(Some("b"), 0, -1), Some(("a", 1)), "and back");
+        assert_eq!(step(Some("b"), 0, 1), Some(("b", 0)), "clamped at the end");
+        assert_eq!(
+            selected_peek(&spans, Some("a"), 5).map(|t| t.dir_name.as_str()),
+            Some("a1"),
+            "an out-of-range index falls back to the first session"
+        );
+    }
+
     #[test]
     fn aggregation_fans_the_same_pr_out_to_one_row_per_session() {
         let mut a = board_pr(5, "portal");
@@ -3982,7 +4588,7 @@ mod tests {
         two.slack_threads = crate::slack::extract_threads(
             "https://t.slack.com/archives/C0/p1723500000000000 https://t.slack.com/archives/C1/p1723500001000000 https://t.slack.com/archives/C4/p1723500003000000",
         );
-        let entries = aggregate(&[two, one], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = fan_out(aggregate(&[two, one], &HashMap::new(), DEFAULT_LINGER_DAYS));
         assert_eq!(entries.len(), 2, "one row per contributing session");
         let mut session_dirs: Vec<&str> = entries
             .iter()
@@ -4040,7 +4646,7 @@ mod tests {
             key: "k".to_string(),
             start,
             end,
-            peek: None,
+            peeks: Vec::new(),
         };
         assert_eq!(scroll_to_reveal(10, 5, &span(3, 5)), 3, "scrolls up");
         assert_eq!(
@@ -4103,7 +4709,7 @@ mod tests {
         );
         let span = &rendered.spans[selectable[0]];
         assert_eq!(span.key, "o/portal#7@live");
-        assert_eq!(span.peek.as_ref().unwrap().session_dir, capture.path());
+        assert_eq!(span.peeks[0].session_dir, capture.path());
         let block =
             crate::parsers::strip_ansi_for_debug(&rendered.lines[span.start..span.end].join("\n"));
         assert!(
@@ -4117,11 +4723,11 @@ mod tests {
             key: "k".to_string(),
             start: 0,
             end: 1,
-            peek: Some(PeekTarget {
+            peeks: vec![PeekTarget {
                 title: "Fix the flaky test".to_string(),
                 dir_name: "portal".to_string(),
                 session_dir: capture.path().to_path_buf(),
-            }),
+            }],
         }]
     }
 
@@ -4132,7 +4738,7 @@ mod tests {
         let spans = peek_spans(&capture);
         let mut transcripts = TranscriptCache::default();
 
-        let pane = build_peek_pane(&spans, Some("k"), 80, 4, None, &mut transcripts);
+        let pane = build_peek_pane(&spans, Some("k"), 0, 80, 4, None, &mut transcripts);
         assert_eq!(pane.len(), 4, "borders plus the screen rows that fit");
         assert!(pane[0].contains('┏') && pane[0].contains('┓'));
         assert_eq!(
@@ -4149,7 +4755,7 @@ mod tests {
         assert!(pane[2].contains("four"));
         assert!(pane[3].contains('┗') && pane[3].contains('┛'));
 
-        let missing = build_peek_pane(&spans, Some("unknown"), 80, 4, None, &mut transcripts);
+        let missing = build_peek_pane(&spans, Some("unknown"), 0, 80, 4, None, &mut transcripts);
         assert!(
             missing[1].contains("no live screen"),
             "a vanished session reads as such instead of a stale screen"
@@ -4166,7 +4772,7 @@ mod tests {
         let spans = peek_spans(&capture);
         let mut transcripts = TranscriptCache::default();
 
-        let pane = build_peek_pane(&spans, Some("k"), 80, 4, Some(3), &mut transcripts);
+        let pane = build_peek_pane(&spans, Some("k"), 0, 80, 4, Some(3), &mut transcripts);
         assert!(pane[1].contains("line 4"), "window starts at the anchor");
         assert!(pane[2].contains("line 5"));
         assert!(
@@ -5344,6 +5950,7 @@ mod tests {
                 state: SessionState::Ready,
                 prompted_at: 0,
                 completed_at: 0,
+                ended: false,
             }],
             slack_threads: Vec::new(),
             stale: false,
@@ -5579,6 +6186,7 @@ mod tests {
                 state: SessionState::Complete,
                 prompted_at: now - 4 * 60 * 60,
                 completed_at: now - 8 * 60 * 60,
+                ended: false,
             },
             SessionRef {
                 session_id: "newer".to_string(),
@@ -5591,6 +6199,7 @@ mod tests {
                 state: SessionState::Thinking,
                 prompted_at: now - 30 * 60,
                 completed_at: now - 2 * 60 * 60,
+                ended: false,
             },
         ];
         let activity = activity_cell(&sessions, now, 0);
@@ -5640,6 +6249,7 @@ mod tests {
                 state,
                 prompted_at: 1,
                 completed_at: 1,
+                ended: false,
             };
             let activity = activity_cell(&[session], 1, 0);
             assert!(crate::parsers::strip_ansi_for_debug(&activity.styled)
@@ -5658,6 +6268,7 @@ mod tests {
             state: SessionState::Thinking,
             prompted_at: 1,
             completed_at: 0,
+            ended: false,
         };
         let first = activity_cell(std::slice::from_ref(&thinking), 1, 0);
         let second = activity_cell(&[thinking], 1, 1);
@@ -5758,6 +6369,7 @@ mod tests {
             state: SessionState::Ready,
             prompted_at: now - 8 * 60,
             completed_at: now - 13 * 60 * 60,
+            ended: false,
         };
         assert_eq!(
             activity_sort_time(std::slice::from_ref(&session)),

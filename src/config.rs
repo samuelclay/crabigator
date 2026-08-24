@@ -56,6 +56,10 @@ pub struct PrBoardPreferences {
     /// Oldest activity shown by default, in hours. None means all activity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_visible_hours: Option<u64>,
+    /// Which grouping the board opens in: "sessions" (one row per session)
+    /// or "prs" (one block per primary PR with its sessions beneath).
+    #[serde(default = "default_pr_board_view")]
+    pub view: String,
 }
 
 fn default_true() -> bool {
@@ -70,6 +74,10 @@ fn default_pr_board_linger_days() -> u64 {
     1
 }
 
+fn default_pr_board_view() -> String {
+    "sessions".to_string()
+}
+
 impl Default for PrBoardPreferences {
     fn default() -> Self {
         Self {
@@ -77,6 +85,7 @@ impl Default for PrBoardPreferences {
             detail: 0,
             linger_days: default_pr_board_linger_days(),
             oldest_visible_hours: None,
+            view: default_pr_board_view(),
         }
     }
 }
@@ -215,6 +224,7 @@ mod tests {
         assert_eq!(config.pr_board.detail, 0);
         assert_eq!(config.pr_board.linger_days, 1);
         assert_eq!(config.pr_board.oldest_visible_hours, None);
+        assert_eq!(config.pr_board.view, "sessions");
     }
 
     #[test]
@@ -224,6 +234,7 @@ mod tests {
         config.pr_board.detail = 1;
         config.pr_board.linger_days = 7;
         config.pr_board.oldest_visible_hours = Some(9);
+        config.pr_board.view = "prs".to_string();
 
         let encoded = toml::to_string(&config).unwrap();
         let decoded: Config = toml::from_str(&encoded).unwrap();
@@ -231,6 +242,7 @@ mod tests {
         assert_eq!(decoded.pr_board.detail, 1);
         assert_eq!(decoded.pr_board.linger_days, 7);
         assert_eq!(decoded.pr_board.oldest_visible_hours, Some(9));
+        assert_eq!(decoded.pr_board.view, "prs");
     }
 
     #[test]

@@ -149,6 +149,15 @@ impl PrColumnWidths {
         self.fit_left(total_width);
     }
 
+    /// PR-view rows carry the number inside the identity cell (`★ 142: title`),
+    /// so the standalone number column collapses and its space returns to the
+    /// flexible columns.
+    pub(crate) fn drop_number_column(&mut self, total_width: usize) {
+        self.number = 0;
+        self.fit_right(total_width);
+        self.fit_left(total_width);
+    }
+
     /// Include the board's session title in the identity measurement.
     pub(crate) fn include_board_identity(
         &mut self,
@@ -289,6 +298,27 @@ pub(crate) fn pr_row_text_with_activity(
         pr,
         widths,
         &left_cells,
+        Some((styled, visible, column_width)),
+    )
+}
+
+/// Render the PR view's header row: identity (`★ 142: title`), diff, file
+/// count, and branch inline on one line, with the age stamp and GitHub status
+/// anchored right.
+pub(crate) fn pr_view_row_text(
+    width: u16,
+    pr: &SessionPr,
+    widths: &PrColumnWidths,
+    title: &str,
+    styled: String,
+    visible: usize,
+    column_width: usize,
+) -> String {
+    pr_row_text_with_optional_activity(
+        width,
+        pr,
+        widths,
+        Some(title),
         Some((styled, visible, column_width)),
     )
 }
@@ -842,7 +872,7 @@ fn truncate_identity(pr: &SessionPr, width: usize) -> String {
 
 fn truncate_board_pr_identity(pr: &SessionPr, title: &str, width: usize) -> String {
     let glyph = pr_glyph(pr);
-    truncate_to_width(&format!("{glyph} {title}"), width)
+    truncate_to_width(&format!("{glyph} {}: {title}", pr.number), width)
 }
 
 /// The identity column at full width, for column sizing.
