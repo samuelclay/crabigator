@@ -97,6 +97,15 @@ fn decl_watch_url_re() -> &'static Regex {
     })
 }
 
+/// `owner/repo#123` on its own, as typed into a watch input.
+fn watch_shorthand_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#(\d+)$")
+            .expect("valid watch shorthand regex")
+    })
+}
+
 /// The same statement as `track owner/repo#123`.
 fn decl_watch_repo_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -362,32 +371,14 @@ impl SessionPr {
 pub fn parse_watch_target(input: &str) -> Option<WatchAdd> {
     let input = input.trim().trim_end_matches(['.', ',', ')', '>', ';']);
     if let Some(loc) = location_from_url(input) {
-        return Some(WatchAdd {
-            owner: loc.owner,
-            repo: loc.repo,
-            number: loc.number,
-            url: loc.url,
-        });
+        return Some(loc.watch_add());
     }
-    let (repo_part, number) = input.split_once('#')?;
-    let (owner, repo) = repo_part.split_once('/')?;
-    let number: u64 = number.parse().ok()?;
-    let valid_name = |name: &str| {
-        !name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
-    };
-    if number == 0 || !valid_name(owner) || !valid_name(repo) {
+    let caps = watch_shorthand_re().captures(input)?;
+    let number: u64 = caps[3].parse().ok()?;
+    if number == 0 {
         return None;
     }
-    let loc = PrLocation::new(owner, repo, number);
-    Some(WatchAdd {
-        owner: loc.owner,
-        repo: loc.repo,
-        number,
-        url: loc.url,
-    })
+    Some(PrLocation::new(&caps[1], &caps[2], number).watch_add())
 }
 
 /// One explicit watch request from an in-session "track PR <url>" statement,
@@ -422,6 +413,16 @@ impl PrLocation {
             repo: repo.to_string(),
             number,
             url: format!("https://github.com/{owner}/{repo}/pull/{number}"),
+        }
+    }
+
+    /// This location as a watch-list add.
+    fn watch_add(self) -> WatchAdd {
+        WatchAdd {
+            owner: self.owner,
+            repo: self.repo,
+            number: self.number,
+            url: self.url,
         }
     }
 }
@@ -976,12 +977,7 @@ impl PrTracker {
         if let Some(pr) = self.prs.iter_mut().find(|p| p.url == loc.url) {
             pr.watched = true;
         }
-        let add = WatchAdd {
-            owner: loc.owner,
-            repo: loc.repo,
-            number: loc.number,
-            url: loc.url,
-        };
+        let add = loc.watch_add();
         if !self.pending_watch_adds.contains(&add) {
             self.pending_watch_adds.push(add);
         }
@@ -2554,7 +2550,10 @@ mod tests {
         );
         let add = parse_watch_target("octo/hello-world#123").unwrap();
         assert_eq!(add.url, "https://github.com/octo/hello-world/pull/123");
-        assert!(parse_watch_target("#123").is_none(), "a bare number has no repo");
+        assert!(
+            parse_watch_target("#123").is_none(),
+            "a bare number has no repo"
+        );
         assert!(parse_watch_target("not a pr").is_none());
         assert!(parse_watch_target("o/r#0").is_none());
     }
@@ -2568,7 +2567,10 @@ mod tests {
             "track PR https://github.com/o/r/pull/812 for me",
             Path::new("/tmp"),
         );
-        assert!(tracker.prs()[0].watched, "the tracked PR is flagged watched");
+        assert!(
+            tracker.prs()[0].watched,
+            "the tracked PR is flagged watched"
+        );
 
         tracker.scan_prompt("also watch other/repo#4102 please", Path::new("/tmp"));
         let adds = tracker.take_watch_adds();

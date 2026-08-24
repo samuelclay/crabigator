@@ -122,10 +122,9 @@ export const prBoardCss = `
 }
 .prb-l1-left { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
 .prb-star { cursor: pointer; flex-shrink: 0; }
-.prb-star.primary { color: #af87ff; }
+/* A watch no session claims renders full purple, like a primary. */
+.prb-star.primary, .prb-star.watched { color: #af87ff; }
 .prb-star.secondary { color: #6c6c6c; }
-/* An explicitly watched PR no session claims: full purple, like a primary. */
-.prb-star.watched { color: #af87ff; }
 .prb-star:hover { color: #d6bffb; }
 .prb-diamond { color: #af87ff; flex-shrink: 0; }
 .prb-ident {

@@ -169,6 +169,16 @@ export const prBoardJs = `
             return null;
         }
 
+        // Add ({ owner, repo, number, url }) or remove ({ …, remove: true })
+        // one watch.
+        function prbPostWatch(body) {
+            return fetch('/api/prs/watched', {
+                method: 'POST',
+                headers: Object.assign({ 'Content-Type': 'application/json' }, getAuthHeaders()),
+                body: JSON.stringify(body),
+            });
+        }
+
         async function prbSubmitWatch(input) {
             const flashError = () => {
                 input.classList.add('prb-add-error');
@@ -180,14 +190,10 @@ export const prBoardJs = `
                 return;
             }
             try {
-                const res = await fetch('/api/prs/watched', {
-                    method: 'POST',
-                    headers: Object.assign({ 'Content-Type': 'application/json' }, getAuthHeaders()),
-                    body: JSON.stringify(Object.assign({}, target, {
-                        url: 'https://github.com/' + target.owner + '/' + target.repo
-                            + '/pull/' + target.number,
-                    })),
-                });
+                const res = await prbPostWatch(Object.assign({}, target, {
+                    url: 'https://github.com/' + target.owner + '/' + target.repo
+                        + '/pull/' + target.number,
+                }));
                 if (!res.ok) throw new Error();
                 input.value = '';
                 input.blur();
@@ -199,12 +205,8 @@ export const prBoardJs = `
 
         async function prbRemoveWatch(pr) {
             try {
-                await fetch('/api/prs/watched', {
-                    method: 'POST',
-                    headers: Object.assign({ 'Content-Type': 'application/json' }, getAuthHeaders()),
-                    body: JSON.stringify({
-                        owner: pr.owner, repo: pr.repo, number: pr.number, remove: true,
-                    }),
+                await prbPostWatch({
+                    owner: pr.owner, repo: pr.repo, number: pr.number, remove: true,
                 });
             } catch (e) {
                 // The next board refresh shows whatever actually happened.

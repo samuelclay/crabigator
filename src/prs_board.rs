@@ -32,7 +32,7 @@ use crossterm::terminal::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::platforms::{PlatformKind, SessionState};
-use crate::pr::SessionPr;
+use crate::pr::{SessionPr, WatchAdd};
 use crate::pr_rank::{attached_to_worktree, PrDisposition};
 use crate::slack::{SlackDirectory, SlackThread};
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG, RESET_UNDERLINE, UNDERLINE};
@@ -3236,7 +3236,6 @@ impl Drop for PrBoardTerminalGuard {
     }
 }
 
-/// Entry point for `crabigator prs`.
 /// How often the open board re-runs `gh` for each open watched PR.
 const WATCHED_REFRESH: Duration = Duration::from_secs(60);
 /// Minimum spacing between relays of freshly fetched watched-PR stats.
@@ -3251,11 +3250,11 @@ const WATCH_ADD_GRACE: Duration = Duration::from_secs(120);
 #[derive(Default)]
 struct WatchedBoard {
     /// Watched PRs by `owner/repo#number`, freshest stats winning.
-    prs: HashMap<String, crate::pr::SessionPr>,
+    prs: HashMap<String, SessionPr>,
     /// Last local `gh` attempt per key, successful or not.
     attempted_at: HashMap<String, Instant>,
     /// In-flight enrichment jobs by key.
-    pending: HashMap<String, mpsc::Receiver<Result<crate::pr::SessionPr, String>>>,
+    pending: HashMap<String, mpsc::Receiver<Result<SessionPr, String>>>,
     /// Keys added on this board, kept through cloud refreshes while the add
     /// itself may still be in flight.
     added_locally: HashMap<String, Instant>,
@@ -3268,6 +3267,17 @@ fn watch_key(owner: &str, repo: &str, number: u64) -> String {
     format!("{owner}/{repo}#{number}")
 }
 
+/// One cloud watch row as the boards hold it: its key, and the stats a board
+/// relayed last — a bare stub until the first enrichment lands.
+fn cloud_watch_entry(row: crate::cloud::CloudWatchedPr) -> (String, SessionPr) {
+    let key = watch_key(&row.owner, &row.repo, row.number);
+    let mut pr = row
+        .pr
+        .unwrap_or_else(|| SessionPr::watched_stub(&row.owner, &row.repo, row.number));
+    pr.watched = true;
+    (key, pr)
+}
+
 impl WatchedBoard {
     /// Adopt the cloud list: new watches join with their relayed stats,
     /// fresher local enrichment is kept, and watches removed elsewhere leave
@@ -3276,12 +3286,8 @@ impl WatchedBoard {
         let mut changed = false;
         let mut listed: HashSet<String> = HashSet::new();
         for row in list {
-            let key = watch_key(&row.owner, &row.repo, row.number);
+            let (key, incoming) = cloud_watch_entry(row);
             listed.insert(key.clone());
-            let mut incoming = row
-                .pr
-                .unwrap_or_else(|| SessionPr::watched_stub(&row.owner, &row.repo, row.number));
-            incoming.watched = true;
             match self.prs.get(&key) {
                 Some(existing) if existing.refreshed_at >= incoming.refreshed_at => {}
                 _ => {
@@ -3300,7 +3306,7 @@ impl WatchedBoard {
     }
 
     /// Watch one more PR right now, ahead of the cloud round trip.
-    fn add(&mut self, add: &crate::pr::WatchAdd) {
+    fn add(&mut self, add: &WatchAdd) {
         let key = watch_key(&add.owner, &add.repo, add.number);
         self.added_locally.insert(key.clone(), Instant::now());
         self.prs
@@ -3342,15 +3348,18 @@ impl WatchedBoard {
         let mut done = Vec::new();
         for (key, rx) in &self.pending {
             match rx.try_recv() {
-                Ok(result) => done.push((key.clone(), Some(result))),
+                Ok(Ok(pr)) => done.push((key.clone(), Some(pr))),
+                // A failed fetch or a dropped worker just retries on the next
+                // cadence tick.
+                Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                    done.push((key.clone(), None))
+                }
                 Err(mpsc::TryRecvError::Empty) => {}
-                Err(mpsc::TryRecvError::Disconnected) => done.push((key.clone(), None)),
             }
         }
         for (key, result) in done {
             self.pending.remove(&key);
-            let Some(Ok(pr)) = result else {
-                // Failures just retry on the next cadence tick.
+            let Some(pr) = result else {
                 continue;
             };
             // The watch may have been removed while the fetch ran.
@@ -3376,7 +3385,7 @@ impl WatchedBoard {
         }
         self.relay_due = false;
         self.last_relay = Some(Instant::now());
-        let prs: Vec<crate::pr::SessionPr> = self
+        let prs: Vec<SessionPr> = self
             .prs
             .values()
             .filter(|pr| pr.refreshed_at > 0)
@@ -3396,7 +3405,7 @@ impl WatchedBoard {
 /// local enrichment replaces relayed stats on those.
 fn merge_watched_entries(
     entries: &mut Vec<BoardPr>,
-    watched: &HashMap<String, crate::pr::SessionPr>,
+    watched: &HashMap<String, SessionPr>,
     overrides: &HashMap<String, PrDisposition>,
     linger_days: u64,
 ) {
@@ -3479,13 +3488,7 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             .await
             .unwrap_or_default()
             .into_iter()
-            .map(|row| {
-                let mut pr = row
-                    .pr
-                    .unwrap_or_else(|| SessionPr::watched_stub(&row.owner, &row.repo, row.number));
-                pr.watched = true;
-                (watch_key(&row.owner, &row.repo, row.number), pr)
-            })
+            .map(cloud_watch_entry)
             .collect();
         merge_watched_entries(&mut entries, &watched, &overrides, linger_days);
         let entries = entries_for_mode(entries, view.mode);
@@ -4240,10 +4243,7 @@ async fn board_loop(
                                 Some(add) => {
                                     watched_board.add(&add);
                                     tokio::spawn(async move {
-                                        let _ = crate::cloud::add_watched_pr_standalone(
-                                            &add.owner, &add.repo, add.number, &add.url,
-                                        )
-                                        .await;
+                                        let _ = crate::cloud::add_watched_pr_standalone(&add).await;
                                     });
                                     add_input = None;
                                     add_error = None;

@@ -653,14 +653,12 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     // Watch-only PRs (no session row) render from their relayed stats; a
     // watch whose PR finished and aged past the linger window clears itself.
     const seenKeys = new Set(prs.map((entry) => `${entry.owner}/${entry.repo}#${entry.number}`));
-    const expiredWatches: typeof watched = [];
     for (const row of watched) {
-        const key = `${row.owner}/${row.repo}#${row.number}`;
-        if (seenKeys.has(key)) continue;
+        if (seenKeys.has(`${row.owner}/${row.repo}#${row.number}`)) continue;
         const pr = parseSessionPr(row.data || '') ?? watchedPlaceholderPr(row);
         pr.watched = true;
         if (!visiblePr(pr, lingerMs, nowMs, row.refreshed_at || row.added_at)) {
-            expiredWatches.push(row);
+            await deleteWatchedPr(env, groupId, row.owner, row.repo, row.number);
             continue;
         }
         prs.push({
@@ -671,9 +669,6 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             updated_at: row.refreshed_at || row.added_at,
             sessions: [],
         });
-    }
-    for (const row of expiredWatches) {
-        await deleteWatchedPr(env, groupId, row.owner, row.repo, row.number);
     }
 
     // Return every active account session separately. Clients keep any session

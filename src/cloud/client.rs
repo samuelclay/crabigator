@@ -184,15 +184,9 @@ pub async fn fetch_watched_prs_standalone() -> Result<Vec<CloudWatchedPr>> {
 }
 
 /// Add one PR to the group's cloud watch list (idempotent).
-pub async fn add_watched_pr_standalone(
-    owner: &str,
-    repo: &str,
-    number: u64,
-    url: &str,
-) -> Result<()> {
+pub async fn add_watched_pr_standalone(add: &crate::pr::WatchAdd) -> Result<()> {
     let device = DeviceIdentity::load_or_create()?;
-    let body = serde_json::json!({ "owner": owner, "repo": repo, "number": number, "url": url });
-    post_watched_pr(device, HttpClient::new(), DEFAULT_API_URL.to_string(), body).await
+    post_watched_pr(device, HttpClient::new(), DEFAULT_API_URL.to_string(), add).await
 }
 
 /// Relay locally fetched GitHub stats for watched PRs, so the web board and
@@ -218,10 +212,16 @@ async fn post_watched_pr(
     device: DeviceIdentity,
     http: HttpClient,
     api_url: String,
-    body: serde_json::Value,
+    add: &crate::pr::WatchAdd,
 ) -> Result<()> {
     let url = format!("{}/prs/watched", api_url);
     let headers = device.auth_headers("POST", "/api/prs/watched")?;
+    let body = serde_json::json!({
+        "owner": add.owner,
+        "repo": add.repo,
+        "number": add.number,
+        "url": add.url,
+    });
     let mut req = http.post(&url).json(&body);
     for (key, value) in headers {
         req = req.header(&key, &value);
@@ -833,13 +833,7 @@ impl CloudClient {
         let http = self.http.clone();
         let api_url = self.api_url.clone();
         tokio::spawn(async move {
-            let body = serde_json::json!({
-                "owner": add.owner,
-                "repo": add.repo,
-                "number": add.number,
-                "url": add.url,
-            });
-            let _ = post_watched_pr(device, http, api_url, body).await;
+            let _ = post_watched_pr(device, http, api_url, &add).await;
         });
     }
 
