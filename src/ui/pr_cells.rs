@@ -23,6 +23,8 @@ const PR_STATE_MAX: usize = 6;
 const PR_CI_MAX: usize = 10;
 /// `💬` is two cells wide, leaving room for a four-digit thread count.
 const PR_COMMENTS_MAX: usize = 6;
+/// The review column is a single state glyph.
+const PR_REVIEW_MAX: usize = 1;
 const PR_MERGE_MAX: usize = 9;
 pub(crate) const PR_IDENTITY_MIN: usize = 10;
 const PR_BRANCH_MIN: usize = 8;
@@ -45,6 +47,7 @@ pub(crate) struct PrColumnWidths {
     pub(crate) state: usize,
     pub(crate) ci: usize,
     pub(crate) comments: usize,
+    pub(crate) review: usize,
     pub(crate) merge: usize,
     /// The `✕` dismiss action at the right edge (1 cell when shown).
     pub(crate) dismiss: usize,
@@ -79,6 +82,9 @@ impl PrColumnWidths {
             widths.comments = widths
                 .comments
                 .max(pr_comments_label(pr).0.width().min(PR_COMMENTS_MAX));
+            widths.review = widths
+                .review
+                .max(pr_review_label(pr).0.width().min(PR_REVIEW_MAX));
             widths.merge = widths
                 .merge
                 .max(pr_merge_label(pr).0.width().min(PR_MERGE_MAX));
@@ -98,8 +104,8 @@ impl PrColumnWidths {
             .saturating_sub(PR_LEFT_PADDING + essential_left + PR_COLUMN_GAP + PR_RIGHT_PADDING);
         self.detail_right = self.detail_right.min(right_budget);
         // Dropped least-essential first: the dismiss action, merge cleanliness,
-        // the unresolved thread count, then CI, leaving the PR's own state as
-        // the last survivor.
+        // the unresolved thread count, the review glyph, then CI, leaving the
+        // PR's own state as the last survivor.
         while self.status_right_width() > right_budget {
             if self.dismiss > 0 {
                 self.dismiss = 0;
@@ -107,6 +113,8 @@ impl PrColumnWidths {
                 self.merge = 0;
             } else if self.comments > 0 {
                 self.comments = 0;
+            } else if self.review > 0 {
+                self.review = 0;
             } else if self.ci > 0 {
                 self.ci = 0;
             } else {
@@ -225,7 +233,14 @@ impl PrColumnWidths {
 
     fn status_right_width(&self) -> usize {
         table_width_with_gap(
-            &[self.state, self.ci, self.comments, self.merge, self.dismiss],
+            &[
+                self.state,
+                self.ci,
+                self.comments,
+                self.review,
+                self.merge,
+                self.dismiss,
+            ],
             PR_RIGHT_COLUMN_GAP,
         )
     }
@@ -622,10 +637,11 @@ fn colored_diff_cell(
     (styled, visible.width(), width)
 }
 
-pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 5] {
+pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 6] {
     let (state_label, state_color) = pr_state_label(pr);
     let (ci_label, ci_color) = pr_ci_label(pr);
     let (comments_label, comments_color) = pr_comments_label(pr);
+    let (review_label, review_color) = pr_review_label(pr);
     let (merge_label, merge_color) = pr_merge_label(pr);
     [
         colored_cell(state_label, row_color(pr, state_color), widths.state),
@@ -638,6 +654,7 @@ pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell
             widths.comments,
             &pr.comments_url,
         ),
+        colored_cell(review_label, row_color(pr, review_color), widths.review),
         colored_cell(merge_label, row_color(pr, merge_color), widths.merge),
         // Dismiss action: removes the PR from every list in the group.
         linked_cell(
@@ -898,6 +915,23 @@ pub(crate) fn pr_comments_label(pr: &SessionPr) -> (String, u8) {
         (String::new(), color::GRAY)
     } else {
         (format!("💬{}", pr.unresolved_comments), color::ORANGE)
+    }
+}
+
+/// Review approval state, open PRs only: `✓` approved, `✗` changes requested,
+/// `⊘` a review was dismissed by new commits and never redone, `◌` awaiting
+/// review.
+fn pr_review_label(pr: &SessionPr) -> (&'static str, u8) {
+    if pr.state != "OPEN" {
+        ("", color::GRAY)
+    } else if pr.review_decision == "APPROVED" {
+        ("✓", color::GREEN)
+    } else if pr.review_decision == "CHANGES_REQUESTED" {
+        ("✗", color::RED)
+    } else if pr.review_dismissed {
+        ("⊘", color::ORANGE)
+    } else {
+        ("◌", color::DARK_GRAY)
     }
 }
 

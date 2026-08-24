@@ -731,6 +731,7 @@ mod tests {
             last_mention_prompt: 0,
             branch_matched: false,
             review_decision: String::new(),
+            review_dismissed: false,
             closed_at: 0,
             primary: false,
             primary_source: String::new(),
@@ -912,13 +913,15 @@ mod tests {
         let files = link_to(&format!("{}/files", pr.url));
         assert!(left[2].0.contains(&files));
         assert!(left[3].0.contains(&files));
-        // CI and the thread count → wherever they pointed; state and merge plain.
+        // CI and the thread count → wherever they pointed; state, review, and
+        // merge stay plain.
         assert!(right[1].0.contains(&link_to(&pr.ci_url)));
         assert!(right[2].0.contains(&link_to(&pr.comments_url)));
         assert!(!right[0].0.contains("\x1b]8;;"));
         assert!(!right[3].0.contains("\x1b]8;;"));
+        assert!(!right[4].0.contains("\x1b]8;;"));
         // The dismiss action links to the same page with disposition=dismissed.
-        assert!(right[4]
+        assert!(right[5]
             .0
             .contains(&link_to(&pr_action_url(&pr, "dismissed"))));
 
@@ -968,6 +971,27 @@ mod tests {
         assert_eq!(pr_right_cells(&pr, &widths)[2].1, 0);
     }
 
+    /// The review column distinguishes approved, changes requested, an
+    /// approval dismissed by new commits, and still awaiting review — and
+    /// disappears once the PR is no longer open.
+    #[test]
+    fn review_column_covers_every_approval_state() {
+        let mut pr = sample_pr("request-handler", 2412, "sam/pal-fanout-fable");
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
+        let glyph = |pr: &SessionPr| pr_right_cells(pr, &widths)[3].0.clone();
+
+        assert!(glyph(&pr).contains('◌'), "open PR awaits review");
+        pr.review_decision = "APPROVED".to_string();
+        assert!(glyph(&pr).contains('✓'));
+        pr.review_decision = "CHANGES_REQUESTED".to_string();
+        assert!(glyph(&pr).contains('✗'));
+        pr.review_decision = String::new();
+        pr.review_dismissed = true;
+        assert!(glyph(&pr).contains('⊘'), "dismissed approval");
+        pr.state = "MERGED".to_string();
+        assert_eq!(pr_right_cells(&pr, &widths)[3].1, 0, "merged PRs show none");
+    }
+
     /// The assembled row reads left to right in column order and fills the
     /// window save for the right padding, with the status cluster anchored right.
     #[test]
@@ -988,10 +1012,11 @@ mod tests {
             widths.state
                 + widths.ci
                 + widths.comments
+                + widths.review
                 + widths.merge
                 + widths.dismiss
-                + 4 * PR_RIGHT_COLUMN_GAP,
-            "the five status columns use four one-cell gaps"
+                + 5 * PR_RIGHT_COLUMN_GAP,
+            "the six status columns use five one-cell gaps"
         );
 
         let at = |needle: &str| {
@@ -1007,6 +1032,7 @@ mod tests {
             at("open"),
             at("✗1 CI"),
             at("💬3"),
+            at("◌"),
             at("conflicts"),
         ];
         assert!(

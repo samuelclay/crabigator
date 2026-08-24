@@ -221,6 +221,10 @@ pub struct SessionPr {
     /// or empty when no review is required or the value is unknown.
     #[serde(default)]
     pub review_decision: String,
+    /// A review on the open PR was dismissed — usually an approval invalidated
+    /// by a new push — and that reviewer has not re-reviewed since.
+    #[serde(default)]
+    pub review_dismissed: bool,
     /// Unix ms of the merge/close (0 while open or unknown).
     #[serde(default)]
     pub closed_at: u64,
@@ -294,6 +298,7 @@ impl SessionPr {
             last_mention_prompt: 0,
             branch_matched: false,
             review_decision: String::new(),
+            review_dismissed: false,
             closed_at: 0,
             primary: false,
             primary_source: String::new(),
@@ -392,6 +397,10 @@ struct GhPrJson {
     merge_state_status: String,
     #[serde(default, rename = "reviewDecision")]
     review_decision: String,
+    /// Each reviewer's most recent review; a DISMISSED entry means their
+    /// approval (or change request) was invalidated and never redone.
+    #[serde(default, rename = "latestReviews")]
+    latest_reviews: Vec<GhReview>,
     /// ISO 8601 once the PR is merged or closed; GitHub returns null while open.
     #[serde(default, rename = "closedAt")]
     closed_at: Option<String>,
@@ -403,6 +412,12 @@ struct GhPrJson {
 struct GhAuthor {
     #[serde(default)]
     login: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct GhReview {
+    #[serde(default)]
+    state: String,
 }
 
 /// One entry in `statusCheckRollup`: either a CheckRun (uses `status`/`conclusion`
@@ -1375,6 +1390,13 @@ impl PrTracker {
         let total = passed + failed + pending;
         let ci_url = ci_link(&json.status_check_rollup, &url);
         let closed_at = json.closed_at.as_deref().map_or(0, parse_iso_ms);
+        // Only meaningful while open: after a merge or close the dismissal
+        // history no longer needs attention.
+        let review_dismissed = json.state == "OPEN"
+            && json
+                .latest_reviews
+                .iter()
+                .any(|review| review.state == "DISMISSED");
         let author_login = json.author.map(|author| author.login).unwrap_or_default();
         let authored_by_viewer = match (author_login.is_empty(), json.viewer_login.is_empty()) {
             (false, false) => Some(author_login == json.viewer_login),
@@ -1394,6 +1416,7 @@ impl PrTracker {
             existing.mergeable = json.mergeable;
             existing.merge_state_status = json.merge_state_status;
             existing.review_decision = json.review_decision;
+            existing.review_dismissed = review_dismissed;
             existing.closed_at = closed_at;
             if !author_login.is_empty() {
                 existing.author_login = author_login;
@@ -1445,6 +1468,7 @@ impl PrTracker {
             mergeable: json.mergeable,
             merge_state_status: json.merge_state_status,
             review_decision: json.review_decision,
+            review_dismissed,
             closed_at,
             checks_passed: passed,
             checks_failed: failed,
@@ -1896,7 +1920,8 @@ fn is_number_list_gap(gap: &str) -> bool {
 
 const GH_JSON_FIELDS: &str =
     "number,title,headRefName,url,author,state,isDraft,additions,deletions,\
-    changedFiles,mergeable,mergeStateStatus,reviewDecision,closedAt,statusCheckRollup";
+    changedFiles,mergeable,mergeStateStatus,reviewDecision,latestReviews,closedAt,\
+    statusCheckRollup";
 
 /// GitHub computes `mergeable` lazily, so the first read often returns UNKNOWN.
 /// Re-query up to this many times (with a short sleep) to get a resolved value.
@@ -2992,6 +3017,7 @@ mod tests {
             mergeable: "MERGEABLE".into(),
             merge_state_status: "CLEAN".into(),
             review_decision: String::new(),
+            latest_reviews: Vec::new(),
             closed_at: None,
             status_check_rollup: Vec::new(),
         }
@@ -3057,6 +3083,9 @@ mod tests {
             mergeable: "MERGEABLE".into(),
             merge_state_status: "CLEAN".into(),
             review_decision: String::new(),
+            latest_reviews: vec![GhReview {
+                state: "DISMISSED".into(),
+            }],
             closed_at: None,
             status_check_rollup: vec![
                 check(CheckClass::Pass, Some("https://github.com/o/r/actions/1")),
@@ -3075,5 +3104,7 @@ mod tests {
         assert_eq!(tracker.prs()[0].additions, 10);
         assert_eq!(tracker.prs()[0].author_login, "octocat");
         assert_eq!(tracker.prs()[0].authored_by_viewer, Some(true));
+        // The dismissed latest review marks the approval as invalidated.
+        assert!(tracker.prs()[0].review_dismissed);
     }
 }
