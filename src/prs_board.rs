@@ -4226,7 +4226,9 @@ async fn board_loop(
                         return Ok(());
                     }
                     // While the add-a-watch input is open, printable keys edit
-                    // it; Enter parses and adds, Esc closes.
+                    // it; Enter parses and adds, Esc closes. The flag keeps
+                    // the submit's Enter from also toggling the peek pane.
+                    let add_input_consumed = add_input.is_some();
                     if let Some(input) = &mut add_input {
                         match key.code {
                             KeyCode::Esc => {
@@ -4392,7 +4394,7 @@ async fn board_loop(
                     // session (selecting the first live one if none is yet) —
                     // unless the add-a-watch input just consumed it.
                     let selectable = selectable_positions(&spans);
-                    if add_input.is_none() && key.code == KeyCode::Enter {
+                    if !add_input_consumed && key.code == KeyCode::Enter {
                         if peek_open {
                             peek_open = false;
                             peek_scroll = None;
