@@ -349,6 +349,45 @@ impl SessionPr {
     pub fn test_stub(number: u64, owner: &str, repo: &str) -> Self {
         Self::placeholder(&PrLocation::new(owner, repo, number), false)
     }
+
+    /// A bare watched-PR entry for the boards, before `gh` enrichment lands.
+    pub fn watched_stub(owner: &str, repo: &str, number: u64) -> Self {
+        let mut pr = Self::placeholder(&PrLocation::new(owner, repo, number), false);
+        pr.watched = true;
+        pr
+    }
+}
+
+/// Parse a user-entered watch target: a full PR URL or `owner/repo#123`.
+pub fn parse_watch_target(input: &str) -> Option<WatchAdd> {
+    let input = input.trim().trim_end_matches(['.', ',', ')', '>', ';']);
+    if let Some(loc) = location_from_url(input) {
+        return Some(WatchAdd {
+            owner: loc.owner,
+            repo: loc.repo,
+            number: loc.number,
+            url: loc.url,
+        });
+    }
+    let (repo_part, number) = input.split_once('#')?;
+    let (owner, repo) = repo_part.split_once('/')?;
+    let number: u64 = number.parse().ok()?;
+    let valid_name = |name: &str| {
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+    };
+    if number == 0 || !valid_name(owner) || !valid_name(repo) {
+        return None;
+    }
+    let loc = PrLocation::new(owner, repo, number);
+    Some(WatchAdd {
+        owner: loc.owner,
+        repo: loc.repo,
+        number,
+        url: loc.url,
+    })
 }
 
 /// One explicit watch request from an in-session "track PR <url>" statement,
@@ -2504,6 +2543,20 @@ mod tests {
         tracker.scan_prompt("remove the flag from PR #500", Path::new("/tmp"));
         tracker.reclassify("", Path::new("/tmp"));
         assert!(!tracker.prs()[0].dismissed);
+    }
+
+    #[test]
+    fn watch_targets_parse_urls_and_repo_shorthand() {
+        let add = parse_watch_target(" https://github.com/o/r/pull/77 ").unwrap();
+        assert_eq!(
+            (add.owner.as_str(), add.repo.as_str(), add.number),
+            ("o", "r", 77)
+        );
+        let add = parse_watch_target("octo/hello-world#123").unwrap();
+        assert_eq!(add.url, "https://github.com/octo/hello-world/pull/123");
+        assert!(parse_watch_target("#123").is_none(), "a bare number has no repo");
+        assert!(parse_watch_target("not a pr").is_none());
+        assert!(parse_watch_target("o/r#0").is_none());
     }
 
     /// "track PR <url>" and "watch owner/repo#N" track the PR, flag it

@@ -1171,7 +1171,7 @@ fn entries_for_mode(entries: Vec<BoardPr>, mode: BoardMode) -> Vec<BoardPr> {
         BoardMode::Sessions => entries.into_iter().flat_map(fan_out_per_session).collect(),
         BoardMode::Prs => entries
             .into_iter()
-            .filter(|entry| entry.pr.primary)
+            .filter(|entry| entry.pr.primary || entry.pr.watched)
             .map(|mut entry| {
                 entry.sessions.sort_by_key(|session| {
                     (
@@ -1471,17 +1471,19 @@ fn visible_pr(pr: &SessionPr, linger_days: u64, now_ms: u64) -> bool {
     }
     // Unverified references are usually scanning artifacts. A primary is
     // different: the session classifier has enough ownership evidence to keep
-    // it visible as "fetching" while enrichment retries.
+    // it visible as "fetching" while enrichment retries — and a watched PR is
+    // wanted by definition.
+    let wanted = pr.primary || pr.watched;
     if pr.refreshed_at == 0 {
-        return pr.primary;
+        return wanted;
     }
     if pr.state == "OPEN" {
         return true;
     }
-    // Finished secondaries disappear immediately. Finished primaries retain
-    // the adjustable grace window, except foreign-authored PRs the user never
-    // explicitly mentioned or promoted.
-    if !pr.primary || foreign_without_explicit_interest(pr) {
+    // Finished secondaries disappear immediately. Finished primaries and
+    // watches retain the adjustable grace window; the foreign-author gate
+    // never applies to a watch, which is explicit interest.
+    if !wanted || (!pr.watched && foreign_without_explicit_interest(pr)) {
         return false;
     }
     let latest = pr.closed_at.max(pr.last_mentioned_at).max(pr.updated_at);
@@ -2931,7 +2933,7 @@ fn render_at(
     let mut spans: Vec<RowSpan> = Vec::new();
     let mut lines = vec![
         format!(
-            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{}{} · {UNDERLINE}↑↓{RESET_UNDERLINE} select · {UNDERLINE}⏎{RESET_UNDERLINE} peek · {UNDERLINE}/{RESET_UNDERLINE} search · {UNDERLINE}+/-{RESET_UNDERLINE} days · {UNDERLINE}q{RESET_UNDERLINE} quit{}",
+            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{}{} · {UNDERLINE}↑↓{RESET_UNDERLINE} select · {UNDERLINE}⏎{RESET_UNDERLINE} peek · {UNDERLINE}/{RESET_UNDERLINE} search · {UNDERLINE}w{RESET_UNDERLINE} watch · {UNDERLINE}+/-{RESET_UNDERLINE} days · {UNDERLINE}q{RESET_UNDERLINE} quit{}",
             fg(color::PURPLE),
             RESET_FG,
             fg(color::DARK_GRAY),
@@ -3235,6 +3237,225 @@ impl Drop for PrBoardTerminalGuard {
 }
 
 /// Entry point for `crabigator prs`.
+/// How often the open board re-runs `gh` for each open watched PR.
+const WATCHED_REFRESH: Duration = Duration::from_secs(60);
+/// Minimum spacing between relays of freshly fetched watched-PR stats.
+const WATCH_RELAY_THROTTLE: Duration = Duration::from_secs(30);
+/// A locally added watch survives cloud list refreshes at least this long,
+/// covering the window before its own add POST lands.
+const WATCH_ADD_GRACE: Duration = Duration::from_secs(120);
+
+/// The board's watch list: cloud-synced membership, locally enriched stats.
+/// The open board is the one place that runs `gh` for watched PRs; it relays
+/// what it learns so the web board and other machines see the same stats.
+#[derive(Default)]
+struct WatchedBoard {
+    /// Watched PRs by `owner/repo#number`, freshest stats winning.
+    prs: HashMap<String, crate::pr::SessionPr>,
+    /// Last local `gh` attempt per key, successful or not.
+    attempted_at: HashMap<String, Instant>,
+    /// In-flight enrichment jobs by key.
+    pending: HashMap<String, mpsc::Receiver<Result<crate::pr::SessionPr, String>>>,
+    /// Keys added on this board, kept through cloud refreshes while the add
+    /// itself may still be in flight.
+    added_locally: HashMap<String, Instant>,
+    /// Fresh local stats waiting to be relayed to the cloud.
+    relay_due: bool,
+    last_relay: Option<Instant>,
+}
+
+fn watch_key(owner: &str, repo: &str, number: u64) -> String {
+    format!("{owner}/{repo}#{number}")
+}
+
+impl WatchedBoard {
+    /// Adopt the cloud list: new watches join with their relayed stats,
+    /// fresher local enrichment is kept, and watches removed elsewhere leave
+    /// (unless just added here, before the add could land).
+    fn apply_cloud(&mut self, list: Vec<crate::cloud::CloudWatchedPr>) -> bool {
+        let mut changed = false;
+        let mut listed: HashSet<String> = HashSet::new();
+        for row in list {
+            let key = watch_key(&row.owner, &row.repo, row.number);
+            listed.insert(key.clone());
+            let mut incoming = row
+                .pr
+                .unwrap_or_else(|| SessionPr::watched_stub(&row.owner, &row.repo, row.number));
+            incoming.watched = true;
+            match self.prs.get(&key) {
+                Some(existing) if existing.refreshed_at >= incoming.refreshed_at => {}
+                _ => {
+                    self.prs.insert(key, incoming);
+                    changed = true;
+                }
+            }
+        }
+        self.added_locally
+            .retain(|_, added| added.elapsed() < WATCH_ADD_GRACE);
+        let added_locally = &self.added_locally;
+        let before = self.prs.len();
+        self.prs
+            .retain(|key, _| listed.contains(key) || added_locally.contains_key(key));
+        changed || self.prs.len() != before
+    }
+
+    /// Watch one more PR right now, ahead of the cloud round trip.
+    fn add(&mut self, add: &crate::pr::WatchAdd) {
+        let key = watch_key(&add.owner, &add.repo, add.number);
+        self.added_locally.insert(key.clone(), Instant::now());
+        self.prs
+            .entry(key.clone())
+            .or_insert_with(|| SessionPr::watched_stub(&add.owner, &add.repo, add.number));
+        self.attempted_at.remove(&key);
+    }
+
+    /// Start `gh` enrichment for every watched PR that is due: never-enriched
+    /// ones immediately, open ones each minute. Finished PRs only linger, so
+    /// they stop refreshing.
+    fn spawn_due_refreshes(&mut self) {
+        let due: Vec<(String, String)> = self
+            .prs
+            .iter()
+            .filter(|(key, pr)| {
+                !self.pending.contains_key(*key)
+                    && (pr.refreshed_at == 0 || pr.state == "OPEN")
+                    && self
+                        .attempted_at
+                        .get(*key)
+                        .is_none_or(|at| at.elapsed() >= WATCHED_REFRESH)
+            })
+            .map(|(key, pr)| (key.clone(), pr.url.clone()))
+            .collect();
+        for (key, url) in due {
+            self.attempted_at.insert(key.clone(), Instant::now());
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(crate::pr::fetch_watched_session_pr(&url));
+            });
+            self.pending.insert(key, rx);
+        }
+    }
+
+    /// Collect finished enrichment jobs. Returns true when stats changed.
+    fn poll(&mut self) -> bool {
+        let mut changed = false;
+        let mut done = Vec::new();
+        for (key, rx) in &self.pending {
+            match rx.try_recv() {
+                Ok(result) => done.push((key.clone(), Some(result))),
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => done.push((key.clone(), None)),
+            }
+        }
+        for (key, result) in done {
+            self.pending.remove(&key);
+            let Some(Ok(pr)) = result else {
+                // Failures just retry on the next cadence tick.
+                continue;
+            };
+            // The watch may have been removed while the fetch ran.
+            if let Some(existing) = self.prs.get_mut(&key) {
+                if *existing != pr {
+                    *existing = pr;
+                    changed = true;
+                    self.relay_due = true;
+                }
+            }
+        }
+        changed
+    }
+
+    /// Push freshly fetched stats to the cloud so other boards see them.
+    fn maybe_relay(&mut self) {
+        if !self.relay_due
+            || self
+                .last_relay
+                .is_some_and(|at| at.elapsed() < WATCH_RELAY_THROTTLE)
+        {
+            return;
+        }
+        self.relay_due = false;
+        self.last_relay = Some(Instant::now());
+        let prs: Vec<crate::pr::SessionPr> = self
+            .prs
+            .values()
+            .filter(|pr| pr.refreshed_at > 0)
+            .cloned()
+            .collect();
+        if prs.is_empty() {
+            return;
+        }
+        tokio::spawn(async move {
+            let _ = crate::cloud::relay_watched_pr_stats_standalone(&prs).await;
+        });
+    }
+}
+
+/// Overlay the watch list on the board entries: session-tracked copies gain
+/// the watch flag, watch-only PRs join as session-less entries, and fresher
+/// local enrichment replaces relayed stats on those.
+fn merge_watched_entries(
+    entries: &mut Vec<BoardPr>,
+    watched: &HashMap<String, crate::pr::SessionPr>,
+    overrides: &HashMap<String, PrDisposition>,
+    linger_days: u64,
+) {
+    let now_ms = (now_secs() * 1000.0) as u64;
+    for (key, pr) in watched {
+        if matches!(overrides.get(key), Some(PrDisposition::Dismissed)) {
+            continue;
+        }
+        if let Some(entry) = entries.iter_mut().find(|entry| {
+            entry.pr.number == pr.number
+                && entry.pr.owner.eq_ignore_ascii_case(&pr.owner)
+                && entry.pr.repo.eq_ignore_ascii_case(&pr.repo)
+        }) {
+            entry.pr.watched = true;
+            // Watch-only cloud rows carry relayed stats; this board's own
+            // enrichment is usually fresher.
+            if entry.sessions.is_empty() && pr.refreshed_at > entry.pr.refreshed_at {
+                entry.pr = pr.clone();
+            }
+            continue;
+        }
+        if !visible_pr(pr, linger_days, now_ms) {
+            continue;
+        }
+        let mut slack_threads = Vec::new();
+        merge_pr_slack_threads(&mut slack_threads, pr, &[]);
+        entries.push(BoardPr {
+            pr: pr.clone(),
+            sessions: Vec::new(),
+            slack_threads,
+            stale: false,
+        });
+    }
+    sort_entries(entries);
+}
+
+fn start_watched_fetch() -> mpsc::Receiver<Vec<crate::cloud::CloudWatchedPr>> {
+    let (tx, rx) = mpsc::channel();
+    tokio::spawn(async move {
+        if let Ok(watched) = crate::cloud::fetch_watched_prs_standalone().await {
+            let _ = tx.send(watched);
+        }
+    });
+    rx
+}
+
+/// The sticky add-a-watch banner behind the `w` key: paste a PR URL or
+/// `owner/repo#123` and Enter adds it to the watch list.
+fn watch_banner(input: &str, error: Option<&str>, width: u16) -> String {
+    let hint = match error {
+        Some(error) => format!("{error} · edit and ⏎ to retry · Esc cancels"),
+        None => "paste a PR URL or owner/repo#123 · ⏎ add · Esc cancels".to_string(),
+    };
+    let text = format!(" ◉ watch {input}▏ {hint} ");
+    let padded = format!("{text:<width$}", width = width as usize);
+    format!("{}{}{}{}", escape::bg(color::YELLOW), fg(16), padded, RESET)
+}
+
+/// Entry point for `crabigator prs`.
 pub async fn run_prs_board(once: bool) -> Result<()> {
     if once {
         let overrides = crate::cloud::fetch_pr_overrides_standalone()
@@ -3250,7 +3471,23 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
         )
         .with_mode(BoardMode::parse(&preferences.view));
         let linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
-        let (entries, workspaces, _) = local_board(&mut activity_history, &overrides, linger_days)?;
+        let (mut entries, workspaces, _) =
+            local_board(&mut activity_history, &overrides, linger_days)?;
+        // Watched PRs render from their cloud-relayed stats; the one-frame
+        // print doesn't run its own `gh` enrichment.
+        let watched: HashMap<String, SessionPr> = crate::cloud::fetch_watched_prs_standalone()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| {
+                let mut pr = row
+                    .pr
+                    .unwrap_or_else(|| SessionPr::watched_stub(&row.owner, &row.repo, row.number));
+                pr.watched = true;
+                (watch_key(&row.owner, &row.repo, row.number), pr)
+            })
+            .collect();
+        merge_watched_entries(&mut entries, &watched, &overrides, linger_days);
         let entries = entries_for_mode(entries, view.mode);
         let rows: Vec<BoardRow> = entries
             .iter()
@@ -3662,6 +3899,13 @@ async fn board_loop(
     let mut pending_overrides = Some(overrides_fetch);
     let mut overrides_fetched = Instant::now();
     let mut expanded = false;
+    // The cloud-synced watch list plus this board's `gh` enrichment of it,
+    // and the `w` add-a-watch input with its parse error while open.
+    let mut watched_board = WatchedBoard::default();
+    let mut pending_watched = Some(start_watched_fetch());
+    let mut watched_fetched = Instant::now();
+    let mut add_input: Option<String> = None;
+    let mut add_error: Option<String> = None;
     let preferences = crate::config::Config::load().unwrap_or_default().pr_board;
     let mut view = BoardView::new(
         preferences.detail,
@@ -3719,6 +3963,30 @@ async fn board_loop(
             overrides_fetched = Instant::now();
             pending_overrides = Some(start_overrides_fetch());
         }
+
+        // The watch list follows the overrides cadence; between fetches this
+        // board enriches watched PRs itself and relays what it learned.
+        if let Some(rx) = pending_watched.as_ref() {
+            match rx.try_recv() {
+                Ok(list) => {
+                    pending_watched = None;
+                    if watched_board.apply_cloud(list) {
+                        needs_render = true;
+                    }
+                }
+                Err(mpsc::TryRecvError::Disconnected) => pending_watched = None,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if pending_watched.is_none() && watched_fetched.elapsed() >= OVERRIDES_REFRESH {
+            watched_fetched = Instant::now();
+            pending_watched = Some(start_watched_fetch());
+        }
+        watched_board.spawn_due_refreshes();
+        if watched_board.poll() {
+            needs_render = true;
+        }
+        watched_board.maybe_relay();
 
         let mut initial_finished = false;
         if let Some(rx) = initial_load.as_ref() {
@@ -3795,9 +4063,11 @@ async fn board_loop(
             let query = search.as_deref().unwrap_or("");
             let now_ms = (now_secs() * 1000.0) as u64;
             let now = now_ms / 1000;
-            // The canonical entries stay merged (one per PR); the active view
-            // shapes them into its own rows here.
-            let view_entries = entries_for_mode(entries.clone(), view.mode);
+            // The canonical entries stay merged (one per PR); the watch list
+            // overlays them, then the active view shapes its own rows.
+            let mut merged_entries = entries.clone();
+            merge_watched_entries(&mut merged_entries, &watched_board.prs, overrides, linger_days);
+            let view_entries = entries_for_mode(merged_entries, view.mode);
             // A PR stays visible when its metadata matches, or when any of
             // its sessions' transcripts contain the query — with the matched
             // excerpt shown inline so the hit can be confirmed.
@@ -3861,7 +4131,7 @@ async fn board_loop(
 
         // The banner is pinned above the scrolled content while searching;
         // the quick look pane claims the bottom half of the terminal.
-        let banner_rows = usize::from(search.is_some());
+        let banner_rows = usize::from(search.is_some()) + usize::from(add_input.is_some());
         let pane_rows = if peek_open { peek_pane_rows(height) } else { 0 };
         let page = (height as usize)
             .saturating_sub(banner_rows)
@@ -3900,6 +4170,9 @@ async fn board_loop(
             if let Some(query) = &search {
                 visible_lines.push(search_banner(query, matched, width));
             }
+            if let Some(input) = &add_input {
+                visible_lines.push(watch_banner(input, add_error.as_deref(), width));
+            }
             let band = selected
                 .as_deref()
                 .and_then(|key| spans.iter().find(|span| span.key == key));
@@ -3932,9 +4205,13 @@ async fn board_loop(
             match read()? {
                 Event::Paste(text) => {
                     // Bracketed paste arrives as one event. A paste outside
-                    // search is inert instead of firing every matching
+                    // an input is inert instead of firing every matching
                     // shortcut in the pasted text.
-                    if let Some(query) = &mut search {
+                    if let Some(input) = &mut add_input {
+                        input.push_str(text.trim());
+                        add_error = None;
+                        dirty = true;
+                    } else if let Some(query) = &mut search {
                         query.push_str(&text);
                         scroll = 0;
                         needs_render = true;
@@ -3948,9 +4225,51 @@ async fn board_loop(
                         save_board_preferences(include_ended, linger_days, view)?;
                         return Ok(());
                     }
+                    // While the add-a-watch input is open, printable keys edit
+                    // it; Enter parses and adds, Esc closes.
+                    if let Some(input) = &mut add_input {
+                        match key.code {
+                            KeyCode::Esc => {
+                                add_input = None;
+                                add_error = None;
+                                dirty = true;
+                            }
+                            KeyCode::Enter => match crate::pr::parse_watch_target(input) {
+                                Some(add) => {
+                                    watched_board.add(&add);
+                                    tokio::spawn(async move {
+                                        let _ = crate::cloud::add_watched_pr_standalone(
+                                            &add.owner, &add.repo, add.number, &add.url,
+                                        )
+                                        .await;
+                                    });
+                                    add_input = None;
+                                    add_error = None;
+                                    needs_render = true;
+                                    dirty = true;
+                                }
+                                None => {
+                                    add_error =
+                                        Some("not a PR URL or owner/repo#123".to_string());
+                                    dirty = true;
+                                }
+                            },
+                            KeyCode::Backspace => {
+                                input.pop();
+                                add_error = None;
+                                dirty = true;
+                            }
+                            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                input.push(c);
+                                add_error = None;
+                                dirty = true;
+                            }
+                            _ => {}
+                        }
+                    }
                     // While a filter is active, printable keys edit the query
                     // and Esc clears it; outside one, they're the shortcuts.
-                    if let Some(query) = &mut search {
+                    else if let Some(query) = &mut search {
                         match key.code {
                             // Esc peels back one layer: the pane first, then
                             // the filter.
@@ -4002,6 +4321,12 @@ async fn board_loop(
                                 search = Some(String::new());
                                 scroll = 0;
                                 needs_render = true;
+                                dirty = true;
+                            }
+                            // Watch a PR that no session is working on.
+                            KeyCode::Char('w') => {
+                                add_input = Some(String::new());
+                                add_error = None;
                                 dirty = true;
                             }
                             // Widen or narrow how long finished PRs linger.
@@ -4064,9 +4389,10 @@ async fn board_loop(
                         }
                     }
                     // Enter toggles the quick look pane on the selected
-                    // session (selecting the first live one if none is yet).
+                    // session (selecting the first live one if none is yet) —
+                    // unless the add-a-watch input just consumed it.
                     let selectable = selectable_positions(&spans);
-                    if key.code == KeyCode::Enter {
+                    if add_input.is_none() && key.code == KeyCode::Enter {
                         if peek_open {
                             peek_open = false;
                             peek_scroll = None;
@@ -4417,6 +4743,78 @@ mod tests {
         let detailed = render_prs_frame(&entries, MAX_DETAIL);
         let frame = crate::parsers::strip_ansi_for_debug(&detailed.lines.join("\n"));
         assert!(frame.contains("Moved the mirror logic"), "{frame}");
+    }
+
+    #[test]
+    fn watched_prs_join_the_board_without_sessions() {
+        let mut tracked = board_pr(5, "portal");
+        make_primary(&mut tracked);
+        let mut session = snapshot("one", vec![tracked]);
+        session.repo_name = "portal".to_string();
+        let mut entries = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+
+        let mut solo = SessionPr::watched_stub("o", "elsewhere", 9);
+        solo.state = "OPEN".to_string();
+        solo.refreshed_at = 1_000;
+        solo.title = "Watched from afar".to_string();
+        let watched = HashMap::from([
+            (
+                watch_key("o", "portal", 5),
+                SessionPr::watched_stub("o", "portal", 5),
+            ),
+            (watch_key("o", "elsewhere", 9), solo),
+        ]);
+        merge_watched_entries(&mut entries, &watched, &HashMap::new(), DEFAULT_LINGER_DAYS);
+
+        assert_eq!(entries.len(), 2);
+        let tracked = entries.iter().find(|e| e.pr.repo == "portal").unwrap();
+        assert!(tracked.pr.watched, "session-tracked copies gain the flag");
+        assert!(tracked.pr.primary, "the session's classification survives");
+        let solo = entries.iter().find(|e| e.pr.repo == "elsewhere").unwrap();
+        assert!(solo.pr.watched);
+        assert!(solo.sessions.is_empty() && !solo.stale);
+
+        // PR view keeps watched PRs even though nothing marks them primary,
+        // and the watch glyph shows on the rendered block.
+        let prs = entries_for_mode(entries, BoardMode::Prs);
+        assert_eq!(prs.len(), 2);
+        let frame = render_prs_frame(&prs, DEFAULT_DETAIL).lines.join("\n");
+        assert!(frame.contains('◉'), "the watch glyph renders: {frame}");
+        assert!(frame.contains("9: Watched from afar"), "{frame}");
+        assert!(
+            frame.contains("disposition=unwatched"),
+            "the glyph links to the unwatch action: {frame}"
+        );
+
+        // A dismissed disposition hides the watch everywhere.
+        let mut entries = Vec::new();
+        let overrides =
+            HashMap::from([(watch_key("o", "elsewhere", 9), PrDisposition::Dismissed)]);
+        merge_watched_entries(&mut entries, &watched, &overrides, DEFAULT_LINGER_DAYS);
+        assert!(entries.iter().all(|e| e.pr.repo != "elsewhere"));
+    }
+
+    #[test]
+    fn watched_prs_use_the_primary_linger_rules() {
+        let now_ms = now_ms();
+        let mut merged = SessionPr::watched_stub("o", "r", 7);
+        merged.refreshed_at = 1_000;
+        merged.state = "MERGED".to_string();
+        merged.closed_at = now_ms - 3600 * 1000;
+        assert!(
+            visible_pr(&merged, 1, now_ms),
+            "a freshly merged watch lingers"
+        );
+        merged.closed_at = now_ms - 3 * 24 * 3600 * 1000;
+        merged.updated_at = merged.closed_at;
+        assert!(
+            !visible_pr(&merged, 1, now_ms),
+            "an aged-out watch drops off"
+        );
+        assert!(
+            visible_pr(&SessionPr::watched_stub("o", "r", 8), 1, now_ms),
+            "a never-enriched watch stays while fetching"
+        );
     }
 
     #[test]

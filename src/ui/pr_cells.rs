@@ -528,7 +528,15 @@ fn styled_pr_identity(pr: &SessionPr, identity: &str) -> String {
         Some(label) => (true, label),
         None => (false, identity),
     };
-    let flip = if pr.primary { "secondary" } else { "primary" };
+    // The glyph flips a session PR's classification; on a pure watch it
+    // removes the watch instead.
+    let flip = if pr.primary {
+        "secondary"
+    } else if pr.watched {
+        "unwatched"
+    } else {
+        "primary"
+    };
     let glyph_styled = if glyph_kept {
         format!(
             "{} ",
@@ -695,11 +703,11 @@ pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell
     ]
 }
 
-/// A cell color as the PR's row should render it: primaries keep the full
-/// palette, secondaries go one notch dimmer so the PR the session is actually
-/// driving stands out.
+/// A cell color as the PR's row should render it: primaries and watched PRs
+/// keep the full palette, secondaries go one notch dimmer so the PRs that
+/// matter stand out.
 fn row_color(pr: &SessionPr, base: u8) -> u8 {
-    if pr.primary {
+    if pr.primary || pr.watched {
         base
     } else {
         color::dimmed(base)
@@ -822,10 +830,13 @@ fn right_cells_width(cells: &[PrCell]) -> usize {
         + active.saturating_sub(1) * PR_RIGHT_COLUMN_GAP
 }
 
-/// `★` marks the session's primary PR; `☆` everything else.
+/// `★` marks the session's primary PR, `◉` an explicitly watched one that no
+/// session claims, and `☆` everything else.
 fn pr_glyph(pr: &SessionPr) -> &'static str {
     if pr.primary {
         "★"
+    } else if pr.watched {
+        "◉"
     } else {
         "☆"
     }
@@ -844,9 +855,10 @@ pub(crate) fn pr_action_url(pr: &SessionPr, disposition: &str) -> String {
     )
 }
 
-/// Primaries keep the PR purple; secondaries recede into dim gray.
+/// Primaries and watched PRs keep the PR purple; secondaries recede into
+/// dim gray.
 fn pr_identity_color(pr: &SessionPr) -> u8 {
-    if pr.primary {
+    if pr.primary || pr.watched {
         color::PURPLE
     } else {
         color::dimmed(color::GRAY)

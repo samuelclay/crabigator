@@ -148,17 +148,13 @@ pub async fn fetch_pr_board_standalone(linger_days: u64) -> Result<CloudBoard> {
     Ok(response.json().await?)
 }
 
-/// One watched PR from GET /api/prs/watched.
+/// One watched PR from GET /api/prs/watched. The response also carries the
+/// watch's url and added_at, which the boards derive locally instead.
 #[derive(Debug, Deserialize)]
 pub struct CloudWatchedPr {
     pub owner: String,
     pub repo: String,
     pub number: u64,
-    #[serde(default)]
-    pub url: String,
-    /// Unix seconds when the watch was added.
-    #[serde(default)]
-    pub added_at: u64,
     /// The stats an open board relayed last; None until first enrichment.
     #[serde(default)]
     pub pr: Option<crate::pr::SessionPr>,
