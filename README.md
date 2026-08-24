@@ -90,6 +90,7 @@ After each turn, Crabigator generates a short recap of what the assistant did �
 
 Board keys:
 
+- `p` — Flip between session view (one row per session) and PR view (one block per primary PR, with every touching session beneath it)
 - `/` — Search, including a grep of each live session's transcript with matched excerpts inline (Tab toggles surrounding context)
 - `r` — Show or hide complete recaps
 - `a` — Cycle through activity age filters
