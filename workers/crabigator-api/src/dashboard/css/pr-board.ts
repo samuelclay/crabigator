@@ -57,8 +57,10 @@ export const prBoardCss = `
 .prb-step:hover { color: #ffd700; }
 .prb-keys { color: #585858; white-space: nowrap; }
 .prb-keys u { text-underline-offset: 2px; }
-.prb-searchwrap { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-#prb-search {
+.prb-addwrap { margin-left: auto; }
+.prb-searchwrap { display: flex; align-items: center; gap: 8px; }
+#prb-search,
+#prb-add {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--border, #30363d);
     border-radius: 4px;
@@ -67,7 +69,9 @@ export const prBoardCss = `
     padding: 2px 8px;
     width: 170px;
 }
-#prb-search:focus { outline: none; border-color: #ffd700; }
+#prb-search:focus, #prb-add:focus { outline: none; border-color: #ffd700; }
+/* A watch input that didn't parse or post flashes red briefly. */
+#prb-add.prb-add-error { border-color: #ff5f5f; }
 #prb-matches { color: #ffd700; white-space: nowrap; }
 
 /* Shared columns: title stretches and truncates, activity and GitHub status
@@ -120,6 +124,8 @@ export const prBoardCss = `
 .prb-star { cursor: pointer; flex-shrink: 0; }
 .prb-star.primary { color: #af87ff; }
 .prb-star.secondary { color: #6c6c6c; }
+/* An explicitly watched PR no session claims: full purple, like a primary. */
+.prb-star.watched { color: #af87ff; }
 .prb-star:hover { color: #d6bffb; }
 .prb-diamond { color: #af87ff; flex-shrink: 0; }
 .prb-ident {
@@ -245,8 +251,8 @@ a.prb-difffiles:hover { text-decoration: underline; }
    never scrolls horizontally. */
 @media (max-width: 760px) {
     .pr-board { padding: 10px 10px 40px; }
-    .prb-searchwrap { margin-left: 0; width: 100%; }
-    #prb-search { flex: 1; width: auto; }
+    .prb-addwrap, .prb-searchwrap { margin-left: 0; width: 100%; }
+    #prb-search, #prb-add { flex: 1; width: 100%; }
     .prb-body { display: block; }
     .prb-row { display: block; }
     .prb-l1, .prb-l2, .prb-dl, .prb-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }

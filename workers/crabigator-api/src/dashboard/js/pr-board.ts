@@ -87,6 +87,7 @@ export const prBoardJs = `
                     board.dataset.shell = '1';
                     board.innerHTML = prbShellHtml();
                     prbBindSearch();
+                    prbBindAdd();
                 }
                 if (!prOverridesLoadStarted) {
                     prOverridesLoadStarted = true;
@@ -113,6 +114,7 @@ export const prBoardJs = `
                 + '<span class="prb-ctl" id="prb-ctl-recap" onclick="prBoardToggleRecap()" title="Show per-session recaps (r)"></span>'
                 + '<span class="prb-ctl" id="prb-ctl-age" onclick="prBoardCycleAge()" title="Hide rows idle longer than this (a)"></span>'
                 + '<span class="prb-keys"><u>↑↓</u> select · <u>⏎</u> peek · <u>/</u> search · <u>+/-</u> days · <u>q</u> quit</span>'
+                + '<span class="prb-addwrap"><input id="prb-add" placeholder="◉ watch a PR URL (w)" spellcheck="false" autocomplete="off"></span>'
                 + '<span class="prb-searchwrap"><input id="prb-search" placeholder="/ search" spellcheck="false" autocomplete="off"><span id="prb-matches"></span></span>'
                 + '</div><div class="prb-body" id="prb-body"></div>'
                 + '<div class="prb-peek" id="prb-peek" hidden>'
@@ -142,6 +144,72 @@ export const prBoardJs = `
                 }
                 e.stopPropagation();
             });
+        }
+
+        function prbBindAdd() {
+            const input = document.getElementById('prb-add');
+            if (!input) return;
+            input.addEventListener('keydown', e => {
+                if (e.key === 'Enter') {
+                    prbSubmitWatch(input);
+                } else if (e.key === 'Escape') {
+                    input.value = '';
+                    input.blur();
+                }
+                e.stopPropagation();
+            });
+        }
+
+        // Parse a watch target: a full PR URL or owner/repo#123.
+        function prbParseWatchTarget(text) {
+            const url = /https:\\/\\/github\\.com\\/([A-Za-z0-9_.-]+)\\/([A-Za-z0-9_.-]+)\\/pull\\/(\\d+)/.exec(text);
+            if (url) return { owner: url[1], repo: url[2], number: Number(url[3]) };
+            const short = /^([A-Za-z0-9_.-]+)\\/([A-Za-z0-9_.-]+)#(\\d+)$/.exec(text.trim());
+            if (short) return { owner: short[1], repo: short[2], number: Number(short[3]) };
+            return null;
+        }
+
+        async function prbSubmitWatch(input) {
+            const flashError = () => {
+                input.classList.add('prb-add-error');
+                setTimeout(() => input.classList.remove('prb-add-error'), 1200);
+            };
+            const target = prbParseWatchTarget(input.value);
+            if (!target || !target.number) {
+                flashError();
+                return;
+            }
+            try {
+                const res = await fetch('/api/prs/watched', {
+                    method: 'POST',
+                    headers: Object.assign({ 'Content-Type': 'application/json' }, getAuthHeaders()),
+                    body: JSON.stringify(Object.assign({}, target, {
+                        url: 'https://github.com/' + target.owner + '/' + target.repo
+                            + '/pull/' + target.number,
+                    })),
+                });
+                if (!res.ok) throw new Error();
+                input.value = '';
+                input.blur();
+                loadPrBoard();
+            } catch (e) {
+                flashError();
+            }
+        }
+
+        async function prbRemoveWatch(pr) {
+            try {
+                await fetch('/api/prs/watched', {
+                    method: 'POST',
+                    headers: Object.assign({ 'Content-Type': 'application/json' }, getAuthHeaders()),
+                    body: JSON.stringify({
+                        owner: pr.owner, repo: pr.repo, number: pr.number, remove: true,
+                    }),
+                });
+            } catch (e) {
+                // The next board refresh shows whatever actually happened.
+            }
+            loadPrBoard();
         }
 
         function prbClearSearch() {
@@ -174,6 +242,10 @@ export const prBoardJs = `
             } else if (e.key === '/') {
                 e.preventDefault();
                 const el = document.getElementById('prb-search');
+                if (el) el.focus();
+            } else if (e.key === 'w') {
+                e.preventDefault();
+                const el = document.getElementById('prb-add');
                 if (el) el.focus();
             } else if (e.key === 'r') prBoardToggleRecap();
             else if (e.key === 'p') prBoardToggleView();
@@ -758,8 +830,13 @@ export const prBoardJs = `
 
         // ── Rows ───────────────────────────────────────────────────────
 
-        // The ★/☆ toggle that flips a PR between primary and secondary.
-        function prbStarHtml(idx, primary) {
+        // The ★/☆ toggle that flips a PR between primary and secondary; a
+        // pure watch shows ◉ and its click removes the watch instead.
+        function prbStarHtml(idx, primary, watched) {
+            if (!primary && watched) {
+                return '<span class="prb-star watched" data-act="unwatch" data-idx="' + idx
+                    + '" title="Watched — click to stop watching">◉</span>';
+            }
             return '<span class="prb-star ' + (primary ? 'primary' : 'secondary')
                 + '" data-act="flip" data-idx="' + idx + '" title="'
                 + (primary ? 'Primary — click to make secondary' : 'Secondary — click to make primary')
@@ -776,9 +853,9 @@ export const prBoardJs = `
             const pr = item.entry.pr;
             const sessions = item.sessions;
             const titles = prbPrTitles(pr, sessions);
-            const star = prbStarHtml(idx, item.primary);
+            const star = prbStarHtml(idx, item.primary, pr.watched);
             const ident = prbIdentHtml(pr, titles.title);
-            let html = '<div class="prb-row' + (item.primary ? '' : ' prb-secondary')
+            let html = '<div class="prb-row' + (item.primary || pr.watched ? '' : ' prb-secondary')
                 + (item.stale ? ' prb-stale' : '')
                 + (item.key === prBoardSelected ? ' prb-sel' : '')
                 + '" data-key="' + escapeHtml(item.key) + '">';
@@ -806,8 +883,8 @@ export const prBoardJs = `
         function prbPrViewRowHtml(item, idx, now) {
             const pr = item.entry.pr;
             const titles = prbPrTitles(pr, item.sessions);
-            // PR view lists primaries only, so the star is always filled.
-            const star = prbStarHtml(idx, true);
+            // PR view lists primaries and watches, nothing dimmer.
+            const star = prbStarHtml(idx, item.primary, pr.watched);
             const ident = prbIdentHtml(pr, titles.title);
             const ageSecs = Math.max(0, now - item.activity);
             const age = item.activity
@@ -1174,7 +1251,7 @@ export const prBoardJs = `
                 const primary = disposition === 'primary';
                 const sessions = e.sessions || [];
                 if (prView) {
-                    if (!primary) continue;
+                    if (!primary && !e.pr.watched) continue;
                     const ordered = sessions.slice().sort((a, b) =>
                         (a.active ? 0 : 1) - (b.active ? 0 : 1)
                         || prbSessionFreshness(b) - prbSessionFreshness(a));
@@ -1183,7 +1260,8 @@ export const prBoardJs = `
                         entry: e,
                         primary,
                         sessions: ordered,
-                        stale: !ordered.some(s => s.active),
+                        // A watch with no sessions is being watched, not stale.
+                        stale: ordered.length ? !ordered.some(s => s.active) : !e.pr.watched,
                         activity: prbPrViewRecency(e, ordered),
                         key: e.owner + '/' + e.repo + '#' + e.number,
                     });
@@ -1196,7 +1274,8 @@ export const prBoardJs = `
                         entry: e,
                         primary,
                         sessions: rowOf,
-                        stale: !rowOf.some(s => s.active),
+                        // A watch with no sessions is being watched, not stale.
+                        stale: rowOf.length ? !rowOf.some(s => s.active) : !e.pr.watched,
                         activity: prbActivityTime(rowOf),
                         key: e.owner + '/' + e.repo + '#' + e.number + '@'
                             + (rowOf[0] ? (rowOf[0].session_id || rowOf[0].dir_name) : ''),
@@ -1234,7 +1313,8 @@ export const prBoardJs = `
 
             const visible = [];
             for (const item of entries) {
-                if (prBoardViewPrefs.liveOnly) {
+                // Explicit watches stay on the board in live mode too.
+                if (prBoardViewPrefs.liveOnly && !item.entry.pr.watched) {
                     const live = !item.stale
                         || activeRepos.has((item.entry.owner + '/' + item.entry.repo).toLowerCase());
                     if (!live) continue;
@@ -1343,6 +1423,10 @@ export const prBoardJs = `
                         return;
                     }
                     if (item.kind === 'session') return;
+                    if (el.dataset.act === 'unwatch') {
+                        prbRemoveWatch(item.entry.pr);
+                        return;
+                    }
                     postPrOverride(item.entry.pr, el.dataset.act === 'dismiss'
                         ? 'dismissed'
                         : (item.primary ? 'secondary' : 'primary'));
