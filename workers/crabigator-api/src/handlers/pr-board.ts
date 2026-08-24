@@ -519,6 +519,13 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         .all<SessionPrRow>();
 
     const merged = new Map<string, BoardEntry & { disposition: string | null }>();
+    // PRs a session holds a verified claim on, and the sessions the strict
+    // ownership gate below left unrepresented paired with the primary PR their
+    // own classifier picked (cross-repo reviews, replying to someone else's
+    // branch). Both are resolved after the merge pass.
+    const representedSessions = new Set<string>();
+    const ownedKeys = new Set<string>();
+    const fallbacks = new Map<string, { key: string; rank: number; row: SessionPrRow }>();
     for (const row of rows.results ?? []) {
         const storedPr = parseSessionPr(row.data);
         if (!storedPr) continue;
@@ -581,7 +588,33 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         const representsSession = !!pr.primary
             && sessionRepositoryMatchesPr(row, pr)
             && (!!pr.created_here || prAttachedToSession(row, pr));
-        if (representsSession) entry.sessions.push(boardSession(row));
+        if (representsSession) {
+            representedSessions.add(row.session_id);
+            ownedKeys.add(key);
+            entry.sessions.push(boardSession(row));
+        } else if (
+            pr.primary
+            && !pr.dismissed
+            && !!row.repo_owner
+            && row.repo_owner.toLowerCase() === (pr.owner || '').toLowerCase()
+        ) {
+            // Same-org only: a session that merely discusses another org's PR
+            // must not migrate into that repository's group.
+            const rank = pr.last_mentioned_at || 0;
+            const existing = fallbacks.get(row.session_id);
+            if (!existing || rank > existing.rank) {
+                fallbacks.set(row.session_id, { key, rank, row });
+            }
+        }
+    }
+
+    // A session whose primary PR failed the strict gate would otherwise fall
+    // back to a bare peer row even though its own status bar names the PR.
+    // Trust the session's classification — but only while no session holds a
+    // verified claim on that PR.
+    for (const [sessionId, fallback] of fallbacks) {
+        if (representedSessions.has(sessionId) || ownedKeys.has(fallback.key)) continue;
+        merged.get(fallback.key)?.sessions.push(boardSession(fallback.row));
     }
 
     const lingerMs = lingerDays * 24 * 3600 * 1000;

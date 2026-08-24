@@ -708,12 +708,6 @@ export const prBoardJs = `
 
         // ── Rows ───────────────────────────────────────────────────────
 
-        function prbRepoMatches(s, entry) {
-            return !!entry.repo
-                && String(s.repo_owner || '').toLowerCase() === String(entry.owner || '').toLowerCase()
-                && String(s.repo_name || '').toLowerCase() === String(entry.repo || '').toLowerCase();
-        }
-
         function prbPrRowHtml(item, idx, now) {
             const pr = item.entry.pr;
             const sessions = item.sessions;
@@ -1032,13 +1026,15 @@ export const prBoardJs = `
                 }
             }
 
-            // Active sessions with no visible PR row in their repository keep
-            // their own ◇ row, like the CLI's workspace rows.
+            // Active sessions no visible PR row represents keep their own
+            // ◇ row, like the CLI's workspace rows. Attachment can be
+            // cross-repo (a session working someone else's PR), so any
+            // session-id match counts.
             const workspaces = [];
             for (const s of prBoardSessions) {
                 if (!s.active) continue;
-                const represented = prBoardEntries.some(e => prbRepoMatches(s, e)
-                    && (e.sessions || []).some(es => es.session_id === s.session_id));
+                const represented = !!s.session_id && prBoardEntries.some(e =>
+                    (e.sessions || []).some(es => es.session_id === s.session_id));
                 if (represented) continue;
                 workspaces.push({
                     kind: 'session',
