@@ -1,6 +1,7 @@
 import type { Env } from '../types/env';
 import { jsonResponse } from '../router';
 import { requireDeviceAuth, requireMobileAuth } from '../auth/middleware';
+import { deleteWatchedPr } from './watched-prs';
 
 const DISPOSITIONS = ['primary', 'secondary', 'dismissed'] as const;
 type Disposition = (typeof DISPOSITIONS)[number];
@@ -12,6 +13,7 @@ const ACTION_WORDING = new Map<string, [string, string]>([
     ['secondary', ['Marking as secondary', 'Marked as secondary']],
     ['dismissed', ['Dismissing', 'Dismissed']],
     ['auto', ['Resetting to automatic', 'Reset to automatic']],
+    ['unwatched', ['Removing the watch on', 'Stopped watching']],
 ]);
 
 interface PrOverrideRow {
@@ -83,7 +85,13 @@ export async function getPrActionPage(request: Request): Promise<Response> {
 
     const [verb, done] = wording;
     const prLabel = `${repo} #${number}`;
-    const payload = JSON.stringify({ owner, repo, number, disposition });
+    // Unwatching targets the watch list; every other action stores an override.
+    const endpoint = disposition === 'unwatched' ? '/api/prs/watched' : '/api/pr-overrides';
+    const payload = JSON.stringify(
+        disposition === 'unwatched'
+            ? { owner, repo, number, remove: true }
+            : { owner, repo, number, disposition }
+    );
 
     const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>${verb} ${prLabel}</title>
@@ -103,7 +111,7 @@ a { color: #c4a7f7; }
         return;
     }
     try {
-        const res = await fetch('/api/pr-overrides', {
+        const res = await fetch(${JSON.stringify(endpoint)}, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
             body: ${JSON.stringify(payload)},
@@ -150,6 +158,11 @@ export async function setPrOverride(request: Request, env: Env): Promise<Respons
     }
 
     const groupKey = result.auth.group_id;
+    // Dismissing a PR also ends any explicit watch on it — nothing should
+    // resurrect a PR the user asked to go away.
+    if (disposition === 'dismissed') {
+        await deleteWatchedPr(env, groupKey, owner, repo, number);
+    }
     if (disposition === 'auto') {
         await env.DB.prepare(
             'DELETE FROM pr_overrides WHERE group_key = ? AND owner = ? AND repo = ? AND number = ?'

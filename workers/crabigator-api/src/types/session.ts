@@ -288,6 +288,7 @@ export interface SessionPr {
     updated_at?: number;      // Unix ms of GitHub's updatedAt — any activity at all
     primary?: boolean;        // The PR this session is actually working on
     primary_source?: string;  // 'auto' | 'session' | 'override'
+    watched?: boolean;        // Explicitly added to the boards' watch list
     dismissed?: boolean;      // User dismissed — do not render
     slack_origin_url?: string;    // Slack permalink pasted in the prompt that led here
     slack_comment_urls?: string[]; // Slack permalinks found in the PR's GitHub comments

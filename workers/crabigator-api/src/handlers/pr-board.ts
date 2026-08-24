@@ -2,6 +2,7 @@ import type { Env } from '../types/env';
 import type { SessionPr } from '../types/session';
 import { jsonResponse } from '../router';
 import { requireDeviceAuth, requireMobileAuth } from '../auth/middleware';
+import { watchedPrRows, watchedPlaceholderPr, deleteWatchedPr } from './watched-prs';
 
 interface BoardSessionRow {
     session_id: string;
@@ -459,10 +460,12 @@ function effectiveSessionPr(row: SessionPrRow, stored: SessionPr): SessionPr {
 
 function visiblePr(pr: SessionPr, lingerMs: number, nowMs: number, updatedAt: number): boolean {
     if (pr.dismissed) return false;
-    // A classified primary remains actionable while GitHub enrichment retries.
-    if (!pr.refreshed_at) return !!pr.primary;
+    // A classified primary remains actionable while GitHub enrichment
+    // retries, and a watched PR is wanted by definition.
+    const wanted = !!pr.primary || !!pr.watched;
+    if (!pr.refreshed_at) return wanted;
     if (pr.state === 'OPEN') return true;
-    if (!pr.primary || foreignWithoutExplicitInterest(pr)) return false;
+    if (!wanted || (!pr.watched && foreignWithoutExplicitInterest(pr))) return false;
     const latest = Math.max(
         pr.closed_at || 0,
         pr.last_mentioned_at || 0,
@@ -618,6 +621,18 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         merged.get(fallback.key)?.sessions.push(boardSession(fallback.row));
     }
 
+    // Explicitly watched PRs join the board even when no session tracks
+    // them, carrying whatever stats an open prs board relayed last. The
+    // watch marks session-tracked copies too, so clients render the watch
+    // glyph and keep the PR through the primary-only PR view.
+    const watched = await watchedPrRows(env, groupId);
+    const watchedKeys = new Set(watched.map((row) => `${row.owner}/${row.repo}#${row.number}`));
+    for (const entry of merged.values()) {
+        if (watchedKeys.has(`${entry.owner}/${entry.repo}#${entry.number}`)) {
+            entry.pr.watched = true;
+        }
+    }
+
     const lingerMs = lingerDays * 24 * 3600 * 1000;
     const nowMs = Date.now();
     const prs = [...merged.values()]
@@ -634,6 +649,32 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             return visiblePr(entry.pr, lingerMs, nowMs, entry.updated_at);
         })
         .map(({ disposition: _disposition, ...entry }) => entry);
+
+    // Watch-only PRs (no session row) render from their relayed stats; a
+    // watch whose PR finished and aged past the linger window clears itself.
+    const seenKeys = new Set(prs.map((entry) => `${entry.owner}/${entry.repo}#${entry.number}`));
+    const expiredWatches: typeof watched = [];
+    for (const row of watched) {
+        const key = `${row.owner}/${row.repo}#${row.number}`;
+        if (seenKeys.has(key)) continue;
+        const pr = parseSessionPr(row.data || '') ?? watchedPlaceholderPr(row);
+        pr.watched = true;
+        if (!visiblePr(pr, lingerMs, nowMs, row.refreshed_at || row.added_at)) {
+            expiredWatches.push(row);
+            continue;
+        }
+        prs.push({
+            owner: row.owner,
+            repo: row.repo,
+            number: row.number,
+            pr,
+            updated_at: row.refreshed_at || row.added_at,
+            sessions: [],
+        });
+    }
+    for (const row of expiredWatches) {
+        await deleteWatchedPr(env, groupId, row.owner, row.repo, row.number);
+    }
 
     // Return every active account session separately. Clients keep any session
     // without a same-repository primary PR as its own peer row.
