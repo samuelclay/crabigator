@@ -22,7 +22,13 @@ enum ParseState {
     Param1(u16),         // Parsing first numeric param
     AfterSemicolon(u16), // Saw semicolon after first param
     Param2(u16, u16),    // Parsing second numeric param
+    PrivateParam(u16),   // Parsing ESC [ ? N (private mode set/reset)
 }
+
+/// Private modes that switch to or from the alternate screen buffer.
+/// Stripped when alt-screen filtering is on, so a full-screen child TUI
+/// paints inside the scroll region on the primary buffer instead.
+const ALT_SCREEN_MODES: [u16; 3] = [47, 1047, 1049];
 
 /// Result from filtering PTY output
 pub struct ScrollRegionFilterResult {
@@ -37,6 +43,7 @@ pub struct ScrollRegionFilter {
     state: ParseState,
     pty_rows: u16,
     pending: Vec<u8>,
+    strip_alt_screen: bool,
 }
 
 impl ScrollRegionFilter {
@@ -45,7 +52,14 @@ impl ScrollRegionFilter {
             state: ParseState::Idle,
             pty_rows,
             pending: Vec::with_capacity(16),
+            strip_alt_screen: false,
         }
+    }
+
+    /// Enable stripping of alternate-screen buffer switches (?47/?1047/?1049).
+    pub fn with_alt_screen_strip(mut self, strip: bool) -> Self {
+        self.strip_alt_screen = strip;
+        self
     }
 
     /// Update the PTY rows (call on terminal resize)
@@ -119,7 +133,26 @@ impl ScrollRegionFilter {
                         self.state = ParseState::AfterSemicolon(0);
                     } else if byte.is_ascii_digit() {
                         self.state = ParseState::Param1((byte - b'0') as u16);
+                    } else if byte == b'?' && self.strip_alt_screen {
+                        self.state = ParseState::PrivateParam(0);
                     } else {
+                        self.flush_or_restart_on_current(&mut output, byte);
+                    }
+                }
+                ParseState::PrivateParam(mode) => {
+                    self.pending.push(byte);
+                    if byte.is_ascii_digit() {
+                        let new_mode = mode.saturating_mul(10).saturating_add((byte - b'0') as u16);
+                        self.state = ParseState::PrivateParam(new_mode);
+                    } else if matches!(byte, b'h' | b'l') && ALT_SCREEN_MODES.contains(&mode) {
+                        // Swallow the buffer switch; the child repaints right
+                        // after it, so refresh the widgets below as well.
+                        needs_redraw = true;
+                        self.pending.clear();
+                        self.state = ParseState::Idle;
+                    } else {
+                        // Any other private mode (mouse, paste, cursor, multi-
+                        // param lists) passes through untouched.
                         self.flush_or_restart_on_current(&mut output, byte);
                     }
                 }
@@ -224,6 +257,43 @@ mod tests {
         assert!(!result.needs_redraw);
         // Sub-region passes through unchanged, no injection
         assert_eq!(result.output, b"\x1b[3;15r");
+    }
+
+    #[test]
+    fn test_alt_screen_stripped_when_enabled() {
+        let mut filter = ScrollRegionFilter::new(20).with_alt_screen_strip(true);
+        let result = filter.scan(b"before\x1b[?1049hafter");
+        assert!(result.needs_redraw);
+        assert_eq!(result.output, b"beforeafter");
+
+        let result = filter.scan(b"\x1b[?1049l\x1b[?47h\x1b[?1047l");
+        assert!(result.needs_redraw);
+        assert_eq!(result.output, b"");
+    }
+
+    #[test]
+    fn test_alt_screen_split_across_chunks() {
+        let mut filter = ScrollRegionFilter::new(20).with_alt_screen_strip(true);
+        let mut output = Vec::new();
+        output.extend(filter.scan(b"x\x1b[?10").output);
+        output.extend(filter.scan(b"49hy").output);
+        assert_eq!(output, b"xy");
+    }
+
+    #[test]
+    fn test_other_private_modes_pass_through() {
+        let mut filter = ScrollRegionFilter::new(20).with_alt_screen_strip(true);
+        let result = filter.scan(b"\x1b[?1000h\x1b[?2004h\x1b[?25l");
+        assert!(!result.needs_redraw);
+        assert_eq!(result.output, b"\x1b[?1000h\x1b[?2004h\x1b[?25l");
+    }
+
+    #[test]
+    fn test_alt_screen_passes_through_when_disabled() {
+        let mut filter = ScrollRegionFilter::new(20);
+        let result = filter.scan(b"\x1b[?1049h");
+        assert!(!result.needs_redraw);
+        assert_eq!(result.output, b"\x1b[?1049h");
     }
 
     #[test]
