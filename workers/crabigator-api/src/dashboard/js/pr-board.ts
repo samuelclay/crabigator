@@ -57,6 +57,15 @@ export const prBoardJs = `
             green: '#5fff5f', lightGreen: '#87d787', red: '#ff5f5f', yellow: '#ffd700',
             orange: '#d7af5f', cyan: '#00d7ff',
         };
+        // Cooldown tints: a session badge or GitHub status cell that changed
+        // lights up bright purple and fades over two minutes to a barely
+        // visible purple-gray — the brighter the purple, the more recent the
+        // change. The CLI board's fade, interpolated between the same stops.
+        const PRB_COOLDOWN_MS = 120000;
+        const PRB_COOL_SHADES = 128;
+        const PRB_COOL_STOPS = [
+            [214, 178, 255], [175, 135, 255], [135, 95, 215], [95, 65, 150], [55, 45, 80],
+        ];
         // Activity recency: one cyan-blue hue at falling intensity, gray after a day.
         const PRB_BUCKETS = [
             { max: 3600, label: 'Last hour', bg: '#00ffff', text: '#000000', hours: 1, ageLabel: '1h' },
@@ -373,6 +382,7 @@ export const prBoardJs = `
 
         function prbThrobFrame() { return Math.floor(Date.now() / 100) % PRB_THROBBER.length; }
         function prbTickThrobber() {
+            prbApplyCooldowns();
             const els = document.querySelectorAll('#pr-board-view .prb-throb');
             if (!els.length) return;
             const ch = PRB_THROBBER[prbThrobFrame()];
@@ -413,12 +423,108 @@ export const prBoardJs = `
             const m = map[state] || ['○', PRB_C.gray];
             return '<span style="color:' + m[1] + '">' + m[0] + '</span>';
         }
+        // ── Cooldown tints ─────────────────────────────────────────────
+        // What each badge and status cell last showed, and when it changed
+        // (0 until a change is seen, so the first load lights nothing up).
+        const prbCooldowns = new Map();
+        function prbSessionCoolKey(s) { return 'session:' + s.session_id; }
+        function prbPrCoolKey(pr, col) {
+            return 'pr:' + pr.owner + '/' + pr.repo + '#' + pr.number + ':' + col;
+        }
+        function prbRecordCooldown(key, sig, changedAt) {
+            const seen = prbCooldowns.get(key);
+            if (!seen) prbCooldowns.set(key, { sig, changedAt: 0 });
+            else if (seen.sig !== sig) { seen.sig = sig; seen.changedAt = changedAt; }
+        }
+        function prbObserveCooldown(key, sig) {
+            prbRecordCooldown(key, sig, Date.now());
+        }
+        // A session entering thinking is the user's own prompt, not news; the
+        // change registers but any active glow goes out.
+        function prbObserveSession(s) {
+            const state = prbSessionState(s);
+            if (state === 'thinking') prbRecordCooldown(prbSessionCoolKey(s), state, 0);
+            else prbObserveCooldown(prbSessionCoolKey(s), state);
+        }
+        // Counts glow only when they rise — comment threads getting resolved
+        // is quiet; new unresolved ones light up.
+        function prbObserveCounter(key, count) {
+            const seen = prbCooldowns.get(key);
+            const rose = !!seen && Number(seen.sig) < count;
+            prbRecordCooldown(key, String(count), rose ? Date.now() : 0);
+        }
+        // The GitHub status columns that cool down; the rest never tint.
+        const PRB_COOL_COLUMNS = ['state', 'ci', 'review', 'merge'];
+        // Record what every badge and status cell shows now, before rendering.
+        function prbObserveBoard() {
+            for (const e of prBoardEntries) {
+                for (const s of e.sessions || []) prbObserveSession(s);
+                const texts = new Map(prbStatusParts(e.pr).map(p => [p.col, p.text]));
+                for (const col of PRB_COOL_COLUMNS) {
+                    prbObserveCooldown(prbPrCoolKey(e.pr, col), texts.get(col) || '');
+                }
+                prbObserveCounter(prbPrCoolKey(e.pr, 'comments'), e.pr.unresolved_comments || 0);
+            }
+            for (const s of prBoardSessions) prbObserveSession(s);
+        }
+        // The freshest change among keys, as a Date.now() value; 0 when cold.
+        function prbCooldownStart(keys) {
+            let start = 0;
+            for (const key of keys) {
+                const seen = prbCooldowns.get(key);
+                if (seen && seen.changedAt > start) start = seen.changedAt;
+            }
+            return Date.now() - start < PRB_COOLDOWN_MS ? start : 0;
+        }
+        function prbCoolTint(ageMs) {
+            if (ageMs >= PRB_COOLDOWN_MS) return null;
+            // Walk the gradient: which pair of stops this shade falls
+            // between, and how far along it sits.
+            const step = Math.floor(ageMs * PRB_COOL_SHADES / PRB_COOLDOWN_MS);
+            const along = step / (PRB_COOL_SHADES - 1) * (PRB_COOL_STOPS.length - 1);
+            const seg = Math.min(Math.floor(along), PRB_COOL_STOPS.length - 2);
+            const f = along - seg;
+            const from = PRB_COOL_STOPS[seg], to = PRB_COOL_STOPS[seg + 1];
+            const mix = i => Math.floor(from[i] + (to[i] - from[i]) * f);
+            const r = mix(0), g = mix(1), b = mix(2);
+            // Dark text on the bright end, light text once the shade dims.
+            const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+            return { bg: 'rgb(' + r + ',' + g + ',' + b + ')', fg: luma >= 150 ? '#000' : '#fff' };
+        }
+        // Wrap a cell that changed recently so prbApplyCooldowns can paint it.
+        function prbCool(html, keys) {
+            const start = prbCooldownStart(keys);
+            return start ? '<span class="prb-cool" data-cool="' + start + '">' + html + '</span>' : html;
+        }
+        // Paint every cooling cell by its age; runs with the throbber tick so
+        // the tint moves without re-rendering the board.
+        function prbApplyCooldowns() {
+            const now = Date.now();
+            document.querySelectorAll('#pr-board-view .prb-cool').forEach(el => {
+                const tint = prbCoolTint(now - Number(el.dataset.cool));
+                if (!tint) {
+                    el.classList.remove('prb-cool');
+                    el.style.background = '';
+                    el.style.color = '';
+                    return;
+                }
+                el.style.background = tint.bg;
+                el.style.color = tint.fg;
+            });
+        }
+
         // "{state} ⟩ prompt-age ⋖ completion-age", each age keeping its own
-        // recency color because the two events can be hours apart.
+        // recency color because the two events can be hours apart. The badge
+        // wears a cooldown tint after a state change; the two shouting states
+        // keep their own backgrounds.
         function prbActivityCell(sessions, now) {
             const prompted = Math.max(0, ...sessions.map(s => s.prompts_changed_at || 0));
             const completed = Math.max(0, ...sessions.map(s => s.completions_changed_at || 0));
-            return prbStateIcon(prbAggregateState(sessions)) + ' '
+            const state = prbAggregateState(sessions);
+            const icon = prbStateIcon(state);
+            const badge = state === 'question' || state === 'permission' || state === 'thinking'
+                ? icon : prbCool(icon, sessions.map(prbSessionCoolKey));
+            return badge + ' '
                 + prbAgePart('⟩', prompted, now) + ' ' + prbAgePart('⋖', completed, now);
         }
         // Rows order by when the user last prompted a session; completions
@@ -538,12 +644,14 @@ export const prBoardJs = `
 
         // GitHub status cells: state, CI, unresolved threads, merge, then the
         // promote/demote and dismiss actions.
-        function prbStatusCells(pr, idx, primary) {
-            const cells = [];
+        // The GitHub status columns as {col, text, html}. The text is what
+        // the cooldown tracker compares between loads.
+        function prbStatusParts(pr) {
+            const parts = [];
             const st = prbStateLabel(pr);
             if (st) {
-                cells.push('<span style="color:' + st.color + '"'
-                    + (st.title ? ' title="' + escapeHtml(st.title) + '"' : '') + '>' + st.label + '</span>');
+                parts.push({ col: 'state', text: st.label, html: '<span style="color:' + st.color + '"'
+                    + (st.title ? ' title="' + escapeHtml(st.title) + '"' : '') + '>' + st.label + '</span>' });
             }
             if (pr.checks_total) {
                 let label = '✓ CI';
@@ -555,11 +663,12 @@ export const prBoardJs = `
                     label = '●' + pr.checks_pending + ' CI';
                     color = PRB_C.yellow;
                 }
-                cells.push(prbLink(pr.ci_url, '<span style="color:' + color + '">' + label + '</span>'));
+                parts.push({ col: 'ci', text: label,
+                    html: prbLink(pr.ci_url, '<span style="color:' + color + '">' + label + '</span>') });
             }
             if (pr.unresolved_comments) {
-                cells.push(prbLink(pr.comments_url,
-                    '<span style="color:' + PRB_C.orange + '">💬' + pr.unresolved_comments + '</span>'));
+                parts.push({ col: 'comments', text: String(pr.unresolved_comments), html: prbLink(pr.comments_url,
+                    '<span style="color:' + PRB_C.orange + '">💬' + pr.unresolved_comments + '</span>') });
             }
             // Review approval state, open PRs only: approved, changes
             // requested, a review dismissed by new commits, or still waiting.
@@ -572,16 +681,23 @@ export const prBoardJs = `
                 } else if (pr.review_dismissed) {
                     review = { glyph: '⊘', color: PRB_C.orange, title: 'Approval dismissed by new commits' };
                 }
-                cells.push('<span style="color:' + review.color + '" title="' + review.title + '">'
-                    + review.glyph + '</span>');
+                parts.push({ col: 'review', text: review.glyph,
+                    html: '<span style="color:' + review.color + '" title="' + review.title + '">'
+                        + review.glyph + '</span>' });
             }
             if (pr.mergeable === 'CONFLICTING') {
-                cells.push('<span style="color:' + PRB_C.red + '">conflicts</span>');
+                parts.push({ col: 'merge', text: 'conflicts', html: '<span style="color:' + PRB_C.red + '">conflicts</span>' });
             } else if (pr.mergeable === 'MERGEABLE') {
                 const behind = pr.merge_state_status === 'BEHIND';
-                cells.push('<span style="color:' + (behind ? PRB_C.yellow : PRB_C.green) + '">'
-                    + (behind ? 'behind' : 'clean') + '</span>');
+                const text = behind ? 'behind' : 'clean';
+                parts.push({ col: 'merge', text,
+                    html: '<span style="color:' + (behind ? PRB_C.yellow : PRB_C.green) + '">' + text + '</span>' });
             }
+            return parts;
+        }
+
+        function prbStatusCells(pr, idx, primary) {
+            const cells = prbStatusParts(pr).map(part => prbCool(part.html, [prbPrCoolKey(pr, part.col)]));
             // ↑ promotes a secondary PR, ↓ demotes a primary. Unlike the ★/☆
             // glyph, it works on watched PRs too, so a watch can be promoted
             // instead of only unwatched.
@@ -1296,6 +1412,7 @@ export const prBoardJs = `
             // sorted live-first then freshest-first (the sub-row and ←→ order).
             const prView = prBoardViewPrefs.view === 'prs';
             body.classList.toggle('prb-prview', prView);
+            prbObserveBoard();
             const entries = [];
             for (const e of prBoardEntries) {
                 const disposition = prDisposition(e.pr);
@@ -1460,6 +1577,7 @@ export const prBoardJs = `
                 }
             }
             body.innerHTML = html;
+            prbApplyCooldowns();
 
             body.querySelectorAll('[data-act]').forEach(el => {
                 const item = prBoardRendered[Number(el.dataset.idx)];

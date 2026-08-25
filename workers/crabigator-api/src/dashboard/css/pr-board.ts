@@ -161,6 +161,10 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
 .prb-badge { color: #000; font-weight: 700; border-radius: 3px; padding: 0 1px; }
 .prb-ask { background: #ff8700; }
 .prb-perm { background: #ffd700; }
+/* A badge or status cell that changed recently: bright purple when fresh,
+   fading to a faint purple-gray, plain again after two minutes. */
+.prb-cool { border-radius: 3px; padding: 0 3px; margin: 0 -3px; }
+.prb-cool * { color: inherit !important; }
 /* The activity cell of a live session (or its PR-view sub-row title) opens
    the quick look pane. */
 .prb-peek-open { cursor: pointer; border-radius: 3px; }
