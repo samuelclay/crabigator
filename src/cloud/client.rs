@@ -346,6 +346,9 @@ pub struct CloudClient {
     pending_pr_overrides: Option<std::sync::mpsc::Receiver<HashMap<String, PrDisposition>>>,
     /// When the last PR-overrides fetch started, for the refresh cadence
     last_pr_overrides_fetch: Option<std::time::Instant>,
+    /// The cloud said dispositions changed; fetch as soon as no fetch is in
+    /// flight, ignoring the refresh interval.
+    pr_overrides_refresh_due: bool,
 }
 
 impl CloudClient {
@@ -378,6 +381,7 @@ impl CloudClient {
             last_viewer_active_at: None,
             pending_pr_overrides: None,
             last_pr_overrides_fetch: None,
+            pr_overrides_refresh_due: false,
         })
     }
 
@@ -803,16 +807,28 @@ impl CloudClient {
     }
 
     /// Start a background fetch of the group's PR dispositions when one is
-    /// due. Results land via [`Self::try_recv_pr_overrides`].
+    /// due: on the refresh interval, or at once when the cloud pushed a
+    /// "dispositions changed" nudge over the WebSocket. Results land via
+    /// [`Self::try_recv_pr_overrides`].
     pub fn maybe_fetch_pr_overrides(&mut self) {
+        if self
+            .ws_handle
+            .as_mut()
+            .is_some_and(|ws| ws.take_pr_overrides_changed())
+        {
+            self.pr_overrides_refresh_due = true;
+        }
         if self.pending_pr_overrides.is_some() {
             return;
         }
-        if let Some(started) = self.last_pr_overrides_fetch {
-            if started.elapsed() < PR_OVERRIDES_REFRESH {
-                return;
-            }
+        // A nudge jumps the queue; otherwise the interval has to run out.
+        let within_interval = self
+            .last_pr_overrides_fetch
+            .is_some_and(|started| started.elapsed() < PR_OVERRIDES_REFRESH);
+        if within_interval && !self.pr_overrides_refresh_due {
+            return;
         }
+        self.pr_overrides_refresh_due = false;
         self.last_pr_overrides_fetch = Some(std::time::Instant::now());
         let device = self.device.clone();
         let http = self.http.clone();

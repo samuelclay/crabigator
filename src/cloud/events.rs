@@ -592,6 +592,11 @@ pub enum CloudToDesktopMessage {
     /// Desktop can use this to adjust streaming frequency
     #[serde(rename = "viewer_status")]
     ViewerStatus { active: bool },
+    /// The group's PR dispositions changed (a ★/☆, ↑/↓, or ✕ click on the
+    /// dashboard or an action link); the desktop should refetch them now
+    /// instead of waiting for its next poll.
+    #[serde(rename = "pr_overrides_changed")]
+    PrOverridesChanged,
     /// Request to spawn a new crabigator instance in a directory
     #[serde(rename = "spawn")]
     Spawn {

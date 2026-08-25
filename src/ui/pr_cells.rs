@@ -879,7 +879,8 @@ fn pr_flip_disposition(pr: &SessionPr) -> &'static str {
 
 /// Web action link that stores a disposition for the whole device group.
 /// The page posts the override with the dashboard's stored auth, confirms,
-/// and closes its tab; the desktop picks the change up within a minute.
+/// and closes its tab; the Worker nudges every live session over its
+/// WebSocket so the desktop refetches at once (its 60s poll is the fallback).
 pub(crate) fn pr_action_url(pr: &SessionPr, disposition: &str) -> String {
     if pr.owner.is_empty() || pr.repo.is_empty() {
         return String::new();

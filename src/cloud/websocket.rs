@@ -34,6 +34,8 @@ pub struct CloudWebSocket {
     viewer_status_rx: mpsc::Receiver<bool>,
     /// Receiver for spawn requests
     spawn_rx: mpsc::Receiver<SpawnRequest>,
+    /// Receiver for "PR dispositions changed" nudges
+    pr_overrides_changed_rx: mpsc::Receiver<()>,
     /// Receiver that completes when the connection closes
     shutdown_rx: mpsc::Receiver<()>,
 }
@@ -94,6 +96,9 @@ impl CloudWebSocket {
         // Channel for spawn requests (cloud -> desktop)
         let (spawn_tx, spawn_rx) = mpsc::channel::<SpawnRequest>(4);
 
+        // Channel for PR disposition change nudges (cloud -> desktop)
+        let (pr_overrides_changed_tx, pr_overrides_changed_rx) = mpsc::channel::<()>(4);
+
         // Channel to signal when connection closes (read task will signal this)
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
@@ -136,6 +141,10 @@ impl CloudWebSocket {
                         Ok(CloudToDesktopMessage::Spawn { cwd, platform }) => {
                             let _ = spawn_tx.send(SpawnRequest { cwd, platform }).await;
                         }
+                        Ok(CloudToDesktopMessage::PrOverridesChanged) => {
+                            // A full channel already holds a pending nudge.
+                            let _ = pr_overrides_changed_tx.try_send(());
+                        }
                         Ok(CloudToDesktopMessage::Ping) | Err(_) => {}
                     }
                 }
@@ -151,6 +160,7 @@ impl CloudWebSocket {
             key_sequence_rx,
             viewer_status_rx,
             spawn_rx,
+            pr_overrides_changed_rx,
             shutdown_rx,
         })
     }
@@ -164,6 +174,7 @@ pub struct WebSocketHandle {
     key_sequence_rx: mpsc::Receiver<Vec<KeyStep>>,
     viewer_status_rx: mpsc::Receiver<bool>,
     spawn_rx: mpsc::Receiver<SpawnRequest>,
+    pr_overrides_changed_rx: mpsc::Receiver<()>,
 }
 
 impl CloudWebSocket {
@@ -176,6 +187,7 @@ impl CloudWebSocket {
             key_sequence_rx: self.key_sequence_rx,
             viewer_status_rx: self.viewer_status_rx,
             spawn_rx: self.spawn_rx,
+            pr_overrides_changed_rx: self.pr_overrides_changed_rx,
         };
         (handle, self.shutdown_rx)
     }
@@ -195,6 +207,16 @@ impl WebSocketHandle {
     /// Try to receive a key command (non-blocking)
     pub fn try_recv_key(&mut self) -> Option<String> {
         self.key_rx.try_recv().ok()
+    }
+
+    /// Whether the cloud nudged us that PR dispositions changed since the
+    /// last check (non-blocking; drains every queued nudge).
+    pub fn take_pr_overrides_changed(&mut self) -> bool {
+        let mut changed = false;
+        while self.pr_overrides_changed_rx.try_recv().is_ok() {
+            changed = true;
+        }
+        changed
     }
 
     /// Try to receive a key sequence (non-blocking)
