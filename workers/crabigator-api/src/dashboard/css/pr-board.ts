@@ -75,7 +75,9 @@ export const prBoardCss = `
 #prb-matches { color: #ffd700; white-space: nowrap; }
 
 /* Shared columns: title stretches and truncates, activity and GitHub status
-   stay compact and right-aligned across every row. */
+   stay compact and right-aligned across every row. PR view adds diff and
+   file-count columns between them so the stats line up across PR rows and
+   workspace rows, like the CLI board. */
 .prb-body {
     display: grid;
     grid-template-columns: minmax(0, 1fr) max-content max-content;
@@ -86,6 +88,9 @@ export const prBoardCss = `
     overflow-x: hidden;
     overflow-y: auto;
     padding-bottom: 34px;
+}
+.prb-body.prb-prview {
+    grid-template-columns: minmax(0, 1fr) max-content max-content max-content max-content;
 }
 .prb-bucket {
     grid-column: 1 / -1;
@@ -147,12 +152,17 @@ a.prb-ident:hover { text-decoration: underline; }
     white-space: nowrap;
     min-width: 0;
 }
-.prb-activity { white-space: nowrap; justify-self: end; }
+.prb-activity { grid-column: 2; white-space: nowrap; justify-self: end; }
+/* PR view's stats columns; both open the PR's Files-changed tab. */
+.prb-diff { grid-column: 3; white-space: nowrap; text-decoration: none; }
+.prb-files { grid-column: 4; white-space: nowrap; color: #585858; text-decoration: none; }
+a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
 /* States that wait on the user: chevrons on a filled background. */
 .prb-badge { color: #000; font-weight: 700; border-radius: 3px; padding: 0 1px; }
 .prb-ask { background: #ff8700; }
 .prb-perm { background: #ffd700; }
-/* The activity cell of a live session opens the quick look pane. */
+/* The activity cell of a live session (or its PR-view sub-row title) opens
+   the quick look pane. */
 .prb-peek-open { cursor: pointer; border-radius: 3px; }
 .prb-peek-open:hover { background: rgba(0, 215, 255, 0.12); }
 /* The selection band: the ↑↓ cursor, matching the CLI's highlighted row. */
@@ -162,6 +172,7 @@ a.prb-ident:hover { text-decoration: underline; }
 .prb-wsdiff, .prb-wsfiles { white-space: nowrap; flex-shrink: 0; }
 .prb-wsfiles { color: #585858; }
 .prb-status {
+    grid-column: -2;
     white-space: nowrap;
     justify-self: end;
     display: inline-flex;
