@@ -294,6 +294,8 @@ export class SessionDO implements DurableObject {
                 return this.handleScrollbackSearch(request);
             case '/viewer-active':
                 return this.handleViewerActive();
+            case '/pr-overrides-changed':
+                return this.handlePrOverridesChanged();
             case '/spawn':
                 return this.handleSpawn(request);
             default:
@@ -1382,6 +1384,27 @@ export class SessionDO implements DurableObject {
         // NOT per-session, to avoid multiplying usage when viewing multiple sessions
 
         return new Response(JSON.stringify({ ok: true }), {
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+
+    /**
+     * Tell the desktop the group's PR dispositions changed so it refetches
+     * them now instead of on its next poll. Sent after a ★/☆, ↑/↓, or ✕
+     * click on the dashboard or an action link.
+     */
+    private handlePrOverridesChanged(): Response {
+        const message: CloudToDesktopMessage = { type: 'pr_overrides_changed' };
+        let delivered = false;
+        if (this.desktopWs) {
+            try {
+                this.desktopWs.send(JSON.stringify(message));
+                delivered = true;
+            } catch {
+                // Connection may have failed, ignore
+            }
+        }
+        return new Response(JSON.stringify({ ok: true, delivered }), {
             headers: { 'Content-Type': 'application/json' },
         });
     }

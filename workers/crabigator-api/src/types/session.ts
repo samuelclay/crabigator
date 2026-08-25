@@ -455,7 +455,15 @@ export interface SpawnMessage {
     platform?: string;
 }
 
-export type CloudToDesktopMessage = AnswerMessage | PingMessage | KeyMessage | KeySequenceMessage | ViewerStatusMessage | SpawnMessage;
+/**
+ * The group's PR dispositions changed, so the desktop should refetch them
+ * now instead of waiting for its next poll.
+ */
+export interface PrOverridesChangedMessage {
+    type: 'pr_overrides_changed';
+}
+
+export type CloudToDesktopMessage = AnswerMessage | PingMessage | KeyMessage | KeySequenceMessage | ViewerStatusMessage | SpawnMessage | PrOverridesChangedMessage;
 
 /**
  * Session info for listing

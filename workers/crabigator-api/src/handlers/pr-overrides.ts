@@ -24,6 +24,30 @@ interface PrOverrideRow {
     updated_at: number;
 }
 
+/** Nudge every live session in the group over its desktop WebSocket so the
+ * status strips refetch dispositions now rather than on their next poll. The
+ * group key is a group id, or a lone device id for desktops that never paired. */
+async function notifyGroupSessions(env: Env, groupKey: string): Promise<void> {
+    const rows = await env.DB.prepare(
+        `SELECT s.id FROM sessions s
+         JOIN devices d ON d.id = s.device_id
+         WHERE (d.group_id = ? OR d.id = ?) AND s.is_active = 1
+         LIMIT 200`
+    )
+        .bind(groupKey, groupKey)
+        .all<{ id: string }>();
+    await Promise.all(
+        (rows.results ?? []).map(async (row) => {
+            try {
+                const stub = env.SESSION.get(env.SESSION.idFromName(row.id));
+                await stub.fetch(new Request('https://internal/pr-overrides-changed', { method: 'POST' }));
+            } catch {
+                // A session whose Durable Object is unreachable keeps its poll.
+            }
+        })
+    );
+}
+
 /** Overrides are scoped like dashboards: by device group, falling back to the
  * lone device id for desktops that never paired. */
 async function deviceGroupKey(env: Env, deviceId: string): Promise<string> {
@@ -181,6 +205,7 @@ export async function setPrOverride(request: Request, env: Env): Promise<Respons
             .bind(groupKey, owner, repo, number, disposition, result.auth.mobile_id)
             .run();
     }
+    await notifyGroupSessions(env, groupKey);
 
     return jsonResponse({ ok: true });
 }
