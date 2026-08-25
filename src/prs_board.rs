@@ -1173,12 +1173,9 @@ fn entries_for_mode(entries: Vec<BoardPr>, mode: BoardMode) -> Vec<BoardPr> {
             .into_iter()
             .filter(|entry| entry.pr.primary || entry.pr.watched)
             .map(|mut entry| {
-                entry.sessions.sort_by_key(|session| {
-                    (
-                        session.ended,
-                        std::cmp::Reverse(session.prompted_at.max(session.completed_at)),
-                    )
-                });
+                entry
+                    .sessions
+                    .sort_by_key(|session| (session.ended, std::cmp::Reverse(session.prompted_at)));
                 entry
             })
             .collect(),
@@ -1712,12 +1709,13 @@ fn board_has_thinking(entries: &[BoardPr], workspaces: &[WorkspaceEntry]) -> boo
         .any(|session| session.state == SessionState::Thinking)
 }
 
-/// Sort each row by its newest prompt or completion. New prompts rise
-/// immediately, and their completions move the row again when the turn ends.
+/// Sort each row by its newest prompt. Completions never move a row: the
+/// board orders by when the user last spoke to a session, not by when the
+/// assistant finished.
 fn activity_sort_time(sessions: &[SessionRef]) -> u64 {
     sessions
         .iter()
-        .map(|session| session.prompted_at.max(session.completed_at))
+        .map(|session| session.prompted_at)
         .max()
         .unwrap_or(0)
 }
@@ -1726,28 +1724,24 @@ fn activity_bucket(sessions: &[SessionRef], now: u64) -> RecencyBucket {
     RecencyBucket::from_age(now.saturating_sub(activity_sort_time(sessions)))
 }
 
-/// PR-view recency, in unix seconds: the freshest of the sessions' activity
-/// and the PR's own events — a mention here, the merge/close, or GitHub's
-/// updatedAt, which moves on any activity at all (push, comment, review).
-fn pr_recency_time(entry: &BoardPr) -> u64 {
-    activity_sort_time(&entry.sessions)
-        .max(entry.pr.last_mentioned_at / 1000)
-        .max(entry.pr.closed_at / 1000)
-        .max(entry.pr.updated_at / 1000)
-}
-
-/// The clock a PR row sorts and buckets by, honoring the view: session
-/// activity alone in session view, session + PR events in PR view.
-fn entry_recency_time(entry: &BoardPr, mode: BoardMode) -> u64 {
-    match mode {
-        BoardMode::Sessions => activity_sort_time(&entry.sessions),
-        BoardMode::Prs => pr_recency_time(entry),
+/// The clock a PR row sorts and buckets by, in unix seconds: the newest
+/// prompt among its sessions. A row with no prompt time — a watch, or
+/// sessions that never prompted — falls back to the PR's own events: GitHub's
+/// updatedAt (which moves on any push, comment, review, or merge), the close,
+/// or its last mention here.
+fn entry_recency_time(entry: &BoardPr) -> u64 {
+    let prompted = activity_sort_time(&entry.sessions);
+    if prompted > 0 {
+        return prompted;
     }
+    (entry.pr.updated_at / 1000)
+        .max(entry.pr.closed_at / 1000)
+        .max(entry.pr.last_mentioned_at / 1000)
 }
 
 /// The recency band a PR row belongs to on that same clock.
-fn entry_bucket(entry: &BoardPr, now: u64, mode: BoardMode) -> RecencyBucket {
-    RecencyBucket::from_age(now.saturating_sub(entry_recency_time(entry, mode)))
+fn entry_bucket(entry: &BoardPr, now: u64) -> RecencyBucket {
+    RecencyBucket::from_age(now.saturating_sub(entry_recency_time(entry)))
 }
 
 fn activity_part(label: &str, timestamp: u64, now: u64) -> ActivityCell {
@@ -2597,7 +2591,7 @@ fn render_pr_view_block(
 ) -> Vec<String> {
     let entry = board_row.entry;
     let (title, _) = pr_row_titles(entry);
-    let age = timestamp_cell(pr_recency_time(entry) * 1000, now_ms, activity_width);
+    let age = timestamp_cell(entry_recency_time(entry) * 1000, now_ms, activity_width);
     let mut row = crate::ui::pr_cells::pr_view_row_text(
         width,
         &entry.pr,
@@ -2872,7 +2866,7 @@ fn render_at(
         .iter()
         .enumerate()
         .filter_map(|(index, row)| {
-            (entry_bucket(row.entry, now, mode) <= oldest_visible_bucket).then_some(index)
+            (entry_bucket(row.entry, now) <= oldest_visible_bucket).then_some(index)
         })
         .collect();
     let visible_workspace_indices: Vec<usize> = workspace_rows
@@ -3082,7 +3076,7 @@ fn render_at(
             let row = &rows[index];
             add_row(
                 format!("{}/{}", row.entry.pr.owner, row.entry.pr.repo),
-                entry_recency_time(row.entry, mode),
+                entry_recency_time(row.entry),
                 SectionRow::Pr(index),
             );
         }
@@ -4078,7 +4072,7 @@ async fn board_loop(
             let filtered: Vec<BoardRow> = view_entries
                 .iter()
                 .filter_map(|entry| {
-                    if entry_bucket(entry, now, view.mode) > view.oldest_visible_bucket {
+                    if entry_bucket(entry, now) > view.oldest_visible_bucket {
                         return None;
                     }
                     let preview_lines =
@@ -4838,14 +4832,15 @@ mod tests {
     }
 
     #[test]
-    fn pr_view_recency_counts_pr_events_not_just_sessions() {
+    fn recency_follows_prompts_and_falls_back_to_pr_events() {
         let now_ms = now_ms();
         let now = now_ms / 1000;
         let mut pr = board_pr(9, "portal");
         make_primary(&mut pr);
         pr.state = "MERGED".to_string();
         pr.closed_at = now_ms - 60_000;
-        let entry = BoardPr {
+        pr.updated_at = now_ms - 60_000;
+        let mut entry = BoardPr {
             pr,
             sessions: vec![test_session_ref("old", now - 30 * 3600, false)],
             slack_threads: Vec::new(),
@@ -4853,14 +4848,21 @@ mod tests {
         };
 
         assert_eq!(
-            entry_bucket(&entry, now, BoardMode::Sessions),
+            entry_bucket(&entry, now),
             RecencyBucket::Older,
-            "session view only sees the stale session"
+            "a stale prompt outranks a fresh merge: the board follows the user"
         );
+        entry.sessions[0].completed_at = now - 60;
         assert_eq!(
-            entry_bucket(&entry, now, BoardMode::Prs),
+            entry_bucket(&entry, now),
+            RecencyBucket::Older,
+            "a fresh completion never moves a row"
+        );
+        entry.sessions.clear();
+        assert_eq!(
+            entry_bucket(&entry, now),
             RecencyBucket::LastHour,
-            "PR view keeps the fresh merge in the newest band"
+            "with no prompt to follow, the PR's own events place it"
         );
     }
 
@@ -5364,7 +5366,7 @@ mod tests {
     }
 
     #[test]
-    fn repository_rows_share_columns_and_follow_completion_activity() {
+    fn repository_rows_share_columns_and_follow_prompt_activity() {
         let now = now_secs() as u64;
         let mut crab_pr = board_pr(7, "crabigator");
         make_primary(&mut crab_pr);
@@ -5376,21 +5378,21 @@ mod tests {
         pr_session.repo_owner = "samuelclay".to_string();
         pr_session.repo_name = "crabigator".to_string();
         pr_session.branch = "with-pr".to_string();
-        pr_session.completed_at = now - 120;
+        pr_session.prompted_at = now - 120;
 
         let mut no_pr_session = snapshot("crabigator", Vec::new());
         no_pr_session.session_id = "without-pr".to_string();
         no_pr_session.repo_owner = "samuelclay".to_string();
         no_pr_session.repo_name = "crabigator".to_string();
         no_pr_session.branch = "main".to_string();
-        no_pr_session.completed_at = now - 30;
+        no_pr_session.prompted_at = now - 30;
         no_pr_session.title = "Newest completed session".to_string();
 
         let mut portal_pr = board_pr(9, "developer-portal");
         make_primary(&mut portal_pr);
         portal_pr.branch = "a-much-longer-branch-name".to_string();
         let mut portal_session = snapshot("developer-portal", vec![portal_pr]);
-        portal_session.completed_at = now - 300;
+        portal_session.prompted_at = now - 300;
 
         let snapshots = vec![pr_session, no_pr_session, portal_session];
         let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
@@ -5425,7 +5427,7 @@ mod tests {
         assert_eq!(frame.matches("samuelclay/crabigator").count(), 1);
         let no_pr_offset = frame.find("◇ ᛝ  Newest completed session").unwrap();
         let pr_offset = frame.find("7:").unwrap();
-        assert!(no_pr_offset < pr_offset, "newer completion sorts first");
+        assert!(no_pr_offset < pr_offset, "newer prompt sorts first");
 
         let no_pr_row = frame
             .lines()
@@ -5561,7 +5563,7 @@ mod tests {
                 let mut pr = board_pr(number, repo);
                 make_primary(&mut pr);
                 let mut session = snapshot(repo, vec![pr]);
-                session.completed_at = now - age;
+                session.prompted_at = now - age;
                 session
             })
             .collect();
@@ -5695,7 +5697,7 @@ mod tests {
             make_primary(&mut pr);
             let mut session = snapshot("repo", vec![pr]);
             session.session_id = format!("session-{number}");
-            session.completed_at = now - age;
+            session.prompted_at = now - age;
             session
         })
         .collect();
@@ -6746,7 +6748,7 @@ mod tests {
     }
 
     #[test]
-    fn activity_sort_uses_the_newest_prompt_or_completion() {
+    fn activity_sort_uses_the_newest_prompt_and_ignores_completions() {
         let now = 100_000;
         let mut session = SessionRef {
             session_id: "one".to_string(),
@@ -6773,7 +6775,7 @@ mod tests {
         session.completed_at = now - 30;
         assert_eq!(
             activity_sort_time(std::slice::from_ref(&session)),
-            session.completed_at
+            session.prompted_at
         );
     }
 
