@@ -74,13 +74,13 @@ export const prBoardCss = `
 #prb-add.prb-add-error { border-color: #ff5f5f; }
 #prb-matches { color: #ffd700; white-space: nowrap; }
 
-/* Shared columns: title stretches and truncates, activity and GitHub status
-   stay compact and right-aligned across every row. PR view adds diff and
-   file-count columns between them so the stats line up across PR rows and
+/* Shared columns: title stretches and truncates, then the activity, the
+   diff, the file count, and the GitHub status stay compact and
+   right-aligned, so the stats line up across PR rows, session blocks, and
    workspace rows, like the CLI board. */
 .prb-body {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) max-content max-content;
+    grid-template-columns: minmax(0, 1fr) max-content max-content max-content max-content;
     column-gap: 16px;
     align-content: start;
     flex: 1;
@@ -88,9 +88,6 @@ export const prBoardCss = `
     overflow-x: hidden;
     overflow-y: auto;
     padding-bottom: 34px;
-}
-.prb-body.prb-prview {
-    grid-template-columns: minmax(0, 1fr) max-content max-content max-content max-content;
 }
 .prb-bucket {
     grid-column: 1 / -1;
@@ -172,9 +169,7 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
 /* The selection band: the ↑↓ cursor, matching the CLI's highlighted row. */
 .prb-row.prb-sel { background: rgba(0, 215, 255, 0.14); }
 .prb-row.prb-sel:hover { background: rgba(0, 215, 255, 0.18); }
-/* A session row's uncommitted diff and file count, in the PR columns. */
-.prb-wsdiff, .prb-wsfiles { white-space: nowrap; flex-shrink: 0; }
-.prb-wsfiles { color: #585858; }
+/* The GitHub status cluster, anchored against the right edge. */
 .prb-status {
     grid-column: -2;
     white-space: nowrap;
@@ -190,12 +185,8 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
 .prb-flip:hover { opacity: 1; color: #d6bffb; }
 .prb-x:hover { opacity: 1; color: #ff5f5f; }
 
-/* Metadata row: generated session title + branch, diff + files right */
+/* Metadata row: the PR header's branch, indented under its title */
 .prb-l2-left { display: flex; align-items: baseline; gap: 10px; min-width: 0; padding-left: 19px; }
-.prb-gen { color: #5fafff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.prb-l2-right { grid-column: 2 / -1; justify-self: end; white-space: nowrap; }
-.prb-difffiles { color: #585858; text-decoration: none; }
-a.prb-difffiles:hover { text-decoration: underline; }
 .prb-add { color: #5fff5f; font-weight: 700; }
 .prb-del { color: #ff5f5f; font-weight: 700; }
 
@@ -214,6 +205,11 @@ a.prb-difffiles:hover { text-decoration: underline; }
 .prb-sub-headline { color: #8a8a8a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 /* Ended sessions dim in whole so the live ones stand out. */
 .prb-sub.prb-ended .prb-sub-title, .prb-sub.prb-ended .prb-sub-headline { color: #585858; }
+/* A session block's PR sub-rows: the PR-view anatomy indented beneath the
+   session header, secondaries receding like top-level rows. */
+.prb-pr-sub { padding-left: 19px; }
+.prb-sub.prb-secondary { opacity: 0.75; }
+.prb-sub.prb-secondary:hover { opacity: 1; }
 
 /* Search previews: recap excerpts confirming why a row matched */
 .prb-pv {
@@ -282,7 +278,7 @@ a.prb-difffiles:hover { text-decoration: underline; }
     .prb-l1-left { flex: 1 1 100%; }
     .prb-activity { margin-left: 19px; }
     .prb-status { margin-left: auto; }
-    .prb-l2-right, .prb-dl-right { margin-left: auto; }
+    .prb-dl-right { margin-left: auto; }
     .prb-keys { display: none; }
     .prb-peek { flex-basis: 45%; }
 }
