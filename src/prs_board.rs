@@ -2577,9 +2577,10 @@ fn render_pr_board_row(
     lines
 }
 
-/// One PR-view block: the PR header row with its stats inline, the ✦
-/// judgment and Slack links when detail is on, then one sub-row per touching
-/// session with its recap headline (and full recap at detail).
+/// One PR-view block: the PR header row with its sessions' activity, diff,
+/// file count, and GitHub status inline, the ✦ judgment and Slack links when
+/// detail is on, then one sub-row per touching session with its recap
+/// headline (and full recap at detail).
 fn render_pr_view_block(
     board_row: &BoardRow<'_>,
     width: u16,
@@ -2591,14 +2592,14 @@ fn render_pr_view_block(
 ) -> Vec<String> {
     let entry = board_row.entry;
     let (title, _) = pr_row_titles(entry);
-    let age = timestamp_cell(entry_recency_time(entry) * 1000, now_ms, activity_width);
+    let activity = pr_view_activity_cell(entry, now_ms, activity_width, throbber_frame);
     let mut row = crate::ui::pr_cells::pr_view_row_text(
         width,
         &entry.pr,
         widths,
         &title,
-        age.styled,
-        age.visible,
+        activity.styled,
+        activity.visible,
         activity_width,
     );
     if entry.stale {
@@ -2619,14 +2620,7 @@ fn render_pr_view_block(
     }
 
     for session in &entry.sessions {
-        lines.push(pr_view_session_row(
-            session,
-            width,
-            now_ms,
-            activity_width,
-            widths,
-            throbber_frame,
-        ));
+        lines.push(pr_view_session_row(session, width, activity_width, widths));
         if detail > DEFAULT_DETAIL {
             if let Some(recap) = session.recap.as_ref() {
                 lines.extend(detail_lines(&recap_extra_rows(recap), &[], &layout));
@@ -2637,16 +2631,30 @@ fn render_pr_view_block(
     lines
 }
 
-/// One session beneath a PR-view header: `◆ title — recap headline` with the
-/// session's own state and activity ages right-aligned. Ended sessions render
-/// entirely dim so the live ones stand out.
+/// The PR-view header's activity cell: the state and prompt/completion ages
+/// aggregated across the PR's sessions. A PR no session touches (a watch)
+/// shows the age of its latest GitHub event instead.
+fn pr_view_activity_cell(
+    entry: &BoardPr,
+    now_ms: u64,
+    activity_width: usize,
+    throbber_frame: usize,
+) -> ActivityCell {
+    if entry.sessions.is_empty() {
+        return timestamp_cell(entry_recency_time(entry) * 1000, now_ms, activity_width);
+    }
+    activity_cell(&entry.sessions, now_ms / 1000, throbber_frame)
+}
+
+/// One session beneath a PR-view header: `◆ title — recap headline`. The
+/// state and activity ages live on the header row, so the sub-row leaves
+/// that column empty. Ended sessions render entirely dim so the live ones
+/// stand out.
 fn pr_view_session_row(
     session: &SessionRef,
     width: u16,
-    now_ms: u64,
     activity_width: usize,
     widths: &PrColumnWidths,
-    throbber_frame: usize,
 ) -> String {
     let title = marked_session_title(session);
     let headline = session
@@ -2677,7 +2685,6 @@ fn pr_view_session_row(
         dim = fg(color::DARK_GRAY),
     );
 
-    let activity = session_activity_cell(session, now_ms / 1000, throbber_frame);
     format!(
         "{}{RESET}",
         board_detail_row_text(
@@ -2685,38 +2692,13 @@ fn pr_view_session_row(
             widths,
             left_styled,
             left_visible,
-            activity.styled,
-            activity.visible,
+            String::new(),
+            0,
             activity_width,
             String::new(),
             0,
         )
     )
-}
-
-/// A single session's state and ages for its PR-view sub-row. Ended sessions
-/// show the same shape in unbroken dim gray.
-fn session_activity_cell(session: &SessionRef, now: u64, throbber_frame: usize) -> ActivityCell {
-    if !session.ended {
-        return activity_cell(std::slice::from_ref(session), now, throbber_frame);
-    }
-    let part = |icon: &str, timestamp: u64| {
-        if timestamp == 0 {
-            format!("{icon} —")
-        } else {
-            format!("{icon} {}", format_age(now.saturating_sub(timestamp)))
-        }
-    };
-    // The ✓ sits centered in the same three-cell slot as a live row's badge.
-    let plain = format!(
-        " ✓   {}  {}",
-        part(PROMPT_ICON, session.prompted_at),
-        part(COMPLETION_ICON, session.completed_at)
-    );
-    ActivityCell {
-        visible: plain.width(),
-        styled: format!("{}{plain}{RESET_FG}", fg(color::DARK_GRAY)),
-    }
 }
 
 /// A session's own title carrying its provider marker, falling back to the
@@ -2974,15 +2956,11 @@ fn render_at(
                 BoardMode::Sessions => activity_cell(&entry.sessions, now, throbber_frame)
                     .visible
                     .max(pr_board_metadata_width(&entry.pr)),
-                // PR-view headers only carry a right-aligned age stamp; the
-                // session sub-rows set the real column width.
-                BoardMode::Prs => entry
-                    .sessions
-                    .iter()
-                    .map(|session| session_activity_cell(session, now, throbber_frame).visible)
-                    .max()
-                    .unwrap_or(0)
-                    .max(4),
+                // A PR no session touches shows only an age stamp, capped at
+                // four cells; the sessions set the real column width.
+                BoardMode::Prs => {
+                    pr_view_activity_cell(entry, now * 1000, 4, throbber_frame).visible
+                }
             }
         })
         .chain(visible_workspace_indices.iter().map(|&index| {
@@ -3022,7 +3000,7 @@ fn render_at(
         );
     }
     if mode == BoardMode::Prs {
-        widths.drop_number_column(shared_width as usize);
+        widths.use_pr_view_layout(shared_width as usize);
     }
 
     #[derive(Clone, Copy)]
@@ -4743,6 +4721,73 @@ mod tests {
         assert!(frame.contains("Moved the mirror logic"), "{frame}");
     }
 
+    /// The header row carries everything about the PR: the full title, the
+    /// sessions' state and ages, then the diff and file count beside the
+    /// GitHub status. Sub-rows only name the session and its headline.
+    #[test]
+    fn pr_view_header_holds_the_title_activity_and_stats() {
+        let mut pr = board_pr(7, "portal");
+        make_primary(&mut pr);
+        pr.title = "A title well past the forty-four cells the session view allows".to_string();
+        pr.additions = 49;
+        pr.deletions = 5;
+        pr.changed_files = 3;
+        pr.mergeable = "MERGEABLE".to_string();
+        let mut session = snapshot("one", vec![pr]);
+        session.repo_name = "portal".to_string();
+        session.prompted_at = now_secs() as u64 - 30 * 60;
+        session.completed_at = now_secs() as u64 - 5 * 60;
+
+        let merged = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = entries_for_mode(merged, BoardMode::Prs);
+        let rendered = render_prs_frame(&entries, DEFAULT_DETAIL);
+        // Cells link to GitHub, so the hyperlink wrappers go too.
+        let links = regex::Regex::new(r"\x1b\]8;;[^\x07]*\x07").unwrap();
+        let lines: Vec<String> = rendered
+            .lines
+            .iter()
+            .map(|line| {
+                links
+                    .replace_all(&crate::parsers::strip_ansi_for_debug(line), "")
+                    .into_owned()
+            })
+            .collect();
+        let header = lines
+            .iter()
+            .find(|line| line.contains("#7: "))
+            .expect("the PR header row renders");
+        assert!(
+            header.contains("A title well past the forty-four cells the session view allows"),
+            "the title is not cut at the session view's cap: {header}"
+        );
+        assert!(header.contains("⟩ 30m") && header.contains("⋖ 5m"));
+        let activity_at = header.find("⟩ 30m").unwrap();
+        let diff_at = header.find("+49 -5").unwrap();
+        let files_at = header.find("3 files").unwrap();
+        let state_at = header.find("open").unwrap();
+        assert!(
+            activity_at < diff_at && diff_at < files_at && files_at < state_at,
+            "activity, then stats, then status: {header}"
+        );
+        assert!(
+            header.contains("3 files  open"),
+            "the stats sit beside the status: {header}"
+        );
+        assert!(
+            header.contains("⋖ 5m  +49"),
+            "the stats sit apart from the activity: {header}"
+        );
+
+        let sub_row = lines
+            .iter()
+            .find(|line| line.trim_start().starts_with('◆'))
+            .expect("the session sub-row renders");
+        assert!(
+            !sub_row.contains('⟩') && !sub_row.contains('⋖'),
+            "sub-rows leave the activity to the header: {sub_row}"
+        );
+    }
+
     #[test]
     fn watched_prs_join_the_board_without_sessions() {
         let mut tracked = board_pr(5, "portal");
@@ -4897,14 +4942,7 @@ mod tests {
         );
 
         let widths = PrColumnWidths::from_pr_refs(&[&shaped[0].pr], 120);
-        let ended_row = pr_view_session_row(
-            &shaped[0].sessions[1],
-            120,
-            now * 1000,
-            12,
-            &widths,
-            0,
-        );
+        let ended_row = pr_view_session_row(&shaped[0].sessions[1], 120, 12, &widths);
         assert!(
             ended_row.trim_start().starts_with(&fg(color::DARK_GRAY)),
             "ended sub-rows dim: {ended_row:?}"
