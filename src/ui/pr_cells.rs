@@ -11,6 +11,7 @@ use crate::pr::SessionPr;
 use crate::terminal::escape::{
     self, color, fg, BOLD, RESET, RESET_BOLD, RESET_FG, RESET_UNDERLINE, UNDERLINE,
 };
+use crate::ui::cooldown::{tint_text, StatusTints, Tint};
 
 pub(crate) const PR_COLUMN_GAP: usize = 2;
 pub(crate) const PR_RIGHT_COLUMN_GAP: usize = 1;
@@ -354,7 +355,7 @@ fn table_width_with_gap(columns: &[usize], gap: usize) -> usize {
 /// One styled row: left padding, the left columns, then a gap wide enough to
 /// anchor the status columns against the right edge.
 pub(crate) fn pr_row_text(width: u16, pr: &SessionPr, widths: &PrColumnWidths) -> String {
-    pr_row_text_with_optional_activity(width, pr, widths, None, None)
+    pr_row_text_with_optional_activity(width, pr, widths, None, None, StatusTints::default())
 }
 
 /// Render the PR board's titled row with activity before the GitHub status.
@@ -364,18 +365,11 @@ pub(crate) fn pr_row_text_with_activity(
     pr: &SessionPr,
     widths: &PrColumnWidths,
     title: &str,
-    styled: String,
-    visible: usize,
-    column_width: usize,
+    activity: PrCell,
+    tints: StatusTints,
 ) -> String {
     let left_cells = [board_pr_title_cell(pr, title, widths.left_width())];
-    pr_row_text_with_left_cells(
-        width,
-        pr,
-        widths,
-        &left_cells,
-        Some((styled, visible, column_width)),
-    )
+    pr_row_text_with_left_cells(width, pr, widths, &left_cells, Some(activity), tints)
 }
 
 /// Render the PR view's header row: identity (`★ #142: title`) and branch on
@@ -386,17 +380,10 @@ pub(crate) fn pr_view_row_text(
     pr: &SessionPr,
     widths: &PrColumnWidths,
     title: &str,
-    styled: String,
-    visible: usize,
-    column_width: usize,
+    activity: PrCell,
+    tints: StatusTints,
 ) -> String {
-    pr_row_text_with_optional_activity(
-        width,
-        pr,
-        widths,
-        Some(title),
-        Some((styled, visible, column_width)),
-    )
+    pr_row_text_with_optional_activity(width, pr, widths, Some(title), Some(activity), tints)
 }
 
 /// Width needed for a PR's diff and file count on the board metadata row.
@@ -563,12 +550,13 @@ fn pr_row_text_with_optional_activity(
     widths: &PrColumnWidths,
     board_title: Option<&str>,
     activity: Option<PrCell>,
+    tints: StatusTints,
 ) -> String {
     let left_cells = board_title.map_or_else(
         || pr_left_cells(pr, widths),
         |title| pr_left_cells_with_board_title(pr, widths, title),
     );
-    pr_row_text_with_left_cells(width, pr, widths, &left_cells, activity)
+    pr_row_text_with_left_cells(width, pr, widths, &left_cells, activity, tints)
 }
 
 fn pr_row_text_with_left_cells(
@@ -577,11 +565,12 @@ fn pr_row_text_with_left_cells(
     widths: &PrColumnWidths,
     left_cells: &[PrCell],
     activity: Option<PrCell>,
+    tints: StatusTints,
 ) -> String {
     let mut row = " ".repeat(PR_LEFT_PADDING);
     row.push_str(&cells_text(left_cells));
 
-    let mut right_cells = pr_right_cells(pr, widths).to_vec();
+    let mut right_cells = pr_right_cells_tinted(pr, widths, tints).to_vec();
     if widths.stats_right {
         right_cells.insert(0, pr_stats_right_cell(pr, widths));
     }
@@ -708,7 +697,8 @@ fn pr_stats_cells(pr: &SessionPr, diff_width: usize, files_width: usize) -> [PrC
     ]
 }
 
-type PrCell = (String, usize, usize);
+/// A rendered cell: styled text, its visible width, and the column width.
+pub(crate) type PrCell = (String, usize, usize);
 
 pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 5] {
     let identity = truncate_identity(pr, widths.identity);
@@ -793,25 +783,68 @@ fn colored_diff_cell(
     (styled, visible.width(), width)
 }
 
+#[cfg(test)]
 pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 7] {
+    pr_right_cells_tinted(pr, widths, StatusTints::default())
+}
+
+/// What each GitHub status column shows, as `(column, text)`. The board
+/// compares the text between frames to spot changes.
+pub(crate) fn pr_status_signature(pr: &SessionPr) -> [(&'static str, String); 4] {
+    [
+        ("state", pr_state_label(pr).0.to_string()),
+        ("ci", pr_ci_label(pr).0),
+        ("review", pr_review_label(pr).0.to_string()),
+        ("merge", pr_merge_label(pr).0.to_string()),
+    ]
+}
+
+/// The status cells with cooldown tints on the columns that changed recently.
+pub(crate) fn pr_right_cells_tinted(
+    pr: &SessionPr,
+    widths: &PrColumnWidths,
+    tints: StatusTints,
+) -> [PrCell; 7] {
     let (state_label, state_color) = pr_state_label(pr);
     let (ci_label, ci_color) = pr_ci_label(pr);
     let (comments_label, comments_color) = pr_comments_label(pr);
     let (review_label, review_color) = pr_review_label(pr);
     let (merge_label, merge_color) = pr_merge_label(pr);
     [
-        colored_cell(state_label, row_color(pr, state_color), widths.state),
+        colored_cell_tinted(
+            state_label,
+            row_color(pr, state_color),
+            widths.state,
+            tints.state,
+        ),
         // Failing CI points at the failing job; anything else at the Checks tab.
-        linked_cell(&ci_label, row_color(pr, ci_color), widths.ci, &pr.ci_url),
+        linked_cell_tinted(
+            &ci_label,
+            row_color(pr, ci_color),
+            widths.ci,
+            &pr.ci_url,
+            tints.ci,
+        ),
         // Unresolved threads point at the first one's comment.
-        linked_cell(
+        linked_cell_tinted(
             &comments_label,
             row_color(pr, comments_color),
             widths.comments,
             &pr.comments_url,
+            tints.comments,
         ),
-        colored_cell(review_label, row_color(pr, review_color), widths.review),
-        colored_cell(merge_label, row_color(pr, merge_color), widths.merge),
+        colored_cell_tinted(
+            review_label,
+            row_color(pr, review_color),
+            widths.review,
+            tints.review,
+        ),
+        colored_cell_tinted(
+            merge_label,
+            row_color(pr, merge_color),
+            widths.merge,
+            tints.merge,
+        ),
         // Promote/demote action: ↑ makes a secondary PR primary, ↓ makes a
         // primary secondary. Unlike the identity glyph, it works on watched
         // PRs too, so a watch can be promoted instead of only unwatched.
@@ -846,9 +879,33 @@ fn colored_cell(label: &str, color: u8, width: usize) -> PrCell {
     colored_cell_capped(label, color, width, width)
 }
 
+/// A colored cell painted on a cooldown tint when one is given.
+fn colored_cell_tinted(label: &str, color: u8, width: usize, tint: Option<Tint>) -> PrCell {
+    let (styled, visible, width) = colored_cell(label, color, width);
+    match tint {
+        // An empty cell has nothing to light up.
+        Some(tint) if visible > 0 => (
+            tint_text(&truncate_to_width(label, width), tint),
+            visible,
+            width,
+        ),
+        _ => (styled, visible, width),
+    }
+}
+
 /// A colored cell whose visible text is also an OSC 8 link.
 fn linked_cell(label: &str, color: u8, width: usize, url: &str) -> PrCell {
-    let (styled, visible, width) = colored_cell(label, color, width);
+    linked_cell_tinted(label, color, width, url, None)
+}
+
+fn linked_cell_tinted(
+    label: &str,
+    color: u8,
+    width: usize,
+    url: &str,
+    tint: Option<Tint>,
+) -> PrCell {
+    let (styled, visible, width) = colored_cell_tinted(label, color, width, tint);
     (link_text(url, styled, visible), visible, width)
 }
 

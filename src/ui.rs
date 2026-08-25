@@ -4,6 +4,7 @@
 //! Widgets use raw ANSI escape sequences for terminal output.
 
 mod changes;
+pub(crate) mod cooldown;
 mod git;
 pub(crate) mod handoff;
 mod pairing;

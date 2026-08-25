@@ -74,6 +74,9 @@ pub const RESET: &str = "\x1b[0m";
 /// Reset foreground color only (keeps background)
 pub const RESET_FG: &str = "\x1b[39m";
 
+/// Reset background color only (keeps foreground)
+pub const RESET_BG: &str = "\x1b[49m";
+
 // === Color Helpers ===
 
 /// Set foreground color using 256-color palette
@@ -86,6 +89,18 @@ pub fn fg(color: u8) -> String {
 #[inline]
 pub fn bg(color: u8) -> String {
     format!("\x1b[48;5;{}m", color)
+}
+
+/// Set foreground color using 24-bit truecolor
+#[inline]
+pub fn fg_rgb((r, g, b): (u8, u8, u8)) -> String {
+    format!("\x1b[38;2;{r};{g};{b}m")
+}
+
+/// Set background color using 24-bit truecolor
+#[inline]
+pub fn bg_rgb((r, g, b): (u8, u8, u8)) -> String {
+    format!("\x1b[48;2;{r};{g};{b}m")
 }
 
 // === Precomputed Foreground Colors (256-color palette) ===

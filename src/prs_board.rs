@@ -36,6 +36,7 @@ use crate::pr::{SessionPr, WatchAdd};
 use crate::pr_rank::{attached_to_worktree, PrDisposition};
 use crate::slack::{SlackDirectory, SlackThread};
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG, RESET_UNDERLINE, UNDERLINE};
+use crate::ui::cooldown::{Cooldowns, StatusTints};
 use crate::ui::pr_cells::{
     board_detail_row_text, pr_board_metadata_row_text, pr_board_metadata_width,
     pr_row_text_with_activity, session_row_text_with_activity, PrColumnWidths, PR_RIGHT_COLUMN_GAP,
@@ -1669,7 +1670,19 @@ struct ActivityCell {
 
 /// The newest prompt and completion among every session attached to a PR.
 /// Each age keeps its own color because the two events can be hours apart.
-fn activity_cell(sessions: &[SessionRef], now: u64, throbber_frame: usize) -> ActivityCell {
+fn activity_cell(
+    sessions: &[SessionRef],
+    now_ms: u64,
+    throbber_frame: usize,
+    cooldowns: &Cooldowns,
+) -> ActivityCell {
+    let now = now_ms / 1000;
+    let badge_tint = cooldowns.hottest_tint(
+        sessions
+            .iter()
+            .map(|session| session_cooldown_key(&session.session_id)),
+        now_ms,
+    );
     let prompted_at = sessions
         .iter()
         .map(|session| session.prompted_at)
@@ -1683,7 +1696,7 @@ fn activity_cell(sessions: &[SessionRef], now: u64, throbber_frame: usize) -> Ac
     let prompt = activity_part(PROMPT_ICON, prompted_at, now);
     let completion = activity_part(COMPLETION_ICON, completed_at, now);
     let state = activity_state(sessions)
-        .map(|state| crate::ui::session_state_badge(state, throbber_frame))
+        .map(|state| crate::ui::session_state_badge(state, throbber_frame, badge_tint))
         .unwrap_or_else(|| " ".repeat(crate::ui::STATE_BADGE_WIDTH));
     ActivityCell {
         styled: format!("{}  {}  {}", state, prompt.styled, completion.styled),
@@ -1706,6 +1719,62 @@ fn activity_state(sessions: &[SessionRef]) -> Option<SessionState> {
             SessionState::Ready => 1,
             SessionState::Complete => 0,
         })
+}
+
+/// Cooldown key for a session's state badge.
+fn session_cooldown_key(session_id: &str) -> String {
+    format!("session:{session_id}")
+}
+
+/// Cooldown key for one of a PR's GitHub status columns.
+fn pr_cooldown_key(pr: &SessionPr, column: &str) -> String {
+    format!("pr:{}/{}#{}:{column}", pr.owner, pr.repo, pr.number)
+}
+
+/// Record what every badge and status cell shows now, so cells that changed
+/// since the last frame start their cooldown.
+fn observe_cooldowns(
+    cooldowns: &mut Cooldowns,
+    entries: &[BoardPr],
+    workspaces: &[WorkspaceEntry],
+    now_ms: u64,
+) {
+    let sessions = entries
+        .iter()
+        .flat_map(|entry| entry.sessions.iter())
+        .chain(workspaces.iter().map(|entry| &entry.session));
+    for session in sessions {
+        let key = session_cooldown_key(&session.session_id);
+        let signature = format!("{:?}", session.state);
+        if session.state == SessionState::Thinking {
+            // Entering thinking is the user's own prompt, not news.
+            cooldowns.observe_quiet(key, &signature);
+        } else {
+            cooldowns.observe(key, &signature, now_ms);
+        }
+    }
+    for entry in entries {
+        for (column, label) in crate::ui::pr_cells::pr_status_signature(&entry.pr) {
+            cooldowns.observe(pr_cooldown_key(&entry.pr, column), &label, now_ms);
+        }
+        cooldowns.observe_counter(
+            pr_cooldown_key(&entry.pr, "comments"),
+            entry.pr.unresolved_comments,
+            now_ms,
+        );
+    }
+}
+
+/// The tints a PR row's status cells wear right now.
+fn status_tints(cooldowns: &Cooldowns, pr: &SessionPr, now_ms: u64) -> StatusTints {
+    let tint = |column: &str| cooldowns.tint(&pr_cooldown_key(pr, column), now_ms);
+    StatusTints {
+        state: tint("state"),
+        ci: tint("ci"),
+        comments: tint("comments"),
+        review: tint("review"),
+        merge: tint("merge"),
+    }
 }
 
 fn board_has_thinking(entries: &[BoardPr], workspaces: &[WorkspaceEntry]) -> bool {
@@ -2524,26 +2593,40 @@ fn pr_span_key(entry: &BoardPr) -> String {
     )
 }
 
-fn render_pr_board_row(
-    board_row: &BoardRow<'_>,
+/// What every board row needs beyond its own entry: the frame's terminal
+/// width and detail level, its clock, the shared column widths, the throbber
+/// phase, and the cooldown tints.
+#[derive(Clone, Copy)]
+struct RowContext<'a> {
     width: u16,
     detail: u8,
     now_ms: u64,
     activity_width: usize,
-    widths: &PrColumnWidths,
+    widths: &'a PrColumnWidths,
     throbber_frame: usize,
-) -> Vec<String> {
+    cooldowns: &'a Cooldowns,
+}
+
+fn render_pr_board_row(board_row: &BoardRow<'_>, context: RowContext<'_>) -> Vec<String> {
+    let RowContext {
+        width,
+        detail,
+        now_ms,
+        activity_width,
+        widths,
+        throbber_frame,
+        cooldowns,
+    } = context;
     let entry = board_row.entry;
-    let activity = activity_cell(&entry.sessions, now_ms / 1000, throbber_frame);
+    let activity = activity_cell(&entry.sessions, now_ms, throbber_frame, cooldowns);
     let (title, generated_title) = pr_row_titles(entry);
     let mut row = pr_row_text_with_activity(
         width,
         &entry.pr,
         widths,
         &title,
-        activity.styled,
-        activity.visible,
-        activity_width,
+        (activity.styled, activity.visible, activity_width),
+        status_tints(cooldowns, &entry.pr, now_ms),
     );
     if entry.stale {
         row = format!("{}{row}", fg(color::DARK_GRAY));
@@ -2588,26 +2671,26 @@ fn render_pr_board_row(
 /// file count, and GitHub status inline, the ✦ judgment and Slack links when
 /// detail is on, then one sub-row per touching session with its recap
 /// headline (and full recap at detail).
-fn render_pr_view_block(
-    board_row: &BoardRow<'_>,
-    width: u16,
-    detail: u8,
-    now_ms: u64,
-    activity_width: usize,
-    widths: &PrColumnWidths,
-    throbber_frame: usize,
-) -> Vec<String> {
+fn render_pr_view_block(board_row: &BoardRow<'_>, context: RowContext<'_>) -> Vec<String> {
+    let RowContext {
+        width,
+        detail,
+        now_ms,
+        activity_width,
+        widths,
+        throbber_frame,
+        cooldowns,
+    } = context;
     let entry = board_row.entry;
     let (title, _) = pr_row_titles(entry);
-    let activity = pr_view_activity_cell(entry, now_ms, activity_width, throbber_frame);
+    let activity = pr_view_activity_cell(entry, now_ms, activity_width, throbber_frame, cooldowns);
     let mut row = crate::ui::pr_cells::pr_view_row_text(
         width,
         &entry.pr,
         widths,
         &title,
-        activity.styled,
-        activity.visible,
-        activity_width,
+        (activity.styled, activity.visible, activity_width),
+        status_tints(cooldowns, &entry.pr, now_ms),
     );
     if entry.stale {
         row = format!("{}{row}", fg(color::DARK_GRAY));
@@ -2646,11 +2729,12 @@ fn pr_view_activity_cell(
     now_ms: u64,
     activity_width: usize,
     throbber_frame: usize,
+    cooldowns: &Cooldowns,
 ) -> ActivityCell {
     if entry.sessions.is_empty() {
         return timestamp_cell(entry_recency_time(entry) * 1000, now_ms, activity_width);
     }
-    activity_cell(&entry.sessions, now_ms / 1000, throbber_frame)
+    activity_cell(&entry.sessions, now_ms, throbber_frame, cooldowns)
 }
 
 /// One session beneath a PR-view header: `◆ title — recap headline`. The
@@ -2757,18 +2841,22 @@ fn workspace_branch_text(entry: &WorkspaceEntry) -> String {
 
 fn render_workspace_board_row(
     workspace_row: &WorkspaceRow<'_>,
-    width: u16,
-    detail: u8,
-    now_ms: u64,
-    activity_width: usize,
-    widths: &PrColumnWidths,
-    throbber_frame: usize,
+    context: RowContext<'_>,
 ) -> Vec<String> {
+    let RowContext {
+        width,
+        detail,
+        now_ms,
+        activity_width,
+        widths,
+        throbber_frame,
+        cooldowns,
+    } = context;
     let entry = workspace_row.entry;
     let (title, title_color) = workspace_title(entry);
     let branch = workspace_branch_text(entry);
     let files = workspace_files_text(entry);
-    let activity = activity_cell(entry.sessions(), now_ms / 1000, throbber_frame);
+    let activity = activity_cell(entry.sessions(), now_ms, throbber_frame, cooldowns);
     let row = session_row_text_with_activity(
         width,
         &title,
@@ -2807,6 +2895,7 @@ fn render(
     include_ended: bool,
     view: BoardView,
 ) -> RenderedBoard {
+    let cooldowns = Cooldowns::default();
     render_at(
         rows,
         workspace_rows,
@@ -2817,14 +2906,17 @@ fn render(
         RenderState {
             now_ms: (now_secs() * 1000.0) as u64,
             loading: false,
+            cooldowns: &cooldowns,
         },
     )
 }
 
 #[derive(Clone, Copy)]
-struct RenderState {
+struct RenderState<'a> {
     now_ms: u64,
     loading: bool,
+    /// Which badges and status cells changed recently, for their tints.
+    cooldowns: &'a Cooldowns,
 }
 
 /// One rendered frame: the styled lines plus where each board row landed,
@@ -2841,9 +2933,13 @@ fn render_at(
     linger_days: u64,
     include_ended: bool,
     view: BoardView,
-    state: RenderState,
+    state: RenderState<'_>,
 ) -> RenderedBoard {
-    let RenderState { now_ms, loading } = state;
+    let RenderState {
+        now_ms,
+        loading,
+        cooldowns,
+    } = state;
     let BoardView {
         detail,
         oldest_visible_bucket,
@@ -2960,18 +3056,26 @@ fn render_at(
         .map(|&index| {
             let entry = rows[index].entry;
             match mode {
-                BoardMode::Sessions => activity_cell(&entry.sessions, now, throbber_frame)
-                    .visible
-                    .max(pr_board_metadata_width(&entry.pr)),
+                BoardMode::Sessions => {
+                    activity_cell(&entry.sessions, now_ms, throbber_frame, cooldowns)
+                        .visible
+                        .max(pr_board_metadata_width(&entry.pr))
+                }
                 // A PR no session touches shows only an age stamp, capped at
                 // four cells; the sessions set the real column width.
                 BoardMode::Prs => {
-                    pr_view_activity_cell(entry, now * 1000, 4, throbber_frame).visible
+                    pr_view_activity_cell(entry, now * 1000, 4, throbber_frame, cooldowns).visible
                 }
             }
         })
         .chain(visible_workspace_indices.iter().map(|&index| {
-            activity_cell(workspace_rows[index].entry.sessions(), now, throbber_frame).visible
+            activity_cell(
+                workspace_rows[index].entry.sessions(),
+                now_ms,
+                throbber_frame,
+                cooldowns,
+            )
+            .visible
         }))
         .max()
         .unwrap_or(0);
@@ -3096,6 +3200,15 @@ fn render_at(
     }
     sections.sort_by_key(|section| section.bucket);
 
+    let context = RowContext {
+        width,
+        detail,
+        now_ms,
+        activity_width,
+        widths: &widths,
+        throbber_frame,
+        cooldowns,
+    };
     for (section_index, section) in sections.into_iter().enumerate() {
         if section_index > 0 {
             lines.push(String::new());
@@ -3127,15 +3240,7 @@ fn render_at(
                         let board_row = &rows[index];
                         match mode {
                             BoardMode::Sessions => {
-                                lines.extend(render_pr_board_row(
-                                    board_row,
-                                    width,
-                                    detail,
-                                    now_ms,
-                                    activity_width,
-                                    &widths,
-                                    throbber_frame,
-                                ));
+                                lines.extend(render_pr_board_row(board_row, context));
                                 (
                                     pr_span_key(board_row.entry),
                                     board_row
@@ -3148,15 +3253,7 @@ fn render_at(
                                 )
                             }
                             BoardMode::Prs => {
-                                lines.extend(render_pr_view_block(
-                                    board_row,
-                                    width,
-                                    detail,
-                                    now_ms,
-                                    activity_width,
-                                    &widths,
-                                    throbber_frame,
-                                ));
+                                lines.extend(render_pr_view_block(board_row, context));
                                 let pr = &board_row.entry.pr;
                                 (
                                     format!("{}/{}#{}", pr.owner, pr.repo, pr.number),
@@ -3174,15 +3271,7 @@ fn render_at(
                     }
                     SectionRow::Workspace(index) => {
                         let workspace_row = &workspace_rows[index];
-                        lines.extend(render_workspace_board_row(
-                            workspace_row,
-                            width,
-                            detail,
-                            now_ms,
-                            activity_width,
-                            &widths,
-                            throbber_frame,
-                        ));
+                        lines.extend(render_workspace_board_row(workspace_row, context));
                         (
                             format!("ws:{}", session_key(&workspace_row.entry.session)),
                             peek_target(&workspace_row.entry.session)
@@ -3904,6 +3993,9 @@ async fn board_loop(
     let mut dirty = false;
     let mut needs_render = false;
     let mut last_throbber_frame = crate::ui::throbber_frame_index();
+    // Badges and status cells that changed recently glow and cool; the board
+    // keeps repainting while any are still warm.
+    let mut cooldowns = Cooldowns::default();
 
     let (initial_width, _) = terminal_size().unwrap_or((120, 40));
     let mut lines = render_at(
@@ -3916,6 +4008,7 @@ async fn board_loop(
         RenderState {
             now_ms: (now_secs() * 1000.0) as u64,
             loading: true,
+            cooldowns: &cooldowns,
         },
     )
     .lines;
@@ -4033,7 +4126,9 @@ async fn board_loop(
             needs_render = true;
         }
 
-        let animating = loading || board_has_thinking(&entries, &workspaces);
+        let now_ms = (now_secs() * 1000.0) as u64;
+        let animating =
+            loading || board_has_thinking(&entries, &workspaces) || cooldowns.active(now_ms);
         let throbber_frame = crate::ui::throbber_frame_index();
         if animating && throbber_frame != last_throbber_frame {
             last_throbber_frame = throbber_frame;
@@ -4044,12 +4139,12 @@ async fn board_loop(
         if needs_render {
             needs_render = false;
             let query = search.as_deref().unwrap_or("");
-            let now_ms = (now_secs() * 1000.0) as u64;
             let now = now_ms / 1000;
             // The canonical entries stay merged (one per PR); the watch list
             // overlays them, then the active view shapes its own rows.
             let mut merged_entries = entries.clone();
             merge_watched_entries(&mut merged_entries, &watched_board.prs, overrides, linger_days);
+            observe_cooldowns(&mut cooldowns, &merged_entries, &workspaces, now_ms);
             let view_entries = entries_for_mode(merged_entries, view.mode);
             // A PR stays visible when its metadata matches, or when any of
             // its sessions' transcripts contain the query — with the matched
@@ -4099,7 +4194,11 @@ async fn board_loop(
                 linger_days,
                 include_ended,
                 view,
-                RenderState { now_ms, loading },
+                RenderState {
+                    now_ms,
+                    loading,
+                    cooldowns: &cooldowns,
+                },
             );
             // Spans track the fresh frame even when the lines are unchanged:
             // a session's screen can appear or vanish without moving a row.
@@ -4795,6 +4894,95 @@ mod tests {
         );
     }
 
+    /// A session badge or status cell that changed since the last frame
+    /// wears a cooldown tint; untouched cells and first sightings stay plain.
+    #[test]
+    fn changed_badges_and_status_cells_wear_a_cooldown_tint() {
+        let mut pr = board_pr(8, "portal");
+        make_primary(&mut pr);
+        pr.mergeable = "MERGEABLE".to_string();
+        let mut session = snapshot("one", vec![pr.clone()]);
+        session.repo_name = "portal".to_string();
+        session.state = SessionState::Thinking;
+        let before = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+
+        let now_ms = now_ms();
+        let mut cooldowns = Cooldowns::default();
+        observe_cooldowns(&mut cooldowns, &before, &[], now_ms);
+        let frame = |entries: &[BoardPr], cooldowns: &Cooldowns, at: u64| {
+            let rows: Vec<BoardRow> = entries
+                .iter()
+                .map(|entry| BoardRow {
+                    entry,
+                    preview_lines: Vec::new(),
+                })
+                .collect();
+            render_at(
+                &rows,
+                &[],
+                160,
+                DEFAULT_LINGER_DAYS,
+                false,
+                BoardView::new(DEFAULT_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET),
+                RenderState {
+                    now_ms: at,
+                    loading: false,
+                    cooldowns,
+                },
+            )
+            .lines
+            .join("\n")
+        };
+        let hot = escape::bg_rgb(crate::ui::cooldown::tint_for_age(0).unwrap().bg);
+        let first = frame(&before, &cooldowns, now_ms);
+        assert!(!first.contains(&hot), "the first frame lights nothing up");
+        let backgrounds = |frame: &str| frame.matches("\x1b[48;").count();
+        let plain_backgrounds = backgrounds(&first);
+
+        // The session finishes and the PR's merge state flips.
+        pr.merge_state_status = "BEHIND".to_string();
+        let mut session = snapshot("one", vec![pr]);
+        session.repo_name = "portal".to_string();
+        session.state = SessionState::Complete;
+        let after = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        observe_cooldowns(&mut cooldowns, &after, &[], now_ms + 2_000);
+        assert!(cooldowns.active(now_ms + 2_000));
+
+        let styled = frame(&after, &cooldowns, now_ms + 2_000);
+        let hot_fg = escape::fg_rgb((0, 0, 0));
+        assert!(
+            styled.contains(&format!("{hot}{hot_fg} ✓ ")),
+            "the badge glows on the hottest tint: {styled:?}"
+        );
+        assert!(
+            styled.contains(&format!("{hot}{hot_fg}behind")),
+            "the merge cell glows too: {styled:?}"
+        );
+        assert!(
+            !styled.contains(&format!("{hot}{hot_fg}open")),
+            "the unchanged state cell stays plain"
+        );
+
+        let half = crate::ui::cooldown::COOLDOWN_MS / 2;
+        let later = frame(&after, &cooldowns, now_ms + 2_000 + half);
+        assert!(
+            !later.contains(&hot),
+            "halfway through, the tint has moved along"
+        );
+        let halfway = crate::ui::cooldown::tint_for_age(half).unwrap();
+        assert!(later.contains(&escape::bg_rgb(halfway.bg)));
+        let cold = frame(
+            &after,
+            &cooldowns,
+            now_ms + 2_000 + crate::ui::cooldown::COOLDOWN_MS,
+        );
+        assert_eq!(
+            backgrounds(&cold),
+            plain_backgrounds,
+            "once the cooldown runs out only the board's own backgrounds remain"
+        );
+    }
+
     #[test]
     fn watched_prs_join_the_board_without_sessions() {
         let mut tracked = board_pr(5, "portal");
@@ -5279,6 +5467,7 @@ mod tests {
             RenderState {
                 now_ms: now_ms(),
                 loading: true,
+                cooldowns: &Cooldowns::default(),
             },
         )
         .lines
@@ -6694,7 +6883,7 @@ mod tests {
                 ended: false,
             },
         ];
-        let activity = activity_cell(&sessions, now, 0);
+        let activity = activity_cell(&sessions, now * 1000, 0, &Cooldowns::default());
         assert!(activity.styled.contains("⟩ 30m"));
         assert!(activity.styled.contains("⋖ 2h"));
         assert!(
@@ -6714,7 +6903,7 @@ mod tests {
         assert_eq!(recency_color(86_400), RECENCY_24H);
         assert_eq!(recency_color(86_401), color::DARK_GRAY);
 
-        let unknown = activity_cell(&[], now, 0);
+        let unknown = activity_cell(&[], now * 1000, 0, &Cooldowns::default());
         assert!(unknown.styled.contains("⟩ —"));
         assert!(unknown.styled.contains("⋖ —"));
         assert!(!unknown.styled.contains("\x1b[48;5;"));
@@ -6746,7 +6935,7 @@ mod tests {
                 completed_at: 1,
                 ended: false,
             };
-            let activity = activity_cell(&[session], 1, 0);
+            let activity = activity_cell(&[session], 1000, 0, &Cooldowns::default());
             let plain = crate::parsers::strip_ansi_for_debug(&activity.styled);
             assert!(plain.starts_with(&format!("{badge}  ⟩")), "{plain}");
             assert!(activity.styled.contains(&styling), "{state:?}");
@@ -6765,8 +6954,13 @@ mod tests {
             completed_at: 0,
             ended: false,
         };
-        let first = activity_cell(std::slice::from_ref(&thinking), 1, 0);
-        let second = activity_cell(&[thinking], 1, 1);
+        let first = activity_cell(
+            std::slice::from_ref(&thinking),
+            1000,
+            0,
+            &Cooldowns::default(),
+        );
+        let second = activity_cell(&[thinking], 1000, 1, &Cooldowns::default());
         assert_ne!(
             crate::parsers::strip_ansi_for_debug(&first.styled),
             crate::parsers::strip_ansi_for_debug(&second.styled)

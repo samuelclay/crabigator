@@ -15,6 +15,7 @@ use crate::cloud::CloudStatus;
 use crate::hooks::SessionStats;
 use crate::platforms::SessionState;
 use crate::terminal::escape::{self, bg, color, fg, RESET};
+use crate::ui::cooldown::{tint_text, Tint};
 
 /// Braille spinner frames for the thinking animation
 const THROBBER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -41,15 +42,19 @@ fn throbber_char() -> char {
 /// The caller supplies the throbber frame so every thinking row in one board
 /// frame moves together.
 pub(crate) fn session_state_icon(state: SessionState, throbber_frame: usize) -> String {
-    let (icon, icon_color) = match state {
+    let (icon, icon_color) = session_state_glyph(state, throbber_frame);
+    format!("{}{}{}", fg(icon_color), icon, RESET)
+}
+
+fn session_state_glyph(state: SessionState, throbber_frame: usize) -> (char, u8) {
+    match state {
         SessionState::Ready => ('○', color::GRAY),
         SessionState::Thinking => (THROBBER[throbber_frame % THROBBER.len()], color::GREEN),
         SessionState::Permission => ('!', color::YELLOW),
         SessionState::Question => ('?', color::ORANGE),
         SessionState::Complete => ('✓', color::PURPLE),
         SessionState::Interrupted => ('⊘', color::RED),
-    };
-    format!("{}{}{}", fg(icon_color), icon, RESET)
+    }
 }
 
 /// Width of [`session_state_badge`] in terminal cells.
@@ -59,13 +64,38 @@ pub(crate) const STATE_BADGE_WIDTH: usize = 3;
 /// can shout. A question is `»?«` on bright orange and a permission prompt
 /// `»!«` on yellow — the status bar's `» ? «` chevrons with a filled
 /// background — while every other state centers its quiet icon.
-pub(crate) fn session_state_badge(state: SessionState, throbber_frame: usize) -> String {
-    let (mark, background) = match state {
-        SessionState::Question => ('?', color::DARK_ORANGE),
-        SessionState::Permission => ('!', color::YELLOW),
-        _ => return format!(" {} ", session_state_icon(state, throbber_frame)),
-    };
+///
+/// After a state change the badge sits on a cooldown tint; the two shouting
+/// states keep their own backgrounds, which already demand attention.
+pub(crate) fn session_state_badge(
+    state: SessionState,
+    throbber_frame: usize,
+    tint: Option<Tint>,
+) -> String {
+    match state {
+        SessionState::Question => shouting_badge('?', color::DARK_ORANGE),
+        SessionState::Permission => shouting_badge('!', color::YELLOW),
+        // A thinking throbber is the user's own prompt at work; it never
+        // wears a tint.
+        SessionState::Thinking => quiet_badge(state, throbber_frame),
+        _ => match tint {
+            Some(tint) => {
+                let (icon, _) = session_state_glyph(state, throbber_frame);
+                tint_text(&format!(" {icon} "), tint)
+            }
+            None => quiet_badge(state, throbber_frame),
+        },
+    }
+}
+
+/// A state that waits on the user: a chevroned mark on a filled background.
+fn shouting_badge(mark: char, background: u8) -> String {
     format!("{}{}»{mark}«{}", bg(background), fg(color::BLACK), RESET)
+}
+
+/// Every other state: the plain icon, centered in the slot.
+fn quiet_badge(state: SessionState, throbber_frame: usize) -> String {
+    format!(" {} ", session_state_icon(state, throbber_frame))
 }
 
 /// Calculate idle seconds from idle_since timestamp
