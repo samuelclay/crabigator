@@ -1097,9 +1097,7 @@ fn aggregate(
             merge_pr_slack_threads(&mut entry.slack_threads, pr, &session.slack_threads);
 
             let represents_session = pr.primary
-                && session_repository_matches_pr(session, pr)
-                && (pr.created_here
-                    || attached_to_worktree(pr, &session.branch, &session.dir_name));
+                && (session_created_pr(session, pr) || pr_attached_to_session(session, pr));
             if represents_session {
                 represented = true;
                 attach_session(entry, session, now);
@@ -1277,6 +1275,15 @@ fn board_session_ref(session: &SessionSnapshot) -> SessionRef {
 fn pr_attached_to_session(session: &SessionSnapshot, pr: &SessionPr) -> bool {
     session_repository_matches_pr(session, pr)
         && attached_to_worktree(pr, &session.branch, &session.dir_name)
+}
+
+/// A PR the session opened itself is the session's own work even when it
+/// lives in a sibling repository of the same organization — a fix paired with
+/// the checkout's own PR. Other organizations still need a matching checkout.
+fn session_created_pr(session: &SessionSnapshot, pr: &SessionPr) -> bool {
+    pr.created_here
+        && !session.repo_owner.is_empty()
+        && session.repo_owner.eq_ignore_ascii_case(&pr.owner)
 }
 
 fn session_repository_matches_pr(session: &SessionSnapshot, pr: &SessionPr) -> bool {
@@ -5933,6 +5940,49 @@ mod tests {
         assert_eq!(entries[0].sessions[0].session_id, "owner");
         assert_eq!(workspaces.len(), 1);
         assert_eq!(workspaces[0].session.session_id, "reviewer");
+    }
+
+    #[test]
+    fn prs_a_session_opened_in_a_sibling_repo_stay_attached_to_it() {
+        // One session fixes a bug across two repositories of the same org: the
+        // checkout's own PR plus a PR it opened in a sibling repo. Both rows
+        // carry the session, so both show its live activity.
+        let mut portal_pr = board_pr(1260, "portal");
+        make_primary(&mut portal_pr);
+        portal_pr.branch = "sam/pal-force-refresh".to_string();
+        let mut handler_pr = board_pr(2768, "handler");
+        make_primary(&mut handler_pr);
+        handler_pr.branch = "sam/hide-pal-publishing-state".to_string();
+        let mut session = snapshot("portal", vec![portal_pr, handler_pr]);
+        session.branch = "sam/pal-force-refresh".to_string();
+
+        let snapshots = vec![session];
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let workspaces = local_workspaces(&snapshots, &entries);
+
+        assert_eq!(entries.len(), 2);
+        for entry in &entries {
+            assert_eq!(entry.sessions.len(), 1, "{} lost its session", entry.pr.repo);
+            assert_eq!(entry.sessions[0].session_id, "portal");
+        }
+        assert!(workspaces.is_empty());
+    }
+
+    #[test]
+    fn prs_opened_in_another_org_still_need_a_matching_checkout() {
+        let mut foreign_pr = board_pr(7, "portal");
+        make_primary(&mut foreign_pr);
+        foreign_pr.branch = "sam/fix".to_string();
+        let mut session = snapshot("crabigator", vec![foreign_pr]);
+        session.repo_owner = "someone-else".to_string();
+        session.branch = "main".to_string();
+
+        let snapshots = vec![session];
+        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let workspaces = local_workspaces(&snapshots, &entries);
+
+        assert!(entries[0].sessions.is_empty());
+        assert_eq!(workspaces.len(), 1);
     }
 
     #[test]
