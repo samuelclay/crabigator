@@ -1,8 +1,9 @@
 //! Shared PR row rendering.
 //!
 //! The shared PR cell engine — column sizing with graceful width
-//! degradation, per-cell styling, OSC 8 links, and the primary/secondary
-//! glyphs — used by the handoff strip and the cross-session PR board.
+//! degradation, per-cell styling, OSC 8 links, the primary/secondary
+//! glyphs, and the promote/demote and dismiss actions — used by the handoff
+//! strip and the cross-session PR board.
 
 use unicode_width::UnicodeWidthStr;
 
@@ -49,6 +50,8 @@ pub(crate) struct PrColumnWidths {
     pub(crate) comments: usize,
     pub(crate) review: usize,
     pub(crate) merge: usize,
+    /// The `↑`/`↓` promote/demote action beside the dismiss (1 cell when shown).
+    pub(crate) flip: usize,
     /// The `✕` dismiss action at the right edge (1 cell when shown).
     pub(crate) dismiss: usize,
     /// Space reserved for PR-board detail links that replace GitHub status.
@@ -89,6 +92,7 @@ impl PrColumnWidths {
                 .merge
                 .max(pr_merge_label(pr).0.width().min(PR_MERGE_MAX));
             if !pr_action_url(pr, "dismissed").is_empty() {
+                widths.flip = 1;
                 widths.dismiss = 1;
             }
         }
@@ -103,11 +107,14 @@ impl PrColumnWidths {
         let right_budget = total_width
             .saturating_sub(PR_LEFT_PADDING + essential_left + PR_COLUMN_GAP + PR_RIGHT_PADDING);
         self.detail_right = self.detail_right.min(right_budget);
-        // Dropped least-essential first: the dismiss action, merge cleanliness,
-        // the unresolved thread count, the review glyph, then CI, leaving the
-        // PR's own state as the last survivor.
+        // Dropped least-essential first: the promote/demote action, the
+        // dismiss action, merge cleanliness, the unresolved thread count, the
+        // review glyph, then CI, leaving the PR's own state as the last
+        // survivor.
         while self.status_right_width() > right_budget {
-            if self.dismiss > 0 {
+            if self.flip > 0 {
+                self.flip = 0;
+            } else if self.dismiss > 0 {
                 self.dismiss = 0;
             } else if self.merge > 0 {
                 self.merge = 0;
@@ -248,6 +255,7 @@ impl PrColumnWidths {
                 self.comments,
                 self.review,
                 self.merge,
+                self.flip,
                 self.dismiss,
             ],
             PR_RIGHT_COLUMN_GAP,
@@ -530,12 +538,10 @@ fn styled_pr_identity(pr: &SessionPr, identity: &str) -> String {
     };
     // The glyph flips a session PR's classification; on a pure watch it
     // removes the watch instead.
-    let flip = if pr.primary {
-        "secondary"
-    } else if pr.watched {
+    let flip = if pr.watched && !pr.primary {
         "unwatched"
     } else {
-        "primary"
+        pr_flip_disposition(pr)
     };
     let glyph_styled = if glyph_kept {
         format!(
@@ -674,7 +680,7 @@ fn colored_diff_cell(
     (styled, visible.width(), width)
 }
 
-pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 6] {
+pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 7] {
     let (state_label, state_color) = pr_state_label(pr);
     let (ci_label, ci_color) = pr_ci_label(pr);
     let (comments_label, comments_color) = pr_comments_label(pr);
@@ -693,6 +699,15 @@ pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell
         ),
         colored_cell(review_label, row_color(pr, review_color), widths.review),
         colored_cell(merge_label, row_color(pr, merge_color), widths.merge),
+        // Promote/demote action: ↑ makes a secondary PR primary, ↓ makes a
+        // primary secondary. Unlike the identity glyph, it works on watched
+        // PRs too, so a watch can be promoted instead of only unwatched.
+        linked_cell(
+            pr_flip_glyph(pr),
+            row_color(pr, color::DARK_GRAY),
+            widths.flip,
+            &pr_action_url(pr, pr_flip_disposition(pr)),
+        ),
         // Dismiss action: removes the PR from every list in the group.
         linked_cell(
             "✕",
@@ -839,6 +854,26 @@ fn pr_glyph(pr: &SessionPr) -> &'static str {
         "◉"
     } else {
         "☆"
+    }
+}
+
+/// The promote/demote action's glyph: `↑` promotes a secondary PR, `↓`
+/// demotes a primary one.
+fn pr_flip_glyph(pr: &SessionPr) -> &'static str {
+    if pr.primary {
+        "↓"
+    } else {
+        "↑"
+    }
+}
+
+/// The disposition the promote/demote action stores: the opposite of the
+/// PR's current classification.
+fn pr_flip_disposition(pr: &SessionPr) -> &'static str {
+    if pr.primary {
+        "secondary"
+    } else {
+        "primary"
     }
 }
 

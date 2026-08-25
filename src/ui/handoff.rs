@@ -747,6 +747,11 @@ mod tests {
         }
     }
 
+    /// The OSC 8 opening sequence a cell carries when it links to `url`.
+    fn link_to(url: &str) -> String {
+        format!("\x1b]8;;{url}\x07")
+    }
+
     #[test]
     fn pr_separator_reserves_a_row_only_when_prs_exist() {
         assert_eq!(pr_separator_rows(&[]), 0);
@@ -903,7 +908,6 @@ mod tests {
         let left = pr_left_cells(&pr, &widths);
         let right = pr_right_cells(&pr, &widths);
 
-        let link_to = |url: &str| format!("\x1b]8;;{url}\x07");
         // Identity → the PR itself; the `☆` glyph is its own link that flips
         // the PR to primary via the web action page.
         assert!(left[0].0.contains(&link_to(&pr.url)));
@@ -922,14 +926,48 @@ mod tests {
         assert!(!right[0].0.contains("\x1b]8;;"));
         assert!(!right[3].0.contains("\x1b]8;;"));
         assert!(!right[4].0.contains("\x1b]8;;"));
-        // The dismiss action links to the same page with disposition=dismissed.
+        // The promote action (`↑` on a secondary PR) and the dismiss action
+        // link to the same page with their own dispositions.
+        assert!(right[5].0.contains('↑'));
         assert!(right[5]
+            .0
+            .contains(&link_to(&pr_action_url(&pr, "primary"))));
+        assert!(right[6].0.contains('✕'));
+        assert!(right[6]
             .0
             .contains(&link_to(&pr_action_url(&pr, "dismissed"))));
 
         for (styled, visible, _) in left.iter().chain(right.iter()) {
             assert_eq!(crate::ui::utils::strip_ansi_len(styled), *visible);
         }
+    }
+
+    /// The action beside `✕` always offers the opposite classification: `↓`
+    /// demotes a primary, `↑` promotes a secondary — including a watched PR,
+    /// whose identity glyph unwatches instead.
+    #[test]
+    fn promote_demote_action_offers_the_opposite_classification() {
+        let mut primary = sample_pr("request-handler", 2412, "sam/pal-fanout-fable");
+        primary.primary = true;
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&primary), 160);
+        let right = pr_right_cells(&primary, &widths);
+        assert!(right[5].0.contains('↓'));
+        assert!(right[5]
+            .0
+            .contains(&link_to(&pr_action_url(&primary, "secondary"))));
+
+        let mut watched = sample_pr("request-handler", 2413, "sam/watched");
+        watched.watched = true;
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&watched), 160);
+        let left = pr_left_cells(&watched, &widths);
+        let right = pr_right_cells(&watched, &widths);
+        assert!(left[0]
+            .0
+            .contains(&link_to(&pr_action_url(&watched, "unwatched"))));
+        assert!(right[5].0.contains('↑'));
+        assert!(right[5]
+            .0
+            .contains(&link_to(&pr_action_url(&watched, "primary"))));
     }
 
     /// A PR with nothing to point at (no checks, no diff yet) stays unlinked
@@ -1016,9 +1054,10 @@ mod tests {
                 + widths.comments
                 + widths.review
                 + widths.merge
+                + widths.flip
                 + widths.dismiss
-                + 5 * PR_RIGHT_COLUMN_GAP,
-            "the six status columns use five one-cell gaps"
+                + 6 * PR_RIGHT_COLUMN_GAP,
+            "the seven status columns use six one-cell gaps"
         );
 
         let at = |needle: &str| {
