@@ -137,6 +137,8 @@ export const prBoardCss = `
     min-width: 0;
 }
 a.prb-ident:hover { text-decoration: underline; }
+/* The PR's handle is bold and underlined so it stands out and reads as the link it is. */
+.prb-num { font-weight: 700; text-decoration: underline; }
 .prb-secondary .prb-ident { color: #6c6c6c; }
 .prb-branch {
     color: #585858;

@@ -864,7 +864,7 @@ export const prBoardJs = `
         function prbIdentHtml(pr, title) {
             return '<a class="prb-ident" href="' + escapeHtml(pr.url || '')
                 + '" target="_blank" rel="noopener noreferrer">'
-                + escapeHtml(pr.number + ': ' + title) + '</a>';
+                + '<span class="prb-num">#' + pr.number + '</span>: ' + escapeHtml(title) + '</a>';
         }
 
         function prbPrRowHtml(item, idx, now) {
