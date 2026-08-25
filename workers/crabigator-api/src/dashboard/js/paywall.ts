@@ -68,7 +68,7 @@ export const paywallJs = `
             updateUsageDisplay();
         }
 
-        // Handle usage_update SSE event
+        // Handle a usage update from the session list stream.
         function handleUsageUpdate(data) {
             if (data.is_pro !== undefined) {
                 usageState.isPro = data.is_pro;
@@ -81,18 +81,19 @@ export const paywallJs = `
 
         // Stop all sessions (close connections and clear UI)
         function stopAllSessions() {
-            // Close all EventSource connections
+            // Close all session WebSocket connections
             for (const [sessionId, session] of sessions) {
-                if (session.eventSource) {
-                    session.eventSource.close();
+                if (session.eventSocket) {
+                    session.eventSocket.close();
                 }
             }
             sessions.clear();
 
             // Close session list stream too
-            if (sessionListSource) {
-                sessionListSource.close();
-                sessionListSource = null;
+            if (sessionListSocket) {
+                sessionListSocket.onclose = null;
+                sessionListSocket.close();
+                sessionListSocket = null;
             }
 
             // Clear the sessions container

@@ -233,7 +233,7 @@ router.get('/api/sessions/debug', async (request, env) => {
     return stub.fetch(new Request(debugUrl.toString(), request));
 });
 
-// SSE stream for real-time session list updates (no polling needed)
+// Hibernatable WebSocket for real-time session list updates.
 router.get('/api/sessions/stream', async (request, env) => {
     const authResult = await requireMobileAuth(request, env);
     if ('error' in authResult) {
@@ -434,7 +434,7 @@ router.get('/api/sessions/:id/connect', async (request, env, params) => {
     return stub.fetch(new Request(url.toString(), request));
 });
 
-// SSE stream for mobile/web viewers (no auth required for dashboard)
+// Hibernatable WebSocket for mobile/web viewers.
 // Note: Skips D1 lookup - DO handles non-existent sessions gracefully
 router.get('/api/sessions/:id/events', async (request, env, params) => {
     const sessionId = params.id;

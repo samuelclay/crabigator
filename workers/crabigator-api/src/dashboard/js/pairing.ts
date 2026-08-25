@@ -22,6 +22,11 @@ export const pairingJs = `
             return mobileToken ? '?token=' + encodeURIComponent(mobileToken) : '';
         }
 
+        function getWebSocketUrl(path) {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return protocol + '//' + window.location.host + API_BASE + path + getAuthQueryParam();
+        }
+
         function handleAuthFailure(resp) {
             if (resp.status === 401) {
                 clearPairing();

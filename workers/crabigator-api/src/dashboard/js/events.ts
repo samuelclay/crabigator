@@ -36,21 +36,21 @@ export const eventsJs = `
         }
 
         function connectToSession(sessionId) {
-            console.log('Connecting SSE for session:', sessionId);
-            const eventSource = new EventSource(API_BASE + '/sessions/' + sessionId + '/events' + getAuthQueryParam());
+            console.log('Connecting WebSocket for session:', sessionId);
+            const eventSocket = new WebSocket(getWebSocketUrl('/sessions/' + sessionId + '/events'));
 
-            eventSource.onopen = () => {
-                console.log('SSE connected for session:', sessionId);
+            eventSocket.onopen = () => {
+                console.log('WebSocket connected for session:', sessionId);
                 const screenEl = document.getElementById('screen-' + sessionId);
                 if (screenEl && screenEl.innerHTML === 'Connecting...') {
                     screenEl.innerHTML = '<span style="color:#8b949e">Connected, waiting for screen data...</span>';
                 }
                 // Send viewer heartbeat immediately - this triggers desktop to send screen
-                // Must happen AFTER SSE is connected so we can receive the screen event
+                // Must happen after the socket connects so we can receive the screen event.
                 sendViewerHeartbeat(sessionId);
             };
 
-            eventSource.onmessage = (event) => {
+            eventSocket.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
                     const shortId = sessionId.split('-')[0];
@@ -82,15 +82,16 @@ export const eventsJs = `
                 }
             };
 
-            eventSource.onerror = (err) => {
-                console.error('SSE error for session ' + sessionId, err);
+            eventSocket.onerror = (err) => {
+                console.error('WebSocket error for session ' + sessionId, err);
+            };
+
+            eventSocket.onclose = () => {
                 // Clean up so the session can be recreated on next poll
                 const session = sessions.get(sessionId);
-                if (session) {
-                    session.eventSource?.close();
-                    sessions.delete(sessionId);
-                    if (activeTerminalId === sessionId) activeTerminalId = null;
-                }
+                if (!session || session.eventSocket !== eventSocket) return;
+                sessions.delete(sessionId);
+                if (activeTerminalId === sessionId) activeTerminalId = null;
                 // Remove the card - it will be recreated if session is still active
                 const card = document.getElementById('session-' + sessionId);
                 if (card) {
@@ -118,7 +119,7 @@ export const eventsJs = `
 
             const session = sessions.get(sessionId);
             if (session) {
-                session.eventSource = eventSource;
+                session.eventSocket = eventSocket;
             }
         }
 
@@ -252,7 +253,7 @@ export const eventsJs = `
                             // Desktop disconnected - remove session from view
                             const session = sessions.get(sessionId);
                             if (session) {
-                                session.eventSource?.close();
+                                session.eventSocket?.close();
                                 sessions.delete(sessionId);
                                 if (activeTerminalId === sessionId) activeTerminalId = null;
                             }

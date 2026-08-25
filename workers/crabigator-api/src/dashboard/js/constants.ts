@@ -2,7 +2,7 @@
 export const constantsJs = `
 
         const API_BASE = '/api';
-        const sessions = new Map(); // sessionId -> { eventSource, state, element, git, changes, stats }
+        const sessions = new Map(); // sessionId -> { eventSocket, state, element, git, changes, stats }
         let allSessions = []; // All sessions from API (for popover)
         let allProjects = []; // All known projects from API (for history)
         const FREE_VISIBLE_SESSION_LIMIT = 3;
@@ -11,7 +11,7 @@ export const constantsJs = `
         let visibleSessionIds = new Set();
         // Frozen set of session IDs chosen at first render. Free-tier dashboards
         // pick the top-N by recent activity once and keep them locked until the
-        // page reloads, so SSE activity on hidden sessions can't churn the cards.
+        // page reloads, so stream activity on hidden sessions can't churn the cards.
         // null = not yet picked; Set = locked.
         let lockedVisibleSessionIds = null;
         let currentLayout = localStorage.getItem('crabigator-layout') || 'fit';

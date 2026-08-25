@@ -15,6 +15,10 @@ interface ActiveSession {
     stats?: SessionInfo['stats'];
 }
 
+interface ViewerAttachment {
+    group_id: string;
+}
+
 /**
  * Durable Object for broadcasting session list changes to dashboard viewers
  *
@@ -25,23 +29,18 @@ interface ActiveSession {
 export class SessionListDO implements DurableObject {
     private state: DurableObjectState;
     private env: Env;
-    private sseClients: Map<WritableStreamDefaultWriter<Uint8Array>, { group_id: string }> = new Map();
-    private encoder = new TextEncoder();
     private activeSessions: Map<string, ActiveSession> = new Map();
 
     constructor(state: DurableObjectState, env: Env) {
         this.state = state;
         this.env = env;
 
-        // Restore active sessions from storage and validate them
+        // Restore active sessions from storage. Validation happens on /sessions,
+        // outside the constructor, so hibernation wake-ups stay cheap.
         state.blockConcurrencyWhile(async () => {
             const stored = await state.storage.get<[string, ActiveSession][]>('activeSessions');
             if (stored) {
                 this.activeSessions = new Map(stored);
-                // Validate each session - remove stale ones
-                await this.validateSessions();
-                // Refresh any missing group/device metadata
-                await this.refreshMissingSessionMetadata();
             }
         });
     }
@@ -155,7 +154,7 @@ export class SessionListDO implements DurableObject {
     }
 
     /**
-     * Handle SSE subscription from dashboard
+     * Handle a hibernatable WebSocket subscription from the dashboard.
      */
     private handleSubscribe(request: Request): Response {
         const url = new URL(request.url);
@@ -164,22 +163,19 @@ export class SessionListDO implements DurableObject {
         if (!groupId) {
             return new Response('Missing group_id', { status: 400 });
         }
+        if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+            return new Response('Expected WebSocket', { status: 426 });
+        }
 
-        const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
-        const writer = writable.getWriter();
+        const pair = new WebSocketPair();
+        const [client, server] = [pair[0], pair[1]];
+        this.state.acceptWebSocket(server, ['viewer']);
+        server.serializeAttachment({ group_id: groupId } satisfies ViewerAttachment);
 
-        this.sseClients.set(writer, { group_id: groupId });
+        const clients = this.state.getWebSockets('viewer').length;
+        server.send(JSON.stringify({ type: 'connected', clients, version }));
 
-        // Send initial connected event with build version
-        this.sendSSE(writer, { type: 'connected', clients: this.sseClients.size, version });
-
-        return new Response(readable, {
-            headers: {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-            },
-        });
+        return new Response(null, { status: 101, webSocket: client });
     }
 
     /**
@@ -219,7 +215,10 @@ export class SessionListDO implements DurableObject {
                 }
             }
 
-            return new Response(JSON.stringify({ ok: true, clients: this.sseClients.size }), {
+            return new Response(JSON.stringify({
+                ok: true,
+                clients: this.state.getWebSockets('viewer').length,
+            }), {
                 headers: { 'Content-Type': 'application/json' },
             });
         } catch {
@@ -231,22 +230,7 @@ export class SessionListDO implements DurableObject {
     }
 
     /**
-     * Send SSE event to a single client
-     */
-    private async sendSSE(
-        writer: WritableStreamDefaultWriter<Uint8Array>,
-        event: unknown
-    ): Promise<void> {
-        const data = `data: ${JSON.stringify(event)}\n\n`;
-        try {
-            await writer.write(this.encoder.encode(data));
-        } catch {
-            this.sseClients.delete(writer);
-        }
-    }
-
-    /**
-     * Broadcast event to all SSE clients
+     * Broadcast an event to the matching hibernatable viewer WebSockets.
      */
     private async broadcast(event: unknown): Promise<void> {
         const eventObj = event as { type?: string; session?: ActiveSession | Partial<ActiveSession> };
@@ -296,26 +280,37 @@ export class SessionListDO implements DurableObject {
             payload = { ...eventObj, session: rest };
         }
 
-        const data = `data: ${JSON.stringify(payload)}\n\n`;
-        const encoded = this.encoder.encode(data);
-
-        const deadClients: WritableStreamDefaultWriter<Uint8Array>[] = [];
-
-        for (const [writer, meta] of this.sseClients.entries()) {
-            if (meta.group_id !== groupId) {
+        const data = JSON.stringify(payload);
+        for (const viewer of this.state.getWebSockets('viewer')) {
+            const attachment = viewer.deserializeAttachment();
+            if (!this.isViewerAttachment(attachment) || attachment.group_id !== groupId) {
                 continue;
             }
             try {
-                await writer.write(encoded);
+                viewer.send(data);
             } catch {
-                deadClients.push(writer);
+                // The runtime removes closed sockets from getWebSockets().
             }
         }
-
-        for (const writer of deadClients) {
-            this.sseClients.delete(writer);
-        }
     }
+
+    private isViewerAttachment(value: unknown): value is ViewerAttachment {
+        return typeof value === 'object'
+            && value !== null
+            && 'group_id' in value
+            && typeof value.group_id === 'string';
+    }
+
+    webSocketMessage(_ws: WebSocket, _message: string | ArrayBuffer): void {}
+
+    webSocketClose(
+        _ws: WebSocket,
+        _code: number,
+        _reason: string,
+        _wasClean: boolean
+    ): void {}
+
+    webSocketError(_ws: WebSocket, _error: unknown): void {}
 
     /**
      * Get list of currently connected sessions

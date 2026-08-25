@@ -181,7 +181,7 @@ export const sessionJs = `
                             if (session.state) meta.state = session.state;
                             if (session.stats) meta.stats = session.stats;
                         }
-                        session.eventSource?.close();
+                        session.eventSocket?.close();
                         sessions.delete(id);
                         if (activeTerminalId === id) activeTerminalId = null;
                         const card = document.getElementById('session-' + id);
@@ -295,7 +295,7 @@ export const sessionJs = `
                     }
 
                     for (const [, session] of sessions) {
-                        session.eventSource?.close();
+                        session.eventSocket?.close();
                     }
                     sessions.clear();
                     activeTerminalId = null;
@@ -336,9 +336,9 @@ export const sessionJs = `
                 lastSuccessfulConnection = Date.now();
                 if (isDeploying) {
                     hideDeployOverlay();
-                    // Reconnect session list SSE stream after deploy
-                    if (!sessionListSource) {
-                        sseRetryCount = 0;
+                    // Reconnect the session list WebSocket after deploy.
+                    if (!sessionListSocket) {
+                        streamRetryCount = 0;
                         connectSessionListStream();
                     }
                 }
@@ -354,10 +354,10 @@ export const sessionJs = `
                     emptyState.remove();
                 }
 
-                // Close event sources for removed sessions
+                // Close event sockets for removed sessions
                 for (const [id, session] of sessions) {
                     if (!filteredSessions.find(s => s.id === id)) {
-                        session.eventSource?.close();
+                        session.eventSocket?.close();
                         sessions.delete(id);
                         if (activeTerminalId === id) activeTerminalId = null;
                     }

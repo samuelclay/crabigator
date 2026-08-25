@@ -157,7 +157,7 @@ interface SessionInfo {
  *
  * Handles:
  * - Desktop WebSocket connection (receives events, sends answers)
- * - SSE streams for mobile/web viewers
+ * - Hibernatable WebSocket streams for mobile/web viewers
  * - Event persistence (only critical state)
  * - Late-joiner state catchup
  *
@@ -170,11 +170,9 @@ export class SessionDO implements DurableObject {
     private state: DurableObjectState;
     private env: Env;
     private desktopWs: WebSocket | null = null;
-    private sseClients: Set<WritableStreamDefaultWriter<Uint8Array>> = new Set();
     private persistentState: PersistentState;
     private ephemeralState: EphemeralState;
     private sessionInfo: SessionInfo | null = null;
-    private encoder = new TextEncoder();
     /** Last time a viewer (dashboard/phone) signaled activity */
     private lastViewerActivity: number = 0;
     /** Whether we've notified desktop that viewers are active */
@@ -265,7 +263,7 @@ export class SessionDO implements DurableObject {
             case '/connect':
                 return this.handleDesktopWebSocket(request);
             case '/events':
-                return this.handleSSE(request);
+                return this.handleViewerWebSocket(request);
             case '/answer':
                 return this.handleAnswer(request);
             case '/key':
@@ -761,7 +759,7 @@ export class SessionDO implements DurableObject {
                 break;
             }
             case 'recap': {
-                // Store the most recent recap state for late-joining SSE viewers.
+                // Store the most recent recap state for late-joining viewers.
                 const incoming = JSON.stringify(event);
                 const stored = JSON.stringify(this.persistentState.lastRecap);
                 if (stored !== incoming) {
@@ -881,10 +879,10 @@ export class SessionDO implements DurableObject {
             await this.state.storage.put('persistentState', this.persistentState);
         }
 
-        // Broadcast to all SSE clients (still immediate for real-time feel)
-        await this.broadcast(event);
+        // Broadcast to all dashboard viewers (still immediate for real-time feel)
+        this.broadcast(event);
         for (const followupEvent of postBroadcastEvents) {
-            await this.broadcast(followupEvent);
+            this.broadcast(followupEvent);
         }
 
         // Notify SessionListDO of activity (throttled to every 10s)
@@ -900,37 +898,31 @@ export class SessionDO implements DurableObject {
     }
 
     /**
-     * Handle SSE connection from mobile/web viewer
+     * Handle a hibernatable WebSocket connection from a mobile/web viewer.
      */
-    private handleSSE(_request: Request): Response {
-        const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
-        const writer = writable.getWriter();
+    private handleViewerWebSocket(request: Request): Response {
+        if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+            return new Response('Expected WebSocket', { status: 426 });
+        }
 
-        // Add to clients set
-        this.sseClients.add(writer);
+        const pair = new WebSocketPair();
+        const [client, server] = [pair[0], pair[1]];
+        this.state.acceptWebSocket(server, ['viewer']);
 
-        // Send initial state to late joiner
-        this.sendCurrentState(writer).catch((err) => {
-            console.error('Error sending initial state:', err);
-            this.sseClients.delete(writer);
-        });
+        try {
+            this.sendCurrentState(server);
+        } catch (error) {
+            console.error('Error sending initial viewer state:', error);
+            server.close(1011, 'Initial state failed');
+        }
 
-        // Client disconnect is detected when write fails in sendSSE/broadcast
-        // No need to consume the readable stream here
-
-        return new Response(readable, {
-            headers: {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-            },
-        });
+        return new Response(null, { status: 101, webSocket: client });
     }
 
     /**
-     * Send current state to a newly connected SSE client
+     * Send current state to a newly connected viewer.
      */
-    private async sendCurrentState(writer: WritableStreamDefaultWriter<Uint8Array>): Promise<void> {
+    private sendCurrentState(viewer: WebSocket): void {
         // Send desktop connection status first
         // This allows dashboard to immediately remove cards for disconnected sessions
         const desktopStatusEvent: SessionEvent = {
@@ -938,7 +930,7 @@ export class SessionDO implements DurableObject {
             connected: this.desktopWs !== null,
             timestamp: Date.now(),
         };
-        await this.sendSSE(writer, desktopStatusEvent);
+        this.sendViewerEvent(viewer, desktopStatusEvent);
 
         // If desktop is disconnected, no need to send other state
         if (!this.desktopWs) {
@@ -952,7 +944,7 @@ export class SessionDO implements DurableObject {
                 type: 'scrollback_history',
                 content: this.ephemeralState.scrollbackContent,
             };
-            await this.sendSSE(writer, scrollbackHistoryEvent);
+            this.sendViewerEvent(viewer, scrollbackHistoryEvent);
         }
 
         // Send screen snapshot (for immediate visual)
@@ -962,7 +954,7 @@ export class SessionDO implements DurableObject {
                 type: 'screen',
                 content: this.ephemeralState.lastScreen,
             };
-            await this.sendSSE(writer, screenEvent);
+            this.sendViewerEvent(viewer, screenEvent);
         }
 
         // Send current state (persistent)
@@ -971,7 +963,7 @@ export class SessionDO implements DurableObject {
             state: this.persistentState.state,
             timestamp: Date.now(),
         };
-        await this.sendSSE(writer, stateEvent);
+        this.sendViewerEvent(viewer, stateEvent);
 
         // Send current title if available (persistent)
         if (this.persistentState.lastTitle) {
@@ -979,7 +971,7 @@ export class SessionDO implements DurableObject {
                 type: 'title',
                 title: this.persistentState.lastTitle,
             };
-            await this.sendSSE(writer, titleEvent);
+            this.sendViewerEvent(viewer, titleEvent);
         }
 
         // Send title history if available (persistent)
@@ -988,56 +980,56 @@ export class SessionDO implements DurableObject {
                 type: 'title_history',
                 history: this.persistentState.lastTitleHistory,
             };
-            await this.sendSSE(writer, titleHistoryEvent);
+            this.sendViewerEvent(viewer, titleHistoryEvent);
         }
 
         // Send the latest recap (and its full history) so a freshly-loaded
         // dashboard tab paints the recap card without waiting for the next turn.
         if (this.persistentState.lastRecap) {
-            await this.sendSSE(writer, this.persistentState.lastRecap as SessionEvent);
+            this.sendViewerEvent(viewer, this.persistentState.lastRecap as SessionEvent);
         }
         if (this.persistentState.lastRecapHistory && this.persistentState.lastRecapHistory.length > 0) {
             const historyEvent = {
                 type: 'recap_history' as const,
                 history: this.persistentState.lastRecapHistory,
             };
-            await this.sendSSE(writer, historyEvent as SessionEvent);
+            this.sendViewerEvent(viewer, historyEvent as SessionEvent);
         }
         if (this.persistentState.lastSlackThreads && this.persistentState.lastSlackThreads.length > 0) {
             const slackThreadsEvent = {
                 type: 'slack_threads' as const,
                 threads: this.persistentState.lastSlackThreads,
             };
-            await this.sendSSE(writer, slackThreadsEvent as SessionEvent);
+            this.sendViewerEvent(viewer, slackThreadsEvent as SessionEvent);
         }
         if (this.persistentState.lastPrs && this.persistentState.lastPrs.length > 0) {
             const prsEvent = {
                 type: 'prs' as const,
                 prs: this.persistentState.lastPrs,
             };
-            await this.sendSSE(writer, prsEvent as SessionEvent);
+            this.sendViewerEvent(viewer, prsEvent as SessionEvent);
         }
         if (this.persistentState.lastCommitHistory && this.persistentState.lastCommitHistory.length > 0) {
             const historyEvent = {
                 type: 'commit_history' as const,
                 history: this.persistentState.lastCommitHistory,
             };
-            await this.sendSSE(writer, historyEvent as SessionEvent);
+            this.sendViewerEvent(viewer, historyEvent as SessionEvent);
         }
 
         // Send git state if available (ephemeral)
         if (this.ephemeralState.lastGit) {
-            await this.sendSSE(writer, this.ephemeralState.lastGit);
+            this.sendViewerEvent(viewer, this.ephemeralState.lastGit);
         }
 
         // Send changes state if available (ephemeral)
         if (this.ephemeralState.lastChanges) {
-            await this.sendSSE(writer, this.ephemeralState.lastChanges);
+            this.sendViewerEvent(viewer, this.ephemeralState.lastChanges);
         }
 
         // Send stats if available (ephemeral - cached from last desktop push)
         if (this.ephemeralState.lastStats) {
-            await this.sendSSE(writer, this.ephemeralState.lastStats);
+            this.sendViewerEvent(viewer, this.ephemeralState.lastStats);
         }
 
         // Send current prompt if any (persistent - for interactive dashboard)
@@ -1048,59 +1040,41 @@ export class SessionDO implements DurableObject {
                 type: 'prompt',
                 prompt: this.persistentState.currentPrompt,
             };
-            await this.sendSSE(writer, promptEvent);
+            this.sendViewerEvent(viewer, promptEvent);
         }
     }
 
     /**
-     * Send SSE event to a single client
+     * Send one event to a dashboard viewer.
      */
-    private async sendSSE(
-        writer: WritableStreamDefaultWriter<Uint8Array>,
-        event: SessionEvent
-    ): Promise<void> {
-        const data = `data: ${JSON.stringify(event)}\n\n`;
-        try {
-            await writer.write(this.encoder.encode(data));
-        } catch {
-            // Client disconnected
-            this.sseClients.delete(writer);
-        }
+    private sendViewerEvent(viewer: WebSocket, event: SessionEvent): void {
+        viewer.send(JSON.stringify(event));
     }
 
     /**
-     * Broadcast event to all SSE clients
+     * Broadcast an event to all hibernatable viewer WebSockets.
      */
-    private async broadcast(event: SessionEvent): Promise<void> {
-        const data = `data: ${JSON.stringify(event)}\n\n`;
-        const encoded = this.encoder.encode(data);
-
-        const deadClients: WritableStreamDefaultWriter<Uint8Array>[] = [];
-
-        for (const writer of this.sseClients) {
+    private broadcast(event: SessionEvent): void {
+        const data = JSON.stringify(event);
+        for (const viewer of this.state.getWebSockets('viewer')) {
             try {
-                await writer.write(encoded);
+                viewer.send(data);
             } catch {
-                deadClients.push(writer);
+                // The runtime removes closed sockets from getWebSockets().
             }
         }
-
-        // Clean up dead clients
-        for (const writer of deadClients) {
-            this.sseClients.delete(writer);
-        }
     }
 
     /**
-     * Broadcast desktop connection status to SSE clients
+     * Broadcast desktop connection status to dashboard viewers.
      */
-    private async broadcastDesktopStatus(connected: boolean): Promise<void> {
+    private broadcastDesktopStatus(connected: boolean): void {
         const event: SessionEvent = {
             type: 'desktop_status',
             connected,
             timestamp: Date.now(),
         };
-        await this.broadcast(event);
+        this.broadcast(event);
     }
 
     /**
@@ -1360,7 +1334,7 @@ export class SessionDO implements DurableObject {
                 title: this.persistentState.lastTitle,
                 event_sequence: this.ephemeralState.eventSequence,
                 desktop_connected: this.desktopWs !== null,
-                sse_clients: this.sseClients.size,
+                viewer_websockets: this.state.getWebSockets('viewer').length,
                 has_active_viewers: this.hasActiveViewers(),
             }),
             { headers: { 'Content-Type': 'application/json' } }
@@ -1468,6 +1442,10 @@ export class SessionDO implements DurableObject {
      * The DO wakes from hibernation if needed, allowing it to sleep between messages.
      */
     async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+        if (!this.state.getTags(ws).includes('desktop')) {
+            return;
+        }
+
         try {
             const data = JSON.parse(message as string) as SessionEvent;
             await this.handleEvent(data);
@@ -1480,31 +1458,41 @@ export class SessionDO implements DurableObject {
      * WebSocket Hibernation API - called when an accepted WebSocket closes.
      */
     async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
-        if (this.desktopWs === ws || this.desktopWs === null) {
-            this.desktopWs = null;
-            this.broadcastDesktopStatus(false);
-            if (this.sessionInfo) {
-                this.notifySessionList('disconnect', { id: this.sessionInfo.id });
-            }
-            // Schedule missed-heartbeat cleanup. Normal wrapper exits end the
-            // session via HTTP; disconnects alone can be transient.
-            this.state.storage.setAlarm(Date.now() + SESSION_HEARTBEAT_TIMEOUT_MS);
+        if (!this.state.getTags(ws).includes('desktop')) {
+            return;
         }
+        if (this.desktopWs && this.desktopWs !== ws) {
+            return;
+        }
+
+        this.desktopWs = null;
+        this.broadcastDesktopStatus(false);
+        if (this.sessionInfo) {
+            await this.notifySessionList('disconnect', { id: this.sessionInfo.id });
+        }
+        // Schedule missed-heartbeat cleanup. Normal wrapper exits end the
+        // session via HTTP; disconnects alone can be transient.
+        await this.state.storage.setAlarm(Date.now() + SESSION_HEARTBEAT_TIMEOUT_MS);
     }
 
     /**
      * WebSocket Hibernation API - called when an accepted WebSocket errors.
      */
     async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
-        console.error('WebSocket error:', error);
-        if (this.desktopWs === ws || this.desktopWs === null) {
-            this.desktopWs = null;
-            this.broadcastDesktopStatus(false);
-            if (this.sessionInfo) {
-                this.notifySessionList('disconnect', { id: this.sessionInfo.id });
-            }
-            this.state.storage.setAlarm(Date.now() + SESSION_HEARTBEAT_TIMEOUT_MS);
+        if (!this.state.getTags(ws).includes('desktop')) {
+            return;
         }
+        if (this.desktopWs && this.desktopWs !== ws) {
+            return;
+        }
+
+        console.error('Desktop WebSocket error:', error);
+        this.desktopWs = null;
+        this.broadcastDesktopStatus(false);
+        if (this.sessionInfo) {
+            await this.notifySessionList('disconnect', { id: this.sessionInfo.id });
+        }
+        await this.state.storage.setAlarm(Date.now() + SESSION_HEARTBEAT_TIMEOUT_MS);
     }
 
     /**

@@ -1,26 +1,28 @@
-// Dashboard JavaScript - sse
+// Dashboard JavaScript - session list stream
 export const sseJs = `
-        let sessionListSource = null;
-        let sseRetryCount = 0;
+        let sessionListSocket = null;
+        let streamRetryCount = 0;
         let pollingInterval = null;
         let emptyPollDelay = 2000;  // Start at 2s when no sessions
         let emptyPollTimeout = null;
         let serverVersion = null;  // Track server version for deploy detection
-        const MAX_SSE_RETRIES = 3;
+        const MAX_STREAM_RETRIES = 3;
         const MIN_EMPTY_POLL_DELAY = 2000;   // 2 seconds
         const MAX_EMPTY_POLL_DELAY = 30000;  // 30 seconds
 
         function connectSessionListStream() {
-            if (sessionListSource) {
-                sessionListSource.close();
+            if (sessionListSocket) {
+                sessionListSocket.onclose = null;
+                sessionListSocket.close();
             }
 
-            console.log('Connecting to session list SSE...');
-            sessionListSource = new EventSource(API_BASE + '/sessions/stream' + getAuthQueryParam());
+            console.log('Connecting to session list WebSocket...');
+            const socket = new WebSocket(getWebSocketUrl('/sessions/stream'));
+            sessionListSocket = socket;
 
-            sessionListSource.onopen = () => {
-                console.log('Session list SSE connected');
-                sseRetryCount = 0;
+            socket.onopen = () => {
+                console.log('Session list WebSocket connected');
+                streamRetryCount = 0;
                 // Stop polling if it was active
                 if (pollingInterval) {
                     clearInterval(pollingInterval);
@@ -36,7 +38,7 @@ export const sseJs = `
                 if (statusEl) statusEl.textContent = 'Connected';
             };
 
-            sessionListSource.onmessage = (event) => {
+            socket.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
                     handleSessionListEvent(data);
@@ -45,10 +47,13 @@ export const sseJs = `
                 }
             };
 
-            sessionListSource.onerror = (err) => {
-                console.error('Session list SSE error:', err);
-                sessionListSource.close();
-                sessionListSource = null;
+            socket.onerror = (err) => {
+                console.error('Session list WebSocket error:', err);
+            };
+
+            socket.onclose = () => {
+                if (sessionListSocket !== socket) return;
+                sessionListSocket = null;
 
                 // If we were recently connected, this might be a deploy. Verify
                 // the build before showing update UI; ordinary reconnects are silent.
@@ -60,10 +65,10 @@ export const sseJs = `
                     // Use fast deploy reconnect
                     scheduleReconnect();
                 } else {
-                    sseRetryCount++;
-                    if (sseRetryCount >= MAX_SSE_RETRIES) {
-                        // Fall back to polling after too many SSE failures
-                        console.log('SSE failed, falling back to polling');
+                    streamRetryCount++;
+                    if (streamRetryCount >= MAX_STREAM_RETRIES) {
+                        // Fall back to polling after too many stream failures
+                        console.log('Session list stream failed, falling back to polling');
                         const statusEl = document.getElementById('status');
                         if (statusEl) statusEl.textContent = sessionCount(sessions.size);
                         if (!pollingInterval) {
@@ -72,8 +77,8 @@ export const sseJs = `
                     } else {
                         const statusEl = document.getElementById('status');
                         if (statusEl) statusEl.textContent = 'Reconnecting...';
-                        // Retry SSE with exponential backoff
-                        setTimeout(connectSessionListStream, Math.min(1000 * Math.pow(2, sseRetryCount), 10000));
+                        // Retry the stream with exponential backoff
+                        setTimeout(connectSessionListStream, Math.min(1000 * Math.pow(2, streamRetryCount), 10000));
                     }
                 }
             };
@@ -145,17 +150,17 @@ export const sseJs = `
         // Detect when tab becomes visible again and check connection
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
-                // Check if SSE connection is still alive
-                if (sessionListSource && sessionListSource.readyState === EventSource.CLOSED) {
-                    console.log('SSE connection closed while tab was hidden, reconnecting...');
+                // Check if the WebSocket connection is still alive.
+                if (sessionListSocket && sessionListSocket.readyState === WebSocket.CLOSED) {
+                    console.log('Session list WebSocket closed while tab was hidden, reconnecting...');
                     // Don't show deploy overlay for tab visibility changes - just reconnect silently
-                    sseRetryCount = 0;
+                    streamRetryCount = 0;
                     loadSessions();
                     connectSessionListStream();
-                } else if (!sessionListSource) {
-                    // No SSE connection at all - reconnect
-                    console.log('No SSE connection, reconnecting...');
-                    sseRetryCount = 0;
+                } else if (!sessionListSocket) {
+                    // No WebSocket connection at all - reconnect
+                    console.log('No session list WebSocket, reconnecting...');
+                    streamRetryCount = 0;
                     loadSessions();
                     connectSessionListStream();
                 }

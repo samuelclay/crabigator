@@ -466,5 +466,5 @@ export const promptJs = `
                 .replace(/'/g, '&#39;');
         }
 
-        // SSE connection for real-time session list updates with polling fallback
+        // The session list stream keeps polling as a fallback.
 `;

@@ -12,7 +12,7 @@ interface MobileTokenData {
 }
 
 /**
- * Extract bearer token from header or query param (for SSE)
+ * Extract a bearer token from a header or streaming URL query parameter.
  */
 export function extractToken(request: Request): string | null {
     const authHeader = request.headers.get('Authorization');

@@ -34,7 +34,7 @@ export const prBoardJs = `
         // blocks can hold several; other rows at most one).
         let prBoardPeekIdx = 0;
         let prBoardPeekSessionId = null;
-        let prBoardPeekSource = null;
+        let prBoardPeekSocket = null;
         let prBoardPeekHeartbeat = null;
         let prBoardPeekScreen = '';
         let prBoardPeekLines = [];
@@ -1104,7 +1104,11 @@ export const prBoardJs = `
             prbStopPeekStream();
         }
         function prbStopPeekStream() {
-            if (prBoardPeekSource) { prBoardPeekSource.close(); prBoardPeekSource = null; }
+            if (prBoardPeekSocket) {
+                prBoardPeekSocket.onclose = null;
+                prBoardPeekSocket.close();
+                prBoardPeekSocket = null;
+            }
             if (prBoardPeekHeartbeat) { clearInterval(prBoardPeekHeartbeat); prBoardPeekHeartbeat = null; }
             prBoardPeekSessionId = null;
             prBoardPeekScreen = '';
@@ -1130,11 +1134,10 @@ export const prBoardJs = `
             prbStopPeekStream();
             prBoardPeekSessionId = sessionId;
             if (!sessionId) { prbRenderPeek(); return; }
-            const source = new EventSource(
-                API_BASE + '/sessions/' + sessionId + '/events' + getAuthQueryParam());
-            prBoardPeekSource = source;
-            source.onopen = () => sendViewerHeartbeat(sessionId);
-            source.onmessage = event => {
+            const socket = new WebSocket(getWebSocketUrl('/sessions/' + sessionId + '/events'));
+            prBoardPeekSocket = socket;
+            socket.onopen = () => sendViewerHeartbeat(sessionId);
+            socket.onmessage = event => {
                 let data;
                 try { data = JSON.parse(event.data); } catch (e) { return; }
                 if (data.type === 'screen') {
@@ -1147,6 +1150,18 @@ export const prBoardJs = `
                     return;
                 }
                 prbRenderPeek();
+            };
+            socket.onerror = error => console.error('PR board peek WebSocket error:', error);
+            socket.onclose = () => {
+                if (prBoardPeekSocket !== socket) return;
+                prBoardPeekSocket = null;
+                if (!prBoardPeekOpen || prBoardPeekSessionId !== sessionId) return;
+                setTimeout(() => {
+                    if (prBoardPeekOpen && prBoardPeekSessionId === sessionId && !prBoardPeekSocket) {
+                        prBoardPeekSessionId = null;
+                        prbSyncPeekStream();
+                    }
+                }, 1000);
             };
             // Keep the desktop streaming this session's screen while we watch.
             prBoardPeekHeartbeat = setInterval(() => sendViewerHeartbeat(sessionId), 10000);

@@ -4,7 +4,7 @@ export const sidebarJs = `
         let sidebarUpdateTimer = null;
         let sidebarLastRenderedHtml = null;
 
-        // Throttled sidebar update - batches rapid SSE events into single re-renders
+        // Throttled sidebar update - batches rapid stream events into single re-renders
         function scheduleSidebarUpdate() {
             if (sidebarUpdateTimer) return;
             sidebarUpdateTimer = setTimeout(() => {

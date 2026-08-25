@@ -229,7 +229,7 @@ export const landingHtml = `<!DOCTYPE html>
                                 <div class="changes-list">
                                     <div class="change-item">
                                         <span class="change-mod">~</span><span class="change-icon fn">ƒ</span>
-                                        <span class="change-name">handleSSE</span>
+                                        <span class="change-name">handleViewerSocket</span>
                                         <span class="change-stats"><span class="del">−8</span> <span class="add">+24</span></span>
                                     </div>
                                     <div class="change-item">
@@ -317,7 +317,7 @@ export const landingHtml = `<!DOCTYPE html>
                             </div>
                             <div class="phone-change">
                                 <span class="pc-mod">~</span><span class="pc-icon">ƒ</span>
-                                <span class="pc-name">handleSSE</span>
+                                <span class="pc-name">handleViewerSocket</span>
                             </div>
                             <div class="phone-change">
                                 <span class="pc-mod">+</span><span class="pc-icon">ƒ</span>
