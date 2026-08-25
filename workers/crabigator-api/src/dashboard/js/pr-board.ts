@@ -421,18 +421,23 @@ export const prBoardJs = `
             return prbStateIcon(prbAggregateState(sessions)) + ' '
                 + prbAgePart('⟩', prompted, now) + ' ' + prbAgePart('⋖', completed, now);
         }
+        // Rows order by when the user last prompted a session; completions
+        // never move a row.
         function prbSessionFreshness(s) {
-            return Math.max(s.completions_changed_at || 0, s.prompts_changed_at || 0);
+            return s.prompts_changed_at || 0;
         }
         function prbActivityTime(sessions) {
             return Math.max(0, ...sessions.map(s => prbSessionFreshness(s)));
         }
-        // PR-view recency, unix seconds: the freshest of session activity and
-        // the PR's own events — a mention here, the merge/close, or GitHub's
-        // updatedAt, which moves on any activity at all (push, comment, review).
-        function prbPrViewRecency(e, sessions) {
-            return Math.max(prbActivityTime(sessions),
-                Math.floor((e.pr.last_mentioned_at || 0) / 1000),
+        // A PR row's recency, unix seconds: its sessions' newest prompt. With
+        // no prompt to follow (a watch, or sessions that never prompted) the
+        // PR's own events place it — GitHub's updatedAt, the close, or its
+        // last mention here.
+        function prbEntryRecency(e, sessions) {
+            const prompted = prbActivityTime(sessions);
+            if (prompted) return prompted;
+            return Math.max(
+                Math.floor((e.pr.updated_at || 0) / 1000),
                 Math.floor((e.pr.closed_at || 0) / 1000),
                 Math.floor((e.pr.last_mentioned_at || 0) / 1000));
         }
@@ -1275,7 +1280,7 @@ export const prBoardJs = `
                         sessions: ordered,
                         // A watch with no sessions is being watched, not stale.
                         stale: ordered.length ? !ordered.some(s => s.active) : !e.pr.watched,
-                        activity: prbPrViewRecency(e, ordered),
+                        activity: prbEntryRecency(e, ordered),
                         key: e.owner + '/' + e.repo + '#' + e.number,
                     });
                     continue;
@@ -1289,7 +1294,7 @@ export const prBoardJs = `
                         sessions: rowOf,
                         // A watch with no sessions is being watched, not stale.
                         stale: rowOf.length ? !rowOf.some(s => s.active) : !e.pr.watched,
-                        activity: prbActivityTime(rowOf),
+                        activity: prbEntryRecency(e, rowOf),
                         key: e.owner + '/' + e.repo + '#' + e.number + '@'
                             + (rowOf[0] ? (rowOf[0].session_id || rowOf[0].dir_name) : ''),
                     });
