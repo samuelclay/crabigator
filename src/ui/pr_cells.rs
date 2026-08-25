@@ -358,20 +358,6 @@ pub(crate) fn pr_row_text(width: u16, pr: &SessionPr, widths: &PrColumnWidths) -
     pr_row_text_with_optional_activity(width, pr, widths, None, None, StatusTints::default())
 }
 
-/// Render the PR board's titled row with activity before the GitHub status.
-/// The shared handoff row calls `pr_row_text` with the same columns.
-pub(crate) fn pr_row_text_with_activity(
-    width: u16,
-    pr: &SessionPr,
-    widths: &PrColumnWidths,
-    title: &str,
-    activity: PrCell,
-    tints: StatusTints,
-) -> String {
-    let left_cells = [board_pr_title_cell(pr, title, widths.left_width())];
-    pr_row_text_with_left_cells(width, pr, widths, &left_cells, Some(activity), tints)
-}
-
 /// Render the PR view's header row: identity (`★ #142: title`) and branch on
 /// the left, then the sessions' activity, the diff and file count, and the
 /// GitHub status anchored right.
@@ -386,54 +372,31 @@ pub(crate) fn pr_view_row_text(
     pr_row_text_with_optional_activity(width, pr, widths, Some(title), Some(activity), tints)
 }
 
-/// Width needed for a PR's diff and file count on the board metadata row.
-pub(crate) fn pr_board_metadata_width(pr: &SessionPr) -> usize {
-    table_width(&[
-        pr_diff_text(pr).width().min(PR_DIFF_MAX),
-        pr_files_text(pr).width().min(PR_FILES_MAX),
-    ])
-}
-
-/// Put the generated session title and branch below the official PR title,
-/// with diff and file count aligned below the prompt/completion activity.
-pub(crate) fn pr_board_metadata_row_text(
+/// Render a session-view PR sub-row: the PR-view row anatomy (identity,
+/// branch, diff and file count beside the GitHub status) indented beneath its
+/// session, with the activity column left empty — the session's header row
+/// carries the state and ages.
+pub(crate) fn session_view_pr_row_text(
     width: u16,
     pr: &SessionPr,
     widths: &PrColumnWidths,
-    generated_title: &str,
+    title: &str,
     activity_width: usize,
+    tints: StatusTints,
 ) -> String {
-    let left_width = widths.left_width();
-    let prefix = "  ";
-    let available = left_width.saturating_sub(prefix.width());
-    let branch_label = pr_branch_text(pr);
-    let branch_width = widths.branch.min(available);
-    let gap = if branch_width > 0 {
-        PR_COLUMN_GAP.min(available.saturating_sub(branch_width))
-    } else {
-        0
-    };
-    let title_width = available.saturating_sub(branch_width + gap);
-    let title = truncate_to_width(generated_title, title_width);
-    let branch = truncate_branch_to_width(&branch_label, branch_width);
-    let mut left_styled = format!("{prefix}{}{}{}", fg(color::LIGHT_BLUE), title, RESET_FG);
-    left_styled.push_str(&" ".repeat(title_width.saturating_sub(title.width()) + gap));
-    if !branch.is_empty() {
-        left_styled.push_str(&format!("{}{}{}", fg(color::DARK_GRAY), branch, RESET_FG));
-    }
-    let left_visible = prefix.width() + title_width + gap + branch.width();
-
-    let metadata = board_pr_metadata_cell(pr, activity_width);
-    board_detail_row_text(
+    const INDENT: &str = "  ";
+    let budget = widths.identity.saturating_sub(INDENT.width());
+    let identity = truncate_board_pr_identity(pr, title, budget);
+    let mut left_cells = pr_left_cells_with_identity(pr, widths, identity);
+    left_cells[0].0.insert_str(0, INDENT);
+    left_cells[0].1 += INDENT.width();
+    pr_row_text_with_left_cells(
         width,
+        pr,
         widths,
-        left_styled,
-        left_visible,
-        metadata.0,
-        metadata.1,
-        activity_width,
-        String::new(),
-        0,
+        &left_cells,
+        Some((String::new(), 0, activity_width)),
+        tints,
     )
 }
 
@@ -602,12 +565,6 @@ fn pr_row_text_with_left_cells(
     row
 }
 
-fn board_pr_title_cell(pr: &SessionPr, title: &str, width: usize) -> PrCell {
-    let identity = truncate_board_pr_identity(pr, title, width);
-    let styled = styled_pr_identity(pr, &identity);
-    (styled, identity.width(), width)
-}
-
 fn styled_pr_identity(pr: &SessionPr, identity: &str) -> String {
     let glyph = pr_glyph(pr);
     let (glyph_kept, identity_label) = match identity.strip_prefix(&format!("{glyph} ")) {
@@ -639,16 +596,6 @@ fn styled_pr_identity(pr: &SessionPr, identity: &str) -> String {
         ),
         RESET_FG
     )
-}
-
-fn board_pr_metadata_cell(pr: &SessionPr, width: usize) -> PrCell {
-    let content = pr_stats_cells(
-        pr,
-        pr_diff_text(pr).width().min(PR_DIFF_MAX),
-        pr_files_text(pr).width().min(PR_FILES_MAX),
-    );
-    let visible = table_width(&[content[0].1, content[1].1]);
-    (cells_text(&content), visible, width)
 }
 
 /// The PR view's diff and file count as one right-cluster cell, padded so it

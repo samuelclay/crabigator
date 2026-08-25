@@ -75,7 +75,7 @@ fn default_pr_board_linger_days() -> u64 {
 }
 
 fn default_pr_board_view() -> String {
-    "sessions".to_string()
+    "prs".to_string()
 }
 
 impl Default for PrBoardPreferences {
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(config.pr_board.detail, 0);
         assert_eq!(config.pr_board.linger_days, 1);
         assert_eq!(config.pr_board.oldest_visible_hours, None);
-        assert_eq!(config.pr_board.view, "sessions");
+        assert_eq!(config.pr_board.view, "prs");
     }
 
     #[test]
@@ -234,7 +234,7 @@ mod tests {
         config.pr_board.detail = 1;
         config.pr_board.linger_days = 7;
         config.pr_board.oldest_visible_hours = Some(9);
-        config.pr_board.view = "prs".to_string();
+        config.pr_board.view = "sessions".to_string();
 
         let encoded = toml::to_string(&config).unwrap();
         let decoded: Config = toml::from_str(&encoded).unwrap();
@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(decoded.pr_board.detail, 1);
         assert_eq!(decoded.pr_board.linger_days, 7);
         assert_eq!(decoded.pr_board.oldest_visible_hours, Some(9));
-        assert_eq!(decoded.pr_board.view, "prs");
+        assert_eq!(decoded.pr_board.view, "sessions");
     }
 
     #[test]

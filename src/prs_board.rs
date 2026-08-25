@@ -38,8 +38,7 @@ use crate::slack::{SlackDirectory, SlackThread};
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG, RESET_UNDERLINE, UNDERLINE};
 use crate::ui::cooldown::{Cooldowns, StatusTints};
 use crate::ui::pr_cells::{
-    board_detail_row_text, pr_board_metadata_row_text, pr_board_metadata_width,
-    pr_row_text_with_activity, session_row_text_with_activity, PrColumnWidths, PR_RIGHT_COLUMN_GAP,
+    board_detail_row_text, session_row_text_with_activity, PrColumnWidths, PR_RIGHT_COLUMN_GAP,
 };
 use crate::ui::{COMPLETION_ICON, PROMPT_ICON};
 
@@ -183,21 +182,22 @@ impl RecencyBucket {
     }
 }
 
-/// What one board row stands for: a session (the default view) or a primary
-/// PR with every touching session grouped beneath it.
+/// What one board block stands for: a primary PR with every touching session
+/// beneath it (the default view), or a session with every PR it touches
+/// beneath it.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum BoardMode {
-    #[default]
     Sessions,
+    #[default]
     Prs,
 }
 
 impl BoardMode {
     fn parse(value: &str) -> Self {
-        if value.eq_ignore_ascii_case("prs") {
-            Self::Prs
-        } else {
+        if value.eq_ignore_ascii_case("sessions") {
             Self::Sessions
+        } else {
+            Self::Prs
         }
     }
 
@@ -225,7 +225,7 @@ impl BoardView {
                 detail
             },
             oldest_visible_bucket,
-            mode: BoardMode::Sessions,
+            mode: BoardMode::Prs,
         }
     }
 
@@ -367,6 +367,16 @@ struct SessionRef {
     /// The session is over. Always false for live local mirrors; cloud
     /// records carry the durable answer.
     ended: bool,
+}
+
+/// One session-view block: a session with every PR it touches beneath it —
+/// the transpose of a PR-view block.
+#[derive(Clone)]
+struct SessionEntry {
+    session: SessionRef,
+    /// The PR entries this session touches, in the board's attention order.
+    prs: Vec<BoardPr>,
+    stale: bool,
 }
 
 /// Active sessions in a repository/branch that has no matching visible PR row.
@@ -1162,51 +1172,103 @@ fn aggregate(
     out
 }
 
-/// Shape merged entries for the active view: session view fans out one row
-/// per session; PR view keeps one block per primary PR, its sessions sorted
-/// live-first then freshest-first (the sub-row and ←→ order).
-fn entries_for_mode(entries: Vec<BoardPr>, mode: BoardMode) -> Vec<BoardPr> {
+/// The active view's blocks: PR blocks, plus session blocks in session view.
+struct ShapedEntries {
+    /// PR view: one block per primary or watched PR. Session view: only the
+    /// PRs no session touches (watches), still drawn as PR blocks.
+    prs: Vec<BoardPr>,
+    /// Session view only: one block per session, PRs beneath it.
+    sessions: Vec<SessionEntry>,
+}
+
+/// Shape merged entries for the active view. PR view keeps one block per
+/// primary PR, its sessions sorted live-first then freshest-first (the
+/// sub-row and ←→ order). Session view transposes that: one block per
+/// session — so the board lists sessions one-to-one — with every PR the
+/// session touches beneath it.
+fn entries_for_mode(entries: Vec<BoardPr>, mode: BoardMode) -> ShapedEntries {
     match mode {
-        BoardMode::Sessions => entries.into_iter().flat_map(fan_out_per_session).collect(),
-        BoardMode::Prs => entries
-            .into_iter()
-            .filter(|entry| entry.pr.primary || entry.pr.watched)
-            .map(|mut entry| {
-                entry
-                    .sessions
-                    .sort_by_key(|session| (session.ended, std::cmp::Reverse(session.prompted_at)));
-                entry
-            })
-            .collect(),
+        BoardMode::Sessions => session_view_entries(entries),
+        BoardMode::Prs => ShapedEntries {
+            prs: entries
+                .into_iter()
+                .filter(|entry| entry.pr.primary || entry.pr.watched)
+                .map(|mut entry| {
+                    entry.sessions.sort_by_key(|session| {
+                        (session.ended, std::cmp::Reverse(session.prompted_at))
+                    });
+                    entry
+                })
+                .collect(),
+            sessions: Vec::new(),
+        },
     }
 }
 
-/// Split a merged PR entry into one board row per contributing session, so
-/// each row shows a single session's title, activity, and recap. The merged
-/// GitHub stats are shared by every row; a PR with no attached session keeps
-/// its single session-less row. Rows for sessions that ended render stale so
-/// a live one stands out.
-fn fan_out_per_session(entry: BoardPr) -> Vec<BoardPr> {
-    if entry.sessions.len() <= 1 {
-        let mut entry = entry;
-        entry.stale |= entry.sessions.first().is_some_and(|session| session.ended);
-        return vec![entry];
+/// Regroup merged PR entries by session: every session becomes one block
+/// carrying the PRs it touches, and a session that ended renders stale so a
+/// live one stands out. PRs no session touches (watches) stay PR blocks.
+fn session_view_entries(entries: Vec<BoardPr>) -> ShapedEntries {
+    let mut prs = Vec::new();
+    let mut sessions: Vec<SessionEntry> = Vec::new();
+    for entry in entries {
+        if entry.sessions.is_empty() {
+            prs.push(entry);
+            continue;
+        }
+        let BoardPr {
+            pr,
+            sessions: entry_sessions,
+            slack_threads,
+            stale,
+        } = entry;
+        for session in entry_sessions {
+            let sub = BoardPr {
+                pr: pr.clone(),
+                sessions: Vec::new(),
+                slack_threads: slack_threads.clone(),
+                stale,
+            };
+            match sessions
+                .iter_mut()
+                .find(|block| session_key(&block.session) == session_key(&session))
+            {
+                Some(block) => {
+                    block.stale &= stale || session.ended;
+                    // Copies of one session are near-identical; keep one whose
+                    // local mirror the quick look pane can open.
+                    if block.session.session_dir.is_none() && session.session_dir.is_some() {
+                        block.session = session;
+                    }
+                    block.prs.push(sub);
+                }
+                None => sessions.push(SessionEntry {
+                    stale: stale || session.ended,
+                    session,
+                    prs: vec![sub],
+                }),
+            }
+        }
     }
-    let BoardPr {
-        pr,
-        sessions,
-        slack_threads,
-        stale,
-    } = entry;
-    sessions
-        .into_iter()
-        .map(|session| BoardPr {
-            pr: pr.clone(),
-            stale: stale || session.ended,
-            sessions: vec![session],
-            slack_threads: slack_threads.clone(),
-        })
-        .collect()
+    for block in &mut sessions {
+        sort_entries(&mut block.prs);
+    }
+    ShapedEntries { prs, sessions }
+}
+
+/// The clock a session block sorts and buckets by: the session's newest
+/// prompt, falling back to its PRs' own events for sessions that never
+/// prompted.
+fn session_entry_recency(entry: &SessionEntry) -> u64 {
+    if entry.session.prompted_at > 0 {
+        return entry.session.prompted_at;
+    }
+    entry.prs.iter().map(entry_recency_time).max().unwrap_or(0)
+}
+
+/// The recency band a session block belongs to on that same clock.
+fn session_entry_bucket(entry: &SessionEntry, now: u64) -> RecencyBucket {
+    RecencyBucket::from_age(now.saturating_sub(session_entry_recency(entry)))
 }
 
 /// Apply current worktree ownership while reading a session snapshot. Older
@@ -1850,6 +1912,16 @@ fn matches_search(pr: &SessionPr, query: &str) -> bool {
         || pr.branch.to_lowercase().contains(&query)
 }
 
+/// A session block matches on its own title or on any of its PRs.
+fn session_entry_matches_search(entry: &SessionEntry, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let title = entry.session.title.to_lowercase();
+    title.contains(&query.to_lowercase())
+        || entry.prs.iter().any(|sub| matches_search(&sub.pr, query))
+}
+
 fn workspace_matches_search(entry: &WorkspaceEntry, query: &str) -> bool {
     if query.is_empty() {
         return true;
@@ -2228,13 +2300,6 @@ fn empty_cell(width: usize) -> ActivityCell {
     }
 }
 
-fn latest_recap(sessions: &[SessionRef]) -> Option<&RecapBrief> {
-    sessions
-        .iter()
-        .filter_map(|session| session.recap.as_ref())
-        .max_by_key(|recap| recap.generated_at)
-}
-
 fn slack_link_cell(thread: &SlackThread, width: usize) -> ActivityCell {
     let full_label = crate::slack::thread_identity_label(thread);
     let label = crate::ui::pr_cells::truncate_to_width(&full_label, width);
@@ -2265,24 +2330,21 @@ fn slack_links_width(threads: &[SlackThread]) -> usize {
         .unwrap_or(0)
 }
 
-fn pr_row_titles(entry: &BoardPr) -> (String, Option<String>) {
-    let generated_title = latest_session_title(&entry.sessions);
+/// The title a PR row leads with: GitHub's own title, falling back to the
+/// newest session title and then the repository name when GitHub has none.
+fn pr_row_title(entry: &BoardPr) -> String {
     let pr_title = entry.pr.title.trim();
-    if pr_title.is_empty() {
-        let title = generated_title.unwrap_or_else(|| {
-            let fallback = if entry.pr.repo.is_empty() {
-                "PR"
-            } else {
-                entry.pr.repo.as_str()
-            };
-            format!("{}{fallback}", provider_markers(&entry.sessions))
-        });
-        return (title, None);
+    if !pr_title.is_empty() {
+        return pr_title.to_string();
     }
-
-    let generated_title = generated_title
-        .filter(|title| crate::title::strip_provider_title_marker(title).trim() != pr_title);
-    (pr_title.to_string(), generated_title)
+    latest_session_title(&entry.sessions).unwrap_or_else(|| {
+        let fallback = if entry.pr.repo.is_empty() {
+            "PR"
+        } else {
+            entry.pr.repo.as_str()
+        };
+        format!("{}{fallback}", provider_markers(&entry.sessions))
+    })
 }
 
 fn slack_detail_cells(entry: &BoardPr, widths: &PrColumnWidths) -> Vec<ActivityCell> {
@@ -2429,27 +2491,6 @@ fn detail_lines(
         .collect()
 }
 
-fn pr_recap_detail_lines(
-    entry: &BoardPr,
-    width: u16,
-    now_ms: u64,
-    activity_width: usize,
-    widths: &PrColumnWidths,
-) -> Vec<String> {
-    let recap = latest_recap(&entry.sessions);
-    let mut recap_rows: Vec<RecapDetailRow<'_>> = judgment_row(&entry.pr).into_iter().collect();
-    if let Some(recap) = recap {
-        recap_rows.extend(recap_detail_rows(recap));
-    }
-    let layout = DetailLayout {
-        width,
-        now_ms,
-        activity_width,
-        widths,
-    };
-    detail_lines(&recap_rows, &slack_detail_cells(entry, widths), &layout)
-}
-
 /// The ✦ judgment row, which only open PRs with a note carry.
 fn judgment_row(pr: &SessionPr) -> Option<RecapDetailRow<'_>> {
     (!pr.ai_note.is_empty() && pr.state == "OPEN").then(|| RecapDetailRow {
@@ -2531,17 +2572,24 @@ struct WorkspaceRow<'a> {
     preview_lines: Vec<String>,
 }
 
+/// One session-view block ready to draw: the session plus any transcript
+/// preview lines the active search produced for it.
+struct SessionBlockRow<'a> {
+    entry: &'a SessionEntry,
+    preview_lines: Vec<String>,
+}
+
 /// One board row's place in the rendered frame, for selection and quick look.
 struct RowSpan {
-    /// Stable identity across refreshes: the PR key plus its session (session
-    /// view), the PR alone (PR view), or the workspace session.
+    /// Stable identity across refreshes: the PR alone on a PR block, the
+    /// session on a session block or a workspace row.
     key: String,
     /// First line of the row block, as an index into the rendered frame.
     start: usize,
     /// One past the row block's last line.
     end: usize,
-    /// The live session mirrors this row can preview: at most one in session
-    /// view, one per live session in PR view (freshest first).
+    /// The live session mirrors this row can preview: one per live session on
+    /// a PR block (freshest first), the block's own session otherwise.
     peeks: Vec<PeekTarget>,
 }
 
@@ -2582,17 +2630,6 @@ fn peek_target(session: &SessionRef) -> Option<PeekTarget> {
     })
 }
 
-/// A PR row's stable identity: the PR itself plus the session it stands for.
-fn pr_span_key(entry: &BoardPr) -> String {
-    format!(
-        "{}/{}#{}@{}",
-        entry.pr.owner,
-        entry.pr.repo,
-        entry.pr.number,
-        entry.sessions.first().map(session_key).unwrap_or_default()
-    )
-}
-
 /// What every board row needs beyond its own entry: the frame's terminal
 /// width and detail level, its clock, the shared column widths, the throbber
 /// phase, and the cooldown tints.
@@ -2605,66 +2642,6 @@ struct RowContext<'a> {
     widths: &'a PrColumnWidths,
     throbber_frame: usize,
     cooldowns: &'a Cooldowns,
-}
-
-fn render_pr_board_row(board_row: &BoardRow<'_>, context: RowContext<'_>) -> Vec<String> {
-    let RowContext {
-        width,
-        detail,
-        now_ms,
-        activity_width,
-        widths,
-        throbber_frame,
-        cooldowns,
-    } = context;
-    let entry = board_row.entry;
-    let activity = activity_cell(&entry.sessions, now_ms, throbber_frame, cooldowns);
-    let (title, generated_title) = pr_row_titles(entry);
-    let mut row = pr_row_text_with_activity(
-        width,
-        &entry.pr,
-        widths,
-        &title,
-        (activity.styled, activity.visible, activity_width),
-        status_tints(cooldowns, &entry.pr, now_ms),
-    );
-    if entry.stale {
-        row = format!("{}{row}", fg(color::DARK_GRAY));
-    }
-
-    let mut lines = vec![format!("{row}{RESET}")];
-    if generated_title.is_some()
-        || !entry.pr.branch.is_empty()
-        || entry.pr.additions != 0
-        || entry.pr.deletions != 0
-        || entry.pr.changed_files != 0
-    {
-        lines.push(format!(
-            "{}{}",
-            pr_board_metadata_row_text(
-                width,
-                &entry.pr,
-                widths,
-                generated_title.as_deref().unwrap_or_default(),
-                activity_width,
-            ),
-            RESET
-        ));
-    }
-    if detail == 0 {
-        lines.extend(board_row.preview_lines.iter().cloned());
-        return lines;
-    }
-
-    lines.extend(pr_recap_detail_lines(
-        entry,
-        width,
-        now_ms,
-        activity_width,
-        widths,
-    ));
-    lines.extend(board_row.preview_lines.iter().cloned());
-    lines
 }
 
 /// One PR-view block: the PR header row with its sessions' activity, diff,
@@ -2682,7 +2659,7 @@ fn render_pr_view_block(board_row: &BoardRow<'_>, context: RowContext<'_>) -> Ve
         cooldowns,
     } = context;
     let entry = board_row.entry;
-    let (title, _) = pr_row_titles(entry);
+    let title = pr_row_title(entry);
     let activity = pr_view_activity_cell(entry, now_ms, activity_width, throbber_frame, cooldowns);
     let mut row = crate::ui::pr_cells::pr_view_row_text(
         width,
@@ -2747,35 +2724,7 @@ fn pr_view_session_row(
     activity_width: usize,
     widths: &PrColumnWidths,
 ) -> String {
-    let title = marked_session_title(session);
-    let headline = session
-        .recap
-        .as_ref()
-        .map(|recap| recap.headline.as_str())
-        .unwrap_or("");
-    let (title_color, text_color) = if session.ended {
-        (color::DARK_GRAY, color::DARK_GRAY)
-    } else {
-        (color::LIGHT_BLUE, color::GRAY)
-    };
-
-    let prefix = "  ◆ ";
-    let budget = widths.board_left_width().saturating_sub(prefix.width());
-    let title_text = crate::ui::pr_cells::truncate_to_width(&title, budget);
-    let separator = if headline.is_empty() { "" } else { " — " };
-    let headline_text = crate::ui::pr_cells::truncate_to_width(
-        headline,
-        budget.saturating_sub(title_text.width() + separator.width()),
-    );
-    let left_visible =
-        prefix.width() + title_text.width() + separator.width() + headline_text.width();
-    let left_styled = format!(
-        "{dim}{prefix}{}{title_text}{dim}{separator}{}{headline_text}{RESET_FG}",
-        fg(title_color),
-        fg(text_color),
-        dim = fg(color::DARK_GRAY),
-    );
-
+    let (left_styled, left_visible) = session_title_cell(session, "  ◆ ", session.ended, widths);
     format!(
         "{}{RESET}",
         board_detail_row_text(
@@ -2790,6 +2739,126 @@ fn pr_view_session_row(
             0,
         )
     )
+}
+
+/// The `◆ title — recap headline` left cell shared by the PR view's session
+/// sub-rows and the session view's block headers, truncated to the left
+/// columns. A dimmed cell renders entirely gray so live rows stand out.
+fn session_title_cell(
+    session: &SessionRef,
+    prefix: &str,
+    dimmed: bool,
+    widths: &PrColumnWidths,
+) -> (String, usize) {
+    let title = marked_session_title(session);
+    let headline = session
+        .recap
+        .as_ref()
+        .map_or("", |recap| recap.headline.as_str());
+    let (title_color, text_color) = if dimmed {
+        (color::DARK_GRAY, color::DARK_GRAY)
+    } else {
+        (color::LIGHT_BLUE, color::GRAY)
+    };
+
+    let budget = widths.board_left_width().saturating_sub(prefix.width());
+    let title_text = crate::ui::pr_cells::truncate_to_width(&title, budget);
+    let mut separator = if headline.is_empty() { "" } else { " — " };
+    let headline_text = crate::ui::pr_cells::truncate_to_width(
+        headline,
+        budget.saturating_sub(title_text.width() + separator.width()),
+    );
+    if headline_text.is_empty() {
+        separator = "";
+    }
+    let visible = prefix.width() + title_text.width() + separator.width() + headline_text.width();
+    let styled = format!(
+        "{gray}{prefix}{}{title_text}{gray}{separator}{}{headline_text}{RESET_FG}",
+        fg(title_color),
+        fg(text_color),
+        gray = fg(color::DARK_GRAY),
+    );
+    (styled, visible)
+}
+
+/// One session-view block: the session's title and recap headline with its
+/// state and activity ages, then one sub-row per PR it touches — the PR-view
+/// row anatomy with the activity column left empty, since the header carries
+/// it. Detail adds the recap under the header and each PR's ✦ judgment and
+/// Slack links under its row.
+fn render_session_view_block(
+    session_row: &SessionBlockRow<'_>,
+    context: RowContext<'_>,
+) -> Vec<String> {
+    let RowContext {
+        width,
+        detail,
+        now_ms,
+        activity_width,
+        widths,
+        throbber_frame,
+        cooldowns,
+    } = context;
+    let entry = session_row.entry;
+    let session = &entry.session;
+    let activity = activity_cell(
+        std::slice::from_ref(session),
+        now_ms,
+        throbber_frame,
+        cooldowns,
+    );
+
+    let (left_styled, left_visible) = session_title_cell(session, "◆ ", entry.stale, widths);
+    let mut row = board_detail_row_text(
+        width,
+        widths,
+        left_styled,
+        left_visible,
+        activity.styled,
+        activity.visible,
+        activity_width,
+        String::new(),
+        0,
+    );
+    if entry.stale {
+        row = format!("{}{row}", fg(color::DARK_GRAY));
+    }
+    let mut lines = vec![format!("{row}{RESET}")];
+
+    let layout = DetailLayout {
+        width,
+        now_ms,
+        activity_width,
+        widths,
+    };
+    if detail > DEFAULT_DETAIL {
+        if let Some(recap) = session.recap.as_ref() {
+            lines.extend(detail_lines(&recap_extra_rows(recap), &[], &layout));
+        }
+    }
+
+    for sub in &entry.prs {
+        let title = pr_row_title(sub);
+        let mut row = crate::ui::pr_cells::session_view_pr_row_text(
+            width,
+            &sub.pr,
+            widths,
+            &title,
+            activity_width,
+            status_tints(cooldowns, &sub.pr, now_ms),
+        );
+        if entry.stale {
+            row = format!("{}{row}", fg(color::DARK_GRAY));
+        }
+        lines.push(format!("{row}{RESET}"));
+        if detail > DEFAULT_DETAIL {
+            let judgment: Vec<RecapDetailRow<'_>> = judgment_row(&sub.pr).into_iter().collect();
+            let slack = slack_detail_cells(sub, widths);
+            lines.extend(detail_lines(&judgment, &slack, &layout));
+        }
+    }
+    lines.extend(session_row.preview_lines.iter().cloned());
+    lines
 }
 
 /// A session's own title carrying its provider marker, falling back to the
@@ -2889,6 +2958,7 @@ fn render_workspace_board_row(
 /// Build one full frame as displayable lines (no trailing newline handling).
 fn render(
     rows: &[BoardRow],
+    session_rows: &[SessionBlockRow],
     workspace_rows: &[WorkspaceRow],
     width: u16,
     linger_days: u64,
@@ -2898,6 +2968,7 @@ fn render(
     let cooldowns = Cooldowns::default();
     render_at(
         rows,
+        session_rows,
         workspace_rows,
         width,
         linger_days,
@@ -2926,8 +2997,10 @@ struct RenderedBoard {
     spans: Vec<RowSpan>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_at(
     rows: &[BoardRow],
+    session_rows: &[SessionBlockRow],
     workspace_rows: &[WorkspaceRow],
     width: u16,
     linger_days: u64,
@@ -2954,6 +3027,13 @@ fn render_at(
             (entry_bucket(row.entry, now) <= oldest_visible_bucket).then_some(index)
         })
         .collect();
+    let visible_session_indices: Vec<usize> = session_rows
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| {
+            (session_entry_bucket(row.entry, now) <= oldest_visible_bucket).then_some(index)
+        })
+        .collect();
     let visible_workspace_indices: Vec<usize> = workspace_rows
         .iter()
         .enumerate()
@@ -2964,6 +3044,11 @@ fn render_at(
     let session_count = visible_row_indices
         .iter()
         .flat_map(|&index| rows[index].entry.sessions.iter())
+        .chain(
+            visible_session_indices
+                .iter()
+                .map(|&index| &session_rows[index].entry.session),
+        )
         .chain(
             visible_workspace_indices
                 .iter()
@@ -3010,6 +3095,18 @@ fn render_at(
         header_control('a', &label, true)
     };
 
+    // A PR touched by several session blocks is still one PR in the count.
+    let pr_count = visible_row_indices
+        .iter()
+        .map(|&index| &rows[index].entry.pr)
+        .chain(
+            visible_session_indices
+                .iter()
+                .flat_map(|&index| session_rows[index].entry.prs.iter().map(|entry| &entry.pr)),
+        )
+        .map(|pr| (pr.owner.as_str(), pr.repo.as_str(), pr.number))
+        .collect::<HashSet<_>>()
+        .len();
     let mut spans: Vec<RowSpan> = Vec::new();
     let mut lines = vec![
         format!(
@@ -3017,7 +3114,7 @@ fn render_at(
             fg(color::PURPLE),
             RESET_FG,
             fg(color::DARK_GRAY),
-            visible_row_indices.len(),
+            pr_count,
             session_count,
             source,
             window,
@@ -3039,7 +3136,10 @@ fn render_at(
         ));
         lines.push(String::new());
     }
-    if visible_row_indices.is_empty() && visible_workspace_indices.is_empty() {
+    if visible_row_indices.is_empty()
+        && visible_session_indices.is_empty()
+        && visible_workspace_indices.is_empty()
+    {
         // No rows drawn, so `spans` is still empty: nothing to select.
         if !loading {
             lines.push(format!(
@@ -3054,20 +3154,20 @@ fn render_at(
     let activity_width = visible_row_indices
         .iter()
         .map(|&index| {
-            let entry = rows[index].entry;
-            match mode {
-                BoardMode::Sessions => {
-                    activity_cell(&entry.sessions, now_ms, throbber_frame, cooldowns)
-                        .visible
-                        .max(pr_board_metadata_width(&entry.pr))
-                }
-                // A PR no session touches shows only an age stamp, capped at
-                // four cells; the sessions set the real column width.
-                BoardMode::Prs => {
-                    pr_view_activity_cell(entry, now * 1000, 4, throbber_frame, cooldowns).visible
-                }
-            }
+            // A PR no session touches shows only an age stamp, capped at
+            // four cells; the sessions set the real column width.
+            pr_view_activity_cell(rows[index].entry, now * 1000, 4, throbber_frame, cooldowns)
+                .visible
         })
+        .chain(visible_session_indices.iter().map(|&index| {
+            activity_cell(
+                std::slice::from_ref(&session_rows[index].entry.session),
+                now_ms,
+                throbber_frame,
+                cooldowns,
+            )
+            .visible
+        }))
         .chain(visible_workspace_indices.iter().map(|&index| {
             activity_cell(
                 workspace_rows[index].entry.sessions(),
@@ -3083,14 +3183,19 @@ fn render_at(
         .saturating_sub(activity_width)
         .saturating_sub(usize::from(activity_width > 0) * PR_RIGHT_COLUMN_GAP)
         .min(u16::MAX as usize) as u16;
-    let pr_refs: Vec<&SessionPr> = visible_row_indices
+    let visible_entries: Vec<&BoardPr> = visible_row_indices
         .iter()
-        .map(|&index| &rows[index].entry.pr)
+        .map(|&index| rows[index].entry)
+        .chain(
+            visible_session_indices
+                .iter()
+                .flat_map(|&index| session_rows[index].entry.prs.iter()),
+        )
         .collect();
+    let pr_refs: Vec<&SessionPr> = visible_entries.iter().map(|entry| &entry.pr).collect();
     let mut widths = PrColumnWidths::from_pr_refs(&pr_refs, shared_width as usize);
-    for &index in &visible_row_indices {
-        let entry = rows[index].entry;
-        let (title, _) = pr_row_titles(entry);
+    for entry in &visible_entries {
+        let title = pr_row_title(entry);
         widths.include_board_identity(&entry.pr, &title, shared_width as usize);
     }
     for &index in &visible_workspace_indices {
@@ -3104,19 +3209,18 @@ fn render_at(
             shared_width as usize,
         );
     }
-    for &index in &visible_row_indices {
+    for entry in &visible_entries {
         widths.include_board_detail_right(
-            slack_links_width(&rows[index].entry.slack_threads),
+            slack_links_width(&entry.slack_threads),
             shared_width as usize,
         );
     }
-    if mode == BoardMode::Prs {
-        widths.use_pr_view_layout(shared_width as usize);
-    }
+    widths.use_pr_view_layout(shared_width as usize);
 
     #[derive(Clone, Copy)]
     enum SectionRow {
         Pr(usize),
+        Session(usize),
         Workspace(usize),
     }
 
@@ -3167,6 +3271,22 @@ fn render_at(
                 format!("{}/{}", row.entry.pr.owner, row.entry.pr.repo),
                 entry_recency_time(row.entry),
                 SectionRow::Pr(index),
+            );
+        }
+        for &index in &visible_session_indices {
+            let row = &session_rows[index];
+            // The block sits in its lead PR's repository — the first after
+            // the attention sort, so the primary's repo when there is one.
+            let repo = row
+                .entry
+                .prs
+                .first()
+                .map(|entry| format!("{}/{}", entry.pr.owner, entry.pr.repo))
+                .unwrap_or_default();
+            add_row(
+                repo,
+                session_entry_recency(row.entry),
+                SectionRow::Session(index),
             );
         }
         for &index in &visible_workspace_indices {
@@ -3238,36 +3358,29 @@ fn render_at(
                 let (key, peeks) = match row {
                     SectionRow::Pr(index) => {
                         let board_row = &rows[index];
-                        match mode {
-                            BoardMode::Sessions => {
-                                lines.extend(render_pr_board_row(board_row, context));
-                                (
-                                    pr_span_key(board_row.entry),
-                                    board_row
-                                        .entry
-                                        .sessions
-                                        .first()
-                                        .and_then(peek_target)
-                                        .into_iter()
-                                        .collect(),
-                                )
-                            }
-                            BoardMode::Prs => {
-                                lines.extend(render_pr_view_block(board_row, context));
-                                let pr = &board_row.entry.pr;
-                                (
-                                    format!("{}/{}#{}", pr.owner, pr.repo, pr.number),
-                                    // Sub-row order: sessions were sorted live
-                                    // first, so ←→ walks them top to bottom.
-                                    board_row
-                                        .entry
-                                        .sessions
-                                        .iter()
-                                        .filter_map(peek_target)
-                                        .collect(),
-                                )
-                            }
-                        }
+                        lines.extend(render_pr_view_block(board_row, context));
+                        let pr = &board_row.entry.pr;
+                        (
+                            format!("{}/{}#{}", pr.owner, pr.repo, pr.number),
+                            // Sub-row order: sessions were sorted live
+                            // first, so ←→ walks them top to bottom.
+                            board_row
+                                .entry
+                                .sessions
+                                .iter()
+                                .filter_map(peek_target)
+                                .collect(),
+                        )
+                    }
+                    SectionRow::Session(index) => {
+                        let session_row = &session_rows[index];
+                        lines.extend(render_session_view_block(session_row, context));
+                        (
+                            format!("sess:{}", session_key(&session_row.entry.session)),
+                            peek_target(&session_row.entry.session)
+                                .into_iter()
+                                .collect(),
+                        )
                     }
                     SectionRow::Workspace(index) => {
                         let workspace_row = &workspace_rows[index];
@@ -3560,10 +3673,19 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             .map(cloud_watch_entry)
             .collect();
         merge_watched_entries(&mut entries, &watched, &overrides, linger_days);
-        let entries = entries_for_mode(entries, view.mode);
-        let rows: Vec<BoardRow> = entries
+        let shaped = entries_for_mode(entries, view.mode);
+        let rows: Vec<BoardRow> = shaped
+            .prs
             .iter()
             .map(|entry| BoardRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        let session_rows: Vec<SessionBlockRow> = shaped
+            .sessions
+            .iter()
+            .map(|entry| SessionBlockRow {
                 entry,
                 preview_lines: Vec::new(),
             })
@@ -3575,7 +3697,17 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
                 preview_lines: Vec::new(),
             })
             .collect();
-        for line in render(&rows, &workspace_rows, width, linger_days, false, view).lines {
+        for line in render(
+            &rows,
+            &session_rows,
+            &workspace_rows,
+            width,
+            linger_days,
+            false,
+            view,
+        )
+        .lines
+        {
             println!("{line}");
         }
         return Ok(());
@@ -3958,8 +4090,8 @@ async fn board_loop(
     let mut selected: Option<String> = None;
     let mut peek_open = false;
     let mut peek_scroll: Option<usize> = None;
-    // Which of the selected row's sessions the pane mirrors (PR view rows
-    // can hold several; session view rows at most one).
+    // Which of the selected row's sessions the pane mirrors (a PR block can
+    // hold several; a session block just its own).
     let mut peek_index: usize = 0;
     let mut pane_lines: Vec<String> = Vec::new();
     // Transcript search state: cached scrollbacks plus the Tab-toggled
@@ -3999,6 +4131,7 @@ async fn board_loop(
 
     let (initial_width, _) = terminal_size().unwrap_or((120, 40));
     let mut lines = render_at(
+        &[],
         &[],
         &[],
         initial_width,
@@ -4145,11 +4278,12 @@ async fn board_loop(
             let mut merged_entries = entries.clone();
             merge_watched_entries(&mut merged_entries, &watched_board.prs, overrides, linger_days);
             observe_cooldowns(&mut cooldowns, &merged_entries, &workspaces, now_ms);
-            let view_entries = entries_for_mode(merged_entries, view.mode);
-            // A PR stays visible when its metadata matches, or when any of
+            let shaped = entries_for_mode(merged_entries, view.mode);
+            // A row stays visible when its metadata matches, or when any of
             // its sessions' transcripts contain the query — with the matched
             // excerpt shown inline so the hit can be confirmed.
-            let filtered: Vec<BoardRow> = view_entries
+            let filtered: Vec<BoardRow> = shaped
+                .prs
                 .iter()
                 .filter_map(|entry| {
                     if entry_bucket(entry, now) > view.oldest_visible_bucket {
@@ -4163,6 +4297,27 @@ async fn board_loop(
                             preview_lines,
                         },
                     )
+                })
+                .collect();
+            let filtered_sessions: Vec<SessionBlockRow> = shaped
+                .sessions
+                .iter()
+                .filter_map(|entry| {
+                    if session_entry_bucket(entry, now) > view.oldest_visible_bucket {
+                        return None;
+                    }
+                    let preview_lines = build_session_previews(
+                        std::slice::from_ref(&entry.session),
+                        &mut transcripts,
+                        query,
+                        width,
+                        expanded,
+                    );
+                    (session_entry_matches_search(entry, query) || !preview_lines.is_empty())
+                        .then_some(SessionBlockRow {
+                            entry,
+                            preview_lines,
+                        })
                 })
                 .collect();
             let filtered_workspaces: Vec<WorkspaceRow> = workspaces
@@ -4186,9 +4341,10 @@ async fn board_loop(
                     )
                 })
                 .collect();
-            matched = filtered.len() + filtered_workspaces.len();
+            matched = filtered.len() + filtered_sessions.len() + filtered_workspaces.len();
             let fresh = render_at(
                 &filtered,
+                &filtered_sessions,
                 &filtered_workspaces,
                 width,
                 linger_days,
@@ -4428,9 +4584,9 @@ async fn board_loop(
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
                             }
-                            // Flip between one row per session and one block
-                            // per primary PR. Selection keys differ between
-                            // the views, so it starts fresh.
+                            // Flip between one block per primary PR and one
+                            // block per session. Selection keys differ
+                            // between the views, so it starts fresh.
                             KeyCode::Char('p') => {
                                 view.toggle_mode();
                                 save_board_preferences(include_ended, linger_days, view)?;
@@ -4664,6 +4820,7 @@ mod tests {
         render(
             &rows,
             &[],
+            &[],
             160,
             DEFAULT_LINGER_DAYS,
             false,
@@ -4682,7 +4839,7 @@ mod tests {
         let styled = render_frame(&[]);
         for (shortcut, label) in [
             ("s", "live"),
-            ("p", "sessions"),
+            ("p", "prs"),
             ("r", "compact"),
             ("a", "all ages"),
             ("↑↓", "select"),
@@ -4695,7 +4852,7 @@ mod tests {
         }
 
         let frame = crate::parsers::strip_ansi_for_debug(&styled);
-        assert!(frame.contains("s live · primary done ≤ 1d · p sessions · r compact · a all ages"));
+        assert!(frame.contains("s live · primary done ≤ 1d · p prs · r compact · a all ages"));
         assert!(!frame.contains("r recap · a age · s live/all"));
         assert!(!frame.contains("e/c recap/compact"));
         assert!(!frame.contains("[/] age"));
@@ -4705,6 +4862,7 @@ mod tests {
         assert!(recap.contains(&format!("{UNDERLINE}a{RESET_UNDERLINE} age ≤ 6h")));
 
         let all_sessions = render(
+            &[],
             &[],
             &[],
             160,
@@ -4757,10 +4915,50 @@ mod tests {
         render(
             &rows,
             &[],
+            &[],
             160,
             DEFAULT_LINGER_DAYS,
             false,
             BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET).with_mode(BoardMode::Prs),
+        )
+    }
+
+    fn render_session_view_frame(
+        shaped: &ShapedEntries,
+        workspaces: &[WorkspaceEntry],
+        detail: u8,
+    ) -> RenderedBoard {
+        let rows: Vec<BoardRow> = shaped
+            .prs
+            .iter()
+            .map(|entry| BoardRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        let session_rows: Vec<SessionBlockRow> = shaped
+            .sessions
+            .iter()
+            .map(|entry| SessionBlockRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        let workspace_rows: Vec<WorkspaceRow> = workspaces
+            .iter()
+            .map(|entry| WorkspaceRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        render(
+            &rows,
+            &session_rows,
+            &workspace_rows,
+            160,
+            DEFAULT_LINGER_DAYS,
+            false,
+            BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET).with_mode(BoardMode::Sessions),
         )
     }
 
@@ -4802,7 +5000,7 @@ mod tests {
         two.repo_name = "portal".to_string();
 
         let merged = aggregate(&[one, two], &HashMap::new(), DEFAULT_LINGER_DAYS);
-        let entries = entries_for_mode(merged, BoardMode::Prs);
+        let entries = entries_for_mode(merged, BoardMode::Prs).prs;
         assert_eq!(entries.len(), 1, "one block per PR, not one row per session");
         assert_eq!(entries[0].sessions.len(), 2);
 
@@ -4845,7 +5043,7 @@ mod tests {
         session.completed_at = now_secs() as u64 - 5 * 60;
 
         let merged = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
-        let entries = entries_for_mode(merged, BoardMode::Prs);
+        let entries = entries_for_mode(merged, BoardMode::Prs).prs;
         let rendered = render_prs_frame(&entries, DEFAULT_DETAIL);
         // Cells link to GitHub, so the hyperlink wrappers go too.
         let links = regex::Regex::new(r"\x1b\]8;;[^\x07]*\x07").unwrap();
@@ -4919,6 +5117,7 @@ mod tests {
                 .collect();
             render_at(
                 &rows,
+                &[],
                 &[],
                 160,
                 DEFAULT_LINGER_DAYS,
@@ -5014,7 +5213,7 @@ mod tests {
 
         // PR view keeps watched PRs even though nothing marks them primary,
         // and the watch glyph shows on the rendered block.
-        let prs = entries_for_mode(entries, BoardMode::Prs);
+        let prs = entries_for_mode(entries, BoardMode::Prs).prs;
         assert_eq!(prs.len(), 2);
         let frame = render_prs_frame(&prs, DEFAULT_DETAIL).lines.join("\n");
         assert!(frame.contains('◉'), "the watch glyph renders: {frame}");
@@ -5069,7 +5268,7 @@ mod tests {
         let merged = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
         assert_eq!(merged.len(), 2, "session view shows the open secondary");
 
-        let prs = entries_for_mode(merged, BoardMode::Prs);
+        let prs = entries_for_mode(merged, BoardMode::Prs).prs;
         assert_eq!(prs.len(), 1, "PR view watches primaries only");
         assert_eq!(prs[0].pr.number, 1);
     }
@@ -5124,7 +5323,7 @@ mod tests {
             stale: false,
         };
 
-        let shaped = entries_for_mode(vec![entry], BoardMode::Prs);
+        let shaped = entries_for_mode(vec![entry], BoardMode::Prs).prs;
         let names: Vec<&str> = shaped[0]
             .sessions
             .iter()
@@ -5184,7 +5383,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregation_fans_the_same_pr_out_to_one_row_per_session() {
+    fn session_view_groups_prs_under_each_session() {
         let mut a = board_pr(5, "portal");
         make_primary(&mut a);
         a.mentions = 10;
@@ -5210,19 +5409,22 @@ mod tests {
         two.slack_threads = crate::slack::extract_threads(
             "https://t.slack.com/archives/C0/p1723500000000000 https://t.slack.com/archives/C1/p1723500001000000 https://t.slack.com/archives/C4/p1723500003000000",
         );
-        let entries = entries_for_mode(
+        let shaped = entries_for_mode(
             aggregate(&[two, one], &HashMap::new(), DEFAULT_LINGER_DAYS),
             BoardMode::Sessions,
         );
-        assert_eq!(entries.len(), 2, "one row per contributing session");
-        let mut session_dirs: Vec<&str> = entries
+        assert!(shaped.prs.is_empty(), "every PR is under a session block");
+        assert_eq!(shaped.sessions.len(), 2, "one block per session");
+        let mut session_dirs: Vec<&str> = shaped
+            .sessions
             .iter()
-            .map(|entry| entry.sessions[0].dir_name.as_str())
+            .map(|block| block.session.dir_name.as_str())
             .collect();
         session_dirs.sort_unstable();
         assert_eq!(session_dirs, ["one", "two"]);
-        for entry in &entries {
-            assert_eq!(entry.sessions.len(), 1, "each row carries one session");
+        for block in &shaped.sessions {
+            assert_eq!(block.prs.len(), 1, "each block lists the session's PRs");
+            let entry = &block.prs[0];
             assert_eq!(entry.pr.mentions, 13, "mentions sum across sessions");
             assert_eq!(entry.pr.additions, 42, "newest gh stats win");
             assert_eq!(
@@ -5319,6 +5521,7 @@ mod tests {
         let rendered = render(
             &rows,
             &[],
+            &[],
             160,
             DEFAULT_LINGER_DAYS,
             false,
@@ -5333,7 +5536,7 @@ mod tests {
             "only the captured session is selectable"
         );
         let span = &rendered.spans[selectable[0]];
-        assert_eq!(span.key, "o/portal#7@live");
+        assert_eq!(span.key, "o/portal#7");
         assert_eq!(span.peeks[0].session_dir, capture.path());
         let block =
             crate::parsers::strip_ansi_for_debug(&rendered.lines[span.start..span.end].join("\n"));
@@ -5460,6 +5663,7 @@ mod tests {
         let loading = render_at(
             &[],
             &[],
+            &[],
             120,
             DEFAULT_LINGER_DAYS,
             false,
@@ -5508,6 +5712,7 @@ mod tests {
             })
             .collect();
         let frame = render(
+            &[],
             &[],
             &rows,
             160,
@@ -5634,31 +5839,11 @@ mod tests {
         let snapshots = vec![pr_session, no_pr_session, portal_session];
         let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
-        let rows: Vec<BoardRow<'_>> = entries
-            .iter()
-            .map(|entry| BoardRow {
-                entry,
-                preview_lines: Vec::new(),
-            })
-            .collect();
-        let workspace_rows: Vec<WorkspaceRow<'_>> = workspaces
-            .iter()
-            .map(|entry| WorkspaceRow {
-                entry,
-                preview_lines: Vec::new(),
-            })
-            .collect();
+        let shaped = entries_for_mode(entries, BoardMode::Sessions);
         let frame = crate::parsers::strip_ansi_for_debug(
-            &render(
-                &rows,
-                &workspace_rows,
-                160,
-                DEFAULT_LINGER_DAYS,
-                false,
-                BoardView::default(),
-            )
-            .lines
-            .join("\n"),
+            &render_session_view_frame(&shaped, &workspaces, DEFAULT_DETAIL)
+                .lines
+                .join("\n"),
         );
 
         assert_eq!(frame.matches("samuelclay/crabigator").count(), 1);
@@ -5670,35 +5855,34 @@ mod tests {
             .lines()
             .find(|line| line.contains("◇ ᛝ  Newest completed session"))
             .unwrap();
+        let crab_header_row = frame
+            .lines()
+            .find(|line| line.contains("◆ ⟁  crabigator"))
+            .expect("the PR session's block leads with the session");
+        let portal_header_row = frame
+            .lines()
+            .find(|line| line.contains("◆ ᛝ  developer-portal"))
+            .unwrap();
         let crab_pr_row = frame.lines().find(|line| line.contains("7:")).unwrap();
         let portal_pr_row = frame.lines().find(|line| line.contains("9:")).unwrap();
-        let crab_metadata_row = frame.lines().find(|line| line.contains("with-pr")).unwrap();
-        let portal_metadata_row = frame
-            .lines()
-            .find(|line| line.contains("a-much-longer-branch-name"))
-            .unwrap();
         let column = |line: &str, text: &str| {
             crate::ui::utils::strip_ansi_len(&line[..line.find(text).unwrap()])
         };
-        assert_eq!(column(no_pr_row, "⟩"), column(crab_pr_row, "⟩"));
-        assert_eq!(column(crab_pr_row, "⟩"), column(portal_pr_row, "⟩"));
+        assert_eq!(column(no_pr_row, "⟩"), column(crab_header_row, "⟩"));
+        assert_eq!(column(crab_header_row, "⟩"), column(portal_header_row, "⟩"));
         assert_eq!(
-            column(no_pr_row, "main"),
-            column(crab_metadata_row, "with-pr")
-        );
-        assert_eq!(
-            column(crab_metadata_row, "with-pr"),
-            column(portal_metadata_row, "a-much-longer-branch-name")
+            column(crab_pr_row, "⎇ with-pr"),
+            column(portal_pr_row, "⎇ a-much-longer-branch-name")
         );
         assert!(!no_pr_row.contains("no tracked PR"));
-        assert!(crab_pr_row.contains("⟁  crabigator"));
-        assert!(crab_pr_row.contains("#7: ⟁  crabigator"));
-        assert!(!crab_pr_row.contains("with-pr"));
-        assert!(crab_metadata_row.contains("⎇ with-pr"));
-        assert!(portal_pr_row.contains("ᛝ  developer-portal"));
-        assert!(portal_pr_row.contains("#9: ᛝ  developer-portal"));
-        assert!(!portal_pr_row.contains("a-much-longer-branch-name"));
-        assert!(portal_metadata_row.contains("⎇ a-much-longer-branch-name"));
+        assert!(
+            !crab_header_row.contains("#7:"),
+            "the session leads its block; the PR sits beneath: {crab_header_row}"
+        );
+        assert!(crab_pr_row.contains("#7: crabigator"));
+        assert!(crab_pr_row.contains("⎇ with-pr"));
+        assert!(portal_pr_row.contains("#9: developer-portal"));
+        assert!(portal_pr_row.contains("⎇ a-much-longer-branch-name"));
     }
 
     #[test]
@@ -5730,34 +5914,14 @@ mod tests {
         let snapshots = vec![pr_session, peer_session, other_repo];
         let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
-        let rows: Vec<BoardRow<'_>> = entries
-            .iter()
-            .map(|entry| BoardRow {
-                entry,
-                preview_lines: Vec::new(),
-            })
-            .collect();
-        let workspace_rows: Vec<WorkspaceRow<'_>> = workspaces
-            .iter()
-            .map(|entry| WorkspaceRow {
-                entry,
-                preview_lines: Vec::new(),
-            })
-            .collect();
+        let shaped = entries_for_mode(entries, BoardMode::Sessions);
 
         for detail in [0, MAX_DETAIL] {
-            let lines: Vec<String> = render(
-                &rows,
-                &workspace_rows,
-                160,
-                DEFAULT_LINGER_DAYS,
-                false,
-                BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET),
-            )
-            .lines
-            .into_iter()
-            .map(|line| crate::parsers::strip_ansi_for_debug(&line))
-            .collect();
+            let lines: Vec<String> = render_session_view_frame(&shaped, &workspaces, detail)
+                .lines
+                .into_iter()
+                .map(|line| crate::parsers::strip_ansi_for_debug(&line))
+                .collect();
             let crabigator = lines
                 .iter()
                 .position(|line| line.contains("o/crabigator"))
@@ -5766,9 +5930,13 @@ mod tests {
                 .iter()
                 .position(|line| line.contains("o/portal"))
                 .unwrap();
+            let header_row = lines
+                .iter()
+                .position(|line| line.contains("◆ ᛝ  PR session"))
+                .unwrap();
             let pr_row = lines
                 .iter()
-                .position(|line| line.contains("2:") && line.contains("PR session"))
+                .position(|line| line.contains("2: crabigator"))
                 .unwrap();
             let peer_row = lines
                 .iter()
@@ -5780,7 +5948,8 @@ mod tests {
                 .filter_map(|(offset, line)| line.is_empty().then_some(crabigator + offset))
                 .collect();
 
-            assert!(crabigator < pr_row && pr_row < peer_row && peer_row < portal);
+            assert!(crabigator < header_row && header_row < pr_row);
+            assert!(pr_row < peer_row && peer_row < portal);
             assert_eq!(blank_lines, vec![portal - 1]);
         }
     }
@@ -6015,31 +6184,25 @@ mod tests {
         assert_eq!(workspaces[0].session.session_id, "secondary-session");
         assert_eq!(entries[0].sessions.len(), 1);
 
-        let rows = [BoardRow {
-            entry: &entries[0],
-            preview_lines: Vec::new(),
-        }];
-        let workspace_rows = [WorkspaceRow {
-            entry: &workspaces[0],
-            preview_lines: Vec::new(),
-        }];
+        let shaped = entries_for_mode(entries, BoardMode::Sessions);
         for detail in 0..=MAX_DETAIL {
             let frame = crate::parsers::strip_ansi_for_debug(
-                &render(
-                    &rows,
-                    &workspace_rows,
-                    160,
-                    DEFAULT_LINGER_DAYS,
-                    false,
-                    BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET),
-                )
-                .lines
-                .join("\n"),
+                &render_session_view_frame(&shaped, &workspaces, detail)
+                    .lines
+                    .join("\n"),
             );
             assert!(frame.contains("2 sessions"));
+            let header_row = frame
+                .lines()
+                .find(|line| line.contains("◆ ᛝ  PR owner session"))
+                .expect("the owning session leads its block");
+            assert!(header_row.contains(PROMPT_ICON));
+            assert!(header_row.contains(COMPLETION_ICON));
             let pr_row = frame.lines().find(|line| line.contains("2:")).unwrap();
-            assert!(pr_row.contains(PROMPT_ICON));
-            assert!(pr_row.contains(COMPLETION_ICON));
+            assert!(
+                !pr_row.contains(PROMPT_ICON),
+                "the header carries the activity, not the PR sub-row: {pr_row}"
+            );
             let session_row = frame
                 .lines()
                 .find(|line| line.contains("◇ ᛝ  Independent session"))
@@ -6346,6 +6509,7 @@ mod tests {
         assert!(crate::parsers::strip_ansi_for_debug(&compact).contains("#9: Fix the flow"));
         assert!(!compact.contains("#builder"));
         assert!(!compact.contains("CI green, awaiting review"));
+        assert!(!compact.contains("Wait for approval"));
 
         let recap = render_frame_at(&entries, 1);
         assert!(
@@ -6387,28 +6551,21 @@ mod tests {
             .unwrap();
         assert!(
             judgment_line.contains("#builder"),
-            "the first Slack link shares the first recap detail row"
+            "the first Slack link shares the judgment row"
         );
         let headline_line = recap
             .lines()
             .find(|line| line.contains("Finished the dashboard changes"))
             .unwrap();
         assert!(
-            headline_line.contains("#pr-reviews"),
-            "the second Slack link shares the recap headline row"
+            headline_line.contains("Builder Signals dashboard"),
+            "the headline rides the session sub-row"
         );
-        let next_line = recap
-            .lines()
-            .find(|line| line.contains("Next: Wait for approval"))
-            .unwrap();
-        assert!(
-            next_line.contains("#builder-dev"),
-            "the third Slack link shares the final recap row"
-        );
+        assert!(recap.contains("Next: Wait for approval"));
         assert_eq!(
             recap.lines().count(),
-            compact.lines().count() + 4,
-            "three recap rows and four Slack links add only four rows"
+            compact.lines().count() + 5,
+            "the judgment with four Slack links plus the next step add five rows"
         );
     }
 
@@ -6694,8 +6851,12 @@ mod tests {
             "judgments wait for recap view"
         );
         assert!(
-            !compact.contains("Added r-toggled recaps"),
-            "recaps wait for recap view"
+            crate::parsers::strip_ansi_for_debug(&compact).contains("— Added r-toggled"),
+            "the headline rides the session sub-row"
+        );
+        assert!(
+            !compact.contains("Next: Ready to merge"),
+            "the rest of the recap waits for recap view"
         );
 
         let recaps = render_frame_at(&entries, 1);
@@ -6703,10 +6864,6 @@ mod tests {
         assert!(recaps.contains("Open and ready for review"));
         assert!(recaps.contains("Added r-toggled"));
         assert!(recaps.contains("Next: Ready to merge once checks finish"));
-        // The recap line carries the turn's diff and compact age.
-        assert!(recaps.contains("+120"), "recap shows the line delta");
-        assert!(recaps.contains("-35"));
-        assert!(recaps.contains("42m"), "recap shows its age");
         assert!(!recaps.contains("ago"), "expanded ages stay compact");
         assert!(
             crate::parsers::strip_ansi_for_debug(&recaps).contains(" · r recap"),
@@ -6717,8 +6874,8 @@ mod tests {
 
         assert_eq!(
             recaps.lines().count(),
-            compact.lines().count() + 3,
-            "recap view keeps the judgment, headline, and next step"
+            compact.lines().count() + 2,
+            "recap view adds the judgment and the next step"
         );
 
         let compact_line = recaps
@@ -6726,10 +6883,6 @@ mod tests {
             .find(|line| {
                 crate::parsers::strip_ansi_for_debug(line).contains("#9: Make PR titles official")
             })
-            .unwrap();
-        let recap_line = recaps
-            .lines()
-            .find(|line| line.contains("Added r-toggled"))
             .unwrap();
         let judgment_line = recaps
             .lines()
@@ -6751,15 +6904,15 @@ mod tests {
             .unwrap();
         let generated_plain = crate::parsers::strip_ansi_for_debug(generated_line);
         assert!(
-            generated_plain.starts_with("   ᛝ  "),
-            "the generated title stays below the PR title"
+            generated_plain.trim_start().starts_with("◆ ᛝ  "),
+            "the session sub-row sits below the PR header: {generated_plain}"
         );
-        assert!(generated_plain.contains("⎇ sam/pr-title-layout"));
-        assert!(generated_plain.contains("+49 -5"));
-        assert!(generated_plain.contains("3 files"));
-        assert!(!compact_plain.contains("sam/pr-title-layout"));
-        assert!(!compact_plain.contains("+49 -5"));
-        assert!(!compact_plain.contains("3 files"));
+        assert!(
+            compact_plain.contains("⎇ sam/pr-title-layout"),
+            "the header carries the branch: {compact_plain}"
+        );
+        assert!(compact_plain.contains("+49 -5"));
+        assert!(compact_plain.contains("3 files"));
         assert!(compact_line.contains(&escape::hyperlink(
             &entries[0].pr.url,
             &format!(
@@ -6771,25 +6924,12 @@ mod tests {
             )
         )));
         assert!(
-            crate::parsers::strip_ansi_for_debug(recap_line).starts_with("   ↪ "),
-            "recap stays indented beneath the titled row"
-        );
-        assert!(
             crate::parsers::strip_ansi_for_debug(judgment_line).starts_with("   ✦ "),
             "the PR judgment remains a separate line"
         );
-        assert!(!judgment_line.contains("+120"));
-        assert!(!judgment_line.contains("42m"));
         assert!(
             crate::parsers::strip_ansi_for_debug(next_line).starts_with("     Next: "),
             "the next step remains a separate recap line"
-        );
-        assert!(!next_line.contains("+120"));
-        assert!(!next_line.contains("42m"));
-        assert!(
-            generated_plain.find("⎇ sam/pr-title-layout").unwrap()
-                < generated_plain.find("+49 -5").unwrap(),
-            "git metadata sits to the right of the blue title and branch"
         );
 
         let row = crate::parsers::strip_ansi_for_debug(&compact);
@@ -7002,6 +7142,7 @@ mod tests {
 
         let styled = render(
             &[],
+            &[],
             &rows,
             160,
             DEFAULT_LINGER_DAYS,
@@ -7032,6 +7173,7 @@ mod tests {
             preview_lines: Vec::new(),
         }];
         let styled = render(
+            &[],
             &[],
             &rows,
             160,
@@ -7269,7 +7411,7 @@ mod tests {
     }
 
     #[test]
-    fn pr_row_keeps_the_pr_title_and_uses_only_the_newest_generated_subtitle() {
+    fn pr_header_keeps_the_pr_title_and_each_session_gets_its_own_sub_row() {
         let mut entries = titled_entries();
         let mut newer = entries[0].sessions[0].clone();
         newer.session_id = "newer-session".to_string();
@@ -7295,8 +7437,10 @@ mod tests {
             .unwrap();
         assert!(!generated_row.contains("9:"), "{plain}");
         assert!(!frame.contains('⌾'));
-        assert!(!frame.contains("Wiring the PR board detail levels"));
-        assert!(!frame.contains("other-worktree"));
+        assert!(
+            frame.contains("Wiring the PR board detail levels"),
+            "every touching session keeps its own sub-row"
+        );
 
         for session in &mut entries[0].sessions {
             session.title.clear();
