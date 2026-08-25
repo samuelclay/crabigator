@@ -1679,11 +1679,11 @@ fn activity_cell(sessions: &[SessionRef], now: u64, throbber_frame: usize) -> Ac
     let prompt = activity_part(PROMPT_ICON, prompted_at, now);
     let completion = activity_part(COMPLETION_ICON, completed_at, now);
     let state = activity_state(sessions)
-        .map(|state| crate::ui::session_state_icon(state, throbber_frame))
-        .unwrap_or_else(|| " ".to_string());
+        .map(|state| crate::ui::session_state_badge(state, throbber_frame))
+        .unwrap_or_else(|| " ".repeat(crate::ui::STATE_BADGE_WIDTH));
     ActivityCell {
         styled: format!("{}  {}  {}", state, prompt.styled, completion.styled),
-        visible: 1 + 2 + prompt.visible + 2 + completion.visible,
+        visible: crate::ui::STATE_BADGE_WIDTH + 2 + prompt.visible + 2 + completion.visible,
     }
 }
 
@@ -2713,8 +2713,9 @@ fn session_activity_cell(session: &SessionRef, now: u64, throbber_frame: usize) 
             format!("{icon} {}", format_age(now.saturating_sub(timestamp)))
         }
     };
+    // The ✓ sits centered in the same three-cell slot as a live row's badge.
     let plain = format!(
-        "✓  {}  {}",
+        " ✓   {}  {}",
         part(PROMPT_ICON, session.prompted_at),
         part(COMPLETION_ICON, session.completed_at)
     );
@@ -4551,6 +4552,7 @@ async fn board_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::escape::bg;
 
     fn board_pr(number: u64, repo: &str) -> SessionPr {
         let mut pr = SessionPr::test_stub(number, "o", repo);
@@ -6591,8 +6593,8 @@ mod tests {
         assert!(activity.styled.contains("⟩ 30m"));
         assert!(activity.styled.contains("⋖ 2h"));
         assert!(
-            crate::parsers::strip_ansi_for_debug(&activity.styled).starts_with("⠋  ⟩"),
-            "thinking state sits directly before prompt activity"
+            crate::parsers::strip_ansi_for_debug(&activity.styled).starts_with(" ⠋   ⟩"),
+            "thinking state sits centered in its badge slot before prompt activity"
         );
         assert!(activity.styled.contains(&fg(RECENCY_1H)));
         assert!(activity.styled.contains(&fg(RECENCY_3H)));
@@ -6613,16 +6615,19 @@ mod tests {
         assert!(!unknown.styled.contains("\x1b[48;5;"));
     }
 
+    /// Quiet states center a colored icon in the three-cell slot; the two
+    /// states that wait on the user fill it with chevrons on a bright
+    /// background so they stand out from a column of ✓ and ○.
     #[test]
     fn activity_icons_cover_every_session_state_and_thinking_animates() {
         let cases = [
-            (SessionState::Ready, "○", color::GRAY),
-            (SessionState::Permission, "!", color::YELLOW),
-            (SessionState::Question, "?", color::ORANGE),
-            (SessionState::Complete, "✓", color::PURPLE),
-            (SessionState::Interrupted, "⊘", color::RED),
+            (SessionState::Ready, " ○ ", fg(color::GRAY)),
+            (SessionState::Permission, "»!«", bg(color::YELLOW)),
+            (SessionState::Question, "»?«", bg(color::DARK_ORANGE)),
+            (SessionState::Complete, " ✓ ", fg(color::PURPLE)),
+            (SessionState::Interrupted, " ⊘ ", fg(color::RED)),
         ];
-        for (state, icon, icon_color) in cases {
+        for (state, badge, styling) in cases {
             let session = SessionRef {
                 session_id: "state".to_string(),
                 platform: PlatformKind::Claude,
@@ -6637,9 +6642,9 @@ mod tests {
                 ended: false,
             };
             let activity = activity_cell(&[session], 1, 0);
-            assert!(crate::parsers::strip_ansi_for_debug(&activity.styled)
-                .starts_with(&format!("{icon}  ⟩")));
-            assert!(activity.styled.contains(&fg(icon_color)));
+            let plain = crate::parsers::strip_ansi_for_debug(&activity.styled);
+            assert!(plain.starts_with(&format!("{badge}  ⟩")), "{plain}");
+            assert!(activity.styled.contains(&styling), "{state:?}");
         }
 
         let thinking = SessionRef {

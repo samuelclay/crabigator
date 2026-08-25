@@ -14,7 +14,7 @@ use super::{WidgetArea, COMPLETION_ICON, PROMPT_ICON};
 use crate::cloud::CloudStatus;
 use crate::hooks::SessionStats;
 use crate::platforms::SessionState;
-use crate::terminal::escape::{self, color, fg, RESET};
+use crate::terminal::escape::{self, bg, color, fg, RESET};
 
 /// Braille spinner frames for the thinking animation
 const THROBBER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -50,6 +50,22 @@ pub(crate) fn session_state_icon(state: SessionState, throbber_frame: usize) -> 
         SessionState::Interrupted => ('⊘', color::RED),
     };
     format!("{}{}{}", fg(icon_color), icon, RESET)
+}
+
+/// Width of [`session_state_badge`] in terminal cells.
+pub(crate) const STATE_BADGE_WIDTH: usize = 3;
+
+/// The board's state slot: three cells so the states that wait on the user
+/// can shout. A question is `»?«` on bright orange and a permission prompt
+/// `»!«` on yellow — the status bar's `» ? «` chevrons with a filled
+/// background — while every other state centers its quiet icon.
+pub(crate) fn session_state_badge(state: SessionState, throbber_frame: usize) -> String {
+    let (mark, background) = match state {
+        SessionState::Question => ('?', color::DARK_ORANGE),
+        SessionState::Permission => ('!', color::YELLOW),
+        _ => return format!(" {} ", session_state_icon(state, throbber_frame)),
+    };
+    format!("{}{}»{mark}«{}", bg(background), fg(color::BLACK), RESET)
 }
 
 /// Calculate idle seconds from idle_since timestamp

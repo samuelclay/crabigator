@@ -21,10 +21,10 @@ pub use handoff::{
     recap_handoff_rows, total_handoff_rows, MAX_RECAP_ROWS,
 };
 pub use pairing::{draw_pairing_banner, draw_update_banner, PairingState};
-pub(crate) use stats::session_state_icon;
 pub use stats::{
     draw_stats_widget, stats_render_rows, stats_use_compact_layout, throbber_frame_index,
 };
+pub(crate) use stats::{session_state_badge, session_state_icon, STATE_BADGE_WIDTH};
 pub use status_bar::{
     compute_dynamic_status_rows, draw_status_bar, handoff_rows, split_terminal_rows, Layout,
 };
