@@ -1,6 +1,6 @@
-//! Cooldown tints for the PR board.
+//! Cooldown tints for the PR board and the session status bar.
 //!
-//! When a session's state badge or one of a PR's GitHub status cells changes,
+//! When a session's state or one of a PR's GitHub status cells changes,
 //! that cell lights up bright purple and fades over two minutes to a barely
 //! visible purple-gray, then back to plain. One hue, so a glance at the board
 //! reads simply: the brighter the purple, the more recent the change.
@@ -10,13 +10,28 @@
 
 use std::collections::HashMap;
 
+use crate::platforms::SessionState;
+use crate::pr::SessionPr;
 use crate::terminal::escape::{bg_rgb, fg_rgb, RESET_BG, RESET_FG};
+use crate::ui::pr_cells::pr_status_signature;
 
 /// How long a changed cell stays tinted.
 pub(crate) const COOLDOWN_MS: u64 = 120_000;
 
+/// Cooldown key for the running session's own state indicator in the
+/// status bar. The PR board keys sessions by id instead; the two never share
+/// a `Cooldowns` instance.
+pub(crate) const SESSION_STATE_KEY: &str = "session-state";
+
 /// How many distinct shades the cooldown steps through.
 const SHADES: u64 = 128;
+
+/// The fade step `now_ms` falls in. A repaint fires once per step, so hashing
+/// this alongside the widget content keeps an active fade animating without
+/// redrawing on every tick.
+pub(crate) fn shade_step(now_ms: u64) -> u64 {
+    now_ms / (COOLDOWN_MS / SHADES)
+}
 
 /// One step of the cooldown: a truecolor background and a foreground that
 /// stays legible on it.
@@ -80,6 +95,11 @@ pub(crate) struct StatusTints {
     pub(crate) merge: Option<Tint>,
 }
 
+/// Cooldown key for one of a PR's GitHub status columns.
+fn pr_key(pr: &SessionPr, column: &str) -> String {
+    format!("pr:{}/{}#{}:{column}", pr.owner, pr.repo, pr.number)
+}
+
 struct Observed {
     signature: String,
     /// Unix ms of the last change; 0 for a cell seen only in one state, so
@@ -96,31 +116,7 @@ pub(crate) struct Cooldowns {
 impl Cooldowns {
     /// Record what a cell shows now. A cell seen for the first time starts
     /// cold; a cell whose text differs from last time starts a cooldown.
-    pub(crate) fn observe(&mut self, key: String, signature: &str, now_ms: u64) {
-        self.record(key, signature, now_ms);
-    }
-
-    /// Record a change that should not glow — a session entering the thinking
-    /// state is the user's own prompt, not news. Any active glow goes out.
-    pub(crate) fn observe_quiet(&mut self, key: String, signature: &str) {
-        self.record(key, signature, 0);
-    }
-
-    /// Record a count that only glows when it rises — comment threads getting
-    /// resolved is quiet; new unresolved ones light up.
-    pub(crate) fn observe_counter(&mut self, key: String, count: i64, now_ms: u64) {
-        let rose = self.seen.get(&key).is_some_and(|observed| {
-            observed
-                .signature
-                .parse::<i64>()
-                .is_ok_and(|old| count > old)
-        });
-        self.record(key, &count.to_string(), if rose { now_ms } else { 0 });
-    }
-
-    fn record(&mut self, key: String, signature: &str, changed_at_ms: u64) {
-        // A cell seen for the first time lands cold, so only a signature that
-        // differs from the one already stored starts a cooldown.
+    fn observe(&mut self, key: String, signature: &str, changed_at_ms: u64) {
         let observed = self.seen.entry(key).or_insert_with(|| Observed {
             signature: signature.to_string(),
             changed_at_ms: 0,
@@ -129,6 +125,57 @@ impl Cooldowns {
             observed.signature = signature.to_string();
             observed.changed_at_ms = changed_at_ms;
         }
+    }
+
+    /// Record a change that should not glow — a session entering the thinking
+    /// state is the user's own prompt, not news. Any active glow goes out.
+    fn observe_quiet(&mut self, key: String, signature: &str) {
+        self.observe(key, signature, 0);
+    }
+
+    /// Record a session's state under `key`. Entering the thinking state is
+    /// the user's own prompt at work, so it lands quietly; any other change
+    /// starts a cooldown.
+    pub(crate) fn observe_session_state(&mut self, key: String, state: SessionState, now_ms: u64) {
+        let signature = format!("{state:?}");
+        if state == SessionState::Thinking {
+            self.observe_quiet(key, &signature);
+        } else {
+            self.observe(key, &signature, now_ms);
+        }
+    }
+
+    /// Record what a PR's GitHub status cells show now — the labeled columns
+    /// as plain changes, the unresolved-comment count as rise-only.
+    pub(crate) fn observe_pr(&mut self, pr: &SessionPr, now_ms: u64) {
+        for (column, label) in pr_status_signature(pr) {
+            self.observe(pr_key(pr, column), &label, now_ms);
+        }
+        self.observe_counter(pr_key(pr, "comments"), pr.unresolved_comments, now_ms);
+    }
+
+    /// The tints a PR row's status cells wear right now.
+    pub(crate) fn pr_tints(&self, pr: &SessionPr, now_ms: u64) -> StatusTints {
+        let tint = |column: &str| self.tint(&pr_key(pr, column), now_ms);
+        StatusTints {
+            state: tint("state"),
+            ci: tint("ci"),
+            comments: tint("comments"),
+            review: tint("review"),
+            merge: tint("merge"),
+        }
+    }
+
+    /// Record a count that only glows when it rises — comment threads getting
+    /// resolved is quiet; new unresolved ones light up.
+    fn observe_counter(&mut self, key: String, count: i64, now_ms: u64) {
+        let rose = self.seen.get(&key).is_some_and(|observed| {
+            observed
+                .signature
+                .parse::<i64>()
+                .is_ok_and(|old| count > old)
+        });
+        self.observe(key, &count.to_string(), if rose { now_ms } else { 0 });
     }
 
     /// When the cell last changed; `None` for an unknown cell or one only
@@ -259,6 +306,20 @@ mod tests {
                 .take(20)
                 .all(|tint| tint.fg == (255, 255, 255)),
             "light text on the dim end"
+        );
+    }
+
+    #[test]
+    fn session_state_observer_keeps_thinking_quiet() {
+        let mut cooldowns = Cooldowns::default();
+        cooldowns.observe_session_state("s".to_string(), SessionState::Complete, 1_000);
+        assert_eq!(cooldowns.tint("s", 1_000), None, "first sight stays cold");
+        cooldowns.observe_session_state("s".to_string(), SessionState::Thinking, 2_000);
+        assert_eq!(cooldowns.tint("s", 2_000), None, "thinking lands quietly");
+        cooldowns.observe_session_state("s".to_string(), SessionState::Complete, 3_000);
+        assert!(
+            cooldowns.tint("s", 3_000).is_some(),
+            "finishing starts the fade"
         );
     }
 

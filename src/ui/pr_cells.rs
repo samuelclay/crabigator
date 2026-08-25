@@ -352,10 +352,21 @@ fn table_width_with_gap(columns: &[usize], gap: usize) -> usize {
     columns.iter().sum::<usize>() + active.saturating_sub(1) * gap
 }
 
-/// One styled row: left padding, the left columns, then a gap wide enough to
-/// anchor the status columns against the right edge.
+#[cfg(test)]
 pub(crate) fn pr_row_text(width: u16, pr: &SessionPr, widths: &PrColumnWidths) -> String {
-    pr_row_text_with_optional_activity(width, pr, widths, None, None, StatusTints::default())
+    pr_row_text_tinted(width, pr, widths, StatusTints::default())
+}
+
+/// One styled row: left padding, the left columns, then a gap wide enough to
+/// anchor the status columns against the right edge, with cooldown tints on
+/// the status cells that changed recently.
+pub(crate) fn pr_row_text_tinted(
+    width: u16,
+    pr: &SessionPr,
+    widths: &PrColumnWidths,
+    tints: StatusTints,
+) -> String {
+    pr_row_text_with_optional_activity(width, pr, widths, None, None, tints)
 }
 
 /// Render the PR view's header row: identity (`★ #142: title`) and branch on

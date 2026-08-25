@@ -36,7 +36,7 @@ use crate::pr::{SessionPr, WatchAdd};
 use crate::pr_rank::{attached_to_worktree, PrDisposition};
 use crate::slack::{SlackDirectory, SlackThread};
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG, RESET_UNDERLINE, UNDERLINE};
-use crate::ui::cooldown::{Cooldowns, StatusTints};
+use crate::ui::cooldown::Cooldowns;
 use crate::ui::pr_cells::{
     board_detail_row_text, session_row_text_with_activity, PrColumnWidths, PR_RIGHT_COLUMN_GAP,
 };
@@ -1788,11 +1788,6 @@ fn session_cooldown_key(session_id: &str) -> String {
     format!("session:{session_id}")
 }
 
-/// Cooldown key for one of a PR's GitHub status columns.
-fn pr_cooldown_key(pr: &SessionPr, column: &str) -> String {
-    format!("pr:{}/{}#{}:{column}", pr.owner, pr.repo, pr.number)
-}
-
 /// Record what every badge and status cell shows now, so cells that changed
 /// since the last frame start their cooldown.
 fn observe_cooldowns(
@@ -1806,36 +1801,14 @@ fn observe_cooldowns(
         .flat_map(|entry| entry.sessions.iter())
         .chain(workspaces.iter().map(|entry| &entry.session));
     for session in sessions {
-        let key = session_cooldown_key(&session.session_id);
-        let signature = format!("{:?}", session.state);
-        if session.state == SessionState::Thinking {
-            // Entering thinking is the user's own prompt, not news.
-            cooldowns.observe_quiet(key, &signature);
-        } else {
-            cooldowns.observe(key, &signature, now_ms);
-        }
-    }
-    for entry in entries {
-        for (column, label) in crate::ui::pr_cells::pr_status_signature(&entry.pr) {
-            cooldowns.observe(pr_cooldown_key(&entry.pr, column), &label, now_ms);
-        }
-        cooldowns.observe_counter(
-            pr_cooldown_key(&entry.pr, "comments"),
-            entry.pr.unresolved_comments,
+        cooldowns.observe_session_state(
+            session_cooldown_key(&session.session_id),
+            session.state,
             now_ms,
         );
     }
-}
-
-/// The tints a PR row's status cells wear right now.
-fn status_tints(cooldowns: &Cooldowns, pr: &SessionPr, now_ms: u64) -> StatusTints {
-    let tint = |column: &str| cooldowns.tint(&pr_cooldown_key(pr, column), now_ms);
-    StatusTints {
-        state: tint("state"),
-        ci: tint("ci"),
-        comments: tint("comments"),
-        review: tint("review"),
-        merge: tint("merge"),
+    for entry in entries {
+        cooldowns.observe_pr(&entry.pr, now_ms);
     }
 }
 
@@ -2667,7 +2640,7 @@ fn render_pr_view_block(board_row: &BoardRow<'_>, context: RowContext<'_>) -> Ve
         widths,
         &title,
         (activity.styled, activity.visible, activity_width),
-        status_tints(cooldowns, &entry.pr, now_ms),
+        cooldowns.pr_tints(&entry.pr, now_ms),
     );
     if entry.stale {
         row = format!("{}{row}", fg(color::DARK_GRAY));
@@ -2845,7 +2818,7 @@ fn render_session_view_block(
             widths,
             &title,
             activity_width,
-            status_tints(cooldowns, &sub.pr, now_ms),
+            cooldowns.pr_tints(&sub.pr, now_ms),
         );
         if entry.stale {
             row = format!("{}{row}", fg(color::DARK_GRAY));

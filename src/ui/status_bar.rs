@@ -19,6 +19,7 @@ use crate::terminal::escape::{self, color, RESET};
 use crate::title::session_title_hierarchy;
 use crate::update::UpdateState;
 
+use super::cooldown::{self, Cooldowns};
 use super::{
     changes_natural_rows, draw_changes_widget, draw_git_widget, draw_pairing_banner,
     draw_pr_handoff, draw_pr_separator, draw_recap_handoff, draw_stats_widget, draw_update_banner,
@@ -184,6 +185,8 @@ pub fn draw_status_bar(
     recap_toast_visible: bool,
     prs: &[SessionPr],
     cursor_position: Option<(u16, u16)>, // (row, col) from vt100 parser, 0-indexed
+    cooldowns: &Cooldowns,
+    now_ms: u64,
 ) -> Result<()> {
     // Begin synchronized update - terminal batches all our drawing
     // so cursor movements don't interfere with Claude's incremental updates
@@ -255,7 +258,15 @@ pub fn draw_status_bar(
         let divider_row = layout.pty_rows + 1 + banner_rows_reserved;
         draw_pr_separator(stdout, divider_row, layout.total_cols)?;
         let pr_start = divider_row + pr_separator_rows(prs);
-        draw_pr_handoff(stdout, pr_start, layout.total_cols, prs, pr_rows)?;
+        draw_pr_handoff(
+            stdout,
+            pr_start,
+            layout.total_cols,
+            prs,
+            pr_rows,
+            cooldowns,
+            now_ms,
+        )?;
     }
 
     // Draw thick separator line (always after the reserved handoff space)
@@ -303,6 +314,7 @@ pub fn draw_status_bar(
         (git_w, remaining - git_w)
     };
     let titles = session_title_hierarchy(prs, terminal_title);
+    let state_tint = cooldowns.tint(cooldown::SESSION_STATE_KEY, now_ms);
 
     // Draw content rows (after reserved handoff space + separator).
     let widget_pty_rows = layout.pty_rows + layout.handoff_rows;
@@ -321,6 +333,7 @@ pub fn draw_status_bar(
             cloud_status,
             is_paired,
             pairing_state.pairing_code.as_deref(),
+            state_tint,
         )?;
 
         // Separator

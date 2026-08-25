@@ -120,27 +120,25 @@ fn format_elapsed(timestamp: Option<f64>) -> String {
         .unwrap_or_default()
 }
 
-/// Format the state indicator for the header row
-fn format_state_indicator(state: SessionState) -> String {
-    match state {
-        SessionState::Ready => {
-            format!("{}○ Ready{}", fg(color::GRAY), RESET)
-        }
+/// Format the state indicator for the header row.
+///
+/// After a state change the indicator sits on a cooldown tint. The waiting
+/// states already shout in their own colors and a thinking throbber is the
+/// user's own prompt at work, so only the settled states wear the tint.
+fn format_state_indicator(state: SessionState, tint: Option<Tint>) -> String {
+    let (label, label_color) = match state {
+        SessionState::Ready => ("○ Ready", color::GRAY),
+        SessionState::Complete => ("✓ Complete", color::PURPLE),
+        SessionState::Interrupted => ("⊘ Interrupted", color::RED),
         SessionState::Thinking => {
-            format!("{}{}{}", fg(color::GREEN), throbber_char(), RESET)
+            return format!("{}{}{}", fg(color::GREEN), throbber_char(), RESET)
         }
-        SessionState::Permission => {
-            format!("{}» ? «{} Perm", fg(color::YELLOW), RESET)
-        }
-        SessionState::Question => {
-            format!("{}» ? «{} Ask", fg(color::ORANGE), RESET)
-        }
-        SessionState::Complete => {
-            format!("{}✓ Complete{}", fg(color::PURPLE), RESET)
-        }
-        SessionState::Interrupted => {
-            format!("{}⊘ Interrupted{}", fg(color::RED), RESET)
-        }
+        SessionState::Permission => return format!("{}» ? «{} Perm", fg(color::YELLOW), RESET),
+        SessionState::Question => return format!("{}» ? «{} Ask", fg(color::ORANGE), RESET),
+    };
+    match tint {
+        Some(tint) => tint_text(label, tint),
+        None => format!("{}{label}{}", fg(label_color), RESET),
     }
 }
 
@@ -181,6 +179,7 @@ pub fn draw_stats_widget(
     cloud_status: Option<&CloudStatus>,
     is_paired: bool,
     pairing_code: Option<&str>,
+    state_tint: Option<Tint>,
 ) -> Result<()> {
     write!(
         stdout,
@@ -204,6 +203,7 @@ pub fn draw_stats_widget(
             cloud_status,
             is_paired,
             pairing_code,
+            state_tint,
         )
     } else {
         draw_normal_row(
@@ -213,6 +213,7 @@ pub fn draw_stats_widget(
             cloud_status,
             is_paired,
             pairing_code,
+            state_tint,
         )
     };
 
@@ -438,6 +439,7 @@ fn draw_compact_row(
     cloud_status: Option<&CloudStatus>,
     is_paired: bool,
     pairing_code: Option<&str>,
+    state_tint: Option<Tint>,
 ) -> String {
     let content_width = (width as usize).saturating_sub(1);
     let left_width = content_width / 2;
@@ -446,7 +448,7 @@ fn draw_compact_row(
     match row {
         1 => {
             // Header: cloud status (+ optional pair code) on left, state on right
-            let state = format_state_indicator(stats.effective_state());
+            let state = format_state_indicator(stats.effective_state(), state_tint);
             let state_len = strip_ansi_len(&state);
             let (header_len, header) = build_header_left(
                 cloud_status,
@@ -535,11 +537,12 @@ fn draw_normal_row(
     cloud_status: Option<&CloudStatus>,
     is_paired: bool,
     pairing_code: Option<&str>,
+    state_tint: Option<Tint>,
 ) -> String {
     match row {
         1 => {
             // Header: cloud status (+ optional pair code) on left, state on right
-            let state = format_state_indicator(stats.effective_state());
+            let state = format_state_indicator(stats.effective_state(), state_tint);
             let state_len = strip_ansi_len(&state);
             let (header_len, header) = build_header_left(
                 cloud_status,
@@ -678,6 +681,29 @@ mod tests {
     }
 
     #[test]
+    fn state_indicator_tints_only_the_settled_states() {
+        let tint = crate::ui::cooldown::tint_for_age(0);
+        let tinted = format_state_indicator(SessionState::Complete, tint);
+        assert!(tinted.contains("\x1b[48;2;"), "a fresh change lights up");
+        assert!(tinted.contains("✓ Complete"));
+
+        for state in [
+            SessionState::Thinking,
+            SessionState::Permission,
+            SessionState::Question,
+        ] {
+            assert!(
+                !format_state_indicator(state, tint).contains("\x1b[48;2;"),
+                "{state:?} keeps its own look"
+            );
+        }
+        assert!(
+            !format_state_indicator(SessionState::Complete, None).contains("\x1b[48;2;"),
+            "no tint once the cooldown runs out"
+        );
+    }
+
+    #[test]
     fn compact_layout_starts_before_normal_rows_are_clipped() {
         let stats = SessionStats::default();
 
@@ -692,9 +718,9 @@ mod tests {
         let stats = SessionStats::default();
         let width = 70;
 
-        let first = draw_compact_row(2, width, &stats, None, false, None);
-        let second = draw_compact_row(3, width, &stats, None, false, None);
-        let third = draw_compact_row(4, width, &stats, None, false, None);
+        let first = draw_compact_row(2, width, &stats, None, false, None, None);
+        let second = draw_compact_row(3, width, &stats, None, false, None, None);
+        let third = draw_compact_row(4, width, &stats, None, false, None, None);
 
         assert!(first.contains("Session"));
         assert!(first.contains("Thinking"));

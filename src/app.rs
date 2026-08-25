@@ -11,7 +11,7 @@ use crossterm::event::{Event, EventStream, MouseEvent};
 use futures_util::StreamExt;
 use std::io::{stdout, Write};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
@@ -31,6 +31,7 @@ use crate::terminal::{
     escape, forward_key_to_pty, DsrChunk, DsrHandler, OscScanner, PlatformPty, QueryResponder,
     ScrollRegionFilter,
 };
+use crate::ui::cooldown::{self, Cooldowns};
 use crate::ui::{
     compute_dynamic_status_rows, draw_status_bar, handoff_rows, split_terminal_rows,
     throbber_frame_index, Layout, PairingState,
@@ -222,6 +223,9 @@ pub struct App {
     suggestion_tracker: crate::parsers::SuggestionTracker,
     /// Hash of last status bar state (to avoid flickering redraws)
     last_status_bar_hash: Option<u64>,
+    /// Fading tints for the state indicator and PR status cells that changed
+    /// recently, matching the PR board's cooldown.
+    cooldowns: Cooldowns,
     /// Session ID for cloud registration retry
     session_id: String,
     /// Number of cloud init retry attempts
@@ -358,6 +362,7 @@ impl App {
             last_cloud_screen_hash: None,
             suggestion_tracker: crate::parsers::SuggestionTracker::new(),
             last_status_bar_hash: None,
+            cooldowns: Cooldowns::default(),
             session_id,
             cloud_init_retry_count: 0,
             last_cloud_init_attempt: None,
@@ -1142,6 +1147,22 @@ impl App {
         let recap_toast_visible = self.recap_manager.enabled_toast_visible();
         let handoff_rows = self.maybe_apply_dynamic_layout(recap_toast_visible)?;
 
+        // Record what the state indicator and each PR's status cells show now,
+        // so anything that changed since the last frame starts its fading tint
+        // — the same cooldown the PR board wears.
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.cooldowns.observe_session_state(
+            cooldown::SESSION_STATE_KEY.to_string(),
+            self.session_stats.effective_state(),
+            now_ms,
+        );
+        for pr in self.pr_tracker.prs() {
+            self.cooldowns.observe_pr(pr, now_ms);
+        }
+
         // Compute hash of status bar inputs to detect changes
         let current_hash = {
             use std::hash::{Hash, Hasher};
@@ -1233,6 +1254,12 @@ impl App {
                 throbber_frame_index().hash(&mut hasher);
             }
 
+            // While a cooldown tint is fading, fold in the fade step so the
+            // bar repaints once per shade — and once more when it expires.
+            if self.cooldowns.active(now_ms) {
+                cooldown::shade_step(now_ms).hash(&mut hasher);
+            }
+
             hasher.finish()
         };
 
@@ -1277,6 +1304,8 @@ impl App {
             recap_toast_visible,
             self.pr_tracker.prs(),
             cursor_position,
+            &self.cooldowns,
+            now_ms,
         )?;
 
         // The transcript path arrives with the first hook/session event, so keep

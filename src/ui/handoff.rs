@@ -11,6 +11,7 @@ use crate::pr::SessionPr;
 use crate::recap::{RecapState, RecapStatus, RecapVariant, TurnLineDelta};
 use crate::terminal::escape::{self, bg, color, fg, RESET, RESET_FG};
 
+use super::cooldown::Cooldowns;
 use super::pr_cells::*;
 use super::time::format_elapsed_age;
 
@@ -84,6 +85,8 @@ pub fn draw_pr_handoff(
     width: u16,
     prs: &[SessionPr],
     available_rows: u16,
+    cooldowns: &Cooldowns,
+    now_ms: u64,
 ) -> Result<u16> {
     let display = display_prs(prs);
     if available_rows == 0 || display.is_empty() {
@@ -95,26 +98,15 @@ pub fn draw_pr_handoff(
         .min(MAX_PR_ROWS as usize);
     let widths = PrColumnWidths::from_pr_refs(&display[..limit], width as usize);
     for (i, pr) in display.iter().take(limit).enumerate() {
-        draw_pr_row(stdout, row + i as u16, width, pr, &widths)?;
+        write!(
+            stdout,
+            "{}{}",
+            escape::cursor_to(row + i as u16, 1),
+            pr_row_text_tinted(width, pr, &widths, cooldowns.pr_tints(pr, now_ms))
+        )?;
     }
     write!(stdout, "{}", RESET)?;
     Ok(limit as u16)
-}
-
-fn draw_pr_row(
-    stdout: &mut Stdout,
-    row: u16,
-    width: u16,
-    pr: &SessionPr,
-    widths: &PrColumnWidths,
-) -> Result<()> {
-    write!(
-        stdout,
-        "{}{}",
-        escape::cursor_to(row, 1),
-        pr_row_text(width, pr, widths)
-    )?;
-    Ok(())
 }
 
 pub fn draw_recap_handoff(
@@ -813,6 +805,28 @@ mod tests {
         let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
         let row = pr_row_text(160, &pr, &widths);
         assert!(row.contains("error"), "failed fetch says so, not silence");
+    }
+
+    #[test]
+    fn changed_status_cells_wear_the_fading_tint() {
+        let mut cooldowns = Cooldowns::default();
+        let mut pr = sample_pr("request-handler", 2475, "feature/full");
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
+
+        cooldowns.observe_pr(&pr, 1_000);
+        let row = pr_row_text_tinted(160, &pr, &widths, cooldowns.pr_tints(&pr, 1_000));
+        assert!(
+            !row.contains("\x1b[48;2;"),
+            "a PR seen for the first time stays cold"
+        );
+
+        pr.mergeable = "CONFLICTING".to_string();
+        cooldowns.observe_pr(&pr, 5_000);
+        let row = pr_row_text_tinted(160, &pr, &widths, cooldowns.pr_tints(&pr, 5_000));
+        assert!(
+            row.contains("\x1b[48;2;"),
+            "the merge cell lights up when it flips to conflicts"
+        );
     }
 
     #[test]
