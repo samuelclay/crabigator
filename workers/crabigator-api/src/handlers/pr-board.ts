@@ -423,6 +423,15 @@ function sessionRepositoryMatchesPr(row: BoardSessionRow, pr: SessionPr): boolea
     return ownerMatches && currentRepo.toLowerCase() === pr.repo.toLowerCase();
 }
 
+// A PR the session opened itself is the session's own work even when it lives
+// in a sibling repository of the same organization — a fix paired with the
+// checkout's own PR. Other organizations still need a matching checkout.
+function sessionCreatedPr(row: BoardSessionRow, pr: SessionPr): boolean {
+    if (!pr.created_here) return false;
+    if (!row.repo_owner) return sessionRepositoryMatchesPr(row, pr);
+    return row.repo_owner.toLowerCase() === (pr.owner || '').toLowerCase();
+}
+
 function prAttachedToSession(row: BoardSessionRow, pr: SessionPr): boolean {
     if (!pr.branch || ['main', 'master', 'develop'].includes(pr.branch)) return false;
     if (!sessionRepositoryMatchesPr(row, pr)) return false;
@@ -590,8 +599,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             entry.pr.ai_confidence = pr.ai_confidence || '';
         }
         const representsSession = !!pr.primary
-            && sessionRepositoryMatchesPr(row, pr)
-            && (!!pr.created_here || prAttachedToSession(row, pr));
+            && (sessionCreatedPr(row, pr) || prAttachedToSession(row, pr));
         if (representsSession) {
             representedSessions.add(row.session_id);
             ownedKeys.add(key);
