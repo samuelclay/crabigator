@@ -4726,7 +4726,7 @@ mod tests {
         assert_eq!(rendered.spans.len(), 1, "the block is one selectable span");
         assert_eq!(rendered.spans[0].key, "o/portal#5");
         let frame = crate::parsers::strip_ansi_for_debug(&rendered.lines.join("\n"));
-        assert!(frame.contains("5: Ship the fallback"), "{frame}");
+        assert!(frame.contains("#5: Ship the fallback"), "{frame}");
         assert!(frame.contains("◆"), "session sub-rows sit under the PR");
         assert!(frame.contains("one") && frame.contains("two"));
         assert!(
@@ -4778,7 +4778,10 @@ mod tests {
         assert_eq!(prs.len(), 2);
         let frame = render_prs_frame(&prs, DEFAULT_DETAIL).lines.join("\n");
         assert!(frame.contains('◉'), "the watch glyph renders: {frame}");
-        assert!(frame.contains("9: Watched from afar"), "{frame}");
+        assert!(
+            crate::parsers::strip_ansi_for_debug(&frame).contains("#9: Watched from afar"),
+            "{frame}"
+        );
         assert!(
             frame.contains("disposition=unwatched"),
             "the glyph links to the unwatch action: {frame}"
@@ -5426,7 +5429,7 @@ mod tests {
 
         assert_eq!(frame.matches("samuelclay/crabigator").count(), 1);
         let no_pr_offset = frame.find("◇ ᛝ  Newest completed session").unwrap();
-        let pr_offset = frame.find("7:").unwrap();
+        let pr_offset = frame.find("#7:").unwrap();
         assert!(no_pr_offset < pr_offset, "newer prompt sorts first");
 
         let no_pr_row = frame
@@ -5455,11 +5458,11 @@ mod tests {
         );
         assert!(!no_pr_row.contains("no tracked PR"));
         assert!(crab_pr_row.contains("⟁  crabigator"));
-        assert!(crab_pr_row.contains("7: ⟁  crabigator"));
+        assert!(crab_pr_row.contains("#7: ⟁  crabigator"));
         assert!(!crab_pr_row.contains("with-pr"));
         assert!(crab_metadata_row.contains("⎇ with-pr"));
         assert!(portal_pr_row.contains("ᛝ  developer-portal"));
-        assert!(portal_pr_row.contains("9: ᛝ  developer-portal"));
+        assert!(portal_pr_row.contains("#9: ᛝ  developer-portal"));
         assert!(!portal_pr_row.contains("a-much-longer-branch-name"));
         assert!(portal_metadata_row.contains("⎇ a-much-longer-branch-name"));
     }
@@ -5718,7 +5721,7 @@ mod tests {
         assert!(six_hours.contains("● 1–3 hours"));
         assert!(six_hours.contains("● 3–6 hours"));
         assert!(!six_hours.contains("● 6–9 hours"));
-        assert!(!six_hours.contains("4: repo"));
+        assert!(!six_hours.contains("#4: repo"));
 
         let last_hour = crate::parsers::strip_ansi_for_debug(&render_frame_with_oldest(
             &entries,
@@ -5734,7 +5737,7 @@ mod tests {
         assert!(last_hour
             .lines()
             .any(|line| line.contains("repo") && line.contains("1:")));
-        assert!(!last_hour.contains("2: repo"));
+        assert!(!last_hour.contains("#2: repo"));
     }
 
     #[test]
@@ -6063,7 +6066,7 @@ mod tests {
         let entries = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
         let compact = render_frame_at(&entries, 0);
         assert!(compact.contains("Builder Signals dashboard"));
-        assert!(compact.contains("9: Fix the flow"));
+        assert!(crate::parsers::strip_ansi_for_debug(&compact).contains("#9: Fix the flow"));
         assert!(!compact.contains("#builder"));
         assert!(!compact.contains("CI green, awaiting review"));
 
@@ -6403,7 +6406,9 @@ mod tests {
         assert!(!compact.contains('▓'), "no progress bar at compact");
         assert!(compact.contains("Make PR titles official"));
         assert!(compact.contains("Wiring the PR board detail levels"));
-        assert!(compact.contains("9: Make PR titles official"));
+        assert!(
+            crate::parsers::strip_ansi_for_debug(&compact).contains("#9: Make PR titles official")
+        );
         assert!(compact.contains("compact"), "header names the level");
         assert!(compact.contains("⟩ 30m"));
         assert!(compact.contains("⋖ 2h"));
@@ -6441,7 +6446,9 @@ mod tests {
 
         let compact_line = recaps
             .lines()
-            .find(|line| line.contains("9: Make PR titles official"))
+            .find(|line| {
+                crate::parsers::strip_ansi_for_debug(line).contains("#9: Make PR titles official")
+            })
             .unwrap();
         let recap_line = recaps
             .lines()
@@ -6458,7 +6465,7 @@ mod tests {
         let compact_plain = crate::parsers::strip_ansi_for_debug(compact_line);
         assert!(compact_plain.contains("Make PR titles official"));
         assert!(
-            compact_plain.contains("9: Make PR titles official"),
+            compact_plain.contains("#9: Make PR titles official"),
             "{compact_plain}"
         );
         let generated_line = recaps
@@ -6478,7 +6485,13 @@ mod tests {
         assert!(!compact_plain.contains("3 files"));
         assert!(compact_line.contains(&escape::hyperlink(
             &entries[0].pr.url,
-            "9: Make PR titles official"
+            &format!(
+                "{}{}#9{}{}: Make PR titles official",
+                escape::BOLD,
+                escape::UNDERLINE,
+                escape::RESET_UNDERLINE,
+                escape::RESET_BOLD
+            )
         )));
         assert!(
             crate::parsers::strip_ansi_for_debug(recap_line).starts_with("   ↪ "),
@@ -6509,7 +6522,9 @@ mod tests {
         );
         let main_row = compact
             .lines()
-            .find(|line| line.contains("9: Make PR titles official"))
+            .find(|line| {
+                crate::parsers::strip_ansi_for_debug(line).contains("#9: Make PR titles official")
+            })
             .unwrap();
         assert_eq!(
             crate::ui::utils::strip_ansi_len(main_row),
@@ -6991,7 +7006,7 @@ mod tests {
             .lines()
             .find(|line| line.contains("Make PR titles official"))
             .unwrap();
-        assert!(title_row.contains("9: Make PR titles official"), "{plain}");
+        assert!(title_row.contains("#9: Make PR titles official"), "{plain}");
         let generated_row = plain
             .lines()
             .find(|line| line.contains("⟁  A newer terminal title"))
@@ -7007,7 +7022,9 @@ mod tests {
         entries[0].slack_threads.clear();
         let fallback = render_frame_at(&entries, 0);
         assert!(fallback.contains("Make PR titles official"));
-        assert!(fallback.contains("9: Make PR titles official"));
+        assert!(
+            crate::parsers::strip_ansi_for_debug(&fallback).contains("#9: Make PR titles official")
+        );
         assert!(!fallback.contains('⌾'));
         assert!(
             render_frame_at(&entries, 1).contains("Added r-toggled"),

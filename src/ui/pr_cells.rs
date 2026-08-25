@@ -8,7 +8,9 @@
 use unicode_width::UnicodeWidthStr;
 
 use crate::pr::SessionPr;
-use crate::terminal::escape::{self, color, fg, BOLD, RESET, RESET_FG};
+use crate::terminal::escape::{
+    self, color, fg, BOLD, RESET, RESET_BOLD, RESET_FG, RESET_UNDERLINE, UNDERLINE,
+};
 
 pub(crate) const PR_COLUMN_GAP: usize = 2;
 pub(crate) const PR_RIGHT_COLUMN_GAP: usize = 1;
@@ -555,7 +557,10 @@ fn styled_pr_identity(pr: &SessionPr, identity: &str) -> String {
         "{}{}{}{}",
         fg(pr_identity_color(pr)),
         glyph_styled,
-        escape::hyperlink(&pr.url, identity_label),
+        escape::hyperlink(
+            &pr.url,
+            &emphasize_first(identity_label.to_string(), &pr_number_text(pr))
+        ),
         RESET_FG
     )
 }
@@ -610,12 +615,13 @@ fn pr_left_cells_with_identity(
     // The glyph is its own click target; the remaining identity opens GitHub.
     let identity_styled = styled_pr_identity(pr, &identity);
 
-    let number = linked_cell(
+    let mut number = linked_cell(
         &pr_number_text(pr),
         row_color(pr, color::PURPLE),
         widths.number,
         &pr.url,
     );
+    number.0 = emphasize_first(number.0, &pr_number_text(pr));
 
     // Both diff columns open the PR's Files-changed tab — the actual changes.
     let files_url = pr_files_url(pr);
@@ -927,11 +933,22 @@ pub(crate) fn pr_identity_text(pr: &SessionPr) -> String {
 }
 
 fn board_pr_identity_text(pr: &SessionPr, title: &str) -> String {
-    format!("{} {}: {title}", pr_glyph(pr), pr.number)
+    format!("{} {}: {title}", pr_glyph(pr), pr_number_text(pr))
 }
 
 fn pr_number_text(pr: &SessionPr) -> String {
     format!("#{}", pr.number)
+}
+
+/// Bold and underline the first occurrence of `text` (the PR's `#number`
+/// handle) in a styled cell, so the number stands out and reads as the link
+/// it is. Cells truncated into the number stay plain.
+fn emphasize_first(styled: String, text: &str) -> String {
+    styled.replacen(
+        text,
+        &format!("{BOLD}{UNDERLINE}{text}{RESET_UNDERLINE}{RESET_BOLD}"),
+        1,
+    )
 }
 
 fn pr_diff_text(pr: &SessionPr) -> String {

@@ -56,6 +56,9 @@ pub fn scroll_up(n: u16) -> String {
 /// Bold text
 pub const BOLD: &str = "\x1b[1m";
 
+/// Back to normal intensity, leaving color and underline in place.
+pub const RESET_BOLD: &str = "\x1b[22m";
+
 /// Dim/faint text
 pub const DIM: &str = "\x1b[2m";
 
