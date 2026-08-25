@@ -395,15 +395,19 @@ export const prBoardJs = `
             }
             return best;
         }
+        // Quiet states are a colored glyph; the two that wait on the user
+        // shout — »?« on orange for a question, »!« on yellow for a
+        // permission prompt — matching the CLI board's badge.
         function prbStateIcon(state) {
             if (state === null) return '';
+            if (state === 'question') return '<span class="prb-badge prb-ask" title="Asking you a question">»?«</span>';
+            if (state === 'permission') return '<span class="prb-badge prb-perm" title="Waiting for permission">»!«</span>';
             if (state === 'thinking') {
                 return '<span class="prb-throb" style="color:' + PRB_C.green + '">'
                     + PRB_THROBBER[prbThrobFrame()] + '</span>';
             }
             const map = {
-                ready: ['○', PRB_C.gray], permission: ['!', PRB_C.yellow],
-                question: ['?', PRB_C.orange], complete: ['✓', PRB_C.purple],
+                ready: ['○', PRB_C.gray], complete: ['✓', PRB_C.purple],
                 interrupted: ['⊘', PRB_C.red],
             };
             const m = map[state] || ['○', PRB_C.gray];

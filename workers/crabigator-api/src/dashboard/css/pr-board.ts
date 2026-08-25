@@ -146,6 +146,10 @@ a.prb-ident:hover { text-decoration: underline; }
     min-width: 0;
 }
 .prb-activity { white-space: nowrap; justify-self: end; }
+/* States that wait on the user: chevrons on a filled background. */
+.prb-badge { color: #000; font-weight: 700; border-radius: 3px; padding: 0 1px; }
+.prb-ask { background: #ff8700; }
+.prb-perm { background: #ffd700; }
 /* The activity cell of a live session opens the quick look pane. */
 .prb-peek-open { cursor: pointer; border-radius: 3px; }
 .prb-peek-open:hover { background: rgba(0, 215, 255, 0.12); }
