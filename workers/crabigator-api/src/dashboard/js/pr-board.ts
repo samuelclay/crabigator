@@ -430,7 +430,7 @@ export const prBoardJs = `
             return Math.max(prbActivityTime(sessions),
                 Math.floor((e.pr.last_mentioned_at || 0) / 1000),
                 Math.floor((e.pr.closed_at || 0) / 1000),
-                Math.floor((e.pr.updated_at || 0) / 1000));
+                Math.floor((e.pr.last_mentioned_at || 0) / 1000));
         }
 
         // Provider markers: ⟁ Codex, ᛝ Claude, both when sessions mix.
@@ -527,8 +527,9 @@ export const prBoardJs = `
                 + '" target="_blank" rel="noopener noreferrer">' + inner + '</a>';
         }
 
-        // GitHub status cells: state, CI, unresolved threads, merge, dismiss.
-        function prbStatusCells(pr, idx) {
+        // GitHub status cells: state, CI, unresolved threads, merge, then the
+        // promote/demote and dismiss actions.
+        function prbStatusCells(pr, idx, primary) {
             const cells = [];
             const st = prbStateLabel(pr);
             if (st) {
@@ -572,6 +573,12 @@ export const prBoardJs = `
                 cells.push('<span style="color:' + (behind ? PRB_C.yellow : PRB_C.green) + '">'
                     + (behind ? 'behind' : 'clean') + '</span>');
             }
+            // ↑ promotes a secondary PR, ↓ demotes a primary. Unlike the ★/☆
+            // glyph, it works on watched PRs too, so a watch can be promoted
+            // instead of only unwatched.
+            cells.push('<span class="prb-flip" data-act="flip" data-idx="' + idx
+                + '" title="' + (primary ? 'Make secondary' : 'Make primary') + '">'
+                + (primary ? '↓' : '↑') + '</span>');
             cells.push('<span class="prb-x" data-act="dismiss" data-idx="' + idx
                 + '" title="Dismiss this PR everywhere">✕</span>');
             return cells.join('');
@@ -863,7 +870,7 @@ export const prBoardJs = `
                 + '" data-key="' + escapeHtml(item.key) + '">';
             html += '<div class="prb-l1"><span class="prb-l1-left">' + star + ident + '</span>'
                 + prbActivityHtml(item, idx, now)
-                + '<span class="prb-status">' + prbStatusCells(pr, idx) + '</span></div>';
+                + '<span class="prb-status">' + prbStatusCells(pr, idx, item.primary) + '</span></div>';
 
             const gen = titles.generated
                 ? '<span class="prb-gen">' + escapeHtml(titles.generated) + '</span>' : '';
@@ -897,7 +904,7 @@ export const prBoardJs = `
                 + (item.key === prBoardSelected ? ' prb-sel' : '')
                 + '" data-key="' + escapeHtml(item.key) + '">';
             html += '<div class="prb-l1"><span class="prb-l1-left">' + star + ident + '</span>'
-                + age + '<span class="prb-status">' + prbStatusCells(pr, idx) + '</span></div>';
+                + age + '<span class="prb-status">' + prbStatusCells(pr, idx, item.primary) + '</span></div>';
 
             const branch = pr.branch
                 ? '<span class="prb-branch">⎇ ' + escapeHtml(pr.branch) + '</span>' : '';

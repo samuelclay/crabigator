@@ -701,10 +701,15 @@ export const changesWidgetJs = `
                 const star = '<span class="pr-primary-toggle ' + (isPrimary ? 'primary' : 'secondary')
                     + '" title="' + (isPrimary ? 'Primary — click to make secondary' : 'Secondary — click to make primary')
                     + '">' + (isPrimary ? '★' : '☆') + '</span>';
+                // ↑ promotes a secondary PR, ↓ demotes a primary — the same
+                // flip as the star, placed beside the dismiss.
+                const flip = '<span class="pr-flip" title="' + (isPrimary ? 'Make secondary' : 'Make primary')
+                    + '">' + (isPrimary ? '↓' : '↑') + '</span>';
                 const dismiss = '<span class="pr-dismiss" title="Dismiss this PR everywhere">✕</span>';
-                // Right-hand status cluster: state, CI, merge cleanliness.
+                // Right-hand status cluster: state, CI, merge cleanliness, then
+                // the promote/demote and dismiss actions.
                 const status = '<span class="pr-status">' + badge + prCiBadge(pr)
-                    + prCommentsBadge(pr) + prReviewBadge(pr) + prMergeBadge(pr) + dismiss + '</span>';
+                    + prCommentsBadge(pr) + prReviewBadge(pr) + prMergeBadge(pr) + flip + dismiss + '</span>';
 
                 const secondary = isPrimary ? '' : ' pr-secondary';
                 const branch = pr.branch
@@ -736,12 +741,14 @@ export const changesWidgetJs = `
             widget.querySelectorAll('.pr-row').forEach((rowEl, i) => {
                 const pr = shown[i];
                 if (!pr) return;
-                const starEl = rowEl.querySelector('.pr-primary-toggle');
-                if (starEl) starEl.onclick = ev => {
+                const flipPr = ev => {
                     ev.stopPropagation();
                     postPrOverride(pr, disposition(pr) === 'primary' ? 'secondary' : 'primary');
                     rerenderAllPrLists();
                 };
+                // The ★/☆ glyph and the ↑/↓ action both flip the PR.
+                rowEl.querySelectorAll('.pr-primary-toggle, .pr-flip')
+                    .forEach(el => { el.onclick = flipPr; });
                 const dismissEl = rowEl.querySelector('.pr-dismiss');
                 if (dismissEl) dismissEl.onclick = ev => {
                     ev.stopPropagation();

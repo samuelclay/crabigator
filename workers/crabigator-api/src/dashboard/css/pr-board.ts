@@ -164,7 +164,9 @@ a.prb-ident:hover { text-decoration: underline; }
 }
 .prb-status a, .prb-a { text-decoration: none; }
 .prb-status a:hover, .prb-a:hover { text-decoration: underline; }
-.prb-x { color: #585858; opacity: 0.55; cursor: pointer; }
+/* Promote/demote (↑/↓) and dismiss (✕) actions at the right edge. */
+.prb-flip, .prb-x { color: #585858; opacity: 0.55; cursor: pointer; }
+.prb-flip:hover { opacity: 1; color: #d6bffb; }
 .prb-x:hover { opacity: 1; color: #ff5f5f; }
 
 /* Metadata row: generated session title + branch, diff + files right */

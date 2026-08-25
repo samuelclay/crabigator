@@ -337,14 +337,16 @@ body.hide-section-prs .session-prs { display: none !important; }
 .session-prs .pr-primary-toggle.primary { color: #c4a7f7; }
 .session-prs .pr-primary-toggle.secondary { color: #6e7681; }
 .session-prs .pr-primary-toggle:hover { color: #d6bffb; }
-/* Dismiss: removes the PR from every list in the group. */
-.session-prs .pr-dismiss {
+/* Promote/demote (↑/↓) flips primary and secondary; dismiss (✕) removes the
+   PR from every list in the group. */
+.session-prs .pr-flip, .session-prs .pr-dismiss {
     font-size: 10px;
     color: #6e7681;
     opacity: 0.55;
     cursor: pointer;
     user-select: none;
 }
+.session-prs .pr-flip:hover { opacity: 1; color: #d6bffb; }
 .session-prs .pr-dismiss:hover { opacity: 1; color: #f85149; }
 .session-prs .pr-link {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
