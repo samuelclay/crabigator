@@ -67,6 +67,10 @@ pub struct CodexState {
     /// The native rollout's mtime when the pane switched away from it; a
     /// newer write means the pane resumed back.
     pub native_mtime_at_switch: Option<SystemTime>,
+    /// When the user last sent input to this pane. An in-pane resume always
+    /// starts with input, so the resume-follow scan requires input newer
+    /// than the tracked rollout's last write before it adopts anything.
+    pub last_user_input: Option<SystemTime>,
     pub prompt_counts: MessageCounters,
     pub completion_counts: MessageCounters,
     pub stats: PlatformStats,
@@ -85,6 +89,7 @@ impl Default for CodexState {
             native_session_path: None,
             native_session_started_at: None,
             native_mtime_at_switch: None,
+            last_user_input: None,
             prompt_counts: MessageCounters::default(),
             completion_counts: MessageCounters::default(),
             stats: PlatformStats::default(),

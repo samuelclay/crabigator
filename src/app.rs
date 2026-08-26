@@ -677,6 +677,7 @@ impl App {
                             buf.extend_from_slice(BRACKETED_PASTE_START);
                             buf.extend_from_slice(text.as_bytes());
                             buf.extend_from_slice(BRACKETED_PASTE_END);
+                            self.platform.note_user_input();
                             self.platform_pty.write(&buf)?;
                         }
                         Ok(Event::Mouse(mouse)) => {
@@ -1746,6 +1747,8 @@ impl App {
             return Ok(());
         }
 
+        self.platform.note_user_input();
+
         // Detect interrupt keys (ESC or Ctrl+C) while thinking
         let is_interrupt = key.code == KeyCode::Esc
             || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL));
@@ -2273,6 +2276,7 @@ impl App {
             // Handle incoming text answers
             while let Some(answer) = client.try_recv_answer() {
                 let text = answer.trim_end();
+                self.platform.note_user_input();
                 // Write text as a single block
                 self.platform_pty.write(text.as_bytes())?;
                 // Small delay to ensure text is processed before Enter
@@ -2283,6 +2287,7 @@ impl App {
 
             // Handle incoming key commands
             while let Some(key) = client.try_recv_key() {
+                self.platform.note_user_input();
                 match key.as_str() {
                     "shift_tab" => {
                         // Shift+Tab: CSI Z (ESC [ Z) - cycles Claude Code modes
@@ -2327,6 +2332,7 @@ impl App {
 
             // Handle incoming key sequences (for Tab instructions)
             while let Some(steps) = client.try_recv_key_sequence() {
+                self.platform.note_user_input();
                 for step in steps {
                     match step {
                         crate::cloud::KeyStep::Key { key } => {

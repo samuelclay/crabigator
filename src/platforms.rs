@@ -267,6 +267,13 @@ pub trait Platform {
     /// Ensure hooks are installed and up-to-date
     fn ensure_hooks_installed(&self) -> Result<()>;
 
+    /// Record that the user sent input to this pane (a keystroke, a paste,
+    /// or a remote command injected into the PTY). Platforms that follow the
+    /// pane's conversation across in-pane resumes use this to tell a real
+    /// resume from a concurrent same-cwd session in another pane: a resume
+    /// always starts with input, an idle pane receives none. Default: ignored.
+    fn note_user_input(&self) {}
+
     /// Load current stats from the platform's data source
     fn load_stats(&self, cwd: &str) -> Result<PlatformStats>;
 

@@ -5,6 +5,7 @@
 mod log_parser;
 pub mod transcript;
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -48,6 +49,9 @@ struct ResumeScan<'a> {
 
 pub struct CodexPlatform {
     sessions_dir: PathBuf,
+    /// Where other live sessions publish their mirrors (`/tmp` outside tests).
+    /// The resume-follow scan reads them to skip rollouts another pane owns.
+    mirror_dir: PathBuf,
     state: Mutex<CodexState>,
 }
 
@@ -58,6 +62,7 @@ impl CodexPlatform {
 
         Self {
             sessions_dir,
+            mirror_dir: PathBuf::from("/tmp"),
             state: Mutex::new(CodexState::default()),
         }
     }
@@ -290,6 +295,16 @@ impl CodexPlatform {
             return None;
         }
 
+        // An in-pane resume starts with the user typing in this pane. With
+        // no input since the tracked rollout last advanced, a same-cwd
+        // rollout being written now belongs to a session in another pane.
+        let input_since_tracked = state
+            .last_user_input
+            .is_some_and(|input| input > tracked_mtime);
+        if !input_since_tracked {
+            return None;
+        }
+
         if !Self::should_rescan(state) {
             return None;
         }
@@ -303,12 +318,19 @@ impl CodexPlatform {
             now,
         };
         let today = Local::now();
-        let mut best: Option<SessionCandidate> = None;
+        let mut candidates = Vec::new();
         for offset in 0..RESUME_SCAN_DAYS {
             let dir = self.sessions_dir_for_date(today - chrono::Duration::days(offset));
-            self.collect_switch_candidates(&dir, &scan, &mut best);
+            self.collect_switch_candidates(&dir, &scan, &mut candidates);
         }
-        let best = best?;
+        if candidates.is_empty() {
+            return None;
+        }
+        let claimed = self.rollouts_claimed_by_other_sessions();
+        let best = candidates
+            .into_iter()
+            .filter(|candidate| !claimed.contains(&candidate.path))
+            .max_by_key(|candidate| candidate.modified)?;
 
         if !state.resume_followed {
             state.native_session_path = Some(tracked.to_path_buf());
@@ -325,14 +347,15 @@ impl CodexPlatform {
     /// directory that does not exist reads as empty. The mtime filters run
     /// before the file is opened so the wide scan stays cheap. A concurrent
     /// same-cwd session in another pane can slip through these filters while
-    /// this pane idles; the native-rollout priority in
-    /// [`Self::follow_resumed_session`] recovers from that as soon as this
-    /// pane's own conversation is written again.
+    /// this pane idles; the claim check in [`Self::follow_resumed_session`]
+    /// drops rollouts another live session tracks, and the native-rollout
+    /// priority there recovers from any remaining misadoption as soon as
+    /// this pane's own conversation is written again.
     fn collect_switch_candidates(
         &self,
         dir: &Path,
         scan: &ResumeScan,
-        best: &mut Option<SessionCandidate>,
+        candidates: &mut Vec<SessionCandidate>,
     ) {
         let Ok(entries) = fs::read_dir(dir) else {
             return;
@@ -347,11 +370,9 @@ impl CodexPlatform {
             let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
                 continue;
             };
-            let best_mtime = best.as_ref().map(|found| found.modified);
             if modified <= scan.tracked_mtime
                 || modified < scan.app_start
                 || scan.now.duration_since(modified).unwrap_or_default() > RESUME_FRESH
-                || best_mtime.is_some_and(|seen| seen >= modified)
             {
                 continue;
             }
@@ -359,13 +380,58 @@ impl CodexPlatform {
                 continue;
             };
             if meta.matches {
-                *best = Some(SessionCandidate {
+                candidates.push(SessionCandidate {
                     path,
                     modified,
                     session_start: meta.session_start,
                 });
             }
         }
+    }
+
+    /// Rollouts that other live crabigator sessions already track, read from
+    /// the mirrors they publish. A claimed rollout belongs to that pane's
+    /// conversation, so this pane must not adopt it as a resume target. Only
+    /// fresh mirrors count: the mirror republishes whenever its rollout
+    /// advances, so a live claim on an actively written rollout is always
+    /// recent, while mirrors of exited sessions go stale and drop out.
+    fn rollouts_claimed_by_other_sessions(&self) -> HashSet<PathBuf> {
+        let own_id = std::env::var("CRABIGATOR_SESSION_ID").unwrap_or_default();
+        let now = SystemTime::now();
+        let mut claimed = HashSet::new();
+        let Ok(entries) = fs::read_dir(&self.mirror_dir) else {
+            return claimed;
+        };
+        for entry in entries.flatten() {
+            if !entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("crabigator-"))
+            {
+                continue;
+            }
+            let mirror = entry.path().join("inspect.json");
+            let fresh = fs::metadata(&mirror)
+                .and_then(|m| m.modified())
+                .is_ok_and(|mtime| now.duration_since(mtime).unwrap_or_default() <= RESUME_FRESH);
+            if !fresh {
+                continue;
+            }
+            let Ok(content) = fs::read_to_string(&mirror) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<Value>(&content) else {
+                continue;
+            };
+            let session_id = value.get("session_id").and_then(|v| v.as_str());
+            if !own_id.is_empty() && session_id == Some(own_id.as_str()) {
+                continue;
+            }
+            if let Some(transcript) = value.get("transcript_path").and_then(|v| v.as_str()) {
+                claimed.insert(PathBuf::from(transcript));
+            }
+        }
+        claimed
     }
 }
 
@@ -387,6 +453,11 @@ impl Platform for CodexPlatform {
     fn ensure_hooks_installed(&self) -> Result<()> {
         // Codex CLI does not currently support Crabigator hooks.
         Ok(())
+    }
+
+    fn note_user_input(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.last_user_input = Some(SystemTime::now());
     }
 
     fn load_stats(&self, cwd: &str) -> Result<PlatformStats> {
@@ -485,8 +556,24 @@ mod tests {
     fn platform_in(dir: &Path) -> CodexPlatform {
         CodexPlatform {
             sessions_dir: dir.to_path_buf(),
+            mirror_dir: dir.join("mirrors"),
             state: Mutex::new(CodexState::default()),
         }
+    }
+
+    /// Publish a fake live mirror in the platform's mirror dir claiming
+    /// `transcript` for another session.
+    fn write_mirror_claim(platform: &CodexPlatform, session_id: &str, transcript: &Path) {
+        let dir = platform.mirror_dir.join(format!("crabigator-{session_id}"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("inspect.json"),
+            format!(
+                "{{\"session_id\":\"{session_id}\",\"transcript_path\":\"{}\"}}",
+                transcript.display()
+            ),
+        )
+        .unwrap();
     }
 
     fn write_rollout(
@@ -518,7 +605,8 @@ mod tests {
             .unwrap();
     }
 
-    /// State locked to a launch rollout that has been quiet past RESUME_QUIET.
+    /// State locked to a launch rollout that has been quiet past RESUME_QUIET,
+    /// with user input recent enough for the resume-follow scan to run.
     fn quiet_locked_state(native: &Path, app_start: SystemTime) -> CodexState {
         set_mtime(
             native,
@@ -528,6 +616,7 @@ mod tests {
         state.session_path = Some(native.to_path_buf());
         state.session_started_at = Some(app_start);
         state.app_start = app_start;
+        state.last_user_input = Some(SystemTime::now());
         state
     }
 
@@ -557,6 +646,48 @@ mod tests {
         assert_eq!(started, Some(resumed_start));
         assert!(state.resume_followed);
         assert_eq!(state.native_session_path.as_deref(), Some(native.as_path()));
+    }
+
+    #[test]
+    fn stays_locked_without_user_input_since_rollout_went_quiet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(tmp.path());
+        let app_start = SystemTime::now() - Duration::from_secs(3600);
+
+        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
+        let resumed = write_rollout(&platform, 3, "resumed.jsonl", app_start);
+        let mut state = quiet_locked_state(&native, app_start);
+        // No keystrokes reached this pane: nothing could have resumed it.
+        state.last_user_input = None;
+        set_mtime(&resumed, SystemTime::now() - Duration::from_secs(30));
+
+        let (path, _) = platform
+            .resolve_session_path(CWD, &mut state)
+            .unwrap()
+            .expect("should resolve a session");
+        assert_eq!(path, native);
+        assert!(!state.resume_followed);
+    }
+
+    #[test]
+    fn ignores_rollouts_claimed_by_other_live_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(tmp.path());
+        let app_start = SystemTime::now() - Duration::from_secs(3600);
+
+        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
+        let resumed = write_rollout(&platform, 3, "resumed.jsonl", app_start);
+        let mut state = quiet_locked_state(&native, app_start);
+        set_mtime(&resumed, SystemTime::now() - Duration::from_secs(30));
+        // Another live session's mirror already tracks that rollout.
+        write_mirror_claim(&platform, "other-session", &resumed);
+
+        let (path, _) = platform
+            .resolve_session_path(CWD, &mut state)
+            .unwrap()
+            .expect("should resolve a session");
+        assert_eq!(path, native);
+        assert!(!state.resume_followed);
     }
 
     #[test]
