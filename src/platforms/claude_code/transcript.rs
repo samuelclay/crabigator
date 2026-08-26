@@ -108,7 +108,11 @@ pub fn read_transcript(
                         output.push_str(&format_user_message(text));
                     } else if let Some(arr) = content.as_array() {
                         // Tool results (array content) - pair with pending tool calls
-                        output.push_str(&format_tool_results(arr, pending_tools));
+                        output.push_str(&format_tool_results(
+                            arr,
+                            pending_tools,
+                            entry.get("toolUseResult"),
+                        ));
                     }
                 }
             }
@@ -195,6 +199,7 @@ fn format_assistant_message(
 fn format_tool_results(
     results: &[Value],
     pending_tools: &mut HashMap<String, PendingToolUse>,
+    tool_use_result: Option<&Value>,
 ) -> String {
     let mut out = String::new();
 
@@ -213,10 +218,63 @@ fn format_tool_results(
 
         // Format the result summary
         let content = result.get("content").cloned().unwrap_or(Value::Null);
-        out.push_str(&format_tool_result_summary(&tool.name, &content));
+        if tool.name == "AskUserQuestion" {
+            out.push_str(&format_question_result(tool_use_result, &content));
+        } else {
+            out.push_str(&format_tool_result_summary(&tool.name, &content));
+        }
     }
 
     out
+}
+
+/// Format the question and selected answer that Claude stores beside the tool
+/// result. The terminal shows this pair, so keep it in durable scrollback too.
+fn format_question_result(tool_use_result: Option<&Value>, content: &Value) -> String {
+    if let Some(result) = tool_use_result {
+        let questions = result.get("questions").and_then(Value::as_array);
+        let answers = result.get("answers").and_then(Value::as_object);
+        if let (Some(questions), Some(answers)) = (questions, answers) {
+            let mut out = String::new();
+            for question in questions {
+                let Some(text) = question.get("question").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(answer) = answers.get(text).and_then(question_answer_text) else {
+                    continue;
+                };
+                out.push_str(&format!("  ⎿  {text} → {answer}\n"));
+            }
+            if !out.is_empty() {
+                return out;
+            }
+        }
+    }
+
+    let fallback = match content {
+        Value::String(text) => text.trim(),
+        _ => "",
+    };
+    if fallback.is_empty() {
+        String::new()
+    } else {
+        format!("  ⎿  {}\n", truncate(fallback, 160))
+    }
+}
+
+fn question_answer_text(answer: &Value) -> Option<String> {
+    match answer {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(values) => {
+            let answers = values
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            (!answers.is_empty()).then_some(answers)
+        }
+        _ => None,
+    }
 }
 
 /// Format a tool use block header
@@ -459,6 +517,8 @@ fn shorten_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::io::Write;
 
     #[test]
     fn test_truncate() {
@@ -470,5 +530,59 @@ mod tests {
     fn test_shorten_path() {
         // Just verify it doesn't panic
         let _ = shorten_path("/some/very/long/path/to/file.rs");
+    }
+
+    #[test]
+    fn keeps_answered_question_in_scrollback() {
+        let mut transcript = tempfile::NamedTempFile::new().expect("temp transcript");
+        let question = json!({
+            "type": "assistant",
+            "message": {
+                "content": [{
+                    "type": "tool_use",
+                    "id": "tool_question",
+                    "name": "AskUserQuestion",
+                    "input": {
+                        "questions": [{
+                            "question": "Which test scope do you want?",
+                            "header": "Test scope",
+                            "options": [
+                                {"label": "Focused", "description": "Run related tests."},
+                                {"label": "Full", "description": "Run every test."}
+                            ],
+                            "multiSelect": false
+                        }]
+                    }
+                }]
+            }
+        });
+        let answer = json!({
+            "type": "user",
+            "message": {
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "tool_question",
+                    "content": "Your questions have been answered."
+                }]
+            },
+            "toolUseResult": {
+                "questions": [{
+                    "question": "Which test scope do you want?",
+                    "header": "Test scope",
+                    "options": [],
+                    "multiSelect": false
+                }],
+                "answers": {"Which test scope do you want?": "Focused"}
+            }
+        });
+        writeln!(transcript, "{question}").unwrap();
+        writeln!(transcript, "{answer}").unwrap();
+        transcript.flush().unwrap();
+
+        let mut pending = HashMap::new();
+        let (output, _) = read_transcript(transcript.path(), 0, &mut pending).unwrap();
+
+        assert!(output.contains("AskUserQuestion"));
+        assert!(output.contains("Which test scope do you want? → Focused"));
     }
 }
