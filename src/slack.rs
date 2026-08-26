@@ -49,6 +49,20 @@ fn slack_message_row_re() -> &'static Regex {
     })
 }
 
+/// A message header in the Slack plugin's thread/channel output:
+/// "From: Ari (U043KK8KBT2)" followed by a Time line and
+/// "Message TS: 1787765223.159079". The channel is not in the result (it was
+/// the tool call's input), so these rows match threads by message TS alone.
+fn slack_plugin_message_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r#"(?m)^From:\s*([^\r\n(]+?)\s*\((U[A-Z0-9]+)\)\s*\r?\nTime:[^\r\n]*\r?\nMessage TS:\s*(\d{10})\.(\d+)"#,
+        )
+        .expect("valid Slack plugin message regex")
+    })
+}
+
 /// Local Slack directory learned by the installed Slack MCP server. Its cache
 /// contains only workspace metadata, so Crabigator can resolve names without
 /// reading or copying the server's credentials.
@@ -149,9 +163,12 @@ impl SlackDirectory {
         let Some(message_id) = slack_message_id(&thread.url) else {
             return;
         };
+        // Plugin-format rows carry no channel, so they index under an empty
+        // channel ID and match on the message TS alone.
         if let Some(metadata) = self
             .messages
             .get(&(channel_id.to_string(), message_id.to_string()))
+            .or_else(|| self.messages.get(&(String::new(), message_id.to_string())))
         {
             metadata.apply_to(thread);
         }
@@ -237,7 +254,7 @@ impl SlackDirectory {
 }
 
 fn parse_slack_message_rows(text: &str) -> Vec<SlackMessageRow> {
-    slack_message_row_re()
+    let mut rows: Vec<SlackMessageRow> = slack_message_row_re()
         .captures_iter(text)
         .filter_map(|captures| {
             let seconds = captures.get(1)?.as_str();
@@ -255,13 +272,34 @@ fn parse_slack_message_rows(text: &str) -> Vec<SlackMessageRow> {
                 channel,
             })
         })
-        .collect()
+        .collect();
+    // The Slack plugin prints message headers instead of CSV. Its results
+    // carry no channel (that was the call's input), so the row's channel ID
+    // stays empty and threads match on the message TS alone.
+    rows.extend(
+        slack_plugin_message_re()
+            .captures_iter(text)
+            .filter_map(|captures| {
+                let seconds = captures.get(3)?.as_str();
+                let fraction = captures.get(4)?.as_str();
+                Some(SlackMessageRow {
+                    message_id: format!("{seconds}{fraction}"),
+                    user_id: captures.get(2)?.as_str().to_string(),
+                    username: String::new(),
+                    real_name: captures.get(1)?.as_str().trim().to_string(),
+                    channel_id: String::new(),
+                    channel: None,
+                })
+            }),
+    );
+    rows
 }
 
 impl SlackMessageMetadata {
     pub(crate) fn matches(&self, thread: &SlackThread) -> bool {
         slack_message_id(&thread.url) == Some(self.message_id.as_str())
-            && slack_channel_id(&thread.url) == Some(self.channel_id.as_str())
+            && (self.channel_id.is_empty()
+                || slack_channel_id(&thread.url) == Some(self.channel_id.as_str()))
     }
 
     pub(crate) fn apply_to(&self, thread: &mut SlackThread) -> bool {
@@ -602,6 +640,32 @@ mod tests {
 
         assert_eq!(thread.channel.as_deref(), Some("pr-reviews"));
         assert_eq!(thread.author.as_deref(), Some("Mango"));
+    }
+
+    #[test]
+    fn reads_message_headers_from_slack_plugin_output() {
+        let url = "https://tavus.slack.com/archives/D0AQWNX3GDT/p1787765223159079";
+        let mut thread = extract_threads(url).remove(0);
+        let mut directory = SlackDirectory::default();
+        // Verbatim shape of a slack_read_thread result inside a transcript:
+        // JSON-escaped text with \n newlines and no channel field.
+        let result = r#"{"messages":"=== THREAD PARENT MESSAGE ===\nFrom: Ari (U043KK8KBT2)\nTime: 2026-08-26 10:27:03 PDT\nMessage TS: 1787765223.159079\nHey Sam — sharing the review\n"}"#;
+
+        let matching = directory
+            .message_metadata(result)
+            .into_iter()
+            .find(|metadata| metadata.matches(&thread))
+            .expect("linked Slack row");
+        assert!(matching.apply_to(&mut thread));
+        assert_eq!(thread.author.as_deref(), Some("Ari"));
+        // No channel in the result: the permalink's ID stays as the fallback.
+        assert_eq!(thread.channel.as_deref(), Some("D0AQWNX3GDT"));
+
+        // A later permalink to the same message enriches through the
+        // channel-less index too.
+        let mut fresh = extract_threads(url).remove(0);
+        directory.enrich_thread(&mut fresh);
+        assert_eq!(fresh.author.as_deref(), Some("Ari"));
     }
 
     #[test]
