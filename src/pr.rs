@@ -720,6 +720,10 @@ pub struct PrTracker {
     latest_prompt_slack: Option<(String, Instant)>,
     /// Every Slack permalink pasted this session, oldest first.
     slack_threads: Vec<SlackThread>,
+    /// Enriched metadata for every Slack permalink attached to a tracked PR
+    /// (its origin and GitHub comment links). A lookup directory for the PR
+    /// boards; the status bar keeps showing only `slack_threads`.
+    pr_slack_threads: Vec<SlackThread>,
     /// Readable Slack channel and user names from the local Slack MCP cache.
     slack_directory: SlackDirectory,
 }
@@ -753,6 +757,7 @@ impl PrTracker {
             pending_watch_adds: Vec::new(),
             latest_prompt_slack: None,
             slack_threads: Vec::new(),
+            pr_slack_threads: Vec::new(),
             slack_directory: load_slack_directory(),
         }
     }
@@ -888,15 +893,57 @@ impl PrTracker {
         &self.slack_threads
     }
 
+    /// Enriched metadata for the Slack permalinks attached to tracked PRs, so
+    /// the PR boards can show channel and author names instead of raw IDs.
+    pub fn pr_slack_threads(&self) -> &[SlackThread] {
+        &self.pr_slack_threads
+    }
+
+    /// Give every PR-attached Slack permalink a metadata entry. Pasted
+    /// permalinks donate what the session already learned about them; new
+    /// URLs resolve against the local Slack directory.
+    fn sync_pr_slack_threads(&mut self) -> bool {
+        let urls: Vec<String> = self
+            .prs
+            .iter()
+            .flat_map(|pr| {
+                std::iter::once(pr.slack_origin_url.as_str())
+                    .chain(pr.slack_comment_urls.iter().map(String::as_str))
+            })
+            .filter(|url| !url.is_empty())
+            .map(str::to_string)
+            .collect();
+        let mut changed = false;
+        for url in urls {
+            if self.pr_slack_threads.iter().any(|thread| thread.url == url) {
+                continue;
+            }
+            let Some(mut thread) = self
+                .slack_threads
+                .iter()
+                .find(|thread| thread.url == url)
+                .cloned()
+                .or_else(|| extract_threads(&url).into_iter().next())
+            else {
+                continue;
+            };
+            self.slack_directory.enrich_thread(&mut thread);
+            self.pr_slack_threads.push(thread);
+            changed = true;
+        }
+        changed
+    }
+
     /// Add recap-derived names only when exact Slack metadata is still absent.
     /// Unknown or invented URLs never enter session state.
     pub fn apply_slack_metadata(&mut self, threads: &[SlackThread]) -> bool {
         let mut changed = false;
         for thread in threads {
-            if let Some(existing) = self
+            for existing in self
                 .slack_threads
                 .iter_mut()
-                .find(|existing| existing.url == thread.url)
+                .chain(self.pr_slack_threads.iter_mut())
+                .filter(|existing| existing.url == thread.url)
             {
                 if let Some(channel) = thread.channel.as_ref().filter(|channel| {
                     !channel.is_empty()
@@ -919,10 +966,11 @@ impl PrTracker {
         let metadata = self.slack_directory.message_metadata(text);
         let mut changed = false;
         for metadata in metadata {
-            if let Some(thread) = self
+            for thread in self
                 .slack_threads
                 .iter_mut()
-                .find(|thread| metadata.matches(thread))
+                .chain(self.pr_slack_threads.iter_mut())
+                .filter(|thread| metadata.matches(thread))
             {
                 changed |= metadata.apply_to(thread);
             }
@@ -1411,6 +1459,7 @@ impl PrTracker {
         self.refresh_open_prs();
         self.retry_unenriched();
         self.refresh_review_threads();
+        changed |= self.sync_pr_slack_threads();
 
         changed
     }
@@ -3203,6 +3252,55 @@ mod tests {
         );
         tracker.apply_fetch(gh_json(&loc.url, "OPEN"), None, false);
         assert_eq!(tracker.prs()[0].unresolved_comments, 2);
+    }
+
+    /// Every Slack link attached to a PR gains a metadata entry the boards can
+    /// label: pasted permalinks donate what the session already learned, and
+    /// later Slack tool results keep enriching the rest.
+    #[test]
+    fn pr_slack_links_build_an_enriched_lookup() {
+        let mut tracker = PrTracker::new();
+        let loc = PrLocation::new("o", "r", 7);
+        let origin = "https://t.slack.com/archives/C1/p1754404040123456";
+        tracker.scan_prompt(&format!("see {origin}"), Path::new("/tmp"));
+        tracker.scan_text(
+            "MsgID,UserID,UserName,RealName,Channel,ThreadTs,Text\n\
+             1754404040.123456,U1,sam,Sam Clay,C1 (#builder),,\"m\"",
+            Path::new("/tmp"),
+        );
+
+        tracker.prs.push(SessionPr::placeholder(&loc, false));
+        tracker.prs[0].slack_origin_url = origin.into();
+        tracker.apply_threads(
+            &loc.url,
+            ReviewThreads {
+                unresolved: 0,
+                first_url: String::new(),
+                slack_urls: vec!["https://t.slack.com/archives/C2/p1754404050123456".into()],
+            },
+        );
+        assert!(tracker.sync_pr_slack_threads());
+
+        let threads = tracker.pr_slack_threads();
+        assert_eq!(threads.len(), 2);
+        assert_eq!(threads[0].channel.as_deref(), Some("builder"));
+        assert_eq!(threads[0].author.as_deref(), Some("Sam Clay"));
+        assert_eq!(threads[1].channel.as_deref(), Some("C2"));
+
+        // The comment link resolves when a Slack tool result names it.
+        tracker.scan_text(
+            "MsgID,UserID,UserName,RealName,Channel,ThreadTs,Text\n\
+             1754404050.123456,U2,geoff,Geoff Barnes,C2 (#dogfood),,\"m\"",
+            Path::new("/tmp"),
+        );
+        assert_eq!(
+            tracker.pr_slack_threads()[1].channel.as_deref(),
+            Some("dogfood")
+        );
+        assert_eq!(
+            tracker.pr_slack_threads()[1].author.as_deref(),
+            Some("Geoff Barnes")
+        );
     }
 
     #[test]

@@ -69,6 +69,10 @@ pub struct MirrorState {
     /// Every Slack permalink pasted during this session.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slack_threads: Vec<SlackThread>,
+    /// Enriched metadata for Slack permalinks attached to tracked PRs (origin
+    /// and GitHub comment links), so the PR boards can label them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pr_slack_threads: Vec<SlackThread>,
     pub last_updated: f64,
     pub capture: CaptureMirror,
     pub launch_timing: LaunchTimingMirror,
@@ -178,6 +182,7 @@ pub struct MirrorPublisher {
     transcript_path: Option<String>,
     slack_origin: Option<String>,
     slack_threads: Vec<SlackThread>,
+    pr_slack_threads: Vec<SlackThread>,
     cwd: String,
     ghostty: Option<GhosttyContext>,
     terminal_title: Option<String>,
@@ -212,6 +217,7 @@ impl MirrorPublisher {
             transcript_path: None,
             slack_origin: None,
             slack_threads: Vec::new(),
+            pr_slack_threads: Vec::new(),
             cwd,
             ghostty: GhosttyContext::focused(),
             terminal_title: None,
@@ -272,6 +278,13 @@ impl MirrorPublisher {
     pub fn set_slack_threads(&mut self, slack_threads: &[SlackThread]) {
         if self.slack_threads != slack_threads {
             self.slack_threads = slack_threads.to_vec();
+            self.last_hash = 0;
+        }
+    }
+
+    pub fn set_pr_slack_threads(&mut self, pr_slack_threads: &[SlackThread]) {
+        if self.pr_slack_threads != pr_slack_threads {
+            self.pr_slack_threads = pr_slack_threads.to_vec();
             self.last_hash = 0;
         }
     }
@@ -495,6 +508,7 @@ impl MirrorPublisher {
             prs: prs.to_vec(),
             slack_origin: self.slack_origin.clone(),
             slack_threads: self.slack_threads.clone(),
+            pr_slack_threads: self.pr_slack_threads.clone(),
             last_updated: timestamp,
             capture: self.capture.clone(),
             launch_timing,

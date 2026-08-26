@@ -388,6 +388,24 @@ impl SlackThreadsEvent {
     }
 }
 
+/// Enriched metadata for Slack permalinks attached to tracked PRs (origin and
+/// GitHub comment links), so the web PR board can label them like the desktop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrSlackThreadsEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub threads: Vec<crate::slack::SlackThread>,
+}
+
+impl PrSlackThreadsEvent {
+    pub fn new(threads: Vec<crate::slack::SlackThread>) -> Self {
+        Self {
+            event_type: "pr_slack_threads".to_string(),
+            threads,
+        }
+    }
+}
+
 impl TitleHistoryEvent {
     pub fn new(history: Vec<String>) -> Self {
         Self {
@@ -483,6 +501,7 @@ pub enum CloudEvent {
     Title(TitleEvent),
     TitleHistory(TitleHistoryEvent),
     SlackThreads(SlackThreadsEvent),
+    PrSlackThreads(PrSlackThreadsEvent),
     Prompt(PromptEvent),
     Recap(RecapEvent),
     RecapHistory(RecapHistoryEvent),
@@ -647,6 +666,10 @@ impl SessionEventBuilder {
 
     pub fn slack_threads(threads: Vec<crate::slack::SlackThread>) -> CloudEvent {
         CloudEvent::SlackThreads(SlackThreadsEvent::new(threads))
+    }
+
+    pub fn pr_slack_threads(threads: Vec<crate::slack::SlackThread>) -> CloudEvent {
+        CloudEvent::PrSlackThreads(PrSlackThreadsEvent::new(threads))
     }
 
     pub fn recap(state: &crate::recap::RecapState) -> CloudEvent {

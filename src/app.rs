@@ -182,6 +182,8 @@ pub struct App {
     last_cloud_title: Option<String>,
     /// Last Slack thread list sent to cloud.
     last_cloud_slack_threads: Vec<SlackThread>,
+    /// Last PR-attached Slack thread list sent to cloud.
+    last_cloud_pr_slack_threads: Vec<SlackThread>,
     /// Whether we've sent an initial stats payload to cloud
     cloud_stats_sent: bool,
     /// Whether we've sent a prompt event (to track clearing)
@@ -343,6 +345,7 @@ impl App {
             last_cloud_scrollback_lines: 0,
             last_cloud_title: None,
             last_cloud_slack_threads: Vec::new(),
+            last_cloud_pr_slack_threads: Vec::new(),
             cloud_stats_sent: false,
             last_cloud_prompt_sent: false,
             last_cloud_active_prompt_was_some: false,
@@ -1318,6 +1321,8 @@ impl App {
             .set_slack_origin(slack_origin.as_deref());
         self.mirror_publisher
             .set_slack_threads(self.pr_tracker.slack_threads());
+        self.mirror_publisher
+            .set_pr_slack_threads(self.pr_tracker.pr_slack_threads());
 
         // Publish mirror state (throttled, only when --profile)
         let _ = self.mirror_publisher.maybe_publish(
@@ -1533,6 +1538,7 @@ impl App {
         prs_changed |= self.scan_session_links_from_transcript();
         self.send_cloud_slack_threads_event();
         prs_changed |= self.pr_tracker.poll();
+        self.send_cloud_pr_slack_threads_event();
         prs_changed |= self
             .pr_tracker
             .reclassify(&self.git_state.branch, &self.cwd);
@@ -1879,6 +1885,21 @@ impl App {
 
         self.last_cloud_slack_threads = threads.clone();
         client.send_event(SessionEventBuilder::slack_threads(threads));
+    }
+
+    /// Send the PR-attached Slack thread metadata whenever it grows or
+    /// resolves a name, so the web PR board labels links like the desktop.
+    fn send_cloud_pr_slack_threads_event(&mut self) {
+        let threads = self.pr_tracker.pr_slack_threads().to_vec();
+        if threads.is_empty() || threads == self.last_cloud_pr_slack_threads {
+            return;
+        }
+        let Some(client) = self.cloud_client.as_mut() else {
+            return;
+        };
+
+        self.last_cloud_pr_slack_threads = threads.clone();
+        client.send_event(SessionEventBuilder::pr_slack_threads(threads));
     }
 
     /// Send stats event to cloud
