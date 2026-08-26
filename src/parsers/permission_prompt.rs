@@ -7,6 +7,42 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+/// A question menu that Codex renders without a matching log event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexQuestionPrompt {
+    /// Codex finished a plan and is waiting for approval to implement it.
+    ExitPlan,
+    /// Codex is showing a `request_user_input` question.
+    Question,
+}
+
+/// Detect Codex question menus from the current terminal viewport.
+///
+/// Keep the match anchored to the menu footer near the bottom of the screen so
+/// an older question in visible scrollback does not keep the session waiting.
+pub fn detect_codex_question_prompt(screen_content: &str) -> Option<CodexQuestionPrompt> {
+    let stripped = strip_ansi_codes(screen_content);
+    let mut recent_lines = stripped.lines().rev().take(30).collect::<Vec<_>>();
+    recent_lines.reverse();
+    let recent = recent_lines.join("\n");
+
+    if recent.contains("Implement this plan?")
+        && recent.contains("Press enter to confirm or esc to go back")
+    {
+        return Some(CodexQuestionPrompt::ExitPlan);
+    }
+
+    let shows_question_count = recent.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("Question ") && line.contains("unanswered")
+    });
+    if shows_question_count && recent.contains("enter to submit answer") {
+        return Some(CodexQuestionPrompt::Question);
+    }
+
+    None
+}
+
 /// Check if the screen shows an interrupted/cancelled state
 /// (user hit Escape during permission or thinking)
 pub fn is_interrupted(screen_content: &str) -> bool {
@@ -80,7 +116,7 @@ impl PermissionPrompt {
         let stripped = strip_ansi_codes(screen_content);
 
         // Look for numbered options pattern
-        let option_re = Regex::new(r"(?m)^[\s❯>]*(\d+)\.\s+(.+)$").ok()?;
+        let option_re = Regex::new(r"(?m)^[\s›❯>]*(\d+)\.\s+(.+)$").ok()?;
 
         // Find the question line and its position
         // "Do you want to" - standard permission prompts
@@ -90,7 +126,9 @@ impl PermissionPrompt {
         let lines: Vec<&str> = stripped.lines().collect();
         let question_idx = lines.iter().position(|line| {
             let trimmed = line.trim();
-            trimmed.contains("Do you want to") || trimmed.contains("Would you like to")
+            trimmed.contains("Do you want to")
+                || trimmed.contains("Would you like to")
+                || trimmed.contains("Implement this plan?")
         });
 
         // Fallback: if no question found, use the ❯ cursor line as anchor
@@ -99,9 +137,9 @@ impl PermissionPrompt {
             (idx + 1, Some(lines[idx].trim().to_string()))
         } else {
             // Find first ❯ line that also matches a numbered option
-            let cursor_idx = lines
-                .iter()
-                .position(|line| line.contains('❯') && option_re.is_match(line));
+            let cursor_idx = lines.iter().position(|line| {
+                (line.contains('›') || line.contains('❯')) && option_re.is_match(line)
+            });
             if let Some(ci) = cursor_idx {
                 // Scan backwards for the nearest question line (ends with ?)
                 let q = lines[..ci]
@@ -147,7 +185,8 @@ impl PermissionPrompt {
                     Some(m) => m.as_str().to_string(),
                     None => continue,
                 };
-                let selected = line.contains('❯') || line.trim_start().starts_with('>');
+                let selected =
+                    line.contains('›') || line.contains('❯') || line.trim_start().starts_with('>');
 
                 current_number = Some(num);
                 current_text = text;
@@ -583,5 +622,65 @@ ctrl-g to edit
         assert!(prompt.options[2].text.contains("manually approve"));
         assert!(prompt.options[3].text.contains("Type here"));
         assert!(prompt.is_valid());
+    }
+
+    #[test]
+    fn detects_codex_exit_plan_question() {
+        let screen = r#"
+  ## Verification
+
+  - Run the focused tests.
+
+  Implement this plan?
+
+› 1. Yes, implement this plan          Switch to Default and start coding.
+  2. Yes, clear context and implement  Fresh thread. Context: 9% used.
+  3. No, stay in Plan mode             Continue planning with the model.
+
+  Press enter to confirm or esc to go back
+"#;
+
+        assert_eq!(
+            detect_codex_question_prompt(screen),
+            Some(CodexQuestionPrompt::ExitPlan)
+        );
+
+        let prompt = PermissionPrompt::parse(screen).expect("plan options");
+        assert_eq!(prompt.question.as_deref(), Some("Implement this plan?"));
+        assert_eq!(prompt.options.len(), 3);
+        assert!(prompt.options[0].selected);
+        assert!(prompt.is_valid());
+    }
+
+    #[test]
+    fn detects_codex_request_user_input_question() {
+        let screen = r#"
+  Question 1/1 (1 unanswered)
+  Which test scope should run?
+
+  › 1. Focused (Recommended)  Run related tests.
+    2. Full                   Run the complete suite.
+    3. None of the above      Add details in notes.
+
+  tab to add notes | enter to submit answer | esc to interrupt
+"#;
+
+        assert_eq!(
+            detect_codex_question_prompt(screen),
+            Some(CodexQuestionPrompt::Question)
+        );
+    }
+
+    #[test]
+    fn ignores_old_codex_question_without_its_footer() {
+        let screen = r#"
+  Implement this plan?
+  1. Yes, implement this plan
+  2. No, stay in Plan mode
+
+  › Ask Codex to do anything
+"#;
+
+        assert_eq!(detect_codex_question_prompt(screen), None);
     }
 }

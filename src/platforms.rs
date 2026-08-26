@@ -95,7 +95,7 @@ impl ClaudeMode {
 }
 
 /// An option in an AskUserQuestion prompt
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct QuestionOption {
     /// Display label for the option
     pub label: String,
@@ -105,7 +105,7 @@ pub struct QuestionOption {
 }
 
 /// A single question in an AskUserQuestion prompt
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Question {
     /// The question text
     pub question: String,
@@ -121,7 +121,7 @@ pub struct Question {
 }
 
 /// Active prompt awaiting user response
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActivePrompt {
     /// AskUserQuestion prompt with structured options
