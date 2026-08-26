@@ -508,6 +508,16 @@ fn snapshot_from_instance(
         .cloned()
         .and_then(|value| serde_json::from_value(value).ok())
         .unwrap_or_default();
+    // The session enriches its PR-attached permalinks with channel and author
+    // names it learned live; carry that metadata into the lookup list.
+    let pr_slack_threads: Vec<SlackThread> = data
+        .get("pr_slack_threads")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default();
+    for thread in pr_slack_threads {
+        merge_slack_thread(&mut slack_threads, thread);
+    }
     for pr in &prs {
         let urls = std::iter::once(pr.slack_origin_url.as_str())
             .chain(pr.slack_comment_urls.iter().map(String::as_str))
@@ -2293,14 +2303,40 @@ fn slack_link_cell(thread: &SlackThread, width: usize) -> ActivityCell {
 }
 
 fn slack_links_width(threads: &[SlackThread]) -> usize {
-    let mut seen = HashSet::new();
-    threads
-        .iter()
-        .filter(|thread| seen.insert(thread.url.as_str()))
+    unique_channel_threads(threads)
+        .into_iter()
         .map(crate::slack::thread_identity_label)
         .map(|label| label.width())
         .max()
         .unwrap_or(0)
+}
+
+/// One row per Slack channel. A PR's comments often link the same channel
+/// many times; readers only need each conversation once, labeled as fully as
+/// any of its permalinks allows. Within a channel the best-known thread wins
+/// (author known, then readable channel name, then newest), while the list
+/// keeps its origin-first channel order.
+fn unique_channel_threads(threads: &[SlackThread]) -> Vec<&SlackThread> {
+    let mut channels: Vec<(String, &SlackThread)> = Vec::new();
+    for thread in threads {
+        let key = crate::slack::channel_key(thread);
+        let rank = |thread: &SlackThread| {
+            (
+                thread.author.is_some(),
+                !crate::slack::has_only_channel_id(thread),
+                thread.posted_at,
+            )
+        };
+        match channels.iter_mut().find(|(existing, _)| *existing == key) {
+            Some((_, existing)) => {
+                if rank(thread) > rank(existing) {
+                    *existing = thread;
+                }
+            }
+            None => channels.push((key, thread)),
+        }
+    }
+    channels.into_iter().map(|(_, thread)| thread).collect()
 }
 
 /// The title a PR row leads with: GitHub's own title, falling back to the
@@ -2321,11 +2357,8 @@ fn pr_row_title(entry: &BoardPr) -> String {
 }
 
 fn slack_detail_cells(entry: &BoardPr, widths: &PrColumnWidths) -> Vec<ActivityCell> {
-    let mut seen = HashSet::new();
-    entry
-        .slack_threads
-        .iter()
-        .filter(|thread| seen.insert(thread.url.as_str()))
+    unique_channel_threads(&entry.slack_threads)
+        .into_iter()
         .map(|thread| slack_link_cell(thread, widths.right_width()))
         .collect()
 }
@@ -3888,7 +3921,12 @@ fn build_peek_pane(
         (Some(target), Some(top)) => {
             let transcript = transcripts.lines(&target.session_dir).unwrap_or(&[]);
             let back = transcript.len().saturating_sub(top + interior);
-            let window = transcript.iter().skip(top).take(interior).cloned().collect();
+            let window = transcript
+                .iter()
+                .skip(top)
+                .take(interior)
+                .cloned()
+                .collect();
             (window, Some(back))
         }
         (Some(target), None) => {
@@ -4249,7 +4287,12 @@ async fn board_loop(
             // The canonical entries stay merged (one per PR); the watch list
             // overlays them, then the active view shapes its own rows.
             let mut merged_entries = entries.clone();
-            merge_watched_entries(&mut merged_entries, &watched_board.prs, overrides, linger_days);
+            merge_watched_entries(
+                &mut merged_entries,
+                &watched_board.prs,
+                overrides,
+                linger_days,
+            );
             observe_cooldowns(&mut cooldowns, &merged_entries, &workspaces, now_ms);
             let shaped = entries_for_mode(merged_entries, view.mode);
             // A row stays visible when its metadata matches, or when any of
@@ -4459,8 +4502,7 @@ async fn board_loop(
                                     dirty = true;
                                 }
                                 None => {
-                                    add_error =
-                                        Some("not a PR URL or owner/repo#123".to_string());
+                                    add_error = Some("not a PR URL or owner/repo#123".to_string());
                                     dirty = true;
                                 }
                             },
@@ -4644,9 +4686,7 @@ async fn board_loop(
                             KeyCode::Char('j') if search.is_none() => Some(1),
                             _ => None,
                         };
-                        if delta.is_some()
-                            || key.code == KeyCode::Home
-                            || key.code == KeyCode::End
+                        if delta.is_some() || key.code == KeyCode::Home || key.code == KeyCode::End
                         {
                             let total = selected_peek(&spans, selected.as_deref(), peek_index)
                                 .and_then(|target| transcripts.lines(&target.session_dir))
@@ -4974,7 +5014,11 @@ mod tests {
 
         let merged = aggregate(&[one, two], &HashMap::new(), DEFAULT_LINGER_DAYS);
         let entries = entries_for_mode(merged, BoardMode::Prs).prs;
-        assert_eq!(entries.len(), 1, "one block per PR, not one row per session");
+        assert_eq!(
+            entries.len(),
+            1,
+            "one block per PR, not one row per session"
+        );
         assert_eq!(entries[0].sessions.len(), 2);
 
         let rendered = render_prs_frame(&entries, DEFAULT_DETAIL);
@@ -5201,8 +5245,7 @@ mod tests {
 
         // A dismissed disposition hides the watch everywhere.
         let mut entries = Vec::new();
-        let overrides =
-            HashMap::from([(watch_key("o", "elsewhere", 9), PrDisposition::Dismissed)]);
+        let overrides = HashMap::from([(watch_key("o", "elsewhere", 9), PrDisposition::Dismissed)]);
         merge_watched_entries(&mut entries, &watched, &overrides, DEFAULT_LINGER_DAYS);
         assert!(entries.iter().all(|e| e.pr.repo != "elsewhere"));
     }
@@ -5587,16 +5630,28 @@ mod tests {
     #[test]
     fn peek_scroll_anchors_climbs_and_returns_to_live() {
         // 10 transcript lines, a 4-line interior: the tail anchors at 6.
-        assert_eq!(step_peek_scroll(None, -1, 10, 4), Some(5), "first ↑ anchors and moves");
+        assert_eq!(
+            step_peek_scroll(None, -1, 10, 4),
+            Some(5),
+            "first ↑ anchors and moves"
+        );
         assert_eq!(step_peek_scroll(Some(5), -1, 10, 4), Some(4));
-        assert_eq!(step_peek_scroll(Some(0), -1, 10, 4), Some(0), "clamped at the top");
+        assert_eq!(
+            step_peek_scroll(Some(0), -1, 10, 4),
+            Some(0),
+            "clamped at the top"
+        );
         assert_eq!(step_peek_scroll(Some(4), 1, 10, 4), Some(5));
         assert_eq!(
             step_peek_scroll(Some(5), 1, 10, 4),
             None,
             "reaching the tail returns to the live screen"
         );
-        assert_eq!(step_peek_scroll(None, 1, 10, 4), None, "↓ while live stays live");
+        assert_eq!(
+            step_peek_scroll(None, 1, 10, 4),
+            None,
+            "↓ while live stays live"
+        );
         assert_eq!(
             step_peek_scroll(None, -1, 3, 4),
             None,
@@ -5616,8 +5671,11 @@ mod tests {
         let mut entries = aggregate(&[snapshot], &HashMap::new(), DEFAULT_LINGER_DAYS);
         entries[0].sessions[0].session_dir = None;
 
-        let mirrors: HashMap<String, PathBuf> =
-            [("cloudid".to_string(), PathBuf::from("/tmp/crabigator-cloudid"))].into();
+        let mirrors: HashMap<String, PathBuf> = [(
+            "cloudid".to_string(),
+            PathBuf::from("/tmp/crabigator-cloudid"),
+        )]
+        .into();
         attach_live_mirrors(&mut entries, &mut [], &mirrors);
         assert_eq!(
             entries[0].sessions[0].session_dir.as_deref(),
@@ -6287,7 +6345,12 @@ mod tests {
 
         assert_eq!(entries.len(), 2);
         for entry in &entries {
-            assert_eq!(entry.sessions.len(), 1, "{} lost its session", entry.pr.repo);
+            assert_eq!(
+                entry.sessions.len(),
+                1,
+                "{} lost its session",
+                entry.pr.repo
+            );
             assert_eq!(entry.sessions[0].session_id, "portal");
         }
         assert!(workspaces.is_empty());
@@ -7344,10 +7407,41 @@ mod tests {
         let snapshot = snapshot_from_instance(dir.path().join("inspect.json"), data, &mut history)
             .expect("fresh session snapshot");
 
-        assert_eq!(
-            crate::slack::thread_identity_label(&snapshot.slack_threads[0]),
-            "#pr-reviews · Mango"
+        let label = crate::slack::thread_identity_label(&snapshot.slack_threads[0]);
+        // The trailing post time renders in the local timezone.
+        assert!(
+            label.starts_with("#pr-reviews · Mango · "),
+            "unexpected label: {label}"
         );
+    }
+
+    /// Many permalinks into the same channel collapse to one row, labeled by
+    /// whichever thread knows the most about the conversation.
+    #[test]
+    fn slack_rows_are_unique_per_channel_and_keep_the_best_metadata() {
+        let thread = |message: &str, channel: Option<&str>, author: Option<&str>| SlackThread {
+            url: format!("https://t.slack.com/archives/C1/p{message}"),
+            posted_at: message[..10].parse().unwrap(),
+            channel: channel.map(str::to_string),
+            author: author.map(str::to_string),
+        };
+        let threads = vec![
+            thread("1754404040123456", Some("C1"), None),
+            thread("1754404050123456", Some("builder"), Some("Sam Clay")),
+            thread("1754404060123456", Some("C1"), None),
+            SlackThread {
+                url: "https://t.slack.com/archives/C2/p1754404070123456".into(),
+                posted_at: 1_754_404_070,
+                channel: Some("C2".into()),
+                author: None,
+            },
+        ];
+
+        let unique = unique_channel_threads(&threads);
+        assert_eq!(unique.len(), 2);
+        assert_eq!(unique[0].channel.as_deref(), Some("builder"));
+        assert_eq!(unique[0].author.as_deref(), Some("Sam Clay"));
+        assert_eq!(unique[1].channel.as_deref(), Some("C2"));
     }
 
     #[test]

@@ -412,8 +412,8 @@ pub fn compact_display_label(thread: &SlackThread, max_width: usize) -> String {
     truncate_field(&compact, max_width)
 }
 
-/// PR-board label: the thread identity without repeating the word "Slack" or
-/// its timestamp. The permalink always supplies at least a channel ID.
+/// PR-board label: channel, author, and post time, without repeating the word
+/// "Slack". The permalink always supplies at least a channel ID.
 pub(crate) fn thread_identity_label(thread: &SlackThread) -> String {
     let channel = thread
         .channel
@@ -422,10 +422,23 @@ pub(crate) fn thread_identity_label(thread: &SlackThread) -> String {
         .or_else(|| slack_channel_id(&thread.url))
         .map(|channel| format!("#{}", channel.trim_start_matches('#')))
         .unwrap_or_else(|| "#thread".to_string());
-    match thread.author.as_deref().filter(|author| !author.is_empty()) {
-        Some(author) => format!("{channel} · {author}"),
-        None => channel,
+    let mut parts = vec![channel];
+    if let Some(author) = thread.author.as_deref().filter(|author| !author.is_empty()) {
+        parts.push(author.to_string());
     }
+    if thread.posted_at > 0 {
+        parts.push(format_date(thread.posted_at, "%b %-d, %-I:%M %p"));
+    }
+    parts.join(" · ")
+}
+
+/// The channel a permalink belongs to, for grouping threads by channel. The
+/// URL's channel ID is stable even while the readable name is still unknown.
+pub(crate) fn channel_key(thread: &SlackThread) -> String {
+    slack_channel_id(&thread.url)
+        .or(thread.channel.as_deref())
+        .unwrap_or(&thread.url)
+        .to_string()
 }
 
 fn format_date(posted_at: u64, format: &str) -> String {
