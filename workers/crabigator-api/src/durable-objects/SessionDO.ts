@@ -28,6 +28,8 @@ interface PersistentState {
     lastRecapHistory: any[] | null;
     /** Slack permalinks pasted during this session. */
     lastSlackThreads: SlackThread[] | null;
+    /** Enriched metadata for Slack permalinks attached to tracked PRs. */
+    lastPrSlackThreads: SlackThread[] | null;
     /** PRs created/updated during this session (recap panel). */
     lastPrs: any[] | null;
     /** Commits detected after this web session established a baseline, oldest first. */
@@ -204,6 +206,7 @@ export class SessionDO implements DurableObject {
             lastRecap: null,
             lastRecapHistory: null,
             lastSlackThreads: null,
+            lastPrSlackThreads: null,
             lastPrs: null,
             lastCommitHistory: null,
             lastCommitHeadHash: null,
@@ -534,6 +537,24 @@ export class SessionDO implements DurableObject {
      * from local Slack metadata; storing the enriched thread lets the web PR
      * board label Slack links the same way instead of showing channel IDs.
      */
+    /**
+     * Pasted permalinks plus the PR-attached ones, deduped by URL. Pasted
+     * threads come first and win, since the session enriches them earliest.
+     */
+    private mergedSlackThreads(): SlackThread[] {
+        const merged: SlackThread[] = [];
+        const seen = new Set<string>();
+        for (const thread of [
+            ...(this.persistentState.lastSlackThreads || []),
+            ...(this.persistentState.lastPrSlackThreads || []),
+        ]) {
+            if (!thread?.url || seen.has(thread.url)) continue;
+            seen.add(thread.url);
+            merged.push(thread);
+        }
+        return merged;
+    }
+
     private persistSlackThreadsToD1(threads: SlackThread[]): void {
         const sessionId = this.persistentState.sessionId || this.sessionInfo?.id;
         if (!sessionId || threads.length === 0) return;
@@ -787,7 +808,13 @@ export class SessionDO implements DurableObject {
             case 'slack_threads': {
                 this.persistentState.lastSlackThreads = event.threads;
                 persistentChanged = true;
-                this.persistSlackThreadsToD1(event.threads || []);
+                this.persistSlackThreadsToD1(this.mergedSlackThreads());
+                break;
+            }
+            case 'pr_slack_threads': {
+                this.persistentState.lastPrSlackThreads = (event as any).threads || [];
+                persistentChanged = true;
+                this.persistSlackThreadsToD1(this.mergedSlackThreads());
                 break;
             }
             case 'prs': {

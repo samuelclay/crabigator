@@ -777,19 +777,33 @@ export const prBoardJs = `
         }
         // Slack links pair with recap rows on the right, like the CLI's detail
         // column. Sessions stream the channel name and poster they learned
-        // locally, so the label reads "#channel · Author"; without that the
-        // channel ID in the permalink stands in.
+        // locally, so the label reads "#channel · Author · time"; without
+        // that the channel ID in the permalink stands in.
         function prbSlackPostedAt(url) {
             const m = /\\/p(\\d{10})/.exec(url);
             return m ? Number(m[1]) : 0;
+        }
+        function prbSlackChannelId(url) {
+            const m = /\\/archives\\/([A-Z0-9]+)/.exec(url);
+            return m ? m[1] : url;
+        }
+        function prbSlackTime(postedAt) {
+            if (!postedAt) return '';
+            const date = new Date(postedAt * 1000);
+            if (Number.isNaN(date.getTime())) return '';
+            return new Intl.DateTimeFormat([], {
+                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+            }).format(date);
         }
         function prbSlackLabel(url) {
             const thread = prBoardSlack.get(url);
             const idMatch = /\\/archives\\/([A-Z0-9]+)/.exec(url);
             const channel = (thread && thread.channel) || (idMatch ? idMatch[1] : '');
-            const label = channel ? '#' + String(channel).replace(/^#/, '') : '#thread';
-            const author = thread && thread.author;
-            return author ? label + ' · ' + author : label;
+            const parts = [channel ? '#' + String(channel).replace(/^#/, '') : '#thread'];
+            if (thread && thread.author) parts.push(thread.author);
+            const time = prbSlackTime((thread && thread.posted_at) || prbSlackPostedAt(url));
+            if (time) parts.push(time);
+            return parts.join(' · ');
         }
         function prbSlackLinks(pr) {
             const origin = pr.slack_origin_url || '';
@@ -801,7 +815,23 @@ export const prBoardJs = `
             // Origin first, then oldest thread to newest, like the CLI.
             urls.sort((a, b) => (a === origin ? 0 : 1) - (b === origin ? 0 : 1)
                 || prbSlackPostedAt(a) - prbSlackPostedAt(b));
-            return urls.map(u => '<a class="prb-slack" href="' + escapeHtml(u)
+            // One link per channel, labeled by whichever permalink knows the
+            // most about the conversation — many comment links usually point
+            // into the same channel.
+            const rank = u => {
+                const thread = prBoardSlack.get(u);
+                return (thread && thread.author ? 2 : 0)
+                    + (thread && thread.channel && thread.channel !== prbSlackChannelId(u) ? 1 : 0);
+            };
+            const byChannel = new Map();
+            for (const u of urls) {
+                const key = prbSlackChannelId(u);
+                const kept = byChannel.get(key);
+                const better = kept === undefined || rank(u) > rank(kept)
+                    || (rank(u) === rank(kept) && prbSlackPostedAt(u) > prbSlackPostedAt(kept));
+                if (better) byChannel.set(key, u);
+            }
+            return [...byChannel.values()].map(u => '<a class="prb-slack" href="' + escapeHtml(u)
                 + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(prbSlackLabel(u)) + '</a>');
         }
         // The ✦ judgment row, which only open PRs with a note carry.

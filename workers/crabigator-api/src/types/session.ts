@@ -229,6 +229,16 @@ export interface SlackThreadsEvent {
 }
 
 /**
+ * Enriched metadata for Slack permalinks attached to the session's tracked
+ * PRs (origin and GitHub comment links). Feeds the PR board's link labels;
+ * the session card keeps showing only pasted threads.
+ */
+export interface PrSlackThreadsEvent {
+    type: 'pr_slack_threads';
+    threads: SlackThread[];
+}
+
+/**
  * Latest recap state. status is one of: ready, updating, failed,
  * missing_key, waiting, disabled. `latest` is present only when ready.
  */
@@ -394,6 +404,7 @@ export type SessionEvent =
     | TitleEvent
     | TitleHistoryEvent
     | SlackThreadsEvent
+    | PrSlackThreadsEvent
     | DesktopStatusEvent
     | PromptEvent
     | RecapEvent
