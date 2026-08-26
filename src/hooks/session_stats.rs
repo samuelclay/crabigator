@@ -1,6 +1,6 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use crate::platforms::{Platform, PlatformStats, SessionState};
+use crate::platforms::{ActivePrompt, Platform, PlatformStats, SessionState};
 use crate::ui::sparkline::bin_timestamps;
 
 #[derive(Clone, Debug)]
@@ -36,6 +36,10 @@ pub struct SessionStats {
     title_has_spinner: bool,
     /// Screen content shows "Esc to cancel" after last ❯ prompt
     screen_shows_input_wait: bool,
+    /// Codex is showing a native question menu that may not exist in its log.
+    screen_shows_question: bool,
+    /// Prompt metadata inferred from the screen when the platform log has none.
+    screen_active_prompt: Option<ActivePrompt>,
     /// Suppress screen→Permission override after hook transitions away from interactive.
     /// Set when hooks go from Permission/Question → Thinking/Complete; cleared on next
     /// PermissionRequest. Prevents PTY output from resurrecting a stale Permission state
@@ -66,6 +70,8 @@ impl SessionStats {
             interrupted: false,
             title_has_spinner: false,
             screen_shows_input_wait: false,
+            screen_shows_question: false,
+            screen_active_prompt: None,
             screen_override_cooldown: false,
         }
     }
@@ -83,6 +89,34 @@ impl SessionStats {
     /// Update screen input-wait state (called from handle_pty_output_capture)
     pub fn set_screen_input_wait(&mut self, waiting: bool) {
         self.screen_shows_input_wait = waiting;
+        if !waiting && !self.screen_shows_question {
+            self.screen_override_cooldown = false;
+        }
+    }
+
+    /// Update the question signal and optional prompt inferred from the screen.
+    /// Returns true when either value changed.
+    pub fn set_screen_question(
+        &mut self,
+        waiting: bool,
+        active_prompt: Option<ActivePrompt>,
+    ) -> bool {
+        let changed =
+            self.screen_shows_question != waiting || self.screen_active_prompt != active_prompt;
+        self.screen_shows_question = waiting;
+        self.screen_active_prompt = if waiting { active_prompt } else { None };
+        if !waiting && !self.screen_shows_input_wait {
+            self.screen_override_cooldown = false;
+        }
+        changed
+    }
+
+    /// Return prompt data from the platform log, falling back to screen data.
+    pub fn active_prompt(&self) -> Option<&ActivePrompt> {
+        self.platform_stats
+            .active_prompt
+            .as_ref()
+            .or(self.screen_active_prompt.as_ref())
     }
 
     /// Get the effective session state (considering secondary signal overrides)
@@ -92,6 +126,12 @@ impl SessionStats {
         }
 
         let hook_state = self.platform_stats.state;
+
+        // Codex renders plan approval as a native menu without a function call.
+        // Treat the visible menu as a question while it is on screen.
+        if self.screen_shows_question && !self.screen_override_cooldown {
+            return SessionState::Question;
+        }
 
         // Spinner active but hooks don't say Thinking → override to Thinking
         if self.title_has_spinner && hook_state != SessionState::Thinking {
@@ -280,5 +320,46 @@ impl SessionStats {
 impl Default for SessionStats {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_screen_question_overrides_complete_state() {
+        let mut stats = SessionStats::new();
+        stats.platform_stats.state = SessionState::Complete;
+
+        assert!(stats.set_screen_question(true, Some(ActivePrompt::ExitPlan)));
+        assert_eq!(stats.effective_state(), SessionState::Question);
+        assert!(matches!(
+            stats.active_prompt(),
+            Some(ActivePrompt::ExitPlan)
+        ));
+
+        assert!(stats.set_screen_question(false, None));
+        assert_eq!(stats.effective_state(), SessionState::Complete);
+        assert!(stats.active_prompt().is_none());
+    }
+
+    #[test]
+    fn platform_question_data_wins_over_screen_fallback() {
+        let mut stats = SessionStats::new();
+        stats.platform_stats.active_prompt = Some(ActivePrompt::Question {
+            questions: vec![crate::platforms::Question {
+                question: "Which tests?".to_string(),
+                ..Default::default()
+            }],
+        });
+        stats.set_screen_question(true, None);
+
+        match stats.active_prompt() {
+            Some(ActivePrompt::Question { questions }) => {
+                assert_eq!(questions[0].question, "Which tests?");
+            }
+            other => panic!("expected structured question, got {other:?}"),
+        }
     }
 }

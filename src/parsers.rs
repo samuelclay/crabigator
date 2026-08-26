@@ -18,7 +18,10 @@ mod typescript;
 pub use cwd::detect_status_line_cwd;
 pub use generic::GenericParser;
 pub use objc::ObjCParser;
-pub use permission_prompt::{is_interrupted, strip_ansi_for_debug, PermissionPrompt};
+pub use permission_prompt::{
+    detect_codex_question_prompt, is_interrupted, strip_ansi_for_debug, CodexQuestionPrompt,
+    PermissionPrompt,
+};
 pub use python::PythonParser;
 pub use rust::RustParser;
 pub use suggestion::SuggestionTracker;

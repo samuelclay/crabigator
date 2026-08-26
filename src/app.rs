@@ -522,6 +522,7 @@ impl App {
         let mut last_status_draw = Instant::now();
         let mut last_throbber_draw = Instant::now();
         let mut last_pty_output = Instant::now();
+        let mut last_settled_screen_output = last_pty_output;
         let mut last_git_refresh = Instant::now();
         let mut last_hook_refresh = Instant::now();
         let mut last_cloud_heartbeat = Instant::now();
@@ -621,7 +622,8 @@ impl App {
                     // after PTY output settles. This prevents drawing mid-burst.
 
                     // Update captures and send to cloud
-                    let cwd_changed = self.handle_pty_output_capture(&mut sent_initial_screen)?;
+                    let cwd_changed =
+                        self.handle_pty_output_capture(&mut sent_initial_screen, false)?;
                     if cwd_changed {
                         git_refresh_generation = git_refresh_generation.saturating_add(1);
                         git_refresh_pending = true;
@@ -747,6 +749,26 @@ impl App {
 
                     // Draw if quiet long enough AND debounce passed
                     if quiet_for >= PTY_SETTLE_TIME && since_draw >= draw_throttle {
+                        // The last PTY chunk can land inside the 100ms capture
+                        // throttle. Force one final screen scan after the burst
+                        // settles so terminal-only prompts are not missed.
+                        if quiet_for >= Duration::from_millis(100)
+                            && last_settled_screen_output < last_pty_output
+                        {
+                            let cwd_changed =
+                                self.handle_pty_output_capture(&mut sent_initial_screen, true)?;
+                            last_settled_screen_output = last_pty_output;
+                            if cwd_changed {
+                                git_refresh_generation = git_refresh_generation.saturating_add(1);
+                                git_refresh_pending = true;
+                                spawn_git_refresh(
+                                    git_tx.clone(),
+                                    self.cwd.clone(),
+                                    git_refresh_generation,
+                                    false,
+                                );
+                            }
+                        }
                         let cwd_changed = self.maybe_update_cwd_from_status_line(true);
                         if cwd_changed {
                             git_refresh_generation = git_refresh_generation.saturating_add(1);
@@ -1337,31 +1359,32 @@ impl App {
     }
 
     /// Handle PTY output capture and cloud streaming
-    fn handle_pty_output_capture(&mut self, sent_initial_screen: &mut bool) -> Result<bool> {
+    fn handle_pty_output_capture(
+        &mut self,
+        sent_initial_screen: &mut bool,
+        force_screen_update: bool,
+    ) -> Result<bool> {
         let cwd_changed = self.maybe_update_cwd_from_status_line(false);
 
-        let screen_to_send = if self.cloud_viewers_active {
-            // Throttle to 100ms even with viewers — rendering the screen on every
-            // PTY chunk is too expensive and causes typing lag in the main loop
+        // Capture at 100ms for local state detection even when nobody is
+        // viewing the dashboard. Cloud screen events remain throttled below.
+        let should_send_screen = self.cloud_viewers_active
+            || self.last_reduced_screen_send.elapsed() >= Duration::from_secs(15);
+        let screen_update = if force_screen_update {
             self.capture_manager
-                .maybe_update_screen(self.platform_pty.screen())
+                .update_screen(self.platform_pty.screen())
                 .ok()
-                .flatten()
-        } else if self.last_reduced_screen_send.elapsed() >= Duration::from_secs(15) {
-            // No viewers: only capture/send once per 15 seconds
-            self.capture_manager
-                .maybe_update_screen(self.platform_pty.screen())
-                .ok()
-                .flatten()
         } else {
-            // No viewers and within 15s throttle: still update local file at 100ms
-            let _ = self
-                .capture_manager
-                .maybe_update_screen(self.platform_pty.screen());
-            None // Don't send to cloud
+            self.capture_manager
+                .maybe_update_screen(self.platform_pty.screen())
+                .ok()
+                .flatten()
         };
 
-        if let Some(screen) = screen_to_send {
+        if let Some(screen) = screen_update {
+            let old_effective_state = self.session_stats.effective_state();
+            let old_active_prompt = self.session_stats.active_prompt().cloned();
+
             // Detect mode from screen content. opencode reports its agent
             // (Build/Plan) through its event stream instead, so screen
             // detection would stomp it with Normal.
@@ -1399,6 +1422,46 @@ impl App {
                 self.session_stats.set_screen_input_wait(shows_input_wait);
             }
 
+            // Codex's plan approval menu is terminal-only: no function call is
+            // written to the rollout. Detect it from the current viewport. The
+            // request_user_input match is a fallback for log timing or schema
+            // changes; structured log data still wins when it is available.
+            let codex_prompt = if self.platform.kind() == crate::platforms::PlatformKind::Codex {
+                crate::parsers::detect_codex_question_prompt(&screen)
+            } else {
+                None
+            };
+            let (screen_question, screen_active_prompt) = match codex_prompt {
+                Some(crate::parsers::CodexQuestionPrompt::ExitPlan) => {
+                    (true, Some(crate::platforms::ActivePrompt::ExitPlan))
+                }
+                Some(crate::parsers::CodexQuestionPrompt::Question) => (true, None),
+                None => (false, None),
+            };
+            let screen_prompt_changed = self
+                .session_stats
+                .set_screen_question(screen_question, screen_active_prompt);
+
+            let new_effective_state = self.session_stats.effective_state();
+            let new_active_prompt = self.session_stats.active_prompt().cloned();
+            if old_effective_state != new_effective_state {
+                self.send_cloud_state_event(new_effective_state);
+                let was_interactive = matches!(
+                    old_effective_state,
+                    SessionState::Question | SessionState::Permission
+                );
+                let is_interactive = matches!(
+                    new_effective_state,
+                    SessionState::Question | SessionState::Permission
+                );
+                if is_interactive || (was_interactive && self.last_cloud_prompt_sent) {
+                    self.send_cloud_prompt_event();
+                }
+                self.draw_status_bar().ok();
+            } else if screen_prompt_changed && old_active_prompt != new_active_prompt {
+                self.send_cloud_prompt_event();
+            }
+
             // Sync suggestion state from screen (authoritative source).
             // The raw PTY process() method can miss suggestions due to chunk boundaries
             // and aggressive clearing on redraws. parse_screen() reads the vt100 buffer
@@ -1411,22 +1474,25 @@ impl App {
                 self.send_cloud_stats_event();
             }
 
-            // Deduplicate: only send if content changed
-            let hash = {
-                use std::hash::{Hash, Hasher};
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                screen.hash(&mut hasher);
-                hasher.finish()
-            };
+            if should_send_screen {
+                // Deduplicate cloud screen updates while keeping local state
+                // detection independent from the viewer throttle.
+                let hash = {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    screen.hash(&mut hasher);
+                    hasher.finish()
+                };
 
-            if self.last_cloud_screen_hash != Some(hash) {
-                self.last_cloud_screen_hash = Some(hash);
-                self.send_cloud_screen_event(screen);
-                if !self.cloud_viewers_active {
-                    self.last_reduced_screen_send = Instant::now();
+                if self.last_cloud_screen_hash != Some(hash) {
+                    self.last_cloud_screen_hash = Some(hash);
+                    self.send_cloud_screen_event(screen);
+                    if !self.cloud_viewers_active {
+                        self.last_reduced_screen_send = Instant::now();
+                    }
                 }
+                *sent_initial_screen = true;
             }
-            *sent_initial_screen = true;
         }
 
         if self.cloud_viewers_active {
@@ -1588,7 +1654,7 @@ impl App {
         // 2. Cloud state drift (catches screen override resurrection)
         if new_last_updated != old_last_updated && old_effective_state == new_effective_state {
             // Check if active_prompt presence changed
-            let prompt_is_some = self.session_stats.platform_stats.active_prompt.is_some();
+            let prompt_is_some = self.session_stats.active_prompt().is_some();
             if prompt_is_some != self.last_cloud_active_prompt_was_some {
                 self.send_cloud_prompt_event();
             }
@@ -1604,7 +1670,7 @@ impl App {
         // For ExitPlan prompts, keep checking for options until we find enough
         // or exhaust retries (prevents infinite fallback sends)
         if matches!(
-            self.session_stats.platform_stats.active_prompt.as_ref(),
+            self.session_stats.active_prompt(),
             Some(crate::platforms::ActivePrompt::ExitPlan)
         ) && self.last_exit_plan_option_count < 3
             && self.last_exit_plan_retry_count < 30
@@ -2019,10 +2085,10 @@ impl App {
             return;
         }
 
-        let active_prompt = self.session_stats.platform_stats.active_prompt.as_ref();
+        let active_prompt = self.session_stats.active_prompt().cloned();
 
         // Parse permission prompt from screen for permission and exit_plan prompts
-        let permission_prompt = match active_prompt {
+        let permission_prompt = match active_prompt.as_ref() {
             Some(crate::platforms::ActivePrompt::Permission { .. })
             | Some(crate::platforms::ActivePrompt::ExitPlan) => {
                 // Get current screen content for parsing
@@ -2035,7 +2101,7 @@ impl App {
                     // Debug logging for exit plan mode
                     #[cfg(debug_assertions)]
                     if matches!(
-                        active_prompt,
+                        active_prompt.as_ref(),
                         Some(crate::platforms::ActivePrompt::ExitPlan)
                     ) {
                         let debug_path = self.capture_manager.capture_dir().join("parse_debug.txt");
@@ -2067,7 +2133,7 @@ impl App {
         // For exit plan prompts, track option count and only send if changed
         // This handles the timing issue where screen isn't ready when hook fires
         if matches!(
-            active_prompt,
+            active_prompt.as_ref(),
             Some(crate::platforms::ActivePrompt::ExitPlan)
         ) {
             let new_option_count = permission_prompt
@@ -2090,7 +2156,7 @@ impl App {
         }
 
         // Build and send the event
-        let event = SessionEventBuilder::prompt(active_prompt, permission_prompt.as_ref());
+        let event = SessionEventBuilder::prompt(active_prompt.as_ref(), permission_prompt.as_ref());
         if let Some(ref mut client) = self.cloud_client {
             client.send_event(event);
         }
@@ -2101,7 +2167,7 @@ impl App {
 
         // Reset exit plan counters when leaving exit plan state
         if !matches!(
-            active_prompt,
+            active_prompt.as_ref(),
             Some(crate::platforms::ActivePrompt::ExitPlan)
         ) {
             self.last_exit_plan_option_count = 0;
