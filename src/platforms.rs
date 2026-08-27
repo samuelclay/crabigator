@@ -233,7 +233,7 @@ impl PlatformStats {
     #[allow(dead_code)]
     pub fn top_tools(&self, n: usize) -> Vec<(&str, u32)> {
         let mut sorted: Vec<_> = self.tools.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|item| std::cmp::Reverse(item.1));
         sorted.truncate(n);
         sorted
     }

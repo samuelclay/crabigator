@@ -155,10 +155,8 @@ fn handle_response_item(state: &mut CodexState, value: &Value) {
                 Some("assistant") => {
                     record_completion(state, MessageSource::ResponseItem);
                 }
-                Some("user") => {
-                    if !is_bootstrap_message(payload) {
-                        record_prompt(state, MessageSource::ResponseItem);
-                    }
+                Some("user") if !is_bootstrap_message(payload) => {
+                    record_prompt(state, MessageSource::ResponseItem);
                 }
                 _ => {}
             }
