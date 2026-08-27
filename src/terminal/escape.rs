@@ -91,12 +91,6 @@ pub fn bg(color: u8) -> String {
     format!("\x1b[48;5;{}m", color)
 }
 
-/// Set foreground color using 24-bit truecolor
-#[inline]
-pub fn fg_rgb((r, g, b): (u8, u8, u8)) -> String {
-    format!("\x1b[38;2;{r};{g};{b}m")
-}
-
 /// Set background color using 24-bit truecolor
 #[inline]
 pub fn bg_rgb((r, g, b): (u8, u8, u8)) -> String {
