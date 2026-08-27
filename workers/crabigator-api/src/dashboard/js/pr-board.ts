@@ -476,6 +476,8 @@ export const prBoardJs = `
             }
             return Date.now() - start < PRB_COOLDOWN_MS ? start : 0;
         }
+        // The background for a change ageMs old; the cell keeps its own text
+        // color on top of it. Null once the cooldown has run out.
         function prbCoolTint(ageMs) {
             if (ageMs >= PRB_COOLDOWN_MS) return null;
             // Walk the gradient: which pair of stops this shade falls
@@ -486,10 +488,7 @@ export const prBoardJs = `
             const f = along - seg;
             const from = PRB_COOL_STOPS[seg], to = PRB_COOL_STOPS[seg + 1];
             const mix = i => Math.floor(from[i] + (to[i] - from[i]) * f);
-            const r = mix(0), g = mix(1), b = mix(2);
-            // Dark text on the bright end, light text once the shade dims.
-            const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-            return { bg: 'rgb(' + r + ',' + g + ',' + b + ')', fg: luma >= 150 ? '#000' : '#fff' };
+            return 'rgb(' + mix(0) + ',' + mix(1) + ',' + mix(2) + ')';
         }
         // Wrap a cell that changed recently so prbApplyCooldowns can paint it.
         function prbCool(html, keys) {
@@ -505,11 +504,9 @@ export const prBoardJs = `
                 if (!tint) {
                     el.classList.remove('prb-cool');
                     el.style.background = '';
-                    el.style.color = '';
                     return;
                 }
-                el.style.background = tint.bg;
-                el.style.color = tint.fg;
+                el.style.background = tint;
             });
         }
 
