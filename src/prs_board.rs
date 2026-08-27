@@ -295,12 +295,6 @@ struct RecapBrief {
     line_delta: crate::recap::TurnLineDelta,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct GhosttyTabRef {
-    id: String,
-    name: String,
-}
-
 /// One live session's contribution to the board.
 struct SessionSnapshot {
     session_id: String,
@@ -319,8 +313,6 @@ struct SessionSnapshot {
     title: String,
     /// Unix ms when the current title was set; 0 for legacy mirrors.
     title_set_at: u64,
-    /// The live Ghostty tab captured when Crabigator started.
-    ghostty_tab: Option<GhosttyTabRef>,
     /// Slack thread metadata learned during this session.
     slack_threads: Vec<SlackThread>,
     /// The session's latest recap, when one has been generated.
@@ -386,7 +378,6 @@ struct WorkspaceEntry {
     repo_name: String,
     branch: String,
     session: SessionRef,
-    ghostty_tab: Option<GhosttyTabRef>,
     uncommitted: usize,
     additions: i64,
     deletions: i64,
@@ -534,17 +525,6 @@ fn snapshot_from_instance(
     for thread in &mut slack_threads {
         activity_history.slack_directory.enrich_thread(thread);
     }
-    let ghostty_tab = data.get("ghostty").and_then(|ghostty| {
-        let id = ghostty.get("tab_id")?.as_str()?;
-        let name = ghostty
-            .get("tab_name")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
-        Some(GhosttyTabRef {
-            id: id.to_string(),
-            name: name.to_string(),
-        })
-    });
     Some(SessionSnapshot {
         session_id: data
             .get("cloud_session_id")
@@ -578,7 +558,6 @@ fn snapshot_from_instance(
         }),
         title,
         title_set_at,
-        ghostty_tab,
         slack_threads,
         recap: latest_recap.and_then(recap_brief_from),
         state: mirror_session_state(&data),
@@ -1378,7 +1357,6 @@ fn local_workspaces(snapshots: &[SessionSnapshot], entries: &[BoardPr]) -> Vec<W
             repo_name: snapshot.repo_name.clone(),
             branch: snapshot.branch.clone(),
             session: board_session_ref(snapshot),
-            ghostty_tab: snapshot.ghostty_tab.clone(),
             uncommitted: snapshot.uncommitted_files,
             additions: snapshot.additions,
             deletions: snapshot.deletions,
@@ -1683,9 +1661,6 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
             repo_name,
             branch: session.branch,
             session: session_ref,
-            // Ghostty tabs are a fact about this machine, so a session that
-            // is running elsewhere has none to point at.
-            ghostty_tab: None,
             uncommitted: session.uncommitted,
             additions: session.additions,
             deletions: session.deletions,
@@ -2199,23 +2174,6 @@ fn styled_preview_lines(
         out.push(line);
     }
     out
-}
-
-fn ghostty_tab_text(tab: &GhosttyTabRef) -> String {
-    let suffix = tab
-        .id
-        .chars()
-        .rev()
-        .take(5)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect::<String>();
-    if tab.name.is_empty() {
-        format!("tab {suffix}")
-    } else {
-        format!("tab {} [{suffix}]", tab.name)
-    }
 }
 
 fn provider_markers(sessions: &[SessionRef]) -> &'static str {
@@ -2880,13 +2838,7 @@ fn marked_session_title(session: &SessionRef) -> String {
 }
 
 fn workspace_title(entry: &WorkspaceEntry) -> (String, u8) {
-    let title = marked_session_title(&entry.session);
-    let text = if let Some(tab) = &entry.ghostty_tab {
-        format!("{title} · {}", ghostty_tab_text(tab))
-    } else {
-        title
-    };
-    (text, color::PURPLE)
+    (marked_session_title(&entry.session), color::PURPLE)
 }
 
 fn workspace_diff_text(entry: &WorkspaceEntry) -> String {
@@ -4907,7 +4859,6 @@ mod tests {
             deletions: 0,
             title: String::new(),
             title_set_at: 0,
-            ghostty_tab: None,
             slack_threads: Vec::new(),
             recap: None,
             state: SessionState::Ready,
