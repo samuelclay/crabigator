@@ -357,6 +357,8 @@ struct SessionRef {
     title: String,
     /// Unix ms when the current title was set; 0 when unknown.
     title_set_at: u64,
+    /// The branch checked out in the session's worktree; empty when unknown.
+    branch: String,
     /// The session's latest recap (detail level 2).
     recap: Option<RecapBrief>,
     /// The session's current effective state.
@@ -1345,6 +1347,7 @@ fn board_session_ref(session: &SessionSnapshot) -> SessionRef {
         session_dir: Some(session.session_dir.clone()),
         title: session.title.clone(),
         title_set_at: session.title_set_at,
+        branch: session.branch.clone(),
         recap: session.recap.clone(),
         state: session.state,
         prompted_at: session.prompted_at,
@@ -1636,6 +1639,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                     session_dir: None,
                     title_set_at: s.title_set_at,
                     title: s.title,
+                    branch: s.branch,
                     recap,
                     state,
                     prompted_at: activity_timestamp_secs(s.prompts_changed_at),
@@ -1690,6 +1694,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
             session_dir: None,
             title_set_at: session.title_set_at,
             title: session.title,
+            branch: session.branch.clone(),
             recap,
             prompted_at: activity_timestamp_secs(session.prompts_changed_at),
             completed_at: activity_timestamp_secs(session.completions_changed_at),
@@ -2513,8 +2518,7 @@ fn recap_detail_rows(recap: &RecapBrief) -> Vec<RecapDetailRow<'_>> {
     rows
 }
 
-/// The recap's detail rows below the headline — for PR-view sub-rows, whose
-/// headline is already inline on the session row.
+/// The recap's detail rows below the headline.
 fn recap_extra_rows(recap: &RecapBrief) -> Vec<RecapDetailRow<'_>> {
     let mut rows = Vec::new();
     rows.extend(recap.bullets.iter().map(|bullet| RecapDetailRow {
@@ -2693,7 +2697,7 @@ fn render_pr_view_block(board_row: &BoardRow<'_>, context: RowContext<'_>) -> Ve
         lines.push(pr_view_session_row(session, width, activity_width, widths));
         if detail > DEFAULT_DETAIL {
             if let Some(recap) = session.recap.as_ref() {
-                lines.extend(detail_lines(&recap_extra_rows(recap), &[], &layout));
+                lines.extend(detail_lines(&recap_detail_rows(recap), &[], &layout));
             }
         }
     }
@@ -2744,9 +2748,16 @@ fn pr_view_session_row(
     )
 }
 
-/// The `◆ title — recap headline` left cell shared by the PR view's session
+/// The narrowest a session title may get before its row's branch is dropped
+/// to make room.
+const SESSION_TITLE_MIN: usize = 16;
+
+/// The `◆ title ⎇ branch` left cell shared by the PR view's session
 /// sub-rows and the session view's block headers, truncated to the left
-/// columns. A dimmed cell renders entirely gray so live rows stand out.
+/// columns. The branch renders whole or not at all — a clipped branch reads
+/// as noise — and the title gives way down to [`SESSION_TITLE_MIN`] before
+/// the branch is dropped. A dimmed cell renders entirely gray so live rows
+/// stand out.
 fn session_title_cell(
     session: &SessionRef,
     prefix: &str,
@@ -2754,10 +2765,11 @@ fn session_title_cell(
     widths: &PrColumnWidths,
 ) -> (String, usize) {
     let title = marked_session_title(session);
-    let headline = session
-        .recap
-        .as_ref()
-        .map_or("", |recap| recap.headline.as_str());
+    let mut branch_text = if session.branch.is_empty() {
+        String::new()
+    } else {
+        format!("⎇ {}", session.branch)
+    };
     let (title_color, text_color) = if dimmed {
         (color::DARK_GRAY, color::DARK_GRAY)
     } else {
@@ -2765,18 +2777,21 @@ fn session_title_cell(
     };
 
     let budget = widths.board_left_width().saturating_sub(prefix.width());
-    let title_text = crate::ui::pr_cells::truncate_to_width(&title, budget);
-    let mut separator = if headline.is_empty() { "" } else { " — " };
-    let headline_text = crate::ui::pr_cells::truncate_to_width(
-        headline,
-        budget.saturating_sub(title_text.width() + separator.width()),
-    );
-    if headline_text.is_empty() {
+    let mut separator = if branch_text.is_empty() { "" } else { " " };
+    let title_reserved = title.width().min(SESSION_TITLE_MIN);
+    if !branch_text.is_empty()
+        && title_reserved + separator.width() + branch_text.width() > budget
+    {
+        branch_text.clear();
         separator = "";
     }
-    let visible = prefix.width() + title_text.width() + separator.width() + headline_text.width();
+    let title_text = crate::ui::pr_cells::truncate_to_width(
+        &title,
+        budget.saturating_sub(branch_text.width() + separator.width()),
+    );
+    let visible = prefix.width() + title_text.width() + separator.width() + branch_text.width();
     let styled = format!(
-        "{gray}{prefix}{}{title_text}{gray}{separator}{}{headline_text}{RESET_FG}",
+        "{gray}{prefix}{}{title_text}{gray}{separator}{}{branch_text}{RESET_FG}",
         fg(title_color),
         fg(text_color),
         gray = fg(color::DARK_GRAY),
@@ -2836,7 +2851,7 @@ fn render_session_view_block(
     };
     if detail > DEFAULT_DETAIL {
         if let Some(recap) = session.recap.as_ref() {
-            lines.extend(detail_lines(&recap_extra_rows(recap), &[], &layout));
+            lines.extend(detail_lines(&recap_detail_rows(recap), &[], &layout));
         }
     }
 
@@ -4980,6 +4995,7 @@ mod tests {
             session_dir: None,
             title: String::new(),
             title_set_at: 0,
+            branch: String::new(),
             recap: None,
             state: SessionState::Ready,
             prompted_at,
@@ -4998,6 +5014,7 @@ mod tests {
 
         let mut one = snapshot("one", vec![pr]);
         one.repo_name = "portal".to_string();
+        one.branch = "sam/fallback-worktree".to_string();
         one.recap = Some(RecapBrief {
             headline: "Ported the fallback".to_string(),
             bullets: vec!["Moved the mirror logic".to_string()],
@@ -5026,8 +5043,12 @@ mod tests {
         assert!(frame.contains("◆"), "session sub-rows sit under the PR");
         assert!(frame.contains("one") && frame.contains("two"));
         assert!(
-            frame.contains("— Ported the fallback"),
-            "the recap headline rides the sub-row: {frame}"
+            frame.contains("⎇ sam/fallback-worktree"),
+            "the session's branch rides the sub-row: {frame}"
+        );
+        assert!(
+            !frame.contains("Ported the fallback"),
+            "the recap headline waits for the recap detail toggle"
         );
         assert!(
             !frame.contains("Moved the mirror logic"),
@@ -5036,6 +5057,7 @@ mod tests {
 
         let detailed = render_prs_frame(&entries, MAX_DETAIL);
         let frame = crate::parsers::strip_ansi_for_debug(&detailed.lines.join("\n"));
+        assert!(frame.contains("Ported the fallback"), "{frame}");
         assert!(frame.contains("Moved the mirror logic"), "{frame}");
     }
 
@@ -6634,14 +6656,14 @@ mod tests {
             .find(|line| line.contains("Finished the dashboard changes"))
             .unwrap();
         assert!(
-            headline_line.contains("Builder Signals dashboard"),
-            "the headline rides the session sub-row"
+            !headline_line.contains("Builder Signals dashboard"),
+            "the headline gets its own detail row below the sub-row"
         );
         assert!(recap.contains("Next: Wait for approval"));
         assert_eq!(
             recap.lines().count(),
-            compact.lines().count() + 5,
-            "the judgment with four Slack links plus the next step add five rows"
+            compact.lines().count() + 6,
+            "the judgment with four Slack links, the headline, and the next step add six rows"
         );
     }
 
@@ -6849,6 +6871,7 @@ mod tests {
                 session_dir: Some(dir.path().to_path_buf()),
                 title: String::new(),
                 title_set_at: 0,
+                branch: String::new(),
                 recap: None,
                 state: SessionState::Ready,
                 prompted_at: 0,
@@ -6889,6 +6912,7 @@ mod tests {
         let mut with_title = snapshot("portal", vec![pr.clone()]);
         with_title.title = "Wiring the PR board detail levels".to_string();
         with_title.title_set_at = now_ms() - 2 * 60 * 60 * 1000;
+        with_title.branch = "sam/detail-levels".to_string();
         with_title.prompted_at = now_secs() as u64 - 30 * 60;
         with_title.completed_at = now_secs() as u64 - 2 * 60 * 60;
         with_title.recap = Some(RecapBrief {
@@ -6928,8 +6952,12 @@ mod tests {
             "judgments wait for recap view"
         );
         assert!(
-            crate::parsers::strip_ansi_for_debug(&compact).contains("— Added r-toggled"),
-            "the headline rides the session sub-row"
+            crate::parsers::strip_ansi_for_debug(&compact).contains("⎇ sam/detail-levels"),
+            "the session's branch rides the sub-row"
+        );
+        assert!(
+            !compact.contains("Added r-toggled"),
+            "the recap headline waits for recap view"
         );
         assert!(
             !compact.contains("Next: Ready to merge"),
@@ -6951,8 +6979,8 @@ mod tests {
 
         assert_eq!(
             recaps.lines().count(),
-            compact.lines().count() + 2,
-            "recap view adds the judgment and the next step"
+            compact.lines().count() + 3,
+            "recap view adds the judgment, the headline, and the next step"
         );
 
         let compact_line = recaps
@@ -7081,6 +7109,7 @@ mod tests {
                 session_dir: None,
                 title: String::new(),
                 title_set_at: 0,
+                branch: String::new(),
                 recap: None,
                 state: SessionState::Complete,
                 prompted_at: now - 4 * 60 * 60,
@@ -7095,6 +7124,7 @@ mod tests {
                 session_dir: None,
                 title: String::new(),
                 title_set_at: 0,
+                branch: String::new(),
                 recap: None,
                 state: SessionState::Thinking,
                 prompted_at: now - 30 * 60,
@@ -7149,6 +7179,7 @@ mod tests {
                 session_dir: None,
                 title: String::new(),
                 title_set_at: 0,
+                branch: String::new(),
                 recap: None,
                 state,
                 prompted_at: 1,
@@ -7169,6 +7200,7 @@ mod tests {
             session_dir: None,
             title: String::new(),
             title_set_at: 0,
+            branch: String::new(),
             recap: None,
             state: SessionState::Thinking,
             prompted_at: 1,
@@ -7278,6 +7310,7 @@ mod tests {
             session_dir: None,
             title: String::new(),
             title_set_at: 0,
+            branch: String::new(),
             recap: None,
             state: SessionState::Ready,
             prompted_at: now - 8 * 60,
