@@ -837,13 +837,14 @@ fn colored_cell(label: &str, color: u8, width: usize) -> PrCell {
     colored_cell_capped(label, color, width, width)
 }
 
-/// A colored cell painted on a cooldown tint when one is given.
+/// A colored cell painted on a cooldown tint when one is given. The label
+/// keeps its normal color; only the background glows.
 fn colored_cell_tinted(label: &str, color: u8, width: usize, tint: Option<Tint>) -> PrCell {
     let (styled, visible, width) = colored_cell(label, color, width);
     match tint {
         // An empty cell has nothing to light up.
         Some(tint) if visible > 0 => (
-            tint_text(&truncate_to_width(label, width), tint),
+            tint_text(&truncate_to_width(label, width), tint, color),
             visible,
             width,
         ),

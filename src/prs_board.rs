@@ -5116,17 +5116,16 @@ mod tests {
         assert!(cooldowns.active(now_ms + 2_000));
 
         let styled = frame(&after, &cooldowns, now_ms + 2_000);
-        let hot_fg = escape::fg_rgb((0, 0, 0));
         assert!(
-            styled.contains(&format!("{hot}{hot_fg} ✓ ")),
-            "the badge glows on the hottest tint: {styled:?}"
+            styled.contains(&format!("{hot}{} ✓ ", fg(color::PURPLE))),
+            "the badge glows on the hottest tint, keeping its own color: {styled:?}"
         );
         assert!(
-            styled.contains(&format!("{hot}{hot_fg}behind")),
-            "the merge cell glows too: {styled:?}"
+            styled.contains(&format!("{hot}{}behind", fg(color::YELLOW))),
+            "the merge cell glows too, keeping its own color: {styled:?}"
         );
         assert!(
-            !styled.contains(&format!("{hot}{hot_fg}open")),
+            !styled.contains(&format!("{hot}{}open", fg(color::LIGHT_GREEN))),
             "the unchanged state cell stays plain"
         );
 

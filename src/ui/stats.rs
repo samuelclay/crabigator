@@ -80,8 +80,8 @@ pub(crate) fn session_state_badge(
         SessionState::Thinking => quiet_badge(state, throbber_frame),
         _ => match tint {
             Some(tint) => {
-                let (icon, _) = session_state_glyph(state, throbber_frame);
-                tint_text(&format!(" {icon} "), tint)
+                let (icon, icon_color) = session_state_glyph(state, throbber_frame);
+                tint_text(&format!(" {icon} "), tint, icon_color)
             }
             None => quiet_badge(state, throbber_frame),
         },
@@ -137,7 +137,7 @@ fn format_state_indicator(state: SessionState, tint: Option<Tint>) -> String {
         SessionState::Question => return format!("{}» ? «{} Ask", fg(color::ORANGE), RESET),
     };
     match tint {
-        Some(tint) => tint_text(label, tint),
+        Some(tint) => tint_text(label, tint, label_color),
         None => format!("{}{label}{}", fg(label_color), RESET),
     }
 }

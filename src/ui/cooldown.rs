@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use crate::platforms::SessionState;
 use crate::pr::SessionPr;
-use crate::terminal::escape::{bg_rgb, fg_rgb, RESET_BG, RESET_FG};
+use crate::terminal::escape::{bg_rgb, fg, RESET_BG, RESET_FG};
 use crate::ui::pr_cells::pr_status_signature;
 
 /// How long a changed cell stays tinted.
@@ -33,12 +33,11 @@ pub(crate) fn shade_step(now_ms: u64) -> u64 {
     now_ms / (COOLDOWN_MS / SHADES)
 }
 
-/// One step of the cooldown: a truecolor background and a foreground that
-/// stays legible on it.
+/// One step of the cooldown: a truecolor background. The cell keeps its own
+/// foreground color so a glowing cell still reads like its plain neighbors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Tint {
     pub(crate) bg: (u8, u8, u8),
-    pub(crate) fg: (u8, u8, u8),
 }
 
 /// Fade anchors, brightest first; the shades interpolate between them. One
@@ -66,22 +65,16 @@ pub(crate) fn tint_for_age(age_ms: u64) -> Option<Tint> {
     let (from, to) = (STOPS[segment], STOPS[segment + 1]);
     let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * fraction) as u8;
     let bg = (mix(from.0, to.0), mix(from.1, to.1), mix(from.2, to.2));
-    // Dark text on the bright end, light text once the shade dims.
-    let luma = 0.299 * f32::from(bg.0) + 0.587 * f32::from(bg.1) + 0.114 * f32::from(bg.2);
-    let fg = if luma >= 150.0 {
-        (0, 0, 0)
-    } else {
-        (255, 255, 255)
-    };
-    Some(Tint { bg, fg })
+    Some(Tint { bg })
 }
 
-/// Paint `text` on the tint, leaving the row's colors untouched afterwards.
-pub(crate) fn tint_text(text: &str, tint: Tint) -> String {
+/// Paint `text` in its normal `color` on the tint's background, leaving the
+/// row's colors untouched afterwards.
+pub(crate) fn tint_text(text: &str, tint: Tint, color: u8) -> String {
     format!(
         "{}{}{text}{RESET_BG}{RESET_FG}",
         bg_rgb(tint.bg),
-        fg_rgb(tint.fg)
+        fg(color)
     )
 }
 
@@ -294,18 +287,6 @@ mod tests {
             distinct.len() > 100,
             "the gradient really has ~{SHADES} shades, not a handful: {}",
             distinct.len()
-        );
-        assert!(
-            shades.iter().take(20).all(|tint| tint.fg == (0, 0, 0)),
-            "dark text on the bright end"
-        );
-        assert!(
-            shades
-                .iter()
-                .rev()
-                .take(20)
-                .all(|tint| tint.fg == (255, 255, 255)),
-            "light text on the dim end"
         );
     }
 
