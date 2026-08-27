@@ -38,7 +38,8 @@ use crate::slack::{SlackDirectory, SlackThread};
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG, RESET_UNDERLINE, UNDERLINE};
 use crate::ui::cooldown::Cooldowns;
 use crate::ui::pr_cells::{
-    board_detail_row_text, session_row_text_with_activity, PrColumnWidths, PR_RIGHT_COLUMN_GAP,
+    board_detail_row_text, session_row_text_with_activity, PrColumnWidths, BRANCH_PREFIX,
+    PR_RIGHT_COLUMN_GAP,
 };
 use crate::ui::{COMPLETION_ICON, PROMPT_ICON};
 
@@ -73,6 +74,10 @@ const RECENCY_6H: u8 = 39;
 const RECENCY_9H: u8 = 33;
 const RECENCY_12H: u8 = 27;
 const RECENCY_24H: u8 = 25;
+/// The event that matches the session's current state.
+const ACTIVITY_BRIGHT_TEAL: u8 = 51;
+/// The previous event in the prompt/completion pair.
+const ACTIVITY_DARK_TEAL: u8 = 30;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum RecencyBucket {
@@ -312,7 +317,6 @@ struct SessionSnapshot {
     session_dir: PathBuf,
     last_updated: f64,
     branch: String,
-    uncommitted_files: usize,
     additions: i64,
     deletions: i64,
     /// The session's current terminal title (generated or OSC-published).
@@ -389,10 +393,15 @@ struct WorkspaceEntry {
     repo_name: String,
     branch: String,
     session: SessionRef,
-    uncommitted: usize,
     additions: i64,
     deletions: i64,
 }
+
+type LocalBoard = (
+    Vec<BoardPr>,
+    Vec<WorkspaceEntry>,
+    HashMap<String, PathBuf>,
+);
 
 impl WorkspaceEntry {
     fn sessions(&self) -> &[SessionRef] {
@@ -564,7 +573,6 @@ fn snapshot_from_instance(
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string(),
-        uncommitted_files: files.map_or(0, Vec::len),
         additions: files.map_or(0, |files| {
             files
                 .iter()
@@ -1389,7 +1397,6 @@ fn local_workspaces(snapshots: &[SessionSnapshot], entries: &[BoardPr]) -> Vec<W
             repo_name: snapshot.repo_name.clone(),
             branch: snapshot.branch.clone(),
             session: board_session_ref(snapshot),
-            uncommitted: snapshot.uncommitted_files,
             additions: snapshot.additions,
             deletions: snapshot.deletions,
         });
@@ -1446,7 +1453,7 @@ fn local_board(
     history: &mut ActivityHistory,
     overrides: &ScopedOverrides,
     linger_days: u64,
-) -> Result<(Vec<BoardPr>, Vec<WorkspaceEntry>, HashMap<String, PathBuf>)> {
+) -> Result<LocalBoard> {
     let snapshots = gather(history)?;
     let mut entries = aggregate(&snapshots, overrides, linger_days);
     history.enrich_slack_threads(&mut entries);
@@ -1705,7 +1712,6 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
             repo_name,
             branch: session.branch,
             session: session_ref,
-            uncommitted: session.uncommitted,
             additions: session.additions,
             deletions: session.deletions,
         });
@@ -1760,7 +1766,7 @@ struct ActivityCell {
 }
 
 /// The newest prompt and completion among every session attached to a PR.
-/// Each age keeps its own color because the two events can be hours apart.
+/// Thinking highlights the prompt; every settled state highlights completion.
 fn activity_cell(
     sessions: &[SessionRef],
     now_ms: u64,
@@ -1784,9 +1790,29 @@ fn activity_cell(
         .map(|session| session.completed_at)
         .max()
         .unwrap_or(0);
-    let prompt = activity_part(PROMPT_ICON, prompted_at, now);
-    let completion = activity_part(COMPLETION_ICON, completed_at, now);
-    let state = activity_state(sessions)
+    let activity_state = activity_state(sessions);
+    let prompt_is_active = activity_state == Some(SessionState::Thinking);
+    let prompt = activity_part(
+        PROMPT_ICON,
+        prompted_at,
+        now,
+        if prompt_is_active {
+            ACTIVITY_BRIGHT_TEAL
+        } else {
+            ACTIVITY_DARK_TEAL
+        },
+    );
+    let completion = activity_part(
+        COMPLETION_ICON,
+        completed_at,
+        now,
+        if prompt_is_active {
+            ACTIVITY_DARK_TEAL
+        } else {
+            ACTIVITY_BRIGHT_TEAL
+        },
+    );
+    let state = activity_state
         .map(|state| crate::ui::session_state_badge(state, throbber_frame, badge_tint))
         .unwrap_or_else(|| " ".repeat(crate::ui::STATE_BADGE_WIDTH));
     ActivityCell {
@@ -1884,12 +1910,12 @@ fn entry_bucket(entry: &BoardPr, now: u64) -> RecencyBucket {
     RecencyBucket::from_age(now.saturating_sub(entry_recency_time(entry)))
 }
 
-fn activity_part(label: &str, timestamp: u64, now: u64) -> ActivityCell {
+fn activity_part(label: &str, timestamp: u64, now: u64, event_color: u8) -> ActivityCell {
     let (plain, part_color) = if timestamp == 0 {
         (format!("{label} —"), color::DARK_GRAY)
     } else {
         let age = now.saturating_sub(timestamp);
-        (format!("{label} {}", format_age(age)), recency_color(age))
+        (format!("{label} {}", format_age(age)), event_color)
     };
     ActivityCell {
         visible: plain.width(),
@@ -2752,7 +2778,7 @@ fn pr_view_session_row(
 /// to make room.
 const SESSION_TITLE_MIN: usize = 16;
 
-/// The `◆ title ⎇ branch` left cell shared by the PR view's session
+/// The `◆ title ⎇  branch` left cell shared by the PR view's session
 /// sub-rows and the session view's block headers, truncated to the left
 /// columns. The branch renders whole or not at all — a clipped branch reads
 /// as noise — and the title gives way down to [`SESSION_TITLE_MIN`] before
@@ -2768,7 +2794,7 @@ fn session_title_cell(
     let mut branch_text = if session.branch.is_empty() {
         String::new()
     } else {
-        format!("⎇ {}", session.branch)
+        format!("{BRANCH_PREFIX}{}", session.branch)
     };
     let (title_color, text_color) = if dimmed {
         (color::DARK_GRAY, color::DARK_GRAY)
@@ -2906,21 +2932,13 @@ fn workspace_diff_text(entry: &WorkspaceEntry) -> String {
     }
 }
 
-fn workspace_files_text(entry: &WorkspaceEntry) -> String {
-    match entry.uncommitted {
-        0 => String::new(),
-        1 => "1 file".to_string(),
-        count => format!("{count} files"),
-    }
-}
-
 fn workspace_branch_text(entry: &WorkspaceEntry) -> String {
     let branch = if entry.branch.is_empty() {
         "(no branch)"
     } else {
         entry.branch.as_str()
     };
-    format!("⎇ {branch}")
+    format!("{BRANCH_PREFIX}{branch}")
 }
 
 fn render_workspace_board_row(
@@ -2939,7 +2957,6 @@ fn render_workspace_board_row(
     let entry = workspace_row.entry;
     let (title, title_color) = workspace_title(entry);
     let branch = workspace_branch_text(entry);
-    let files = workspace_files_text(entry);
     let activity = activity_cell(entry.sessions(), now_ms, throbber_frame, cooldowns);
     let row = session_row_text_with_activity(
         width,
@@ -2947,7 +2964,6 @@ fn render_workspace_board_row(
         title_color,
         entry.additions,
         entry.deletions,
-        &files,
         &branch,
         widths,
         activity.styled,
@@ -3219,7 +3235,6 @@ fn render_at(
         widths.include_board_row(
             &format!("◇ {title}"),
             &workspace_diff_text(entry),
-            &workspace_files_text(entry),
             &workspace_branch_text(entry),
             shared_width as usize,
         );
@@ -4934,7 +4949,6 @@ mod tests {
             session_dir: PathBuf::new(),
             last_updated: now_secs(),
             branch: String::new(),
-            uncommitted_files: 0,
             additions: 0,
             deletions: 0,
             title: String::new(),
@@ -5063,7 +5077,7 @@ mod tests {
         assert!(frame.contains("◆"), "session sub-rows sit under the PR");
         assert!(frame.contains("one") && frame.contains("two"));
         assert!(
-            frame.contains("⎇ sam/fallback-worktree"),
+            frame.contains("⎇  sam/fallback-worktree"),
             "the session's branch rides the sub-row: {frame}"
         );
         assert!(
@@ -5123,15 +5137,14 @@ mod tests {
         assert!(header.contains("⟩ 30m") && header.contains("⋖ 5m"));
         let activity_at = header.find("⟩ 30m").unwrap();
         let diff_at = header.find("+49 -5").unwrap();
-        let files_at = header.find("3 files").unwrap();
         let state_at = header.find("open").unwrap();
         assert!(
-            activity_at < diff_at && diff_at < files_at && files_at < state_at,
-            "activity, then stats, then status: {header}"
+            activity_at < diff_at && diff_at < state_at,
+            "activity, then diff, then status: {header}"
         );
         assert!(
-            header.contains("3 files  open"),
-            "the stats sit beside the status: {header}"
+            header.contains("+49 -5  open") && !header.contains('☰'),
+            "only the diff sits beside the status: {header}"
         );
         assert!(
             header.contains("⋖ 5m  +49"),
@@ -5758,7 +5771,6 @@ mod tests {
         first.repo_name = "crabigator".to_string();
         first.branch = "sam/pr-board-session-rows".to_string();
         first.title = "First active session".to_string();
-        first.uncommitted_files = 3;
         first.additions = 10;
         first.deletions = 2;
         let mut second = snapshot("crabigator", Vec::new());
@@ -5806,7 +5818,8 @@ mod tests {
             fg(color::GREEN)
         )));
         assert!(frame.contains(&format!("{}-2", fg(color::RED))));
-        assert!(frame.contains("3 files"));
+        assert!(plain.contains("+10 -2"));
+        assert!(!plain.contains('☰'));
     }
 
     #[test]
@@ -5940,8 +5953,8 @@ mod tests {
         assert_eq!(column(no_pr_row, "⟩"), column(crab_header_row, "⟩"));
         assert_eq!(column(crab_header_row, "⟩"), column(portal_header_row, "⟩"));
         assert_eq!(
-            column(crab_pr_row, "⎇ with-pr"),
-            column(portal_pr_row, "⎇ a-much-longer-branch-name")
+            column(crab_pr_row, "⎇  with-pr"),
+            column(portal_pr_row, "⎇  a-much-longer-branch-name")
         );
         assert!(!no_pr_row.contains("no tracked PR"));
         assert!(
@@ -5949,9 +5962,9 @@ mod tests {
             "the session leads its block; the PR sits beneath: {crab_header_row}"
         );
         assert!(crab_pr_row.contains("#7: crabigator"));
-        assert!(crab_pr_row.contains("⎇ with-pr"));
+        assert!(crab_pr_row.contains("⎇  with-pr"));
         assert!(portal_pr_row.contains("#9: developer-portal"));
-        assert!(portal_pr_row.contains("⎇ a-much-longer-branch-name"));
+        assert!(portal_pr_row.contains("⎇  a-much-longer-branch-name"));
     }
 
     #[test]
@@ -6586,7 +6599,6 @@ mod tests {
         session.repo_name = "portal".to_string();
         session.title = "Builder Signals dashboard".to_string();
         session.title_set_at = now_ms() - 2 * 60 * 60 * 1000;
-        session.uncommitted_files = 4;
         session.recap = Some(RecapBrief {
             headline: "Finished the dashboard changes".to_string(),
             bullets: Vec::new(),
@@ -6972,7 +6984,7 @@ mod tests {
             "judgments wait for recap view"
         );
         assert!(
-            crate::parsers::strip_ansi_for_debug(&compact).contains("⎇ sam/detail-levels"),
+            crate::parsers::strip_ansi_for_debug(&compact).contains("⎇  sam/detail-levels"),
             "the session's branch rides the sub-row"
         );
         assert!(
@@ -7033,11 +7045,23 @@ mod tests {
             "the session sub-row sits below the PR header: {generated_plain}"
         );
         assert!(
-            compact_plain.contains("⎇ sam/pr-title-layout"),
+            compact_plain.contains("⎇  sam/pr-title-layout"),
             "the header carries the branch: {compact_plain}"
         );
-        assert!(compact_plain.contains("+49 -5"));
-        assert!(compact_plain.contains("3 files"));
+        assert!(
+            regex::Regex::new(r"\x1b\]8;;[^\x07]*\x07")
+                .unwrap()
+                .replace_all(&compact_plain, "")
+                .contains("+49 -5"),
+            "the board keeps the diff: {compact_plain}"
+        );
+        assert!(!compact_plain.contains('☰'), "the board omits file counts");
+        assert!(
+            !['↑', '↓', '✕']
+                .iter()
+                .any(|glyph| compact_plain.contains(*glyph)),
+            "the PR board omits promote, demote, and close actions: {compact_plain}"
+        );
         assert!(compact_line.contains(&escape::hyperlink(
             &entries[0].pr.url,
             &format!(
@@ -7118,9 +7142,9 @@ mod tests {
     }
 
     #[test]
-    fn activity_uses_independent_recency_bands_and_latest_session_times() {
+    fn activity_highlights_the_event_that_matches_session_state() {
         let now = 1_000_000;
-        let sessions = vec![
+        let mut sessions = vec![
             SessionRef {
                 session_id: "older".to_string(),
                 platform: PlatformKind::Claude,
@@ -7159,9 +7183,30 @@ mod tests {
             crate::parsers::strip_ansi_for_debug(&activity.styled).starts_with(" ⠋   ⟩"),
             "thinking state sits centered in its badge slot before prompt activity"
         );
-        assert!(activity.styled.contains(&fg(RECENCY_1H)));
-        assert!(activity.styled.contains(&fg(RECENCY_3H)));
+        assert!(
+            activity
+                .styled
+                .contains(&format!("{}⟩ 30m", fg(ACTIVITY_BRIGHT_TEAL)))
+        );
+        assert!(
+            activity
+                .styled
+                .contains(&format!("{}⋖ 2h", fg(ACTIVITY_DARK_TEAL)))
+        );
         assert!(!activity.styled.contains("\x1b[48;5;"));
+
+        sessions[1].state = SessionState::Complete;
+        let settled = activity_cell(&sessions, now * 1000, 0, &Cooldowns::default());
+        assert!(
+            settled
+                .styled
+                .contains(&format!("{}⟩ 30m", fg(ACTIVITY_DARK_TEAL)))
+        );
+        assert!(
+            settled
+                .styled
+                .contains(&format!("{}⋖ 2h", fg(ACTIVITY_BRIGHT_TEAL)))
+        );
 
         assert_eq!(recency_color(0), RECENCY_1H);
         assert_eq!(recency_color(3_600), RECENCY_3H);
@@ -7175,6 +7220,16 @@ mod tests {
         let unknown = activity_cell(&[], now * 1000, 0, &Cooldowns::default());
         assert!(unknown.styled.contains("⟩ —"));
         assert!(unknown.styled.contains("⋖ —"));
+        assert!(
+            unknown
+                .styled
+                .contains(&format!("{}⟩ —", fg(color::DARK_GRAY)))
+        );
+        assert!(
+            unknown
+                .styled
+                .contains(&format!("{}⋖ —", fg(color::DARK_GRAY)))
+        );
         assert!(!unknown.styled.contains("\x1b[48;5;"));
     }
 
@@ -7210,6 +7265,18 @@ mod tests {
             let plain = crate::parsers::strip_ansi_for_debug(&activity.styled);
             assert!(plain.starts_with(&format!("{badge}  ⟩")), "{plain}");
             assert!(activity.styled.contains(&styling), "{state:?}");
+            assert!(
+                activity
+                    .styled
+                    .contains(&format!("{}⟩ 1m", fg(ACTIVITY_DARK_TEAL))),
+                "{state:?}"
+            );
+            assert!(
+                activity
+                    .styled
+                    .contains(&format!("{}⋖ 1m", fg(ACTIVITY_BRIGHT_TEAL))),
+                "{state:?}"
+            );
         }
 
         let thinking = SessionRef {
@@ -7224,7 +7291,7 @@ mod tests {
             recap: None,
             state: SessionState::Thinking,
             prompted_at: 1,
-            completed_at: 0,
+            completed_at: 1,
             ended: false,
         };
         let first = activity_cell(
@@ -7239,6 +7306,16 @@ mod tests {
             crate::parsers::strip_ansi_for_debug(&second.styled)
         );
         assert!(first.styled.contains(&fg(color::GREEN)));
+        assert!(
+            first
+                .styled
+                .contains(&format!("{}⟩ 1m", fg(ACTIVITY_BRIGHT_TEAL)))
+        );
+        assert!(
+            first
+                .styled
+                .contains(&format!("{}⋖ 1m", fg(ACTIVITY_DARK_TEAL)))
+        );
     }
 
     #[test]

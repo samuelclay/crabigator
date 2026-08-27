@@ -96,9 +96,6 @@ pub struct CloudBoardSession {
     /// Unix ms when that title was set; 0 when unknown.
     #[serde(default)]
     pub title_set_at: u64,
-    /// Uncommitted files in the session's worktree.
-    #[serde(default)]
-    pub uncommitted: usize,
     /// Lines added across those uncommitted files.
     #[serde(default)]
     pub additions: i64,

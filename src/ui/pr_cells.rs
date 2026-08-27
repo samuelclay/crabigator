@@ -22,7 +22,9 @@ pub(crate) const PR_IDENTITY_MAX: usize = 44;
 const PR_IDENTITY_EXTRA: usize = 12;
 const PR_DIFF_MAX: usize = 18;
 const PR_FILES_MAX: usize = 11;
-pub(crate) const PR_BRANCH_MAX: usize = 28;
+/// One cell wider than the other caps: the branch label spends three of its
+/// cells on [`BRANCH_PREFIX`], so this keeps the name itself as long as it was.
+pub(crate) const PR_BRANCH_MAX: usize = 29;
 const PR_STATE_MAX: usize = 6;
 const PR_CI_MAX: usize = 10;
 /// `💬` is two cells wide, leaving room for a four-digit thread count.
@@ -31,7 +33,11 @@ const PR_COMMENTS_MAX: usize = 6;
 const PR_REVIEW_MAX: usize = 1;
 const PR_MERGE_MAX: usize = 9;
 pub(crate) const PR_IDENTITY_MIN: usize = 10;
-const PR_BRANCH_MIN: usize = 8;
+const PR_BRANCH_MIN: usize = 9;
+
+/// The branch glyph and the gap before the branch name. Most terminals draw
+/// `⎇` wider than the one cell it claims, so a single space reads as none.
+pub(crate) const BRANCH_PREFIX: &str = "⎇  ";
 
 /// PRs the handoff renders: dismissed ones hidden, primaries above
 /// secondaries, arrival order kept within each group.
@@ -59,9 +65,9 @@ pub(crate) struct PrColumnWidths {
     pub(crate) dismiss: usize,
     /// Space reserved for PR-board detail links that replace GitHub status.
     pub(crate) detail_right: usize,
-    /// PR-view layout: the diff and file count sit in the right cluster
-    /// beside the GitHub status instead of between the title and the branch,
-    /// and the title takes every spare cell on the left.
+    /// PR-view layout: the diff sits in the right cluster beside the GitHub
+    /// status instead of between the title and the branch, and the title
+    /// takes every spare cell on the left.
     pub(crate) stats_right: bool,
     /// The flexible columns as measured, before any fitting pass grew or
     /// dropped them. The PR-view layout refits from these so the title, not
@@ -69,7 +75,6 @@ pub(crate) struct PrColumnWidths {
     pub(crate) natural_identity: usize,
     pub(crate) natural_branch: usize,
     pub(crate) natural_diff: usize,
-    pub(crate) natural_files: usize,
 }
 
 impl PrColumnWidths {
@@ -127,7 +132,6 @@ impl PrColumnWidths {
         self.diff = self.diff.max(diff);
         self.natural_diff = self.natural_diff.max(diff);
         self.files = self.files.max(files);
-        self.natural_files = self.natural_files.max(files);
     }
 
     pub(crate) fn fit_right(&mut self, total_width: usize) {
@@ -136,16 +140,14 @@ impl PrColumnWidths {
             .saturating_sub(PR_LEFT_PADDING + essential_left + PR_COLUMN_GAP + PR_RIGHT_PADDING);
         self.detail_right = self.detail_right.min(right_budget);
         // Dropped least-essential first: the promote/demote action, the
-        // dismiss action, the file count and diff when they live on this
-        // side, merge cleanliness, the unresolved thread count, the review
-        // glyph, then CI, leaving the PR's own state as the last survivor.
+        // dismiss action, the board diff, merge cleanliness, the unresolved
+        // thread count, the review glyph, then CI, leaving the PR's own state
+        // as the last survivor.
         while self.status_right_width() > right_budget {
             if self.flip > 0 {
                 self.flip = 0;
             } else if self.dismiss > 0 {
                 self.dismiss = 0;
-            } else if self.stats_right && self.files > 0 {
-                self.files = 0;
             } else if self.stats_right && self.diff > 0 {
                 self.diff = 0;
             } else if self.merge > 0 {
@@ -168,12 +170,11 @@ impl PrColumnWidths {
         &mut self,
         identity: &str,
         diff: &str,
-        files: &str,
         branch: &str,
         total_width: usize,
     ) {
         self.measure_identity(identity.width());
-        self.measure_stats(diff.width(), files.width());
+        self.measure_stats(diff.width(), 0);
         self.measure_branch(branch.width());
         self.fit_right(total_width);
         self.fit_left(total_width);
@@ -187,20 +188,24 @@ impl PrColumnWidths {
         self.fit_left(total_width);
     }
 
-    /// Switch to the PR view's row shape: the number rides inside the
+    /// Switch to the board's row shape: the number rides inside the
     /// identity cell (`★ #142: title`) so the standalone number column
-    /// collapses, and the diff and file count move beside the GitHub status
-    /// so the title keeps the width they used to take.
+    /// collapses, and the diff moves beside the GitHub status so the title
+    /// keeps the width it used to take.
     pub(crate) fn use_pr_view_layout(&mut self, total_width: usize) {
         self.number = 0;
         self.stats_right = true;
+        // The board is a reading surface, so it drops the promote/demote and
+        // dismiss actions; the in-session handoff strip still carries both.
+        self.flip = 0;
+        self.dismiss = 0;
         // Earlier passes fitted the stats on the left and may have dropped
         // them or grown the branch into the slack. Start over from the
         // measured widths so the fit below reflects this layout's priorities.
         self.identity = self.natural_identity;
         self.branch = self.natural_branch;
         self.diff = self.natural_diff;
-        self.files = self.natural_files;
+        self.files = 0;
         self.fit_right(total_width);
         self.fit_left(total_width);
     }
@@ -229,9 +234,9 @@ impl PrColumnWidths {
     }
 
     fn fit_left(&mut self, total_width: usize) {
-        // Dropping the diff or file count frees the left side directly, or
-        // shrinks the right cluster when they sit beside the status, so the
-        // budget is recomputed after every cut.
+        // Dropping stats frees the left side directly, or shrinks the right
+        // cluster when they sit beside the status, so the budget is
+        // recomputed after every cut.
         let mut left_budget = self.left_budget(total_width);
         while self.left_width() > left_budget {
             if self.stats_right && self.branch > 0 {
@@ -293,15 +298,13 @@ impl PrColumnWidths {
         ])
     }
 
-    /// The diff and file count as one right-cluster cell: the pair with its
-    /// usual gap, plus one leading and one trailing space so it reads apart
-    /// from the activity on its left and the status on its right. Zero when
-    /// the stats stay on the left or the PR has none.
+    /// The board's diff column, plus one leading and one trailing space so it
+    /// reads apart from activity and GitHub status.
     fn stats_cell_width(&self) -> usize {
         if !self.stats_right {
             return 0;
         }
-        match table_width(&[self.diff, self.files]) {
+        match self.diff {
             0 => 0,
             stats => stats + 2,
         }
@@ -372,9 +375,9 @@ pub(crate) fn pr_row_text_tinted(
 }
 
 /// Render the PR view's header row: identity (`★ #142: title`) and branch on
-/// the left, then the sessions' activity, the diff and file count, and the
-/// GitHub status anchored right. The block stands for the PR across every
-/// session, so its action links act group-wide.
+/// the left, then the sessions' activity, diff, and GitHub status anchored
+/// right. The block stands for the PR across every session, so its action
+/// links act group-wide.
 pub(crate) fn pr_view_row_text(
     width: u16,
     pr: &SessionPr,
@@ -387,9 +390,9 @@ pub(crate) fn pr_view_row_text(
 }
 
 /// Render a session-view PR sub-row: the PR-view row anatomy (identity,
-/// branch, diff and file count beside the GitHub status) indented beneath its
-/// session, with the activity column left empty — the session's header row
-/// carries the state and ages. Its action links act in that session's scope.
+/// branch, and diff beside the GitHub status) indented beneath its session,
+/// with the activity column left empty — the session's header row carries
+/// the state and ages. Its action links act in that session's scope.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn session_view_pr_row_text(
     width: u16,
@@ -425,7 +428,6 @@ pub(crate) fn session_row_text_with_activity(
     identity_color: u8,
     additions: i64,
     deletions: i64,
-    files: &str,
     branch: &str,
     widths: &PrColumnWidths,
     styled_activity: String,
@@ -433,40 +435,31 @@ pub(crate) fn session_row_text_with_activity(
     activity_width: usize,
 ) -> String {
     let identity = truncate_to_width(&format!("◇ {title}"), widths.identity);
-    let stats = [
-        colored_diff_cell(
+    // The diff sits where a PR row's diff does, at the head of an otherwise
+    // empty status cluster.
+    let status = if widths.stats_cell_width() == 0 {
+        (String::new(), 0, widths.right_width())
+    } else {
+        let diff = workspace_diff_text(additions, deletions);
+        let diff_cell = colored_diff_cell(
             additions,
             deletions,
             color::GREEN,
             color::RED,
             color::GRAY,
-            widths.diff,
-        ),
-        colored_cell(files, color::DARK_GRAY, widths.files),
-    ];
-    // In the PR view the stats sit where a PR row's stats do, at the head of
-    // an otherwise empty status cluster; everywhere else they stay inline
-    // between the title and the branch. `stats_cell_width` is zero unless the
-    // stats belong on the right and the session has some.
-    let status = if widths.stats_cell_width() == 0 {
-        (String::new(), 0, widths.right_width())
-    } else {
+            diff.width().min(PR_DIFF_MAX),
+        );
         stats_right_cell(
-            &stats,
+            &diff_cell,
             widths.right_width() - widths.status_right_width(),
             widths.right_width(),
         )
     };
-    let [diff, files] = if widths.stats_right {
-        [(String::new(), 0, 0), (String::new(), 0, 0)]
-    } else {
-        stats
-    };
     let left_cells = [
         colored_cell(&identity, identity_color, widths.identity),
         (String::new(), 0, widths.number),
-        diff,
-        files,
+        (String::new(), 0, 0),
+        (String::new(), 0, 0),
         colored_branch_cell(branch, color::DARK_GRAY, widths.branch),
     ];
     let mut row = " ".repeat(PR_LEFT_PADDING);
@@ -618,25 +611,25 @@ fn styled_pr_identity(pr: &SessionPr, identity: &str, scope: &str) -> String {
     )
 }
 
-/// The PR view's diff and file count as one right-cluster cell, padded so it
-/// sits apart from the activity before it and the status after it.
+/// The PR view's diff as a right-cluster cell, padded so it sits apart from
+/// the activity before it and the status after it.
 fn pr_stats_right_cell(pr: &SessionPr, widths: &PrColumnWidths) -> PrCell {
     let width = widths.stats_cell_width();
     if width == 0 {
         return (String::new(), 0, 0);
     }
-    stats_right_cell(&pr_stats_cells(pr, widths.diff, widths.files), 0, width)
+    stats_right_cell(&pr_stats_cells(pr, widths.diff, 0)[0], 0, width)
 }
 
-/// Diff and file-count cells at the head of the right cluster. One leading
-/// space keeps them off the activity column; `filler` is the shift a PR row's
-/// status takes when detail links are wider than the status itself, so rows
-/// without a status line up with it.
-fn stats_right_cell(cells: &[PrCell; 2], filler: usize, width: usize) -> PrCell {
+/// A diff cell at the head of the right cluster. One leading space keeps it
+/// off the activity column; `filler` is the shift a PR row's status takes when
+/// detail links are wider than the status itself, so rows without a status
+/// line up with it.
+fn stats_right_cell(cell: &PrCell, filler: usize, width: usize) -> PrCell {
     let lead = filler + 1;
     (
-        format!("{}{}", " ".repeat(lead), cells_text(cells)),
-        lead + table_width(&[cells[0].2, cells[1].2]),
+        format!("{}{}", " ".repeat(lead), cell.0),
+        lead + cell.1,
         width,
     )
 }
@@ -925,19 +918,18 @@ fn colored_branch_cell(label: &str, color: u8, width: usize) -> PrCell {
 /// Keep the branch suffix because it usually carries the ticket or feature
 /// name that distinguishes similar worktrees.
 fn truncate_branch_to_width(label: &str, max_width: usize) -> String {
-    const PREFIX: &str = "⎇ ";
-    let Some(branch) = label.strip_prefix(PREFIX) else {
+    let Some(branch) = label.strip_prefix(BRANCH_PREFIX) else {
         return truncate_left_to_width(label, max_width);
     };
-    let prefix_width = PREFIX.width();
+    let prefix_width = BRANCH_PREFIX.width();
     if label.width() <= max_width {
         return label.to_string();
     }
     if max_width <= prefix_width {
-        return truncate_to_width(PREFIX, max_width);
+        return truncate_to_width(BRANCH_PREFIX, max_width);
     }
     format!(
-        "{PREFIX}{}",
+        "{BRANCH_PREFIX}{}",
         truncate_left_to_width(branch, max_width - prefix_width)
     )
 }
@@ -1127,6 +1119,14 @@ fn pr_diff_text(pr: &SessionPr) -> String {
     }
 }
 
+fn workspace_diff_text(additions: i64, deletions: i64) -> String {
+    if additions == 0 && deletions == 0 {
+        String::new()
+    } else {
+        format!("+{additions} -{deletions}")
+    }
+}
+
 /// The PR's Files-changed tab — where the diff columns point.
 fn pr_files_url(pr: &SessionPr) -> String {
     if pr.url.is_empty() {
@@ -1153,7 +1153,7 @@ fn pr_branch_text(pr: &SessionPr) -> String {
     if pr.branch.is_empty() {
         String::new()
     } else {
-        format!("⎇ {}", pr.branch)
+        format!("{BRANCH_PREFIX}{}", pr.branch)
     }
 }
 

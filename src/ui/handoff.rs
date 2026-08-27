@@ -75,7 +75,7 @@ fn pr_separator_rule_width(width: u16) -> usize {
 /// Draw the session's PR list, one PR per row, on the terminal's own
 /// background so the strip reads as part of the session, not a panel.
 /// Each row uses shared columns:
-/// `☆ repo  #num  +A -D  N files  ⎇ branch  state CI 💬N merge`.
+/// `☆ repo  #num  +A -D  N files  ⎇  branch  state CI 💬N merge`.
 /// The first five are left-aligned, with the branch column flexing across the
 /// middle. Status columns are anchored at the right edge with a tighter
 /// one-space rhythm. The table leaves one cell at the right window edge.
@@ -886,7 +886,7 @@ mod tests {
         assert_eq!(long_cells[4].2, widths.branch);
         assert_eq!(
             crate::parsers::strip_ansi_for_debug(&long_cells[4].0),
-            "⎇ …callback-with-more-detail"
+            "⎇  …callback-with-more-detail"
         );
         assert_eq!(widths.files, "48 files".width());
         assert_eq!(widths.state, "open".width());
@@ -1112,7 +1112,7 @@ mod tests {
             at("#2412"),
             at("+1869"),
             at("13 files"),
-            at("⎇ sam/pal-fanout-fable"),
+            at("⎇  sam/pal-fanout-fable"),
             at("open"),
             at("✗1 CI"),
             at("💬3"),
