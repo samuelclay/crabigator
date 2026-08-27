@@ -1046,16 +1046,14 @@ fn aggregate(
     let now = now_secs();
     let mut merged: HashMap<String, BoardPr> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
-    // PRs a session holds a verified claim on, and the sessions the strict
-    // ownership gate below left unrepresented paired with the primary PR their
-    // own classifier picked (cross-repo reviews, replying to someone else's
-    // branch). Both are resolved after the merge pass.
-    let mut owned: HashSet<String> = HashSet::new();
-    let mut fallbacks: Vec<(&SessionSnapshot, String)> = Vec::new();
+    // PRs a session holds a verified claim on, and same-organization primary
+    // PRs that do not match its checkout. Resolve the latter after the merge
+    // pass so a verified owner wins; otherwise every primary PR keeps the
+    // session title, state, and activity that it shares.
+    let mut verified_owner_keys: HashSet<String> = HashSet::new();
+    let mut same_org_primary_candidates: Vec<(&SessionSnapshot, String)> = Vec::new();
 
     for session in snapshots {
-        let mut represented = false;
-        let mut fallback: Option<(String, u64)> = None;
         for stored_pr in &session.prs {
             let key = format!(
                 "{}/{}#{}",
@@ -1137,9 +1135,8 @@ fn aggregate(
             let represents_session = pr.primary
                 && (session_created_pr(session, pr) || pr_attached_to_session(session, pr));
             if represents_session {
-                represented = true;
                 attach_session(entry, session, now);
-                owned.insert(key);
+                verified_owner_keys.insert(key);
             } else if pr.primary
                 && !pr.dismissed
                 && !session.repo_owner.is_empty()
@@ -1147,25 +1144,17 @@ fn aggregate(
             {
                 // Same-org only: a session that merely discusses another
                 // org's PR must not migrate into that repository's group.
-                let rank = pr.last_mentioned_at;
-                if fallback.as_ref().is_none_or(|(_, best)| rank > *best) {
-                    fallback = Some((key, rank));
-                }
-            }
-        }
-        if !represented {
-            if let Some((key, _)) = fallback {
-                fallbacks.push((session, key));
+                same_org_primary_candidates.push((session, key));
             }
         }
     }
 
-    // A session whose primary PR failed the strict gate would otherwise fall
-    // back to a bare workspace row even though its own status bar names the
-    // PR. Trust the session's classification — but only while no session
-    // holds a verified claim on that PR.
-    for (session, key) in fallbacks {
-        if owned.contains(&key) {
+    // A same-organization primary can live in a sibling repository while one
+    // session works a paired change. Carry that session onto every such PR so
+    // each block shows the shared title, state, prompt time, and completion
+    // time. A verified claim from another session still wins.
+    for (session, key) in same_org_primary_candidates {
+        if verified_owner_keys.contains(&key) {
             continue;
         }
         if let Some(entry) = merged.get_mut(&key) {
@@ -6405,6 +6394,76 @@ mod tests {
             assert_eq!(entry.sessions[0].session_id, "portal");
         }
         assert!(workspaces.is_empty());
+    }
+
+    #[test]
+    fn paired_same_org_prs_share_session_title_state_and_activity() {
+        let now = now_secs() as u64;
+        let mut portal_pr = board_pr(1099, "developer-portal");
+        make_primary(&mut portal_pr);
+        portal_pr.created_here = false;
+        portal_pr.branch = "sam/builder-document-intent".to_string();
+        portal_pr.title = "Apply uploaded document instructions".to_string();
+        let mut handler_pr = board_pr(2573, "request-handler");
+        make_primary(&mut handler_pr);
+        handler_pr.created_here = false;
+        handler_pr.branch = "sam/builder-document-intent".to_string();
+        handler_pr.title = "Classify uploaded document intent".to_string();
+
+        let mut session = snapshot("developer-portal", vec![portal_pr, handler_pr]);
+        session.branch = "sam/builder-document-intent".to_string();
+        session.title = "Shared builder document work".to_string();
+        session.state = SessionState::Thinking;
+        session.prompted_at = now - 60;
+        session.completed_at = now - 120;
+
+        let snapshots = vec![session];
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let workspaces = local_workspaces(&snapshots, &entries);
+
+        assert_eq!(entries.len(), 2);
+        for entry in &entries {
+            assert_eq!(
+                entry.sessions.len(),
+                1,
+                "{} lost its session",
+                entry.pr.repo
+            );
+            let attached = &entry.sessions[0];
+            assert_eq!(attached.title, "Shared builder document work");
+            assert_eq!(attached.state, SessionState::Thinking);
+            assert_eq!(attached.prompted_at, now - 60);
+            assert_eq!(attached.completed_at, now - 120);
+        }
+        assert!(workspaces.is_empty());
+
+        let frame = crate::parsers::strip_ansi_for_debug(
+            &render_prs_frame(
+                &entries_for_mode(entries, BoardMode::Prs).prs,
+                DEFAULT_DETAIL,
+            )
+            .lines
+            .join("\n"),
+        );
+        assert_eq!(
+            frame.matches("Shared builder document work").count(),
+            2,
+            "each PR block shows the shared session title: {frame}"
+        );
+        for number in [1099, 2573] {
+            let row = frame
+                .lines()
+                .find(|line| line.contains(&format!("#{number}:")))
+                .unwrap_or_else(|| panic!("PR #{number} is missing from: {frame}"));
+            assert!(
+                row.contains(PROMPT_ICON),
+                "PR #{number} lost its prompt time: {row}"
+            );
+            assert!(
+                row.contains(COMPLETION_ICON),
+                "PR #{number} lost its completion time: {row}"
+            );
+        }
     }
 
     #[test]

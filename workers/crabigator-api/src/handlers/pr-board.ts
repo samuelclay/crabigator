@@ -576,13 +576,12 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         .all<SessionPrRow>();
 
     const merged = new Map<string, BoardEntry & { disposition: string | null }>();
-    // PRs a session holds a verified claim on, and the sessions the strict
-    // ownership gate below left unrepresented paired with the primary PR their
-    // own classifier picked (cross-repo reviews, replying to someone else's
-    // branch). Both are resolved after the merge pass.
-    const representedSessions = new Set<string>();
-    const ownedKeys = new Set<string>();
-    const fallbacks = new Map<string, { key: string; rank: number; row: SessionPrRow }>();
+    // PRs a session holds a verified claim on, and same-organization primary
+    // PRs that do not match its checkout. Resolve the latter after the merge
+    // pass so a verified owner wins; otherwise every primary PR keeps the
+    // session title, state, and activity that it shares.
+    const verifiedOwnerKeys = new Set<string>();
+    const sameOrgPrimaryCandidates: Array<{ key: string; row: SessionPrRow }> = [];
     for (const row of rows.results ?? []) {
         const storedPr = parseSessionPr(row.data);
         if (!storedPr) continue;
@@ -652,8 +651,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         const representsSession = !!pr.primary
             && (sessionCreatedPr(row, pr) || prAttachedToSession(row, pr));
         if (representsSession) {
-            representedSessions.add(row.session_id);
-            ownedKeys.add(key);
+            verifiedOwnerKeys.add(key);
             entry.sessions.push(boardSession(row));
         } else if (
             pr.primary
@@ -663,21 +661,17 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         ) {
             // Same-org only: a session that merely discusses another org's PR
             // must not migrate into that repository's group.
-            const rank = pr.last_mentioned_at || 0;
-            const existing = fallbacks.get(row.session_id);
-            if (!existing || rank > existing.rank) {
-                fallbacks.set(row.session_id, { key, rank, row });
-            }
+            sameOrgPrimaryCandidates.push({ key, row });
         }
     }
 
-    // A session whose primary PR failed the strict gate would otherwise fall
-    // back to a bare peer row even though its own status bar names the PR.
-    // Trust the session's classification — but only while no session holds a
-    // verified claim on that PR.
-    for (const [sessionId, fallback] of fallbacks) {
-        if (representedSessions.has(sessionId) || ownedKeys.has(fallback.key)) continue;
-        merged.get(fallback.key)?.sessions.push(boardSession(fallback.row));
+    // A same-organization primary can live in a sibling repository while one
+    // session works a paired change. Carry that session onto every such PR so
+    // each block shows the shared title, state, prompt time, and completion
+    // time. A verified claim from another session still wins.
+    for (const candidate of sameOrgPrimaryCandidates) {
+        if (verifiedOwnerKeys.has(candidate.key)) continue;
+        merged.get(candidate.key)?.sessions.push(boardSession(candidate.row));
     }
 
     // Explicitly watched PRs join the board even when no session tracks
