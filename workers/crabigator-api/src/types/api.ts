@@ -60,6 +60,9 @@ export interface CreateSessionRequest {
     client_session_id: string;
     cwd: string;
     platform: 'claude' | 'codex';
+    /** 'path:<cwd>' when the session runs in a linked git worktree; its PR
+     * dispositions then stick to the directory instead of the session. */
+    pr_scope?: string;
 }
 
 export interface CreateSessionResponse {

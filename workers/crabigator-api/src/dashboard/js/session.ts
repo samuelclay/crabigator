@@ -605,6 +605,10 @@ export const sessionJs = `
             }
             sessions.set(session.id, {
                 element: card,
+                sessionId: session.id,
+                // The scope this session's PR dispositions use: 'path:<cwd>'
+                // inside a linked worktree, else its own session id.
+                prScope: session.pr_scope || ('session:' + session.id),
                 state: session.state,
                 title: null,
                 generatedTitle: null,

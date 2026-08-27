@@ -509,10 +509,12 @@ export const changesWidgetJs = `
             updatePrList(sessionId, sessionData.prs || []);
         }
 
-        // Canonical PR dispositions for the whole group, keyed owner/repo#number.
-        // The desktop already applies these during classification, but loading
-        // them here lets a fresh dashboard reflect toggles made elsewhere before
-        // the next prs event arrives.
+        // Canonical PR dispositions for the whole group, keyed owner/repo#number
+        // and then by scope: '' for the group, 'session:<id>' for one session,
+        // 'path:<cwd>' for every session in one worktree. The desktop already
+        // applies these during classification, but loading them here lets a
+        // fresh dashboard reflect toggles made elsewhere before the next prs
+        // event arrives.
         const prOverrides = new Map();
         let prOverridesLoadStarted = false;
         async function loadPrOverrides() {
@@ -522,10 +524,31 @@ export const changesWidgetJs = `
                 const data = await res.json();
                 prOverrides.clear();
                 for (const o of (data.overrides || [])) {
-                    prOverrides.set(o.owner + '/' + o.repo + '#' + o.number, o.disposition);
+                    const key = o.owner + '/' + o.repo + '#' + o.number;
+                    if (!prOverrides.has(key)) prOverrides.set(key, new Map());
+                    prOverrides.get(key).set(o.scope_key || '', o.disposition);
                 }
                 rerenderAllPrLists();
             } catch (e) { /* offline dashboards still render local state */ }
+        }
+
+        // The override one session sees: its own session scope beats its
+        // worktree-path scope beats the group-wide row. With no session given
+        // (board-level rows), only the group row counts.
+        function prScopedOverride(pr, sessionData = null) {
+            const scopes = prOverrides.get(prKey(pr));
+            if (!scopes) return null;
+            if (sessionData) {
+                const bySession = sessionData.sessionId
+                    ? scopes.get('session:' + sessionData.sessionId)
+                    : null;
+                if (bySession) return bySession;
+                const byPath = sessionData.cwd ? scopes.get('path:' + sessionData.cwd) : null;
+                if (byPath) return byPath;
+                const byScope = sessionData.prScope ? scopes.get(sessionData.prScope) : null;
+                if (byScope) return byScope;
+            }
+            return scopes.get('') || null;
         }
 
         function prKey(pr) {
@@ -563,7 +586,7 @@ export const changesWidgetJs = `
         // Override wins. Current worktree ownership fills in automatic-primary
         // for sessions that started before this classification shipped.
         function prDisposition(pr, sessionData = null) {
-            const override = prOverrides.get(prKey(pr));
+            const override = prScopedOverride(pr, sessionData);
             if (override) return override;
             if (pr.dismissed) return 'dismissed';
             if (pr.primary) return 'primary';
@@ -618,8 +641,10 @@ export const changesWidgetJs = `
             }
         }
 
-        async function postPrOverride(pr, disposition) {
-            prOverrides.set(prKey(pr), disposition);
+        async function postPrOverride(pr, disposition, scope = '') {
+            const key = prKey(pr);
+            if (!prOverrides.has(key)) prOverrides.set(key, new Map());
+            prOverrides.get(key).set(scope, disposition);
             try {
                 await fetch('/api/pr-overrides', {
                     method: 'POST',
@@ -629,6 +654,7 @@ export const changesWidgetJs = `
                         repo: pr.repo,
                         number: pr.number,
                         disposition: disposition,
+                        scope: scope,
                     }),
                 });
             } catch (e) { /* optimistic state stays; next load reconciles */ }
@@ -705,7 +731,10 @@ export const changesWidgetJs = `
                 // flip as the star, placed beside the dismiss.
                 const flip = '<span class="pr-flip" title="' + (isPrimary ? 'Make secondary' : 'Make primary')
                     + '">' + (isPrimary ? '↓' : '↑') + '</span>';
-                const dismiss = '<span class="pr-dismiss" title="Dismiss this PR everywhere">✕</span>';
+                const dismissTitle = sessionData && String(sessionData.prScope || '').startsWith('path:')
+                    ? 'Dismiss this PR from this worktree'
+                    : 'Dismiss this PR from this session';
+                const dismiss = '<span class="pr-dismiss" title="' + dismissTitle + '">✕</span>';
                 // Right-hand status cluster: state, CI, merge cleanliness, then
                 // the promote/demote and dismiss actions.
                 const status = '<span class="pr-status">' + badge + prCiBadge(pr)
@@ -738,12 +767,16 @@ export const changesWidgetJs = `
                 ev.stopPropagation();
                 togglePrs(sessionId);
             };
+            // Actions taken on a session card apply in that session's scope,
+            // so a dismissal here leaves the group's other sessions alone.
+            const actionScope = (sessionData && sessionData.prScope)
+                || ('session:' + sessionId);
             widget.querySelectorAll('.pr-row').forEach((rowEl, i) => {
                 const pr = shown[i];
                 if (!pr) return;
                 const flipPr = ev => {
                     ev.stopPropagation();
-                    postPrOverride(pr, disposition(pr) === 'primary' ? 'secondary' : 'primary');
+                    postPrOverride(pr, disposition(pr) === 'primary' ? 'secondary' : 'primary', actionScope);
                     rerenderAllPrLists();
                 };
                 // The ★/☆ glyph and the ↑/↓ action both flip the PR.
@@ -752,7 +785,7 @@ export const changesWidgetJs = `
                 const dismissEl = rowEl.querySelector('.pr-dismiss');
                 if (dismissEl) dismissEl.onclick = ev => {
                     ev.stopPropagation();
-                    postPrOverride(pr, 'dismissed');
+                    postPrOverride(pr, 'dismissed', actionScope);
                     rerenderAllPrLists();
                 };
             });

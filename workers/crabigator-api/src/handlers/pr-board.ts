@@ -8,6 +8,7 @@ interface BoardSessionRow {
     session_id: string;
     platform: 'claude' | 'codex' | null;
     cwd: string | null;
+    pr_scope: string | null;
     session_state: string | null;
     is_active: number | null;
     last_seen_at: number | null;
@@ -32,7 +33,44 @@ interface SessionPrRow extends BoardSessionRow {
     data: string;
     updated_at: number;
     is_primary: number;
-    disposition: string | null;
+}
+
+/** The group's overrides, keyed owner/repo#number then scope_key. */
+type OverrideMap = Map<string, Map<string, string>>;
+
+async function loadOverrides(env: Env, groupId: string): Promise<OverrideMap> {
+    const rows = await env.DB.prepare(
+        'SELECT owner, repo, number, scope_key, disposition FROM pr_overrides WHERE group_key = ?'
+    )
+        .bind(groupId)
+        .all<{ owner: string; repo: string; number: number; scope_key: string; disposition: string }>();
+    const map: OverrideMap = new Map();
+    for (const row of rows.results ?? []) {
+        const key = `${row.owner}/${row.repo}#${row.number}`;
+        let scopes = map.get(key);
+        if (!scopes) {
+            scopes = new Map();
+            map.set(key, scopes);
+        }
+        scopes.set(row.scope_key, row.disposition);
+    }
+    return map;
+}
+
+/** The disposition one session sees for a PR: its own session scope beats its
+ * worktree-path scope beats the group-wide row. */
+function overrideForSession(
+    overrides: OverrideMap,
+    key: string,
+    sessionId: string,
+    cwd: string | null
+): string | null {
+    const scopes = overrides.get(key);
+    if (!scopes) return null;
+    return scopes.get(`session:${sessionId}`)
+        ?? (cwd ? scopes.get(`path:${cwd}`) : undefined)
+        ?? scopes.get('')
+        ?? null;
 }
 
 /** Per-session recap brief stored in sessions.recap (see SessionDO). */
@@ -215,6 +253,9 @@ interface BoardEntry {
     sessions: {
         session_id: string;
         platform: 'claude' | 'codex';
+        /** The scope this session's own PR dispositions use: 'path:<cwd>'
+         * inside a linked worktree, else 'session:<id>'. */
+        pr_scope: string;
         dir_name: string;
         repo_owner: string;
         repo_name: string;
@@ -324,6 +365,7 @@ function boardSession(row: BoardSessionRow): BoardSession {
     return {
         session_id: row.session_id,
         platform: row.platform || 'claude',
+        pr_scope: row.pr_scope || `session:${row.session_id}`,
         dir_name: dirName,
         repo_owner: row.repo_owner || '',
         repo_name: row.repo_name || dirName,
@@ -441,15 +483,19 @@ function prAttachedToSession(row: BoardSessionRow, pr: SessionPr): boolean {
 }
 
 /** Derive worktree ownership from durable session data written by older clients. */
-function effectiveSessionPr(row: SessionPrRow, stored: SessionPr): SessionPr {
+function effectiveSessionPr(
+    row: SessionPrRow,
+    stored: SessionPr,
+    disposition: string | null
+): SessionPr {
     const pr = { ...stored };
-    if (row.disposition === 'primary') {
+    if (disposition === 'primary') {
         return { ...pr, primary: true, primary_source: 'override', dismissed: false };
     }
-    if (row.disposition === 'secondary') {
+    if (disposition === 'secondary') {
         return { ...pr, primary: false, primary_source: 'override', dismissed: false };
     }
-    if (row.disposition === 'dismissed') {
+    if (disposition === 'dismissed') {
         return { ...pr, primary: false, primary_source: 'override', dismissed: true };
     }
 
@@ -510,20 +556,18 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     const daysParam = parseInt(new URL(request.url).searchParams.get('days') ?? '1', 10);
     const lingerDays = Number.isFinite(daysParam) ? Math.min(Math.max(daysParam, 0), 90) : 1;
 
+    const overrides = await loadOverrides(env, groupId);
     const rows = await env.DB.prepare(
         `SELECT sp.owner, sp.repo, sp.number, sp.data, sp.updated_at, sp.session_id,
                 sp.is_primary,
-                s.platform, s.cwd, s.state AS session_state, s.is_active, s.last_seen_at,
+                s.platform, s.cwd, s.pr_scope, s.state AS session_state, s.is_active, s.last_seen_at,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,
                 s.repo_owner, s.repo_name, s.branch,
-                s.uncommitted_files, s.additions, s.deletions, s.slack_threads,
-                o.disposition
+                s.uncommitted_files, s.additions, s.deletions, s.slack_threads
          FROM session_prs sp
          JOIN sessions s ON s.id = sp.session_id
          JOIN devices d ON d.id = s.device_id
-         LEFT JOIN pr_overrides o
-             ON o.group_key = ?1 AND o.owner = sp.owner AND o.repo = sp.repo AND o.number = sp.number
          WHERE d.group_id = ?1
          ORDER BY sp.updated_at DESC
          LIMIT 1000`
@@ -542,8 +586,12 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     for (const row of rows.results ?? []) {
         const storedPr = parseSessionPr(row.data);
         if (!storedPr) continue;
-        const pr = effectiveSessionPr(row, storedPr);
         const key = `${row.owner}/${row.repo}#${row.number}`;
+        const pr = effectiveSessionPr(
+            row,
+            storedPr,
+            overrideForSession(overrides, key, row.session_id, row.cwd)
+        );
         let entry = merged.get(key);
         if (!entry) {
             entry = {
@@ -554,13 +602,16 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
                 pr: { ...pr, mentions: 0, user_mentions: 0, last_mentioned_at: 0 },
                 updated_at: row.updated_at,
                 sessions: [],
-                disposition: row.disposition,
+                disposition: overrides.get(key)?.get('') ?? null,
             };
             merged.set(key, entry);
         }
         const aggregatePrimary = !!entry.pr.primary || !!pr.primary;
         const aggregatePrimarySource = combinedPrimarySource(entry.pr, pr);
-        const aggregateDismissed = !!entry.pr.dismissed || !!pr.dismissed;
+        // A PR dismissed in one session can still be another session's live
+        // work: the merged copy reads dismissed only when every contribution
+        // does (a group-wide dismissal is handled by `disposition` instead).
+        const aggregateDismissed = !!entry.pr.dismissed && !!pr.dismissed;
         if (pr.refreshed_at > entry.pr.refreshed_at) {
             const previous = entry.pr;
             entry.pr = {
@@ -682,7 +733,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     // Return every active account session separately. Clients keep any session
     // without a same-repository primary PR as its own peer row.
     const sessionRows = await env.DB.prepare(
-        `SELECT s.id AS session_id, s.platform, s.cwd, s.state AS session_state,
+        `SELECT s.id AS session_id, s.platform, s.cwd, s.pr_scope, s.state AS session_state,
                 s.is_active, s.last_seen_at,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,

@@ -6,6 +6,19 @@ import { deleteWatchedPr } from './watched-prs';
 const DISPOSITIONS = ['primary', 'secondary', 'dismissed'] as const;
 type Disposition = (typeof DISPOSITIONS)[number];
 
+/**
+ * Where an override applies: '' is the whole group (board-level actions and
+ * watched PRs), 'session:<id>' one session, 'path:<cwd>' every session in one
+ * worktree directory — sticky for future sessions there. Scoped rows beat the
+ * group row when both exist.
+ */
+function validScopeKey(scope: unknown): scope is string {
+    if (typeof scope !== 'string') return false;
+    return scope === ''
+        || /^session:[A-Za-z0-9_.-]{1,64}$/.test(scope)
+        || (/^path:\//.test(scope) && scope.length <= 512);
+}
+
 /** [in progress, done] wording for the action page; also the set of
  * dispositions the page accepts. */
 const ACTION_WORDING = new Map<string, [string, string]>([
@@ -20,6 +33,7 @@ interface PrOverrideRow {
     owner: string;
     repo: string;
     number: number;
+    scope_key: string;
     disposition: Disposition;
     updated_at: number;
 }
@@ -75,7 +89,7 @@ export async function getPrOverrides(request: Request, env: Env): Promise<Respon
     }
 
     const rows = await env.DB.prepare(
-        `SELECT owner, repo, number, disposition, updated_at
+        `SELECT owner, repo, number, scope_key, disposition, updated_at
          FROM pr_overrides WHERE group_key = ?`
     )
         .bind(groupKey)
@@ -96,13 +110,15 @@ export async function getPrActionPage(request: Request): Promise<Response> {
     const repo = url.searchParams.get('repo') ?? '';
     const number = parseInt(url.searchParams.get('number') ?? '', 10);
     const disposition = url.searchParams.get('disposition') ?? '';
+    const scope = url.searchParams.get('scope') ?? '';
 
     const wording = ACTION_WORDING.get(disposition);
     const invalid =
         !wording ||
         !/^[A-Za-z0-9_.-]+$/.test(owner) ||
         !/^[A-Za-z0-9_.-]+$/.test(repo) ||
-        !Number.isInteger(number) || number <= 0;
+        !Number.isInteger(number) || number <= 0 ||
+        !validScopeKey(scope);
     if (invalid) {
         return new Response('Invalid PR action', { status: 400 });
     }
@@ -111,11 +127,13 @@ export async function getPrActionPage(request: Request): Promise<Response> {
     const prLabel = `${repo} #${number}`;
     // Unwatching targets the watch list; every other action stores an override.
     const endpoint = disposition === 'unwatched' ? '/api/prs/watched' : '/api/pr-overrides';
+    // The scope is free-form text (it can carry a filesystem path); <
+    // keeps a hostile value from closing the <script> tag it is embedded in.
     const payload = JSON.stringify(
         disposition === 'unwatched'
             ? { owner, repo, number, remove: true }
-            : { owner, repo, number, disposition }
-    );
+            : { owner, repo, number, disposition, scope }
+    ).replace(/</g, '\\u003c');
 
     const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>${verb} ${prLabel}</title>
@@ -155,14 +173,23 @@ a { color: #c4a7f7; }
 
 /**
  * POST /api/pr-overrides - Set or clear one PR's disposition.
- * Body: { owner, repo, number, disposition: 'primary' | 'secondary' | 'dismissed' | 'auto' }
- * 'auto' deletes the override, returning the PR to automatic classification.
+ * Body: { owner, repo, number, disposition: 'primary' | 'secondary' | 'dismissed' | 'auto',
+ *         scope?: '' | 'session:<id>' | 'path:<cwd>' }
+ * Omitted or empty scope is the whole group. 'auto' deletes the scope's
+ * override — with no scope given it clears every row for the PR, returning it
+ * fully to automatic classification.
  */
 export async function setPrOverride(request: Request, env: Env): Promise<Response> {
     const result = await requireMobileAuth(request, env);
     if ('error' in result) return result.error;
 
-    let body: { owner?: string; repo?: string; number?: number; disposition?: string };
+    let body: {
+        owner?: string;
+        repo?: string;
+        number?: number;
+        disposition?: string;
+        scope?: string;
+    };
     try {
         body = await request.json();
     } catch {
@@ -180,29 +207,40 @@ export async function setPrOverride(request: Request, env: Env): Promise<Respons
     if (disposition !== 'auto' && !DISPOSITIONS.includes(disposition as Disposition)) {
         return jsonResponse({ error: 'Invalid disposition', code: 'INVALID_DISPOSITION' }, 400);
     }
+    const scope = body.scope ?? '';
+    if (!validScopeKey(scope)) {
+        return jsonResponse({ error: 'Invalid scope', code: 'INVALID_SCOPE' }, 400);
+    }
 
     const groupKey = result.auth.group_id;
-    // Dismissing a PR also ends any explicit watch on it — nothing should
-    // resurrect a PR the user asked to go away.
-    if (disposition === 'dismissed') {
+    // A group-wide dismissal also ends any explicit watch on the PR — nothing
+    // should resurrect a PR the user asked to go away everywhere. A scoped
+    // dismissal only hides it from that session or worktree, so the watch
+    // (a group-level fact) survives.
+    if (disposition === 'dismissed' && scope === '') {
         await deleteWatchedPr(env, groupKey, owner, repo, number);
     }
     if (disposition === 'auto') {
+        const scoped = body.scope !== undefined;
         await env.DB.prepare(
-            'DELETE FROM pr_overrides WHERE group_key = ? AND owner = ? AND repo = ? AND number = ?'
+            `DELETE FROM pr_overrides
+             WHERE group_key = ? AND owner = ? AND repo = ? AND number = ?
+               ${scoped ? 'AND scope_key = ?' : ''}`
         )
-            .bind(groupKey, owner, repo, number)
+            .bind(...(scoped
+                ? [groupKey, owner, repo, number, scope]
+                : [groupKey, owner, repo, number]))
             .run();
     } else {
         await env.DB.prepare(
-            `INSERT INTO pr_overrides (group_key, owner, repo, number, disposition, updated_at, updated_by)
-             VALUES (?, ?, ?, ?, ?, unixepoch(), ?)
-             ON CONFLICT (group_key, owner, repo, number)
+            `INSERT INTO pr_overrides (group_key, owner, repo, number, scope_key, disposition, updated_at, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?)
+             ON CONFLICT (group_key, owner, repo, number, scope_key)
              DO UPDATE SET disposition = excluded.disposition,
                            updated_at = excluded.updated_at,
                            updated_by = excluded.updated_by`
         )
-            .bind(groupKey, owner, repo, number, disposition, result.auth.mobile_id)
+            .bind(groupKey, owner, repo, number, scope, disposition, result.auth.mobile_id)
             .run();
     }
     await notifyGroupSessions(env, groupKey);

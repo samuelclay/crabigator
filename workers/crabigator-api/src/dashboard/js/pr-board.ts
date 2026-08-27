@@ -692,7 +692,7 @@ export const prBoardJs = `
         function prbIdxAttrs(idx, sub) {
             return 'data-idx="' + idx + '"' + (sub === undefined ? '' : ' data-sub="' + sub + '"');
         }
-        function prbStatusCells(pr, idx, primary, sub) {
+        function prbStatusCells(pr, idx, primary, sub, sessScope) {
             const cells = prbStatusParts(pr).map(part => prbCool(part.html, [prbPrCoolKey(pr, part.col)]));
             // ↑ promotes a secondary PR, ↓ demotes a primary. Unlike the ★/☆
             // glyph, it works on watched PRs too, so a watch can be promoted
@@ -700,9 +700,31 @@ export const prBoardJs = `
             cells.push('<span class="prb-flip" data-act="flip" ' + prbIdxAttrs(idx, sub)
                 + ' title="' + (primary ? 'Make secondary' : 'Make primary') + '">'
                 + (primary ? '↓' : '↑') + '</span>');
+            // A PR-block ✕ dismisses everywhere; a session sub-row ✕ only
+            // dismisses from that session (or its worktree, when scoped so).
+            const dismissTitle = sub === undefined
+                ? 'Dismiss this PR everywhere'
+                : String(sessScope || '').startsWith('path:')
+                    ? 'Dismiss this PR from this worktree'
+                    : 'Dismiss this PR from this session';
             cells.push('<span class="prb-x" data-act="dismiss" ' + prbIdxAttrs(idx, sub)
-                + ' title="Dismiss this PR everywhere">✕</span>');
+                + ' title="' + dismissTitle + '">✕</span>');
             return cells.join('');
+        }
+
+        // The scope a session's own dispositions use, and the override one
+        // session sees for a PR: its session scope beats its worktree-path
+        // scope beats the group row.
+        function prbSessScope(s) {
+            return (s && s.pr_scope) || ('session:' + ((s && s.session_id) || ''));
+        }
+        function prbSessionDisposition(pr, s) {
+            const scopes = prOverrides.get(pr.owner + '/' + pr.repo + '#' + pr.number);
+            if (!scopes || !s) return null;
+            return scopes.get('session:' + (s.session_id || ''))
+                || scopes.get(prbSessScope(s))
+                || scopes.get('')
+                || null;
         }
 
         // The diff and file count both point at the PR's Files-changed tab.
@@ -1036,7 +1058,7 @@ export const prBoardJs = `
                     + '"><span class="prb-l1-left prb-pr-sub">' + star + ident + branch + '</span>'
                     + '<span class="prb-activity"></span>'
                     + prbStatsCells(pr.url, pr.additions, pr.deletions, pr.changed_files)
-                    + '<span class="prb-status">' + prbStatusCells(pr, idx, sub.primary, subIdx)
+                    + '<span class="prb-status">' + prbStatusCells(pr, idx, sub.primary, subIdx, prbSessScope(s))
                     + '</span></div>';
                 if (prBoardViewPrefs.detail === 1) html += prbPrViewDetailHtml(pr);
             });
@@ -1419,7 +1441,11 @@ export const prBoardJs = `
                 const disposition = prDisposition(e.pr);
                 if (disposition === 'dismissed') continue;
                 const primary = disposition === 'primary';
-                const sessions = e.sessions || [];
+                // The server already drops scope-dismissed sessions; filtering
+                // here lets a dismissal made just now reshape the board before
+                // the next fetch.
+                const sessions = (e.sessions || []).filter(s =>
+                    prbSessionDisposition(e.pr, s) !== 'dismissed');
                 if (prView || !sessions.length) {
                     if (prView && !primary && !e.pr.watched) continue;
                     const ordered = sessions.slice().sort((a, b) =>
@@ -1449,7 +1475,10 @@ export const prBoardJs = `
                             key: 'sess:' + sessKey,
                         });
                     }
-                    sessBlocks.get(sessKey).prs.push({ entry: e, primary });
+                    // A flip scoped to this session outranks the entry-level
+                    // classification on its own row.
+                    const sd = prbSessionDisposition(e.pr, s);
+                    sessBlocks.get(sessKey).prs.push({ entry: e, primary: sd ? sd === 'primary' : primary });
                 }
             }
             for (const block of sessBlocks.values()) {
@@ -1622,9 +1651,12 @@ export const prBoardJs = `
                         prbRemoveWatch(target.entry.pr);
                         return;
                     }
+                    // Session-view rows act in that session's scope; PR-view
+                    // blocks stand for the PR itself, so they act group-wide.
+                    const scope = item.kind === 'sessview' ? prbSessScope(item.session) : '';
                     postPrOverride(target.entry.pr, el.dataset.act === 'dismiss'
                         ? 'dismissed'
-                        : (target.primary ? 'secondary' : 'primary'));
+                        : (target.primary ? 'secondary' : 'primary'), scope);
                     renderPrBoardBody();
                     rerenderAllPrLists();
                 };

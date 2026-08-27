@@ -59,6 +59,11 @@ export async function createSession(
     }
 
     const { client_session_id, cwd, platform } = body;
+    // Only worktree sessions publish a path scope; everything else falls back
+    // to 'session:<id>' at read time.
+    const prScope = typeof body.pr_scope === 'string' && body.pr_scope.startsWith('path:/')
+        ? body.pr_scope.slice(0, 512)
+        : null;
 
     if (!client_session_id || !cwd || !platform) {
         return new Response(
@@ -87,12 +92,13 @@ export async function createSession(
             UPDATE sessions
             SET cwd = ?,
                 platform = ?,
+                pr_scope = ?,
                 state = CASE WHEN is_active = 1 THEN state ELSE 'ready' END,
                 ended_at = NULL,
                 is_active = 1,
                 last_seen_at = ?
             WHERE id = ?
-        `).bind(cwd, platform, now, existing.id).run();
+        `).bind(cwd, platform, prScope, now, existing.id).run();
 
         // Session already exists, return existing ID
         const url = new URL(request.url);
@@ -108,9 +114,9 @@ export async function createSession(
 
     // Create new session
     await env.DB.prepare(`
-        INSERT INTO sessions (id, device_id, client_session_id, cwd, platform, state, started_at, is_active)
-        VALUES (?, ?, ?, ?, ?, 'ready', ?, 1)
-    `).bind(sessionId, device_id, client_session_id, cwd, platform, now).run();
+        INSERT INTO sessions (id, device_id, client_session_id, cwd, platform, pr_scope, state, started_at, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, 'ready', ?, 1)
+    `).bind(sessionId, device_id, client_session_id, cwd, platform, prScope, now).run();
 
     // Unhide project if it was manually hidden
     const device = await env.DB.prepare('SELECT group_id, name as device_name FROM devices WHERE id = ?')
@@ -196,7 +202,7 @@ export async function listSessions(
     const offset = parseInt(url.searchParams.get('offset') || '0', 10);
 
     let query = `
-        SELECT sessions.id, sessions.client_session_id, sessions.cwd, sessions.platform, sessions.state,
+        SELECT sessions.id, sessions.client_session_id, sessions.cwd, sessions.platform, sessions.pr_scope, sessions.state,
                sessions.started_at, sessions.ended_at, sessions.is_active, sessions.last_seen_at,
                sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds,
                sessions.prompts_changed_at, sessions.completions_changed_at,
@@ -226,6 +232,7 @@ export async function listSessions(
         client_session_id: string;
         cwd: string;
         platform: 'claude' | 'codex';
+        pr_scope: string | null;
         state: SessionState;
         started_at: number;
         ended_at: number | null;
@@ -307,6 +314,7 @@ export async function listSessions(
             client_session_id: row.client_session_id,
             cwd: row.cwd,
             platform: row.platform,
+            pr_scope: row.pr_scope || undefined,
             state: row.state,
             started_at: row.started_at,
             ended_at: row.ended_at,

@@ -484,6 +484,9 @@ export interface SessionInfo {
     client_session_id: string;
     cwd: string;
     platform: 'claude' | 'codex';
+    /** 'path:<cwd>' when the session runs in a linked git worktree; the scope
+     * its own PR dispositions use (else 'session:<id>'). */
+    pr_scope?: string;
     state: SessionState;
     started_at: number;
     last_activity_at?: number;
