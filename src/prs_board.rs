@@ -3822,7 +3822,9 @@ fn selected_position(
 }
 
 /// The selectable row `step` away from the current selection, clamped at the
-/// list's ends; entering the list from nowhere starts at the nearer edge.
+/// list's ends; entering the list from nowhere starts at the top. The caller
+/// handles stepping up from the top row (it clears the selection) and up
+/// with nothing selected (it scrolls), so only downward entry lands here.
 fn step_selection<'a>(
     spans: &'a [RowSpan],
     selectable: &[usize],
@@ -3836,8 +3838,7 @@ fn step_selection<'a>(
         Some(position) => {
             (position as isize + step).clamp(0, selectable.len() as isize - 1) as usize
         }
-        None if step > 0 => 0,
-        None => selectable.len() - 1,
+        None => 0,
     };
     Some(&spans[selectable[next]])
 }
@@ -4752,27 +4753,46 @@ async fn board_loop(
                             _ => None,
                         };
                         if let Some(step) = step {
-                            match step_selection(&spans, &selectable, selected.as_deref(), step) {
-                                Some(span) => {
-                                    let moved = selected.as_deref() != Some(span.key.as_str());
-                                    let target =
-                                        scroll_to_reveal(scroll, page, span).min(max_scroll);
-                                    if moved || target != scroll {
-                                        selected = Some(span.key.clone());
-                                        peek_index = 0;
-                                        scroll = target;
-                                        dirty = true;
-                                    }
+                            let position =
+                                selected_position(&spans, &selectable, selected.as_deref());
+                            if step < 0 && position == Some(0) {
+                                // Up from the top row clears the highlight
+                                // instead of pinning it there; Down starts a
+                                // fresh selection.
+                                selected = None;
+                                peek_index = 0;
+                                dirty = true;
+                            } else if step < 0 && position.is_none() {
+                                // Up with nothing selected scrolls the board;
+                                // only Down enters the selection.
+                                let target = scroll.saturating_sub(1);
+                                if target != scroll {
+                                    scroll = target;
+                                    dirty = true;
                                 }
-                                None => {
-                                    let target = if step < 0 {
-                                        scroll.saturating_sub(1)
-                                    } else {
-                                        (scroll + 1).min(max_scroll)
-                                    };
-                                    if target != scroll {
-                                        scroll = target;
-                                        dirty = true;
+                            } else {
+                                match step_selection(&spans, &selectable, selected.as_deref(), step)
+                                {
+                                    Some(span) => {
+                                        let moved = selected.as_deref() != Some(span.key.as_str());
+                                        let target =
+                                            scroll_to_reveal(scroll, page, span).min(max_scroll);
+                                        if moved || target != scroll {
+                                            selected = Some(span.key.clone());
+                                            peek_index = 0;
+                                            scroll = target;
+                                            dirty = true;
+                                        }
+                                    }
+                                    None => {
+                                        // Nothing selectable: Down falls back
+                                        // to line scrolling (Up scrolled
+                                        // above).
+                                        let target = (scroll + 1).min(max_scroll);
+                                        if target != scroll {
+                                            scroll = target;
+                                            dirty = true;
+                                        }
                                     }
                                 }
                             }
