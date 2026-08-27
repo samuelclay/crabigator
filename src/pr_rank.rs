@@ -17,9 +17,82 @@ use crate::pr::SessionPr;
 pub enum PrDisposition {
     Primary,
     Secondary,
-    /// Drop the PR from every list — it stays tracked so a re-mention can't
-    /// resurrect it, but nothing renders it.
+    /// Drop the PR from the lists its scope covers — it stays tracked so a
+    /// re-mention can't resurrect it, but nothing renders it there.
     Dismissed,
+}
+
+/// The group's cloud-stored dispositions, keyed `owner/repo#number` and then
+/// by the scope each was set under: `""` covers the whole group,
+/// `session:<id>` one session, and `path:<cwd>` every session in one worktree
+/// directory — sticky for future sessions started there.
+#[derive(Clone, Debug, Default)]
+pub struct ScopedOverrides {
+    rows: HashMap<String, Vec<(String, PrDisposition)>>,
+}
+
+impl ScopedOverrides {
+    pub fn insert(&mut self, key: String, scope_key: String, disposition: PrDisposition) {
+        let scopes = self.rows.entry(key).or_default();
+        match scopes.iter_mut().find(|(scope, _)| *scope == scope_key) {
+            Some(entry) => entry.1 = disposition,
+            None => scopes.push((scope_key, disposition)),
+        }
+    }
+
+    /// The disposition one session sees for a PR: its own session scope beats
+    /// its worktree-path scope beats the group-wide row.
+    pub fn for_session(
+        &self,
+        key: &str,
+        session_id: &str,
+        cwd: &str,
+    ) -> Option<PrDisposition> {
+        let scopes = self.rows.get(key)?;
+        let find = |wanted: String| {
+            scopes
+                .iter()
+                .find(|(scope, _)| *scope == wanted)
+                .map(|(_, disposition)| *disposition)
+        };
+        (!session_id.is_empty())
+            .then(|| find(format!("session:{session_id}")))
+            .flatten()
+            .or_else(|| (!cwd.is_empty()).then(|| find(format!("path:{cwd}"))).flatten())
+            .or_else(|| find(String::new()))
+    }
+
+    /// Only the group-wide row — for surfaces that stand for the PR itself
+    /// rather than one session's view of it.
+    pub fn group(&self, key: &str) -> Option<PrDisposition> {
+        self.rows
+            .get(key)?
+            .iter()
+            .find(|(scope, _)| scope.is_empty())
+            .map(|(_, disposition)| *disposition)
+    }
+
+    /// Flatten to the single map one session's classifier consumes.
+    pub fn session_map(&self, session_id: &str, cwd: &str) -> HashMap<String, PrDisposition> {
+        self.rows
+            .keys()
+            .filter_map(|key| {
+                self.for_session(key, session_id, cwd)
+                    .map(|disposition| (key.clone(), disposition))
+            })
+            .collect()
+    }
+}
+
+/// Group-wide rows only, the shape older callers and tests build directly.
+impl From<HashMap<String, PrDisposition>> for ScopedOverrides {
+    fn from(map: HashMap<String, PrDisposition>) -> Self {
+        let mut overrides = Self::default();
+        for (key, disposition) in map {
+            overrides.insert(key, String::new(), disposition);
+        }
+        overrides
+    }
 }
 
 /// Session facts the classifier needs beyond the PRs themselves.
@@ -233,6 +306,46 @@ mod tests {
             prompt_count,
             ..RankContext::default()
         }
+    }
+
+    /// A session sees its own scope first, then its worktree path, then the
+    /// group row — and other sessions never see scoped rows at all.
+    #[test]
+    fn scoped_overrides_resolve_most_specific_first() {
+        let key = "o/portal#9";
+        let mut overrides = ScopedOverrides::default();
+        overrides.insert(key.to_string(), String::new(), PrDisposition::Primary);
+        overrides.insert(
+            key.to_string(),
+            "path:/w/tree".to_string(),
+            PrDisposition::Secondary,
+        );
+        overrides.insert(
+            key.to_string(),
+            "session:abc".to_string(),
+            PrDisposition::Dismissed,
+        );
+
+        assert_eq!(
+            overrides.for_session(key, "abc", "/w/tree"),
+            Some(PrDisposition::Dismissed),
+            "own session beats path and group"
+        );
+        assert_eq!(
+            overrides.for_session(key, "other", "/w/tree"),
+            Some(PrDisposition::Secondary),
+            "worktree path beats group"
+        );
+        assert_eq!(
+            overrides.for_session(key, "other", "/elsewhere"),
+            Some(PrDisposition::Primary),
+            "unrelated sessions get only the group row"
+        );
+        assert_eq!(overrides.group(key), Some(PrDisposition::Primary));
+        assert_eq!(overrides.for_session("o/portal#10", "abc", "/w/tree"), None);
+
+        let map = overrides.session_map("other", "/elsewhere");
+        assert_eq!(map.get(key), Some(&PrDisposition::Primary));
     }
 
     #[test]

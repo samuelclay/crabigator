@@ -33,7 +33,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::platforms::{PlatformKind, SessionState};
 use crate::pr::{SessionPr, WatchAdd};
-use crate::pr_rank::{attached_to_worktree, PrDisposition};
+use crate::pr_rank::{attached_to_worktree, PrDisposition, ScopedOverrides};
 use crate::slack::{SlackDirectory, SlackThread};
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG, RESET_UNDERLINE, UNDERLINE};
 use crate::ui::cooldown::Cooldowns;
@@ -299,6 +299,12 @@ struct RecapBrief {
 struct SessionSnapshot {
     session_id: String,
     platform: PlatformKind,
+    /// The session's full working directory, for matching path-scoped
+    /// dispositions.
+    cwd: String,
+    /// The scope this session's PR dispositions use: 'path:<cwd>' in a linked
+    /// worktree, else 'session:<id>'.
+    pr_scope: String,
     dir_name: String,
     repo_owner: String,
     repo_name: String,
@@ -340,6 +346,9 @@ struct BoardPr {
 struct SessionRef {
     session_id: String,
     platform: PlatformKind,
+    /// The scope this session's PR dispositions use — its sub-row action
+    /// links store dispositions there instead of group-wide.
+    pr_scope: String,
     dir_name: String,
     /// Local mirror directory holding scrollback.log; None for cloud records,
     /// whose transcripts aren't reachable from this machine.
@@ -525,14 +534,24 @@ fn snapshot_from_instance(
     for thread in &mut slack_threads {
         activity_history.slack_directory.enrich_thread(thread);
     }
+    let session_id = data
+        .get("cloud_session_id")
+        .and_then(|v| v.as_str())
+        .or_else(|| data.get("session_id").and_then(|v| v.as_str()))
+        .unwrap_or_default()
+        .to_string();
+    // Worktree sessions publish a path scope; everything else keys its
+    // dispositions by session id.
+    let pr_scope = data
+        .get("pr_scope")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("session:{session_id}"));
     Some(SessionSnapshot {
-        session_id: data
-            .get("cloud_session_id")
-            .and_then(|v| v.as_str())
-            .or_else(|| data.get("session_id").and_then(|v| v.as_str()))
-            .unwrap_or_default()
-            .to_string(),
+        session_id,
         platform,
+        cwd: cwd.to_string(),
+        pr_scope,
         session_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
         dir_name: cwd.rsplit('/').next().unwrap_or_default().to_string(),
         repo_owner,
@@ -1006,11 +1025,12 @@ fn now_secs() -> f64 {
         .as_secs_f64()
 }
 
-/// Merge session snapshots into deduped board entries, honoring overrides.
+/// Merge session snapshots into deduped board entries, honoring overrides —
+/// scoped ones against the session they cover, group-wide ones everywhere.
 /// `linger_days` bounds how long finished primary PRs stay visible (0 = open only).
 fn aggregate(
     snapshots: &[SessionSnapshot],
-    overrides: &HashMap<String, PrDisposition>,
+    overrides: &ScopedOverrides,
     linger_days: u64,
 ) -> Vec<BoardPr> {
     let now = now_secs();
@@ -1031,7 +1051,11 @@ fn aggregate(
                 "{}/{}#{}",
                 stored_pr.owner, stored_pr.repo, stored_pr.number
             );
-            let effective_pr = effective_session_pr(session, stored_pr, overrides.get(&key));
+            let effective_pr = effective_session_pr(
+                session,
+                stored_pr,
+                overrides.for_session(&key, &session.session_id, &session.cwd),
+            );
             let pr = &effective_pr;
             let entry = merged.entry(key.clone()).or_insert_with(|| {
                 order.push(key.clone());
@@ -1053,7 +1077,11 @@ fn aggregate(
             // to the aggregate rather than to any one session's copy.
             let aggregate_primary = entry.pr.primary || pr.primary;
             let aggregate_primary_source = combined_primary_source(&entry.pr, pr);
-            let aggregate_dismissed = entry.pr.dismissed || pr.dismissed;
+            // A PR dismissed in one session can still be another session's
+            // live work: the merged copy reads dismissed only when every
+            // contribution does (group-wide dismissals are applied at the
+            // entry level below).
+            let aggregate_dismissed = entry.pr.dismissed && pr.dismissed;
             if pr.refreshed_at > entry.pr.refreshed_at {
                 let previous = std::mem::replace(&mut entry.pr, pr.clone());
                 entry.pr.mentions = previous.mentions;
@@ -1141,7 +1169,7 @@ fn aggregate(
         .filter_map(|key| {
             let mut entry = merged.remove(&key)?;
             order_pr_slack_threads(&mut entry);
-            match overrides.get(&key) {
+            match overrides.group(&key) {
                 Some(PrDisposition::Dismissed) => return None,
                 Some(PrDisposition::Primary) => {
                     entry.pr.primary = true;
@@ -1266,7 +1294,7 @@ fn session_entry_bucket(entry: &SessionEntry, now: u64) -> RecencyBucket {
 fn effective_session_pr(
     session: &SessionSnapshot,
     stored: &SessionPr,
-    disposition: Option<&PrDisposition>,
+    disposition: Option<PrDisposition>,
 ) -> SessionPr {
     let mut pr = stored.clone();
     match disposition {
@@ -1312,6 +1340,7 @@ fn board_session_ref(session: &SessionSnapshot) -> SessionRef {
     SessionRef {
         session_id: session.session_id.clone(),
         platform: session.platform,
+        pr_scope: session.pr_scope.clone(),
         dir_name: session.dir_name.clone(),
         session_dir: Some(session.session_dir.clone()),
         title: session.title.clone(),
@@ -1412,7 +1441,7 @@ fn repository_matches(owner: &str, repo: &str, other_owner: &str, other_repo: &s
 
 fn local_board(
     history: &mut ActivityHistory,
-    overrides: &HashMap<String, PrDisposition>,
+    overrides: &ScopedOverrides,
     linger_days: u64,
 ) -> Result<(Vec<BoardPr>, Vec<WorkspaceEntry>, HashMap<String, PathBuf>)> {
     let snapshots = gather(history)?;
@@ -1596,6 +1625,11 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                     })
                 });
                 SessionRef {
+                    pr_scope: if s.pr_scope.is_empty() {
+                        format!("session:{}", s.session_id)
+                    } else {
+                        s.pr_scope
+                    },
                     session_id: s.session_id,
                     platform: cloud_session_platform(s.platform, &s.title),
                     dir_name: s.dir_name,
@@ -1645,6 +1679,11 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
         });
         let session_ref = SessionRef {
             state: parse_session_state(&session.state).unwrap_or(SessionState::Ready),
+            pr_scope: if session.pr_scope.is_empty() {
+                format!("session:{}", session.session_id)
+            } else {
+                session.pr_scope.clone()
+            },
             session_id: session.session_id,
             platform: cloud_session_platform(session.platform, &session.title),
             dir_name: session.dir_name,
@@ -2803,6 +2842,8 @@ fn render_session_view_block(
 
     for sub in &entry.prs {
         let title = pr_row_title(sub);
+        // Actions on a session's sub-rows apply in that session's scope, so a
+        // dismissal here leaves the group's other sessions alone.
         let mut row = crate::ui::pr_cells::session_view_pr_row_text(
             width,
             &sub.pr,
@@ -2810,6 +2851,7 @@ fn render_session_view_block(
             &title,
             activity_width,
             cooldowns.pr_tints(&sub.pr, now_ms),
+            &session.pr_scope,
         );
         if entry.stale {
             row = format!("{}{row}", fg(color::DARK_GRAY));
@@ -3546,12 +3588,13 @@ impl WatchedBoard {
 fn merge_watched_entries(
     entries: &mut Vec<BoardPr>,
     watched: &HashMap<String, SessionPr>,
-    overrides: &HashMap<String, PrDisposition>,
+    overrides: &ScopedOverrides,
     linger_days: u64,
 ) {
     let now_ms = (now_secs() * 1000.0) as u64;
     for (key, pr) in watched {
-        if matches!(overrides.get(key), Some(PrDisposition::Dismissed)) {
+        // Watches are group-level, so only a group-wide dismissal hides one.
+        if matches!(overrides.group(key), Some(PrDisposition::Dismissed)) {
             continue;
         }
         if let Some(entry) = entries.iter_mut().find(|entry| {
@@ -3680,12 +3723,12 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
     // and clipping them at the margin beats corrupting the layout.
     write!(out, "{}{}", escape::CURSOR_HIDE, escape::WRAP_OFF)?;
     out.flush()?;
-    let mut overrides = HashMap::new();
+    let mut overrides = ScopedOverrides::default();
     let overrides_fetch = start_overrides_fetch();
     board_loop(&mut out, &mut overrides, overrides_fetch).await
 }
 
-fn start_overrides_fetch() -> mpsc::Receiver<HashMap<String, PrDisposition>> {
+fn start_overrides_fetch() -> mpsc::Receiver<ScopedOverrides> {
     let (tx, rx) = mpsc::channel();
     tokio::spawn(async move {
         if let Ok(overrides) = crate::cloud::fetch_pr_overrides_standalone().await {
@@ -4034,8 +4077,8 @@ fn save_board_preferences(include_ended: bool, linger_days: u64, view: BoardView
 
 async fn board_loop(
     out: &mut std::io::Stdout,
-    overrides: &mut HashMap<String, PrDisposition>,
-    overrides_fetch: mpsc::Receiver<HashMap<String, PrDisposition>>,
+    overrides: &mut ScopedOverrides,
+    overrides_fetch: mpsc::Receiver<ScopedOverrides>,
 ) -> Result<()> {
     let mut drawn_lines: Vec<String> = Vec::new();
     let mut last_refresh = Instant::now();
@@ -4848,6 +4891,8 @@ mod tests {
         SessionSnapshot {
             session_id: dir.to_string(),
             platform: PlatformKind::Claude,
+            cwd: format!("/tmp/{dir}"),
+            pr_scope: format!("session:{dir}"),
             dir_name: dir.to_string(),
             repo_owner: "o".to_string(),
             repo_name: dir.to_string(),
@@ -4930,6 +4975,7 @@ mod tests {
         SessionRef {
             session_id: name.to_string(),
             platform: PlatformKind::Claude,
+            pr_scope: format!("session:{name}"),
             dir_name: name.to_string(),
             session_dir: None,
             title: String::new(),
@@ -4963,7 +5009,7 @@ mod tests {
         let mut two = snapshot("two", vec![twin]);
         two.repo_name = "portal".to_string();
 
-        let merged = aggregate(&[one, two], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let merged = aggregate(&[one, two], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let entries = entries_for_mode(merged, BoardMode::Prs).prs;
         assert_eq!(
             entries.len(),
@@ -5010,7 +5056,7 @@ mod tests {
         session.prompted_at = now_secs() as u64 - 30 * 60;
         session.completed_at = now_secs() as u64 - 5 * 60;
 
-        let merged = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let merged = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let entries = entries_for_mode(merged, BoardMode::Prs).prs;
         let rendered = render_prs_frame(&entries, DEFAULT_DETAIL);
         // Cells link to GitHub, so the hyperlink wrappers go too.
@@ -5070,7 +5116,7 @@ mod tests {
         let mut session = snapshot("one", vec![pr.clone()]);
         session.repo_name = "portal".to_string();
         session.state = SessionState::Thinking;
-        let before = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let before = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
 
         let now_ms = now_ms();
         let mut cooldowns = Cooldowns::default();
@@ -5111,7 +5157,7 @@ mod tests {
         let mut session = snapshot("one", vec![pr]);
         session.repo_name = "portal".to_string();
         session.state = SessionState::Complete;
-        let after = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let after = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         observe_cooldowns(&mut cooldowns, &after, &[], now_ms + 2_000);
         assert!(cooldowns.active(now_ms + 2_000));
 
@@ -5155,7 +5201,7 @@ mod tests {
         make_primary(&mut tracked);
         let mut session = snapshot("one", vec![tracked]);
         session.repo_name = "portal".to_string();
-        let mut entries = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let mut entries = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
 
         let mut solo = SessionPr::watched_stub("o", "elsewhere", 9);
         solo.state = "OPEN".to_string();
@@ -5168,7 +5214,7 @@ mod tests {
             ),
             (watch_key("o", "elsewhere", 9), solo),
         ]);
-        merge_watched_entries(&mut entries, &watched, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        merge_watched_entries(&mut entries, &watched, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
 
         assert_eq!(entries.len(), 2);
         let tracked = entries.iter().find(|e| e.pr.repo == "portal").unwrap();
@@ -5195,7 +5241,7 @@ mod tests {
 
         // A dismissed disposition hides the watch everywhere.
         let mut entries = Vec::new();
-        let overrides = HashMap::from([(watch_key("o", "elsewhere", 9), PrDisposition::Dismissed)]);
+        let overrides = ScopedOverrides::from(HashMap::from([(watch_key("o", "elsewhere", 9), PrDisposition::Dismissed)]));
         merge_watched_entries(&mut entries, &watched, &overrides, DEFAULT_LINGER_DAYS);
         assert!(entries.iter().all(|e| e.pr.repo != "elsewhere"));
     }
@@ -5231,7 +5277,7 @@ mod tests {
         let mut session = snapshot("one", vec![primary, secondary]);
         session.repo_name = "portal".to_string();
 
-        let merged = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let merged = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         assert_eq!(merged.len(), 2, "session view shows the open secondary");
 
         let prs = entries_for_mode(merged, BoardMode::Prs).prs;
@@ -5376,7 +5422,7 @@ mod tests {
             "https://t.slack.com/archives/C0/p1723500000000000 https://t.slack.com/archives/C1/p1723500001000000 https://t.slack.com/archives/C4/p1723500003000000",
         );
         let shaped = entries_for_mode(
-            aggregate(&[two, one], &HashMap::new(), DEFAULT_LINGER_DAYS),
+            aggregate(&[two, one], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS),
             BoardMode::Sessions,
         );
         assert!(shaped.prs.is_empty(), "every PR is under a session block");
@@ -5476,7 +5522,7 @@ mod tests {
         captureless.repo_name = "portal".to_string();
         captureless.session_dir = capture.path().join("missing");
 
-        let entries = aggregate(&[live, captureless], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&[live, captureless], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let rows: Vec<BoardRow> = entries
             .iter()
             .map(|entry| BoardRow {
@@ -5618,7 +5664,7 @@ mod tests {
         make_primary(&mut pr);
         let mut snapshot = snapshot("cloudid", vec![pr]);
         snapshot.repo_name = "portal".to_string();
-        let mut entries = aggregate(&[snapshot], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let mut entries = aggregate(&[snapshot], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         entries[0].sessions[0].session_dir = None;
 
         let mirrors: HashMap<String, PathBuf> = [(
@@ -5681,7 +5727,7 @@ mod tests {
         second.title = "Second active session".to_string();
 
         let snapshots = vec![first, second];
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
         assert_eq!(workspaces.len(), 2);
 
@@ -5775,7 +5821,7 @@ mod tests {
         pr.branch = "old-branch".to_string();
         let mut durable = snapshot("crabigator", vec![pr]);
         durable.session_id = "cloud-session".to_string();
-        let entries = aggregate(&[durable], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&[durable], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
 
         let mut current = snapshot("crabigator", Vec::new());
         current.session_id = "cloud-session".to_string();
@@ -5818,7 +5864,7 @@ mod tests {
         portal_session.prompted_at = now - 300;
 
         let snapshots = vec![pr_session, no_pr_session, portal_session];
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
         let shaped = entries_for_mode(entries, BoardMode::Sessions);
         let frame = crate::parsers::strip_ansi_for_debug(
@@ -5893,7 +5939,7 @@ mod tests {
         other_repo.completed_at = now - 300;
 
         let snapshots = vec![pr_session, peer_session, other_repo];
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
         let shaped = entries_for_mode(entries, BoardMode::Sessions);
 
@@ -5954,7 +6000,7 @@ mod tests {
                 session
             })
             .collect();
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let rendered = render_frame(&entries);
         for (label, bucket_color, text_color) in [
             ("● Last hour", RECENCY_1H, color::BLACK),
@@ -6088,7 +6134,7 @@ mod tests {
             session
         })
         .collect();
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
 
         let six_hours = crate::parsers::strip_ansi_for_debug(&render_frame_with_oldest(
             &entries,
@@ -6130,7 +6176,7 @@ mod tests {
         make_primary(&mut pr);
         let session = snapshot("crabigator", vec![pr]);
         let snapshots = vec![session];
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         assert_eq!(entries.len(), 1);
         assert!(local_workspaces(&snapshots, &entries).is_empty());
     }
@@ -6158,7 +6204,7 @@ mod tests {
         secondary.completed_at = now - 30;
 
         let snapshots = vec![primary, secondary];
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
         assert_eq!(entries.len(), 1);
         assert_eq!(workspaces.len(), 1);
@@ -6214,7 +6260,7 @@ mod tests {
         reviewer.branch = "main".to_string();
 
         let snapshots = vec![reviewer];
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert_eq!(entries.len(), 1);
@@ -6241,7 +6287,7 @@ mod tests {
         bystander.branch = "main".to_string();
 
         let snapshots = vec![bystander];
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert_eq!(entries.len(), 1);
@@ -6265,7 +6311,7 @@ mod tests {
         owner.branch = "ryan/feature".to_string();
 
         let snapshots = vec![reviewer, owner];
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert_eq!(entries.len(), 1);
@@ -6290,7 +6336,7 @@ mod tests {
         session.branch = "sam/pal-force-refresh".to_string();
 
         let snapshots = vec![session];
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert_eq!(entries.len(), 2);
@@ -6316,7 +6362,7 @@ mod tests {
         session.branch = "main".to_string();
 
         let snapshots = vec![session];
-        let entries = aggregate(&snapshots, &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert!(entries[0].sessions.is_empty());
@@ -6345,7 +6391,7 @@ mod tests {
                 snapshot("active", vec![placeholder]),
                 snapshot("older", vec![enriched]),
             ],
-            &HashMap::new(),
+            &ScopedOverrides::default(),
             DEFAULT_LINGER_DAYS,
         );
 
@@ -6364,7 +6410,7 @@ mod tests {
         old_mirror.repo_name = "portal".to_string();
         old_mirror.title = "⟁ Fix builder autosave".to_string();
 
-        let entries = aggregate(&[old_mirror], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&[old_mirror], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
 
         assert_eq!(entries.len(), 1);
         assert!(entries[0].pr.primary);
@@ -6384,7 +6430,7 @@ mod tests {
         let mut overrides = HashMap::new();
         overrides.insert("o/portal#1206".to_string(), PrDisposition::Secondary);
 
-        let entries = aggregate(&[old_mirror], &overrides, DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&[old_mirror], &ScopedOverrides::from(overrides), DEFAULT_LINGER_DAYS);
 
         assert_eq!(entries.len(), 1);
         assert!(!entries[0].pr.primary);
@@ -6395,9 +6441,9 @@ mod tests {
     fn overrides_reshape_the_board() {
         let primary_key = "o/portal#5".to_string();
         let dismissed_key = "o/portal#6".to_string();
-        let mut overrides = HashMap::new();
-        overrides.insert(primary_key, PrDisposition::Primary);
-        overrides.insert(dismissed_key, PrDisposition::Dismissed);
+        let mut overrides = ScopedOverrides::default();
+        overrides.insert(primary_key, String::new(), PrDisposition::Primary);
+        overrides.insert(dismissed_key, String::new(), PrDisposition::Dismissed);
 
         let entries = aggregate(
             &[snapshot(
@@ -6409,6 +6455,50 @@ mod tests {
         );
         assert_eq!(entries.len(), 1, "dismissed PR is gone");
         assert!(entries[0].pr.primary, "override promotes");
+    }
+
+    /// A dismissal scoped to one session hides the PR from that session's
+    /// rows without touching a parallel session in the same directory — and a
+    /// path-scoped one covers every session in the worktree.
+    #[test]
+    fn scoped_dismissals_only_reach_their_own_session() {
+        let key = "o/portal#7".to_string();
+        let mut overrides = ScopedOverrides::default();
+        overrides.insert(key.clone(), "session:one".to_string(), PrDisposition::Dismissed);
+
+        let mut pr = board_pr(7, "portal");
+        make_primary(&mut pr);
+        let entries = aggregate(
+            &[
+                snapshot("one", vec![pr.clone()]),
+                snapshot("two", vec![pr.clone()]),
+            ],
+            &overrides,
+            DEFAULT_LINGER_DAYS,
+        );
+        assert_eq!(entries.len(), 1, "the PR survives for the other session");
+        assert!(!entries[0].pr.dismissed);
+        assert_eq!(
+            entries[0].sessions.len(),
+            1,
+            "only the undismissed session claims the PR"
+        );
+        assert_eq!(entries[0].sessions[0].session_id, "two");
+
+        // The same dismissal keyed to session one's path covers it too.
+        let mut overrides = ScopedOverrides::default();
+        overrides.insert(key, "path:/tmp/one".to_string(), PrDisposition::Dismissed);
+        let entries = aggregate(
+            &[
+                snapshot("one", vec![pr.clone()]),
+                snapshot("two", vec![pr]),
+            ],
+            &overrides,
+            DEFAULT_LINGER_DAYS,
+        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].sessions.len(), 1);
+        assert_eq!(entries[0].sessions[0].session_id, "two");
     }
 
     #[test]
@@ -6430,7 +6520,7 @@ mod tests {
 
         let entries = aggregate(
             &[snapshot("one", vec![merged, ready, failing])],
-            &HashMap::new(),
+            &ScopedOverrides::default(),
             DEFAULT_LINGER_DAYS,
         );
         let numbers: Vec<u64> = entries.iter().map(|e| e.pr.number).collect();
@@ -6489,7 +6579,7 @@ mod tests {
                 author: Some("Ivy".to_string()),
             },
         ];
-        let entries = aggregate(&[session], &HashMap::new(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let compact = render_frame_at(&entries, 0);
         assert!(compact.contains("Builder Signals dashboard"));
         assert!(crate::parsers::strip_ansi_for_debug(&compact).contains("#9: Fix the flow"));
@@ -6565,7 +6655,7 @@ mod tests {
         make_primary(&mut primary);
         let entries = aggregate(
             &[snapshot("one", vec![phantom, primary])],
-            &HashMap::new(),
+            &ScopedOverrides::default(),
             DEFAULT_LINGER_DAYS,
         );
         assert_eq!(entries.len(), 1);
@@ -6597,7 +6687,7 @@ mod tests {
                 "one",
                 vec![fresh, old, recently_discussed, silent],
             )],
-            &HashMap::new(),
+            &ScopedOverrides::default(),
             DEFAULT_LINGER_DAYS,
         );
         let numbers: Vec<u64> = entries.iter().map(|e| e.pr.number).collect();
@@ -6617,14 +6707,14 @@ mod tests {
         make_primary(&mut merged);
         let snapshots = [snapshot("one", vec![merged])];
 
-        assert!(aggregate(&snapshots, &HashMap::new(), 1).is_empty());
-        assert_eq!(aggregate(&snapshots, &HashMap::new(), 3).len(), 1);
+        assert!(aggregate(&snapshots, &ScopedOverrides::default(), 1).is_empty());
+        assert_eq!(aggregate(&snapshots, &ScopedOverrides::default(), 3).len(), 1);
         // Zero shows open PRs only, no matter how fresh the merge.
         let mut fresh = board_pr(2, "portal");
         fresh.state = "MERGED".to_string();
         fresh.closed_at = now_ms();
         make_primary(&mut fresh);
-        assert!(aggregate(&[snapshot("one", vec![fresh])], &HashMap::new(), 0).is_empty());
+        assert!(aggregate(&[snapshot("one", vec![fresh])], &ScopedOverrides::default(), 0).is_empty());
     }
 
     #[test]
@@ -6646,7 +6736,7 @@ mod tests {
 
         let entries = aggregate(
             &[snapshot("one", vec![secondary, foreign, mentioned])],
-            &HashMap::new(),
+            &ScopedOverrides::default(),
             DEFAULT_LINGER_DAYS,
         );
         assert_eq!(entries.len(), 1);
@@ -6754,6 +6844,7 @@ mod tests {
             sessions: vec![SessionRef {
                 session_id: "portal".to_string(),
                 platform: PlatformKind::Claude,
+                pr_scope: String::new(),
                 dir_name: "portal".to_string(),
                 session_dir: Some(dir.path().to_path_buf()),
                 title: String::new(),
@@ -6814,7 +6905,7 @@ mod tests {
         let mut bare = snapshot("other-dir", vec![pr]);
         bare.prompted_at = now_secs() as u64 - 4 * 60 * 60;
         bare.completed_at = now_secs() as u64 - 5 * 60 * 60;
-        aggregate(&[with_title, bare], &HashMap::new(), DEFAULT_LINGER_DAYS)
+        aggregate(&[with_title, bare], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS)
     }
 
     /// The title stays on the PR row; `r` adds the complete recap beneath it.
@@ -6985,6 +7076,7 @@ mod tests {
             SessionRef {
                 session_id: "older".to_string(),
                 platform: PlatformKind::Claude,
+                pr_scope: String::new(),
                 dir_name: "older".to_string(),
                 session_dir: None,
                 title: String::new(),
@@ -6998,6 +7090,7 @@ mod tests {
             SessionRef {
                 session_id: "newer".to_string(),
                 platform: PlatformKind::Codex,
+                pr_scope: String::new(),
                 dir_name: "newer".to_string(),
                 session_dir: None,
                 title: String::new(),
@@ -7051,6 +7144,7 @@ mod tests {
             let session = SessionRef {
                 session_id: "state".to_string(),
                 platform: PlatformKind::Claude,
+                pr_scope: String::new(),
                 dir_name: "state".to_string(),
                 session_dir: None,
                 title: String::new(),
@@ -7070,6 +7164,7 @@ mod tests {
         let thinking = SessionRef {
             session_id: "thinking".to_string(),
             platform: PlatformKind::Codex,
+            pr_scope: String::new(),
             dir_name: "thinking".to_string(),
             session_dir: None,
             title: String::new(),
@@ -7178,6 +7273,7 @@ mod tests {
         let mut session = SessionRef {
             session_id: "one".to_string(),
             platform: PlatformKind::Claude,
+            pr_scope: String::new(),
             dir_name: "crabigator".to_string(),
             session_dir: None,
             title: String::new(),

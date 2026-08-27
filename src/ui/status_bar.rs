@@ -184,6 +184,7 @@ pub fn draw_status_bar(
     recap_state: &RecapState,
     recap_toast_visible: bool,
     prs: &[SessionPr],
+    pr_scope: &str,
     cursor_position: Option<(u16, u16)>, // (row, col) from vt100 parser, 0-indexed
     cooldowns: &Cooldowns,
     now_ms: u64,
@@ -263,6 +264,7 @@ pub fn draw_status_bar(
             pr_start,
             layout.total_cols,
             prs,
+            pr_scope,
             pr_rows,
             cooldowns,
             now_ms,

@@ -148,6 +148,10 @@ pub struct App {
     /// Launch cwd used to identify platform stats/log files. This stays stable
     /// even when the assistant moves its shell into another worktree.
     stats_cwd: std::path::PathBuf,
+    /// 'path:<cwd>' when this session runs in a linked git worktree — its PR
+    /// dispositions then stick to the directory. None in a main checkout,
+    /// where dispositions key by the cloud session id instead.
+    pr_path_scope: Option<String>,
     /// Detected IDE for clickable hyperlinks
     ide: IdeKind,
     pty_rx: mpsc::Receiver<Vec<u8>>,
@@ -288,13 +292,19 @@ impl App {
 
         // Create mirror publisher (always enabled for inspection by other instances)
         let session_id = std::env::var("CRABIGATOR_SESSION_ID").unwrap_or_default();
-        let mirror_publisher = MirrorPublisher::new(
+        let mut mirror_publisher = MirrorPublisher::new(
             true,
             session_id.clone(),
             platform.kind(),
             cwd_str.clone(),
             capture_enabled,
         );
+
+        // Worktree sessions scope their PR dispositions to the directory, so a
+        // dismissal sticks for future sessions there without touching the
+        // group's other sessions.
+        let pr_path_scope = crate::git::worktree_pr_scope(&cwd);
+        mirror_publisher.set_pr_scope(pr_path_scope.clone());
 
         // Create capture manager for output streaming
         // Must match PTY dimensions for escape sequences to work correctly
@@ -310,7 +320,13 @@ impl App {
         // the correct transcript_path once the assistant starts.
 
         // Initialize cloud client (optional - don't fail if cloud is unreachable)
-        let cloud_client = Self::init_cloud_client(&session_id, &cwd_str, platform.as_ref()).await;
+        let cloud_client = Self::init_cloud_client(
+            &session_id,
+            &cwd_str,
+            platform.as_ref(),
+            pr_path_scope.as_deref(),
+        )
+        .await;
 
         let mut app = Self {
             running: true,
@@ -326,6 +342,7 @@ impl App {
             status_rows,
             cwd: cwd.clone(),
             stats_cwd: cwd,
+            pr_path_scope,
             ide,
             pty_rx,
             mirror_publisher,
@@ -411,6 +428,7 @@ impl App {
         session_id: &str,
         cwd: &str,
         platform: &dyn Platform,
+        pr_scope: Option<&str>,
     ) -> Option<CloudClient> {
         // Try to create cloud client
         let mut client = match CloudClient::new() {
@@ -427,7 +445,7 @@ impl App {
 
         // Try to register session with cloud
         match client
-            .register_session(session_id, cwd, platform.kind().as_str())
+            .register_session(session_id, cwd, platform.kind().as_str(), pr_scope)
             .await
         {
             Ok(cloud_session_id) => {
@@ -817,6 +835,7 @@ impl App {
                             let session_id = self.session_id.clone();
                             let cwd_str = self.cwd.to_string_lossy().to_string();
                             let platform_kind = self.platform.kind().as_str().to_string();
+                            let pr_scope = self.pr_path_scope.clone();
 
                             // Spawn async cloud init in background thread (non-blocking)
                             let (tx, rx) = std::sync::mpsc::channel();
@@ -827,7 +846,7 @@ impl App {
                                 if let Ok(rt) = rt {
                                     let result = rt.block_on(async {
                                         let mut client = crate::cloud::CloudClient::new()?;
-                                        client.register_session(&session_id, &cwd_str, &platform_kind).await?;
+                                        client.register_session(&session_id, &cwd_str, &platform_kind, pr_scope.as_deref()).await?;
                                         Ok::<_, anyhow::Error>(client)
                                     });
                                     let _ = tx.send(result);
@@ -910,7 +929,13 @@ impl App {
                         }
                         client.maybe_fetch_pr_overrides();
                         if let Some(overrides) = client.try_recv_pr_overrides() {
-                            self.pr_tracker.set_overrides(overrides);
+                            // Keep only what applies to this session: its own
+                            // session scope, its worktree path, and the
+                            // group-wide rows.
+                            let session_scope_id = client.session_id().unwrap_or_default();
+                            let cwd_str = self.cwd.to_string_lossy();
+                            self.pr_tracker
+                                .set_overrides(overrides.session_map(session_scope_id, &cwd_str));
                             if self
                                 .pr_tracker
                                 .reclassify(&self.git_state.branch, &self.cwd)
@@ -1161,6 +1186,20 @@ impl App {
         Ok(handoff)
     }
 
+    /// The scope this session's PR action links store dispositions under:
+    /// the worktree path when there is one, else the cloud session id, else
+    /// empty (group-wide) until cloud registration succeeds.
+    fn pr_action_scope(&self) -> String {
+        if let Some(scope) = &self.pr_path_scope {
+            return scope.clone();
+        }
+        self.cloud_client
+            .as_ref()
+            .and_then(|client| client.session_id())
+            .map(|id| format!("session:{id}"))
+            .unwrap_or_default()
+    }
+
     /// Draw status bar using the widget system
     /// Returns true if status bar was actually redrawn (content changed)
     fn draw_status_bar(&mut self) -> Result<()> {
@@ -1312,6 +1351,7 @@ impl App {
 
         // Get cloud status if connected
         let cloud_status = self.cloud_client.as_ref().map(|c| c.status());
+        let pr_scope = self.pr_action_scope();
         draw_status_bar(
             &mut stdout,
             &layout,
@@ -1328,6 +1368,7 @@ impl App {
             self.recap_manager.state(),
             recap_toast_visible,
             self.pr_tracker.prs(),
+            &pr_scope,
             cursor_position,
             &self.cooldowns,
             now_ms,

@@ -79,11 +79,13 @@ fn pr_separator_rule_width(width: u16) -> usize {
 /// The first five are left-aligned, with the branch column flexing across the
 /// middle. Status columns are anchored at the right edge with a tighter
 /// one-space rhythm. The table leaves one cell at the right window edge.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_pr_handoff(
     stdout: &mut Stdout,
     row: u16,
     width: u16,
     prs: &[SessionPr],
+    pr_scope: &str,
     available_rows: u16,
     cooldowns: &Cooldowns,
     now_ms: u64,
@@ -102,7 +104,7 @@ pub fn draw_pr_handoff(
             stdout,
             "{}{}",
             escape::cursor_to(row + i as u16, 1),
-            pr_row_text_tinted(width, pr, &widths, cooldowns.pr_tints(pr, now_ms))
+            pr_row_text_tinted(width, pr, &widths, cooldowns.pr_tints(pr, now_ms), pr_scope)
         )?;
     }
     write!(stdout, "{}", RESET)?;
@@ -790,7 +792,7 @@ mod tests {
         let cells = pr_left_cells(&pr, &widths);
         assert!(cells[0]
             .0
-            .contains(&format!("\x1b]8;;{}\x07★", pr_action_url(&pr, "secondary"))));
+            .contains(&format!("\x1b]8;;{}\x07★", pr_action_url(&pr, "secondary", ""))));
     }
 
     #[test]
@@ -814,7 +816,7 @@ mod tests {
         let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
 
         cooldowns.observe_pr(&pr, 1_000);
-        let row = pr_row_text_tinted(160, &pr, &widths, cooldowns.pr_tints(&pr, 1_000));
+        let row = pr_row_text_tinted(160, &pr, &widths, cooldowns.pr_tints(&pr, 1_000), "");
         assert!(
             !row.contains("\x1b[48;2;"),
             "a PR seen for the first time stays cold"
@@ -822,7 +824,7 @@ mod tests {
 
         pr.mergeable = "CONFLICTING".to_string();
         cooldowns.observe_pr(&pr, 5_000);
-        let row = pr_row_text_tinted(160, &pr, &widths, cooldowns.pr_tints(&pr, 5_000));
+        let row = pr_row_text_tinted(160, &pr, &widths, cooldowns.pr_tints(&pr, 5_000), "");
         assert!(
             row.contains("\x1b[48;2;"),
             "the merge cell lights up when it flips to conflicts"
@@ -913,6 +915,33 @@ mod tests {
         assert_eq!(widths.total_width(), 80);
     }
 
+    /// A session's rows carry the session's disposition scope in their action
+    /// links, URL-encoded, so a dismissal lands on that session (or its
+    /// worktree) instead of the whole group.
+    #[test]
+    fn action_links_carry_the_session_scope() {
+        let pr = sample_pr("portal", 7, "sam/scoped");
+        let url = pr_action_url(&pr, "dismissed", "session:abc-123");
+        assert!(url.ends_with("&scope=session%3Aabc-123"), "{url}");
+        let url = pr_action_url(&pr, "dismissed", "path:/Users/sam/work tree");
+        assert!(url.ends_with("&scope=path%3A/Users/sam/work%20tree"), "{url}");
+        // No scope means the old group-wide link, byte for byte.
+        assert!(!pr_action_url(&pr, "dismissed", "").contains("scope="));
+
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
+        let row = pr_row_text_tinted(
+            160,
+            &pr,
+            &widths,
+            super::super::cooldown::StatusTints::default(),
+            "session:abc-123",
+        );
+        assert!(
+            row.contains(&link_to(&pr_action_url(&pr, "dismissed", "session:abc-123"))),
+            "the dismiss cell links with the scope: {row}"
+        );
+    }
+
     /// Every cell that has a target carries its own link, and linking never
     /// changes the width the column was laid out for.
     #[test]
@@ -925,7 +954,7 @@ mod tests {
         // Identity → the PR itself; the `☆` glyph is its own link that flips
         // the PR to primary via the web action page.
         assert!(left[0].0.contains(&link_to(&pr.url)));
-        assert!(left[0].0.contains(&link_to(&pr_action_url(&pr, "primary"))));
+        assert!(left[0].0.contains(&link_to(&pr_action_url(&pr, "primary", ""))));
         // Number → the PR; diff and file count → the Files-changed tab.
         assert!(left[1].0.contains("#2412"));
         assert_eq!(left[1].1, "#2412".width());
@@ -945,11 +974,11 @@ mod tests {
         assert!(right[5].0.contains('↑'));
         assert!(right[5]
             .0
-            .contains(&link_to(&pr_action_url(&pr, "primary"))));
+            .contains(&link_to(&pr_action_url(&pr, "primary", ""))));
         assert!(right[6].0.contains('✕'));
         assert!(right[6]
             .0
-            .contains(&link_to(&pr_action_url(&pr, "dismissed"))));
+            .contains(&link_to(&pr_action_url(&pr, "dismissed", ""))));
 
         for (styled, visible, _) in left.iter().chain(right.iter()) {
             assert_eq!(crate::ui::utils::strip_ansi_len(styled), *visible);
@@ -968,7 +997,7 @@ mod tests {
         assert!(right[5].0.contains('↓'));
         assert!(right[5]
             .0
-            .contains(&link_to(&pr_action_url(&primary, "secondary"))));
+            .contains(&link_to(&pr_action_url(&primary, "secondary", ""))));
 
         let mut watched = sample_pr("request-handler", 2413, "sam/watched");
         watched.watched = true;
@@ -977,11 +1006,11 @@ mod tests {
         let right = pr_right_cells(&watched, &widths);
         assert!(left[0]
             .0
-            .contains(&link_to(&pr_action_url(&watched, "unwatched"))));
+            .contains(&link_to(&pr_action_url(&watched, "unwatched", ""))));
         assert!(right[5].0.contains('↑'));
         assert!(right[5]
             .0
-            .contains(&link_to(&pr_action_url(&watched, "primary"))));
+            .contains(&link_to(&pr_action_url(&watched, "primary", ""))));
     }
 
     /// A PR with nothing to point at (no checks, no diff yet) stays unlinked

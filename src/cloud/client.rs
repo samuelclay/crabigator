@@ -16,7 +16,7 @@ use super::device::DeviceIdentity;
 use super::events::CloudEvent;
 use super::queue::OfflineQueue;
 use super::websocket::{CloudWebSocket, WebSocketHandle};
-use crate::pr_rank::PrDisposition;
+use crate::pr_rank::{PrDisposition, ScopedOverrides};
 
 /// Default API URL
 const DEFAULT_API_URL: &str = "https://drinkcrabigator.com/api";
@@ -30,6 +30,10 @@ struct PrOverrideRow {
     owner: String,
     repo: String,
     number: u64,
+    /// '' for the whole group, 'session:<id>', or 'path:<cwd>'. Absent in
+    /// responses from a Worker that predates scoped dispositions.
+    #[serde(default)]
+    scope_key: String,
     disposition: String,
 }
 
@@ -41,7 +45,7 @@ struct PrOverridesResponse {
 /// One-shot overrides fetch for CLI commands that run outside a session
 /// (the `crabigator prs` board). Uses the same device identity and HMAC
 /// auth as a live session.
-pub async fn fetch_pr_overrides_standalone() -> Result<HashMap<String, PrDisposition>> {
+pub async fn fetch_pr_overrides_standalone() -> Result<ScopedOverrides> {
     let device = DeviceIdentity::load_or_create()?;
     CloudClient::fetch_pr_overrides_with(device, HttpClient::new(), DEFAULT_API_URL.to_string())
         .await
@@ -63,6 +67,10 @@ pub struct CloudBoardSession {
     /// Provider is absent only when talking to an older Worker response.
     #[serde(default)]
     pub platform: Option<crate::platforms::PlatformKind>,
+    /// The scope this session's PR dispositions use ('path:<cwd>' in a linked
+    /// worktree, else 'session:<id>'); empty from an older Worker.
+    #[serde(default)]
+    pub pr_scope: String,
     #[serde(default)]
     pub dir_name: String,
     #[serde(default)]
@@ -343,7 +351,7 @@ pub struct CloudClient {
     /// Used to auto-timeout viewer_active after 15s of no heartbeats
     last_viewer_active_at: Option<std::time::Instant>,
     /// Pending PR-overrides fetch (receiver for the async result)
-    pending_pr_overrides: Option<std::sync::mpsc::Receiver<HashMap<String, PrDisposition>>>,
+    pending_pr_overrides: Option<std::sync::mpsc::Receiver<ScopedOverrides>>,
     /// When the last PR-overrides fetch started, for the refresh cadence
     last_pr_overrides_fetch: Option<std::time::Instant>,
     /// The cloud said dispositions changed; fetch as soon as no fetch is in
@@ -492,6 +500,7 @@ impl CloudClient {
         client_session_id: &str,
         cwd: &str,
         platform: &str,
+        pr_scope: Option<&str>,
     ) -> Result<String> {
         // Ensure device is registered first
         self.register_device().await?;
@@ -501,12 +510,17 @@ impl CloudClient {
             client_session_id: String,
             cwd: String,
             platform: String,
+            /// 'path:<cwd>' when the session runs in a linked git worktree,
+            /// so boards can build worktree-scoped disposition links for it.
+            #[serde(skip_serializing_if = "Option::is_none")]
+            pr_scope: Option<String>,
         }
 
         let request = CreateSessionRequest {
             client_session_id: client_session_id.to_string(),
             cwd: cwd.to_string(),
             platform: platform.to_string(),
+            pr_scope: pr_scope.map(str::to_string),
         };
 
         let url = format!("{}/sessions", self.api_url);
@@ -854,7 +868,7 @@ impl CloudClient {
     }
 
     /// The result of a previously started overrides fetch, if it landed.
-    pub fn try_recv_pr_overrides(&mut self) -> Option<HashMap<String, PrDisposition>> {
+    pub fn try_recv_pr_overrides(&mut self) -> Option<ScopedOverrides> {
         let rx = self.pending_pr_overrides.as_ref()?;
         match rx.try_recv() {
             Ok(map) => {
@@ -873,7 +887,7 @@ impl CloudClient {
         device: DeviceIdentity,
         http: HttpClient,
         api_url: String,
-    ) -> Result<HashMap<String, PrDisposition>> {
+    ) -> Result<ScopedOverrides> {
         let url = format!("{}/pr-overrides", api_url);
         let headers = device.auth_headers("GET", "/api/pr-overrides")?;
         let mut req = http.get(&url);
@@ -885,17 +899,18 @@ impl CloudClient {
             anyhow::bail!("Failed to fetch PR overrides: {}", response.status());
         }
         let data: PrOverridesResponse = response.json().await?;
-        Ok(data
-            .overrides
-            .iter()
-            .filter_map(|row| {
-                let disposition = parse_pr_disposition(&row.disposition)?;
-                Some((
-                    format!("{}/{}#{}", row.owner, row.repo, row.number),
-                    disposition,
-                ))
-            })
-            .collect())
+        let mut overrides = ScopedOverrides::default();
+        for row in &data.overrides {
+            let Some(disposition) = parse_pr_disposition(&row.disposition) else {
+                continue;
+            };
+            overrides.insert(
+                format!("{}/{}#{}", row.owner, row.repo, row.number),
+                row.scope_key.clone(),
+                disposition,
+            );
+        }
+        Ok(overrides)
     }
 
     /// Send a session update asynchronously

@@ -391,6 +391,34 @@ fn unquote_git_path(path: &str) -> String {
     }
 }
 
+/// The scope this directory's PR dispositions should use: `path:<dir>` when
+/// it is a linked git worktree, so a dismissal there sticks to the worktree
+/// and future sessions in it inherit the decision. A main checkout returns
+/// None — several sessions can share it at once, so its dispositions key by
+/// session instead.
+pub fn worktree_pr_scope(dir: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--git-dir", "--git-common-dir"])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines();
+    let git_dir = lines.next()?.trim();
+    let common_dir = lines.next()?.trim();
+    // A linked worktree's private git dir lives under the main checkout's
+    // (`…/.git/worktrees/<name>` vs `…/.git`); in the main checkout the two
+    // answers are the same directory.
+    if git_dir.is_empty() || common_dir.is_empty() || git_dir == common_dir {
+        return None;
+    }
+    Some(format!("path:{}", dir.display()))
+}
+
 /// Parse the final owner/repository pair from common HTTPS, SSH, and scp-like
 /// Git remotes. The host is intentionally irrelevant: the PR board is scoped
 /// to the user's sessions, not to one GitHub organization.
@@ -408,7 +436,36 @@ pub(crate) fn parse_remote_identity(remote: &str) -> Option<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_remote_identity;
+    use super::{parse_remote_identity, worktree_pr_scope};
+
+    /// Only a linked worktree gets a path scope; the main checkout (shared by
+    /// parallel sessions) and a non-repo directory key by session instead.
+    #[test]
+    fn worktree_scope_only_for_linked_worktrees() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let main = temp.path().join("main");
+        std::fs::create_dir(&main).expect("main dir");
+        let git = |args: &[&str], dir: &std::path::Path| {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("git runs");
+            assert!(output.status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q"], &main);
+        git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"], &main);
+
+        assert_eq!(worktree_pr_scope(&main), None, "main checkout has no path scope");
+        assert_eq!(worktree_pr_scope(temp.path()), None, "non-repo dir");
+
+        let linked = temp.path().join("linked");
+        git(&["worktree", "add", "-q", linked.to_str().unwrap(), "-b", "scoped"], &main);
+        assert_eq!(
+            worktree_pr_scope(&linked),
+            Some(format!("path:{}", linked.display()))
+        );
+    }
 
     #[test]
     fn parses_repository_identity_from_common_remotes() {

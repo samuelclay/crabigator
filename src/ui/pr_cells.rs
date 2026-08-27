@@ -98,7 +98,7 @@ impl PrColumnWidths {
             widths.merge = widths
                 .merge
                 .max(pr_merge_label(pr).0.width().min(PR_MERGE_MAX));
-            if !pr_action_url(pr, "dismissed").is_empty() {
+            if !pr_action_url(pr, "dismissed", "").is_empty() {
                 widths.flip = 1;
                 widths.dismiss = 1;
             }
@@ -354,24 +354,27 @@ fn table_width_with_gap(columns: &[usize], gap: usize) -> usize {
 
 #[cfg(test)]
 pub(crate) fn pr_row_text(width: u16, pr: &SessionPr, widths: &PrColumnWidths) -> String {
-    pr_row_text_tinted(width, pr, widths, StatusTints::default())
+    pr_row_text_tinted(width, pr, widths, StatusTints::default(), "")
 }
 
 /// One styled row: left padding, the left columns, then a gap wide enough to
 /// anchor the status columns against the right edge, with cooldown tints on
-/// the status cells that changed recently.
+/// the status cells that changed recently. `scope` is where the row's action
+/// links store dispositions — see [`pr_action_url`].
 pub(crate) fn pr_row_text_tinted(
     width: u16,
     pr: &SessionPr,
     widths: &PrColumnWidths,
     tints: StatusTints,
+    scope: &str,
 ) -> String {
-    pr_row_text_with_optional_activity(width, pr, widths, None, None, tints)
+    pr_row_text_with_optional_activity(width, pr, widths, None, None, tints, scope)
 }
 
 /// Render the PR view's header row: identity (`★ #142: title`) and branch on
 /// the left, then the sessions' activity, the diff and file count, and the
-/// GitHub status anchored right.
+/// GitHub status anchored right. The block stands for the PR across every
+/// session, so its action links act group-wide.
 pub(crate) fn pr_view_row_text(
     width: u16,
     pr: &SessionPr,
@@ -380,13 +383,14 @@ pub(crate) fn pr_view_row_text(
     activity: PrCell,
     tints: StatusTints,
 ) -> String {
-    pr_row_text_with_optional_activity(width, pr, widths, Some(title), Some(activity), tints)
+    pr_row_text_with_optional_activity(width, pr, widths, Some(title), Some(activity), tints, "")
 }
 
 /// Render a session-view PR sub-row: the PR-view row anatomy (identity,
 /// branch, diff and file count beside the GitHub status) indented beneath its
 /// session, with the activity column left empty — the session's header row
-/// carries the state and ages.
+/// carries the state and ages. Its action links act in that session's scope.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn session_view_pr_row_text(
     width: u16,
     pr: &SessionPr,
@@ -394,11 +398,12 @@ pub(crate) fn session_view_pr_row_text(
     title: &str,
     activity_width: usize,
     tints: StatusTints,
+    scope: &str,
 ) -> String {
     const INDENT: &str = "  ";
     let budget = widths.identity.saturating_sub(INDENT.width());
     let identity = truncate_board_pr_identity(pr, title, budget);
-    let mut left_cells = pr_left_cells_with_identity(pr, widths, identity);
+    let mut left_cells = pr_left_cells_with_identity(pr, widths, identity, scope);
     left_cells[0].0.insert_str(0, INDENT);
     left_cells[0].1 += INDENT.width();
     pr_row_text_with_left_cells(
@@ -408,6 +413,7 @@ pub(crate) fn session_view_pr_row_text(
         &left_cells,
         Some((String::new(), 0, activity_width)),
         tints,
+        scope,
     )
 }
 
@@ -525,14 +531,16 @@ fn pr_row_text_with_optional_activity(
     board_title: Option<&str>,
     activity: Option<PrCell>,
     tints: StatusTints,
+    scope: &str,
 ) -> String {
     let left_cells = board_title.map_or_else(
-        || pr_left_cells(pr, widths),
-        |title| pr_left_cells_with_board_title(pr, widths, title),
+        || pr_left_cells_scoped(pr, widths, scope),
+        |title| pr_left_cells_with_board_title(pr, widths, title, scope),
     );
-    pr_row_text_with_left_cells(width, pr, widths, &left_cells, activity, tints)
+    pr_row_text_with_left_cells(width, pr, widths, &left_cells, activity, tints, scope)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pr_row_text_with_left_cells(
     width: u16,
     pr: &SessionPr,
@@ -540,11 +548,12 @@ fn pr_row_text_with_left_cells(
     left_cells: &[PrCell],
     activity: Option<PrCell>,
     tints: StatusTints,
+    scope: &str,
 ) -> String {
     let mut row = " ".repeat(PR_LEFT_PADDING);
     row.push_str(&cells_text(left_cells));
 
-    let mut right_cells = pr_right_cells_tinted(pr, widths, tints).to_vec();
+    let mut right_cells = pr_right_cells_tinted(pr, widths, tints, scope).to_vec();
     if widths.stats_right {
         right_cells.insert(0, pr_stats_right_cell(pr, widths));
     }
@@ -576,23 +585,23 @@ fn pr_row_text_with_left_cells(
     row
 }
 
-fn styled_pr_identity(pr: &SessionPr, identity: &str) -> String {
+fn styled_pr_identity(pr: &SessionPr, identity: &str, scope: &str) -> String {
     let glyph = pr_glyph(pr);
     let (glyph_kept, identity_label) = match identity.strip_prefix(&format!("{glyph} ")) {
         Some(label) => (true, label),
         None => (false, identity),
     };
     // The glyph flips a session PR's classification; on a pure watch it
-    // removes the watch instead.
-    let flip = if pr.watched && !pr.primary {
-        "unwatched"
+    // removes the watch instead (watches are group-level).
+    let (flip, flip_scope) = if pr.watched && !pr.primary {
+        ("unwatched", "")
     } else {
-        pr_flip_disposition(pr)
+        (pr_flip_disposition(pr), scope)
     };
     let glyph_styled = if glyph_kept {
         format!(
             "{} ",
-            link_text(&pr_action_url(pr, flip), glyph.to_string(), 1)
+            link_text(&pr_action_url(pr, flip, flip_scope), glyph.to_string(), 1)
         )
     } else {
         String::new()
@@ -658,27 +667,38 @@ fn pr_stats_cells(pr: &SessionPr, diff_width: usize, files_width: usize) -> [PrC
 /// A rendered cell: styled text, its visible width, and the column width.
 pub(crate) type PrCell = (String, usize, usize);
 
+#[cfg(test)]
 pub(crate) fn pr_left_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 5] {
+    pr_left_cells_scoped(pr, widths, "")
+}
+
+pub(crate) fn pr_left_cells_scoped(
+    pr: &SessionPr,
+    widths: &PrColumnWidths,
+    scope: &str,
+) -> [PrCell; 5] {
     let identity = truncate_identity(pr, widths.identity);
-    pr_left_cells_with_identity(pr, widths, identity)
+    pr_left_cells_with_identity(pr, widths, identity, scope)
 }
 
 fn pr_left_cells_with_board_title(
     pr: &SessionPr,
     widths: &PrColumnWidths,
     title: &str,
+    scope: &str,
 ) -> [PrCell; 5] {
     let identity = truncate_board_pr_identity(pr, title, widths.identity);
-    pr_left_cells_with_identity(pr, widths, identity)
+    pr_left_cells_with_identity(pr, widths, identity, scope)
 }
 
 fn pr_left_cells_with_identity(
     pr: &SessionPr,
     widths: &PrColumnWidths,
     identity: String,
+    scope: &str,
 ) -> [PrCell; 5] {
     // The glyph is its own click target; the remaining identity opens GitHub.
-    let identity_styled = styled_pr_identity(pr, &identity);
+    let identity_styled = styled_pr_identity(pr, &identity, scope);
 
     let mut number = linked_cell(
         &pr_number_text(pr),
@@ -743,7 +763,7 @@ fn colored_diff_cell(
 
 #[cfg(test)]
 pub(crate) fn pr_right_cells(pr: &SessionPr, widths: &PrColumnWidths) -> [PrCell; 7] {
-    pr_right_cells_tinted(pr, widths, StatusTints::default())
+    pr_right_cells_tinted(pr, widths, StatusTints::default(), "")
 }
 
 /// What each GitHub status column shows, as `(column, text)`. The board
@@ -762,6 +782,7 @@ pub(crate) fn pr_right_cells_tinted(
     pr: &SessionPr,
     widths: &PrColumnWidths,
     tints: StatusTints,
+    scope: &str,
 ) -> [PrCell; 7] {
     let (state_label, state_color) = pr_state_label(pr);
     let (ci_label, ci_color) = pr_ci_label(pr);
@@ -810,14 +831,16 @@ pub(crate) fn pr_right_cells_tinted(
             pr_flip_glyph(pr),
             row_color(pr, color::DARK_GRAY),
             widths.flip,
-            &pr_action_url(pr, pr_flip_disposition(pr)),
+            &pr_action_url(pr, pr_flip_disposition(pr), scope),
         ),
-        // Dismiss action: removes the PR from every list in the group.
+        // Dismiss action. With a session or worktree scope it removes the PR
+        // from that session's lists only; with no scope (PR-view blocks,
+        // watched PRs) it removes the PR from every list in the group.
         linked_cell(
             "✕",
             row_color(pr, color::DARK_GRAY),
             widths.dismiss,
-            &pr_action_url(pr, "dismissed"),
+            &pr_action_url(pr, "dismissed", scope),
         ),
     ]
 }
@@ -1006,18 +1029,40 @@ fn pr_flip_disposition(pr: &SessionPr) -> &'static str {
     }
 }
 
-/// Web action link that stores a disposition for the whole device group.
-/// The page posts the override with the dashboard's stored auth, confirms,
-/// and closes its tab; the Worker nudges every live session over its
-/// WebSocket so the desktop refetches at once (its 60s poll is the fallback).
-pub(crate) fn pr_action_url(pr: &SessionPr, disposition: &str) -> String {
+/// Web action link that stores a disposition. `scope` picks where it applies:
+/// empty for the whole device group (PR-view blocks, watched PRs),
+/// `session:<id>` for one session's rows, or `path:<cwd>` for a worktree —
+/// sticky for future sessions started there. The page posts the override with
+/// the dashboard's stored auth, confirms, and closes its tab; the Worker
+/// nudges every live session over its WebSocket so the desktop refetches at
+/// once (its 60s poll is the fallback).
+pub(crate) fn pr_action_url(pr: &SessionPr, disposition: &str, scope: &str) -> String {
     if pr.owner.is_empty() || pr.repo.is_empty() {
         return String::new();
     }
-    format!(
+    let mut url = format!(
         "https://drinkcrabigator.com/pr-action?owner={}&repo={}&number={}&disposition={}",
         pr.owner, pr.repo, pr.number, disposition
-    )
+    );
+    if !scope.is_empty() {
+        url.push_str("&scope=");
+        url.push_str(&urlencode(scope));
+    }
+    url
+}
+
+/// Percent-encode a query value; scopes carry `:` and filesystem paths.
+fn urlencode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
 }
 
 /// Primaries and watched PRs keep the PR purple; secondaries recede into

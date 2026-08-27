@@ -44,6 +44,11 @@ pub struct MirrorState {
     /// session found by any of its ids leads straight to its conversation log.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
+    /// 'path:<cwd>' when this session runs in a linked git worktree — the
+    /// scope its PR dispositions use. Absent otherwise; readers fall back to
+    /// 'session:<cloud id>'.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_scope: Option<String>,
     pub cwd: String,
     /// Stable live Ghostty surface IDs captured when this session starts.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -180,6 +185,7 @@ pub struct MirrorPublisher {
     platform: PlatformKind,
     cloud_session_id: Option<String>,
     transcript_path: Option<String>,
+    pr_scope: Option<String>,
     slack_origin: Option<String>,
     slack_threads: Vec<SlackThread>,
     pr_slack_threads: Vec<SlackThread>,
@@ -215,6 +221,7 @@ impl MirrorPublisher {
             platform,
             cloud_session_id: None,
             transcript_path: None,
+            pr_scope: None,
             slack_origin: None,
             slack_threads: Vec::new(),
             pr_slack_threads: Vec::new(),
@@ -262,6 +269,15 @@ impl MirrorPublisher {
     pub fn set_transcript_path(&mut self, transcript_path: &str) {
         if self.transcript_path.as_deref() != Some(transcript_path) {
             self.transcript_path = Some(transcript_path.to_string());
+            self.last_hash = 0;
+        }
+    }
+
+    /// Record the worktree scope this session's PR dispositions use, so the
+    /// PR boards can build matching action links for it.
+    pub fn set_pr_scope(&mut self, pr_scope: Option<String>) {
+        if self.pr_scope != pr_scope {
+            self.pr_scope = pr_scope;
             self.last_hash = 0;
         }
     }
@@ -498,6 +514,7 @@ impl MirrorPublisher {
             platform: self.platform,
             cloud_session_id: self.cloud_session_id.clone(),
             transcript_path: self.transcript_path.clone(),
+            pr_scope: self.pr_scope.clone(),
             cwd: self.cwd.clone(),
             ghostty: self.ghostty.clone(),
             terminal_title: terminal_title.map(String::from),
