@@ -158,8 +158,10 @@ pub fn compute_dynamic_status_rows(
             titles.row_count(),
             slack_threads.len(),
         ));
+    // A short terminal can leave fewer rows than MIN_STATUS_ROWS; keep the
+    // lower bound at or below the upper bound so `clamp` never panics.
     let desired = natural.saturating_add(1); // +1 separator
-    desired.clamp(MIN_STATUS_ROWS, preferred_max)
+    desired.clamp(MIN_STATUS_ROWS.min(preferred_max), preferred_max)
 }
 
 /// Draw the entire status bar area with all widgets
@@ -445,6 +447,25 @@ mod tests {
         let diff = DiffSummary::default();
         let rows = compute_dynamic_status_rows(60, 200, &stats, &git, &diff, None, &[], &[], 0);
         assert_eq!(rows, 8);
+    }
+
+    #[test]
+    fn dynamic_status_rows_survives_short_terminal() {
+        // An 8-row terminal with a 3-row handoff strip leaves only 4 rows for
+        // status, below MIN_STATUS_ROWS. This used to panic inside `clamp`.
+        let rows = compute_dynamic_status_rows(
+            8,
+            120,
+            &SessionStats::default(),
+            &GitState::default(),
+            &DiffSummary::default(),
+            None,
+            &[],
+            &[],
+            3,
+        );
+        assert_eq!(rows, preferred_status_rows_max(8, 3));
+        assert!(rows < MIN_STATUS_ROWS);
     }
 
     #[test]
