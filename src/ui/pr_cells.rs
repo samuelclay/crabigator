@@ -195,10 +195,9 @@ impl PrColumnWidths {
     pub(crate) fn use_pr_view_layout(&mut self, total_width: usize) {
         self.number = 0;
         self.stats_right = true;
-        // The board is a reading surface, so it drops the promote/demote and
-        // dismiss actions; the in-session handoff strip still carries both.
+        // The board drops promote/demote but keeps dismiss so unwanted PRs
+        // can still be removed. The in-session handoff strip carries both.
         self.flip = 0;
-        self.dismiss = 0;
         // Earlier passes fitted the stats on the left and may have dropped
         // them or grown the branch into the slack. Start over from the
         // measured widths so the fit below reflects this layout's priorities.

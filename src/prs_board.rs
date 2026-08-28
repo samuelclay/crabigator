@@ -7116,10 +7116,14 @@ mod tests {
         );
         assert!(!compact_plain.contains('☰'), "the board omits file counts");
         assert!(
-            !['↑', '↓', '✕']
+            !['↑', '↓']
                 .iter()
                 .any(|glyph| compact_plain.contains(*glyph)),
-            "the PR board omits promote, demote, and close actions: {compact_plain}"
+            "the PR board omits promote and demote actions: {compact_plain}"
+        );
+        assert!(
+            compact_plain.contains('✕'),
+            "the PR board keeps its dismiss action: {compact_plain}"
         );
         assert!(compact_line.contains(&escape::hyperlink(
             &entries[0].pr.url,
