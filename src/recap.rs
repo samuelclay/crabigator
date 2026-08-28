@@ -606,6 +606,65 @@ fn generate_turn_recap(job: RecapJob) -> Result<TurnRecap> {
 pub(crate) struct TurnTranscript {
     pub(crate) user_prompt: Option<String>,
     pub(crate) activity: String,
+    /// Byte offset, within the text that was parsed, of the line holding the
+    /// latest user prompt. Lets callers re-read only the current turn later.
+    pub(crate) turn_start: usize,
+}
+
+/// Where the last incremental transcript scan left off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TranscriptCursor {
+    path: PathBuf,
+    len: u64,
+    modified: Option<SystemTime>,
+    /// Absolute byte offset of the line that starts the latest turn.
+    turn_start: u64,
+}
+
+/// Like `collect_latest_turn_text`, but cheap to call on a timer. Returns
+/// `Ok(None)` when the transcript has not changed since `cursor` was taken.
+/// When it has, only the bytes from the start of the latest turn onward are
+/// read and parsed, so the cost tracks the current turn rather than the whole
+/// session. A truncated or replaced file falls back to a full read.
+pub(crate) fn collect_latest_turn_text_incremental(
+    platform: PlatformKind,
+    path: &Path,
+    cursor: &mut Option<TranscriptCursor>,
+) -> Result<Option<TurnTranscript>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let meta = fs::metadata(path)
+        .with_context(|| format!("Failed to stat transcript {}", path.display()))?;
+    let len = meta.len();
+    let modified = meta.modified().ok();
+    let same_file = cursor.as_ref().is_some_and(|c| c.path == path);
+    if same_file
+        && cursor
+            .as_ref()
+            .is_some_and(|c| c.len == len && c.modified == modified)
+    {
+        return Ok(None);
+    }
+
+    let start = match cursor.as_ref() {
+        Some(c) if same_file && len >= c.len => c.turn_start.min(len),
+        _ => 0,
+    };
+    let mut file = fs::File::open(path)
+        .with_context(|| format!("Failed to read transcript {}", path.display()))?;
+    file.seek(SeekFrom::Start(start))?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .with_context(|| format!("Failed to read transcript {}", path.display()))?;
+
+    let transcript = finish_latest_turn(platform, &content);
+    *cursor = Some(TranscriptCursor {
+        path: path.to_path_buf(),
+        len,
+        modified,
+        turn_start: start + transcript.turn_start as u64,
+    });
+    Ok(Some(transcript))
 }
 
 fn collect_latest_turn(job: &RecapJob) -> Result<TurnTranscript> {
@@ -623,28 +682,39 @@ pub(crate) fn collect_latest_turn_text(
         return Ok(TurnTranscript {
             user_prompt: None,
             activity: String::new(),
+            turn_start: 0,
         });
     };
 
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read transcript {}", path.display()))?;
+    Ok(finish_latest_turn(platform, &content))
+}
+
+fn finish_latest_turn(platform: PlatformKind, content: &str) -> TurnTranscript {
     let mut transcript = match platform {
-        PlatformKind::Claude => collect_claude_latest_turn(&content),
-        PlatformKind::Codex => collect_codex_latest_turn(&content),
-        PlatformKind::Opencode => collect_opencode_latest_turn(&content),
+        PlatformKind::Claude => collect_claude_latest_turn(content),
+        PlatformKind::Codex => collect_codex_latest_turn(content),
+        PlatformKind::Opencode => collect_opencode_latest_turn(content),
     };
     transcript.activity =
         redact_sensitive(&truncate_start(&transcript.activity, MAX_TRANSCRIPT_CHARS));
     transcript.user_prompt = transcript
         .user_prompt
         .map(|prompt| redact_sensitive(&truncate_start(&prompt, 2_000)));
-    Ok(transcript)
+    transcript
+}
+
+/// Byte offset of `line` inside `content`; `line` must be a slice of it.
+fn line_offset(content: &str, line: &str) -> usize {
+    line.as_ptr() as usize - content.as_ptr() as usize
 }
 
 fn collect_claude_latest_turn(content: &str) -> TurnTranscript {
     let mut user_prompt = None;
     let mut activity = String::new();
     let mut after_user_prompt = false;
+    let mut turn_start = 0;
 
     for line in content.lines() {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
@@ -666,6 +736,7 @@ fn collect_claude_latest_turn(content: &str) -> TurnTranscript {
                     }
                     user_prompt = Some(prompt);
                     activity.clear();
+                    turn_start = line_offset(content, line);
                     after_user_prompt = true;
                 } else if after_user_prompt {
                     append_tool_results(&mut activity, message_content);
@@ -683,6 +754,7 @@ fn collect_claude_latest_turn(content: &str) -> TurnTranscript {
     TurnTranscript {
         user_prompt,
         activity,
+        turn_start,
     }
 }
 
@@ -734,6 +806,7 @@ fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
     let mut user_prompt = None;
     let mut activity = String::new();
     let mut after_user_prompt = false;
+    let mut turn_start = 0;
 
     for line in content.lines() {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
@@ -749,6 +822,7 @@ fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
                     if !prompt.trim().is_empty() && !is_codex_bootstrap(&prompt) {
                         user_prompt = Some(prompt.trim().to_string());
                         activity.clear();
+                        turn_start = line_offset(content, line);
                         after_user_prompt = true;
                     }
                 }
@@ -818,6 +892,7 @@ fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
                     if !prompt.trim().is_empty() && !is_codex_bootstrap(prompt) {
                         user_prompt = Some(prompt.trim().to_string());
                         activity.clear();
+                        turn_start = line_offset(content, line);
                         after_user_prompt = true;
                     }
                 }
@@ -840,6 +915,7 @@ fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
     TurnTranscript {
         user_prompt,
         activity,
+        turn_start,
     }
 }
 
@@ -850,6 +926,7 @@ fn collect_opencode_latest_turn(content: &str) -> TurnTranscript {
     let mut user_prompt = None;
     let mut activity = String::new();
     let mut after_user_prompt = false;
+    let mut turn_start = 0;
 
     for line in content.lines() {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
@@ -864,6 +941,7 @@ fn collect_opencode_latest_turn(content: &str) -> TurnTranscript {
                 if !text.trim().is_empty() {
                     user_prompt = Some(text.trim().to_string());
                     activity.clear();
+                    turn_start = line_offset(content, line);
                     after_user_prompt = true;
                 }
             }
@@ -895,6 +973,7 @@ fn collect_opencode_latest_turn(content: &str) -> TurnTranscript {
     TurnTranscript {
         user_prompt,
         activity,
+        turn_start,
     }
 }
 
@@ -1427,6 +1506,94 @@ fn write_recap_cache(cwd: &Path, recap: &TurnRecap) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn codex_user(text: &str) -> String {
+        format!(
+            r#"{{"type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"{text}"}}]}}}}"#
+        )
+    }
+
+    fn codex_assistant(text: &str) -> String {
+        format!(
+            r#"{{"type":"response_item","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"{text}"}}]}}}}"#
+        )
+    }
+
+    #[test]
+    fn latest_turn_reports_where_the_turn_starts() {
+        let first = codex_user("old prompt");
+        let transcript = format!(
+            "{first}\n{}\n{}\n{}\n",
+            codex_assistant("old reply"),
+            codex_user("new prompt"),
+            codex_assistant("new reply")
+        );
+        let turn = collect_codex_latest_turn(&transcript);
+        assert_eq!(turn.user_prompt.as_deref(), Some("new prompt"));
+        let expected = first.len() + 1 + codex_assistant("old reply").len() + 1;
+        assert_eq!(turn.turn_start, expected);
+        assert!(transcript[turn.turn_start..].starts_with(&codex_user("new prompt")));
+    }
+
+    #[test]
+    fn incremental_scan_skips_unchanged_files_and_reads_only_the_current_turn() {
+        use std::io::Write as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let mut file = fs::File::create(&path).unwrap();
+        writeln!(file, "{}", codex_user("first prompt")).unwrap();
+        writeln!(file, "{}", codex_assistant("first reply")).unwrap();
+        writeln!(file, "{}", codex_user("second prompt")).unwrap();
+        file.sync_all().unwrap();
+
+        let mut cursor = None;
+        let turn = collect_latest_turn_text_incremental(PlatformKind::Codex, &path, &mut cursor)
+            .unwrap()
+            .expect("first scan reads the file");
+        assert_eq!(turn.user_prompt.as_deref(), Some("second prompt"));
+        let first_cursor = cursor.clone().unwrap();
+        assert_eq!(
+            first_cursor.turn_start as usize,
+            codex_user("first prompt").len() + 1 + codex_assistant("first reply").len() + 1
+        );
+
+        // Nothing changed: no read, no parse.
+        assert!(
+            collect_latest_turn_text_incremental(PlatformKind::Codex, &path, &mut cursor)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(cursor.as_ref(), Some(&first_cursor));
+
+        // Appending to the current turn re-reads from the turn start only, and
+        // the result still carries the prompt that lives at that offset.
+        writeln!(file, "{}", codex_assistant("second reply")).unwrap();
+        file.sync_all().unwrap();
+        let turn = collect_latest_turn_text_incremental(PlatformKind::Codex, &path, &mut cursor)
+            .unwrap()
+            .expect("appended bytes trigger a scan");
+        assert_eq!(turn.user_prompt.as_deref(), Some("second prompt"));
+        assert!(turn.activity.contains("second reply"));
+        assert_eq!(cursor.as_ref().unwrap().turn_start, first_cursor.turn_start);
+
+        // A new prompt moves the turn start forward.
+        writeln!(file, "{}", codex_user("third prompt")).unwrap();
+        file.sync_all().unwrap();
+        let turn = collect_latest_turn_text_incremental(PlatformKind::Codex, &path, &mut cursor)
+            .unwrap()
+            .unwrap();
+        assert_eq!(turn.user_prompt.as_deref(), Some("third prompt"));
+        assert!(cursor.as_ref().unwrap().turn_start > first_cursor.turn_start);
+
+        // A truncated (replaced) transcript falls back to a full read.
+        fs::write(&path, format!("{}\n", codex_user("fresh prompt"))).unwrap();
+        let turn = collect_latest_turn_text_incremental(PlatformKind::Codex, &path, &mut cursor)
+            .unwrap()
+            .unwrap();
+        assert_eq!(turn.user_prompt.as_deref(), Some("fresh prompt"));
+        assert_eq!(cursor.as_ref().unwrap().turn_start, 0);
+    }
 
     #[test]
     fn parses_recap_json_with_wrapping_text() {

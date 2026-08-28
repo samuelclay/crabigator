@@ -50,6 +50,8 @@ const GIT_INTERVAL_IDLE: Duration = Duration::from_secs(10);
 const HOOK_INTERVAL_ACTIVE: Duration = Duration::from_millis(500);
 /// Hook/stats refresh interval when idle
 const HOOK_INTERVAL_IDLE: Duration = Duration::from_secs(2);
+/// Minimum time between transcript parses for PR links while a turn streams.
+const TRANSCRIPT_SCAN_MIN_INTERVAL: Duration = Duration::from_secs(3);
 
 /// Status draw interval when active (for smooth throbber animation)
 const STATUS_DRAW_INTERVAL_ACTIVE: Duration = Duration::from_millis(50);
@@ -204,6 +206,12 @@ pub struct App {
     recap_manager: RecapManager,
     /// Tracks PRs created/updated during this session for the recap panel
     pr_tracker: PrTracker,
+    /// Where the last per-tick transcript scan for PR links left off, so the
+    /// scan skips unchanged transcripts and re-reads only the current turn.
+    transcript_scan_cursor: Option<crate::recap::TranscriptCursor>,
+    /// When the transcript was last parsed for PR links. While a turn streams,
+    /// the file changes on every tick, so parses are rate limited.
+    last_transcript_scan: Instant,
     /// Update state for version banner
     update_state: UpdateState,
     /// Last time we polled pairing status
@@ -371,6 +379,8 @@ impl App {
             pairing_state,
             recap_manager,
             pr_tracker,
+            transcript_scan_cursor: None,
+            last_transcript_scan: Instant::now(),
             update_state,
             last_pairing_poll: Instant::now(),
             pending_pairing_poll: None,
@@ -1642,16 +1652,16 @@ impl App {
         // Advance PR tracking on the same tick. Poll finished `gh` jobs, and on a
         // turn completion refresh tracked PRs so their diff stats stay current
         // ("where it starts" vs "where it ends"). Both may change the visible list.
+        let turn_completed = old_effective_state != SessionState::Complete
+            && new_effective_state == SessionState::Complete;
         let mut prs_changed = recap_notes_changed;
-        prs_changed |= self.scan_session_links_from_transcript();
+        prs_changed |= self.scan_session_links_from_transcript(turn_completed);
         self.send_cloud_slack_threads_event();
         prs_changed |= self.pr_tracker.poll();
         self.send_cloud_pr_slack_threads_event();
         prs_changed |= self
             .pr_tracker
             .reclassify(&self.git_state.branch, &self.cwd);
-        let turn_completed = old_effective_state != SessionState::Complete
-            && new_effective_state == SessionState::Complete;
         if turn_completed {
             // Fetches run on background threads; results land via poll() next tick.
             self.pr_tracker.refresh_stale();
@@ -1891,13 +1901,25 @@ impl App {
     /// Uses `collect_latest_turn_text`, which parses both Claude and Codex
     /// transcripts, rather than `scrollback.log` (which is only populated for
     /// Claude). Returns true if tracked session links changed.
-    fn scan_session_links_from_transcript(&mut self) -> bool {
+    fn scan_session_links_from_transcript(&mut self, turn_completed: bool) -> bool {
         let Some(path) = self.session_stats.platform_stats.transcript_path.clone() else {
             return false;
         };
-        let Ok(turn) = crate::recap::collect_latest_turn_text(
+        // Parsing the current turn costs time proportional to its length, and
+        // the file changes on every tick while the assistant streams. Rescan at
+        // most every few seconds, except at turn completion, when the final
+        // PR links should land right away. The first scan always runs.
+        if !turn_completed
+            && self.transcript_scan_cursor.is_some()
+            && self.last_transcript_scan.elapsed() < TRANSCRIPT_SCAN_MIN_INTERVAL
+        {
+            return false;
+        }
+        self.last_transcript_scan = Instant::now();
+        let Ok(Some(turn)) = crate::recap::collect_latest_turn_text_incremental(
             self.platform.kind(),
-            Some(std::path::Path::new(&path)),
+            std::path::Path::new(&path),
+            &mut self.transcript_scan_cursor,
         ) else {
             return false;
         };
