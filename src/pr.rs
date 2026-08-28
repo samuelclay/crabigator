@@ -270,8 +270,8 @@ pub struct SessionPr {
     /// or "override" (the cloud-stored dashboard disposition).
     #[serde(default)]
     pub primary_source: String,
-    /// Dismissed by the user — stays tracked so a re-mention can't resurrect
-    /// it, but nothing should render it.
+    /// Hidden from rendered lists. User dismissals stay sticky; automatic
+    /// stale-secondary dismissal clears if the PR is mentioned again.
     #[serde(default)]
     pub dismissed: bool,
     /// Explicitly added to the boards' watch list ("track PR <url>", the

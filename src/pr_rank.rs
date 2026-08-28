@@ -126,6 +126,16 @@ fn is_recent(last_mention_prompt: u32, prompt_count: u32) -> bool {
     last_mention_prompt + recent_window(prompt_count) >= prompt_count
 }
 
+/// Hide an automatically secondary PR after this many prompts pass without
+/// another mention. User dispositions and watch-list entries stay sticky.
+const SECONDARY_DISMISS_AFTER_PROMPTS: u32 = 3;
+
+fn auto_secondary_is_stale(pr: &SessionPr, ctx: &RankContext) -> bool {
+    !pr.watched
+        && ctx.prompt_count.saturating_sub(pr.last_mention_prompt)
+            >= SECONDARY_DISMISS_AFTER_PROMPTS
+}
+
 /// Classify every PR in place. Returns true when any visible field changed.
 pub fn classify(prs: &mut [SessionPr], ctx: &RankContext) -> bool {
     let mut changed = false;
@@ -186,10 +196,11 @@ fn decide(
     {
         return apply_disposition(*disposition, "session");
     }
+    let primary = auto_primary(pr, ctx, total_mentions, created);
     (
-        auto_primary(pr, ctx, total_mentions, created),
+        primary,
         "auto",
-        false,
+        !primary && auto_secondary_is_stale(pr, ctx),
     )
 }
 
@@ -486,6 +497,58 @@ mod tests {
 
         assert!(prs[0].primary);
         assert_eq!(prs[0].primary_source, "auto");
+    }
+
+    #[test]
+    fn auto_secondary_is_dismissed_on_third_unmentioned_prompt() {
+        let mut prs = vec![pr(1078, "portal"), pr(1079, "portal")];
+        prs[0].mentions = 1;
+        prs[0].last_mention_prompt = 5;
+        prs[1].mentions = 2;
+        prs[1].last_mention_prompt = 7;
+
+        classify(&mut prs, &ctx(7));
+        assert!(!prs[0].primary);
+        assert!(!prs[0].dismissed, "two missed prompts keep it visible");
+
+        classify(&mut prs, &ctx(8));
+        assert!(prs[0].dismissed, "the third missed prompt dismisses it");
+    }
+
+    #[test]
+    fn a_new_mention_restores_an_auto_dismissed_secondary() {
+        let mut prs = vec![pr(1078, "portal"), pr(1079, "portal")];
+        prs[0].mentions = 1;
+        prs[0].last_mention_prompt = 5;
+        prs[1].mentions = 2;
+        prs[1].last_mention_prompt = 8;
+
+        classify(&mut prs, &ctx(8));
+        assert!(prs[0].dismissed);
+
+        prs[0].last_mention_prompt = 9;
+        classify(&mut prs, &ctx(9));
+        assert!(!prs[0].dismissed);
+    }
+
+    #[test]
+    fn watched_and_explicit_secondary_prs_do_not_decay() {
+        let mut watched = pr(1078, "portal");
+        watched.watched = true;
+        watched.last_mention_prompt = 1;
+
+        let mut explicit = pr(1079, "portal");
+        explicit.last_mention_prompt = 1;
+        let mut context = ctx(20);
+        context
+            .declared_numbers
+            .insert(explicit.number, PrDisposition::Secondary);
+
+        let mut prs = vec![watched, explicit];
+        classify(&mut prs, &context);
+
+        assert!(!prs[0].dismissed, "watched PR stays visible");
+        assert!(!prs[1].dismissed, "explicit secondary stays visible");
     }
 
     #[test]
