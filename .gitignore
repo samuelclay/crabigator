@@ -28,6 +28,8 @@ prompts.md
 
 # Wrangler local cache
 .wrangler/
+workers/crabigator-api/wrangler.jsonc
+workers/crabigator-api/.dev.vars
 
 # NPM vendor binaries (populated by CI)
 npm/vendor/

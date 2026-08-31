@@ -3,6 +3,8 @@ import { landingCss } from './landing/css';
 import { landingJs } from './landing/js';
 import { palmWebglJs } from './landing/palm-webgl';
 import { analyticsJs } from './landing/analytics';
+import type { RuntimeConfig } from './config';
+import { escapeHtml, metaPixelHtml, usePublicOrigin } from './html-render';
 import {
     iconCrabigator,
     iconCrabigatorEncoded,
@@ -79,23 +81,6 @@ export const landingHtml = `<!DOCTYPE html>
     <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-landing.png">
     <link rel="icon" href="data:image/svg+xml,${iconCrabigatorEncoded}">
     <style>${landingCss}</style>
-    <!-- Meta Pixel Code -->
-    <script>
-    !function(f,b,e,v,n,t,s)
-    {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-    n.callMethod.apply(n,arguments):n.queue.push(arguments)};
-    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
-    n.queue=[];t=b.createElement(e);t.async=!0;
-    t.src=v;s=b.getElementsByTagName(e)[0];
-    s.parentNode.insertBefore(t,s)}(window, document,'script',
-    'https://connect.facebook.net/en_US/fbevents.js');
-    fbq('init', '386521575130337');
-    fbq('track', 'PageView');
-    </script>
-    <noscript><img height="1" width="1" style="display:none"
-    src="https://www.facebook.com/tr?id=386521575130337&ev=PageView&noscript=1"
-    /></noscript>
-    <!-- End Meta Pixel Code -->
 </head>
 <body>
     <!-- Navigation -->
@@ -1066,3 +1051,21 @@ export const landingHtml = `<!DOCTYPE html>
     <script>${palmWebglJs}</script>
 </body>
 </html>`;
+
+export function renderLandingHtml(runtime: RuntimeConfig, metaPixelId = ''): string {
+    const pixel = runtime.capabilities.marketing_analytics ? metaPixelHtml(metaPixelId) : '';
+    const disabledStyles = [
+        !runtime.capabilities.billing ? '#pricing,.nav-link[href="#pricing"]{display:none!important}' : '',
+        !runtime.capabilities.marketing_analytics ? '.cta-form,.email-form{display:none!important}' : '',
+    ].join('');
+    let html = usePublicOrigin(landingHtml, runtime.origin)
+        .replace(
+            '<div class="pricing-amount">$3<span class="pricing-period">/month</span></div>',
+            `<div class="pricing-amount">${escapeHtml(runtime.billing_price)}<span class="pricing-period">${escapeHtml(runtime.billing_period)}</span></div>`,
+        )
+        .replace('</head>', `${pixel}<style>${disabledStyles}</style></head>`);
+    if (!runtime.capabilities.marketing_analytics) {
+        html = html.replace(`<script>${analyticsJs}</script>`, '');
+    }
+    return html;
+}

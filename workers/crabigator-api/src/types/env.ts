@@ -1,47 +1,25 @@
-export interface Env {
-    // D1 Database
-    DB: D1Database;
+import type { AppConfig } from '../config';
 
-    // KV Namespace for tokens
-    TOKENS: KVNamespace;
+/**
+ * Wrangler generates Cloudflare.Env from wrangler.example.jsonc. This extension
+ * lists secrets, which never belong in the checked-in Wrangler configuration.
+ */
+export type Env = Omit<Cloudflare.Env, 'APP_CONFIG'> & {
+    APP_CONFIG: AppConfig;
 
-    // Durable Object namespace for sessions
-    SESSION: DurableObjectNamespace;
-
-    // Durable Object for session list broadcasting
-    SESSION_LIST: DurableObjectNamespace;
-
-    // Durable Object for usage tracking
-    USAGE: DurableObjectNamespace;
-
-    // Environment variables
-    API_VERSION: string;
-
-    // Stripe payment secrets (live)
     STRIPE_SECRET_KEY?: string;
     STRIPE_WEBHOOK_SECRET?: string;
     STRIPE_PRICE_ID?: string;
 
-    // Stripe payment secrets (test)
     STRIPE_SECRET_KEY_TEST?: string;
     STRIPE_WEBHOOK_SECRET_TEST?: string;
     STRIPE_PRICE_ID_TEST?: string;
 
-    // Stripe mode: 'test' or 'live' (defaults to 'live')
-    STRIPE_MODE?: 'test' | 'live';
-
-    // PayPal payment secrets
     PAYPAL_CLIENT_ID?: string;
     PAYPAL_CLIENT_SECRET?: string;
     PAYPAL_WEBHOOK_ID?: string;
     PAYPAL_PLAN_ID?: string;
-    PAYPAL_MODE?: 'sandbox' | 'live';
-
-    // OpenAI API key (for Whisper transcription)
     OPENAI_API_KEY?: string;
-
-    // Mailgun email settings
     MAILGUN_API_KEY?: string;
-    MAILGUN_DOMAIN?: string;
-    MAILGUN_FROM?: string;
-}
+    STAFF_ACCESS_KEY?: string;
+};

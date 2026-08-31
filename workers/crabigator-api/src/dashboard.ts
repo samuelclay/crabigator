@@ -2,6 +2,8 @@
 import { dashboardCss } from './dashboard/css';
 import { dashboardJs } from './dashboard/js';
 import { faviconSvg } from './dashboard/icons';
+import type { RuntimeConfig } from './config';
+import { escapeHtml, metaPixelHtml, usePublicOrigin } from './html-render';
 
 export const dashboardHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -25,23 +27,6 @@ export const dashboardHtml = `<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap">
     <style>${dashboardCss}</style>
-    <!-- Meta Pixel Code -->
-    <script>
-    !function(f,b,e,v,n,t,s)
-    {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-    n.callMethod.apply(n,arguments):n.queue.push(arguments)};
-    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
-    n.queue=[];t=b.createElement(e);t.async=!0;
-    t.src=v;s=b.getElementsByTagName(e)[0];
-    s.parentNode.insertBefore(t,s)}(window, document,'script',
-    'https://connect.facebook.net/en_US/fbevents.js');
-    fbq('init', '386521575130337');
-    fbq('track', 'PageView');
-    </script>
-    <noscript><img height="1" width="1" style="display:none"
-    src="https://www.facebook.com/tr?id=386521575130337&ev=PageView&noscript=1"
-    /></noscript>
-    <!-- End Meta Pixel Code -->
 </head>
 <body>
     <div class="deploy-overlay" id="deploy-overlay">
@@ -340,3 +325,30 @@ export const dashboardHtml = `<!DOCTYPE html>
     <script>${dashboardJs}</script>
 </body>
 </html>`;
+
+export function renderDashboardHtml(runtime: RuntimeConfig, metaPixelId = ''): string {
+    const limit = runtime.visible_session_limit;
+    const freeLimitCopy = `Free accounts show the ${limit} most recently active sessions.`;
+    const browserConfig = JSON.stringify({
+        capabilities: runtime.capabilities,
+        visible_session_limit: runtime.visible_session_limit,
+    }).replace(/</g, '\\u003c');
+    const disabledStyles = [
+        !runtime.capabilities.transcription
+            ? '.voice-btn,.voice-cancel-btn,.voice-actions,.voice-overlay{display:none!important}'
+            : '',
+        !runtime.capabilities.billing
+            ? '.usage-display,.settings-divider:first-of-type,.paywall-overlay,#session-limit-banner{display:none!important}'
+            : '',
+        !runtime.capabilities.gifts ? '.gift-overlay{display:none!important}' : '',
+    ].join('');
+    const pixel = runtime.capabilities.marketing_analytics ? metaPixelHtml(metaPixelId) : '';
+
+    return usePublicOrigin(dashboardHtml, runtime.origin)
+        .replaceAll('Free accounts show the 3 most recently active sessions.', freeLimitCopy)
+        .replace('id="usage-time">0 / 3 visible', `id="usage-time">0 / ${limit} visible`)
+        .replace('id="paywall-usage">3', `id="paywall-usage">${limit}`)
+        .replace('<div class="paywall-price">$3</div>', `<div class="paywall-price">${escapeHtml(runtime.billing_price)}</div>`)
+        .replace('<div class="paywall-price-period">per month</div>', `<div class="paywall-price-period">${escapeHtml(runtime.billing_period)}</div>`)
+        .replace('</head>', `${pixel}<script>window.CRABIGATOR_CONFIG=${browserConfig};</script><style>${disabledStyles}</style></head>`);
+}

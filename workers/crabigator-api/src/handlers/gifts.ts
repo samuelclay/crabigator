@@ -1,5 +1,6 @@
 import type { Env } from '../types/env';
 import { jsonResponse } from '../router';
+import { getAppConfig, getPublicOrigin } from '../config';
 
 /**
  * Create an error response
@@ -147,7 +148,7 @@ export async function handleCreateGift(
         recipient_email || null
     ).run();
 
-    const giftUrl = `https://drinkcrabigator.com/dashboard?gift=${giftCode!}`;
+    const giftUrl = `${getPublicOrigin(request, getAppConfig(env))}/dashboard?gift=${giftCode!}`;
 
     return jsonResponse({
         id: giftCode!,
@@ -163,7 +164,7 @@ export async function handleCreateGift(
  * GET /api/staff/gifts - List all gifts with usage stats
  */
 export async function handleListGifts(
-    _request: Request,
+    request: Request,
     env: Env
 ): Promise<Response> {
     // Query gifts with usage stats
@@ -197,9 +198,10 @@ export async function handleListGifts(
         ORDER BY g.created_at DESC
     `).all<GiftWithStats>();
 
+    const origin = getPublicOrigin(request, getAppConfig(env));
     const gifts = (result.results || []).map(gift => ({
         ...gift,
-        url: `https://drinkcrabigator.com/dashboard?gift=${gift.id}`,
+        url: `${origin}/dashboard?gift=${gift.id}`,
         total_duration_formatted: formatDuration(gift.total_duration_seconds || 0),
         avg_duration_formatted: gift.avg_duration_seconds
             ? formatDuration(Math.round(gift.avg_duration_seconds))
@@ -218,7 +220,7 @@ export async function handleListGifts(
  * POST /api/staff/gifts/:id/send-email - Send gift email via Mailgun
  */
 export async function handleSendGiftEmail(
-    _request: Request,
+    request: Request,
     env: Env,
     params: Record<string, string>
 ): Promise<Response> {
@@ -237,11 +239,16 @@ export async function handleSendGiftEmail(
         return errorResponse('Gift has no recipient email', 'NO_EMAIL', 400);
     }
 
-    if (!env.MAILGUN_API_KEY || !env.MAILGUN_DOMAIN) {
+    const appConfig = getAppConfig(env);
+    const mailgunDomain = appConfig.email?.mailgun_domain;
+    const mailgunFrom = appConfig.email?.from;
+    if (!env.MAILGUN_API_KEY || !mailgunDomain || !mailgunFrom) {
         return errorResponse('Mailgun not configured', 'MAILGUN_NOT_CONFIGURED', 500);
     }
 
-    const giftUrl = `https://drinkcrabigator.com/dashboard?gift=${gift.id}`;
+    const origin = getPublicOrigin(request, appConfig);
+    const publicHost = new URL(origin).host;
+    const giftUrl = `${origin}/dashboard?gift=${gift.id}`;
     const durationText = gift.duration_type === 'forever'
         ? 'lifetime access'
         : gift.duration_type === 'year'
@@ -292,7 +299,7 @@ export async function handleSendGiftEmail(
                         <td style="background: linear-gradient(180deg, #1c2128 0%, #161b22 100%); border-radius: 16px; border: 1px solid #30363d; padding: 48px 40px; text-align: center;">
 
                             <!-- Logo -->
-                            <img src="https://drinkcrabigator.com/assets/logo.svg" alt="Crabigator" width="80" height="80" style="display: block; margin: 0 auto 24px auto;">
+                            <img src="${origin}/assets/logo.svg" alt="Crabigator" width="80" height="80" style="display: block; margin: 0 auto 24px auto;">
 
                             <!-- Gift Badge -->
                             <table role="presentation" cellspacing="0" cellpadding="0" style="margin: 0 auto 20px auto;">
@@ -382,7 +389,7 @@ export async function handleSendGiftEmail(
                                             <tr>
                                                 <td width="44" valign="top">
                                                     <div style="width: 36px; height: 36px; background: rgba(88, 166, 255, 0.1); border-radius: 8px; text-align: center; line-height: 36px;">
-                                                        <img src="https://drinkcrabigator.com/assets/icon-phone.svg" alt="" width="18" height="18" style="vertical-align: middle;">
+                                                        <img src="${origin}/assets/icon-phone.svg" alt="" width="18" height="18" style="vertical-align: middle;">
                                                     </div>
                                                 </td>
                                                 <td>
@@ -400,7 +407,7 @@ export async function handleSendGiftEmail(
                                             <tr>
                                                 <td width="44" valign="top">
                                                     <div style="width: 36px; height: 36px; background: rgba(163, 113, 247, 0.1); border-radius: 8px; text-align: center; line-height: 36px;">
-                                                        <img src="https://drinkcrabigator.com/assets/icon-cloud.svg" alt="" width="18" height="18" style="vertical-align: middle;">
+                                                        <img src="${origin}/assets/icon-cloud.svg" alt="" width="18" height="18" style="vertical-align: middle;">
                                                     </div>
                                                 </td>
                                                 <td>
@@ -418,7 +425,7 @@ export async function handleSendGiftEmail(
                                             <tr>
                                                 <td width="44" valign="top">
                                                     <div style="width: 36px; height: 36px; background: rgba(63, 185, 80, 0.1); border-radius: 8px; text-align: center; line-height: 36px;">
-                                                        <img src="https://drinkcrabigator.com/assets/icon-bolt.svg" alt="" width="18" height="18" style="vertical-align: middle;">
+                                                        <img src="${origin}/assets/icon-bolt.svg" alt="" width="18" height="18" style="vertical-align: middle;">
                                                     </div>
                                                 </td>
                                                 <td>
@@ -441,7 +448,7 @@ export async function handleSendGiftEmail(
                     <tr>
                         <td style="text-align: center; padding: 20px; border-top: 1px solid #21262d;">
                             <p style="margin: 0 0 4px 0; font-size: 12px; color: #484f58;">
-                                <a href="https://drinkcrabigator.com" style="color: #58a6ff; text-decoration: none;">drinkcrabigator.com</a>
+                                <a href="${origin}" style="color: #58a6ff; text-decoration: none;">${publicHost}</a>
                             </p>
                             <p style="margin: 0; font-size: 11px; color: #3d4450;">
                                 Built in San Francisco
@@ -460,13 +467,13 @@ export async function handleSendGiftEmail(
 
     // Send via Mailgun
     const formData = new FormData();
-    formData.append('from', env.MAILGUN_FROM || `Crabigator <noreply@${env.MAILGUN_DOMAIN}>`);
+    formData.append('from', mailgunFrom);
     formData.append('to', gift.recipient_email);
     formData.append('subject', `You've been gifted ${subjectDuration} Crabigator Pro!`);
     formData.append('html', emailHtml);
 
     const mailgunResponse = await fetch(
-        `https://api.mailgun.net/v3/${env.MAILGUN_DOMAIN}/messages`,
+        `https://api.mailgun.net/v3/${mailgunDomain}/messages`,
         {
             method: 'POST',
             headers: {

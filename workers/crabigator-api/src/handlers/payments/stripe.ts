@@ -1,6 +1,7 @@
 import type { Env } from '../../types/env';
 import { jsonResponse } from '../../router';
 import { getStripeConfig } from './stripe-config';
+import { getAppConfig, getPublicOrigin } from '../../config';
 
 /**
  * Create a Stripe checkout session for subscription
@@ -27,7 +28,7 @@ export async function createStripeCheckout(
         body = {};
     }
 
-    const returnUrl = body.return_url || 'https://drinkcrabigator.com/dashboard';
+    const returnUrl = body.return_url || `${getPublicOrigin(request, getAppConfig(env))}/dashboard`;
     const successUrl = `${returnUrl}?payment=success&provider=stripe`;
     const cancelUrl = `${returnUrl}?payment=canceled`;
 

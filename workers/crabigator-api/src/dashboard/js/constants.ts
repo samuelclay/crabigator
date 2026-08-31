@@ -2,11 +2,15 @@
 export const constantsJs = `
 
         const API_BASE = '/api';
+        const APP_CONFIG = window.CRABIGATOR_CONFIG || { capabilities: {}, visible_session_limit: 3 };
+        const TRANSCRIPTION_ENABLED = APP_CONFIG.capabilities.transcription === true;
+        const BILLING_ENABLED = APP_CONFIG.capabilities.billing === true;
+        const GIFTS_ENABLED = APP_CONFIG.capabilities.gifts === true;
         const sessions = new Map(); // sessionId -> { eventSocket, state, element, git, changes, stats }
         let allSessions = []; // All sessions from API (for popover)
         let allProjects = []; // All known projects from API (for history)
-        const FREE_VISIBLE_SESSION_LIMIT = 3;
-        let isProUser = false;
+        const FREE_VISIBLE_SESSION_LIMIT = APP_CONFIG.visible_session_limit || 3;
+        let isProUser = !BILLING_ENABLED;
         let hiddenSessionCount = 0;
         let visibleSessionIds = new Set();
         // Frozen set of session IDs chosen at first render. Free-tier dashboards

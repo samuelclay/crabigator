@@ -20,7 +20,7 @@ export const initJs = `
             }
 
             // Check for gift claim via URL parameter
-            const handledGift = await handleGiftParam();
+            const handledGift = GIFTS_ENABLED ? await handleGiftParam() : false;
             // Note: Gift handling shows overlay but doesn't block normal init
             // User can dismiss and still use the dashboard
 
@@ -37,9 +37,9 @@ export const initJs = `
                 // Start viewer activity tracking for streaming optimization
                 startViewerActivityTracking();
                 // Initialize usage tracking and paywall
-                initUsageTracking();
+                if (BILLING_ENABLED) initUsageTracking();
                 // Check for pending gift that was claimed before pairing
-                resolvePendingGift();
+                if (GIFTS_ENABLED) resolvePendingGift();
             }
         })();
 `;

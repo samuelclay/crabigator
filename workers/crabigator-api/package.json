@@ -2,16 +2,23 @@
   "name": "crabigator-api",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "wrangler dev --profile newsblur",
-    "deploy": "wrangler deploy --profile newsblur",
-    "db:migrate:local": "wrangler d1 execute crabigator --local --file=migrations/0001_initial.sql --profile newsblur",
-    "db:migrate:prod": "wrangler d1 execute crabigator --file=migrations/0001_initial.sql --profile newsblur",
-    "typecheck": "tsc --noEmit"
+    "dev": "wrangler dev --config ${WRANGLER_CONFIG:-wrangler.jsonc} ${WRANGLER_PROFILE:+--profile $WRANGLER_PROFILE}",
+    "deploy": "wrangler deploy --config ${WRANGLER_CONFIG:-wrangler.jsonc} ${WRANGLER_PROFILE:+--profile $WRANGLER_PROFILE}",
+    "deploy:dry-run": "wrangler deploy --dry-run --config ${WRANGLER_CONFIG:-wrangler.jsonc} ${WRANGLER_PROFILE:+--profile $WRANGLER_PROFILE}",
+    "db:migrate:local": "wrangler d1 migrations apply ${D1_DATABASE:-DB} --local --config ${WRANGLER_CONFIG:-wrangler.jsonc} ${WRANGLER_PROFILE:+--profile $WRANGLER_PROFILE}",
+    "db:migrate:remote": "wrangler d1 migrations apply ${D1_DATABASE:-DB} --remote --config ${WRANGLER_CONFIG:-wrangler.jsonc} ${WRANGLER_PROFILE:+--profile $WRANGLER_PROFILE}",
+    "types": "wrangler types worker-configuration.d.ts --config wrangler.example.jsonc",
+    "types:check": "wrangler types --check worker-configuration.d.ts --config wrangler.example.jsonc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260714.1",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@types/node": "^24.5.2",
     "typescript": "^5.7.2",
+    "vitest": "^4.1.11",
     "wrangler": "^4.125.0"
   }
 }

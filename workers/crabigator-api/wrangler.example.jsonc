@@ -1,0 +1,93 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "crabigator-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+
+  // Wrangler creates these resources on the first deploy when IDs are omitted.
+  // Keep the binding names unchanged because the Worker code uses them.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "crabigator",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    { "binding": "TOKENS" }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "SESSION", "class_name": "SessionDO" },
+      { "name": "SESSION_LIST", "class_name": "SessionListDO" },
+      { "name": "USAGE", "class_name": "UsageDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["SessionListDO"] },
+    { "tag": "v3", "deleted_classes": ["SessionListDO"] },
+    { "tag": "v4", "new_sqlite_classes": ["SessionListDO"] },
+    { "tag": "v5", "new_sqlite_classes": ["UsageDO"] }
+  ],
+
+  "triggers": {
+    "crons": ["*/5 * * * *", "0 6 * * *"]
+  },
+
+  // workers.dev works without any route configuration. To use your own domain,
+  // set workers_dev to false and add this top-level property:
+  // "routes": [{ "pattern": "crabigator.example.com", "custom_domain": true }],
+
+  "vars": {
+    "API_VERSION": "v1",
+    "APP_CONFIG": {
+      // Leave blank to use the incoming request origin. Set this when emails or
+      // payment providers need one stable public callback origin.
+      "public_origin": "",
+      // Features are independent unless noted. Missing required secrets make a
+      // requested feature unavailable and list it in /api/health.
+      "features": {
+        "transcription": true,
+        "billing": false,
+        "gifts": false,
+        "outbound_email": false,
+        "marketing_analytics": false,
+        "traffic_alerts": false,
+        "staff": false
+      },
+      "billing": {
+        // This cap applies only while billing is enabled.
+        "visible_session_limit": 3,
+        // Text shown for the paid plan. These values are display-only.
+        "price_display": "$3",
+        "price_period": "per month",
+        // Modes choose which provider secrets the Worker reads.
+        "stripe_mode": "test",
+        "paypal_mode": "sandbox"
+      },
+      "email": {
+        // These are public sender settings. MAILGUN_API_KEY remains a secret.
+        "mailgun_domain": "",
+        "from": "",
+        "traffic_alert_recipient": ""
+      },
+      "marketing": {
+        // Leave blank to omit Meta Pixel code even when analytics is enabled.
+        "meta_pixel_id": ""
+      },
+      "operations": {
+        // First day of your Cloudflare billing cycle, used by make cf-usage.
+        "billing_cycle_day": 1
+      }
+    }
+  },
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

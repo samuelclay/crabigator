@@ -1,4 +1,5 @@
 import type { Env } from '../types/env';
+import { getAppConfig } from '../config';
 
 /**
  * NPM API response for download stats
@@ -163,7 +164,12 @@ interface TrafficAlertData {
 }
 
 async function sendTrafficAlert(env: Env, data: TrafficAlertData): Promise<void> {
-    if (!env.MAILGUN_API_KEY || !env.MAILGUN_DOMAIN) {
+    const config = getAppConfig(env);
+    const origin = config.public_origin;
+    const mailgunDomain = config.email?.mailgun_domain;
+    const mailgunFrom = config.email?.from;
+    const recipient = config.email?.traffic_alert_recipient;
+    if (!env.MAILGUN_API_KEY || !mailgunDomain || !mailgunFrom || !recipient || !origin) {
         console.error('Mailgun not configured for traffic alerts');
         return;
     }
@@ -241,7 +247,7 @@ async function sendTrafficAlert(env: Env, data: TrafficAlertData): Promise<void>
                                 ${campaignsHtml}
                             </ul>
 
-                            <a href="https://drinkcrabigator.com/staff" style="display: inline-block; padding: 12px 24px; background: #58a6ff; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600;">
+                            <a href="${origin}/staff" style="display: inline-block; padding: 12px 24px; background: #58a6ff; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600;">
                                 View Staff Dashboard
                             </a>
 
@@ -256,14 +262,14 @@ async function sendTrafficAlert(env: Env, data: TrafficAlertData): Promise<void>
     `.trim();
 
     const formData = new FormData();
-    formData.append('from', env.MAILGUN_FROM || `Crabigator <noreply@${env.MAILGUN_DOMAIN}>`);
-    formData.append('to', env.MAILGUN_FROM || `alerts@${env.MAILGUN_DOMAIN}`); // Send to same address
+    formData.append('from', mailgunFrom);
+    formData.append('to', recipient);
     formData.append('subject', `${emoji} Crabigator Traffic ${trend}: ${data.percentChange > 0 ? '+' : ''}${data.percentChange}%`);
     formData.append('html', emailHtml);
 
     try {
         const response = await fetch(
-            `https://api.mailgun.net/v3/${env.MAILGUN_DOMAIN}/messages`,
+            `https://api.mailgun.net/v3/${mailgunDomain}/messages`,
             {
                 method: 'POST',
                 headers: {

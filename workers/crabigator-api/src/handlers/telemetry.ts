@@ -2,6 +2,7 @@ import type { Env } from '../types/env';
 import { jsonResponse } from '../router';
 import { staffDashboardHtml } from '../staff-dashboard';
 import { categorizeReferrer } from './analytics';
+import { getAppConfig } from '../config';
 
 /**
  * Telemetry data sent with update checks
@@ -54,22 +55,24 @@ export async function handleUpdateCheck(
     }
 
     // Store telemetry (best-effort, don't block on failure)
-    try {
-        await env.DB.prepare(`
-            INSERT INTO telemetry (device_id, machine_name, os, os_version, timezone_offset, app_version, cli_version, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(
-            device_id,
-            machine_name || null,
-            os || null,
-            os_version || null,
-            timezone_offset ?? null,
-            app_version,
-            cli_version || null,
-            Math.floor(Date.now() / 1000)
-        ).run();
-    } catch {
-        // Silently ignore telemetry failures
+    if (getAppConfig(env).features?.marketing_analytics) {
+        try {
+            await env.DB.prepare(`
+                INSERT INTO telemetry (device_id, machine_name, os, os_version, timezone_offset, app_version, cli_version, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).bind(
+                device_id,
+                machine_name || null,
+                os || null,
+                os_version || null,
+                timezone_offset ?? null,
+                app_version,
+                cli_version || null,
+                Math.floor(Date.now() / 1000)
+            ).run();
+        } catch {
+            // Telemetry must never prevent update checks.
+        }
     }
 
     // Fetch latest release from GitHub

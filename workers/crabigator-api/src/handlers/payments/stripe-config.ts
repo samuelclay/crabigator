@@ -1,4 +1,5 @@
 import type { Env } from '../../types/env';
+import { getAppConfig } from '../../config';
 
 export interface StripeConfig {
     secretKey: string;
@@ -8,11 +9,10 @@ export interface StripeConfig {
 }
 
 /**
- * Get Stripe configuration based on STRIPE_MODE
- * Defaults to live mode if not specified
+ * Get Stripe configuration based on APP_CONFIG.
  */
 export function getStripeConfig(env: Env): StripeConfig | null {
-    const isTestMode = env.STRIPE_MODE === 'test';
+    const isTestMode = getAppConfig(env).billing?.stripe_mode === 'test';
 
     const secretKey = isTestMode ? env.STRIPE_SECRET_KEY_TEST : env.STRIPE_SECRET_KEY;
     const webhookSecret = isTestMode ? env.STRIPE_WEBHOOK_SECRET_TEST : env.STRIPE_WEBHOOK_SECRET;

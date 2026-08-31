@@ -1,11 +1,12 @@
 import type { Env } from '../../types/env';
 import { jsonResponse } from '../../router';
+import { getAppConfig, getPublicOrigin } from '../../config';
 
 /**
  * Get PayPal API base URL based on mode
  */
 function getPayPalApiBase(env: Env): string {
-    return env.PAYPAL_MODE === 'live'
+    return getAppConfig(env).billing?.paypal_mode === 'live'
         ? 'https://api-m.paypal.com'
         : 'https://api-m.sandbox.paypal.com';
 }
@@ -61,7 +62,7 @@ export async function createPayPalSubscription(
         body = {};
     }
 
-    const returnUrl = body.return_url || 'https://drinkcrabigator.com/dashboard';
+    const returnUrl = body.return_url || `${getPublicOrigin(request, getAppConfig(env))}/dashboard`;
     const successUrl = `${returnUrl}?payment=success&provider=paypal`;
     const cancelUrl = `${returnUrl}?payment=canceled`;
 

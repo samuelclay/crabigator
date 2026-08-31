@@ -8,8 +8,10 @@ import { getWatchedPrs, setWatchedPr, relayWatchedPrStats } from './handlers/wat
 import { createSession, getSession, updateSession, deleteSession } from './handlers/sessions';
 import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCodePage, generateInviteCode } from './handlers/pairing';
 import { requireAuth, requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
-import { dashboardHtml } from './dashboard';
-import { landingHtml } from './landing';
+import { dashboardHtml, renderDashboardHtml } from './dashboard';
+import { renderLandingHtml } from './landing';
+import { featureUnavailable, getAppConfig, getRuntimeConfig, type Capabilities } from './config';
+import { clearStaffSession, createStaffSession, requireStaffSession, staffLoginPage } from './auth/staff';
 import { createStripeCheckout } from './handlers/payments/stripe';
 import { handleStripeWebhook } from './handlers/payments/stripe-webhook';
 import { createPayPalSubscription } from './handlers/payments/paypal';
@@ -46,13 +48,33 @@ export { SessionListDO } from './durable-objects/SessionListDO';
 export { UsageDO } from './durable-objects/UsageDO';
 
 const router = new Router();
+type RouteHandler = (request: Request, env: Env, params: Record<string, string>) => Promise<Response>;
+
+function withFeature(
+    feature: keyof Omit<Capabilities, 'core'>,
+    handler: RouteHandler,
+): RouteHandler {
+    return async (request, env, params) => {
+        if (!getRuntimeConfig(request, env).capabilities[feature]) return featureUnavailable(feature);
+        return handler(request, env, params);
+    };
+}
+
+function withStaffSession(handler: RouteHandler): RouteHandler {
+    return withFeature('staff', async (request, env, params) => {
+        const error = await requireStaffSession(request, env);
+        return error || handler(request, env, params);
+    });
+}
 
 // ============================================
 // Dashboard (no auth for now)
 // ============================================
 
-router.get('/dashboard', async () => {
-    return new Response(dashboardHtml, {
+router.get('/dashboard', async (request, env) => {
+    const runtime = getRuntimeConfig(request, env);
+    const appConfig = getAppConfig(env);
+    return new Response(renderDashboardHtml(runtime, appConfig.marketing?.meta_pixel_id), {
         headers: {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'no-cache, must-revalidate',
@@ -62,8 +84,10 @@ router.get('/dashboard', async () => {
 });
 
 // Landing page
-router.get('/', async () => {
-    return new Response(landingHtml, {
+router.get('/', async (request, env) => {
+    const runtime = getRuntimeConfig(request, env);
+    const appConfig = getAppConfig(env);
+    return new Response(renderLandingHtml(runtime, appConfig.marketing?.meta_pixel_id), {
         headers: {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'public, max-age=3600',
@@ -729,60 +753,60 @@ router.post('/api/usage/heartbeat', async (request, env) => {
 // Subscription management
 // ============================================
 
-router.get('/api/subscription', async (request, env) => {
+router.get('/api/subscription', withFeature('billing', async (request, env) => {
     const authResult = await requireMobileAuth(request, env);
     if ('error' in authResult) {
         return authResult.error;
     }
     const { group_id } = authResult.auth;
     return getSubscription(env, group_id);
-});
+}));
 
-router.post('/api/subscription/cancel', async (request, env) => {
+router.post('/api/subscription/cancel', withFeature('billing', async (request, env) => {
     const authResult = await requireMobileAuth(request, env);
     if ('error' in authResult) {
         return authResult.error;
     }
     const { group_id } = authResult.auth;
     return cancelSubscription(env, group_id);
-});
+}));
 
-router.post('/api/subscription/portal', async (request, env) => {
+router.post('/api/subscription/portal', withFeature('billing', async (request, env) => {
     const authResult = await requireMobileAuth(request, env);
     if ('error' in authResult) {
         return authResult.error;
     }
     const { group_id } = authResult.auth;
     const body = await request.json() as { return_url?: string };
-    const returnUrl = body.return_url || 'https://drinkcrabigator.com/dashboard';
+    const returnUrl = body.return_url || `${getRuntimeConfig(request, env).origin}/dashboard`;
     return getSubscriptionPortal(env, group_id, returnUrl);
-});
+}));
 
 // ============================================
 // Payment endpoints
 // ============================================
 
-router.post('/api/payments/stripe/checkout', async (request, env) => {
+router.post('/api/payments/stripe/checkout', withFeature('billing', async (request, env) => {
     const authResult = await requireMobileAuth(request, env);
     if ('error' in authResult) {
         return authResult.error;
     }
     const { group_id } = authResult.auth;
     return createStripeCheckout(request, env, group_id);
-});
+}));
 
-router.post('/api/payments/paypal/subscribe', async (request, env) => {
+router.post('/api/payments/paypal/subscribe', withFeature('billing', async (request, env) => {
     const authResult = await requireMobileAuth(request, env);
     if ('error' in authResult) {
         return authResult.error;
     }
     const { group_id } = authResult.auth;
     return createPayPalSubscription(request, env, group_id);
-});
+}));
 
 // Webhook endpoints (no auth - signature verified internally)
-router.post('/api/webhooks/stripe', handleStripeWebhook);
-router.post('/api/webhooks/paypal', handlePayPalWebhook);
+router.post('/api/webhooks/stripe', withFeature('billing', handleStripeWebhook));
+router.post('/api/webhooks/paypal', withFeature('billing', handlePayPalWebhook));
 
 // ============================================
 // Update check with telemetry (no auth)
@@ -794,32 +818,39 @@ router.post('/api/update-check', handleUpdateCheck);
 // Analytics (no auth - fire-and-forget tracking)
 // ============================================
 
-router.post('/api/analytics/beacon', handleAnalyticsBeacon);
-router.post('/api/analytics/event', handleAnalyticsEvent);
+router.post('/api/analytics/beacon', withFeature('marketing_analytics', handleAnalyticsBeacon));
+router.post('/api/analytics/event', withFeature('marketing_analytics', handleAnalyticsEvent));
 
 // ============================================
-// Staff dashboard (no auth - obscurity is security for now)
+// Staff dashboard and APIs. A shared access key creates a 12-hour KV session.
 // ============================================
 
-router.get('/staff', handleStaffDashboard);
-router.get('/api/staff/telemetry', handleStaffTelemetry);
-router.get('/api/staff/analytics', handleStaffAnalytics);
-router.get('/api/staff/session-analytics', handleStaffSessionAnalytics);
-router.post('/api/staff/sync-usage', handleStaffSyncUsage);
+router.get('/staff/login', withFeature('staff', async () => staffLoginPage()));
+router.post('/api/staff/login', withFeature('staff', createStaffSession));
+router.post('/api/staff/logout', withStaffSession(clearStaffSession));
+router.get('/staff', withFeature('staff', async (request, env) => {
+    const error = await requireStaffSession(request, env);
+    if (error) return Response.redirect(new URL('/staff/login', request.url).toString(), 302);
+    return handleStaffDashboard();
+}));
+router.get('/api/staff/telemetry', withStaffSession(handleStaffTelemetry));
+router.get('/api/staff/analytics', withStaffSession(handleStaffAnalytics));
+router.get('/api/staff/session-analytics', withStaffSession(handleStaffSessionAnalytics));
+router.post('/api/staff/sync-usage', withStaffSession(handleStaffSyncUsage));
 
 // Staff gift management
-router.post('/api/staff/gifts', handleCreateGift);
-router.get('/api/staff/gifts', handleListGifts);
-router.post('/api/staff/gifts/:id/send-email', handleSendGiftEmail);
+router.post('/api/staff/gifts', withFeature('gifts', withStaffSession(handleCreateGift)));
+router.get('/api/staff/gifts', withFeature('gifts', withStaffSession(handleListGifts)));
+router.post('/api/staff/gifts/:id/send-email', withFeature('outbound_email', withFeature('gifts', withStaffSession(handleSendGiftEmail))));
 
 // ============================================
 // Gift claiming (public endpoints)
 // ============================================
 
-router.get('/api/gifts/:code', handleGetGift);
+router.get('/api/gifts/:code', withFeature('gifts', handleGetGift));
 
 // Claim gift - tries mobile auth but accepts unauthenticated
-router.post('/api/gifts/:code/claim', async (request, env, params) => {
+router.post('/api/gifts/:code/claim', withFeature('gifts', async (request, env, params) => {
     // Try to get mobile auth for group_id (optional)
     let auth: { group_id?: string } | undefined;
     try {
@@ -831,29 +862,38 @@ router.post('/api/gifts/:code/claim', async (request, env, params) => {
         // No auth is OK
     }
     return handleClaimGift(request, env, params, auth);
-});
+}));
 
 // Resolve pending gift after pairing (requires mobile auth)
-router.post('/api/gifts/resolve-pending', async (request, env) => {
+router.post('/api/gifts/resolve-pending', withFeature('gifts', async (request, env) => {
     const authResult = await requireMobileAuth(request, env);
     if ('error' in authResult) {
         return authResult.error;
     }
     return handleResolvePendingGift(request, env, { group_id: authResult.auth.group_id });
-});
+}));
 
 // ============================================
 // Transcription (voice input)
 // ============================================
 
-router.post('/api/transcribe', handleTranscribe);
+router.post('/api/transcribe', withFeature('transcription', handleTranscribe));
 
 // ============================================
 // Health check
 // ============================================
 
-router.get('/api/health', async () => {
-    return jsonResponse({ status: 'ok', version: '0.1.0', build: await getBuildVersion() });
+router.get('/api/health', async (request, env) => {
+    const runtime = getRuntimeConfig(request, env);
+    return jsonResponse({
+        service: 'crabigator-api',
+        api_version: env.API_VERSION,
+        status: runtime.missing_config.length > 0 ? 'degraded' : 'ok',
+        capabilities: runtime.capabilities,
+        missing_config: runtime.missing_config,
+        version: '0.1.0',
+        build: await getBuildVersion(),
+    });
 });
 
 // ============================================
@@ -873,8 +913,9 @@ export default {
         // Check if this is the 6 AM cron (cron expression: "0 6 * * *")
         const date = new Date(controller.scheduledTime);
         if (date.getUTCHours() === 6 && date.getUTCMinutes() === 0) {
-            ctx.waitUntil(fetchNpmStats(env));
-            ctx.waitUntil(checkTrafficAnomalies(env));
+            const runtime = getRuntimeConfig(new Request('http://localhost'), env);
+            if (runtime.capabilities.marketing_analytics) ctx.waitUntil(fetchNpmStats(env));
+            if (runtime.capabilities.traffic_alerts) ctx.waitUntil(checkTrafficAnomalies(env));
         }
     },
 } satisfies ExportedHandler<Env>;

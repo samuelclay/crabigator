@@ -1,5 +1,6 @@
 import type { Env } from '../../types/env';
 import { jsonResponse } from '../../router';
+import { getAppConfig } from '../../config';
 
 interface PayPalSubscription {
     id: string;
@@ -33,7 +34,7 @@ interface PayPalWebhookEvent {
  * Get PayPal API base URL based on mode
  */
 function getPayPalApiBase(env: Env): string {
-    return env.PAYPAL_MODE === 'live'
+    return getAppConfig(env).billing?.paypal_mode === 'live'
         ? 'https://api-m.paypal.com'
         : 'https://api-m.sandbox.paypal.com';
 }

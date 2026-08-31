@@ -1,6 +1,7 @@
 import type { Env } from '../../types/env';
 import { jsonResponse } from '../../router';
 import { getStripeConfig } from './stripe-config';
+import { getAppConfig } from '../../config';
 
 interface SubscriptionRow {
     id: string;
@@ -96,7 +97,7 @@ export async function getSubscriptionPortal(
         return jsonResponse({ portal_url: portalUrl, provider: 'stripe' });
     } else if (row.provider === 'paypal') {
         // PayPal users manage subscriptions directly on PayPal
-        const paypalBase = env.PAYPAL_MODE === 'live'
+        const paypalBase = getAppConfig(env).billing?.paypal_mode === 'live'
             ? 'https://www.paypal.com'
             : 'https://www.sandbox.paypal.com';
         const portalUrl = `${paypalBase}/myaccount/autopay/`;
@@ -228,7 +229,7 @@ async function cancelPayPalSubscription(env: Env, subscriptionId: string): Promi
         return false;
     }
 
-    const apiBase = env.PAYPAL_MODE === 'live'
+    const apiBase = getAppConfig(env).billing?.paypal_mode === 'live'
         ? 'https://api-m.paypal.com'
         : 'https://api-m.sandbox.paypal.com';
 

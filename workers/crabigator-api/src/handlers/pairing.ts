@@ -255,7 +255,7 @@ export async function getPairingStatus(
  * No auth required - shows the human-readable code for the token
  */
 export async function getPairingCodePage(
-    _request: Request,
+    request: Request,
     env: Env,
     params: Record<string, string>
 ): Promise<Response> {
@@ -267,7 +267,7 @@ export async function getPairingCodePage(
     // Look up token data
     const tokenDataStr = await env.TOKENS.get(`pairing:${token}`);
     if (!tokenDataStr) {
-        return new Response(pairingPageHtml('EXPIRED', true), {
+        return new Response(pairingPageHtml('EXPIRED', new URL(request.url).host, true), {
             status: 200,
             headers: { 'Content-Type': 'text/html; charset=utf-8' }
         });
@@ -275,7 +275,7 @@ export async function getPairingCodePage(
 
     const tokenData: PairingTokenData = JSON.parse(tokenDataStr);
 
-    return new Response(pairingPageHtml(tokenData.code, false, tokenData.claimed), {
+    return new Response(pairingPageHtml(tokenData.code, new URL(request.url).host, false, tokenData.claimed), {
         status: 200,
         headers: { 'Content-Type': 'text/html; charset=utf-8' }
     });
@@ -284,7 +284,7 @@ export async function getPairingCodePage(
 /**
  * Generate HTML for the pairing code page
  */
-function pairingPageHtml(code: string, expired: boolean, claimed: boolean = false): string {
+function pairingPageHtml(code: string, publicHost: string, expired: boolean, claimed: boolean = false): string {
     // Format code into segments for display
     const codeSegments = code.split('-');
     const formattedCode = codeSegments.map(seg =>
@@ -461,7 +461,7 @@ function pairingPageHtml(code: string, expired: boolean, claimed: boolean = fals
                     <p>This code can still be reused</p>
                 </div>
             ` : `
-                <p class="hint">Open drinkcrabigator.com/dashboard and enter this code</p>
+                <p class="hint">Open ${publicHost}/dashboard and enter this code</p>
             `}
         `}
         <a href="/dashboard" class="dashboard-link">Go to Dashboard</a>
