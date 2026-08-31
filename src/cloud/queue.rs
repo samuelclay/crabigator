@@ -6,13 +6,14 @@
 //! IMPORTANT: We don't queue screen events because they're large (~200KB each)
 //! and ephemeral. Queuing them causes O(n) serialization on every enqueue.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use super::endpoints::CloudEndpoints;
 use super::events::CloudEvent;
 
 /// Maximum number of events to keep in the queue
@@ -62,8 +63,9 @@ impl OfflineQueue {
 
     /// Get the queue file path
     fn queue_path() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        Ok(home.join(".crabigator").join("offline_queue.json"))
+        Ok(CloudEndpoints::load()?
+            .state_dir()
+            .join("offline_queue.json"))
     }
 
     /// Add an event to the queue

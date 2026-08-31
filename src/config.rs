@@ -40,6 +40,18 @@ pub struct Config {
     /// Persistent view preferences for `crabigator prs`.
     #[serde(default)]
     pub pr_board: PrBoardPreferences,
+
+    /// Cloud service used for streaming, pairing, and dashboard links.
+    #[serde(default)]
+    pub cloud: CloudPreferences,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CloudPreferences {
+    /// Base origin for a compatible Crabigator Worker.
+    /// The official service is used when this is not set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -100,6 +112,7 @@ impl Default for Config {
             recap_enabled: true,
             recap_model: None,
             pr_board: PrBoardPreferences::default(),
+            cloud: CloudPreferences::default(),
         }
     }
 }
@@ -225,6 +238,23 @@ mod tests {
         assert_eq!(config.pr_board.linger_days, 1);
         assert_eq!(config.pr_board.oldest_visible_hours, None);
         assert_eq!(config.pr_board.view, "prs");
+        assert!(config.cloud.url.is_none());
+    }
+
+    #[test]
+    fn cloud_preferences_round_trip() {
+        let config: Config = toml::from_str(
+            "default_platform = \"codex\"\n[cloud]\nurl = \"https://crabigator.example.com\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.cloud.url.as_deref(),
+            Some("https://crabigator.example.com")
+        );
+
+        let encoded = toml::to_string(&config).unwrap();
+        assert!(encoded.contains("[cloud]"));
+        assert!(encoded.contains("url = \"https://crabigator.example.com\""));
     }
 
     #[test]

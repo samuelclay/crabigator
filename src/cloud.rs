@@ -1,4 +1,4 @@
-//! Cloud integration for streaming sessions to drinkcrabigator.com
+//! Cloud integration for streaming sessions to the configured service
 //!
 //! This module provides:
 //! - Device identity management (device_id, device_secret)
@@ -8,6 +8,7 @@
 
 mod client;
 mod device;
+mod endpoints;
 mod events;
 mod queue;
 mod websocket;
@@ -18,4 +19,5 @@ pub use client::{
     CloudStatus, CloudWatchedPr, PairingStatusResponse,
 };
 pub use device::DeviceIdentity;
+pub use endpoints::{print_cloud_status, reset_cloud, set_cloud, CloudEndpoints};
 pub use events::{KeyStep, SessionEventBuilder};

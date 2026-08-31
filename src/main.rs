@@ -43,7 +43,7 @@ use std::time::{Duration, Instant};
 
 use crate::app::App;
 use crate::banner::{print_session_banner, print_session_end_line};
-use crate::cli::{parse_args, resolve_platform, Command, DebugTimer};
+use crate::cli::{parse_args, resolve_platform, CloudCommand, Command, DebugTimer};
 use crate::config::Config;
 use crate::update::{
     check_for_update, detect_install_method, dismiss_version, get_cli_version, UpdateState,
@@ -195,6 +195,13 @@ async fn main() -> Result<()> {
         }
         Command::Key { api_key } => {
             return recap::run_key_command(api_key);
+        }
+        Command::Cloud(command) => {
+            return match command {
+                CloudCommand::Set { url, force } => cloud::set_cloud(&url, force).await,
+                CloudCommand::Status => cloud::print_cloud_status(),
+                CloudCommand::Reset => cloud::reset_cloud(),
+            };
         }
         Command::Run => {}
     }

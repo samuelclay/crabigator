@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::cloud::DeviceIdentity;
+use crate::cloud::{CloudEndpoints, DeviceIdentity};
 use crate::config::Config;
 
 /// Current version from Cargo.toml
@@ -177,9 +177,6 @@ struct GitHubRelease {
     html_url: String,
 }
 
-/// Cloud API URL for update checks
-const CLOUD_API_URL: &str = "https://drinkcrabigator.com/api/update-check";
-
 /// Telemetry data sent with update checks
 #[derive(Debug, Serialize)]
 struct TelemetryRequest {
@@ -321,6 +318,7 @@ async fn check_via_cloud(
     client: &reqwest::Client,
     cli_version: Option<String>,
 ) -> Result<(String, String)> {
+    let endpoints = CloudEndpoints::load()?;
     // Load device identity (creates one if doesn't exist)
     let identity = DeviceIdentity::load_or_create()?;
 
@@ -338,7 +336,7 @@ async fn check_via_cloud(
     };
 
     let response = client
-        .post(CLOUD_API_URL)
+        .post(endpoints.endpoint("/api/update-check"))
         .json(&telemetry)
         .send()
         .await

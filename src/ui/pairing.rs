@@ -128,7 +128,13 @@ fn draw_pairing_toast_row(
 }
 
 fn draw_pairing_content_row(stdout: &mut Stdout, row: u16, width: u16, code: &str) -> Result<()> {
-    let url = format!("https://drinkcrabigator.com/dashboard?setup={}", code);
+    let endpoints = crate::cloud::CloudEndpoints::load().unwrap_or_default();
+    let url = endpoints.dashboard_setup_url(code);
+    let dashboard_url = endpoints.dashboard_url();
+    let dashboard_label = dashboard_url
+        .strip_prefix("https://")
+        .or_else(|| dashboard_url.strip_prefix("http://"))
+        .unwrap_or(&dashboard_url);
 
     // Fill entire row with dark background first
     write!(stdout, "{}", escape::cursor_to(row, 1))?;
@@ -154,9 +160,10 @@ fn draw_pairing_content_row(stdout: &mut Stdout, row: u16, width: u16, code: &st
     // Clickable link pill with dark teal background
     // URL in white, code highlighted in bright yellow
     let link_text = format!(
-        "{}{} drinkcrabigator.com/dashboard?setup={}{}{} {}",
-        bg(30),            // Dark teal background (color 30)
-        fg(color::WHITE),  // White text for URL
+        "{}{} {}?setup={}{}{} {}",
+        bg(30),           // Dark teal background (color 30)
+        fg(color::WHITE), // White text for URL
+        dashboard_label,
         fg(color::YELLOW), // Bright yellow for the code
         code,
         fg(color::WHITE), // Back to white after code

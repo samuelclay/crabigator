@@ -13,13 +13,11 @@ use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 
 use super::device::DeviceIdentity;
+use super::endpoints::CloudEndpoints;
 use super::events::CloudEvent;
 use super::queue::OfflineQueue;
 use super::websocket::{CloudWebSocket, WebSocketHandle};
 use crate::pr_rank::{PrDisposition, ScopedOverrides};
-
-/// Default API URL
-const DEFAULT_API_URL: &str = "https://drinkcrabigator.com/api";
 
 /// How often to refresh the group's PR dispositions from the cloud.
 const PR_OVERRIDES_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
@@ -46,9 +44,9 @@ struct PrOverridesResponse {
 /// (the `crabigator prs` board). Uses the same device identity and HMAC
 /// auth as a live session.
 pub async fn fetch_pr_overrides_standalone() -> Result<ScopedOverrides> {
+    let endpoints = CloudEndpoints::load()?;
     let device = DeviceIdentity::load_or_create()?;
-    CloudClient::fetch_pr_overrides_with(device, HttpClient::new(), DEFAULT_API_URL.to_string())
-        .await
+    CloudClient::fetch_pr_overrides_with(device, HttpClient::new(), endpoints.api_url()).await
 }
 
 /// One aggregated PR from GET /api/prs/board — the durable cross-session
@@ -139,8 +137,9 @@ pub struct CloudBoard {
 /// tracked, with overrides already applied and finished PRs bounded by
 /// `linger_days` (0 = open only).
 pub async fn fetch_pr_board_standalone(linger_days: u64) -> Result<CloudBoard> {
+    let endpoints = CloudEndpoints::load()?;
     let device = DeviceIdentity::load_or_create()?;
-    let url = format!("{}/prs/board?days={}", DEFAULT_API_URL, linger_days);
+    let url = format!("{}/prs/board?days={}", endpoints.api_url(), linger_days);
     let headers = device.auth_headers("GET", "/api/prs/board")?;
     let mut req = HttpClient::new().get(&url);
     for (key, value) in headers {
@@ -173,8 +172,9 @@ struct WatchedPrsResponse {
 
 /// One-shot fetch of the group's explicitly watched PRs, for the prs board.
 pub async fn fetch_watched_prs_standalone() -> Result<Vec<CloudWatchedPr>> {
+    let endpoints = CloudEndpoints::load()?;
     let device = DeviceIdentity::load_or_create()?;
-    let url = format!("{}/prs/watched", DEFAULT_API_URL);
+    let url = format!("{}/prs/watched", endpoints.api_url());
     let headers = device.auth_headers("GET", "/api/prs/watched")?;
     let mut req = HttpClient::new().get(&url);
     for (key, value) in headers {
@@ -190,15 +190,17 @@ pub async fn fetch_watched_prs_standalone() -> Result<Vec<CloudWatchedPr>> {
 
 /// Add one PR to the group's cloud watch list (idempotent).
 pub async fn add_watched_pr_standalone(add: &crate::pr::WatchAdd) -> Result<()> {
+    let endpoints = CloudEndpoints::load()?;
     let device = DeviceIdentity::load_or_create()?;
-    post_watched_pr(device, HttpClient::new(), DEFAULT_API_URL.to_string(), add).await
+    post_watched_pr(device, HttpClient::new(), endpoints.api_url(), add).await
 }
 
 /// Relay locally fetched GitHub stats for watched PRs, so the web board and
 /// other machines see them without running `gh` themselves.
 pub async fn relay_watched_pr_stats_standalone(prs: &[crate::pr::SessionPr]) -> Result<()> {
+    let endpoints = CloudEndpoints::load()?;
     let device = DeviceIdentity::load_or_create()?;
-    let url = format!("{}/prs/watched/stats", DEFAULT_API_URL);
+    let url = format!("{}/prs/watched/stats", endpoints.api_url());
     let headers = device.auth_headers("POST", "/api/prs/watched/stats")?;
     let mut req = HttpClient::new()
         .post(&url)
@@ -362,6 +364,7 @@ impl CloudClient {
     /// This loads or creates the device identity and initializes the offline queue.
     /// Call `register_device()` and `register_session()` to connect to the cloud.
     pub fn new() -> Result<Self> {
+        let endpoints = CloudEndpoints::load()?;
         let device = DeviceIdentity::load_or_create()?;
         let queue = OfflineQueue::new()?;
         let http = HttpClient::builder()
@@ -375,7 +378,7 @@ impl CloudClient {
             ws_handle: None,
             queue,
             http,
-            api_url: DEFAULT_API_URL.to_string(),
+            api_url: endpoints.api_url(),
             device_registered: false,
             last_reconnect_attempt: None,
             reconnect_backoff_secs: 1,

@@ -38,6 +38,18 @@ pub enum Command {
     Recap(RecapCommand),
     /// Save an Anthropic API key for recap generation
     Key { api_key: Option<String> },
+    /// Configure the Crabigator cloud service
+    Cloud(CloudCommand),
+}
+
+#[derive(Clone)]
+pub enum CloudCommand {
+    /// Save and verify a compatible cloud origin
+    Set { url: String, force: bool },
+    /// Print the configured cloud origin and local state directory
+    Status,
+    /// Return to the official Crabigator service
+    Reset,
 }
 
 /// Recap configuration subcommands
@@ -148,6 +160,11 @@ pub fn parse_args() -> Args {
                 args.command = Command::Key { api_key };
                 return args;
             }
+            "cloud" => {
+                iter.next(); // consume "cloud"
+                args.command = Command::Cloud(parse_cloud_command(iter.collect()));
+                return args;
+            }
             _ => {}
         }
     }
@@ -198,6 +215,26 @@ pub fn parse_args() -> Args {
     }
 
     args
+}
+
+fn parse_cloud_command(args: Vec<String>) -> CloudCommand {
+    let mut iter = args.into_iter();
+    match iter.next().as_deref() {
+        Some("set") => {
+            let Some(url) = iter.next().filter(|value| !value.starts_with('-')) else {
+                eprintln!("Usage: crabigator cloud set <origin> [--force]");
+                std::process::exit(1);
+            };
+            let force = iter.any(|arg| arg == "--force");
+            CloudCommand::Set { url, force }
+        }
+        Some("reset") => CloudCommand::Reset,
+        Some("status") | None => CloudCommand::Status,
+        Some(other) => {
+            eprintln!("Unknown cloud command: {other}. Use set, status, or reset.");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn parse_recap_command(args: Vec<String>) -> RecapCommand {

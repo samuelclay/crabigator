@@ -280,7 +280,9 @@ fn build_pair_suffix(code: &str, available: usize) -> Option<(usize, String)> {
     if code.is_empty() {
         return None;
     }
-    let url = format!("https://drinkcrabigator.com/dashboard?setup={}", code);
+    let url = crate::cloud::CloudEndpoints::load()
+        .unwrap_or_default()
+        .dashboard_setup_url(code);
     let dim = fg(color::DARK_GRAY);
     // " · " is 3 visible columns and is rendered *outside* the hyperlink so
     // clicking only triggers on the pair text itself.

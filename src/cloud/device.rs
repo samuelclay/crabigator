@@ -12,6 +12,8 @@ use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use super::endpoints::CloudEndpoints;
+
 type HmacSha256 = Hmac<Sha256>;
 
 /// Device identity stored locally
@@ -83,8 +85,7 @@ impl DeviceIdentity {
 
     /// Get the config file path
     fn config_path() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        Ok(home.join(".crabigator").join("device.json"))
+        Ok(CloudEndpoints::load()?.state_dir().join("device.json"))
     }
 
     /// Compute SHA-256 hash of the device secret (for registration)

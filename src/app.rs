@@ -178,7 +178,7 @@ pub struct App {
     initial_git_time_ms: Option<u64>,
     /// Time taken for initial diff parsing (set once on first load)
     initial_diff_time_ms: Option<u64>,
-    /// Cloud client for streaming to drinkcrabigator.com (optional)
+    /// Cloud client for streaming to the configured service (optional)
     cloud_client: Option<CloudClient>,
     /// Last state sent to cloud (to avoid duplicate events)
     last_cloud_state: Option<SessionState>,

@@ -13,7 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::cloud::CloudClient;
+use crate::cloud::{CloudClient, CloudEndpoints};
 
 /// Cached pairing code
 #[derive(Serialize, Deserialize)]
@@ -24,7 +24,9 @@ struct PairingCache {
 
 /// Get the cache file path (~/.crabigator/.pairing-cache)
 fn cache_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".crabigator").join(".pairing-cache"))
+    CloudEndpoints::load()
+        .ok()
+        .map(|endpoints| endpoints.state_dir().join(".pairing-cache"))
 }
 
 /// Get current unix timestamp
@@ -74,7 +76,7 @@ fn save_cached_code(code: &str, expires_at: u64) {
 ///
 /// This is designed for Chrome MCP auto-login:
 /// 1. Run `crabigator pair` to get a code
-/// 2. Navigate to `https://drinkcrabigator.com/dashboard?setup=<code>`
+/// 2. Open the configured cloud dashboard with `?setup=<code>`
 /// 3. Dashboard authenticates automatically
 ///
 /// Codes are cached and reused until expiry or claimed by a browser.
