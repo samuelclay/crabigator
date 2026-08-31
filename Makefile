@@ -1,7 +1,11 @@
-.PHONY: run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo opencode pr prs reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux
+.PHONY: run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo opencode pr prs reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux portability-check
 
 PROVIDER_FILE := .crabigator-provider
 DEFAULT_PROVIDER := claude
+WRANGLER_CONFIG ?= wrangler.jsonc
+WRANGLER_PROFILE ?=
+D1_DATABASE ?= DB
+WRANGLER_FLAGS := --config $(WRANGLER_CONFIG) $(if $(WRANGLER_PROFILE),--profile $(WRANGLER_PROFILE))
 
 run:
 	@provider=$$(cat $(PROVIDER_FILE) 2>/dev/null | head -n 1 | tr -d ' \t\r\n'); \
@@ -102,6 +106,9 @@ dev:
 typecheck:
 	cd workers/crabigator-api && npm run typecheck
 
+portability-check:
+	@./scripts/check-portability.sh
+
 cf-usage:
 	@./scripts/cf-usage.sh
 
@@ -112,7 +119,7 @@ reset-usage:
 	@echo "Resetting all usage for today..."
 	@today=$$(date -u +%Y-%m-%d); \
 	cd workers/crabigator-api && \
-	wrangler d1 execute crabigator --remote --profile newsblur --command "DELETE FROM daily_usage WHERE date = '$$today'" && \
+	wrangler d1 execute $(D1_DATABASE) --remote $(WRANGLER_FLAGS) --command "DELETE FROM daily_usage WHERE date = '$$today'" && \
 	echo "Usage reset for $$today. Note: Durable Objects may still have cached state until they're accessed again."
 
 sync-usage:
@@ -120,9 +127,12 @@ sync-usage:
 		echo "Usage: make sync-usage GROUP=<group_id>"; \
 		echo ""; \
 		echo "Find group_id with:"; \
-		cd workers/crabigator-api && wrangler d1 execute crabigator --remote --profile newsblur --command "SELECT d.group_id, d.name FROM devices d WHERE d.group_id IS NOT NULL GROUP BY d.group_id ORDER BY MAX(d.last_seen_at) DESC LIMIT 10"; \
+		cd workers/crabigator-api && wrangler d1 execute $(D1_DATABASE) --remote $(WRANGLER_FLAGS) --command "SELECT d.group_id, d.name FROM devices d WHERE d.group_id IS NOT NULL GROUP BY d.group_id ORDER BY MAX(d.last_seen_at) DESC LIMIT 10"; \
 	else \
-		curl -s -X POST 'https://drinkcrabigator.com/api/staff/sync-usage' \
+		if [ -z "$(CLOUD_URL)" ] || [ -z "$(STAFF_COOKIE)" ]; then echo "Set CLOUD_URL and STAFF_COOKIE."; exit 1; fi; \
+		curl -s -X POST '$(CLOUD_URL)/api/staff/sync-usage' \
 			-H 'Content-Type: application/json' \
+			-H 'Origin: $(CLOUD_URL)' \
+			-H 'Cookie: crabigator_staff=$(STAFF_COOKIE)' \
 			-d "{\"group_id\":\"$(GROUP)\"}" && echo ""; \
 	fi

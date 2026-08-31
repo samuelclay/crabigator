@@ -5,11 +5,18 @@
 
 set -euo pipefail
 
-ACCOUNT_ID="20af5d7e521c82550b1ffe8705e981c5"
-SCRIPT_NAME="crabigator-api"
-D1_NAME="crabigator"
-WRANGLER_PROFILE="newsblur"
-BILLING_DAY=6
+WRANGLER_CONFIG="${WRANGLER_CONFIG:-workers/crabigator-api/wrangler.jsonc}"
+WRANGLER_PROFILE="${WRANGLER_PROFILE:-}"
+ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-$(sed -n 's/.*"account_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WRANGLER_CONFIG" | head -1)}"
+SCRIPT_NAME="${CLOUDFLARE_WORKER_NAME:-$(sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WRANGLER_CONFIG" | head -1)}"
+D1_NAME="${D1_DATABASE:-$(sed -n 's/.*"database_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WRANGLER_CONFIG" | head -1)}"
+CONFIG_BILLING_DAY=$(sed -n 's/.*"billing_cycle_day"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$WRANGLER_CONFIG" | head -1)
+BILLING_DAY="${CLOUDFLARE_BILLING_DAY:-${CONFIG_BILLING_DAY:-1}}"
+
+if [ -z "$ACCOUNT_ID" ]; then
+    echo "Error: Set CLOUDFLARE_ACCOUNT_ID or add account_id to $WRANGLER_CONFIG"
+    exit 1
+fi
 
 for command in curl jq awk wrangler; do
     if ! command -v "$command" >/dev/null 2>&1; then
@@ -20,10 +27,11 @@ done
 
 API_TOKEN="${CLOUDFLARE_API_TOKEN:-}"
 if [ -z "$API_TOKEN" ]; then
+    PROFILE_NAME="${WRANGLER_PROFILE:-default}"
     TOKEN_PATHS=(
-        "$HOME/.wrangler/config/$WRANGLER_PROFILE.toml"
-        "$HOME/Library/Preferences/.wrangler/config/$WRANGLER_PROFILE.toml"
-        "$HOME/.config/.wrangler/config/$WRANGLER_PROFILE.toml"
+        "$HOME/.wrangler/config/$PROFILE_NAME.toml"
+        "$HOME/Library/Preferences/.wrangler/config/$PROFILE_NAME.toml"
+        "$HOME/.config/.wrangler/config/$PROFILE_NAME.toml"
     )
     for path in "${TOKEN_PATHS[@]}"; do
         if [ -f "$path" ]; then
@@ -34,8 +42,7 @@ if [ -z "$API_TOKEN" ]; then
 fi
 
 if [ -z "$API_TOKEN" ]; then
-    echo "Error: Could not find the Wrangler OAuth token for profile $WRANGLER_PROFILE"
-    echo "Run 'wrangler login --profile $WRANGLER_PROFILE' to authenticate"
+    echo "Error: Set CLOUDFLARE_API_TOKEN or log in with Wrangler"
     exit 1
 fi
 
@@ -114,9 +121,9 @@ query CrabigatorUsage($accountTag: string!, $start: Date!, $end: Date!, $scriptN
   }
 }')
 
-D1_DATABASE_ID=$(sed -n 's/^database_id = "\([^"]*\)"/\1/p' workers/crabigator-api/wrangler.toml | head -1)
+D1_DATABASE_ID="${CLOUDFLARE_D1_DATABASE_ID:-$(sed -n 's/.*"database_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WRANGLER_CONFIG" | head -1)}"
 if [ -z "$D1_DATABASE_ID" ]; then
-    echo "Error: Could not find the D1 database ID in workers/crabigator-api/wrangler.toml"
+    echo "Error: Set CLOUDFLARE_D1_DATABASE_ID or add database_id to $WRANGLER_CONFIG"
     exit 1
 fi
 
@@ -207,7 +214,11 @@ DO_BY_CLASS=$(echo "$ACCOUNT_DATA" | jq --argjson namespaces "$NAMESPACES" '
 D1_ROWS_READ=$(echo "$ACCOUNT_DATA" | jq '[.d1AnalyticsAdaptiveGroups[].sum.rowsRead] | add // 0')
 D1_ROWS_WRITTEN=$(echo "$ACCOUNT_DATA" | jq '[.d1AnalyticsAdaptiveGroups[].sum.rowsWritten] | add // 0')
 
-D1_INFO=$(wrangler d1 info "$D1_NAME" --profile "$WRANGLER_PROFILE" 2>/dev/null || true)
+WRANGLER_ARGS=(--config "$WRANGLER_CONFIG")
+if [ -n "$WRANGLER_PROFILE" ]; then
+    WRANGLER_ARGS+=(--profile "$WRANGLER_PROFILE")
+fi
+D1_INFO=$(wrangler d1 info "$D1_NAME" "${WRANGLER_ARGS[@]}" 2>/dev/null || true)
 D1_SIZE=$(echo "$D1_INFO" | awk -F '│' '$2 ~ /database_size/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $3); print $3; exit}')
 D1_SIZE=${D1_SIZE:-unknown}
 

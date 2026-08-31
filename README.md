@@ -126,7 +126,7 @@ Supports [Claude Code](https://claude.ai/code) (Anthropic), [Codex CLI](https://
                 │
                 ▼
         ┌───────────────┐
-        │  Cloud Relay  │  ← Cloudflare Workers at drinkcrabigator.com
+        │  Cloud Relay  │  ← Official or self-hosted Cloudflare Worker
         └───────────────┘
                 │
                 ▼
@@ -161,6 +161,10 @@ crabigator recap disable      # Turn off recaps and remove the stored key
 crabigator recap status       # Show recap configuration
 crabigator key <api-key>      # Save an Anthropic API key for recaps
 
+crabigator cloud status       # Show the active cloud service and local state path
+crabigator cloud set <origin> # Verify and use a compatible self-hosted Worker
+crabigator cloud reset        # Return to the official Crabigator service
+
 crabigator pair               # Generate a dashboard pairing code
 crabigator install-launcher   # Install the macOS crabigator:// URL handler
 crabigator --no-capture       # Run without writing scrollback.log/screen.txt
@@ -180,6 +184,9 @@ check_for_updates = true      # check GitHub Releases on startup
 recap_enabled = true          # per-turn recaps (needs an API key: crabigator key)
 recap_model = "claude-haiku-4-5"  # optional model override for recaps
 
+[cloud]
+# url = "https://crabigator.example.com" # omit to use the official service
+
 [pr_board]                    # crabigator prs view preferences (saved automatically)
 include_ended = false         # open with durable ended sessions included
 detail = 1                    # 0 compact, 1 complete recaps
@@ -187,7 +194,123 @@ linger_days = 1               # how long finished PRs stay on the board
 oldest_visible_hours = 9      # activity age filter; omit to show every age
 ```
 
+`crabigator cloud set` accepts HTTPS origins. It also accepts HTTP for loopback
+development, such as `http://localhost:8787`. The command checks `/api/health`
+before it saves the URL. Use `--force` only when the service is temporarily
+unreachable but you know it is compatible.
+
+Crabigator keeps each custom host's device identity, pairing cache, and offline
+queue under `~/.crabigator/cloud/<origin-hash>/`. The official service keeps its
+existing files directly under `~/.crabigator/`. Switching hosts does not copy
+devices, sessions, or other data between services.
+
 Claude Code hooks are installed to `~/.claude/crabigator/` for tracking session state and statistics. They are versioned and reinstall themselves automatically when Crabigator updates.
+
+## Self-host the Cloudflare Worker
+
+The Worker in `workers/crabigator-api/` contains the relay, dashboard, pairing,
+Durable Objects, D1 database, and KV-backed tokens. A basic deployment needs
+only a Cloudflare account. Optional hosted-service features stay off unless you
+enable and configure them.
+
+### 1. Create your active configuration
+
+```bash
+cd workers/crabigator-api
+npm install
+cp wrangler.example.jsonc wrangler.jsonc
+```
+
+`wrangler.example.jsonc` is the annotated, tracked template. `wrangler.jsonc`
+is ignored by Git so it can hold your account's resource IDs, routes, and public
+settings. Do not put API keys in either file.
+
+The example deploys to `workers.dev`. For a custom domain, set `workers_dev` to
+`false` and add this top-level setting:
+
+```jsonc
+"routes": [
+  { "pattern": "crabigator.example.com", "custom_domain": true }
+]
+```
+
+Both forms run the same Worker. Set `APP_CONFIG.public_origin` to your final
+HTTPS origin when you enable email, payments, or traffic alerts. Otherwise,
+leave it blank and web pages use the incoming request origin.
+
+### 2. Develop and migrate locally
+
+```bash
+npm run db:migrate:local
+npm run dev
+curl http://localhost:8787/api/health
+```
+
+Wrangler uses local D1, KV, and Durable Object storage for this flow. All D1
+migrations in `migrations/` are applied in order.
+
+### 3. Deploy and migrate production
+
+```bash
+wrangler login
+npm run deploy
+npm run db:migrate:remote
+curl https://your-worker.example/api/health
+```
+
+The template omits D1 and KV IDs, so Wrangler can create and bind those
+resources during the first deploy. Keep every Durable Object migration entry
+in the template. Removing old entries can break an existing deployment.
+
+You can select another config or Wrangler profile without editing scripts:
+
+```bash
+WRANGLER_CONFIG=wrangler.production.jsonc WRANGLER_PROFILE=my-profile npm run deploy
+```
+
+### 4. Connect the desktop
+
+```bash
+crabigator cloud set https://your-worker.example
+crabigator cloud status
+crabigator pair
+```
+
+Open the dashboard URL shown by Crabigator and enter the pairing code. Use
+`crabigator cloud reset` to return to the official service.
+
+The Worker `test-state.sh`, `test-events.sh`, and `test-answer.sh` helpers also
+use the selected cloud URL and its host-specific device identity. Set
+`CLOUD_URL` and `CRABIGATOR_STATE_DIR` only when testing without an installed
+`crabigator` command.
+
+### Optional features
+
+Enable a feature in `APP_CONFIG.features`, then add its required secrets with
+`wrangler secret put NAME`. A requested feature stays unavailable until all of
+its required values exist. `/api/health` lists active capabilities and missing
+configuration.
+
+| Feature | Public configuration | Secrets |
+|---|---|---|
+| Core relay, dashboard, pairing, PR board | None | None |
+| Voice transcription | `features.transcription` | `OPENAI_API_KEY` |
+| Billing | `features.billing`, display price, provider mode, and visible-session limit | Stripe live or test keys, or PayPal client, secret, webhook ID, and plan ID |
+| Gifts | `features.gifts` and billing | Same payment provider values as billing |
+| Outbound gift email | `features.outbound_email`, Mailgun domain and sender | `MAILGUN_API_KEY` |
+| Marketing analytics | `features.marketing_analytics`; optional Meta Pixel ID | None |
+| Traffic alerts | `features.traffic_alerts`, public origin, Mailgun values, alert recipient | `MAILGUN_API_KEY` |
+| Staff tools | `features.staff` | `STAFF_ACCESS_KEY` |
+
+Use a long, randomly generated `STAFF_ACCESS_KEY`. The `/staff` login creates a
+12-hour, Secure, HttpOnly, SameSite=Strict session in KV. Changing the access
+key invalidates existing sessions. Staff-changing requests also require a
+same-origin browser request.
+
+Stripe secrets are `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and
+`STRIPE_PRICE_ID`; append `_TEST` for test mode. PayPal secrets are
+`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, and
+`PAYPAL_PLAN_ID`.
 
 ## Session Files
 

@@ -4,7 +4,7 @@ Guidance for coding agents (Claude Code, Codex CLI) working in this repository. 
 
 ## What This Project Is
 
-Crabigator is a Rust TUI wrapper around the Claude Code and Codex CLIs. It spawns the assistant CLI in a PTY (pseudo-terminal) and adds status widgets below the interface showing git status, file changes, session statistics, per-turn recaps, and tracked PRs. Sessions can stream live to a dashboard at drinkcrabigator.com, backed by a Cloudflare Workers project in `workers/crabigator-api/`.
+Crabigator is a Rust TUI wrapper around the Claude Code and Codex CLIs. It spawns the assistant CLI in a PTY (pseudo-terminal) and adds status widgets below the interface showing git status, file changes, session statistics, per-turn recaps, and tracked PRs. Sessions can stream to the official dashboard or a compatible self-hosted Cloudflare Worker in `workers/crabigator-api/`.
 
 Platform selection:
 
@@ -114,7 +114,7 @@ The application uses a **scroll region approach** to layer UI:
   - `opencode/`: opencode integration. Spawns the CLI with `--port` and follows the server's SSE `/event` stream for state, permissions, and the model; writes a normalized transcript log to `/tmp/crabigator-opencode-{session_id}.jsonl` for scrollback, recaps, and PR tracking. opencode's full-screen TUI runs on the alternate screen, which crabigator strips (see `ScrollRegionFilter`) so it paints inside the scroll region on the primary buffer.
 - **hooks/**: `SessionStats` for session time tracking and platform stats integration.
 - **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout; `git.rs`, `changes.rs`, `stats.rs` are the individual widgets; `handoff.rs` is the strip above the widgets (setup prompts, update notices, latest recap, tracked PRs); `pr_cells.rs` is the PR cell rendering shared by the handoff strip and the PR board; `pairing.rs` renders full-width pairing/update banners; `sparkline.rs` renders Unicode sparklines.
-- **cloud/**: Streaming to drinkcrabigator.com - device identity (`device.rs`), session registration (`client.rs`), event queue, and WebSocket connection with auto-reconnect.
+- **cloud/**: Streaming to the configured cloud origin - endpoint selection, host-scoped device identity, session registration, event queue, and WebSocket connection with auto-reconnect.
 - **capture.rs**: Output capture. Writes the session transcript to `scrollback.log` (from platform JSONL) and periodic screen snapshots to `screen.txt`.
 - **mirror.rs**: Widget state mirroring. Publishes throttled JSON snapshots of all widget state to `inspect.json`.
 - **inspect.rs**: `crabigator inspect` implementation for viewing other running instances.
@@ -251,7 +251,7 @@ cat /tmp/crabigator-{session}/hooks.log  # Raw hook invocation log
 
 ## Cloud Infrastructure
 
-Cloudflare Workers project for real-time session streaming to drinkcrabigator.com.
+Cloudflare Workers project for real-time session streaming to the configured dashboard origin.
 
 ### Structure
 
@@ -268,7 +268,8 @@ workers/crabigator-api/
 │   ├── staff-dashboard.ts + staff-dashboard/
 │   ├── assets/                 # OG images
 │   └── types/                  # Shared TypeScript types
-└── wrangler.toml               # Worker config (D1, KV, Durable Objects bindings)
+├── wrangler.example.jsonc      # Tracked, annotated Worker config template
+└── wrangler.jsonc              # Ignored active config with account resources and routes
 ```
 
 ### Commands
@@ -287,7 +288,7 @@ Project slash commands exist for common flows: `/deploy`, `/commit-push-deploy`,
 - **256-color**: Uses xterm formula `value = idx === 0 ? 0 : idx * 40 + 55`
 - **Deploys break WebSockets**: Desktop auto-reconnects with exponential backoff (1s-30s)
 - **Session state**: Managed by Durable Objects (`SessionDO` per session, `SessionListDO` for the roster, `UsageDO` for usage tracking)
-- **Auth**: Desktop device_id + HMAC-SHA256 signatures, no user accounts
+- **Auth**: Desktop device_id + HMAC-SHA256 signatures; optional staff tools use a shared-key login and KV sessions
 - **SVG Icons**: NEVER inline SVG icons in TypeScript template files. Keep all SVG icons in dedicated `icons.ts` files (`src/landing/icons.ts`, `src/dashboard/icons.ts`), export them as named string constants, and import where needed. For favicons, use URL-encoded versions (with `%23` for `#` in colors).
 
 ### Usage Analytics
@@ -300,16 +301,19 @@ Queries the Cloudflare GraphQL API for worker requests, Durable Objects, and D1 
 
 ### Querying the D1 Database
 
-The database name is `crabigator` (defined in `workers/crabigator-api/wrangler.toml`).
+The D1 binding is `DB`. Deployment-specific values live in the ignored
+`workers/crabigator-api/wrangler.jsonc`; the tracked
+`workers/crabigator-api/wrangler.example.jsonc` is the public template.
 
-`wrangler` is installed globally (no `npx` needed). The `crabigator-api` Worker lives in the **NewsBlur** Cloudflare account, so always pass `--profile newsblur`.
+Use `WRANGLER_CONFIG` and `WRANGLER_PROFILE` when the active config or account
+profile is not the default.
 
 ```bash
 # Query production database
-wrangler d1 execute crabigator --remote --profile newsblur --command "SELECT * FROM page_views LIMIT 5"
+wrangler d1 execute DB --remote --config workers/crabigator-api/wrangler.jsonc --command "SELECT * FROM page_views LIMIT 5"
 
 # Example: Traffic sources by referrer domain
-wrangler d1 execute crabigator --remote --profile newsblur --command "
+wrangler d1 execute DB --remote --config workers/crabigator-api/wrangler.jsonc --command "
 SELECT referrer_domain, COUNT(DISTINCT visitor_id) as visitors
 FROM page_views
 WHERE created_at > strftime('%s', 'now', '-30 days')
