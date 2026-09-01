@@ -73,7 +73,9 @@ const CODEX_REMOTE_ANSWER_SUBMIT_DELAY: Duration = Duration::from_millis(75);
 fn remote_answer_submit_delay(platform: PlatformKind) -> Duration {
     match platform {
         PlatformKind::Codex => CODEX_REMOTE_ANSWER_SUBMIT_DELAY,
-        PlatformKind::Claude | PlatformKind::Opencode => DEFAULT_REMOTE_ANSWER_SUBMIT_DELAY,
+        PlatformKind::Claude | PlatformKind::Opencode | PlatformKind::Grok => {
+            DEFAULT_REMOTE_ANSWER_SUBMIT_DELAY
+        }
     }
 }
 
@@ -1442,10 +1444,13 @@ impl App {
             let old_effective_state = self.session_stats.effective_state();
             let old_active_prompt = self.session_stats.active_prompt().cloned();
 
-            // Detect mode from screen content. opencode reports its agent
-            // (Build/Plan) through its event stream instead, so screen
-            // detection would stomp it with Normal.
-            if self.platform.kind() != crate::platforms::PlatformKind::Opencode {
+            // Detect mode from screen content. opencode and Grok report mode
+            // through their event streams instead, so screen detection would
+            // stomp Plan / Always-approve with Normal.
+            if !matches!(
+                self.platform.kind(),
+                crate::platforms::PlatformKind::Opencode | crate::platforms::PlatformKind::Grok
+            ) {
                 let new_mode = crate::mode::detect_mode(&screen);
                 if new_mode != self.session_stats.platform_stats.mode {
                     self.session_stats.platform_stats.mode = new_mode;
@@ -1976,7 +1981,10 @@ impl App {
 
         if let Some(title) = next {
             let plain_title = crate::title::strip_provider_title_marker(&title);
-            let is_default = plain_title == "Claude Code" || plain_title == "Codex CLI";
+            let is_default = matches!(
+                plain_title,
+                "Claude Code" | "Codex CLI" | "Grok" | "Grok Build"
+            );
             if !is_default && !self.title_history.contains(&title) {
                 self.title_history.push(title.clone());
             }

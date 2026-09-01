@@ -2792,6 +2792,8 @@ mod tests {
         };
         let platform = match std::env::var("CRABIGATOR_PLATFORM").as_deref() {
             Ok("codex") => crate::platforms::PlatformKind::Codex,
+            Ok("grok") => crate::platforms::PlatformKind::Grok,
+            Ok("opencode") => crate::platforms::PlatformKind::Opencode,
             _ => crate::platforms::PlatformKind::Claude,
         };
         let content = std::fs::read_to_string(&path).expect("transcript is readable");

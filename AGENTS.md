@@ -4,7 +4,7 @@ Guidance for coding agents (Claude Code, Codex CLI) working in this repository. 
 
 ## What This Project Is
 
-Crabigator is a Rust TUI wrapper around the Claude Code and Codex CLIs. It spawns the assistant CLI in a PTY (pseudo-terminal) and adds status widgets below the interface showing git status, file changes, session statistics, per-turn recaps, and tracked PRs. Sessions can stream to the official dashboard or a compatible self-hosted Cloudflare Worker in `workers/crabigator-api/`.
+Crabigator is a Rust TUI wrapper around the Claude Code, Codex, opencode, and Grok CLIs. It spawns the assistant CLI in a PTY (pseudo-terminal) and adds status widgets below the interface showing git status, file changes, session statistics, per-turn recaps, and tracked PRs. Sessions can stream to the official dashboard or a compatible self-hosted Cloudflare Worker in `workers/crabigator-api/`.
 
 Platform selection:
 
@@ -13,7 +13,8 @@ crabigator                  # Uses default platform (config/env/claude)
 crabigator codex            # Use Codex CLI
 crabigator claude           # Use Claude Code
 crabigator opencode         # Use opencode
-crabigator --platform codex # Explicit flag
+crabigator grok             # Use Grok Build (aliases: grok-build, xai)
+crabigator --platform grok  # Explicit flag
 ```
 
 Other subcommands: `inspect` (view running instances), `prs` (live cross-session PR board; `--once` prints one frame — only sessions with a live mirror under /tmp appear, the durable history lives on the web dashboard's PR board; `/` search also greps each live session's transcript and shows the matched excerpt inline, Tab toggles surrounding context; `↑↓` select a session and Enter toggles a quick look pane that mirrors its live screen in the bottom half — while open, `↑↓` scroll that session's transcript and `←→` switch sessions; the default PR view shows one block per primary PR — its GitHub status inline and every touching session as a sub-row beneath it, sorted by the freshest of session activity and PR events, GitHub's updatedAt included; `p` flips to session view, the transpose: one block per session — so blocks map one-to-one to your sessions — with every PR the session touches as a sub-row beneath it; `w` watches any PR by URL or owner/repo#number — watched PRs live in the cloud like dispositions, show on every board (the open board runs `gh` for them and relays the stats), and can also be added by typing "track PR <url>" in a session; dispositions (promote/demote/dismiss) are scoped: the ✕ on a session's own strip or on a session-view sub-row applies only to that session — or to its worktree directory when the session runs in a linked worktree, so future sessions there inherit it — while the ✕ on a PR-view block or a watched PR still removes the PR group-wide; `r` shows or hides recaps, `a` cycles activity ages, and `s` toggles live/all sessions), `pair` (dashboard auth code), `recap` (enable/disable/status for turn recaps), `key` (save an Anthropic API key for recaps), `install-launcher` (macOS crabigator:// URL handler), `resume`/`continue`.
@@ -112,6 +113,7 @@ The application uses a **scroll region approach** to layer UI:
   - `claude_code/`: Claude Code hooks (`stats_hook.py`, `hook_script.rs`) and transcript parsing (writes to `~/.claude/crabigator/`)
   - `codex_cli/`: Codex CLI session log and transcript parsing (reads `~/.codex/sessions`)
   - `opencode/`: opencode integration. Spawns the CLI with `--port` and follows the server's SSE `/event` stream for state, permissions, and the model; writes a normalized transcript log to `/tmp/crabigator-opencode-{session_id}.jsonl` for scrollback, recaps, and PR tracking. opencode's full-screen TUI runs on the alternate screen, which crabigator strips (see `ScrollRegionFilter`) so it paints inside the scroll region on the primary buffer.
+  - `grok/`: Grok Build TUI integration. Spawns `grok` (found in `~/.grok/bin` if needed). Full-screen TUI is stripped onto the primary buffer like opencode. State comes from `~/.grok/sessions/<encoded-cwd>/<id>/events.jsonl` and the transcript from `updates.jsonl`; no hooks are installed.
 - **hooks/**: `SessionStats` for session time tracking and platform stats integration.
 - **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout; `git.rs`, `changes.rs`, `stats.rs` are the individual widgets; `handoff.rs` is the strip above the widgets (setup prompts, update notices, latest recap, tracked PRs); `pr_cells.rs` is the PR cell rendering shared by the handoff strip and the PR board; `pairing.rs` renders full-width pairing/update banners; `sparkline.rs` renders Unicode sparklines.
 - **cloud/**: Streaming to the configured cloud origin - endpoint selection, host-scoped device identity, session registration, event queue, and WebSocket connection with auto-reconnect.

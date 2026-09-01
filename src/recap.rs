@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use crate::cli::RecapCommand;
 use crate::config::Config;
 use crate::git::GitState;
+use crate::platforms::grok::acp as grok_acp;
 use crate::platforms::{PlatformKind, PlatformStats, SessionState};
 use crate::slack::{extract_threads, SlackThread};
 use crate::title::clean_generated_title;
@@ -696,6 +697,7 @@ fn finish_latest_turn(platform: PlatformKind, content: &str) -> TurnTranscript {
         PlatformKind::Claude => collect_claude_latest_turn(content),
         PlatformKind::Codex => collect_codex_latest_turn(content),
         PlatformKind::Opencode => collect_opencode_latest_turn(content),
+        PlatformKind::Grok => collect_grok_latest_turn(content),
     };
     transcript.activity =
         redact_sensitive(&truncate_start(&transcript.activity, MAX_TRANSCRIPT_CHARS));
@@ -745,6 +747,70 @@ fn collect_claude_latest_turn(content: &str) -> TurnTranscript {
             Some("assistant") if after_user_prompt => {
                 if let Some(message_content) = entry.get("message").and_then(|m| m.get("content")) {
                     append_assistant_content(&mut activity, message_content);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    TurnTranscript {
+        user_prompt,
+        activity,
+        turn_start,
+    }
+}
+
+/// Grok's `updates.jsonl` is an ACP session-update stream.
+fn collect_grok_latest_turn(content: &str) -> TurnTranscript {
+    let mut user_prompt = None;
+    let mut activity = String::new();
+    let mut after_user_prompt = false;
+    let mut turn_start = 0;
+
+    for line in content.lines() {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(update) = grok_acp::update_from_line(&entry) else {
+            continue;
+        };
+        match update.get("sessionUpdate").and_then(|v| v.as_str()) {
+            Some("user_message_chunk") => {
+                let text = grok_acp::text_content(update).trim();
+                if !text.is_empty() {
+                    user_prompt = Some(text.to_string());
+                    activity.clear();
+                    turn_start = line_offset(content, line);
+                    after_user_prompt = true;
+                }
+            }
+            Some("agent_message_chunk") if after_user_prompt => {
+                let text = grok_acp::text_content(update).trim();
+                if !text.is_empty() {
+                    push_section(&mut activity, "assistant", text);
+                }
+            }
+            Some("tool_call") if after_user_prompt => {
+                let name = grok_acp::tool_name_or_tool(update);
+                let title = update.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                let preview = if title.is_empty() || title == name {
+                    name.to_string()
+                } else {
+                    format!("{name} {title}")
+                };
+                push_section(&mut activity, "tool", &preview);
+            }
+            Some("tool_call_update") if after_user_prompt => {
+                let status = update.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if matches!(status, "completed" | "failed" | "error") {
+                    let output = grok_acp::tool_output_text(update);
+                    if !output.trim().is_empty() {
+                        push_section(
+                            &mut activity,
+                            "tool_result",
+                            &truncate_end(output.trim(), MAX_TOOL_RESULT_CHARS),
+                        );
+                    }
                 }
             }
             _ => {}

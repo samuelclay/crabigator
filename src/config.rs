@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// Crabigator configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
-    /// Default platform: "claude" or "codex"
+    /// Default platform: "claude", "codex", "opencode", or "grok"
     #[serde(default = "default_platform")]
     pub default_platform: String,
 

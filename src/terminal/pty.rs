@@ -239,6 +239,8 @@ fn find_in_fallbacks(command: &str) -> Option<PathBuf> {
         // opencode's installer puts its launcher here
         dirs.push(home.join(".opencode/bin"));
         dirs.push(home.join(".cache/opencode/bin"));
+        // Grok's installer puts its launcher here
+        dirs.push(home.join(".grok/bin"));
     }
 
     dirs.push(PathBuf::from("/opt/homebrew/bin"));

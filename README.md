@@ -1,6 +1,6 @@
 # <img src="assets/crab.svg" width="32" height="32" alt="Crabigator"> Crabigator
 
-Control Claude Code, Codex, and opencode from anywhere. Answer prompts from your phone while your agent runs on your desktop.
+Control Claude Code, Codex, opencode, and Grok from anywhere. Answer prompts from your phone while your agent runs on your desktop.
 
 [![npm version](https://img.shields.io/npm/v/crabigator)](https://www.npmjs.com/package/crabigator)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)](https://www.rust-lang.org/)
@@ -12,7 +12,7 @@ Control Claude Code, Codex, and opencode from anywhere. Answer prompts from your
 
 ## What is Crabigator?
 
-Crabigator is a terminal wrapper that runs Claude Code, Codex CLI, or opencode with real-time status widgets and **remote control from your phone**. The assistant runs natively on your machine exactly as intended, while Crabigator streams the session to a web dashboard where you can:
+Crabigator is a terminal wrapper that runs Claude Code, Codex CLI, opencode, or Grok with real-time status widgets and **remote control from your phone**. The assistant runs natively on your machine exactly as intended, while Crabigator streams the session to a web dashboard where you can:
 
 - <img src="assets/shield-check.svg" width="16" height="16"> **Answer permission requests** — Approve file writes, command execution, and tool use from anywhere
 - <img src="assets/chat-dots.svg" width="16" height="16"> **Respond to questions** — When Claude asks for clarification, reply from your phone
@@ -38,7 +38,7 @@ cargo install --path .
 
 ### Prerequisites
 
-- **Claude Code**, **Codex CLI**, or **opencode** installed and authenticated
+- **Claude Code**, **Codex CLI**, **opencode**, or **Grok** installed and authenticated
 - Node.js 18+ (for npm install) or Rust 1.70+ (for cargo install)
 - macOS, Linux, or Windows (WSL)
 
@@ -110,7 +110,7 @@ The board saves these view choices between sessions. The full history also lives
 
 ### <img src="assets/screens.svg" width="20" height="20"> Multi-Platform
 
-Supports [Claude Code](https://claude.ai/code) (Anthropic), [Codex CLI](https://github.com/openai/codex) (OpenAI), and [opencode](https://opencode.ai).
+Supports [Claude Code](https://claude.ai/code) (Anthropic), [Codex CLI](https://github.com/openai/codex) (OpenAI), [opencode](https://opencode.ai), and [Grok](https://grok.com).
 
 ## How It Works
 
@@ -144,6 +144,7 @@ crabigator                    # Start with your default platform
 crabigator claude             # Use Claude Code
 crabigator codex              # Use Codex CLI
 crabigator opencode           # Use opencode
+crabigator grok               # Use Grok Build (also: xai)
 crabigator resume             # Resume last session (also: r, --resume)
 crabigator continue           # Continue last conversation (also: c, --continue)
 
@@ -331,7 +332,7 @@ The desktop app is Rust; the cloud backend is a Cloudflare Workers project. The 
 | Terminal | [`src/terminal/`](src/terminal.rs) | PTY management, input encoding, ANSI escape sequences |
 | Widgets | [`src/ui/`](src/ui.rs) | Status bar, git, changes, stats, handoff strip, pairing banners |
 | Diff parsing | [`src/parsers/`](src/parsers.rs) | Semantic diffs per language, scope attribution |
-| Platforms | [`src/platforms/`](src/platforms.rs) | Claude Code hooks and transcript parsing; Codex session logs; opencode event stream |
+| Platforms | [`src/platforms/`](src/platforms.rs) | Claude Code hooks and transcript parsing; Codex session logs; opencode event stream; Grok session logs |
 | Recaps & PRs | [`src/recap.rs`](src/recap.rs), [`src/pr.rs`](src/pr.rs), [`src/prs_board.rs`](src/prs_board.rs) | Turn recaps, PR tracking and classification, the `prs` board |
 | Cloud client | [`src/cloud/`](src/cloud.rs) | Device identity, HMAC auth, event queue, WebSocket streaming |
 | Cloud backend | [`workers/crabigator-api/`](workers/crabigator-api/) | Durable Objects, D1, dashboard, landing page |

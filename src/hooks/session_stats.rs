@@ -133,8 +133,15 @@ impl SessionStats {
             return SessionState::Question;
         }
 
-        // Spinner active but hooks don't say Thinking → override to Thinking
-        if self.title_has_spinner && hook_state != SessionState::Thinking {
+        // Spinner active but hooks don't say Thinking → override to Thinking.
+        // Grok keeps a title spinner while a question or permission card is
+        // waiting, so those states must win.
+        if self.title_has_spinner
+            && !matches!(
+                hook_state,
+                SessionState::Thinking | SessionState::Permission | SessionState::Question
+            )
+        {
             return SessionState::Thinking;
         }
 
@@ -342,6 +349,21 @@ mod tests {
         assert!(stats.set_screen_question(false, None));
         assert_eq!(stats.effective_state(), SessionState::Complete);
         assert!(stats.active_prompt().is_none());
+    }
+
+    #[test]
+    fn title_spinner_does_not_hide_question_or_permission() {
+        let mut stats = SessionStats::new();
+        stats.set_title_spinner(true);
+
+        stats.platform_stats.state = SessionState::Question;
+        assert_eq!(stats.effective_state(), SessionState::Question);
+
+        stats.platform_stats.state = SessionState::Permission;
+        assert_eq!(stats.effective_state(), SessionState::Permission);
+
+        stats.platform_stats.state = SessionState::Complete;
+        assert_eq!(stats.effective_state(), SessionState::Thinking);
     }
 
     #[test]

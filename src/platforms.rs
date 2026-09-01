@@ -1,10 +1,10 @@
 //! Platform abstraction layer
 //!
-//! Defines a common interface for different AI assistant platforms.
-//! Currently supports Claude Code and Codex CLI, with extensibility for future platforms.
+//! Defines a common interface for Claude Code, Codex CLI, opencode, and Grok.
 
 pub mod claude_code;
 pub mod codex_cli;
+pub mod grok;
 pub mod opencode;
 
 use std::collections::HashMap;
@@ -19,6 +19,7 @@ pub enum PlatformKind {
     Claude,
     Codex,
     Opencode,
+    Grok,
 }
 
 impl PlatformKind {
@@ -27,6 +28,7 @@ impl PlatformKind {
             "claude" | "claude-code" | "claude_code" => Some(Self::Claude),
             "codex" | "codecs" | "openai" => Some(Self::Codex),
             "opencode" | "open-code" | "open_code" => Some(Self::Opencode),
+            "grok" | "grok-build" | "grok_build" | "xai" => Some(Self::Grok),
             _ => None,
         }
     }
@@ -36,6 +38,7 @@ impl PlatformKind {
             Self::Claude => "claude",
             Self::Codex => "codex",
             Self::Opencode => "opencode",
+            Self::Grok => "grok",
         }
     }
 
@@ -48,6 +51,7 @@ impl PlatformKind {
             Self::Claude => "Claude",
             Self::Codex => "Codex",
             Self::Opencode => "opencode",
+            Self::Grok => "Grok",
         }
     }
 }
@@ -286,5 +290,6 @@ pub fn platform_for(kind: PlatformKind) -> Box<dyn Platform> {
         PlatformKind::Claude => Box::new(claude_code::ClaudeCodePlatform::new()),
         PlatformKind::Codex => Box::new(codex_cli::CodexPlatform::new()),
         PlatformKind::Opencode => Box::new(opencode::OpencodePlatform::new()),
+        PlatformKind::Grok => Box::new(grok::GrokPlatform::new()),
     }
 }

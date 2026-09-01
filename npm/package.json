@@ -1,7 +1,7 @@
 {
   "name": "crabigator",
   "version": "0.10.4",
-  "description": "A TUI wrapper for Claude Code, Codex, and opencode with real-time status widgets",
+  "description": "A TUI wrapper for Claude Code, Codex, opencode, and Grok with real-time status widgets",
   "bin": {
     "crabigator": "bin/crabigator.js"
   },
@@ -25,7 +25,9 @@
     "cli",
     "ai",
     "anthropic",
-    "codex"
+    "codex",
+    "grok",
+    "opencode"
   ],
   "author": "Samuel Clay",
   "license": "MIT",

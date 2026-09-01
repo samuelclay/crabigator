@@ -184,7 +184,7 @@ pub fn parse_args() -> Args {
                         platform_selected = true;
                     } else {
                         eprintln!(
-                            "Unknown platform: {}. Use 'claude', 'codex', or 'opencode'.",
+                            "Unknown platform: {}. Use 'claude', 'codex', 'opencode', or 'grok'.",
                             value
                         );
                         std::process::exit(1);

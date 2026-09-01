@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use crate::platforms::claude_code::transcript as claude_transcript;
 use crate::platforms::codex_cli::transcript as codex_transcript;
+use crate::platforms::grok::transcript as grok_transcript;
 use crate::platforms::opencode::transcript as opencode_transcript;
 use crate::platforms::PlatformKind;
 
@@ -64,6 +65,8 @@ pub struct CaptureManager {
     claude_pending_tools: HashMap<String, claude_transcript::PendingToolUse>,
     /// Pending Codex tool calls awaiting results (persisted across reads)
     codex_pending_tools: HashMap<String, codex_transcript::PendingToolUse>,
+    /// Pending Grok tool calls awaiting results (persisted across reads)
+    grok_pending_tools: HashMap<String, grok_transcript::PendingToolUse>,
     /// Total line count in scrollback.log
     total_scrollback_lines: usize,
     /// Raw PTY output log file (debug builds only)
@@ -131,6 +134,7 @@ impl CaptureManager {
                 transcript_offset: 0,
                 claude_pending_tools: HashMap::new(),
                 codex_pending_tools: HashMap::new(),
+                grok_pending_tools: HashMap::new(),
                 total_scrollback_lines: 0,
                 #[cfg(debug_assertions)]
                 raw_log: None,
@@ -166,6 +170,7 @@ impl CaptureManager {
             transcript_offset: 0,
             claude_pending_tools: HashMap::new(),
             codex_pending_tools: HashMap::new(),
+            grok_pending_tools: HashMap::new(),
             total_scrollback_lines: 0,
             #[cfg(debug_assertions)]
             raw_log,
@@ -191,6 +196,7 @@ impl CaptureManager {
                 self.transcript_offset = 0;
                 self.claude_pending_tools.clear();
                 self.codex_pending_tools.clear();
+                self.grok_pending_tools.clear();
                 self.total_scrollback_lines = 0;
                 // Clear scrollback.log to avoid mixing content from different sessions
                 if self.config.enabled {
@@ -293,6 +299,11 @@ impl CaptureManager {
             PlatformKind::Opencode => {
                 opencode_transcript::read_transcript(transcript_path, self.transcript_offset)?
             }
+            PlatformKind::Grok => grok_transcript::read_transcript(
+                transcript_path,
+                self.transcript_offset,
+                &mut self.grok_pending_tools,
+            )?,
         };
 
         if new_content.is_empty() {

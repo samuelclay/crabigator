@@ -397,11 +397,7 @@ struct WorkspaceEntry {
     deletions: i64,
 }
 
-type LocalBoard = (
-    Vec<BoardPr>,
-    Vec<WorkspaceEntry>,
-    HashMap<String, PathBuf>,
-);
+type LocalBoard = (Vec<BoardPr>, Vec<WorkspaceEntry>, HashMap<String, PathBuf>);
 
 impl WorkspaceEntry {
     fn sessions(&self) -> &[SessionRef] {
@@ -608,6 +604,8 @@ fn mirror_platform(data: &serde_json::Value) -> PlatformKind {
                 .find_map(|component| match component {
                     ".codex" => Some(PlatformKind::Codex),
                     ".claude" => Some(PlatformKind::Claude),
+                    ".grok" => Some(PlatformKind::Grok),
+                    ".opencode" => Some(PlatformKind::Opencode),
                     _ => None,
                 })
         })
@@ -2235,19 +2233,8 @@ fn styled_preview_lines(
     out
 }
 
-fn provider_markers(sessions: &[SessionRef]) -> &'static str {
-    let has_codex = sessions
-        .iter()
-        .any(|session| session.platform == PlatformKind::Codex);
-    let has_claude = sessions
-        .iter()
-        .any(|session| session.platform == PlatformKind::Claude);
-    match (has_codex, has_claude) {
-        (true, true) => crate::title::MIXED_PROVIDER_TITLE_MARKER,
-        (true, false) => crate::title::CODEX_TITLE_MARKER,
-        (false, true) => crate::title::CLAUDE_TITLE_MARKER,
-        (false, false) => "",
-    }
+fn provider_markers(sessions: &[SessionRef]) -> String {
+    crate::title::combined_provider_title_marker(sessions.iter().map(|session| session.platform))
 }
 
 fn latest_session_title(sessions: &[SessionRef]) -> Option<String> {
@@ -2794,8 +2781,7 @@ fn session_title_cell(
     let budget = widths.board_left_width().saturating_sub(prefix.width());
     let mut separator = if branch_text.is_empty() { "" } else { " " };
     let title_reserved = title.width().min(SESSION_TITLE_MIN);
-    if !branch_text.is_empty()
-        && title_reserved + separator.width() + branch_text.width() > budget
+    if !branch_text.is_empty() && title_reserved + separator.width() + branch_text.width() > budget
     {
         branch_text.clear();
         separator = "";
@@ -5049,7 +5035,11 @@ mod tests {
         let mut two = snapshot("two", vec![twin]);
         two.repo_name = "portal".to_string();
 
-        let merged = aggregate(&[one, two], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let merged = aggregate(
+            &[one, two],
+            &ScopedOverrides::default(),
+            DEFAULT_LINGER_DAYS,
+        );
         let entries = entries_for_mode(merged, BoardMode::Prs).prs;
         assert_eq!(
             entries.len(),
@@ -5258,7 +5248,12 @@ mod tests {
             ),
             (watch_key("o", "elsewhere", 9), solo),
         ]);
-        merge_watched_entries(&mut entries, &watched, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        merge_watched_entries(
+            &mut entries,
+            &watched,
+            &ScopedOverrides::default(),
+            DEFAULT_LINGER_DAYS,
+        );
 
         assert_eq!(entries.len(), 2);
         let tracked = entries.iter().find(|e| e.pr.repo == "portal").unwrap();
@@ -5285,7 +5280,10 @@ mod tests {
 
         // A dismissed disposition hides the watch everywhere.
         let mut entries = Vec::new();
-        let overrides = ScopedOverrides::from(HashMap::from([(watch_key("o", "elsewhere", 9), PrDisposition::Dismissed)]));
+        let overrides = ScopedOverrides::from(HashMap::from([(
+            watch_key("o", "elsewhere", 9),
+            PrDisposition::Dismissed,
+        )]));
         merge_watched_entries(&mut entries, &watched, &overrides, DEFAULT_LINGER_DAYS);
         assert!(entries.iter().all(|e| e.pr.repo != "elsewhere"));
     }
@@ -5466,7 +5464,11 @@ mod tests {
             "https://t.slack.com/archives/C0/p1723500000000000 https://t.slack.com/archives/C1/p1723500001000000 https://t.slack.com/archives/C4/p1723500003000000",
         );
         let shaped = entries_for_mode(
-            aggregate(&[two, one], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS),
+            aggregate(
+                &[two, one],
+                &ScopedOverrides::default(),
+                DEFAULT_LINGER_DAYS,
+            ),
             BoardMode::Sessions,
         );
         assert!(shaped.prs.is_empty(), "every PR is under a session block");
@@ -5566,7 +5568,11 @@ mod tests {
         captureless.repo_name = "portal".to_string();
         captureless.session_dir = capture.path().join("missing");
 
-        let entries = aggregate(&[live, captureless], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(
+            &[live, captureless],
+            &ScopedOverrides::default(),
+            DEFAULT_LINGER_DAYS,
+        );
         let rows: Vec<BoardRow> = entries
             .iter()
             .map(|entry| BoardRow {
@@ -5708,7 +5714,11 @@ mod tests {
         make_primary(&mut pr);
         let mut snapshot = snapshot("cloudid", vec![pr]);
         snapshot.repo_name = "portal".to_string();
-        let mut entries = aggregate(&[snapshot], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let mut entries = aggregate(
+            &[snapshot],
+            &ScopedOverrides::default(),
+            DEFAULT_LINGER_DAYS,
+        );
         entries[0].sessions[0].session_dir = None;
 
         let mirrors: HashMap<String, PathBuf> = [(
@@ -6524,7 +6534,11 @@ mod tests {
         old_mirror.repo_name = "portal".to_string();
         old_mirror.title = "⟁ Fix builder autosave".to_string();
 
-        let entries = aggregate(&[old_mirror], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(
+            &[old_mirror],
+            &ScopedOverrides::default(),
+            DEFAULT_LINGER_DAYS,
+        );
 
         assert_eq!(entries.len(), 1);
         assert!(entries[0].pr.primary);
@@ -6544,7 +6558,11 @@ mod tests {
         let mut overrides = HashMap::new();
         overrides.insert("o/portal#1206".to_string(), PrDisposition::Secondary);
 
-        let entries = aggregate(&[old_mirror], &ScopedOverrides::from(overrides), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(
+            &[old_mirror],
+            &ScopedOverrides::from(overrides),
+            DEFAULT_LINGER_DAYS,
+        );
 
         assert_eq!(entries.len(), 1);
         assert!(!entries[0].pr.primary);
@@ -6578,7 +6596,11 @@ mod tests {
     fn scoped_dismissals_only_reach_their_own_session() {
         let key = "o/portal#7".to_string();
         let mut overrides = ScopedOverrides::default();
-        overrides.insert(key.clone(), "session:one".to_string(), PrDisposition::Dismissed);
+        overrides.insert(
+            key.clone(),
+            "session:one".to_string(),
+            PrDisposition::Dismissed,
+        );
 
         let mut pr = board_pr(7, "portal");
         make_primary(&mut pr);
@@ -6603,10 +6625,7 @@ mod tests {
         let mut overrides = ScopedOverrides::default();
         overrides.insert(key, "path:/tmp/one".to_string(), PrDisposition::Dismissed);
         let entries = aggregate(
-            &[
-                snapshot("one", vec![pr.clone()]),
-                snapshot("two", vec![pr]),
-            ],
+            &[snapshot("one", vec![pr.clone()]), snapshot("two", vec![pr])],
             &overrides,
             DEFAULT_LINGER_DAYS,
         );
@@ -6821,13 +6840,21 @@ mod tests {
         let snapshots = [snapshot("one", vec![merged])];
 
         assert!(aggregate(&snapshots, &ScopedOverrides::default(), 1).is_empty());
-        assert_eq!(aggregate(&snapshots, &ScopedOverrides::default(), 3).len(), 1);
+        assert_eq!(
+            aggregate(&snapshots, &ScopedOverrides::default(), 3).len(),
+            1
+        );
         // Zero shows open PRs only, no matter how fresh the merge.
         let mut fresh = board_pr(2, "portal");
         fresh.state = "MERGED".to_string();
         fresh.closed_at = now_ms();
         make_primary(&mut fresh);
-        assert!(aggregate(&[snapshot("one", vec![fresh])], &ScopedOverrides::default(), 0).is_empty());
+        assert!(aggregate(
+            &[snapshot("one", vec![fresh])],
+            &ScopedOverrides::default(),
+            0
+        )
+        .is_empty());
     }
 
     #[test]
@@ -7020,7 +7047,11 @@ mod tests {
         let mut bare = snapshot("other-dir", vec![pr]);
         bare.prompted_at = now_secs() as u64 - 4 * 60 * 60;
         bare.completed_at = now_secs() as u64 - 5 * 60 * 60;
-        aggregate(&[with_title, bare], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS)
+        aggregate(
+            &[with_title, bare],
+            &ScopedOverrides::default(),
+            DEFAULT_LINGER_DAYS,
+        )
     }
 
     /// The title stays on the PR row; `r` adds the complete recap beneath it.
@@ -7246,30 +7277,22 @@ mod tests {
             crate::parsers::strip_ansi_for_debug(&activity.styled).starts_with(" ⠋   ⟩"),
             "thinking state sits centered in its badge slot before prompt activity"
         );
-        assert!(
-            activity
-                .styled
-                .contains(&format!("{}⟩ 30m", fg(ACTIVITY_BRIGHT_TEAL)))
-        );
-        assert!(
-            activity
-                .styled
-                .contains(&format!("{}⋖ 2h", fg(ACTIVITY_DARK_TEAL)))
-        );
+        assert!(activity
+            .styled
+            .contains(&format!("{}⟩ 30m", fg(ACTIVITY_BRIGHT_TEAL))));
+        assert!(activity
+            .styled
+            .contains(&format!("{}⋖ 2h", fg(ACTIVITY_DARK_TEAL))));
         assert!(!activity.styled.contains("\x1b[48;5;"));
 
         sessions[1].state = SessionState::Complete;
         let settled = activity_cell(&sessions, now * 1000, 0, &Cooldowns::default());
-        assert!(
-            settled
-                .styled
-                .contains(&format!("{}⟩ 30m", fg(ACTIVITY_DARK_TEAL)))
-        );
-        assert!(
-            settled
-                .styled
-                .contains(&format!("{}⋖ 2h", fg(ACTIVITY_BRIGHT_TEAL)))
-        );
+        assert!(settled
+            .styled
+            .contains(&format!("{}⟩ 30m", fg(ACTIVITY_DARK_TEAL))));
+        assert!(settled
+            .styled
+            .contains(&format!("{}⋖ 2h", fg(ACTIVITY_BRIGHT_TEAL))));
 
         assert_eq!(recency_color(0), RECENCY_1H);
         assert_eq!(recency_color(3_600), RECENCY_3H);
@@ -7283,16 +7306,12 @@ mod tests {
         let unknown = activity_cell(&[], now * 1000, 0, &Cooldowns::default());
         assert!(unknown.styled.contains("⟩ —"));
         assert!(unknown.styled.contains("⋖ —"));
-        assert!(
-            unknown
-                .styled
-                .contains(&format!("{}⟩ —", fg(color::DARK_GRAY)))
-        );
-        assert!(
-            unknown
-                .styled
-                .contains(&format!("{}⋖ —", fg(color::DARK_GRAY)))
-        );
+        assert!(unknown
+            .styled
+            .contains(&format!("{}⟩ —", fg(color::DARK_GRAY))));
+        assert!(unknown
+            .styled
+            .contains(&format!("{}⋖ —", fg(color::DARK_GRAY))));
         assert!(!unknown.styled.contains("\x1b[48;5;"));
     }
 
@@ -7369,16 +7388,12 @@ mod tests {
             crate::parsers::strip_ansi_for_debug(&second.styled)
         );
         assert!(first.styled.contains(&fg(color::GREEN)));
-        assert!(
-            first
-                .styled
-                .contains(&format!("{}⟩ 1m", fg(ACTIVITY_BRIGHT_TEAL)))
-        );
-        assert!(
-            first
-                .styled
-                .contains(&format!("{}⋖ 1m", fg(ACTIVITY_DARK_TEAL)))
-        );
+        assert!(first
+            .styled
+            .contains(&format!("{}⟩ 1m", fg(ACTIVITY_BRIGHT_TEAL))));
+        assert!(first
+            .styled
+            .contains(&format!("{}⋖ 1m", fg(ACTIVITY_DARK_TEAL))));
     }
 
     #[test]
