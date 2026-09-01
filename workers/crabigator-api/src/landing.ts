@@ -67,16 +67,16 @@ export const landingHtml = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crabigator - control Claude Code, Codex, and opencode from anywhere</title>
-    <meta name="description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code, Codex, and opencode sessions.">
-    <meta property="og:title" content="Crabigator - Control Claude Code, Codex, and opencode from anywhere">
-    <meta property="og:description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code, Codex, and opencode sessions.">
+    <title>Crabigator - control Claude Code, Codex, opencode, and Grok from anywhere</title>
+    <meta name="description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code, Codex, opencode, and Grok sessions.">
+    <meta property="og:title" content="Crabigator - Control Claude Code, Codex, opencode, and Grok from anywhere">
+    <meta property="og:description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code, Codex, opencode, and Grok sessions.">
     <meta property="og:image" content="https://drinkcrabigator.com/assets/og-landing.png">
     <meta property="og:url" content="https://drinkcrabigator.com/">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Crabigator">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Crabigator - Control Claude Code, Codex, and opencode from anywhere">
+    <meta name="twitter:title" content="Crabigator - Control Claude Code, Codex, opencode, and Grok from anywhere">
     <meta name="twitter:description" content="Answer permissions, approve plans, and respond to questions from your phone.">
     <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-landing.png">
     <link rel="icon" href="data:image/svg+xml,${iconCrabigatorEncoded}">
@@ -107,11 +107,11 @@ export const landingHtml = `<!DOCTYPE html>
             <div class="hero-text">
                 <p class="hero-tagline">${iconPhone} Remote AI Control</p>
                 <h1 class="hero-headline">
-                    Control <span class="highlight">Claude Code</span>, Codex &amp; opencode from anywhere
+                    Control <span class="highlight">Claude Code</span>, Codex, opencode &amp; Grok from anywhere
                 </h1>
                 <p class="hero-subheadline">
                     Answer permissions, approve plans, and respond to questions—all from your phone.
-                    Claude Code, Codex, and opencode run natively on Mac, Windows, or Linux—exactly as intended.
+                    Claude Code, Codex, opencode, and Grok run natively on Mac, Windows, or Linux—exactly as intended.
                 </p>
                 <div class="hero-install">
                     <div class="hero-install-command">
@@ -342,7 +342,7 @@ export const landingHtml = `<!DOCTYPE html>
                 <p class="section-label">${iconMultiDevice} Multi-device</p>
                 <h2 class="section-title">Check in from phone or desktop</h2>
                 <p class="section-subtitle">
-                    No Tmux. No Tailscale. No Termius. Native integration built for Claude Code, Codex, and opencode.
+                    No Tmux. No Tailscale. No Termius. Native integration built for Claude Code, Codex, opencode, and Grok.
                     Pair any device in seconds—monitor progress and respond to prompts on the go.
                 </p>
                 <div class="showcase-status">
@@ -587,8 +587,8 @@ export const landingHtml = `<!DOCTYPE html>
             </div>
             <div class="bento-card small">
                 <div class="bento-icon openai">${iconDiamond}</div>
-                <h3 class="bento-title">Codex &amp; opencode</h3>
-                <p class="bento-desc">Works seamlessly with OpenAI's Codex CLI and opencode.</p>
+                <h3 class="bento-title">Codex, opencode &amp; Grok</h3>
+                <p class="bento-desc">Works seamlessly with OpenAI's Codex CLI, opencode, and Grok Build.</p>
             </div>
 
             <!-- Row 3-4: Semantic Diff (wide + tall) + File Links (tall) -->
@@ -758,7 +758,7 @@ export const landingHtml = `<!DOCTYPE html>
                     <div class="pricing-tier">Free</div>
                     <div class="pricing-amount">$0<span class="pricing-period">/month</span></div>
                     <ul class="pricing-features">
-                        <li><span class="check">${iconCheck}</span> Unlimited Claude Code, Codex &amp; opencode sessions</li>
+                        <li><span class="check">${iconCheck}</span> Unlimited Claude Code, Codex, opencode &amp; Grok sessions</li>
                         <li><span class="check">${iconCheck}</span> Answer permissions & questions</li>
                         <li><span class="check">${iconCheck}</span> Unlimited web and mobile access</li>
                         <li><span class="check">${iconCheck}</span> Real-time sync</li>
@@ -772,7 +772,7 @@ export const landingHtml = `<!DOCTYPE html>
                     <div class="pricing-tier">Pro</div>
                     <div class="pricing-amount">$3<span class="pricing-period">/month</span></div>
                     <ul class="pricing-features">
-                        <li><span class="check">${iconCheck}</span> Unlimited Claude Code, Codex &amp; opencode sessions</li>
+                        <li><span class="check">${iconCheck}</span> Unlimited Claude Code, Codex, opencode &amp; Grok sessions</li>
                         <li><span class="check">${iconCheck}</span> Answer permissions & questions</li>
                         <li><span class="check">${iconCheck}</span> Unlimited web and mobile access</li>
                         <li><span class="check">${iconCheck}</span> Real-time sync</li>
@@ -835,7 +835,7 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
             </div>
             <p class="github-desc">
-                A Rust TUI wrapper for Claude Code, Codex, and opencode with real-time mobile streaming. MIT licensed.
+                A Rust TUI wrapper for Claude Code, Codex, opencode, and Grok with real-time mobile streaming. MIT licensed.
             </p>
             <div class="github-meta">
                 <span class="github-lang">

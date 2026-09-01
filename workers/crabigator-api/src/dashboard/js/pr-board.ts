@@ -545,24 +545,29 @@ export const prBoardJs = `
                 Math.floor((e.pr.last_mentioned_at || 0) / 1000));
         }
 
-        // Provider markers: ⟁ Codex, ᛝ Claude, both when sessions mix.
+        // Provider markers: ᛝ Claude, ⟁ Codex, ↯ Grok, ▣ opencode.
         function prbStripMarker(title) {
-            return String(title || '').replace(/^[⟁ᛝ]+\\s+/, '').trim();
+            return String(title || '').replace(/^[ᛝ⟁↯✦▣]+\\s+/, '').trim();
         }
         function prbMarker(platform) {
-            return platform === 'codex' ? '⟁ ' : 'ᛝ ';
+            if (platform === 'codex') return '⟁ ';
+            if (platform === 'grok') return '↯ ';
+            if (platform === 'opencode') return '▣ ';
+            return 'ᛝ ';
         }
         // A session's own marked title, falling back to its directory name.
         function prbSessionTitle(s) {
             return prbMarker(s.platform) + (prbStripMarker(s.title) || s.dir_name || 'session');
         }
         function prbProviderMarkers(sessions) {
-            const codex = sessions.some(s => s.platform === 'codex');
-            const claude = sessions.some(s => s.platform !== 'codex');
-            if (codex && claude) return '⟁ᛝ ';
-            if (codex) return '⟁ ';
-            if (claude) return 'ᛝ ';
-            return '';
+            const order = ['claude', 'codex', 'grok', 'opencode'];
+            const glyphs = { claude: 'ᛝ', codex: '⟁', grok: '↯', opencode: '▣' };
+            const present = new Set((sessions || []).map(s => s.platform));
+            let symbols = '';
+            for (const platform of order) {
+                if (present.has(platform)) symbols += glyphs[platform];
+            }
+            return symbols ? symbols + '  ' : '';
         }
         // The newest title among a PR's sessions, by when it was set — the
         // same choice the CLI makes, so a stale session can't win.

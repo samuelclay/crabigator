@@ -72,7 +72,7 @@ export async function createSession(
         );
     }
 
-    if (platform !== 'claude' && platform !== 'codex') {
+    if (platform !== 'claude' && platform !== 'codex' && platform !== 'grok' && platform !== 'opencode') {
         return new Response(
             JSON.stringify({ error: 'Invalid platform', code: 'INVALID_PLATFORM' }),
             { status: 400, headers: { 'Content-Type': 'application/json' } }
@@ -231,7 +231,7 @@ export async function listSessions(
         id: string;
         client_session_id: string;
         cwd: string;
-        platform: 'claude' | 'codex';
+        platform: 'claude' | 'codex' | 'grok' | 'opencode';
         pr_scope: string | null;
         state: SessionState;
         started_at: number;
@@ -389,7 +389,7 @@ export async function getSession(
         id: string;
         client_session_id: string;
         cwd: string;
-        platform: 'claude' | 'codex';
+        platform: 'claude' | 'codex' | 'grok' | 'opencode';
         state: SessionState;
         started_at: number;
         ended_at: number | null;

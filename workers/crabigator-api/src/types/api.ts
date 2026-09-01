@@ -59,7 +59,7 @@ export interface PairingStatusResponse {
 export interface CreateSessionRequest {
     client_session_id: string;
     cwd: string;
-    platform: 'claude' | 'codex';
+    platform: 'claude' | 'codex' | 'grok' | 'opencode';
     /** 'path:<cwd>' when the session runs in a linked git worktree; its PR
      * dispositions then stick to the directory instead of the session. */
     pr_scope?: string;
@@ -117,7 +117,7 @@ export interface GenerateShareResponse {
 export interface SharedSessionResponse {
     id: string;
     cwd: string;
-    platform: 'claude' | 'codex';
+    platform: 'claude' | 'codex' | 'grok' | 'opencode';
     state: SessionState;
     started_at: number;
     is_active: boolean;

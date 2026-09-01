@@ -483,7 +483,7 @@ export interface SessionInfo {
     id: string;
     client_session_id: string;
     cwd: string;
-    platform: 'claude' | 'codex';
+    platform: 'claude' | 'codex' | 'grok' | 'opencode';
     /** 'path:<cwd>' when the session runs in a linked git worktree; the scope
      * its own PR dispositions use (else 'session:<id>'). */
     pr_scope?: string;

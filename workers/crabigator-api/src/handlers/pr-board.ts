@@ -6,7 +6,7 @@ import { watchedPrRows, watchedPlaceholderPr, deleteWatchedPr } from './watched-
 
 interface BoardSessionRow {
     session_id: string;
-    platform: 'claude' | 'codex' | null;
+    platform: 'claude' | 'codex' | 'grok' | 'opencode' | null;
     cwd: string | null;
     pr_scope: string | null;
     session_state: string | null;
@@ -252,7 +252,7 @@ interface BoardEntry {
     /** Sessions created with this PR or currently working on its branch. */
     sessions: {
         session_id: string;
-        platform: 'claude' | 'codex';
+        platform: 'claude' | 'codex' | 'grok' | 'opencode';
         /** The scope this session's own PR dispositions use: 'path:<cwd>'
          * inside a linked worktree, else 'session:<id>'. */
         pr_scope: string;

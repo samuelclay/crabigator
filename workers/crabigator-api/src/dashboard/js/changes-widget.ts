@@ -609,7 +609,7 @@ export const changesWidgetJs = `
         }
 
         function stripGeneratedTitleMarker(title) {
-            return String(title || '').replace(/^[⟁ᛝ]\s+/, '').trim();
+            return String(title || '').replace(/^[ᛝ⟁↯✦▣]+\\s+/, '').trim();
         }
 
         function sessionTitleHierarchy(sessionData, fallbackTitle = '') {
