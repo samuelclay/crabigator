@@ -1,0 +1,45 @@
+id = "crabigator.herdr"
+name = "Crabigator"
+version = "0.1.0"
+min_herdr_version = "0.8.2"
+description = "Start Crabigator in a pane and open its PR board"
+platforms = ["linux", "macos", "windows"]
+
+[[build]]
+command = ["sh", "build.sh"]
+
+[[actions]]
+id = "start"
+title = "Start Crabigator"
+contexts = ["workspace"]
+command = ["sh", "start.sh"]
+
+[[actions]]
+id = "start-claude"
+title = "Start Crabigator (Claude)"
+contexts = ["workspace"]
+command = ["sh", "start.sh", "claude"]
+
+[[actions]]
+id = "start-codex"
+title = "Start Crabigator (Codex)"
+contexts = ["workspace"]
+command = ["sh", "start.sh", "codex"]
+
+[[actions]]
+id = "start-opencode"
+title = "Start Crabigator (OpenCode)"
+contexts = ["workspace"]
+command = ["sh", "start.sh", "opencode"]
+
+[[actions]]
+id = "start-grok"
+title = "Start Crabigator (Grok)"
+contexts = ["workspace"]
+command = ["sh", "start.sh", "grok"]
+
+[[panes]]
+id = "prs"
+title = "Crabigator PRs"
+placement = "overlay"
+command = ["sh", "run.sh", "prs"]
