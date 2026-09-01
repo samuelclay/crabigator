@@ -122,6 +122,7 @@ impl Platform for OpencodePlatform {
         let state = self.shared.lock().unwrap_or_else(|p| p.into_inner());
         let mut stats = state.stats.clone();
         stats.transcript_path = Some(self.transcript_path.to_string_lossy().to_string());
+        stats.native_session_id = state.main_session.clone();
         Ok(stats)
     }
 

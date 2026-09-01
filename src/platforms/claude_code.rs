@@ -519,4 +519,14 @@ mod tests {
         assert!(path.to_string_lossy().starts_with("/tmp/crabigator-stats-"));
         assert!(path.to_string_lossy().ends_with(".json"));
     }
+
+    #[test]
+    fn reads_claude_session_id_as_native_session_id() {
+        let stats: crate::platforms::PlatformStats = serde_json::from_str(
+            r#"{"prompts":1,"completions":0,"subagent_messages":0,"compressions":0,"claude_session_id":"abc-uuid","state":"thinking"}"#,
+        )
+        .unwrap();
+        assert_eq!(stats.native_session_id.as_deref(), Some("abc-uuid"));
+        assert_eq!(stats.state, crate::platforms::SessionState::Thinking);
+    }
 }

@@ -511,6 +511,13 @@ impl Platform for CodexPlatform {
             set_last_updated(&mut state);
         }
         state.stats.transcript_path = Some(session_path.to_string_lossy().to_string());
+        if state.stats.native_session_id.is_none() {
+            if let Some(stem) = session_path.file_stem().and_then(|s| s.to_str()) {
+                if let Some(id) = stem.rsplit('-').next().filter(|part| part.len() >= 8) {
+                    state.stats.native_session_id = Some(id.to_string());
+                }
+            }
+        }
 
         Ok(state.stats.clone())
     }

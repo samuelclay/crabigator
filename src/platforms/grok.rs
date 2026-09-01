@@ -316,6 +316,7 @@ impl Platform for GrokPlatform {
                 .to_string_lossy()
                 .into_owned(),
         );
+        stats.native_session_id = state.linked_session.clone();
         Ok(stats)
     }
 }

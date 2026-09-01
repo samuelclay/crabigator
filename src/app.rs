@@ -139,6 +139,7 @@ pub struct App {
     pub git_state: GitState,
     pub diff_summary: DiffSummary,
     pub session_stats: SessionStats,
+    herdr: crate::herdr::HerdrReporter,
     pub last_mouse_event: Option<MouseEvent>,
 
     // Layout
@@ -345,6 +346,7 @@ impl App {
             git_state,
             diff_summary,
             session_stats,
+            herdr: crate::herdr::HerdrReporter::from_env(),
             last_mouse_event: None,
             total_rows: rows,
             total_cols: cols,
@@ -402,6 +404,8 @@ impl App {
             last_cwd_detection: Instant::now() - CWD_DETECTION_INTERVAL,
         };
         app.link_cloud_session();
+        app.herdr
+            .sync(&app.session_stats, app.platform.kind());
         Ok(app)
     }
 
@@ -1611,6 +1615,8 @@ impl App {
         let old_prompts = self.session_stats.platform_stats.prompts;
         self.session_stats
             .refresh_platform_stats(self.platform.as_ref(), &self.stats_cwd.to_string_lossy());
+        self.herdr
+            .sync(&self.session_stats, self.platform.kind());
         let new_effective_state = self.session_stats.effective_state();
         let new_last_updated = self.session_stats.platform_stats.last_updated;
         if self.session_stats.platform_stats.prompts > old_prompts {

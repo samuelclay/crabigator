@@ -142,6 +142,13 @@ pub fn update_from_log(state: &mut CodexState, line: &str) {
         "turn_context" => handle_turn_context(state, &value),
         "session_meta" => {
             set_state(state, SessionState::Ready);
+            if let Some(id) = value
+                .pointer("/payload/id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                state.stats.native_session_id = Some(id.to_string());
+            }
         }
         _ => {}
     }

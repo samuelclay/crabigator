@@ -225,6 +225,10 @@ pub struct PlatformStats {
     /// Path to Claude Code transcript JSONL file
     #[serde(default)]
     pub transcript_path: Option<String>,
+    /// Native assistant session id used to resume this conversation.
+    /// Claude's hook file stores this as `claude_session_id`.
+    #[serde(default, alias = "claude_session_id")]
+    pub native_session_id: Option<String>,
 }
 
 impl PlatformStats {

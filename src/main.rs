@@ -5,6 +5,7 @@ mod cli;
 mod cloud;
 mod config;
 mod git;
+mod herdr;
 mod hooks;
 mod ide;
 mod inspect;
