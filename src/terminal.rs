@@ -18,7 +18,7 @@ pub mod queries;
 pub mod redraw;
 
 pub use dsr::{DsrChunk, DsrHandler};
-pub use input::forward_key_to_pty;
+pub use input::{forward_key_to_pty, forward_mouse_to_pty};
 pub use osc::OscScanner;
 pub use pty::PlatformPty;
 pub use queries::QueryResponder;

@@ -1,10 +1,11 @@
 //! Input handling module
 //!
-//! Handles keyboard input encoding and forwarding to the PTY.
-//! Implements proper xterm escape sequences for all key combinations.
+//! Handles keyboard and mouse encoding and forwarding to the PTY.
+//! Implements proper xterm escape sequences for all key combinations
+//! and SGR (1006) mouse reports.
 
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use super::escape::key;
 use super::pty::PlatformPty;
@@ -13,6 +14,14 @@ use super::pty::PlatformPty;
 pub fn forward_key_to_pty(key: KeyEvent, pty: &mut PlatformPty) -> Result<()> {
     let bytes = encode_key(key);
     if !bytes.is_empty() {
+        pty.write(&bytes)?;
+    }
+    Ok(())
+}
+
+/// Forward a mouse event to the PTY as an SGR 1006 report.
+pub fn forward_mouse_to_pty(mouse: MouseEvent, pty: &mut PlatformPty, pty_rows: u16) -> Result<()> {
+    if let Some(bytes) = encode_mouse(mouse, pty_rows) {
         pty.write(&bytes)?;
     }
     Ok(())
@@ -189,5 +198,116 @@ fn encode_function_key(n: u8, has_modifiers: bool, modifier_code: u8) -> Vec<u8>
     } else {
         // F5-F12 without modifiers
         key::f5_f12(base_code)
+    }
+}
+
+/// Encode a mouse event as SGR 1006 (`CSI < Pb ; Px ; Py M/m`).
+/// Clicks and motion below `pty_rows` are dropped; wheel ticks there
+/// clamp to the last PTY row.
+fn encode_mouse(mouse: MouseEvent, pty_rows: u16) -> Option<Vec<u8>> {
+    let is_scroll = matches!(
+        mouse.kind,
+        MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight
+    );
+    if mouse.row >= pty_rows && !is_scroll {
+        return None;
+    }
+
+    let (mut button, release) = match mouse.kind {
+        MouseEventKind::Down(btn) => (sgr_button(btn), false),
+        MouseEventKind::Up(btn) => (sgr_button(btn), true),
+        MouseEventKind::Drag(btn) => (sgr_button(btn) + 32, false),
+        MouseEventKind::Moved => (35, false),
+        MouseEventKind::ScrollUp => (64, false),
+        MouseEventKind::ScrollDown => (65, false),
+        MouseEventKind::ScrollLeft => (66, false),
+        MouseEventKind::ScrollRight => (67, false),
+    };
+    if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+        button += 4;
+    }
+    if mouse.modifiers.contains(KeyModifiers::ALT) {
+        button += 8;
+    }
+    if mouse.modifiers.contains(KeyModifiers::CONTROL) {
+        button += 16;
+    }
+
+    let x = mouse.column.saturating_add(1);
+    let y = mouse.row.min(pty_rows.saturating_sub(1)).saturating_add(1);
+    let end = if release { 'm' } else { 'M' };
+    Some(format!("\x1b[<{button};{x};{y}{end}").into_bytes())
+}
+
+fn sgr_button(button: MouseButton) -> u16 {
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn wheel_up_is_sgr_button_64() {
+        let bytes = encode_mouse(mouse(MouseEventKind::ScrollUp, 4, 2), 20).unwrap();
+        assert_eq!(bytes, b"\x1b[<64;5;3M");
+    }
+
+    #[test]
+    fn wheel_down_is_sgr_button_65() {
+        let bytes = encode_mouse(mouse(MouseEventKind::ScrollDown, 0, 0), 20).unwrap();
+        assert_eq!(bytes, b"\x1b[<65;1;1M");
+    }
+
+    #[test]
+    fn left_click_press_and_release() {
+        let down = encode_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 9, 4), 20).unwrap();
+        let up = encode_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 9, 4), 20).unwrap();
+        assert_eq!(down, b"\x1b[<0;10;5M");
+        assert_eq!(up, b"\x1b[<0;10;5m");
+    }
+
+    #[test]
+    fn motion_and_drag_set_the_motion_bit() {
+        let moved = encode_mouse(mouse(MouseEventKind::Moved, 1, 1), 20).unwrap();
+        let drag = encode_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 1, 1), 20).unwrap();
+        assert_eq!(moved, b"\x1b[<35;2;2M");
+        assert_eq!(drag, b"\x1b[<32;2;2M");
+    }
+
+    #[test]
+    fn shift_adds_to_the_button_code() {
+        let mut event = mouse(MouseEventKind::ScrollUp, 0, 0);
+        event.modifiers = KeyModifiers::SHIFT;
+        let bytes = encode_mouse(event, 20).unwrap();
+        assert_eq!(bytes, b"\x1b[<68;1;1M");
+    }
+
+    #[test]
+    fn clicks_in_the_widget_area_are_dropped() {
+        assert!(encode_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 0, 20), 20).is_none());
+        assert!(encode_mouse(mouse(MouseEventKind::Moved, 3, 21), 20).is_none());
+    }
+
+    #[test]
+    fn wheel_over_the_widget_area_clamps_into_the_pty() {
+        let bytes = encode_mouse(mouse(MouseEventKind::ScrollUp, 7, 25), 20).unwrap();
+        assert_eq!(bytes, b"\x1b[<64;8;20M");
     }
 }
