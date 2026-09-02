@@ -736,6 +736,10 @@ impl Default for PrTracker {
 
 impl PrTracker {
     pub fn new() -> Self {
+        Self::with_slack_directory(load_slack_directory())
+    }
+
+    fn with_slack_directory(slack_directory: SlackDirectory) -> Self {
         Self {
             prs: Vec::new(),
             pending: HashMap::new(),
@@ -758,8 +762,21 @@ impl PrTracker {
             latest_prompt_slack: None,
             slack_threads: Vec::new(),
             pr_slack_threads: Vec::new(),
-            slack_directory: load_slack_directory(),
+            slack_directory,
         }
+    }
+
+    /// Forget everything learned from the conversation so far. Only state
+    /// that belongs to the pane rather than the conversation survives: cloud
+    /// dispositions, watch requests still waiting to post, and the Slack
+    /// directory. Called when the pane moves to a different conversation
+    /// (Codex `/new` or `/resume`, Claude Code `/clear`) so the previous
+    /// conversation's PRs and Slack threads stop showing under the new one.
+    pub fn reset_conversation(&mut self) {
+        let mut fresh = Self::with_slack_directory(std::mem::take(&mut self.slack_directory));
+        fresh.overrides = std::mem::take(&mut self.overrides);
+        fresh.pending_watch_adds = std::mem::take(&mut self.pending_watch_adds);
+        *self = fresh;
     }
 
     pub fn prs(&self) -> &[SessionPr] {
@@ -2310,6 +2327,51 @@ fn now_unix_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Switching the pane to another conversation drops that conversation's
+    /// PRs and Slack threads, while cloud dispositions and queued watch adds
+    /// stay with the pane. The next prompt is then scanned fresh.
+    #[test]
+    fn reset_conversation_forgets_the_conversation_but_keeps_pane_state() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_prompt(
+            "Investigate https://t.slack.com/archives/C0OLD/p1723500000000000 and track PR https://github.com/o/r/pull/5",
+            Path::new("/tmp"),
+        );
+        tracker.set_overrides(HashMap::from([(
+            "o/r#9".to_string(),
+            PrDisposition::Primary,
+        )]));
+        assert_eq!(tracker.prs().len(), 1);
+        assert_eq!(tracker.slack_threads().len(), 1);
+        assert!(tracker.session_slack_origin().is_some());
+
+        tracker.reset_conversation();
+
+        assert!(tracker.prs().is_empty());
+        assert!(tracker.slack_threads().is_empty());
+        assert!(tracker.pr_slack_threads().is_empty());
+        assert!(tracker.session_slack_origin().is_none());
+        assert_eq!(
+            tracker.overrides.get("o/r#9"),
+            Some(&PrDisposition::Primary),
+            "cloud dispositions belong to the pane"
+        );
+        assert_eq!(
+            tracker.take_watch_adds().len(),
+            1,
+            "queued watch adds still post"
+        );
+
+        tracker.scan_prompt(
+            "Look at https://t.slack.com/archives/C0NEW/p1723600000000000 next",
+            Path::new("/tmp"),
+        );
+        assert_eq!(tracker.slack_threads().len(), 1);
+        assert!(tracker
+            .session_slack_origin()
+            .is_some_and(|url| url.contains("C0NEW")));
+    }
 
     #[test]
     fn unenriched_retry_delay_doubles_then_caps() {

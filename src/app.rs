@@ -1608,6 +1608,22 @@ impl App {
         true
     }
 
+    /// The pane moved to a different conversation (Codex `/new` or `/resume`,
+    /// Claude Code `/clear`): the transcript path changed under a running
+    /// session. PRs and Slack threads belong to the conversation that
+    /// mentioned them, so drop them, start over from the checkout's own PR,
+    /// and tell the cloud so the dashboard and PR boards clear too. The next
+    /// transcript scan then reads the new conversation from its start.
+    fn on_conversation_switched(&mut self) {
+        self.pr_tracker.reset_conversation();
+        self.pr_tracker.resolve_current_branch(&self.cwd);
+        self.transcript_scan_cursor = None;
+        self.send_cloud_prs_event();
+        self.send_cloud_slack_threads_event();
+        self.send_cloud_pr_slack_threads_event();
+        self.last_status_bar_hash = None;
+    }
+
     /// Handle hook/stats refresh
     fn handle_hook_refresh(
         &mut self,
@@ -1617,11 +1633,19 @@ impl App {
         let old_effective_state = self.session_stats.effective_state();
         let old_last_updated = self.session_stats.platform_stats.last_updated;
         let old_prompts = self.session_stats.platform_stats.prompts;
+        let old_transcript = self.session_stats.platform_stats.transcript_path.clone();
         self.session_stats
             .refresh_platform_stats(self.platform.as_ref(), &self.stats_cwd.to_string_lossy());
         self.herdr.sync(&self.session_stats, self.platform.kind());
         let new_effective_state = self.session_stats.effective_state();
         let new_last_updated = self.session_stats.platform_stats.last_updated;
+        let new_transcript = self.session_stats.platform_stats.transcript_path.as_deref();
+        if old_transcript.is_some()
+            && new_transcript.is_some()
+            && old_transcript.as_deref() != new_transcript
+        {
+            self.on_conversation_switched();
+        }
         if self.session_stats.platform_stats.prompts > old_prompts {
             self.pr_tracker.on_prompt_observed();
         }
@@ -2036,11 +2060,11 @@ impl App {
         client.send_event(SessionEventBuilder::slack_threads(threads));
     }
 
-    /// Send the PR-attached Slack thread metadata whenever it grows or
-    /// resolves a name, so the web PR board labels links like the desktop.
+    /// Send the PR-attached Slack thread metadata whenever it grows, resolves
+    /// a name, or is cleared, so the web PR board labels links like the desktop.
     fn send_cloud_pr_slack_threads_event(&mut self) {
         let threads = self.pr_tracker.pr_slack_threads().to_vec();
-        if threads.is_empty() || threads == self.last_cloud_pr_slack_threads {
+        if threads == self.last_cloud_pr_slack_threads {
             return;
         }
         let Some(client) = self.cloud_client.as_mut() else {
