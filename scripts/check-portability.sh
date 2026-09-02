@@ -8,6 +8,7 @@ cd "$ROOT"
 
 if rg -n --hidden \
     --glob '!workers/crabigator-api/wrangler.jsonc' \
+    --glob '!workers/crabigator-api/wrangler.production.jsonc' \
     --glob '!scripts/check-portability.sh' \
     --glob '!.git/**' \
     'newsblur|20af5d7e521c82550b1ffe8705e981c5|884ae30b-0a93-4716-83f6-89f62a18156a|e35b69000ee445469639878d623139a5' \

@@ -271,7 +271,8 @@ workers/crabigator-api/
 │   ├── assets/                 # OG images
 │   └── types/                  # Shared TypeScript types
 ├── wrangler.example.jsonc      # Tracked, annotated Worker config template
-└── wrangler.jsonc              # Ignored active config with account resources and routes
+├── wrangler.production.jsonc   # Tracked config for the official drinkcrabigator.com deployment
+└── wrangler.jsonc              # Ignored local config for self-hosted deployments
 ```
 
 ### Commands
@@ -303,19 +304,21 @@ Queries the Cloudflare GraphQL API for worker requests, Durable Objects, and D1 
 
 ### Querying the D1 Database
 
-The D1 binding is `DB`. Deployment-specific values live in the ignored
-`workers/crabigator-api/wrangler.jsonc`; the tracked
-`workers/crabigator-api/wrangler.example.jsonc` is the public template.
+The D1 binding is `DB`. The official deployment's config is the tracked
+`workers/crabigator-api/wrangler.production.jsonc`; the tracked
+`workers/crabigator-api/wrangler.example.jsonc` is the public template, and a
+self-hosted copy lives in the ignored `workers/crabigator-api/wrangler.jsonc`.
 
-Use `WRANGLER_CONFIG` and `WRANGLER_PROFILE` when the active config or account
-profile is not the default.
+The official account is not the default wrangler profile, so pass its profile
+with `--profile` (the `/deploy` command carries the name). Use `WRANGLER_CONFIG`
+and `WRANGLER_PROFILE` with the `make` targets for the same reason.
 
 ```bash
 # Query production database
-wrangler d1 execute DB --remote --config workers/crabigator-api/wrangler.jsonc --command "SELECT * FROM page_views LIMIT 5"
+wrangler d1 execute DB --remote --config workers/crabigator-api/wrangler.production.jsonc --profile <official-profile> --command "SELECT * FROM page_views LIMIT 5"
 
 # Example: Traffic sources by referrer domain
-wrangler d1 execute DB --remote --config workers/crabigator-api/wrangler.jsonc --command "
+wrangler d1 execute DB --remote --config workers/crabigator-api/wrangler.production.jsonc --profile <official-profile> --command "
 SELECT referrer_domain, COUNT(DISTINCT visitor_id) as visitors
 FROM page_views
 WHERE created_at > strftime('%s', 'now', '-30 days')

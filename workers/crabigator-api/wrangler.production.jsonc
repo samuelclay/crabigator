@@ -1,0 +1,95 @@
+{
+  // Config for the official drinkcrabigator.com deployment. Tracked so every
+  // machine deploys the same settings; it only works with the NewsBlur
+  // Cloudflare account's wrangler profile:
+  //   WRANGLER_CONFIG=wrangler.production.jsonc WRANGLER_PROFILE=newsblur make deploy
+  // Self-hosters: copy wrangler.example.jsonc to the ignored wrangler.jsonc instead.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "crabigator-api",
+  "account_id": "20af5d7e521c82550b1ffe8705e981c5",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "crabigator",
+      "database_id": "884ae30b-0a93-4716-83f6-89f62a18156a",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    { "binding": "TOKENS", "id": "e35b69000ee445469639878d623139a5" }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "SESSION", "class_name": "SessionDO" },
+      { "name": "SESSION_LIST", "class_name": "SessionListDO" },
+      { "name": "USAGE", "class_name": "UsageDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["SessionDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["SessionListDO"] },
+    { "tag": "v3", "deleted_classes": ["SessionListDO"] },
+    { "tag": "v4", "new_sqlite_classes": ["SessionListDO"] },
+    { "tag": "v5", "new_sqlite_classes": ["UsageDO"] }
+  ],
+
+  "triggers": {
+    // Every 5 minutes: zombie session cleanup. Daily 6 AM UTC: npm stats and traffic alerts.
+    "crons": ["*/5 * * * *", "0 6 * * *"]
+  },
+
+  "routes": [
+    { "pattern": "drinkcrabigator.com/api/*", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/dashboard*", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/pair/*", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/staff*", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/pr-action*", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/assets/*", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/", "zone_name": "drinkcrabigator.com" }
+  ],
+
+  "vars": {
+    "API_VERSION": "v1",
+    "APP_CONFIG": {
+      "public_origin": "https://drinkcrabigator.com",
+      "features": {
+        "transcription": true,
+        "billing": true,
+        "gifts": true,
+        "outbound_email": true,
+        "marketing_analytics": true,
+        "traffic_alerts": true,
+        "staff": true
+      },
+      "billing": {
+        "visible_session_limit": 3,
+        "price_display": "$3",
+        "price_period": "per month",
+        "stripe_mode": "live",
+        "paypal_mode": "live"
+      },
+      "email": {
+        "mailgun_domain": "email.drinkcrabigator.com",
+        "from": "Crabigator <gifts@drinkcrabigator.com>",
+        "traffic_alert_recipient": "gifts@drinkcrabigator.com"
+      },
+      "marketing": {
+        "meta_pixel_id": "386521575130337"
+      },
+      "operations": {
+        "billing_cycle_day": 6
+      }
+    }
+  },
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

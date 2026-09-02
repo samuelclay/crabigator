@@ -101,7 +101,7 @@ Steps:
 
 10. **Deploy the Cloudflare Worker.**
    ```
-   make deploy
+   WRANGLER_CONFIG=wrangler.production.jsonc WRANGLER_PROFILE=newsblur make deploy
    ```
    This publishes any Worker/dashboard code that landed in the release. Capture the deployed Worker version ID from the output when available.
 

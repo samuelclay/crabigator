@@ -266,8 +266,12 @@ in the template. Removing old entries can break an existing deployment.
 You can select another config or Wrangler profile without editing scripts:
 
 ```bash
-WRANGLER_CONFIG=wrangler.production.jsonc WRANGLER_PROFILE=my-profile npm run deploy
+WRANGLER_CONFIG=wrangler.staging.jsonc WRANGLER_PROFILE=my-profile npm run deploy
 ```
+
+`wrangler.production.jsonc` is the official drinkcrabigator.com deployment's
+config. It is tracked as a working reference, but it names that account's
+resources and routes, so it only deploys with that account's Wrangler profile.
 
 ### 4. Connect the desktop
 
