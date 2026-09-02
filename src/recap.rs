@@ -1131,9 +1131,7 @@ fn codex_custom_tool_output_text(payload: &Value) -> String {
 }
 
 fn is_codex_bootstrap(text: &str) -> bool {
-    text.contains("<INSTRUCTIONS>")
-        || text.contains("<environment_context>")
-        || text.contains("# AGENTS.md instructions")
+    crate::platforms::codex_cli::is_injected_user_message(text)
 }
 
 fn push_section(out: &mut String, label: &str, text: &str) {
@@ -1583,6 +1581,30 @@ mod tests {
         format!(
             r#"{{"type":"response_item","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"{text}"}}]}}}}"#
         )
+    }
+
+    /// A `$skill` reference makes Codex log the skill body as a user-role
+    /// message right after the prompt. The turn still belongs to the prompt
+    /// the user typed, and the skill body is not activity.
+    #[test]
+    fn skill_body_after_the_prompt_keeps_the_typed_prompt() {
+        let transcript = format!(
+            "{}\n{}\n{}\n",
+            codex_user(
+                "Investigate https://t.slack.com/archives/C0NEW/p1723600000000000, use $commit-pr"
+            ),
+            codex_user("<skill><name>commit-pr</name><path>/skills/commit-pr/SKILL.md</path>"),
+            codex_assistant("On it.")
+        );
+        let turn = collect_codex_latest_turn(&transcript);
+        assert_eq!(
+            turn.user_prompt.as_deref(),
+            Some(
+                "Investigate https://t.slack.com/archives/C0NEW/p1723600000000000, use $commit-pr"
+            )
+        );
+        assert!(turn.activity.contains("On it."));
+        assert!(!turn.activity.contains("<skill>"));
     }
 
     #[test]

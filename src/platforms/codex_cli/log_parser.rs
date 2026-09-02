@@ -363,14 +363,36 @@ fn clear_active_prompt(state: &mut CodexState) {
     state.stats.permission = None;
 }
 
-/// Check if a message is a bootstrap message (should not count as user prompt)
+/// Check if a user-role message was written by Codex itself (should not count as a user prompt)
 fn is_bootstrap_message(payload: &serde_json::Map<String, Value>) -> bool {
-    let Some(text) = response_item_text(payload) else {
-        return false;
-    };
+    response_item_text(payload).is_some_and(|text| is_injected_user_message(&text))
+}
+
+/// Opening tags of the user-role messages Codex writes on its own behalf
+/// during a conversation. Most arrive once at session start; `<skill>` is
+/// appended right after any prompt that names a `$skill`, carrying the skill
+/// file so the model can follow it.
+const INJECTED_MESSAGE_TAGS: &[&str] = &[
+    "<skill>",
+    "<skills_instructions>",
+    "<apps_instructions>",
+    "<plugins_instructions>",
+    "<permissions instructions>",
+    "<collaboration_mode>",
+    "<multi_agent_mode>",
+];
+
+/// Whether a user-role message in a Codex rollout was written by Codex rather
+/// than typed by the user: bootstrap instructions, environment context, mode
+/// switches, and skill bodies. Shared by the stats parser, the transcript
+/// writer, and the recap turn collector so all three agree on what a prompt is.
+pub(crate) fn is_injected_user_message(text: &str) -> bool {
     text.contains("<INSTRUCTIONS>")
         || text.contains("<environment_context>")
         || text.contains("# AGENTS.md instructions")
+        || INJECTED_MESSAGE_TAGS
+            .iter()
+            .any(|tag| text.trim_start().starts_with(tag))
 }
 
 /// Extract text content from a response_item payload
@@ -416,6 +438,51 @@ pub fn reset_state(state: &mut CodexState, path: PathBuf, session_started_at: Op
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn user_message(text: &str) -> String {
+        json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": text}]
+            }
+        })
+        .to_string()
+    }
+
+    /// Codex appends the body of any `$skill` the prompt names as a second
+    /// user-role message. Only the typed prompt counts.
+    #[test]
+    fn skill_bodies_and_mode_notices_do_not_count_as_prompts() {
+        let mut state = CodexState::default();
+        update_from_log(
+            &mut state,
+            &user_message("<permissions instructions>\nsandbox"),
+        );
+        update_from_log(&mut state, &user_message("<collaboration_mode># Default"));
+        update_from_log(&mut state, &user_message("fix the hover, use $commit-pr"));
+        update_from_log(
+            &mut state,
+            &user_message(
+                "<skill>\n<name>commit-pr</name>\n<path>/skills/commit-pr/SKILL.md</path>",
+            ),
+        );
+        assert_eq!(state.stats.prompts, 1);
+    }
+
+    #[test]
+    fn injected_user_messages_are_recognized_by_their_opening_tag() {
+        assert!(is_injected_user_message("<skill>\n<name>x</name>"));
+        assert!(is_injected_user_message("  <multi_agent_mode>off"));
+        assert!(is_injected_user_message(
+            "# AGENTS.md instructions for /repo\n<INSTRUCTIONS>"
+        ));
+        assert!(!is_injected_user_message("write a <skill> tag parser"));
+        assert!(!is_injected_user_message(
+            "<image name=[Image #1] path=/tmp/a.png>"
+        ));
+    }
 
     #[test]
     fn tracks_permission_prompt_for_escalated_tool_calls() {

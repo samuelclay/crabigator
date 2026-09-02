@@ -93,7 +93,7 @@ fn format_message(payload: &Map<String, Value>) -> String {
     }
 
     match role {
-        Some("user") if !is_bootstrap_message(trimmed) => format!(
+        Some("user") if !super::is_injected_user_message(trimmed) => format!(
             "\n{}{}> {}{}\n",
             colors::BOLD,
             colors::GREEN,
@@ -114,12 +114,6 @@ fn message_text(payload: &Map<String, Value>) -> String {
         .filter_map(|part| part.get("text").and_then(Value::as_str))
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn is_bootstrap_message(text: &str) -> bool {
-    text.contains("<INSTRUCTIONS>")
-        || text.contains("<environment_context>")
-        || text.contains("# AGENTS.md instructions")
 }
 
 fn format_tool_call(payload: &Map<String, Value>) -> String {
@@ -274,6 +268,11 @@ mod tests {
         .unwrap();
         writeln!(
             transcript,
+            r#"{{"type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"<skill>\n<name>status</name>\n<path>/skills/status/SKILL.md</path>"}}]}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            transcript,
             r#"{{"type":"response_item","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"Checking now."}}]}}}}"#
         )
         .unwrap();
@@ -287,6 +286,10 @@ mod tests {
         let mut pending = HashMap::new();
         let (first, offset) = read_transcript(transcript.path(), 0, &mut pending).unwrap();
         assert!(!first.contains("environment_context"));
+        assert!(
+            !first.contains("<skill>"),
+            "skill bodies are Codex's, not the user's"
+        );
         assert!(first.contains("> show the status"));
         assert!(first.contains("● Checking now."));
         assert!(first.contains("● exec_command"));

@@ -5,6 +5,8 @@
 mod log_parser;
 pub mod transcript;
 
+pub(crate) use log_parser::is_injected_user_message;
+
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
