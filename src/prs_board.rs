@@ -1014,6 +1014,9 @@ fn merge_slack_thread(merged: &mut Vec<SlackThread>, candidate: SlackThread) {
         if existing.author.is_none() {
             existing.author = candidate.author;
         }
+        if existing.text.is_none() {
+            existing.text = candidate.text;
+        }
     } else {
         merged.push(candidate);
     }
@@ -6717,24 +6720,28 @@ mod tests {
                 posted_at: 1_723_500_000,
                 channel: Some("builder".to_string()),
                 author: Some("Sam Clay".to_string()),
+                text: None,
             },
             SlackThread {
                 url: "https://t.slack.com/archives/C2/p1723500000000001".to_string(),
                 posted_at: 1_723_500_001,
                 channel: Some("pr-reviews".to_string()),
                 author: Some("Mango".to_string()),
+                text: None,
             },
             SlackThread {
                 url: "https://t.slack.com/archives/C3/p1723500000000002".to_string(),
                 posted_at: 1_723_500_002,
                 channel: Some("builder-dev".to_string()),
                 author: Some("Kapil".to_string()),
+                text: None,
             },
             SlackThread {
                 url: "https://t.slack.com/archives/C4/p1723500000000003".to_string(),
                 posted_at: 1_723_500_003,
                 channel: Some("deployments".to_string()),
                 author: Some("Ivy".to_string()),
+                text: None,
             },
         ];
         let entries = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
@@ -6824,6 +6831,7 @@ mod tests {
             posted_at: 1_723_500_000,
             channel: Some("deployments-and-releases".to_string()),
             author: Some("Samuel Clay".to_string()),
+            text: None,
         }];
         let entries = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
 
@@ -7775,6 +7783,7 @@ mod tests {
             posted_at: message[..10].parse().unwrap(),
             channel: channel.map(str::to_string),
             author: author.map(str::to_string),
+            text: None,
         };
         let threads = vec![
             thread("1754404040123456", Some("C1"), None),
@@ -7785,6 +7794,7 @@ mod tests {
                 posted_at: 1_754_404_070,
                 channel: Some("C2".into()),
                 author: None,
+                text: None,
             },
         ];
 

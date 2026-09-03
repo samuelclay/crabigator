@@ -3115,6 +3115,7 @@ mod tests {
         assert_eq!(thread.url, url);
         assert_eq!(thread.channel.as_deref(), Some("dogfood"));
         assert_eq!(thread.author.as_deref(), Some("Jared Vishno"));
+        assert_eq!(thread.text.as_deref(), Some("message"));
     }
 
     #[test]
