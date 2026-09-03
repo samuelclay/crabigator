@@ -300,6 +300,8 @@ fn get_timezone_offset() -> i32 {
 pub fn get_cli_version(command: &str) -> Option<String> {
     std::process::Command::new(command)
         .arg("--version")
+        // Never let the probe touch the terminal the session is running in.
+        .stdin(std::process::Stdio::null())
         .output()
         .ok()
         .and_then(|output| {

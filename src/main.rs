@@ -59,6 +59,10 @@ use crate::update::{
 /// with the fresh settings file when it does.
 const HOOK_INSTALL_GRACE: Duration = Duration::from_millis(300);
 
+/// How long the background update check waits before probing the assistant's
+/// version, so the probe never runs while the assistant itself is booting.
+const UPDATE_CHECK_DELAY: Duration = Duration::from_secs(2);
+
 fn setup_terminal() -> Result<(u16, u16)> {
     let mut stdout = stdout();
     let (cols, rows) = terminal_size()?;
@@ -405,10 +409,14 @@ fn start_update_check(
     };
 
     // Spawn only after the prompt so a fresh dismissal isn't overwritten by
-    // the check saving its own copy of the cache.
+    // the check saving its own copy of the cache. The check waits until the
+    // assistant has finished starting: probing its version launches a second
+    // copy of its binary, and two copies booting at once is a race the CLI
+    // was never asked to handle. Telemetry is not urgent.
     let command = platform_kind.command();
     let (tx, rx) = oneshot::channel();
     tokio::spawn(async move {
+        tokio::time::sleep(UPDATE_CHECK_DELAY).await;
         let cli_version = tokio::task::spawn_blocking(move || get_cli_version(command))
             .await
             .ok()
