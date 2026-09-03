@@ -156,7 +156,7 @@ pub fn compute_dynamic_status_rows(
             diff_summary,
             changes_w,
             titles.row_count(),
-            slack_threads.len(),
+            slack_threads,
         ));
     // A short terminal can leave fewer rows than MIN_STATUS_ROWS; keep the
     // lower bound at or below the upper bound so `clamp` never panics.

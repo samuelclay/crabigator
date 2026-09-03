@@ -62,6 +62,9 @@ pub const RESET_BOLD: &str = "\x1b[22m";
 /// Dim/faint text
 pub const DIM: &str = "\x1b[2m";
 
+/// Italic text
+pub const ITALIC: &str = "\x1b[3m";
+
 /// Underline text
 pub const UNDERLINE: &str = "\x1b[4m";
 

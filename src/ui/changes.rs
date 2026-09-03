@@ -11,11 +11,15 @@ use anyhow::Result;
 use crate::ide::IdeKind;
 use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges, NodeKind};
 use crate::slack::{compact_display_label, SlackThread};
-use crate::terminal::escape::{self, color, fg, hyperlink, RESET};
+use crate::terminal::escape::{self, color, fg, hyperlink, ITALIC, RESET};
 use crate::title::SessionTitleHierarchy;
 
+use super::pr_cells::truncate_to_width;
 use super::utils::{digit_count, strip_ansi_len, truncate_middle, truncate_path};
 use super::WidgetArea;
+
+/// Columns the message snippet is indented from the Slack link above it.
+const SLACK_SNIPPET_INDENT: usize = 2;
 
 /// Priority order for node kinds (lower = higher priority, appears first)
 fn kind_priority(kind: &NodeKind) -> u8 {
@@ -97,11 +101,12 @@ pub fn changes_natural_rows(
     diff_summary: &DiffSummary,
     available_width: u16,
     title_rows: u16,
-    slack_thread_count: usize,
+    slack_threads: &[SlackThread],
 ) -> u16 {
+    let slack_rows = slack_row_count(slack_threads);
     let langs = diff_summary.by_language();
     if langs.is_empty() {
-        return (title_rows + slack_thread_count as u16).max(1);
+        return (title_rows + slack_rows).max(1);
     }
 
     // Average packed-item width: modifier + icon + truncated name (≤20) + " ±N".
@@ -126,8 +131,32 @@ pub fn changes_natural_rows(
     // Titles claim their own top rows. Without them the first language header
     // doubles as the top row, so no extra row is needed.
     rows = rows.saturating_add(title_rows);
-    rows = rows.saturating_add(slack_thread_count as u16);
+    rows = rows.saturating_add(slack_rows);
     rows
+}
+
+/// What the Slack block shows on a given row below the titles: a thread's
+/// link, or the message snippet that follows a link when the text is known.
+enum SlackRow<'a> {
+    Link(&'a SlackThread),
+    Snippet(&'a SlackThread, &'a str),
+}
+
+/// Every row the Slack block draws, in order: each thread's link, followed
+/// by its message snippet when the text is known.
+fn slack_rows(threads: &[SlackThread]) -> impl Iterator<Item = SlackRow<'_>> {
+    threads.iter().flat_map(|thread| {
+        std::iter::once(SlackRow::Link(thread)).chain(
+            thread
+                .text
+                .as_deref()
+                .map(|text| SlackRow::Snippet(thread, text)),
+        )
+    })
+}
+
+fn slack_row_count(threads: &[SlackThread]) -> u16 {
+    u16::try_from(slack_rows(threads).count()).unwrap_or(u16::MAX)
 }
 
 /// Draw the changes widget at the given position
@@ -154,7 +183,7 @@ pub fn draw_changes_widget(
     let by_language = diff_summary.by_language();
 
     let title_rows = titles.row_count();
-    let prefix_rows = title_rows.saturating_add(slack_threads.len() as u16);
+    let prefix_rows = title_rows.saturating_add(slack_row_count(slack_threads));
 
     // The primary PR title is the official top line. The assistant's automatic
     // title stays directly below it, or takes the top line when there is no PR.
@@ -185,11 +214,22 @@ pub fn draw_changes_widget(
 
     let slack_start_row = title_rows + 1;
     if area.row >= slack_start_row {
-        let slack_idx = (area.row - slack_start_row) as usize;
-        if let Some(thread) = slack_threads.get(slack_idx) {
-            let trimmed = compact_display_label(thread, inner_width_usize);
-            let linked = hyperlink(&thread.url, &trimmed);
-            let row = format!("{}{}{}", fg(color::CYAN), linked, RESET);
+        let offset = (area.row - slack_start_row) as usize;
+        if let Some(slack_row) = slack_rows(slack_threads).nth(offset) {
+            let row = match slack_row {
+                SlackRow::Link(thread) => {
+                    let label = compact_display_label(thread, inner_width_usize);
+                    format!(
+                        "{}{}{}",
+                        fg(color::CYAN),
+                        hyperlink(&thread.url, &label),
+                        RESET
+                    )
+                }
+                SlackRow::Snippet(thread, text) => {
+                    slack_snippet_row(thread, text, inner_width_usize)
+                }
+            };
             write_padded_row(stdout, &row, inner_width_usize)?;
             return Ok(());
         }
@@ -259,6 +299,23 @@ pub fn draw_changes_widget(
     write!(stdout, " ")?;
 
     Ok(())
+}
+
+/// The message snippet under a Slack link: indented, italic, and muted so it
+/// reads as a quote, cut at the column edge, and clickable like the link.
+fn slack_snippet_row(thread: &SlackThread, text: &str, width: usize) -> String {
+    let snippet = truncate_to_width(text, width.saturating_sub(SLACK_SNIPPET_INDENT));
+    if snippet.is_empty() {
+        return String::new();
+    }
+    format!(
+        "{}{}{}{}{}",
+        " ".repeat(SLACK_SNIPPET_INDENT),
+        ITALIC,
+        fg(color::GRAY),
+        hyperlink(&thread.url, &snippet),
+        RESET
+    )
 }
 
 fn write_padded_row(stdout: &mut Stdout, content: &str, width: usize) -> Result<()> {
@@ -625,4 +682,62 @@ fn pack_items_into_rows(items: &[FormattedItem], max_width: usize) -> Vec<Packed
     }
 
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn thread(url: &str, text: Option<&str>) -> SlackThread {
+        SlackThread {
+            url: url.to_string(),
+            posted_at: 1_754_404_040,
+            channel: Some("builder".to_string()),
+            author: Some("Elisa".to_string()),
+            text: text.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn snippet_rows_follow_their_link_and_count_toward_the_widget_height() {
+        let threads = vec![
+            thread(
+                "https://t.slack.com/archives/C1/p1754404040000001",
+                Some("first message"),
+            ),
+            thread("https://t.slack.com/archives/C1/p1754404040000002", None),
+            thread(
+                "https://t.slack.com/archives/C1/p1754404040000003",
+                Some("third message"),
+            ),
+        ];
+        assert_eq!(slack_row_count(&threads), 5);
+
+        let describe = |offset: usize| match slack_rows(&threads).nth(offset) {
+            Some(SlackRow::Link(thread)) => format!("link {}", &thread.url[thread.url.len() - 1..]),
+            Some(SlackRow::Snippet(_, text)) => format!("snippet {text}"),
+            None => "none".to_string(),
+        };
+        assert_eq!(describe(0), "link 1");
+        assert_eq!(describe(1), "snippet first message");
+        assert_eq!(describe(2), "link 2");
+        assert_eq!(describe(3), "link 3");
+        assert_eq!(describe(4), "snippet third message");
+        assert_eq!(describe(5), "none");
+    }
+
+    #[test]
+    fn snippet_row_is_indented_italic_and_cut_at_the_column_edge() {
+        let thread = thread(
+            "https://t.slack.com/archives/C1/p1754404040000001",
+            Some("It looks like phx4.5 faces have their voices displayed as Haiyao"),
+        );
+        let row = slack_snippet_row(&thread, thread.text.as_deref().unwrap(), 30);
+        assert!(row.starts_with(&format!("  {ITALIC}")));
+        assert!(row.contains("It looks like phx4.5 faces …"));
+        assert!(row.contains(&thread.url));
+        assert_eq!(strip_ansi_len(&row), 30);
+
+        assert!(slack_snippet_row(&thread, "text", 2).is_empty());
+    }
 }
