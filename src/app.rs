@@ -619,6 +619,11 @@ impl App {
     /// region, PTY ioctl — kicks Claude out of the bad state; a bare PTY
     /// resize alone is not enough. The user sees a one-frame flicker at
     /// startup, but the session renders correctly from that point on.
+    /// How the assistant CLI exited, if the main loop saw it exit.
+    pub fn assistant_exit_status(&self) -> Option<portable_pty::ExitStatus> {
+        self.platform_pty.exit_status()
+    }
+
     fn startup_resize_nudge(&mut self) -> Result<()> {
         let orig_rows = self.total_rows;
         if orig_rows >= 2 && self.pty_rows >= 2 {

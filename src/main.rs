@@ -311,7 +311,7 @@ async fn main() -> Result<()> {
     };
     timer.duration("setup terminal", begin.elapsed());
 
-    let (result, final_rows) = {
+    let (result, final_rows, assistant_exit) = {
         let begin = Instant::now();
         let platform = platforms::platform_for(platform_kind);
         let app_result = App::new(
@@ -334,7 +334,7 @@ async fn main() -> Result<()> {
                 let run_result = app.run().await;
                 timer.duration("app.run", begin.elapsed());
                 let total_rows = app.total_rows;
-                (run_result, total_rows)
+                (run_result, total_rows, app.assistant_exit_status())
             }
             Err(e) => {
                 let _ = restore_terminal(rows);
@@ -376,6 +376,16 @@ async fn main() -> Result<()> {
         }
         4 => println!("Warning: Hook installation thread panicked."),
         _ => {}
+    }
+
+    // An assistant that died on its own is the one thing the session end line
+    // cannot show; name it so a startup failure is not mistaken for ours.
+    if let Some(status) = assistant_exit.filter(|status| !status.success()) {
+        println!(
+            "Warning: {} exited with status {}.",
+            platform_kind.display_name(),
+            status.exit_code()
+        );
     }
 
     // Print session end line with platform and date (get fresh terminal width)

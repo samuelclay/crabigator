@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, ExitStatus, MasterPty, PtySize};
 use std::env;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -11,6 +11,8 @@ pub struct PlatformPty {
     parser: vt100::Parser,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
+    /// How the child exited, recorded the first time `is_running` sees it gone.
+    exit_status: Arc<Mutex<Option<ExitStatus>>>,
     #[allow(dead_code)]
     scroll_offset: usize,
 }
@@ -92,6 +94,7 @@ impl PlatformPty {
             parser,
             writer,
             child,
+            exit_status: Arc::new(Mutex::new(None)),
             scroll_offset: 0,
         })
     }
@@ -100,10 +103,18 @@ impl PlatformPty {
         let mut child = self.child.lock().unwrap();
         // try_wait returns Ok(Some(status)) if exited, Ok(None) if still running
         match child.try_wait() {
-            Ok(Some(_)) => false,
+            Ok(Some(status)) => {
+                *self.exit_status.lock().unwrap() = Some(status);
+                false
+            }
             Ok(None) => true,
             Err(_) => false,
         }
+    }
+
+    /// The child's exit status, once `is_running` has observed the exit.
+    pub fn exit_status(&self) -> Option<ExitStatus> {
+        self.exit_status.lock().unwrap().clone()
     }
 
     #[allow(dead_code)]
@@ -162,10 +173,18 @@ impl PlatformPty {
     }
 
     pub fn write(&mut self, data: &[u8]) -> Result<()> {
-        let mut writer = self.writer.lock().unwrap();
-        writer.write_all(data)?;
-        writer.flush()?;
-        Ok(())
+        let result = {
+            let mut writer = self.writer.lock().unwrap();
+            writer.write_all(data).and_then(|()| writer.flush())
+        };
+        match result {
+            Ok(()) => Ok(()),
+            // Writes fail with EIO once the child has closed its end of the
+            // PTY. The main loop notices the exit on its next pass and shuts
+            // down normally, so drop the bytes instead of failing the session.
+            Err(_) if !self.is_running() => Ok(()),
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) -> Result<()> {
