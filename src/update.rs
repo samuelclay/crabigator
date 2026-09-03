@@ -445,6 +445,23 @@ pub fn dismiss_version(version: &str) -> Result<()> {
     cache.save()
 }
 
+/// Build an update-check result from the local version cache alone.
+///
+/// Startup uses this to decide about the update prompt without waiting on the
+/// network; the live check runs in the background and refreshes the cache for
+/// the next launch. Returns `None` when no version has been cached yet.
+pub fn cached_update_check() -> Option<UpdateCheckResult> {
+    let cache = VersionCache::load();
+    let latest = cache.latest_version.clone()?;
+    Some(UpdateCheckResult {
+        update_available: is_newer_version(&latest, CURRENT_VERSION),
+        was_dismissed: cache.dismissed_version.as_deref() == Some(latest.as_str()),
+        new_version: Some(latest),
+        current_version: CURRENT_VERSION.to_string(),
+        release_url: cache.release_url,
+    })
+}
+
 /// Compare two semver versions, returns true if `new` is newer than `current`
 fn is_newer_version(new: &str, current: &str) -> bool {
     let parse_version = |s: &str| -> (u32, u32, u32) {

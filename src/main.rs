@@ -41,14 +41,23 @@ use std::io::{stdout, Write};
 use std::panic;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
+use tokio::sync::oneshot;
 
 use crate::app::App;
 use crate::banner::{print_session_banner, print_session_end_line};
 use crate::cli::{parse_args, resolve_platform, CloudCommand, Command, DebugTimer};
 use crate::config::Config;
+use crate::platforms::PlatformKind;
 use crate::update::{
-    check_for_update, detect_install_method, dismiss_version, get_cli_version, UpdateState,
+    cached_update_check, check_for_update, detect_install_method, dismiss_version, get_cli_version,
+    UpdateCheckResult, UpdateState,
 };
+
+/// How long to let a hook reinstall finish before spawning the assistant.
+/// The usual version check takes well under a millisecond; only an actual
+/// reinstall after an upgrade takes longer, and the assistant should start
+/// with the fresh settings file when it does.
+const HOOK_INSTALL_GRACE: Duration = Duration::from_millis(300);
 
 fn setup_terminal() -> Result<(u16, u16)> {
     let mut stdout = stdout();
@@ -271,11 +280,21 @@ async fn main() -> Result<()> {
     let (cols, _) = terminal_size()?;
     print_session_banner(&session_id, platform_kind, cols);
 
-    // Get CLI version for telemetry (quick, runs in ~10ms)
-    let cli_version = get_cli_version(platform_kind.command());
+    // Make sure the device identity exists before any background task needs
+    // it, so two tasks can't each generate a different one on first launch.
+    let _ = cloud::DeviceIdentity::load_or_create();
 
-    // Check for updates before entering raw mode (non-blocking modal prompt)
-    let update_state = check_and_prompt_for_update(cli_version).await;
+    // Decide about the update prompt from the local cache (instant) and
+    // refresh that cache over the network in the background.
+    let begin = Instant::now();
+    let (update_state, pending_update_check) = start_update_check(platform_kind);
+    timer.duration("update check (cached)", begin.elapsed());
+
+    let begin = Instant::now();
+    while timer.hook_state.load(Ordering::SeqCst) < 2 && begin.elapsed() < HOOK_INSTALL_GRACE {
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    timer.duration("hook install wait", begin.elapsed());
 
     let begin = Instant::now();
     let (cols, rows) = match setup_terminal() {
@@ -298,6 +317,7 @@ async fn main() -> Result<()> {
             args.platform_args,
             args.capture,
             update_state,
+            pending_update_check,
         )
         .await;
         timer.duration("App::new", begin.elapsed());
@@ -361,37 +381,49 @@ async fn main() -> Result<()> {
     result
 }
 
-/// Check for updates and show modal prompt if available
-/// Returns UpdateState to pass to the app for banner display
-async fn check_and_prompt_for_update(cli_version: Option<String>) -> UpdateState {
-    // Load config to check if updates are enabled
+/// Decide about the update prompt without touching the network.
+///
+/// The version cache from the previous launch answers instantly: a newer
+/// cached version shows the modal prompt (or the banner, if already dismissed).
+/// The live check then runs in the background — it records session telemetry
+/// and refreshes the cache — and its result reaches the app through the
+/// returned receiver so a newly found update still gets a banner this session.
+fn start_update_check(
+    platform_kind: PlatformKind,
+) -> (UpdateState, Option<oneshot::Receiver<UpdateCheckResult>>) {
     let config = Config::load().unwrap_or_default();
     if !config.check_for_updates {
-        return UpdateState::default();
+        return (UpdateState::default(), None);
     }
 
-    // Spawn background task to check for updates
-    let check_handle = tokio::spawn(async move { check_for_update(cli_version).await });
-
-    // Wait briefly for result (don't block startup too long)
-    let result = tokio::time::timeout(Duration::from_millis(500), check_handle).await;
-
-    let check_result = match result {
-        Ok(Ok(Ok(r))) => r,
-        _ => return UpdateState::default(), // Timeout or error, skip update check
+    let state = match cached_update_check() {
+        Some(result) if result.update_available && !result.was_dismissed => {
+            prompt_for_update(&result)
+        }
+        Some(result) if result.update_available => UpdateState::from_check(&result, true),
+        _ => UpdateState::default(),
     };
 
-    // No update available
-    if !check_result.update_available {
-        return UpdateState::default();
-    }
+    // Spawn only after the prompt so a fresh dismissal isn't overwritten by
+    // the check saving its own copy of the cache.
+    let command = platform_kind.command();
+    let (tx, rx) = oneshot::channel();
+    tokio::spawn(async move {
+        let cli_version = tokio::task::spawn_blocking(move || get_cli_version(command))
+            .await
+            .ok()
+            .flatten();
+        if let Ok(result) = check_for_update(cli_version).await {
+            let _ = tx.send(result);
+        }
+    });
 
-    // User already dismissed this version
-    if check_result.was_dismissed {
-        return UpdateState::from_check(&check_result, true);
-    }
+    (state, Some(rx))
+}
 
-    // Show modal prompt
+/// Show the "Update now?" modal for a known-newer version and return the
+/// state the app should display afterwards.
+fn prompt_for_update(check_result: &UpdateCheckResult) -> UpdateState {
     let version = check_result.new_version.as_deref().unwrap_or("unknown");
     let current = crate::update::CURRENT_VERSION;
     let install_method = detect_install_method();
@@ -482,12 +514,12 @@ async fn check_and_prompt_for_update(cli_version: Option<String>) -> UpdateState
                 }
             }
             // Continue with current version, show banner
-            UpdateState::from_check(&check_result, true)
+            UpdateState::from_check(check_result, true)
         }
         _ => {
             // User said no or timeout - dismiss this version and show banner
             let _ = dismiss_version(version);
-            UpdateState::from_check(&check_result, true)
+            UpdateState::from_check(check_result, true)
         }
     }
 }

@@ -12,11 +12,11 @@ use futures_util::StreamExt;
 use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::interval;
 
 use crate::capture::{screen_to_string, CaptureConfig, CaptureManager, ScrollbackUpdate};
-use crate::cloud::{CloudClient, PairingStatusResponse, SessionEventBuilder};
+use crate::cloud::{CloudClient, PairingSnapshot, PairingStatusResponse, SessionEventBuilder};
 use crate::config::Config;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
@@ -36,7 +36,7 @@ use crate::ui::{
     compute_dynamic_status_rows, draw_status_bar, handoff_rows, split_terminal_rows,
     throbber_frame_index, Layout, PairingState,
 };
-use crate::update::UpdateState;
+use crate::update::{UpdateCheckResult, UpdateState};
 
 /// Time PTY must be quiet before drawing status bar (prevents mid-burst draws)
 const PTY_SETTLE_TIME: Duration = Duration::from_millis(30);
@@ -250,7 +250,13 @@ pub struct App {
     /// Last cloud init attempt time
     last_cloud_init_attempt: Option<Instant>,
     /// Pending cloud init result
-    pending_cloud_init: Option<std::sync::mpsc::Receiver<anyhow::Result<CloudClient>>>,
+    pending_cloud_init: Option<oneshot::Receiver<anyhow::Result<CloudClient>>>,
+    /// Pairing snapshot (linked devices, pairing code) fetched after the
+    /// cloud session registers; applied when it lands.
+    pending_pairing_init: Option<oneshot::Receiver<PairingSnapshot>>,
+    /// Live update check started before raw mode; a newly found update turns
+    /// into the handoff banner when the result arrives.
+    pending_update_check: Option<oneshot::Receiver<UpdateCheckResult>>,
     /// Last time the PTY screen was scanned for a cwd status-line update
     last_cwd_detection: Instant,
 }
@@ -263,12 +269,15 @@ impl App {
         platform_args: Vec<String>,
         capture_enabled: bool,
         update_state: UpdateState,
+        pending_update_check: Option<oneshot::Receiver<UpdateCheckResult>>,
     ) -> Result<Self> {
         let (pty_tx, pty_rx) = mpsc::channel(256);
 
         let pairing_state = PairingState::default();
         let recap_manager = RecapManager::load();
+        crate::cli::profile_mark("App::new: recap manager loaded");
         let pr_tracker = PrTracker::new();
+        crate::cli::profile_mark("App::new: PR tracker created");
         let initial_handoff_rows = handoff_rows(
             cols,
             &pairing_state,
@@ -286,6 +295,7 @@ impl App {
         let platform_args = platform.spawn_args(platform_args);
         let platform_pty =
             PlatformPty::new(pty_tx, cols, pty_rows, platform.command(), platform_args).await?;
+        crate::cli::profile_mark("App::new: assistant CLI spawned in PTY");
         let git_state = GitState::new();
         let diff_summary = DiffSummary::new();
         let session_stats = SessionStats::new();
@@ -316,6 +326,7 @@ impl App {
         // group's other sessions.
         let pr_path_scope = crate::git::worktree_pr_scope(&cwd);
         mirror_publisher.set_pr_scope(pr_path_scope.clone());
+        crate::cli::profile_mark("App::new: config/ide/mirror/worktree scope ready");
 
         // Create capture manager for output streaming
         // Must match PTY dimensions for escape sequences to work correctly
@@ -324,20 +335,12 @@ impl App {
             session_id: session_id.clone(),
         };
         let capture_manager = CaptureManager::new(capture_config, platform.kind(), cols, pty_rows)?;
+        crate::cli::profile_mark("App::new: capture manager ready");
         let platform_strips_alt_screen = platform.uses_alt_screen();
 
         // Note: We don't pre-initialize transcript_path on startup because we can't
         // reliably determine which session is being resumed. Platform stats provide
         // the correct transcript_path once the assistant starts.
-
-        // Initialize cloud client (optional - don't fail if cloud is unreachable)
-        let cloud_client = Self::init_cloud_client(
-            &session_id,
-            &cwd_str,
-            platform.as_ref(),
-            pr_path_scope.as_deref(),
-        )
-        .await;
 
         let mut app = Self {
             running: true,
@@ -355,6 +358,8 @@ impl App {
             cwd: cwd.clone(),
             stats_cwd: cwd,
             pr_path_scope,
+            // Registered in the background by spawn_cloud_init below.
+            cloud_client: None,
             ide,
             pty_rx,
             mirror_publisher,
@@ -369,7 +374,6 @@ impl App {
             title_history: Vec::new(),
             initial_git_time_ms: None,
             initial_diff_time_ms: None,
-            cloud_client,
             last_cloud_state: None,
             last_cloud_scrollback_lines: 0,
             last_cloud_title: None,
@@ -401,9 +405,13 @@ impl App {
             cloud_init_retry_count: 0,
             last_cloud_init_attempt: None,
             pending_cloud_init: None,
+            pending_pairing_init: None,
+            pending_update_check,
             last_cwd_detection: Instant::now() - CWD_DETECTION_INTERVAL,
         };
-        app.link_cloud_session();
+        // Cloud registration is three network round trips; run it in the
+        // background so the assistant's first screen never waits on it.
+        app.spawn_cloud_init();
         app.herdr.sync(&app.session_stats, app.platform.kind());
         Ok(app)
     }
@@ -438,48 +446,131 @@ impl App {
         self.mirror_publisher.set_cloud_session_id(cloud_id);
     }
 
-    /// Initialize cloud client - returns None if cloud is unreachable
+    /// Register this session with the cloud: device, then session, then the
+    /// event WebSocket. Runs as a background task (see `spawn_cloud_init`).
     async fn init_cloud_client(
-        session_id: &str,
-        cwd: &str,
-        platform: &dyn Platform,
-        pr_scope: Option<&str>,
-    ) -> Option<CloudClient> {
-        // Try to create cloud client
-        let mut client = match CloudClient::new() {
-            Ok(c) => c,
-            Err(e) => {
-                // Style: dim gray label, red X, dim error
-                eprintln!(
-                    "\x1b[38;5;245m     Cloud\x1b[0m  \x1b[38;5;203m✗\x1b[0m \x1b[2m{}\x1b[0m",
-                    e
-                );
-                return None;
-            }
-        };
+        session_id: String,
+        cwd: String,
+        platform: String,
+        pr_scope: Option<String>,
+    ) -> anyhow::Result<CloudClient> {
+        let mut client = CloudClient::new()?;
+        client
+            .register_session(&session_id, &cwd, &platform, pr_scope.as_deref())
+            .await?;
+        Ok(client)
+    }
 
-        // Try to register session with cloud
-        match client
-            .register_session(session_id, cwd, platform.kind().as_str(), pr_scope)
-            .await
-        {
-            Ok(cloud_session_id) => {
-                // Style: dim gray label, green checkmark, dim session ID
-                eprintln!(
-                    "\x1b[38;5;245m     Cloud\x1b[0m  \x1b[38;5;114m✓\x1b[0m \x1b[2m{}\x1b[0m",
-                    cloud_session_id
-                );
-                Some(client)
-            }
-            Err(e) => {
-                // Style: dim gray label, red X, dim error
-                eprintln!(
-                    "\x1b[38;5;245m     Cloud\x1b[0m  \x1b[38;5;203m✗\x1b[0m \x1b[2m{}\x1b[0m",
-                    e
-                );
-                None
+    /// Start cloud registration on the runtime and remember the receiver;
+    /// `poll_startup_tasks` adopts the client when it arrives. Spawning on the
+    /// main runtime keeps the WebSocket tasks alive for the whole session.
+    fn spawn_cloud_init(&mut self) {
+        let session_id = self.session_id.clone();
+        let cwd = self.cwd.to_string_lossy().to_string();
+        let platform = self.platform.kind().as_str().to_string();
+        let pr_scope = self.pr_path_scope.clone();
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let result = Self::init_cloud_client(session_id, cwd, platform, pr_scope).await;
+            let _ = tx.send(result);
+        });
+        self.pending_cloud_init = Some(rx);
+    }
+
+    /// Take a freshly registered cloud client into service and catch it up on
+    /// anything that happened while it was connecting.
+    fn adopt_cloud_client(&mut self, client: CloudClient) {
+        self.cloud_client = Some(client);
+        self.link_cloud_session();
+        self.cloud_init_retry_count = 0;
+        let current_state = self.session_stats.effective_state();
+        self.send_cloud_state_event(current_state);
+        if let Some(title) = self.display_title.clone() {
+            self.send_cloud_title_event(title);
+        }
+        self.send_cloud_slack_threads_event();
+        self.spawn_pairing_init();
+        crate::cli::profile_mark("cloud: client adopted by main loop");
+    }
+
+    /// Fetch linked devices and a pairing code in the background; the status
+    /// bar shows the code once `poll_startup_tasks` applies the snapshot.
+    fn spawn_pairing_init(&mut self) {
+        if let Some(ref client) = self.cloud_client {
+            self.pending_pairing_init = Some(client.spawn_pairing_snapshot());
+        }
+    }
+
+    /// True while any background startup task is still running.
+    fn has_pending_startup_tasks(&self) -> bool {
+        self.pending_cloud_init.is_some()
+            || self.pending_pairing_init.is_some()
+            || self.pending_update_check.is_some()
+    }
+
+    /// Collect finished background startup work: cloud registration, the
+    /// pairing snapshot, and the live update check. Returns true when the
+    /// status bar has something new to show.
+    fn poll_startup_tasks(&mut self) -> bool {
+        use oneshot::error::TryRecvError;
+        let mut changed = false;
+
+        if let Some(rx) = self.pending_cloud_init.as_mut() {
+            match rx.try_recv() {
+                Ok(Ok(client)) => {
+                    self.pending_cloud_init = None;
+                    self.adopt_cloud_client(client);
+                    changed = true;
+                }
+                Ok(Err(e)) => {
+                    self.pending_cloud_init = None;
+                    crate::cli::profile_mark(&format!("cloud: registration failed: {e}"));
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Closed) => self.pending_cloud_init = None,
             }
         }
+
+        if let Some(rx) = self.pending_pairing_init.as_mut() {
+            match rx.try_recv() {
+                Ok(snapshot) => {
+                    self.pending_pairing_init = None;
+                    if let Some(linked) = snapshot.has_linked_devices {
+                        self.pairing_state.has_linked_devices = linked;
+                    }
+                    if let Some(pairing) = snapshot.pairing {
+                        self.pairing_state.pairing_token = Some(pairing.token);
+                        self.pairing_state.pairing_code = Some(pairing.code);
+                    }
+                    changed = true;
+                    crate::cli::profile_mark("cloud: pairing snapshot applied");
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Closed) => self.pending_pairing_init = None,
+            }
+        }
+
+        if let Some(rx) = self.pending_update_check.as_mut() {
+            match rx.try_recv() {
+                Ok(result) => {
+                    self.pending_update_check = None;
+                    // The modal is only possible before raw mode, so a newly
+                    // found update shows as the banner for this session.
+                    if result.update_available && !self.update_state.update_available {
+                        self.update_state = UpdateState::from_check(&result, true);
+                        changed = true;
+                    }
+                    crate::cli::profile_mark("update check: live result applied");
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Closed) => self.pending_update_check = None,
+            }
+        }
+
+        if changed {
+            self.last_status_bar_hash = None;
+        }
+        changed
     }
 
     /// Set scroll region to constrain PTY output to top area
@@ -589,9 +680,11 @@ impl App {
 
         // Initial status bar draw (shows "loading" state for git widgets)
         self.draw_status_bar()?;
+        crate::cli::profile_mark("run: scroll region + first status bar drawn");
 
-        // Initialize pairing state (check for linked devices, generate token if needed)
-        self.init_pairing().await;
+        // Background startup work (cloud registration, pairing, update check)
+        // is collected on this tick, which stays quiet once everything landed.
+        let mut startup_poll = interval(Duration::from_millis(50));
 
         // Channel for receiving background git refresh results
         let (git_tx, mut git_rx) = mpsc::channel::<GitRefreshResult>(1);
@@ -625,6 +718,11 @@ impl App {
         let startup_nudge = tokio::time::sleep(Duration::from_millis(600));
         tokio::pin!(startup_nudge);
         let mut startup_nudged = false;
+        // Startup-trace markers; pre-set when profiling is off so the
+        // per-chunk prompt scan never runs.
+        let mut profiled_first_pty_write = !crate::cli::profiling_enabled();
+        let mut profiled_prompt_visible = profiled_first_pty_write;
+        crate::cli::profile_mark("run: main loop started");
 
         // Event-driven main loop using tokio::select!
         // This replaces the polling loop - we only wake up when something actually happens
@@ -642,17 +740,34 @@ impl App {
             );
 
             tokio::select! {
+                // Adopt background startup results as soon as they land.
+                _ = startup_poll.tick(), if self.has_pending_startup_tasks() => {
+                    if self.poll_startup_tasks() && last_pty_output.elapsed() >= PTY_SETTLE_TIME {
+                        self.draw_status_bar()?;
+                        last_status_draw = Instant::now();
+                    }
+                }
+
                 // One-shot startup resize nudge (works around Claude Code
                 // rendering regression; see startup_resize_nudge).
                 () = &mut startup_nudge, if !startup_nudged => {
                     self.startup_resize_nudge()?;
                     startup_nudged = true;
+                    crate::cli::profile_mark("run: startup resize nudge sent");
                 }
 
                 // PTY output - highest priority, handle immediately
                 Some(data) = self.pty_rx.recv() => {
                     self.write_pty_output(&data)?;
                     last_pty_output = Instant::now();
+                    if !profiled_first_pty_write {
+                        profiled_first_pty_write = true;
+                        crate::cli::profile_mark("run: first PTY output written to terminal");
+                    }
+                    if !profiled_prompt_visible && data.windows(3).any(|w| w == "\u{276F}".as_bytes()) {
+                        profiled_prompt_visible = true;
+                        crate::cli::profile_mark("run: assistant prompt (\u{276F}) reached terminal");
+                    }
 
                     // Don't draw status bar here - let status_draw_interval handle it
                     // after PTY output settles. This prevents drawing mid-burst.
@@ -719,6 +834,9 @@ impl App {
                     self.git_state = result.git_state;
                     self.diff_summary = result.diff_summary;
                     git_refresh_pending = false;
+                    if self.initial_git_time_ms.is_none() {
+                        crate::cli::profile_mark("run: first git refresh result applied");
+                    }
 
                     // Stream git + changes snapshot to cloud
                     if self.cloud_viewers_active {
@@ -843,9 +961,13 @@ impl App {
                     // Check for commands from cloud
                     self.check_cloud_commands()?;
 
-                    // Retry cloud init if client is None and we haven't exceeded max retries
-                    // Retry every 30s, up to 10 times (5 minutes total)
-                    if self.cloud_client.is_none() && self.cloud_init_retry_count < 10 {
+                    // Retry cloud registration while no attempt is in flight:
+                    // every 30s, up to 10 times (5 minutes total). Results are
+                    // adopted by poll_startup_tasks.
+                    if self.cloud_client.is_none()
+                        && self.pending_cloud_init.is_none()
+                        && self.cloud_init_retry_count < 10
+                    {
                         let should_retry = match self.last_cloud_init_attempt {
                             None => true,
                             Some(last) => last.elapsed() > Duration::from_secs(30),
@@ -853,48 +975,7 @@ impl App {
                         if should_retry {
                             self.last_cloud_init_attempt = Some(Instant::now());
                             self.cloud_init_retry_count += 1;
-                            let session_id = self.session_id.clone();
-                            let cwd_str = self.cwd.to_string_lossy().to_string();
-                            let platform_kind = self.platform.kind().as_str().to_string();
-                            let pr_scope = self.pr_path_scope.clone();
-
-                            // Spawn async cloud init in background thread (non-blocking)
-                            let (tx, rx) = std::sync::mpsc::channel();
-                            std::thread::spawn(move || {
-                                let rt = tokio::runtime::Builder::new_current_thread()
-                                    .enable_all()
-                                    .build();
-                                if let Ok(rt) = rt {
-                                    let result = rt.block_on(async {
-                                        let mut client = crate::cloud::CloudClient::new()?;
-                                        client.register_session(&session_id, &cwd_str, &platform_kind, pr_scope.as_deref()).await?;
-                                        Ok::<_, anyhow::Error>(client)
-                                    });
-                                    let _ = tx.send(result);
-                                }
-                            });
-                            // Store the receiver to check on next tick
-                            self.pending_cloud_init = Some(rx);
-                        }
-                    }
-
-                    // Check for pending cloud init result
-                    if let Some(ref rx) = self.pending_cloud_init {
-                        if let Ok(result) = rx.try_recv() {
-                            self.pending_cloud_init = None;
-                            if let Ok(client) = result {
-                                self.cloud_client = Some(client);
-                                self.link_cloud_session();
-                                self.cloud_init_retry_count = 0; // Reset on success
-                                // Send current state immediately - state changes may have
-                                // occurred before the cloud client was ready
-                                let current_state = self.session_stats.effective_state();
-                                self.send_cloud_state_event(current_state);
-                                if let Some(title) = self.display_title.clone() {
-                                    self.send_cloud_title_event(title);
-                                }
-                                self.send_cloud_slack_threads_event();
-                            }
+                            self.spawn_cloud_init();
                         }
                     }
 
@@ -2427,30 +2508,6 @@ impl App {
     // ========================================
     // Pairing Methods
     // ========================================
-
-    /// Initialize pairing state on startup
-    /// Checks for existing linked devices and always generates pairing token
-    async fn init_pairing(&mut self) {
-        let Some(ref client) = self.cloud_client else {
-            return;
-        };
-
-        // Check for existing linked devices (for stats display)
-        if let Ok(response) = client.get_linked_devices().await {
-            self.pairing_state.has_linked_devices = !response.devices.is_empty();
-        }
-
-        // ALWAYS generate a pairing token (allows adding more devices)
-        match client.generate_pairing_token().await {
-            Ok(response) => {
-                self.pairing_state.pairing_token = Some(response.token);
-                self.pairing_state.pairing_code = Some(response.code);
-            }
-            Err(_) => {
-                // Silently fail - pairing widget won't show
-            }
-        }
-    }
 
     /// Poll pairing status periodically (non-blocking)
     fn maybe_poll_pairing(&mut self) {

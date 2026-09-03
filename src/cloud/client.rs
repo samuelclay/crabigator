@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 
 use super::device::DeviceIdentity;
 use super::endpoints::CloudEndpoints;
@@ -504,6 +505,7 @@ impl CloudClient {
     ) -> Result<String> {
         // Ensure device is registered first
         self.register_device().await?;
+        crate::cli::profile_mark("cloud: device registered");
 
         #[derive(Serialize)]
         struct CreateSessionRequest {
@@ -544,9 +546,11 @@ impl CloudClient {
 
         let data: CreateSessionResponse = response.json().await?;
         self.session_id = Some(data.id.clone());
+        crate::cli::profile_mark("cloud: session registered");
 
         // Connect WebSocket
         self.connect_websocket(&data.ws_url).await?;
+        crate::cli::profile_mark("cloud: websocket connected");
 
         // Drain any queued events
         self.drain_queue();
@@ -1049,27 +1053,29 @@ impl CloudClient {
 
     /// Generate a pairing token for mobile device linking
     pub async fn generate_pairing_token(&self) -> Result<PairingTokenResponse> {
-        let url = format!("{}/pairing/generate", self.api_url);
-        let headers = self.device.auth_headers("POST", "/api/pairing/generate")?;
+        generate_pairing_token(&self.http, &self.api_url, &self.device).await
+    }
 
-        let mut req = self.http.post(&url);
-        for (key, value) in headers {
-            req = req.header(&key, &value);
-        }
-
-        let response = req
-            .send()
-            .await
-            .with_context(|| "Failed to generate pairing token")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Failed to generate pairing token: {} - {}", status, body);
-        }
-
-        let data: PairingTokenResponse = response.json().await?;
-        Ok(data)
+    /// Fetch the pairing snapshot (linked devices plus a fresh pairing code)
+    /// as a detached task. The two requests run concurrently and the caller
+    /// picks the result up from the returned receiver, so the main loop never
+    /// waits on them.
+    pub fn spawn_pairing_snapshot(&self) -> oneshot::Receiver<PairingSnapshot> {
+        let http = self.http.clone();
+        let api_url = self.api_url.clone();
+        let device = self.device.clone();
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let (devices, pairing) = tokio::join!(
+                get_linked_devices(&http, &api_url, &device),
+                generate_pairing_token(&http, &api_url, &device),
+            );
+            let _ = tx.send(PairingSnapshot {
+                has_linked_devices: devices.ok().map(|r| !r.devices.is_empty()),
+                pairing: pairing.ok(),
+            });
+        });
+        rx
     }
 
     /// Poll pairing status to check if mobile device has claimed the token
@@ -1097,31 +1103,6 @@ impl CloudClient {
         }
 
         let data: PairingStatusResponse = response.json().await?;
-        Ok(data)
-    }
-
-    /// Get list of linked mobile devices
-    pub async fn get_linked_devices(&self) -> Result<LinkedDevicesResponse> {
-        let url = format!("{}/devices/linked", self.api_url);
-        let headers = self.device.auth_headers("GET", "/api/devices/linked")?;
-
-        let mut req = self.http.get(&url);
-        for (key, value) in headers {
-            req = req.header(&key, &value);
-        }
-
-        let response = req
-            .send()
-            .await
-            .with_context(|| "Failed to get linked devices")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Failed to get linked devices: {} - {}", status, body);
-        }
-
-        let data: LinkedDevicesResponse = response.json().await?;
         Ok(data)
     }
 
@@ -1190,4 +1171,69 @@ pub struct LinkedDevice {
     pub mobile_id: String,
     pub mobile_name: Option<String>,
     pub paired_at: u64,
+}
+
+/// Pairing state fetched once a session is registered: whether any device is
+/// already linked, and a fresh token/code for linking another.
+pub struct PairingSnapshot {
+    /// `None` when the linked-devices request failed.
+    pub has_linked_devices: Option<bool>,
+    /// `None` when the token request failed; the pairing widget stays hidden.
+    pub pairing: Option<PairingTokenResponse>,
+}
+
+async fn generate_pairing_token(
+    http: &HttpClient,
+    api_url: &str,
+    device: &DeviceIdentity,
+) -> Result<PairingTokenResponse> {
+    let url = format!("{}/pairing/generate", api_url);
+    let headers = device.auth_headers("POST", "/api/pairing/generate")?;
+
+    let mut req = http.post(&url);
+    for (key, value) in headers {
+        req = req.header(&key, &value);
+    }
+
+    let response = req
+        .send()
+        .await
+        .with_context(|| "Failed to generate pairing token")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("Failed to generate pairing token: {} - {}", status, body);
+    }
+
+    let data: PairingTokenResponse = response.json().await?;
+    Ok(data)
+}
+
+async fn get_linked_devices(
+    http: &HttpClient,
+    api_url: &str,
+    device: &DeviceIdentity,
+) -> Result<LinkedDevicesResponse> {
+    let url = format!("{}/devices/linked", api_url);
+    let headers = device.auth_headers("GET", "/api/devices/linked")?;
+
+    let mut req = http.get(&url);
+    for (key, value) in headers {
+        req = req.header(&key, &value);
+    }
+
+    let response = req
+        .send()
+        .await
+        .with_context(|| "Failed to get linked devices")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("Failed to get linked devices: {} - {}", status, body);
+    }
+
+    let data: LinkedDevicesResponse = response.json().await?;
+    Ok(data)
 }

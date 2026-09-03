@@ -16,7 +16,7 @@ mod websocket;
 pub use client::{
     add_watched_pr_standalone, fetch_pr_board_standalone, fetch_pr_overrides_standalone,
     fetch_watched_prs_standalone, relay_watched_pr_stats_standalone, CloudBoard, CloudClient,
-    CloudStatus, CloudWatchedPr, PairingStatusResponse,
+    CloudStatus, CloudWatchedPr, PairingSnapshot, PairingStatusResponse,
 };
 pub use device::DeviceIdentity;
 pub use endpoints::{print_cloud_status, reset_cloud, set_cloud, CloudEndpoints};
