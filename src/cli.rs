@@ -4,8 +4,8 @@
 //! and debug timing infrastructure.
 
 use std::env;
-use std::sync::atomic::AtomicU8;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
@@ -300,65 +300,92 @@ pub fn save_platform_preference(platform: PlatformKind) -> anyhow::Result<()> {
     config.set_default_platform(platform.as_str())
 }
 
+/// Process-wide startup trace shared by every module.
+///
+/// `DebugTimer` (below) is the handle `main` owns; `profile_mark` lets any
+/// module drop a timestamped line into the same trace without plumbing the
+/// timer through constructors. Both are no-ops unless `--profile` is set.
+struct ProfileStore {
+    start: Instant,
+    logs: Mutex<Vec<String>>,
+}
+
+static PROFILE: OnceLock<ProfileStore> = OnceLock::new();
+static PROFILE_ENABLED: AtomicBool = AtomicBool::new(false);
+
+fn profile_store() -> &'static ProfileStore {
+    PROFILE.get_or_init(|| ProfileStore {
+        start: Instant::now(),
+        logs: Mutex::new(Vec::new()),
+    })
+}
+
+/// Whether `--profile` is active for this run.
+pub fn profiling_enabled() -> bool {
+    PROFILE_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Record a startup-trace line. Cheap when profiling is off (one atomic load).
+pub fn profile_mark(msg: &str) {
+    if !PROFILE_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let store = profile_store();
+    let line = format!("+{:>6}ms  {}", store.start.elapsed().as_millis(), msg);
+    store
+        .logs
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .push(line);
+}
+
 /// Startup trace for measuring performance.
 /// Enabled with --profile. Dumps to stdout after terminal restore.
 #[derive(Clone)]
 pub struct DebugTimer {
     enabled: bool,
-    start: Instant,
-    logs: Arc<Mutex<Vec<String>>>,
     pub hook_state: Arc<AtomicU8>,
     pub hook_error: Arc<Mutex<Option<String>>>,
 }
 
 impl DebugTimer {
     pub fn new(enabled: bool) -> Self {
+        PROFILE_ENABLED.store(enabled, Ordering::Relaxed);
+        if enabled {
+            // Anchor the trace clock now, before anything else runs.
+            let _ = profile_store();
+        }
         Self {
             enabled,
-            start: Instant::now(),
-            logs: Arc::new(Mutex::new(Vec::new())),
             hook_state: Arc::new(AtomicU8::new(0)),
             hook_error: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn log(&self, msg: &str) {
-        if !self.enabled {
-            return;
-        }
-        self.push_line(format!(
-            "+{:>6}ms  {}",
-            self.start.elapsed().as_millis(),
-            msg
-        ));
+        profile_mark(msg);
     }
 
     pub fn duration(&self, label: &str, duration: Duration) {
         if !self.enabled {
             return;
         }
-        self.push_line(format!(
-            "+{:>6}ms  {:<28} {:>6}ms",
-            self.start.elapsed().as_millis(),
-            label,
-            duration.as_millis()
-        ));
+        profile_mark(&format!("{:<28} {:>6}ms", label, duration.as_millis()));
     }
 
     pub fn set_hook_error(&self, error: String) {
         *self.hook_error.lock().unwrap_or_else(|p| p.into_inner()) = Some(error);
     }
 
-    fn push_line(&self, line: String) {
-        let mut guard = self.logs.lock().unwrap_or_else(|p| p.into_inner());
-        guard.push(line);
-    }
-
     pub fn dump(&self) {
         if !self.enabled {
             return;
         }
-        let lines = self.logs.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let lines = profile_store()
+            .logs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
         if lines.is_empty() {
             return;
         }

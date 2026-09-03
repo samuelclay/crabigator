@@ -125,6 +125,7 @@ impl PlatformPty {
     async fn read_loop(reader: Box<dyn Read + Send>, tx: mpsc::Sender<Vec<u8>>) {
         // Wrap reader in Arc<Mutex> so it can be shared with spawn_blocking
         let reader = Arc::new(Mutex::new(reader));
+        let mut first_read = true;
 
         loop {
             let reader_clone = Arc::clone(&reader);
@@ -143,6 +144,10 @@ impl PlatformPty {
 
             match read_result {
                 Ok(Some(data)) => {
+                    if first_read {
+                        first_read = false;
+                        crate::cli::profile_mark("pty: first bytes from assistant CLI");
+                    }
                     if tx.send(data).await.is_err() {
                         break;
                     }
