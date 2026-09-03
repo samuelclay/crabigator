@@ -254,8 +254,8 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     margin-top: 6px;
     padding-top: 6px;
 }
-.slack-thread {
-    color: #58d6ff;
+.slack-thread,
+.slack-thread-text {
     font-size: 10px;
     line-height: 1.35;
     overflow: hidden;
@@ -263,7 +263,15 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.slack-thread:hover { text-decoration: underline; }
+.slack-thread { color: #58d6ff; }
+.slack-thread-text {
+    color: #8b949e;
+    font-style: italic;
+    margin-top: -2px;
+    padding-left: 10px;
+}
+.slack-thread:hover,
+.slack-thread-text:hover { text-decoration: underline; }
 
 /* Stack widgets for multi-column layouts */
 .container[data-layout="2"] .widgets-content,

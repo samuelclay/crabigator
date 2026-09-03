@@ -221,6 +221,8 @@ export interface SlackThread {
     posted_at: number;
     channel?: string;
     author?: string;
+    /** The message body on one line, once the desktop has read the thread. */
+    text?: string;
 }
 
 export interface SlackThreadsEvent {

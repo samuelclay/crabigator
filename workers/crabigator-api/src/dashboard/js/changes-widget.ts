@@ -81,8 +81,15 @@ export const changesWidgetJs = `
                 const channelLabel = channel ? '#' + channel : '';
                 const details = [date, channelLabel, thread.author].filter(Boolean).join(' · ');
                 const label = details ? 'Slack · ' + details : 'Slack';
-                return '<a class="slack-thread" href="' + escapeHtml(thread.url) + '" target="_blank" rel="noopener">'
+                const href = escapeHtml(thread.url);
+                const link = '<a class="slack-thread" href="' + href + '" target="_blank" rel="noopener">'
                     + escapeHtml(label) + '</a>';
+                const text = escapeHtml(String(thread.text || '').trim());
+                const snippet = text
+                    ? '<a class="slack-thread-text" href="' + href + '" target="_blank" rel="noopener" title="'
+                        + text + '">' + text + '</a>'
+                    : '';
+                return link + snippet;
             }).join('');
             return '<div class="slack-threads">' + rows + '</div>';
         }
