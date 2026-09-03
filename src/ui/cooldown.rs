@@ -71,11 +71,7 @@ pub(crate) fn tint_for_age(age_ms: u64) -> Option<Tint> {
 /// Paint `text` in its normal `color` on the tint's background, leaving the
 /// row's colors untouched afterwards.
 pub(crate) fn tint_text(text: &str, tint: Tint, color: u8) -> String {
-    format!(
-        "{}{}{text}{RESET_BG}{RESET_FG}",
-        bg_rgb(tint.bg),
-        fg(color)
-    )
+    format!("{}{}{text}{RESET_BG}{RESET_FG}", bg_rgb(tint.bg), fg(color))
 }
 
 /// Tints for a PR row's GitHub status cells.

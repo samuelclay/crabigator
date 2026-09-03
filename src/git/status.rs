@@ -454,13 +454,40 @@ mod tests {
             assert!(output.status.success(), "git {args:?} failed");
         };
         git(&["init", "-q"], &main);
-        git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"], &main);
+        git(
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+            &main,
+        );
 
-        assert_eq!(worktree_pr_scope(&main), None, "main checkout has no path scope");
+        assert_eq!(
+            worktree_pr_scope(&main),
+            None,
+            "main checkout has no path scope"
+        );
         assert_eq!(worktree_pr_scope(temp.path()), None, "non-repo dir");
 
         let linked = temp.path().join("linked");
-        git(&["worktree", "add", "-q", linked.to_str().unwrap(), "-b", "scoped"], &main);
+        git(
+            &[
+                "worktree",
+                "add",
+                "-q",
+                linked.to_str().unwrap(),
+                "-b",
+                "scoped",
+            ],
+            &main,
+        );
         assert_eq!(
             worktree_pr_scope(&linked),
             Some(format!("path:{}", linked.display()))

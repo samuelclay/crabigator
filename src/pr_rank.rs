@@ -42,12 +42,7 @@ impl ScopedOverrides {
 
     /// The disposition one session sees for a PR: its own session scope beats
     /// its worktree-path scope beats the group-wide row.
-    pub fn for_session(
-        &self,
-        key: &str,
-        session_id: &str,
-        cwd: &str,
-    ) -> Option<PrDisposition> {
+    pub fn for_session(&self, key: &str, session_id: &str, cwd: &str) -> Option<PrDisposition> {
         let scopes = self.rows.get(key)?;
         let find = |wanted: String| {
             scopes
@@ -58,7 +53,11 @@ impl ScopedOverrides {
         (!session_id.is_empty())
             .then(|| find(format!("session:{session_id}")))
             .flatten()
-            .or_else(|| (!cwd.is_empty()).then(|| find(format!("path:{cwd}"))).flatten())
+            .or_else(|| {
+                (!cwd.is_empty())
+                    .then(|| find(format!("path:{cwd}")))
+                    .flatten()
+            })
             .or_else(|| find(String::new()))
     }
 

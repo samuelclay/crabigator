@@ -790,9 +790,10 @@ mod tests {
         // A primary's star links to the demote action.
         let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
         let cells = pr_left_cells(&pr, &widths);
-        assert!(cells[0]
-            .0
-            .contains(&format!("\x1b]8;;{}\x07★", pr_action_url(&pr, "secondary", ""))));
+        assert!(cells[0].0.contains(&format!(
+            "\x1b]8;;{}\x07★",
+            pr_action_url(&pr, "secondary", "")
+        )));
     }
 
     #[test]
@@ -924,7 +925,10 @@ mod tests {
         let url = pr_action_url(&pr, "dismissed", "session:abc-123");
         assert!(url.ends_with("&scope=session%3Aabc-123"), "{url}");
         let url = pr_action_url(&pr, "dismissed", "path:/Users/sam/work tree");
-        assert!(url.ends_with("&scope=path%3A/Users/sam/work%20tree"), "{url}");
+        assert!(
+            url.ends_with("&scope=path%3A/Users/sam/work%20tree"),
+            "{url}"
+        );
         // No scope means the old group-wide link, byte for byte.
         assert!(!pr_action_url(&pr, "dismissed", "").contains("scope="));
 
@@ -937,7 +941,11 @@ mod tests {
             "session:abc-123",
         );
         assert!(
-            row.contains(&link_to(&pr_action_url(&pr, "dismissed", "session:abc-123"))),
+            row.contains(&link_to(&pr_action_url(
+                &pr,
+                "dismissed",
+                "session:abc-123"
+            ))),
             "the dismiss cell links with the scope: {row}"
         );
     }
@@ -954,7 +962,9 @@ mod tests {
         // Identity → the PR itself; the `☆` glyph is its own link that flips
         // the PR to primary via the web action page.
         assert!(left[0].0.contains(&link_to(&pr.url)));
-        assert!(left[0].0.contains(&link_to(&pr_action_url(&pr, "primary", ""))));
+        assert!(left[0]
+            .0
+            .contains(&link_to(&pr_action_url(&pr, "primary", ""))));
         // Number → the PR; diff and file count → the Files-changed tab.
         assert!(left[1].0.contains("#2412"));
         assert_eq!(left[1].1, "#2412".width());

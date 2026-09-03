@@ -600,9 +600,7 @@ mod tests {
         let created = chrono::Utc::now().to_rfc3339();
         fs::write(
             session.join("summary.json"),
-            format!(
-                r#"{{"info":{{"id":"01partial","cwd":"{cwd}"}},"created_at":"{created}"}}"#
-            ),
+            format!(r#"{{"info":{{"id":"01partial","cwd":"{cwd}"}},"created_at":"{created}"}}"#),
         )
         .unwrap();
         let events_path = session.join("events.jsonl");

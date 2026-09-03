@@ -49,7 +49,9 @@ pub fn map_session_state(state: SessionState) -> HerdrState {
     match state {
         SessionState::Thinking => HerdrState::Working,
         SessionState::Permission | SessionState::Question => HerdrState::Blocked,
-        SessionState::Ready | SessionState::Complete | SessionState::Interrupted => HerdrState::Idle,
+        SessionState::Ready | SessionState::Complete | SessionState::Interrupted => {
+            HerdrState::Idle
+        }
     }
 }
 
@@ -122,10 +124,7 @@ impl HerdrReporter {
         let state = map_session_state(stats.effective_state());
         let message = blocked_message(stats);
         let display = display_agent(platform);
-        let session = session_ref(
-            platform,
-            stats.platform_stats.native_session_id.as_deref(),
-        );
+        let session = session_ref(platform, stats.platform_stats.native_session_id.as_deref());
 
         let state_changed = self.last_state != Some(state) || self.last_message != message;
         let display_changed = self.last_display.as_deref() != Some(display.as_str());
