@@ -234,17 +234,6 @@ export const styleJs = `
             if (sidebarSettingsPopover && sidebarSettingsBtn && !sidebarSettingsPopover.contains(e.target) && !sidebarSettingsBtn.contains(e.target)) {
                 closeSidebarSettings();
             }
-
-            // Close sidebar popover when clicking outside (only in popover mode)
-            const sidebar = document.getElementById('sidebar');
-            const sessionsBtn = document.getElementById('sessions-btn');
-            if (sidebar && !sidebarPinned && !sidebar.classList.contains('collapsed')) {
-                if (!sidebar.contains(e.target) && sessionsBtn && !sessionsBtn.contains(e.target)) {
-                    sidebar.classList.add('collapsed');
-                    updateSessionsButtonState();
-                    updateSidebarBackdrop();
-                }
-            }
         });
 
         // Session grouping mode

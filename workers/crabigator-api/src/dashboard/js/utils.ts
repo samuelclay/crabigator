@@ -82,12 +82,8 @@ export const utilsJs = `
                 updateSidebarActiveState();
             }
 
-            const sidebar = document.getElementById('sidebar');
-            if (sidebar && !sidebarPinned) {
-                sidebar.classList.add('collapsed');
-                if (typeof closeSidebarSettings === 'function') closeSidebarSettings();
-                if (typeof updateSessionsButtonState === 'function') updateSessionsButtonState();
-                if (typeof updateSidebarBackdrop === 'function') updateSidebarBackdrop();
+            if (typeof hideSidebarPopover === 'function') {
+                hideSidebarPopover();
             }
         }
 

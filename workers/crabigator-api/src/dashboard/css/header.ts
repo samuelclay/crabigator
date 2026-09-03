@@ -13,7 +13,7 @@ export const headerCss = `
     top: 0;
     left: 0;
     right: 0;
-    z-index: 100;
+    z-index: 210;
     max-width: 100%;
 }
 /* Disable expensive backdrop-filter on mobile - use solid background instead */

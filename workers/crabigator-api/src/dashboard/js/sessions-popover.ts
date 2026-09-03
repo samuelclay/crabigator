@@ -11,13 +11,14 @@ export const sessionsPopoverJs = `
             const setText = (el, value) => {
                 if (el && el.textContent !== String(value)) el.textContent = value;
             };
+            const setAttr = (el, name, value) => {
+                if (el && el.getAttribute(name) !== String(value)) el.setAttribute(name, value);
+            };
             if (sessionsAreStillLoading()) {
                 setText(countEl, 'Loading');
                 setText(labelEl, 'sessions');
-                if (buttonEl) {
-                    buttonEl.setAttribute('aria-label', 'Loading sessions');
-                    buttonEl.setAttribute('aria-busy', 'true');
-                }
+                setAttr(buttonEl, 'aria-label', 'Loading sessions');
+                setAttr(buttonEl, 'aria-busy', 'true');
                 return;
             }
 
@@ -26,10 +27,8 @@ export const sessionsPopoverJs = `
                 : (visibleSessionIds.size || getRenderableSessions(allSessions).length);
             setText(countEl, count);
             setText(labelEl, count === 1 ? 'session' : 'sessions');
-            if (buttonEl) {
-                buttonEl.setAttribute('aria-label', count + (count === 1 ? ' session' : ' sessions'));
-                buttonEl.setAttribute('aria-busy', 'false');
-            }
+            setAttr(buttonEl, 'aria-label', count + (count === 1 ? ' session' : ' sessions'));
+            setAttr(buttonEl, 'aria-busy', 'false');
             // Batch sidebar re-renders instead of rebuilding on every event.
             if (typeof scheduleSidebarUpdate === 'function') {
                 scheduleSidebarUpdate();

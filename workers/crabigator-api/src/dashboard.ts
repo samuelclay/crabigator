@@ -46,7 +46,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             <button class="pr-board-btn" id="pr-board-btn" onclick="togglePrBoard()" title="Cross-session PR board">
                 <span class="pr-board-btn-icon">⑆</span> PRs
             </button>
-            <button class="sessions-btn" id="sessions-btn" onclick="toggleSidebar()" aria-label="Loading sessions" aria-busy="true">
+            <button class="sessions-btn" id="sessions-btn" aria-label="Loading sessions" aria-busy="true" aria-expanded="false" aria-haspopup="true">
                 <span class="sessions-count" id="sessions-count">Loading</span>
                 <span class="sessions-label">sessions</span>
             </button>
@@ -223,7 +223,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             <div class="sidebar-content" id="sidebar-content"></div>
             <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
         </div>
-        <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="toggleSidebar()"></div>
+        <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
         <div class="session-limit-banner" id="session-limit-banner" hidden>
             <div class="session-limit-kicker">Free session limit</div>
             <div class="session-limit-title" id="session-limit-hidden-count">0 active sessions hidden</div>

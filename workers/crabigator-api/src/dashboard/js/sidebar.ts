@@ -3,6 +3,7 @@ export const sidebarJs = `
         let sidebarActiveSessionId = null;
         let sidebarUpdateTimer = null;
         let sidebarLastRenderedHtml = null;
+        let sessionsOutsideCloseBound = false;
 
         // Throttled sidebar update - batches rapid stream events into single re-renders
         function scheduleSidebarUpdate() {
@@ -13,17 +14,76 @@ export const sidebarJs = `
             }, 500);
         }
 
+        function syncHeaderHeight() {
+            const header = document.querySelector('.header');
+            if (!header) return;
+            const headerHeight = Math.ceil(header.getBoundingClientRect().height);
+            document.documentElement.style.setProperty('--header-height', headerHeight + 'px');
+        }
+
+        function isTapNotDrag(start, event) {
+            if (!start) return false;
+            return Math.abs(event.clientX - start.x) <= 10 && Math.abs(event.clientY - start.y) <= 10;
+        }
+
+        function initSessionsMenuToggle() {
+            const btn = document.getElementById('sessions-btn');
+            if (!btn || btn.dataset.toggleBound === '1') return;
+            btn.dataset.toggleBound = '1';
+
+            // Touch/pen: toggle on pointerdown so the first tap opens (or
+            // closes) instead of waiting for a click that mobile browsers
+            // often swallow or retarget onto the newly opened popover.
+            // Mouse/keyboard still use click so a press can be cancelled.
+            let ignoreClick = false;
+
+            btn.addEventListener('pointerdown', (e) => {
+                if (e.pointerType === 'mouse') return;
+                e.preventDefault();
+                e.stopPropagation();
+                ignoreClick = true;
+                toggleSidebar();
+                setTimeout(() => { ignoreClick = false; }, 500);
+            }, { passive: false });
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (ignoreClick) {
+                    e.preventDefault();
+                    return;
+                }
+                toggleSidebar();
+            });
+        }
+
+        function initSessionsOutsideClose() {
+            if (sessionsOutsideCloseBound) return;
+            sessionsOutsideCloseBound = true;
+            // Close the popover on pointerdown outside. A click listener is too
+            // late: opening the menu can retarget the same tap's compatibility
+            // click onto the backdrop and immediately close it.
+            document.addEventListener('pointerdown', (e) => {
+                if (sidebarPinned) return;
+                const menu = document.getElementById('sidebar');
+                const sessionsBtn = document.getElementById('sessions-btn');
+                if (!menu || menu.classList.contains('collapsed')) return;
+                if (menu.contains(e.target)) return;
+                if (sessionsBtn && sessionsBtn.contains(e.target)) return;
+                hideSidebarPopover();
+            });
+        }
+
+        function initSessionsPopoverInteractions() {
+            initSessionsMenuToggle();
+            initSessionsOutsideClose();
+        }
+
         function initSidebar() {
             const sidebar = document.getElementById('sidebar');
             const layout = document.getElementById('dashboard-layout');
             if (!sidebar || !layout) return;
 
-            // Measure actual header height and set CSS variable
-            const header = document.querySelector('.header');
-            if (header) {
-                const headerHeight = header.getBoundingClientRect().height;
-                document.documentElement.style.setProperty('--header-height', headerHeight + 'px');
-            }
+            syncHeaderHeight();
+            window.addEventListener('resize', syncHeaderHeight);
 
             // Apply saved position
             layout.dataset.sidebarPosition = sidebarPosition;
@@ -43,6 +103,8 @@ export const sidebarJs = `
             // Init scroll spy
             initSidebarScrollSpy();
 
+            initSessionsPopoverInteractions();
+
             // Session-item taps are delegated to the (stable) content element
             // instead of inline onclick on each item. The list re-renders while
             // live sessions stream, and if the tapped element is replaced
@@ -53,15 +115,15 @@ export const sidebarJs = `
             if (sidebarContent) {
                 let tap = null;
                 sidebarContent.addEventListener('pointerdown', (e) => {
-                    const item = e.target.closest('.session-item');
+                    const origin = e.target.nodeType === 1 ? e.target : e.target.parentElement;
+                    const item = origin?.closest('.session-item');
                     tap = item ? { id: item.dataset.sessionId, x: e.clientX, y: e.clientY } : null;
                 });
                 sidebarContent.addEventListener('pointerup', (e) => {
                     const started = tap;
                     tap = null;
                     if (!started || !started.id) return;
-                    // A drag (scrolling the list) is not a tap.
-                    if (Math.abs(e.clientX - started.x) > 10 || Math.abs(e.clientY - started.y) > 10) return;
+                    if (!isTapNotDrag(started, e)) return;
                     handleSessionClick(started.id);
                 });
                 sidebarContent.addEventListener('pointercancel', () => { tap = null; });
@@ -112,6 +174,21 @@ export const sidebarJs = `
             updateSidebarBackdrop();
         }
 
+        function isSessionsPopoverOpen() {
+            const sidebar = document.getElementById('sidebar');
+            return !!(sidebar && !sidebarPinned && !sidebar.classList.contains('collapsed'));
+        }
+
+        function hideSidebarPopover() {
+            if (sidebarPinned) return;
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar || sidebar.classList.contains('collapsed')) return;
+            sidebar.classList.add('collapsed');
+            closeSidebarSettings();
+            updateSessionsButtonState();
+            updateSidebarBackdrop();
+        }
+
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             if (!sidebar) return;
@@ -122,19 +199,15 @@ export const sidebarJs = `
                 return;
             }
 
-            // Popover mode: toggle visibility
-            const isCollapsed = sidebar.classList.contains('collapsed');
-            if (isCollapsed) {
-                // Open popover
-                sidebar.classList.remove('collapsed');
-                closeStylePopover();
-                closeSettingsPopover();
-                updateSidebarContent();
-            } else {
-                // Close popover
-                sidebar.classList.add('collapsed');
-                closeSidebarSettings();
+            if (isSessionsPopoverOpen()) {
+                hideSidebarPopover();
+                return;
             }
+
+            sidebar.classList.remove('collapsed');
+            closeStylePopover();
+            closeSettingsPopover();
+            updateSidebarContent();
             updateSessionsButtonState();
             updateSidebarBackdrop();
         }
@@ -162,13 +235,13 @@ export const sidebarJs = `
 
         function updateSessionsButtonState() {
             const btn = document.getElementById('sessions-btn');
-            const container = btn?.closest('.sessions-container');
             if (!btn) return;
             const sidebar = document.getElementById('sidebar');
             const isOpen = sidebar && !sidebar.classList.contains('collapsed');
-            btn.classList.toggle('active', isOpen && !sidebarPinned);
-            // Hide sessions button entirely when sidebar is pinned
-            if (container) container.classList.toggle('sidebar-pinned-hidden', sidebarPinned);
+            const showActive = isOpen && !sidebarPinned;
+            btn.classList.toggle('active', showActive);
+            btn.setAttribute('aria-expanded', showActive ? 'true' : 'false');
+            btn.closest('.sessions-container')?.classList.toggle('sidebar-pinned-hidden', sidebarPinned);
         }
 
         function updateSidebarBackdrop() {
@@ -255,6 +328,7 @@ export const sidebarJs = `
         }
 
         function handleSessionClick(sessionId) {
+            hideSidebarPopover();
             if (isFocusedMode() || sessionClickAction === 'focus') {
                 focusOnSession(sessionId);
             } else {
@@ -262,14 +336,10 @@ export const sidebarJs = `
             }
         }
 
-        function scrollToSession(sessionId) {
-            // Suppress scroll spy so the programmatic scrollIntoView doesn't override our selection
-            if (typeof window.suppressScrollSpy === 'function') window.suppressScrollSpy();
-
+        function expandSessionCardForScroll(sessionId) {
             const card = document.getElementById('session-' + sessionId);
-            if (!card) return;
+            if (!card) return null;
 
-            // If session's project group is collapsed, expand it first
             const projectGroup = card.closest('.project-group');
             if (projectGroup && projectGroup.classList.contains('collapsed')) {
                 projectGroup.classList.remove('collapsed');
@@ -280,7 +350,6 @@ export const sidebarJs = `
                 }
             }
 
-            // Also expand device group if collapsed
             const deviceGroup = card.closest('.device-group');
             if (deviceGroup && deviceGroup.classList.contains('collapsed')) {
                 deviceGroup.classList.remove('collapsed');
@@ -291,7 +360,6 @@ export const sidebarJs = `
                 }
             }
 
-            // If session card body is collapsed, expand it
             const body = document.getElementById('body-' + sessionId);
             const collapseBtn = document.getElementById('collapse-btn-' + sessionId);
             if (body && body.style.display === 'none') {
@@ -305,20 +373,66 @@ export const sidebarJs = `
                 }
             }
 
-            // Smooth scroll to the card
-            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return card;
+        }
 
-            // Add highlight animation (remove first + reflow to retrigger if already highlighted)
+        function scrollSessionCardIntoView(card, smooth) {
+            if (smooth) {
+                card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+            const root = document.documentElement;
+            const previous = root.style.scrollBehavior;
+            root.style.scrollBehavior = 'auto';
+            card.scrollIntoView({ block: 'center' });
+            root.style.scrollBehavior = previous;
+        }
+
+        function sessionCardNeedsRescroll(card) {
+            const headerHeight = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--header-height'), 10) || 67;
+            const rect = card.getBoundingClientRect();
+            const viewTop = headerHeight;
+            const viewBottom = window.innerHeight;
+            if (rect.bottom < viewTop + 24 || rect.top > viewBottom - 24) return true;
+            const viewMid = (viewTop + viewBottom) / 2;
+            const cardMid = rect.top + Math.min(rect.height, viewBottom - viewTop) / 2;
+            return Math.abs(cardMid - viewMid) > 120;
+        }
+
+        function highlightScrolledSession(card, sessionId) {
             card.classList.remove('highlight');
             void card.offsetHeight;
             card.classList.add('highlight');
             card.addEventListener('animationend', () => {
                 card.classList.remove('highlight');
             }, { once: true });
-
-            // Update active session in sidebar
             sidebarActiveSessionId = sessionId;
             updateSidebarActiveState();
+        }
+
+        function scrollToSession(sessionId) {
+            // Suppress scroll spy so the programmatic scrollIntoView doesn't override our selection
+            if (typeof window.suppressScrollSpy === 'function') window.suppressScrollSpy();
+
+            const card = expandSessionCardForScroll(sessionId);
+            if (card) {
+                scrollSessionCardIntoView(card, true);
+                highlightScrolledSession(card, sessionId);
+            }
+
+            // Cards below the fold can still be mounting widgets/screen data as
+            // scrolling starts, which shoves the target off-center. Re-check
+            // after layout settles and jump if we missed.
+            const resettle = () => {
+                const next = expandSessionCardForScroll(sessionId);
+                if (!next) return;
+                if (!card || sessionCardNeedsRescroll(next)) {
+                    scrollSessionCardIntoView(next, false);
+                }
+                if (!card) highlightScrolledSession(next, sessionId);
+            };
+            setTimeout(resettle, 60);
+            setTimeout(resettle, 280);
         }
 
         function updateSidebarActiveState() {
@@ -669,4 +783,6 @@ export const sidebarJs = `
                 if (typeof updateFitLayout === 'function') updateFitLayout();
             });
         }
+
+        initSessionsPopoverInteractions();
 `;

@@ -272,8 +272,17 @@ export const popoversCss = `
     transition: all 0.2s;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    user-select: none;
+    -webkit-user-select: none;
 }
-.sessions-btn:hover {
+@media (hover: hover) {
+    .sessions-btn:hover {
+        border-color: var(--accent-cyan);
+        color: var(--accent-cyan);
+        background: rgba(34, 211, 238, 0.05);
+    }
+}
+.sessions-btn:active {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     background: rgba(34, 211, 238, 0.05);
