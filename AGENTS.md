@@ -404,6 +404,12 @@ tmux send-keys -t crab Up               # Arrow keys (Up/Down/Left/Right)
 
 **Dashboard** (via browser tools): navigate to `https://drinkcrabigator.com/dashboard` (see Browser Testing above for auth), then take a snapshot or screenshot to verify session state, screen preview, and widgets.
 
+### Profiling Startup
+
+`crabigator --profile claude` prints a startup trace after the session ends: one timestamped line per phase (hook check, PTY spawn, first assistant output, cloud registration, pairing, update check). Add a line anywhere with `crate::cli::profile_mark("label")`; it is a no-op without `--profile`.
+
+Nothing on the startup path may wait on the network. Cloud registration, the pairing code, and the live update check all run as background tasks and are adopted by the main loop's startup poll, so the assistant's first screen appears as fast as it does without Crabigator. To measure in tmux: start `crabigator --profile claude` in a detached session with `remain-on-exit` on, poll `tmux capture-pane` until the assistant prompt appears, send `/exit`, then read the trace from the pane. The "assistant prompt reached terminal" line should land within roughly 100ms of "first bytes from assistant CLI".
+
 ## Code Quality
 
 After completing code changes, use the code-simplifier agent to clean up the code:
