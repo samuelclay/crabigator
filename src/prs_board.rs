@@ -38,7 +38,7 @@ use crate::slack::{SlackDirectory, SlackThread};
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG, RESET_UNDERLINE, UNDERLINE};
 use crate::ui::cooldown::Cooldowns;
 use crate::ui::pr_cells::{
-    board_detail_row_text, session_row_text_with_activity, PrColumnWidths, BRANCH_PREFIX,
+    board_detail_row_text, session_row_text_with_activity, PrCell, PrColumnWidths, BRANCH_PREFIX,
     PR_RIGHT_COLUMN_GAP,
 };
 use crate::ui::{COMPLETION_ICON, PROMPT_ICON};
@@ -2287,22 +2287,23 @@ fn empty_cell(width: usize) -> ActivityCell {
     }
 }
 
+/// A Slack link right-aligned in `width` cells, so links end at the right
+/// edge like the GitHub status above them.
 fn slack_link_cell(thread: &SlackThread, width: usize) -> ActivityCell {
     let full_label = crate::slack::thread_identity_label(thread);
     let label = crate::ui::pr_cells::truncate_to_width(&full_label, width);
-    let visible = label.width();
+    if label.is_empty() {
+        return empty_cell(0);
+    }
     ActivityCell {
-        styled: if label.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "{}{}{}",
-                fg(color::CYAN),
-                escape::hyperlink(&thread.url, &label),
-                RESET_FG
-            )
-        },
-        visible,
+        styled: format!(
+            "{}{}{}{}",
+            " ".repeat(width.saturating_sub(label.width())),
+            fg(color::CYAN),
+            escape::hyperlink(&thread.url, &label),
+            RESET_FG
+        ),
+        visible: width,
     }
 }
 
@@ -2360,10 +2361,10 @@ fn pr_row_title(entry: &BoardPr) -> String {
     })
 }
 
-fn slack_detail_cells(entry: &BoardPr, widths: &PrColumnWidths) -> Vec<ActivityCell> {
+fn slack_detail_cells(entry: &BoardPr, span: usize) -> Vec<ActivityCell> {
     unique_channel_threads(&entry.slack_threads)
         .into_iter()
-        .map(|thread| slack_link_cell(thread, widths.right_width()))
+        .map(|thread| slack_link_cell(thread, span))
         .collect()
 }
 
@@ -2388,6 +2389,29 @@ struct DetailLayout<'a> {
     widths: &'a PrColumnWidths,
 }
 
+impl DetailLayout<'_> {
+    /// The cells a Slack link may fill: the activity column, its gap, and the
+    /// right cluster. Links only share a row with the judgment or stand
+    /// alone, so the activity column beneath them is always empty.
+    fn link_span(&self) -> usize {
+        activity_span(self.activity_width) + self.widths.right_width()
+    }
+
+    /// A Slack link's row cells: the activity cell collapses so the link
+    /// spans it along with the right cluster.
+    fn link_cells(&self, link: &ActivityCell) -> (PrCell, PrCell) {
+        (
+            (String::new(), 0, 0),
+            (link.styled.clone(), link.visible, self.link_span()),
+        )
+    }
+}
+
+/// The activity column plus the gap that separates it from the right cluster.
+fn activity_span(activity_width: usize) -> usize {
+    activity_width + usize::from(activity_width > 0) * PR_RIGHT_COLUMN_GAP
+}
+
 impl RecapLineKind {
     fn style(self) -> (&'static str, u8) {
         match self {
@@ -2404,7 +2428,7 @@ fn recap_line(
     headline: &str,
     recap: Option<&RecapBrief>,
     layout: &DetailLayout<'_>,
-    right: Option<&ActivityCell>,
+    link: Option<&ActivityCell>,
 ) -> String {
     let (icon, icon_color) = kind.style();
     let mut delta = recap.map_or_else(String::new, |recap| {
@@ -2441,12 +2465,21 @@ fn recap_line(
         fg(color::DARK_GRAY),
         delta,
     );
-    let age = recap.map_or_else(
-        || empty_cell(layout.activity_width),
-        |recap| timestamp_cell(recap.generated_at, layout.now_ms, layout.activity_width),
-    );
-    let right_styled = right.map_or_else(String::new, |cell| cell.styled.clone());
-    let right_visible = right.map_or(0, |cell| cell.visible);
+    // A Slack link takes the activity column with it; without one the column
+    // carries the recap's age.
+    let (activity, right) = match link {
+        Some(link) => layout.link_cells(link),
+        None => {
+            let age = recap.map_or_else(
+                || empty_cell(layout.activity_width),
+                |recap| timestamp_cell(recap.generated_at, layout.now_ms, layout.activity_width),
+            );
+            (
+                (age.styled, age.visible, layout.activity_width),
+                (String::new(), 0, layout.widths.right_width()),
+            )
+        }
+    };
     format!(
         "{}{}",
         board_detail_row_text(
@@ -2454,11 +2487,8 @@ fn recap_line(
             layout.widths,
             left_styled,
             left_visible,
-            age.styled,
-            age.visible,
-            layout.activity_width,
-            right_styled,
-            right_visible,
+            activity,
+            right,
         ),
         RESET
     )
@@ -2480,7 +2510,7 @@ fn detail_lines(
                 slack_cells.get(index),
             ),
             None => {
-                let right = &slack_cells[index];
+                let (activity, right) = layout.link_cells(&slack_cells[index]);
                 format!(
                     "{}{}",
                     board_detail_row_text(
@@ -2488,11 +2518,8 @@ fn detail_lines(
                         layout.widths,
                         String::new(),
                         0,
-                        String::new(),
-                        0,
-                        layout.activity_width,
-                        right.styled.clone(),
-                        right.visible,
+                        activity,
+                        right,
                     ),
                     RESET
                 )
@@ -2691,7 +2718,7 @@ fn render_pr_view_block(board_row: &BoardRow<'_>, context: RowContext<'_>) -> Ve
     };
     if detail > DEFAULT_DETAIL {
         let judgment: Vec<RecapDetailRow<'_>> = judgment_row(&entry.pr).into_iter().collect();
-        let slack = slack_detail_cells(entry, widths);
+        let slack = slack_detail_cells(entry, layout.link_span());
         lines.extend(detail_lines(&judgment, &slack, &layout));
     }
 
@@ -2741,11 +2768,8 @@ fn pr_view_session_row(
             widths,
             left_styled,
             left_visible,
-            String::new(),
-            0,
-            activity_width,
-            String::new(),
-            0,
+            (String::new(), 0, activity_width),
+            (String::new(), 0, widths.right_width()),
         )
     )
 }
@@ -2833,11 +2857,8 @@ fn render_session_view_block(
         widths,
         left_styled,
         left_visible,
-        activity.styled,
-        activity.visible,
-        activity_width,
-        String::new(),
-        0,
+        (activity.styled, activity.visible, activity_width),
+        (String::new(), 0, widths.right_width()),
     );
     if entry.stale {
         row = format!("{}{row}", fg(color::DARK_GRAY));
@@ -2875,7 +2896,7 @@ fn render_session_view_block(
         lines.push(format!("{row}{RESET}"));
         if detail > DEFAULT_DETAIL {
             let judgment: Vec<RecapDetailRow<'_>> = judgment_row(&sub.pr).into_iter().collect();
-            let slack = slack_detail_cells(sub, widths);
+            let slack = slack_detail_cells(sub, layout.link_span());
             lines.extend(detail_lines(&judgment, &slack, &layout));
         }
     }
@@ -3186,8 +3207,7 @@ fn render_at(
         .max()
         .unwrap_or(0);
     let shared_width = (width as usize)
-        .saturating_sub(activity_width)
-        .saturating_sub(usize::from(activity_width > 0) * PR_RIGHT_COLUMN_GAP)
+        .saturating_sub(activity_span(activity_width))
         .min(u16::MAX as usize) as u16;
     let visible_entries: Vec<&BoardPr> = visible_row_indices
         .iter()
@@ -3214,11 +3234,17 @@ fn render_at(
             shared_width as usize,
         );
     }
-    for entry in &visible_entries {
-        widths.include_board_detail_right(
-            slack_links_width(&entry.slack_threads),
-            shared_width as usize,
-        );
+    if detail > DEFAULT_DETAIL {
+        // Compact view never draws Slack links, so it reserves nothing for
+        // them and the title keeps the room. In recap view a link spans the
+        // empty activity column too; only the excess widens the right cluster.
+        for entry in &visible_entries {
+            widths.include_board_detail_right(
+                slack_links_width(&entry.slack_threads)
+                    .saturating_sub(activity_span(activity_width)),
+                shared_width as usize,
+            );
+        }
     }
     widths.use_pr_view_layout(shared_width as usize);
 
@@ -6774,6 +6800,77 @@ mod tests {
             recap.lines().count(),
             compact.lines().count() + 6,
             "the judgment with four Slack links, the headline, and the next step add six rows"
+        );
+    }
+
+    /// Slack links render only in recap view, so compact view spends their
+    /// room on the title. In both views the diff stays beside the activity
+    /// column, and a link lines up with the right edge like the status.
+    #[test]
+    fn title_takes_the_slack_link_room_and_the_diff_hugs_the_activity() {
+        let title = "Skip URL-less documents in the component builder so knowledge sync \
+                     stops failing on null links";
+        let mut pr = board_pr(9, "portal");
+        make_primary(&mut pr);
+        pr.title = title.to_string();
+        pr.additions = 34;
+        pr.deletions = 6;
+        pr.ai_note = "CI green, awaiting review".to_string();
+        let mut session = snapshot("one", vec![pr]);
+        session.prompted_at = now_secs() as u64 - 30 * 60;
+        session.completed_at = now_secs() as u64 - 2 * 60 * 60;
+        session.slack_threads = vec![SlackThread {
+            url: "https://t.slack.com/archives/C1/p1723500000000000".to_string(),
+            posted_at: 1_723_500_000,
+            channel: Some("deployments-and-releases".to_string()),
+            author: Some("Samuel Clay".to_string()),
+        }];
+        let entries = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+
+        // The styled frame line whose text holds `needle`.
+        fn row_with<'a>(frame: &'a str, needle: &str) -> &'a str {
+            frame
+                .lines()
+                .find(|line| crate::parsers::strip_ansi_for_debug(line).contains(needle))
+                .unwrap_or_else(|| panic!("no line holds {needle:?}:\n{frame}"))
+        }
+        // The activity column ends with the completion age; only the column
+        // gap and the diff's own leading space may separate them.
+        let gap_before_diff = |row: &str| {
+            let before_diff = &row[..row.find("+34 -6").unwrap()];
+            before_diff.len() - before_diff.trim_end().len()
+        };
+
+        let compact_frame = render_frame_at(&entries, 0);
+        let compact = crate::parsers::strip_ansi_for_debug(row_with(&compact_frame, "#9:"));
+        assert!(
+            compact.contains(title),
+            "the title takes the room: {compact}"
+        );
+        assert!(gap_before_diff(&compact) <= 2, "{compact}");
+
+        let recap = render_frame_at(&entries, 1);
+        let recap_row = crate::parsers::strip_ansi_for_debug(row_with(&recap, "#9:"));
+        assert!(gap_before_diff(&recap_row) <= 2, "{recap_row}");
+
+        let link_row = row_with(&recap, "#deployments-and-releases");
+        let link_text = crate::parsers::strip_ansi_for_debug(link_row);
+        assert!(
+            link_text.contains("CI green, awaiting review"),
+            "the link shares the judgment row: {link_text}"
+        );
+        let label = crate::slack::thread_identity_label(&entries[0].slack_threads[0]);
+        let label_at = link_row.find(&label).expect("the link renders whole");
+        let right_edge = 160 - crate::ui::pr_cells::PR_RIGHT_PADDING;
+        assert_eq!(
+            crate::ui::utils::strip_ansi_len(&link_row[..label_at]) + label.width(),
+            right_edge,
+            "the link ends at the right edge: {link_text}"
+        );
+        assert_eq!(
+            crate::ui::utils::strip_ansi_len(link_row),
+            right_edge,
+            "nothing follows the link: {link_text}"
         );
     }
 

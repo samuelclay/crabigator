@@ -448,11 +448,7 @@ pub(crate) fn session_row_text_with_activity(
             color::GRAY,
             diff.width().min(PR_DIFF_MAX),
         );
-        stats_right_cell(
-            &diff_cell,
-            widths.right_width() - widths.status_right_width(),
-            widths.right_width(),
-        )
+        stats_right_cell(&diff_cell, widths.right_width())
     };
     let left_cells = [
         colored_cell(&identity, identity_color, widths.identity),
@@ -479,18 +475,16 @@ pub(crate) fn session_row_text_with_activity(
 }
 
 /// Render a PR-board detail row against the same left, activity, and GitHub
-/// status columns as its compact PR row.
-#[allow(clippy::too_many_arguments)]
+/// status columns as its compact PR row. A row whose activity cell has no
+/// width may give its right cell the activity column too, which is how Slack
+/// links span both.
 pub(crate) fn board_detail_row_text(
     width: u16,
     widths: &PrColumnWidths,
     left_styled: String,
     left_visible: usize,
-    activity_styled: String,
-    activity_visible: usize,
-    activity_width: usize,
-    right_styled: String,
-    right_visible: usize,
+    activity: PrCell,
+    right: PrCell,
 ) -> String {
     let mut row = " ".repeat(PR_LEFT_PADDING);
     row.push_str(&cells_text(&[(
@@ -499,10 +493,7 @@ pub(crate) fn board_detail_row_text(
         widths.left_width(),
     )]));
 
-    let right_cells = [
-        (activity_styled, activity_visible, activity_width),
-        (right_styled, right_visible, widths.right_width()),
-    ];
+    let right_cells = [activity, right];
     let right_width = right_cells_width(&right_cells);
     if right_width > 0 {
         let gap = (width as usize)
@@ -549,6 +540,8 @@ fn pr_row_text_with_left_cells(
     if widths.stats_right {
         right_cells.insert(0, pr_stats_right_cell(pr, widths));
     }
+    // Detail links wider than the GitHub status widen the right cluster, so
+    // the leading cell takes the extra room.
     let status_width = right_cells_width(&right_cells);
     let filler = widths.right_width().saturating_sub(status_width);
     if filler > 0 {
@@ -556,8 +549,14 @@ fn pr_row_text_with_left_cells(
             .iter_mut()
             .find(|(_, _, cell_width)| *cell_width > 0)
         {
-            styled.insert_str(0, &" ".repeat(filler));
-            *visible += filler;
+            // The diff leads the cluster in PR view. Widening its cell alone
+            // opens the room after it, so the diff stays beside the activity
+            // column and only the GitHub status shifts to the right edge.
+            // Any other leading cell takes the room in front of it instead.
+            if widths.stats_cell_width() == 0 {
+                styled.insert_str(0, &" ".repeat(filler));
+                *visible += filler;
+            }
             *width += filler;
         }
     }
@@ -617,20 +616,13 @@ fn pr_stats_right_cell(pr: &SessionPr, widths: &PrColumnWidths) -> PrCell {
     if width == 0 {
         return (String::new(), 0, 0);
     }
-    stats_right_cell(&pr_stats_cells(pr, widths.diff, 0)[0], 0, width)
+    stats_right_cell(&pr_stats_cells(pr, widths.diff, 0)[0], width)
 }
 
-/// A diff cell at the head of the right cluster. One leading space keeps it
-/// off the activity column; `filler` is the shift a PR row's status takes when
-/// detail links are wider than the status itself, so rows without a status
-/// line up with it.
-fn stats_right_cell(cell: &PrCell, filler: usize, width: usize) -> PrCell {
-    let lead = filler + 1;
-    (
-        format!("{}{}", " ".repeat(lead), cell.0),
-        lead + cell.1,
-        width,
-    )
+/// A diff cell at the head of the right cluster, padded out to `width`. One
+/// leading space keeps it off the activity column.
+fn stats_right_cell(cell: &PrCell, width: usize) -> PrCell {
+    (format!(" {}", cell.0), 1 + cell.1, width)
 }
 
 /// The diff and file-count cells. Both open the PR's Files-changed tab — the
