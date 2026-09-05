@@ -257,7 +257,7 @@ pub struct App {
     /// Live update check started before raw mode; a newly found update turns
     /// into the handoff banner when the result arrives.
     pending_update_check: Option<oneshot::Receiver<UpdateCheckResult>>,
-    /// Last time the PTY screen was scanned for a cwd status-line update
+    /// Last time assistant directory evidence was checked
     last_cwd_detection: Instant,
 }
 
@@ -891,7 +891,13 @@ impl App {
                         continue;
                     }
                     last_hook_refresh = Instant::now();
+                    let previous_cwd = self.cwd.clone();
                     self.handle_hook_refresh(&mut last_status_draw, last_pty_output)?;
+                    if previous_cwd != self.cwd {
+                        git_refresh_generation = git_refresh_generation.saturating_add(1);
+                        git_refresh_pending = true;
+                        spawn_git_refresh(git_tx.clone(), self.cwd.clone(), git_refresh_generation, false);
+                    }
                 }
 
                 // Throbber animation timer - only active when in Thinking/Permission state
@@ -934,7 +940,7 @@ impl App {
                                 );
                             }
                         }
-                        let cwd_changed = self.maybe_update_cwd_from_status_line(true);
+                        let cwd_changed = self.maybe_update_cwd(true);
                         if cwd_changed {
                             git_refresh_generation = git_refresh_generation.saturating_add(1);
                             git_refresh_pending = true;
@@ -1517,7 +1523,7 @@ impl App {
         sent_initial_screen: &mut bool,
         force_screen_update: bool,
     ) -> Result<bool> {
-        let cwd_changed = self.maybe_update_cwd_from_status_line(false);
+        let cwd_changed = self.maybe_update_cwd(false);
 
         // Capture at 100ms for local state detection even when nobody is
         // viewing the dashboard. Cloud screen events remain throttled below.
@@ -1663,11 +1669,38 @@ impl App {
         Ok(cwd_changed)
     }
 
-    fn maybe_update_cwd_from_status_line(&mut self, force: bool) -> bool {
+    fn maybe_update_cwd(&mut self, force: bool) -> bool {
         if !force && self.last_cwd_detection.elapsed() < CWD_DETECTION_INTERVAL {
             return false;
         }
         self.last_cwd_detection = Instant::now();
+
+        // Claude's live status line can move before its next hook runs.
+        // The resume hook supplies a directory while that line is absent.
+        if self.platform.kind() == crate::platforms::PlatformKind::Claude {
+            let screen = screen_to_string(self.platform_pty.screen());
+            if let Some(path) = crate::parsers::detect_status_line_cwd(&screen) {
+                self.pr_tracker.set_command_workdir(false);
+                return self.apply_detected_cwd(path);
+            }
+        }
+
+        if let Some(path) = self
+            .session_stats
+            .platform_stats
+            .working_directory
+            .clone()
+            .filter(|path| path.is_dir())
+        {
+            self.pr_tracker.set_command_workdir(
+                self.session_stats
+                    .platform_stats
+                    .working_directory_from_command,
+            );
+            let path = std::fs::canonicalize(&path).unwrap_or(path);
+            return self.apply_detected_cwd(path);
+        }
+        self.pr_tracker.set_command_workdir(false);
 
         let screen = screen_to_string(self.platform_pty.screen());
         let Some(next_cwd) = crate::parsers::detect_status_line_cwd(&screen) else {
@@ -1724,6 +1757,7 @@ impl App {
         self.herdr.sync(&self.session_stats, self.platform.kind());
         let new_effective_state = self.session_stats.effective_state();
         let new_last_updated = self.session_stats.platform_stats.last_updated;
+        self.maybe_update_cwd(true);
         let new_transcript = self.session_stats.platform_stats.transcript_path.as_deref();
         if old_transcript.is_some()
             && new_transcript.is_some()

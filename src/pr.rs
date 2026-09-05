@@ -798,6 +798,10 @@ impl PrTracker {
         self.prompt_count = prompts;
     }
 
+    pub fn set_command_workdir(&mut self, command_workdir: bool) {
+        self.command_workdir = command_workdir;
+    }
+
     /// Resolve the PR attached to the current branch in `cwd` and track it.
     ///
     /// Called on CLI startup and whenever the working directory / worktree changes,

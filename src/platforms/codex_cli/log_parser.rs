@@ -78,6 +78,7 @@ pub struct CodexState {
     pub completion_counts: MessageCounters,
     pub stats: PlatformStats,
     active_prompt_call_id: Option<String>,
+    cwd: super::cwd::CodexCwd,
 }
 
 impl Default for CodexState {
@@ -100,6 +101,7 @@ impl Default for CodexState {
             completion_counts: MessageCounters::default(),
             stats: PlatformStats::default(),
             active_prompt_call_id: None,
+            cwd: super::cwd::CodexCwd::default(),
         }
     }
 }
@@ -142,6 +144,9 @@ pub fn update_from_log(state: &mut CodexState, line: &str) {
         Err(_) => return,
     };
     let entry_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    state.cwd.observe(&value);
+    state.stats.working_directory = state.cwd.current.clone();
+    state.stats.working_directory_from_command = state.cwd.from_command;
     match entry_type {
         "response_item" => handle_response_item(state, &value),
         "event_msg" => handle_event_msg(state, &value),
@@ -437,6 +442,7 @@ pub fn reset_state(state: &mut CodexState, path: PathBuf, session_started_at: Op
     state.completion_counts = MessageCounters::default();
     state.stats = PlatformStats::default();
     state.active_prompt_call_id = None;
+    state.cwd = super::cwd::CodexCwd::default();
     set_last_updated(state);
 }
 

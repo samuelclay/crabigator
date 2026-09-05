@@ -51,13 +51,11 @@ fn extract_claude_status_path(line: &str) -> Option<String> {
 }
 
 fn extract_codex_status_path(line: &str) -> Option<String> {
-    let (_, rest) = line.rsplit_once('·')?;
-    let candidate = rest.trim();
-    if looks_like_path_start(candidate) {
-        Some(candidate.to_string())
-    } else {
-        None
-    }
+    line.split('·')
+        .skip(1)
+        .map(str::trim)
+        .find(|candidate| looks_like_path_start(candidate))
+        .map(str::to_string)
 }
 
 fn looks_like_path_start(value: &str) -> bool {
@@ -103,6 +101,15 @@ mod tests {
         assert_eq!(
             extract_status_line_path(line).as_deref(),
             Some("~/projects/crabigator")
+        );
+    }
+
+    #[test]
+    fn extracts_codex_path_before_branch_and_mode() {
+        assert_eq!(
+            extract_status_line_path("gpt-6-astra xhigh · ~/projects/portal · Main [default]")
+                .as_deref(),
+            Some("~/projects/portal")
         );
     }
 

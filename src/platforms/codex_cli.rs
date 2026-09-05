@@ -2,6 +2,7 @@
 //!
 //! Reads Codex session logs under ~/.codex/sessions and derives session stats.
 
+mod cwd;
 mod log_parser;
 pub mod transcript;
 

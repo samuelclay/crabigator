@@ -229,6 +229,12 @@ pub struct PlatformStats {
     /// Claude's hook file stores this as `claude_session_id`.
     #[serde(default, alias = "claude_session_id")]
     pub native_session_id: Option<String>,
+    /// Effective directory of the assistant's latest command. Used locally to
+    /// follow Codex workdirs while retaining the launch cwd for log discovery.
+    #[serde(default, skip_serializing)]
+    pub working_directory: Option<std::path::PathBuf>,
+    #[serde(default, skip_serializing)]
+    pub working_directory_from_command: bool,
 }
 
 impl PlatformStats {
