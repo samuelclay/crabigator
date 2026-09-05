@@ -730,6 +730,7 @@ mod tests {
             updated_at: 0,
             primary: false,
             primary_source: String::new(),
+            worktree_visit: false,
             dismissed: false,
             watched: false,
             slack_origin_url: String::new(),

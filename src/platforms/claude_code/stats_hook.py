@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Crabigator stats hook for Claude Code
-Handles: PermissionRequest, PostToolUse, Stop, SubagentStop, PreCompact, UserPromptSubmit
+Handles: SessionStart, PermissionRequest, PostToolUse, Stop, SubagentStop,
+         PreCompact, UserPromptSubmit
 
 State machine:
   - ready: Initial state (nothing happened yet)
@@ -113,6 +114,26 @@ def load_stats(stats_file: Path) -> dict:
         "model": None,
     }
 
+def extract_cwd_from_transcript(transcript_path: str) -> str | None:
+    """Restore the most recent directory recorded by the resumed conversation."""
+    latest = None
+    try:
+        with open(transcript_path) as transcript:
+            for line in transcript:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict) or entry.get("isSidechain"):
+                    continue
+                candidate = entry.get("cwd")
+                if isinstance(candidate, str) and Path(candidate).is_absolute():
+                    latest = candidate
+    except (OSError, UnicodeError):
+        return None
+    return latest if latest and Path(latest).is_dir() else None
+
+
 def extract_model_from_transcript(transcript_path: str) -> str | None:
     """Extract model name from transcript file (reads last few lines for efficiency)."""
     if not transcript_path:
@@ -194,6 +215,10 @@ def main():
     if transcript_path:
         stats["transcript_path"] = transcript_path
 
+    stats["working_directory"] = cwd
+    if event == "SessionStart" and data.get("source") == "resume" and transcript_path:
+        stats["working_directory"] = extract_cwd_from_transcript(transcript_path) or cwd
+
     # Extract model from transcript if not already known
     if transcript_path and not stats.get("model"):
         model = extract_model_from_transcript(transcript_path)
@@ -203,7 +228,16 @@ def main():
 
     debug_log(crabigator_session_id, f"  state_before={stats.get('state', 'ready')} file={stats_file}")
 
-    if event == "PermissionRequest":
+    if event == "SessionStart":
+        add_event(stats, event, {"source": data.get("source", "startup")})
+        # Compaction starts a new context while the current turn continues.
+        if data.get("source") != "compact":
+            stats["state"] = "ready"
+            stats["active_prompt"] = None
+            stats.pop("permission", None)
+            stats["pending_question"] = False
+
+    elif event == "PermissionRequest":
         # Permission dialog is being shown to user
         tool_name = data.get("tool_name", "unknown")
         tool_input = data.get("tool_input", {})

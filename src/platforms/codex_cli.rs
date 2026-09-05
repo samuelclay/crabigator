@@ -7,7 +7,7 @@ pub mod transcript;
 
 pub(crate) use log_parser::is_injected_user_message;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -129,6 +129,19 @@ impl CodexPlatform {
 
         state.last_scan = Some(SystemTime::now());
 
+        if state.resume_requested && state.session_path.is_none() {
+            if let Some(path) = self.find_launch_resume(cwd, state) {
+                state.resume_followed = true;
+                let started = Self::session_meta_info(&path, cwd)
+                    .ok()
+                    .and_then(|meta| meta.session_start);
+                return Ok(Some((path, started)));
+            }
+            // A resume picker has not selected a rollout yet. Do not adopt a
+            // concurrently opened session merely because its timestamp is new.
+            return Ok(None);
+        }
+
         let mut candidates = Vec::new();
         let today = Local::now();
         for offset in 0..=1 {
@@ -152,6 +165,116 @@ impl CodexPlatform {
         }
 
         Ok(None)
+    }
+
+    /// Explicit resumes may point to files much older than the normal launch
+    /// discovery window. A picker selection must have fresh transcript or
+    /// shell initialization evidence and must not belong to another live pane.
+    fn find_launch_resume(&self, cwd: &str, state: &CodexState) -> Option<PathBuf> {
+        let claimed = self.rollouts_claimed_by_other_sessions();
+        let initialized = self.recent_shell_snapshots(state.app_start);
+        let mut directories = vec![self.sessions_dir.clone()];
+        let mut newest: Option<(PathBuf, SystemTime)> = None;
+        while let Some(directory) = directories.pop() {
+            let Ok(entries) = fs::read_dir(directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                if kind.is_dir() {
+                    directories.push(path);
+                    continue;
+                }
+                if !kind.is_file()
+                    || path
+                        .extension()
+                        .is_none_or(|extension| extension != "jsonl")
+                {
+                    continue;
+                }
+                if let Some(id) = state.explicit_resume_id.as_deref() {
+                    if path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.ends_with(&format!("{id}.jsonl")))
+                    {
+                        return Some(path);
+                    }
+                    continue;
+                }
+                let Some(mut modified) =
+                    entry.metadata().ok().and_then(|meta| meta.modified().ok())
+                else {
+                    continue;
+                };
+                if let Some(started) = path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| name.get(name.len().saturating_sub(36)..))
+                    .and_then(|id| initialized.get(id))
+                {
+                    modified = modified.max(*started);
+                }
+                if modified < state.app_start {
+                    continue;
+                }
+                let filter_cwd = if state.resume_all { "" } else { cwd };
+                if !Self::session_meta_info(&path, filter_cwd).is_ok_and(|meta| meta.matches) {
+                    continue;
+                }
+                if claimed.contains(&path) {
+                    continue;
+                }
+                if newest
+                    .as_ref()
+                    .is_none_or(|(_, previous)| modified > *previous)
+                {
+                    newest = Some((path, modified));
+                }
+            }
+        }
+        newest.map(|(path, _)| path)
+    }
+
+    /// Codex may leave a resumed rollout unchanged until the next prompt.
+    /// Its shell initialization still writes `<uuid>[.<stamp>].sh` at resume.
+    /// Read only filenames and modification times, never shell contents.
+    fn recent_shell_snapshots(&self, since: SystemTime) -> HashMap<String, SystemTime> {
+        let mut initialized: HashMap<String, SystemTime> = HashMap::new();
+        let Some(parent) = self.sessions_dir.parent() else {
+            return initialized;
+        };
+        let Ok(entries) = fs::read_dir(parent.join("shell_snapshots")) else {
+            return initialized;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str().filter(|name| name.ends_with(".sh")) else {
+                continue;
+            };
+            let Some(id) = name
+                .get(..36)
+                .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+            else {
+                continue;
+            };
+            let Some(modified) = entry
+                .metadata()
+                .ok()
+                .and_then(|meta| meta.modified().ok())
+                .filter(|modified| *modified >= since)
+            else {
+                continue;
+            };
+            initialized
+                .entry(id.to_string())
+                .and_modify(|latest| *latest = (*latest).max(modified))
+                .or_insert(modified);
+        }
+        initialized
     }
 
     fn sessions_dir_for_date(&self, date: chrono::DateTime<Local>) -> PathBuf {
@@ -210,10 +333,20 @@ impl CodexPlatform {
             let Some(payload) = payload else {
                 continue;
             };
+            // Child rollouts can be newer than the parent in the same cwd.
+            // Automatic session discovery follows the interactive conversation.
+            if payload.get("source").is_some_and(|source| {
+                source.get("subagent").is_some() || source.as_str() == Some("subagent")
+            }) {
+                return Ok(SessionMetaInfo {
+                    matches: false,
+                    session_start: None,
+                });
+            }
             if payload
                 .get("cwd")
                 .and_then(|v| v.as_str())
-                .is_some_and(|entry_cwd| entry_cwd == cwd)
+                .is_some_and(|entry_cwd| cwd.is_empty() || entry_cwd == cwd)
             {
                 let session_start = payload
                     .get("timestamp")
@@ -452,6 +585,28 @@ impl Platform for CodexPlatform {
         PlatformKind::Codex.command()
     }
 
+    fn spawn_args(&self, user_args: Vec<String>) -> Vec<String> {
+        let mut args = Vec::new();
+        for arg in user_args {
+            match arg.as_str() {
+                "--resume" => args.push("resume".to_string()),
+                "--continue" => args.extend(["resume".to_string(), "--last".to_string()]),
+                _ => args.push(arg),
+            }
+        }
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(index) = args.iter().position(|arg| arg == "resume") {
+            state.resume_requested = true;
+            state.resume_all = args.iter().any(|arg| arg == "--all");
+            state.explicit_resume_id = args
+                .iter()
+                .skip(index + 1)
+                .find(|id| uuid::Uuid::parse_str(id).is_ok())
+                .cloned();
+        }
+        args
+    }
+
     fn ensure_hooks_installed(&self) -> Result<()> {
         // Codex CLI does not currently support Crabigator hooks.
         Ok(())
@@ -627,6 +782,118 @@ mod tests {
         state.app_start = app_start;
         state.last_user_input = Some(SystemTime::now());
         state
+    }
+
+    #[test]
+    fn explicit_resume_finds_an_old_rollout_before_it_is_written_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(tmp.path());
+        let id = "01a0724d-3a0b-75a2-82c0-ee65fe6f5547";
+        let before = SystemTime::now() - Duration::from_secs(30 * 86_400);
+        let path = write_rollout(&platform, 30, &format!("rollout-{id}.jsonl"), before);
+        set_mtime(&path, before);
+        let args = platform.spawn_args(vec!["--resume".into(), id.into()]);
+        assert_eq!(args, vec!["resume", id]);
+        let mut state = platform.state.lock().unwrap();
+        // An explicit choice also works when launched from a different cwd.
+        let (actual, _) = platform
+            .resolve_session_path("/different/directory", &mut state)
+            .unwrap()
+            .unwrap();
+        assert_eq!(actual, path);
+        assert!(state.resume_followed);
+    }
+
+    #[test]
+    fn continue_waits_for_codex_to_select_an_old_rollout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(tmp.path());
+        let before = SystemTime::now() - Duration::from_secs(30 * 86_400);
+        let old = write_rollout(&platform, 30, "old.jsonl", before);
+        let latest = write_rollout(&platform, 20, "latest.jsonl", before);
+        let claimed = write_rollout(&platform, 10, "claimed.jsonl", before);
+        let child = write_rollout(&platform, 0, "child.jsonl", before);
+        let mut meta: Value = serde_json::from_str(&fs::read_to_string(&child).unwrap()).unwrap();
+        meta["payload"]["source"] =
+            serde_json::json!({"subagent":{"thread_spawn":{"parent_thread_id":"parent"}}});
+        fs::write(&child, meta.to_string() + "\n").unwrap();
+        set_mtime(&old, before);
+        set_mtime(&latest, before + Duration::from_secs(1));
+        set_mtime(&claimed, before + Duration::from_secs(2));
+        write_mirror_claim(&platform, "other-pane", &claimed);
+        assert_eq!(
+            platform.spawn_args(vec!["--continue".into()]),
+            vec!["resume", "--last"]
+        );
+        let mut state = platform.state.lock().unwrap();
+        assert!(platform
+            .resolve_session_path(CWD, &mut state)
+            .unwrap()
+            .is_none());
+        set_mtime(&latest, SystemTime::now());
+        state.last_scan = None;
+        let (actual, _) = platform
+            .resolve_session_path(CWD, &mut state)
+            .unwrap()
+            .unwrap();
+        assert_eq!(actual, latest);
+    }
+
+    #[test]
+    fn resume_picker_follows_shell_initialization_without_a_new_prompt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(&tmp.path().join("sessions"));
+        let id = "01a0724d-3a0b-75a2-82c0-ee65fe6f5547";
+        let before = SystemTime::now() - Duration::from_secs(30 * 86_400);
+        let selected = write_rollout(&platform, 30, &format!("rollout-{id}.jsonl"), before);
+        set_mtime(&selected, before);
+        platform.spawn_args(vec!["--resume".into(), "--all".into()]);
+        let mut state = platform.state.lock().unwrap();
+        assert!(platform
+            .resolve_session_path("/different/directory", &mut state)
+            .unwrap()
+            .is_none());
+        let snapshots = tmp.path().join("shell_snapshots");
+        fs::create_dir(&snapshots).unwrap();
+        let snapshot = snapshots.join(format!("{id}.123456.sh"));
+        fs::write(&snapshot, "shell content is not parsed").unwrap();
+        state.last_scan = None;
+        assert_eq!(
+            platform
+                .resolve_session_path("/different/directory", &mut state)
+                .unwrap()
+                .unwrap()
+                .0,
+            selected
+        );
+        assert_eq!(fs::metadata(&selected).unwrap().modified().unwrap(), before);
+    }
+
+    #[test]
+    fn resume_picker_waits_for_selection_without_adopting_a_live_neighbor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(tmp.path());
+        let before = SystemTime::now() - Duration::from_secs(30 * 86_400);
+        let selected = write_rollout(&platform, 30, "selected.jsonl", before);
+        set_mtime(&selected, before);
+        platform.spawn_args(vec!["--resume".into()]);
+        let neighbor = write_rollout(&platform, 0, "neighbor.jsonl", SystemTime::now());
+        write_mirror_claim(&platform, "neighbor", &neighbor);
+        let mut state = platform.state.lock().unwrap();
+        assert!(platform
+            .resolve_session_path(CWD, &mut state)
+            .unwrap()
+            .is_none());
+        set_mtime(&selected, SystemTime::now());
+        state.last_scan = None;
+        assert_eq!(
+            platform
+                .resolve_session_path(CWD, &mut state)
+                .unwrap()
+                .unwrap()
+                .0,
+            selected
+        );
     }
 
     #[test]

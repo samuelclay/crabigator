@@ -97,6 +97,8 @@ impl From<HashMap<String, PrDisposition>> for ScopedOverrides {
 /// Session facts the classifier needs beyond the PRs themselves.
 #[derive(Clone, Debug, Default)]
 pub struct RankContext {
+    /// The displayed worktree comes from a command rather than a session move.
+    pub command_workdir: bool,
     /// The session's current git branch (empty when unknown).
     pub current_branch: String,
     /// Basename of the session's working directory — worktrees are commonly
@@ -142,7 +144,7 @@ pub fn classify(prs: &mut [SessionPr], ctx: &RankContext) -> bool {
     // Branch matching is sticky: a branch can stop matching when the session
     // hops worktrees, but the ownership it proved doesn't expire.
     for pr in prs.iter_mut() {
-        if !pr.branch_matched && branch_matches(pr, ctx) {
+        if !ctx.command_workdir && !pr.branch_matched && branch_matches(pr, ctx) {
             pr.branch_matched = true;
             changed = true;
         }
@@ -159,13 +161,28 @@ pub fn classify(prs: &mut [SessionPr], ctx: &RankContext) -> bool {
 
     let decisions: Vec<_> = prs
         .iter()
-        .map(|pr| decide(pr, ctx, total_mentions, &created))
+        .map(|pr| {
+            let has_recent_creation = prs.iter().any(|other| {
+                other.created_here
+                    && other.state == "OPEN"
+                    && other.owner == pr.owner
+                    && other.repo == pr.repo
+                    && is_recent(other.last_mention_prompt, ctx.prompt_count)
+            });
+            decide(pr, ctx, total_mentions, &created, has_recent_creation)
+        })
         .collect();
     for (pr, (primary, source, dismissed)) in prs.iter_mut().zip(decisions) {
-        if pr.primary != primary || pr.primary_source != source || pr.dismissed != dismissed {
+        let worktree_visit = ctx.command_workdir && !primary;
+        if pr.primary != primary
+            || pr.primary_source != source
+            || pr.dismissed != dismissed
+            || pr.worktree_visit != worktree_visit
+        {
             pr.primary = primary;
             pr.primary_source = source.to_string();
             pr.dismissed = dismissed;
+            pr.worktree_visit = worktree_visit;
             changed = true;
         }
     }
@@ -183,6 +200,7 @@ fn decide(
     ctx: &RankContext,
     total_mentions: u64,
     created: &[(String, u64, u64)],
+    has_recent_creation: bool,
 ) -> (bool, &'static str, bool) {
     let key = format!("{}/{}#{}", pr.owner, pr.repo, pr.number);
     if let Some(disposition) = ctx.overrides.get(&key) {
@@ -195,7 +213,7 @@ fn decide(
     {
         return apply_disposition(*disposition, "session");
     }
-    let primary = auto_primary(pr, ctx, total_mentions, created);
+    let primary = auto_primary(pr, ctx, total_mentions, created, has_recent_creation);
     (
         primary,
         "auto",
@@ -222,10 +240,16 @@ fn auto_primary(
     ctx: &RankContext,
     total_mentions: u64,
     created: &[(String, u64, u64)],
+    has_recent_creation: bool,
 ) -> bool {
     // Closed-not-merged means the approach was abandoned — the audit found a
     // closed PR with 2.7× the primary's mentions that the user had rejected.
     if pr.state == "CLOSED" {
+        return false;
+    }
+    // Integration sessions visit source PR worktrees to fix regressions. Those
+    // visits should not displace the PR this session created in the same repo.
+    if ctx.command_workdir && !pr.created_here && has_recent_creation {
         return false;
     }
     if attached_to_worktree(pr, &ctx.current_branch, &ctx.worktree_dir) {
@@ -368,6 +392,33 @@ mod tests {
         assert!(classify(&mut prs, &ctx(10)));
         assert!(prs[0].primary);
         assert_eq!(prs[0].primary_source, "auto");
+    }
+
+    #[test]
+    fn source_worktree_visits_keep_the_integration_pr_primary() {
+        let mut prs = vec![pr(1437, "portal"), pr(1438, "portal"), pr(2890, "rqh")];
+        prs[0].branch = "source-fix".into();
+        for pr in &mut prs {
+            pr.mentions = 2;
+            pr.last_mention_prompt = 5;
+        }
+        prs[1].created_here = true;
+        prs[2].created_here = true;
+        let mut context = ctx(5);
+        context.command_workdir = true;
+        context.current_branch = "source-fix".into();
+        classify(&mut prs, &context);
+        assert!(!prs[0].primary);
+        assert!(
+            !prs[0].branch_matched,
+            "a command visit must not become sticky ownership"
+        );
+        assert!(prs[1].primary && prs[2].primary);
+
+        // Once integration lands, working on the source branch can own its PR.
+        prs[1].state = "MERGED".into();
+        classify(&mut prs, &context);
+        assert!(prs[0].primary);
     }
 
     /// Audit sessions 3/5/6/11: investigations and bookkeeping have no primary.

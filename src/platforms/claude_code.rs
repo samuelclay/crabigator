@@ -166,6 +166,7 @@ impl ClaudeCodePlatform {
 
         let script_path_str = self.script_path().to_string_lossy().to_string();
         let hook_events = [
+            "SessionStart",
             "PermissionRequest",
             "PostToolUse",
             "Stop",
@@ -252,6 +253,7 @@ impl ClaudeCodePlatform {
 
         // Hook events we need to register
         let hook_events = [
+            "SessionStart",
             "PermissionRequest",
             "PostToolUse",
             "Stop",
@@ -518,6 +520,52 @@ mod tests {
         let path = ClaudeCodePlatform::stats_file_path("/Users/test/project");
         assert!(path.to_string_lossy().starts_with("/tmp/crabigator-stats-"));
         assert!(path.to_string_lossy().ends_with(".json"));
+    }
+
+    #[test]
+    fn resume_hook_restores_transcript_and_directory_before_the_first_prompt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let script = tmp.path().join("stats_hook.py");
+        fs::write(&script, script_with_version()).unwrap();
+        let output = std::process::Command::new("python3")
+            .args(["-c", r#"
+import io, json, pathlib, runpy, sys
+root = pathlib.Path(sys.argv[1])
+hook = runpy.run_path(str(root / 'stats_hook.py'))
+main = hook['main']
+main.__globals__['get_stats_file'] = lambda cwd: root / 'stats.json'
+main.__globals__['debug_log'] = lambda *args: None
+main.__globals__['create_claude_session_symlink'] = lambda *args: None
+work = root / 'worktree'
+work.mkdir()
+transcript = root / 'session.jsonl'
+transcript.write_text(json.dumps({'cwd': str(root)}) + '\n' + json.dumps({'cwd': str(work)}) + '\n' + json.dumps({'cwd': str(root), 'isSidechain': True}) + '\n')
+event = {'hook_event_name': 'SessionStart', 'source': 'resume', 'cwd': str(root), 'transcript_path': str(transcript), 'session_id': 'resumed-conversation'}
+sys.stdin = io.StringIO(json.dumps(event))
+main()
+stats = json.loads((root / 'stats.json').read_text())
+assert stats['transcript_path'] == str(transcript)
+assert stats['working_directory'] == str(work)
+assert stats['claude_session_id'] == 'resumed-conversation'
+assert stats['state'] == 'ready'
+assert stats['prompts'] == 0
+stats.update(state='thinking', active_prompt='Keep working')
+(root / 'stats.json').write_text(json.dumps(stats))
+event['source'] = 'compact'
+sys.stdin = io.StringIO(json.dumps(event))
+main()
+stats = json.loads((root / 'stats.json').read_text())
+assert stats['state'] == 'thinking'
+assert stats['active_prompt'] == 'Keep working'
+"#])
+            .arg(tmp.path())
+            .output()
+            .expect("Python 3 runs the Claude hook");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]

@@ -620,6 +620,9 @@ pub(crate) struct TranscriptCursor {
     modified: Option<SystemTime>,
     /// Absolute byte offset of the line that starts the latest turn.
     turn_start: u64,
+    /// Ordinal of the turn at turn_start, including history before a resume.
+    turn_number: u32,
+    cwd: Option<PathBuf>,
 }
 
 /// Like `collect_latest_turn_text`, but cheap to call on a timer. Returns
@@ -627,11 +630,37 @@ pub(crate) struct TranscriptCursor {
 /// When it has, only the bytes from the start of the latest turn onward are
 /// read and parsed, so the cost tracks the current turn rather than the whole
 /// session. A truncated or replaced file falls back to a full read.
+#[cfg(test)]
 pub(crate) fn collect_latest_turn_text_incremental(
     platform: PlatformKind,
     path: &Path,
     cursor: &mut Option<TranscriptCursor>,
 ) -> Result<Option<TurnTranscript>> {
+    Ok(collect_tracking_turns_incremental(platform, path, cursor)?
+        .and_then(|mut update| update.turns.pop().map(|turn| turn.transcript)))
+}
+
+#[derive(Debug)]
+pub(crate) struct TrackingTurn {
+    pub transcript: TurnTranscript,
+    pub number: u32,
+    pub timestamp: u64,
+    pub cwd: Option<PathBuf>,
+}
+
+pub(crate) struct TrackingUpdate {
+    pub turns: Vec<TrackingTurn>,
+    pub reset: bool,
+}
+
+/// Replay every turn when a transcript is first adopted or replaced. Later
+/// scans read only the current turn and any newer turns, preserving history
+/// without treating a resume as a fresh mention of every old PR.
+pub(crate) fn collect_tracking_turns_incremental(
+    platform: PlatformKind,
+    path: &Path,
+    cursor: &mut Option<TranscriptCursor>,
+) -> Result<Option<TrackingUpdate>> {
     use std::io::{Read, Seek, SeekFrom};
 
     let meta = fs::metadata(path)
@@ -646,26 +675,145 @@ pub(crate) fn collect_latest_turn_text_incremental(
     {
         return Ok(None);
     }
-
-    let start = match cursor.as_ref() {
-        Some(c) if same_file && len >= c.len => c.turn_start.min(len),
-        _ => 0,
-    };
+    // A changed file of the same size was rewritten, not appended to.
+    let previous = cursor.as_ref().filter(|c| same_file && len > c.len);
+    let start = previous.map_or(0, |c| c.turn_start.min(len));
+    let first_number = previous.map_or(0, |c| c.turn_number.saturating_sub(1));
+    let previous_cwd = previous.and_then(|c| c.cwd.clone());
+    let reset = previous.is_none();
     let mut file = fs::File::open(path)
         .with_context(|| format!("Failed to read transcript {}", path.display()))?;
     file.seek(SeekFrom::Start(start))?;
     let mut content = String::new();
-    file.read_to_string(&mut content)
-        .with_context(|| format!("Failed to read transcript {}", path.display()))?;
-
-    let transcript = finish_latest_turn(platform, &content);
+    file.read_to_string(&mut content)?;
+    // A partially written JSONL record must remain unread until its newline
+    // lands; otherwise resume discovery can skip the first recorded prompt.
+    let complete_len = if content.ends_with('\n')
+        || content
+            .lines()
+            .last()
+            .is_some_and(|line| serde_json::from_str::<Value>(line).is_ok())
+    {
+        content.len()
+    } else {
+        content.rfind('\n').map_or(0, |end| end + 1)
+    };
+    let content = &content[..complete_len];
+    let turns = tracking_turns(platform, content, first_number, previous_cwd);
+    let last = turns.last();
     *cursor = Some(TranscriptCursor {
         path: path.to_path_buf(),
-        len,
+        len: start + complete_len as u64,
         modified,
-        turn_start: start + transcript.turn_start as u64,
+        turn_start: start + last.map_or(0, |turn| turn.transcript.turn_start as u64),
+        turn_number: last.map_or(first_number, |turn| turn.number),
+        cwd: last.and_then(|turn| turn.cwd.clone()),
     });
-    Ok(Some(transcript))
+    Ok(Some(TrackingUpdate { turns, reset }))
+}
+
+fn tracking_turns(
+    platform: PlatformKind,
+    content: &str,
+    first_number: u32,
+    mut cwd: Option<PathBuf>,
+) -> Vec<TrackingTurn> {
+    let mut boundaries = Vec::new();
+    for line in content.lines() {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let payload = entry.get("payload").unwrap_or(&Value::Null);
+        if let Some(path) = entry
+            .get("cwd")
+            .or_else(|| payload.get("cwd"))
+            .and_then(Value::as_str)
+        {
+            if Path::new(path).is_absolute() {
+                cwd = Some(PathBuf::from(path));
+            }
+        }
+        let prompt = match platform {
+            PlatformKind::Claude if entry["type"] == "user" => {
+                claude_user_prompt_text(&entry["message"]["content"])
+                    .filter(|prompt| !is_claude_image_source_note(prompt))
+            }
+            PlatformKind::Codex
+                if entry["type"] == "response_item"
+                    && payload["type"] == "message"
+                    && payload["role"] == "user" =>
+            {
+                Some(codex_message_text(payload)).filter(|prompt| !is_codex_bootstrap(prompt))
+            }
+            PlatformKind::Codex
+                if entry["type"] == "event_msg" && payload["type"] == "user_message" =>
+            {
+                payload
+                    .get("message")
+                    .or_else(|| payload.get("text"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .filter(|prompt| !is_codex_bootstrap(prompt))
+            }
+            PlatformKind::Opencode if entry["kind"] == "user" => {
+                entry["text"].as_str().map(str::to_string)
+            }
+            PlatformKind::Grok => grok_acp::update_from_line(&entry)
+                .filter(|update| update["sessionUpdate"] == "user_message_chunk")
+                .map(|update| grok_acp::text_content(update).to_string()),
+            _ => None,
+        };
+        if prompt.is_some_and(|prompt| !prompt.trim().is_empty()) {
+            let timestamp = entry
+                .get("timestamp")
+                .or_else(|| payload.get("timestamp"))
+                .and_then(Value::as_str)
+                .and_then(|stamp| chrono::DateTime::parse_from_rfc3339(stamp).ok())
+                .map_or(0, |stamp| stamp.timestamp_millis().max(0) as u64);
+            boundaries.push((
+                line_offset(content, line),
+                timestamp,
+                cwd.clone(),
+                entry["type"] == "event_msg",
+            ));
+        }
+    }
+    let mut turns: Vec<TrackingTurn> = Vec::new();
+    let mut unpaired_codex_prompt = None;
+    for (i, (start, timestamp, cwd, event_prompt)) in boundaries.iter().enumerate() {
+        let end = boundaries.get(i + 1).map_or(content.len(), |next| next.0);
+        let mut transcript = finish_latest_turn(platform, &content[*start..end]);
+        transcript.turn_start += start;
+        // Codex writes both event_msg and response_item for the same prompt.
+        // Pair those copies once, preserving deliberately repeated prompts.
+        if platform == PlatformKind::Codex
+            && unpaired_codex_prompt.is_some_and(|previous| previous != *event_prompt)
+            && turns.last().is_some_and(|previous| {
+                previous.transcript.activity.trim().is_empty()
+                    && previous.transcript.user_prompt == transcript.user_prompt
+            })
+        {
+            // Re-read both records on the next incremental scan so the second
+            // copy cannot pair with a later, deliberately repeated prompt.
+            transcript.turn_start = turns
+                .pop()
+                .expect("duplicate has a previous turn")
+                .transcript
+                .turn_start;
+            unpaired_codex_prompt = None;
+        } else {
+            unpaired_codex_prompt = Some(*event_prompt);
+        }
+        turns.push(TrackingTurn {
+            transcript,
+            number: first_number
+                .saturating_add(turns.len() as u32)
+                .saturating_add(1),
+            timestamp: *timestamp,
+            cwd: cwd.clone(),
+        });
+    }
+    turns
 }
 
 fn collect_latest_turn(job: &RecapJob) -> Result<TurnTranscript> {
@@ -689,7 +837,17 @@ pub(crate) fn collect_latest_turn_text(
 
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read transcript {}", path.display()))?;
-    Ok(finish_latest_turn(platform, &content))
+    let mut transcript = finish_latest_turn(platform, &content);
+    // Only model summaries need a size limit. Local PR tracking uses the full
+    // turn, including commands and creation results from hours earlier.
+    transcript.activity = truncate_start(
+        &condense_activity(&transcript.activity),
+        MAX_TRANSCRIPT_CHARS,
+    );
+    transcript.user_prompt = transcript
+        .user_prompt
+        .map(|prompt| truncate_start(&prompt, 2_000));
+    Ok(transcript)
 }
 
 fn finish_latest_turn(platform: PlatformKind, content: &str) -> TurnTranscript {
@@ -699,11 +857,10 @@ fn finish_latest_turn(platform: PlatformKind, content: &str) -> TurnTranscript {
         PlatformKind::Opencode => collect_opencode_latest_turn(content),
         PlatformKind::Grok => collect_grok_latest_turn(content),
     };
-    transcript.activity =
-        redact_sensitive(&truncate_start(&transcript.activity, MAX_TRANSCRIPT_CHARS));
+    transcript.activity = redact_sensitive(&transcript.activity);
     transcript.user_prompt = transcript
         .user_prompt
-        .map(|prompt| redact_sensitive(&truncate_start(&prompt, 2_000)));
+        .map(|prompt| redact_sensitive(&prompt));
     transcript
 }
 
@@ -805,11 +962,7 @@ fn collect_grok_latest_turn(content: &str) -> TurnTranscript {
                 if matches!(status, "completed" | "failed" | "error") {
                     let output = grok_acp::tool_output_text(update);
                     if !output.trim().is_empty() {
-                        push_section(
-                            &mut activity,
-                            "tool_result",
-                            &truncate_end(output.trim(), MAX_TOOL_RESULT_CHARS),
-                        );
+                        push_section(&mut activity, "tool_result", output.trim());
                     }
                 }
             }
@@ -908,9 +1061,14 @@ fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
                         .unwrap_or("tool");
                     let args = payload
                         .get("arguments")
-                        .map(format_json_preview)
+                        .map(format_transcript_value)
                         .unwrap_or_default();
-                    push_section(&mut activity, "tool", &format!("{} {}", name, args));
+                    push_tool_section(
+                        &mut activity,
+                        "tool",
+                        payload.get("call_id"),
+                        &format!("{} {}", name, args),
+                    );
                 }
                 Some("function_call_output") if after_user_prompt => {
                     let output = payload
@@ -918,10 +1076,11 @@ fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
                         .and_then(|v| v.as_str())
                         .unwrap_or_default();
                     if !output.trim().is_empty() {
-                        push_section(
+                        push_tool_section(
                             &mut activity,
                             "tool_result",
-                            &truncate_end(output.trim(), MAX_TOOL_RESULT_CHARS),
+                            payload.get("call_id"),
+                            output.trim(),
                         );
                     }
                 }
@@ -932,17 +1091,23 @@ fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
                         .unwrap_or("tool");
                     let input = payload
                         .get("input")
-                        .map(format_codex_custom_tool_preview)
+                        .map(format_transcript_value)
                         .unwrap_or_default();
-                    push_section(&mut activity, "tool", &format!("{} {}", name, input));
+                    push_tool_section(
+                        &mut activity,
+                        "tool",
+                        payload.get("call_id"),
+                        &format!("{} {}", name, input),
+                    );
                 }
                 Some("custom_tool_call_output") if after_user_prompt => {
                     let output = codex_custom_tool_output_text(payload);
                     if !output.trim().is_empty() {
-                        push_section(
+                        push_tool_section(
                             &mut activity,
                             "tool_result",
-                            &truncate_end(output.trim(), MAX_TOOL_RESULT_CHARS),
+                            payload.get("call_id"),
+                            output.trim(),
                         );
                     }
                 }
@@ -1025,11 +1190,7 @@ fn collect_opencode_latest_turn(content: &str) -> TurnTranscript {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
                 if !output.trim().is_empty() {
-                    push_section(
-                        &mut activity,
-                        "tool_result",
-                        &truncate_end(output.trim(), MAX_TOOL_RESULT_CHARS),
-                    );
+                    push_section(&mut activity, "tool_result", output.trim());
                 }
             }
             _ => {}
@@ -1058,9 +1219,14 @@ fn append_assistant_content(activity: &mut String, content: &Value) {
                         let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
                         let input = block
                             .get("input")
-                            .map(format_json_preview)
+                            .map(format_transcript_value)
                             .unwrap_or_default();
-                        push_section(activity, "tool", &format!("{} {}", name, input));
+                        push_tool_section(
+                            activity,
+                            "tool",
+                            block.get("id"),
+                            &format!("{} {}", name, input),
+                        );
                     }
                     _ => {}
                 }
@@ -1085,13 +1251,14 @@ fn append_tool_results(activity: &mut String, content: &Value) {
                 .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
                 .collect::<Vec<_>>()
                 .join("\n"),
-            other => format_json_preview(other),
+            other => format_transcript_value(other),
         };
         if !text.trim().is_empty() {
-            push_section(
+            push_tool_section(
                 activity,
                 "tool_result",
-                &truncate_end(text.trim(), MAX_TOOL_RESULT_CHARS),
+                result.get("tool_use_id"),
+                text.trim(),
             );
         }
     }
@@ -1108,13 +1275,6 @@ fn codex_message_text(payload: &Value) -> String {
         .join("\n")
 }
 
-fn format_codex_custom_tool_preview(value: &Value) -> String {
-    match value {
-        Value::String(text) => truncate_middle(text, 1_200),
-        other => format_json_preview(other),
-    }
-}
-
 fn codex_custom_tool_output_text(payload: &Value) -> String {
     let Some(output) = payload.get("output") else {
         return String::new();
@@ -1126,7 +1286,7 @@ fn codex_custom_tool_output_text(payload: &Value) -> String {
             .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
             .collect::<Vec<_>>()
             .join("\n"),
-        other => format_json_preview(other),
+        other => format_transcript_value(other),
     }
 }
 
@@ -1146,13 +1306,44 @@ fn push_section(out: &mut String, label: &str, text: &str) {
     out.push('\n');
 }
 
-fn format_json_preview(value: &Value) -> String {
-    match value {
-        Value::String(text) => truncate_end(text, 600),
-        other => serde_json::to_string(other)
-            .map(|s| truncate_end(&s, 900))
-            .unwrap_or_default(),
+/// Preserve result ownership when multiple tool calls are in flight.
+fn push_tool_section(out: &mut String, label: &str, call_id: Option<&Value>, text: &str) {
+    match call_id.and_then(Value::as_str) {
+        Some(id) => push_section(out, label, &format!("call_id: {id}\n{text}")),
+        None => push_section(out, label, text),
     }
+}
+
+fn format_transcript_value(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+/// Keep tool previews short for recaps without discarding local tracking evidence.
+fn condense_activity(activity: &str) -> String {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"(?m)^\[(assistant|tool|tool_result)\]\n")
+            .expect("valid transcript section regex")
+    });
+    let mut sections = re.captures_iter(activity).peekable();
+    let mut condensed = String::new();
+    while let Some(section) = sections.next() {
+        let start = section.get(0).unwrap().end();
+        let end = sections
+            .peek()
+            .map_or(activity.len(), |next| next.get(0).unwrap().start());
+        let body = &activity[start..end];
+        let preview = match &section[1] {
+            "tool" => truncate_middle(body, 1_200),
+            "tool_result" => truncate_end(body, MAX_TOOL_RESULT_CHARS),
+            _ => body.to_string(),
+        };
+        push_section(&mut condensed, &section[1], &preview);
+    }
+    condensed
 }
 
 fn build_anthropic_request(
@@ -1571,6 +1762,12 @@ fn write_recap_cache(cwd: &Path, recap: &TurnRecap) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn recap_condensation_preserves_bracketed_prose() {
+        let activity = "\n[assistant]\n[Portal](https://example.com)\n[1] Check the result\n";
+        assert_eq!(condense_activity(activity), activity);
+    }
+
     fn codex_user(text: &str) -> String {
         format!(
             r#"{{"type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"{text}"}}]}}}}"#
@@ -1681,6 +1878,113 @@ mod tests {
             .unwrap();
         assert_eq!(turn.user_prompt.as_deref(), Some("fresh prompt"));
         assert_eq!(cursor.as_ref().unwrap().turn_start, 0);
+    }
+
+    #[test]
+    fn tracking_restores_all_turns_then_only_revisits_the_latest_turn() {
+        use std::io::Write as _;
+        for platform in [PlatformKind::Claude, PlatformKind::Codex] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("session.jsonl");
+            let user = |text: &str| {
+                match platform {
+                PlatformKind::Claude => serde_json::json!({"type":"user","cwd":dir.path(),"timestamp":"2026-08-01T12:00:00Z","message":{"content":text}}).to_string(),
+                _ => serde_json::json!({"type":"event_msg","timestamp":"2026-08-01T12:00:00Z","payload":{"type":"user_message","message":text}}).to_string(),
+            }
+            };
+            fs::write(
+                &path,
+                format!(
+                    "{}\n{}\n{}\n",
+                    user("Open the PR"),
+                    user("Run checks"),
+                    user("Run checks")
+                ),
+            )
+            .unwrap();
+            let mut cursor = None;
+            let update = collect_tracking_turns_incremental(platform, &path, &mut cursor)
+                .unwrap()
+                .unwrap();
+            assert!(update.reset);
+            assert_eq!(
+                update
+                    .turns
+                    .iter()
+                    .map(|turn| turn.number)
+                    .collect::<Vec<_>>(),
+                vec![1, 2, 3]
+            );
+            assert_eq!(
+                update.turns[0].transcript.user_prompt.as_deref(),
+                Some("Open the PR")
+            );
+            assert_eq!(update.turns[0].timestamp, 1785585600000);
+            if platform == PlatformKind::Claude {
+                assert_eq!(update.turns[0].cwd.as_deref(), Some(dir.path()));
+            }
+            assert!(
+                collect_tracking_turns_incremental(platform, &path, &mut cursor)
+                    .unwrap()
+                    .is_none()
+            );
+            let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(file, "{}", user("Review the result")).unwrap();
+            let update = collect_tracking_turns_incremental(platform, &path, &mut cursor)
+                .unwrap()
+                .unwrap();
+            assert!(!update.reset);
+            assert_eq!(
+                update
+                    .turns
+                    .iter()
+                    .map(|turn| turn.number)
+                    .collect::<Vec<_>>(),
+                vec![3, 4]
+            );
+            fs::write(&path, format!("{}\n", user("New session"))).unwrap();
+            let update = collect_tracking_turns_incremental(platform, &path, &mut cursor)
+                .unwrap()
+                .unwrap();
+            assert!(update.reset);
+            assert_eq!(update.turns.len(), 1);
+            assert_eq!(update.turns[0].number, 1);
+        }
+    }
+
+    #[test]
+    fn tracking_waits_for_partial_records_and_deduplicates_codex_prompt_copies() {
+        use std::io::Write as _;
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let response = codex_user("Continue");
+        let event = serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"Continue"}}).to_string();
+        fs::write(
+            file.path(),
+            format!("{event}\n{}", &response[..response.len() / 2]),
+        )
+        .unwrap();
+        let mut cursor = None;
+        let update =
+            collect_tracking_turns_incremental(PlatformKind::Codex, file.path(), &mut cursor)
+                .unwrap()
+                .unwrap();
+        assert_eq!(update.turns.len(), 1);
+        let mut append = fs::OpenOptions::new()
+            .append(true)
+            .open(file.path())
+            .unwrap();
+        writeln!(append, "{}", &response[response.len() / 2..]).unwrap();
+        writeln!(append, "{}", codex_assistant("Checking the PR.")).unwrap();
+        let update =
+            collect_tracking_turns_incremental(PlatformKind::Codex, file.path(), &mut cursor)
+                .unwrap()
+                .unwrap();
+        assert_eq!(update.turns.len(), 1);
+        assert_eq!(update.turns[0].number, 1);
+        assert!(update.turns[0]
+            .transcript
+            .activity
+            .contains("Checking the PR."));
     }
 
     #[test]

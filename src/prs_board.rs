@@ -1317,7 +1317,12 @@ fn effective_session_pr(
             let explicitly_secondary =
                 !pr.primary && matches!(pr.primary_source.as_str(), "session" | "override");
             let attached = pr_attached_to_session(session, &pr);
-            if attached && !explicitly_secondary && !pr.dismissed && pr.state != "CLOSED" {
+            if attached
+                && !explicitly_secondary
+                && !pr.worktree_visit
+                && !pr.dismissed
+                && pr.state != "CLOSED"
+            {
                 pr.primary = true;
                 pr.primary_source = "auto".to_string();
             }
@@ -6575,6 +6580,17 @@ mod tests {
         assert_eq!(entries[0].sessions.len(), 1);
         assert_eq!(entries[0].pr.title, "Keep draft values during autosave");
         assert_eq!(entries[0].sessions[0].title, "⟁ Fix builder autosave");
+    }
+
+    #[test]
+    fn temporary_worktree_visits_do_not_override_the_session_classification() {
+        let mut source = board_pr(1437, "portal");
+        source.branch = "sam/source-fix".into();
+        source.worktree_visit = true;
+        let mut session = snapshot("source-fix", vec![source.clone()]);
+        session.repo_name = "portal".into();
+        assert!(!effective_session_pr(&session, &source, None).primary);
+        assert!(effective_session_pr(&session, &source, Some(PrDisposition::Primary)).primary);
     }
 
     #[test]

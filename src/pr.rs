@@ -33,9 +33,6 @@ const PR_ACTIVE_THROTTLE: Duration = Duration::from_secs(60);
 const PR_IDLE_THROTTLE: Duration = Duration::from_secs(60 * 60);
 const COMMENTS_IDLE_THROTTLE: Duration = Duration::from_secs(60 * 60);
 const PR_ACTIVE_WINDOW: Duration = Duration::from_secs(15 * 60);
-/// Safety cap on how long a `gh pr create` keeps claiming PR URLs, in case no
-/// new prompt arrives to close the window. Normally closed by `on_new_prompt`.
-const CREATE_CLAIM_WINDOW: Duration = Duration::from_secs(600);
 /// How many pasted-prompt URLs to keep for branch matching.
 const PROMPT_URLS_KEPT: usize = 32;
 /// How long a pasted Slack permalink keeps claiming new PRs as their origin.
@@ -270,6 +267,10 @@ pub struct SessionPr {
     /// or "override" (the cloud-stored dashboard disposition).
     #[serde(default)]
     pub primary_source: String,
+    /// This secondary was classified while following a command's directory.
+    /// Boards must not turn that temporary visit into worktree ownership.
+    #[serde(default)]
+    pub worktree_visit: bool,
     /// Hidden from rendered lists. User dismissals stay sticky; automatic
     /// stale-secondary dismissal clears if the PR is mentioned again.
     #[serde(default)]
@@ -342,6 +343,7 @@ impl SessionPr {
             updated_at: 0,
             primary: false,
             primary_source: String::new(),
+            worktree_visit: false,
             dismissed: false,
             watched: false,
             slack_origin_url: String::new(),
@@ -670,8 +672,8 @@ pub struct PrTracker {
     prs: Vec<SessionPr>,
     /// In-flight `gh` jobs keyed by the URL (or synthetic branch key) being fetched.
     pending: HashMap<String, mpsc::Receiver<JobResult>>,
-    /// Set when a `gh pr create` was seen; the next fresh PR URL is attributed to it.
-    expect_created_since: Option<Instant>,
+    /// Bare-number mentions awaiting a repository identity from GitHub.
+    pending_mentions: HashMap<String, Vec<(bool, u32, u64)>>,
     /// Last time a `git push` / PR-edit triggered a current-branch PR lookup.
     /// Throttles branch resolution since the same turn text is re-scanned each tick.
     last_branch_resolve: Option<Instant>,
@@ -704,6 +706,10 @@ pub struct PrTracker {
     /// The platform's prompt counter, stamped onto mentions so recency can be
     /// judged in turns rather than wall-clock time.
     prompt_count: u32,
+    /// A command's workdir is a temporary visit, weaker than creating a PR.
+    command_workdir: bool,
+    replaying_history: bool,
+    mention_time: Option<u64>,
     /// URLs pasted into user prompts, kept for branch/preview-URL matching.
     prompt_urls: Vec<String>,
     /// "PR #123 is the primary" statements from this session, by number.
@@ -743,7 +749,7 @@ impl PrTracker {
         Self {
             prs: Vec::new(),
             pending: HashMap::new(),
-            expect_created_since: None,
+            pending_mentions: HashMap::new(),
             last_branch_resolve: None,
             mention_events_seen: HashMap::new(),
             scan_prompt_owner: None,
@@ -754,6 +760,9 @@ impl PrTracker {
             update_commands_seen: HashMap::new(),
             pending_pr_active: HashMap::new(),
             prompt_count: 0,
+            command_workdir: false,
+            replaying_history: false,
+            mention_time: None,
             prompt_urls: Vec::new(),
             declared_numbers: HashMap::new(),
             declared_urls: HashMap::new(),
@@ -776,6 +785,7 @@ impl PrTracker {
         let mut fresh = Self::with_slack_directory(std::mem::take(&mut self.slack_directory));
         fresh.overrides = std::mem::take(&mut self.overrides);
         fresh.pending_watch_adds = std::mem::take(&mut self.pending_watch_adds);
+        fresh.command_workdir = self.command_workdir;
         *self = fresh;
     }
 
@@ -800,20 +810,8 @@ impl PrTracker {
         self.resolve_branch_pr(cwd, false);
     }
 
-    /// Close the "created here" claim window at the start of a new user turn.
-    ///
-    /// `gh pr create`'s own URL output is collapsed in the transcript, so the PR
-    /// URLs only surface later in the assistant's summary text — and one visible
-    /// create can produce several PRs. We therefore claim *every* new PR URL after
-    /// a create until the next prompt ends the turn, so later references remain
-    /// associated without being mislabeled as created by this session.
-    pub fn on_new_prompt(&mut self) {
-        self.expect_created_since = None;
-    }
-
     /// Reset per-turn transcript deduplication after the platform confirms that
-    /// a new prompt was recorded. Keeping this separate from [`on_new_prompt`]
-    /// avoids reprocessing the previous turn during the brief gap after Enter.
+    /// a new prompt was recorded, rather than during the gap after Enter.
     pub fn on_prompt_observed(&mut self) {
         self.reset_scan_deduplication();
     }
@@ -840,6 +838,50 @@ impl PrTracker {
     /// added. Enrichment results land later via [`poll`].
     pub fn scan_text(&mut self, text: &str, cwd: &Path) -> bool {
         self.scan_slack_metadata(text) | self.scan_text_inner(text, cwd, true, "activity")
+    }
+
+    /// Restore detections in chronological turn order. This replays evidence,
+    /// never shell commands. Historical pushes must not query today's checkout
+    /// as though that were the branch the old command updated.
+    pub fn scan_transcript_turn(
+        &mut self,
+        turn: &crate::recap::TrackingTurn,
+        cwd: &Path,
+        historical: bool,
+    ) -> bool {
+        if self.prompt_count != turn.number {
+            self.on_prompt_observed();
+            self.set_prompt_count(turn.number);
+        }
+        self.replaying_history = historical;
+        self.mention_time = (historical && turn.timestamp != 0).then_some(turn.timestamp);
+        let cwd = turn
+            .cwd
+            .as_deref()
+            .filter(|path| path.is_dir())
+            .unwrap_or(cwd);
+        let mut changed = false;
+        if let Some(prompt) = turn.transcript.user_prompt.as_deref() {
+            changed |= self.scan_prompt(prompt, cwd);
+        }
+        changed |= self.scan_text(&turn.transcript.activity, cwd);
+        self.replaying_history = false;
+        self.mention_time = None;
+        changed
+    }
+
+    /// Enrich restored PRs once after the historical scan, without refreshing
+    /// on every old mention while the transcript is being replayed.
+    pub fn refresh_restored_prs(&mut self) {
+        let urls: Vec<_> = self
+            .prs
+            .iter()
+            .filter(|pr| pr.refreshed_at == 0)
+            .map(|pr| pr.url.clone())
+            .collect();
+        for url in urls {
+            self.refresh_url(&url, false);
+        }
     }
 
     /// Scan a user prompt for PR references without treating text such as
@@ -1043,7 +1085,7 @@ impl PrTracker {
             pr.watched = true;
         }
         let add = loc.watch_add();
-        if !self.pending_watch_adds.contains(&add) {
+        if !self.replaying_history && !self.pending_watch_adds.contains(&add) {
             self.pending_watch_adds.push(add);
         }
     }
@@ -1081,6 +1123,7 @@ impl PrTracker {
             return false;
         }
         let ctx = crate::pr_rank::RankContext {
+            command_workdir: self.command_workdir,
             current_branch: current_branch.to_string(),
             worktree_dir: cwd
                 .file_name()
@@ -1112,14 +1155,32 @@ impl PrTracker {
         let known_pr_numbers: HashSet<u64> = self.prs.iter().map(|pr| pr.number).collect();
         for event in scan_events_with_known_prs(text, &known_pr_numbers) {
             match event {
-                ScanEvent::Created => self.expect_created_since = Some(Instant::now()),
+                ScanEvent::Created(loc) if handle_updates => {
+                    if self
+                        .prs
+                        .iter()
+                        .any(|pr| pr.url == loc.url && pr.created_here)
+                    {
+                        continue;
+                    }
+                    changed |= self.observe_url(&loc);
+                    if let Some(pr) = self.prs.iter_mut().find(|pr| pr.url == loc.url) {
+                        if !pr.created_here {
+                            pr.created_here = true;
+                            changed = true;
+                        }
+                    }
+                }
+                ScanEvent::Created(_) => {}
                 ScanEvent::Updated(command) if handle_updates => {
                     let occurrence = update_occurrences.entry(command.clone()).or_default();
                     *occurrence += 1;
                     let seen = self.update_commands_seen.entry(command).or_default();
                     if *occurrence > *seen {
                         *seen = *occurrence;
-                        self.resolve_branch_pr(cwd, true);
+                        if !self.replaying_history {
+                            self.resolve_branch_pr(cwd, true);
+                        }
                     }
                 }
                 ScanEvent::Updated(_) => {}
@@ -1141,7 +1202,16 @@ impl PrTracker {
                     ) {
                         self.resolve_mentioned_pr(number, cwd);
                         if !bulk {
-                            changed |= self.record_mention_for_number(number, user_authored);
+                            let recorded = self.record_mention_for_number(number, user_authored);
+                            changed |= recorded;
+                            let key = format!("mention:{}#{number}", cwd.display());
+                            if !recorded && self.pending.contains_key(&key) {
+                                self.pending_mentions.entry(key).or_default().push((
+                                    user_authored,
+                                    self.prompt_count,
+                                    self.mention_time.unwrap_or_else(now_unix_ms),
+                                ));
+                            }
                         }
                     }
                 }
@@ -1154,7 +1224,7 @@ impl PrTracker {
     fn record_mention_for_url(&mut self, url: &str, user_authored: bool) -> bool {
         let prompt_count = self.prompt_count;
         match self.prs.iter_mut().find(|p| p.url == url) {
-            Some(pr) => bump_mention(pr, user_authored, prompt_count),
+            Some(pr) => bump_mention(pr, user_authored, prompt_count, self.mention_time),
             None => false,
         }
     }
@@ -1165,7 +1235,7 @@ impl PrTracker {
         let prompt_count = self.prompt_count;
         let mut changed = false;
         for pr in self.prs.iter_mut().filter(|p| p.number == number) {
-            changed |= bump_mention(pr, user_authored, prompt_count);
+            changed |= bump_mention(pr, user_authored, prompt_count, self.mention_time);
         }
         changed
     }
@@ -1195,23 +1265,21 @@ impl PrTracker {
         // Transcript rescans are filtered by `is_new_mention`, so `force` still
         // means once per actual mention rather than once per hook tick.
         if self.prs.iter().any(|p| p.url == loc.url) {
+            if self.replaying_history {
+                return false;
+            }
             self.note_pr_active(&loc.url);
             self.refresh_url(&loc.url, true);
             return false;
         }
 
-        // References are associated with the session whether they were created
-        // here or merely discussed. The claim window only controls attribution.
-        let created_here = self
-            .expect_created_since
-            .map(|t| t.elapsed() < CREATE_CLAIM_WINDOW)
-            .unwrap_or(false);
-
-        let mut pr = SessionPr::placeholder(loc, created_here);
+        let mut pr = SessionPr::placeholder(loc, false);
         pr.slack_origin_url = self.current_origin_slack();
         self.prs.push(pr);
-        self.note_pr_active(&loc.url);
-        self.spawn_fetch(loc.url.clone(), created_here);
+        if !self.replaying_history {
+            self.note_pr_active(&loc.url);
+            self.spawn_fetch(loc.url.clone(), false);
+        }
         true
     }
 
@@ -1230,6 +1298,9 @@ impl PrTracker {
             .collect();
         if !tracked_urls.is_empty() {
             for url in tracked_urls {
+                if self.replaying_history {
+                    continue;
+                }
                 self.note_pr_active(&url);
                 self.refresh_url(&url, true);
             }
@@ -1242,15 +1313,19 @@ impl PrTracker {
         }
         let key = format!("mention:{}#{number}", cwd.display());
         if self.pending.contains_key(&key) {
+            if !self.replaying_history {
+                self.pending_pr_active.insert(key, true);
+            }
             return;
         }
         let cwd = cwd.to_path_buf();
         let (tx, rx) = mpsc::channel();
+        let pr_active = !self.replaying_history;
         std::thread::spawn(move || {
             let _ = tx.send(JobResult::Pr(Box::new(FetchResult {
                 requested_url: None,
                 created_here: false,
-                pr_active: true,
+                pr_active,
                 data: fetch_pr_number(&cwd, number),
             })));
         });
@@ -1415,6 +1490,7 @@ impl PrTracker {
 
         for (key, result) in done_keys {
             self.pending.remove(&key);
+            let mentions = self.pending_mentions.remove(&key).unwrap_or_default();
             let pending_pr_active = self.pending_pr_active.remove(&key).unwrap_or(false);
             // Most errors are silent: a PR we can't view right now (auth,
             // network, private) simply doesn't gain live stats and keeps its
@@ -1425,6 +1501,7 @@ impl PrTracker {
             match result {
                 Some(JobResult::Pr(result)) => match result.data {
                     Ok(json) => {
+                        let resolved_url = json.url.clone();
                         let pr_active = if (result.pr_active || pending_pr_active)
                             && json.state == "OPEN"
                             && !json.url.is_empty()
@@ -1435,6 +1512,12 @@ impl PrTracker {
                         };
                         changed |=
                             self.apply_fetch(json, result.requested_url, result.created_here);
+                        if let Some(pr) = self.prs.iter_mut().find(|pr| pr.url == resolved_url) {
+                            for (user_authored, prompt_count, timestamp) in mentions {
+                                changed |=
+                                    bump_mention(pr, user_authored, prompt_count, Some(timestamp));
+                            }
+                        }
                         if let Some(url) = pr_active {
                             self.note_pr_active(&url);
                         }
@@ -1764,17 +1847,22 @@ fn ci_link(rollup: &[CheckEntry], pr_url: &str) -> String {
 
 /// Stamp one counted mention onto a PR. Always a change: the counters and the
 /// recency stamps feed classification, the mirror, and the cloud stream.
-fn bump_mention(pr: &mut SessionPr, user_authored: bool, prompt_count: u32) -> bool {
-    let now = now_unix_ms();
+fn bump_mention(
+    pr: &mut SessionPr,
+    user_authored: bool,
+    prompt_count: u32,
+    timestamp: Option<u64>,
+) -> bool {
+    let now = timestamp.unwrap_or_else(now_unix_ms);
     pr.mentions += 1;
     if user_authored {
         pr.user_mentions += 1;
     }
-    if pr.first_mentioned_at == 0 {
+    if pr.first_mentioned_at == 0 || now < pr.first_mentioned_at {
         pr.first_mentioned_at = now;
     }
-    pr.last_mentioned_at = now;
-    pr.last_mention_prompt = prompt_count;
+    pr.last_mentioned_at = pr.last_mentioned_at.max(now);
+    pr.last_mention_prompt = pr.last_mention_prompt.max(prompt_count);
     true
 }
 
@@ -1810,8 +1898,8 @@ enum ScanEvent {
     Located { loc: PrLocation, bulk: bool },
     /// A marked `#123` with no repository — resolved against the session's repo.
     Mentioned { number: u64, bulk: bool },
-    /// `gh pr create` ran, so PRs seen after it were created by this session.
-    Created,
+    /// The URL printed by a completed `gh pr create`, including a delayed result.
+    Created(PrLocation),
     /// A push or PR edit ran, so the current branch's PR is worth resolving.
     Updated(String),
 }
@@ -1830,46 +1918,205 @@ fn scan_events(text: &str) -> Vec<ScanEvent> {
 
 fn scan_events_with_known_prs(text: &str, known_pr_numbers: &HashSet<u64>) -> Vec<ScanEvent> {
     let mut events = Vec::new();
-    // Set while the section that just ran was a `gh pr create`, so its output
-    // (and only its output) is read for the new PR's URL.
-    let mut expect_create_output = false;
+    let mut creates = Vec::<PendingCreation>::new();
+    let mut result_creates = Vec::new();
+    let mut tool_creates = HashMap::new();
+    let mut raw_creates = 0;
 
     for (channel, body) in split_channels(text) {
         match channel {
-            Channel::Prose | Channel::Tool => {
-                if channel == Channel::Tool {
-                    expect_create_output = body.contains("gh pr create");
-                }
+            Channel::Prose => {
                 for line in body.lines() {
-                    if line.contains("gh pr create") {
-                        events.push(ScanEvent::Created);
+                    // Legacy unmarked scrollback can contain the command and
+                    // its stdout together. Ordinary prose links prove no creation.
+                    if line.starts_with("gh pr create") || line.contains("Bash(gh pr create") {
+                        raw_creates += 1;
+                    } else if raw_creates > 0 {
+                        if let Some(loc) = standalone_pr_url(line) {
+                            events.push(ScanEvent::Created(loc));
+                            raw_creates -= 1;
+                        }
                     }
                     if is_pr_update_command(line) {
                         events.push(ScanEvent::Updated(line.trim().to_string()));
                     }
-                    if channel == Channel::Prose {
-                        push_prose_line(&mut events, line, known_pr_numbers);
-                    }
+                    push_prose_line(&mut events, line, known_pr_numbers);
                 }
-                // Raw scrollback arrives unmarked, so repo-qualified commands land
-                // in prose too. URL targets were already captured line-by-line;
-                // only tool sections need the full target extractor.
-                if channel == Channel::Prose {
-                    push_located(&mut events, repo_qualified_gh_pr_targets(&body));
-                } else {
-                    push_located(&mut events, gh_pr_targets(&body));
+                push_located(&mut events, repo_qualified_gh_pr_targets(&body));
+            }
+            Channel::Tool => {
+                result_creates.clear();
+                let count = body.matches("gh pr create").count();
+                if count > 0 {
+                    result_creates.push(creates.len());
+                    creates.push(PendingCreation {
+                        remaining: count,
+                        sessions: HashSet::new(),
+                    });
+                } else if body.contains("write_stdin") || body.contains("wait") {
+                    let sessions = command_session_ids(&body);
+                    result_creates.extend(creates.iter().enumerate().filter_map(|(i, create)| {
+                        (create.remaining > 0 && !create.sessions.is_disjoint(&sessions))
+                            .then_some(i)
+                    }));
                 }
+                if let Some(call_id) = tool_call_id(&body) {
+                    tool_creates.insert(call_id.to_string(), result_creates.clone());
+                }
+                for line in body.lines().filter(|line| is_pr_update_command(line)) {
+                    events.push(ScanEvent::Updated(line.trim().to_string()));
+                }
+                push_located(&mut events, gh_pr_targets(&body));
             }
             Channel::ToolResult => {
-                if expect_create_output {
-                    for line in body.lines() {
-                        push_located(&mut events, pr_urls(line));
+                let matching_creates = match tool_call_id(&body) {
+                    Some(id) => tool_creates.get(id).cloned().unwrap_or_default(),
+                    None => result_creates.clone(),
+                };
+                if matching_creates.is_empty() {
+                    continue;
+                }
+                let output = creation_output(&body);
+                let mut urls = output.urls.into_iter();
+                for &index in &matching_creates {
+                    let create = &mut creates[index];
+                    for loc in urls.by_ref().take(create.remaining) {
+                        create.remaining -= 1;
+                        events.push(ScanEvent::Created(loc.clone()));
+                        push_located(&mut events, vec![loc]);
+                    }
+                    // An async command or exec cell can finish in a later poll.
+                    // Only polls of this execution may supply its creation URL.
+                    create.sessions.extend(output.sessions.iter().cloned());
+                    if create.sessions.is_empty() {
+                        create.remaining = 0;
                     }
                 }
             }
         }
     }
     events
+}
+
+fn tool_call_id(body: &str) -> Option<&str> {
+    body.lines().next()?.strip_prefix("call_id: ")
+}
+
+#[derive(Default)]
+struct PendingCreation {
+    remaining: usize,
+    sessions: HashSet<String>,
+}
+
+#[derive(Default)]
+struct CreationOutput {
+    urls: Vec<PrLocation>,
+    sessions: HashSet<String>,
+}
+
+fn command_session_ids(text: &str) -> HashSet<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?:session_id|cell_id)["']?\s*:\s*["']?([A-Za-z0-9_-]+)"#)
+            .expect("valid command session regex")
+    })
+    .captures_iter(text)
+    .map(|caps| caps[1].to_string())
+    .collect()
+}
+
+/// gh prints the created PR on its own stdout line. JSON listings, cited
+/// links, and "already exists" errors do not establish creation.
+fn standalone_pr_url(line: &str) -> Option<PrLocation> {
+    let line = line.trim();
+    pr_urls(line).into_iter().find(|loc| loc.url == line)
+}
+
+/// Unwrap Codex execution results and MCP text blocks without scanning the
+/// arbitrary fields of a JSON listing as if they were command stdout.
+fn creation_output(text: &str) -> CreationOutput {
+    let text = if tool_call_id(text).is_some() {
+        text.split_once('\n').map_or("", |(_, body)| body)
+    } else {
+        text
+    };
+    fn read_value(value: &serde_json::Value, result: &mut CreationOutput, depth: usize) {
+        match value {
+            serde_json::Value::String(text) => read_text(text, result, depth + 1),
+            serde_json::Value::Array(parts) => {
+                for part in parts {
+                    read_value(part, result, depth + 1);
+                }
+            }
+            serde_json::Value::Object(object) => {
+                if object
+                    .get("exit_code")
+                    .and_then(|v| v.as_i64())
+                    .is_some_and(|code| code != 0)
+                {
+                    return;
+                }
+                for key in ["session_id", "cell_id"] {
+                    if let Some(id) = object.get(key).filter(|v| v.is_string() || v.is_number()) {
+                        result.sessions.insert(
+                            id.as_str()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| id.to_string()),
+                        );
+                    }
+                }
+                for key in ["output", "text", "content"] {
+                    if let Some(value) = object.get(key) {
+                        read_value(value, result, depth + 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    fn read_text(text: &str, result: &mut CreationOutput, depth: usize) {
+        if depth > 12 {
+            return;
+        }
+        if text.lines().any(|line| {
+            line.strip_prefix("Process exited with code ")
+                .or_else(|| line.strip_prefix("Exit code: "))
+                .and_then(|code| code.trim().parse::<i32>().ok())
+                .is_some_and(|code| code != 0)
+        }) || text.lines().any(|line| {
+            line.trim_start().starts_with("a pull request for branch")
+                && line.contains("already exists")
+        }) {
+            return;
+        }
+        if let Ok(value) = serde_json::from_str(text) {
+            read_value(&value, result, depth);
+            return;
+        }
+        for line in text.lines() {
+            if let Some(loc) = standalone_pr_url(line) {
+                if !result.urls.contains(&loc) {
+                    result.urls.push(loc);
+                }
+            } else if let Ok(value) = serde_json::from_str(line) {
+                read_value(&value, result, depth + 1);
+            } else {
+                for marker in [
+                    "Process running with session ID ",
+                    "Script running with cell ID ",
+                ] {
+                    if let Some((_, tail)) = line.split_once(marker) {
+                        if let Some(id) = tail.split_whitespace().next() {
+                            result.sessions.insert(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut result = CreationOutput::default();
+    read_text(text, &mut result, 0);
+    result
 }
 
 /// Whether a `gh` error means the PR definitively doesn't exist, as opposed
@@ -2328,6 +2575,188 @@ fn now_unix_ms() -> u64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn resume_restores_early_prs_for_claude_and_codex_without_repeating_old_pushes() {
+        use crate::platforms::PlatformKind;
+        use serde_json::json;
+        for platform in [PlatformKind::Claude, PlatformKind::Codex] {
+            let file = tempfile::NamedTempFile::new().unwrap();
+            let cwd = file.path().parent().unwrap();
+            let user = |text: &str| match platform {
+                PlatformKind::Claude => {
+                    json!({"type":"user","cwd":cwd,"timestamp":"2026-08-01T12:00:00Z","message":{"content":text}})
+                }
+                _ => {
+                    json!({"type":"event_msg","timestamp":"2026-08-01T12:00:00Z","payload":{"type":"user_message","message":text}})
+                }
+            };
+            let assistant = |text: &str| match platform {
+                PlatformKind::Claude => {
+                    json!({"type":"assistant","message":{"content":[{"type":"text","text":text}]}})
+                }
+                _ => json!({"type":"event_msg","payload":{"type":"agent_message","message":text}}),
+            };
+            let tool = |id: &str, command: &str| match platform {
+                PlatformKind::Claude => {
+                    json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":id,"name":"Bash","input":{"command":command}}]}})
+                }
+                _ => {
+                    json!({"type":"response_item","payload":{"type":"function_call","call_id":id,"name":"exec_command","arguments":json!({"cmd":command}).to_string()}})
+                }
+            };
+            let output = |id: &str, text: &str| match platform {
+                PlatformKind::Claude => {
+                    json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":id,"content":text}]}})
+                }
+                _ => {
+                    json!({"type":"response_item","payload":{"type":"function_call_output","call_id":id,"output":text}})
+                }
+            };
+            let lines = [
+                user("Combine the source changes into two integration PRs."),
+                assistant("Sources: https://github.com/o/portal/pull/1437 and https://github.com/o/rqh/pull/2889."),
+                tool("portal", "gh pr create"),
+                output("portal", "https://github.com/o/portal/pull/1438"),
+                tool("rqh", "gh pr create"),
+                output("rqh", "https://github.com/o/rqh/pull/2890"),
+                user("Review PR #1438."),
+                assistant("Review complete."),
+                user("Run checks."),
+                tool("push", "git push"),
+            ];
+            std::fs::write(
+                file.path(),
+                lines
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n",
+            )
+            .unwrap();
+            let update =
+                crate::recap::collect_tracking_turns_incremental(platform, file.path(), &mut None)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(update.turns.len(), 3);
+            let mut tracker = PrTracker::new();
+            for turn in &update.turns {
+                tracker.scan_transcript_turn(turn, cwd, true);
+            }
+            assert!(
+                tracker.pending.is_empty(),
+                "historical pushes never resolve today's branch"
+            );
+            assert!(
+                tracker.pr_active_at.is_empty(),
+                "resume is not new PR activity"
+            );
+            for pr in &mut tracker.prs {
+                pr.state = "OPEN".to_string();
+            }
+            tracker.reclassify("main", cwd);
+            let primary: Vec<_> = tracker
+                .prs
+                .iter()
+                .filter(|pr| pr.primary)
+                .map(|pr| pr.number)
+                .collect();
+            assert_eq!(primary, vec![1438, 2890]);
+            let portal = tracker.prs.iter().find(|pr| pr.number == 1438).unwrap();
+            assert_eq!(
+                (
+                    portal.mentions,
+                    portal.user_mentions,
+                    portal.last_mention_prompt
+                ),
+                (2, 1, 2)
+            );
+            assert_eq!(
+                portal.first_mentioned_at,
+                parse_iso_ms("2026-08-01T12:00:00Z")
+            );
+            let before = tracker.prs.clone();
+            tracker.scan_transcript_turn(update.turns.last().unwrap(), cwd, false);
+            assert_eq!(tracker.prs, before);
+            assert!(tracker.pending.is_empty());
+
+            // Resume uses the same aging rules as an uninterrupted session.
+            tracker.set_prompt_count(4);
+            tracker.reclassify("main", cwd);
+            assert!(tracker
+                .prs
+                .iter()
+                .filter(|pr| [1437, 2889].contains(&pr.number))
+                .all(|pr| pr.dismissed));
+        }
+    }
+
+    #[test]
+    fn restoring_a_watch_does_not_repost_it_to_the_cloud() {
+        let mut tracker = PrTracker::new();
+        let mut turn = crate::recap::TrackingTurn {
+            transcript: crate::recap::TurnTranscript {
+                user_prompt: Some("track PR https://github.com/o/portal/pull/1438".to_string()),
+                activity: String::new(),
+                turn_start: 0,
+            },
+            number: 1,
+            timestamp: 1000,
+            cwd: None,
+        };
+        tracker.scan_transcript_turn(&turn, Path::new("/tmp"), true);
+        assert!(tracker.prs[0].watched);
+        assert!(tracker.take_watch_adds().is_empty());
+        // A later, explicit request is a new watch action.
+        tracker
+            .pending
+            .insert(tracker.prs[0].url.clone(), mpsc::channel().1);
+        turn.number = 2;
+        tracker.scan_transcript_turn(&turn, Path::new("/tmp"), false);
+        assert_eq!(tracker.take_watch_adds().len(), 1);
+    }
+
+    #[test]
+    fn delayed_bare_pr_lookup_preserves_historical_mentions() {
+        let mut tracker = PrTracker::new();
+        let cwd = Path::new("/tmp");
+        let key = "mention:/tmp#1438".to_string();
+        let (sender, receiver) = mpsc::channel();
+        tracker.pending.insert(key, receiver);
+        for number in 1..=2 {
+            tracker.scan_transcript_turn(
+                &crate::recap::TrackingTurn {
+                    transcript: crate::recap::TurnTranscript {
+                        user_prompt: Some("Review PR #1438".to_string()),
+                        activity: String::new(),
+                        turn_start: 0,
+                    },
+                    number,
+                    timestamp: number as u64 * 1000,
+                    cwd: None,
+                },
+                cwd,
+                true,
+            );
+        }
+        sender.send(JobResult::Pr(Box::new(FetchResult {
+            requested_url: None,
+            created_here: false,
+            pr_active: false,
+            // Closed avoids unrelated periodic status/review jobs in this test.
+            data: Ok(serde_json::from_value(serde_json::json!({"number":1438,"url":"https://github.com/o/portal/pull/1438","state":"CLOSED"})).unwrap()),
+        }))).unwrap();
+        tracker.poll();
+        let pr = &tracker.prs[0];
+        assert_eq!(
+            (pr.mentions, pr.user_mentions, pr.last_mention_prompt),
+            (2, 2, 2)
+        );
+        assert_eq!((pr.first_mentioned_at, pr.last_mentioned_at), (1000, 2000));
+        assert!(tracker.pr_active_at.is_empty());
+        assert!(tracker.pending_mentions.is_empty());
+    }
+
     /// Switching the pane to another conversation drops that conversation's
     /// PRs and Slack threads, while cloud dispositions and queued watch adds
     /// stay with the pane. The next prompt is then scanned fresh.
@@ -2444,9 +2873,7 @@ mod tests {
     }
 
     #[test]
-    fn create_claims_all_urls_in_the_turn() {
-        // One visible `gh pr create` can produce several PRs whose URLs only show
-        // up later in the assistant's summary — all of them should be adopted.
+    fn create_does_not_claim_unrelated_summary_links() {
         let mut tracker = PrTracker::new();
         tracker.scan_text(
             "gh pr create\nsummary: https://github.com/o/r/pull/1 and https://github.com/o/r/pull/2\n",
@@ -2455,6 +2882,7 @@ mod tests {
         assert_eq!(tracker.prs().len(), 2);
         assert_eq!(tracker.prs()[0].number, 1);
         assert_eq!(tracker.prs()[1].number, 2);
+        assert!(tracker.prs().iter().all(|pr| !pr.created_here));
     }
 
     #[test]
@@ -2462,7 +2890,7 @@ mod tests {
         let mut tracker = PrTracker::new();
         tracker.scan_text("gh pr create", Path::new("/tmp"));
         // Next turn starts: a referenced PR is still associated, but not claimed.
-        tracker.on_new_prompt();
+        tracker.on_prompt_observed();
         let changed = tracker.scan_text(
             "as discussed in https://github.com/o/r/pull/9\n",
             Path::new("/tmp"),
@@ -2802,6 +3230,201 @@ mod tests {
     }
 
     #[test]
+    fn create_results_follow_their_background_command() {
+        let text = r#"[tool]
+exec_command {"cmd":"gh pr create --body-file /tmp/body.md"}
+[tool_result]
+{"session_id":42,"output":""}
+[tool]
+exec_command {"cmd":"gh pr view 90 --json url"}
+[tool_result]
+https://github.com/o/r/pull/90
+[tool]
+write_stdin {"session_id":99}
+[tool_result]
+https://github.com/o/r/pull/99
+[tool]
+write_stdin {"session_id":42}
+[tool_result]
+{"exit_code":0,"output":"https://github.com/o/r/pull/100\n"}
+[assistant]
+Created https://github.com/o/r/pull/100; depends on https://github.com/o/r/pull/90.
+"#;
+        let created: Vec<_> = scan_events(text)
+            .into_iter()
+            .filter_map(|event| match event {
+                ScanEvent::Created(loc) => Some(loc.number),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(created, vec![100]);
+    }
+
+    #[test]
+    fn failed_create_does_not_claim_an_existing_pr_or_later_output() {
+        let text = r#"[tool]
+exec_command {"cmd":"gh pr create"}
+[tool_result]
+{"exit_code":1,"output":"already exists:\nhttps://github.com/o/r/pull/90\n"}
+[tool]
+exec_command {"cmd":"gh pr list --json url"}
+[tool_result]
+[{"url":"https://github.com/o/r/pull/91"}]
+[assistant]
+See https://github.com/o/r/pull/92 for context.
+"#;
+        assert!(!scan_events(text)
+            .iter()
+            .any(|event| matches!(event, ScanEvent::Created(_))));
+    }
+
+    #[test]
+    fn plain_failed_create_does_not_claim_an_existing_pr() {
+        let text = "[tool]\nexec_command gh pr create\n[tool_result]\nProcess exited with code 1\nFinal output:\na pull request for branch work already exists:\nhttps://github.com/o/r/pull/90\n";
+        assert!(!scan_events(text)
+            .iter()
+            .any(|event| matches!(event, ScanEvent::Created(_))));
+    }
+
+    #[test]
+    fn interleaved_tool_results_keep_their_creation_owner() {
+        let text = "[tool]\ncall_id: create\nexec_command gh pr create\n[tool]\ncall_id: inspect\nexec_command gh pr view 90\n[tool_result]\ncall_id: inspect\nhttps://github.com/o/r/pull/90\n[tool_result]\ncall_id: create\nhttps://github.com/o/r/pull/100\n";
+        let created: Vec<_> = scan_events(text)
+            .into_iter()
+            .filter_map(|event| match event {
+                ScanEvent::Created(loc) => Some(loc.number),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(created, vec![100]);
+    }
+
+    #[test]
+    fn creation_output_reads_pretty_json_after_call_metadata() {
+        let output = creation_output("call_id: create\n{\n  \"output\": \"https://github.com/o/r/pull/100\\n\",\n  \"exit_code\": 0\n}");
+        assert_eq!(output.urls, vec![PrLocation::new("o", "r", 100)]);
+    }
+
+    #[test]
+    fn long_codex_turn_keeps_only_created_integration_prs_primary() {
+        use serde_json::json;
+        let portal = "https://github.com/o/portal/pull/1438";
+        let rqh = "https://github.com/o/rqh/pull/2890";
+        let mut lines = Vec::new();
+        let mut record =
+            |payload| lines.push(json!({"type":"response_item", "payload":payload}).to_string());
+        record(
+            json!({"type":"message","role":"user","content":[{"text":"Combine the source changes into linked integration PRs."}]}),
+        );
+        record(
+            json!({"type":"message","role":"assistant","content":[{"text":"Sources: https://github.com/o/portal/pull/1437 and https://github.com/o/rqh/pull/2889."}]}),
+        );
+        // The create sits in the middle of a long functions.exec input, with
+        // its output delivered by a later write_stdin call.
+        let padding = "body text ".repeat(200);
+        record(
+            json!({"type":"custom_tool_call","call_id":"create-portal","name":"exec","input":format!("{padding}\ntext(await tools.exec_command({{cmd:\"gh pr create\"}}));\n{padding}")}),
+        );
+        record(
+            json!({"type":"custom_tool_call_output","call_id":"create-portal","output":[{"type":"input_text","text":"{\"session_id\":42,\"output\":\"\"}"}]}),
+        );
+        record(
+            json!({"type":"function_call","call_id":"checks","name":"exec_command","arguments":"{\"cmd\":\"gh pr checks 66 --repo o/evals\"}"}),
+        );
+        record(
+            json!({"type":"function_call_output","call_id":"checks","output":"https://github.com/o/evals/pull/66"}),
+        );
+        record(
+            json!({"type":"custom_tool_call","call_id":"poll","name":"exec","input":"text(await tools.write_stdin({session_id:42}));"}),
+        );
+        record(
+            json!({"type":"custom_tool_call_output","call_id":"poll","output":[{"type":"input_text","text":json!({"exit_code":0,"output":format!("{padding}\n{portal}\n")}).to_string()}]}),
+        );
+        // A conventional JSON tool call has its create beyond the old preview
+        // limit too. Its result can arrive after another tool was started.
+        record(
+            json!({"type":"function_call","call_id":"create-rqh","name":"exec_command","arguments":json!({"cmd":format!("{padding}\ngh pr create")}).to_string()}),
+        );
+        record(
+            json!({"type":"function_call","call_id":"inspect","name":"exec_command","arguments":"{\"cmd\":\"gh pr view 66 --repo o/evals\"}"}),
+        );
+        record(
+            json!({"type":"function_call_output","call_id":"inspect","output":"https://github.com/o/evals/pull/66"}),
+        );
+        record(json!({"type":"function_call_output","call_id":"create-rqh","output":rqh}));
+        record(
+            json!({"type":"message","role":"assistant","content":[{"text":format!("Opened {portal} and {rqh}. Source PR https://github.com/o/evals/pull/66 remains separate.")}]}),
+        );
+        record(
+            json!({"type":"message","role":"assistant","content":[{"text":"Running the integration checks. ".repeat(2_000)}]}),
+        );
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), lines.join("\n")).unwrap();
+        let platform = crate::platforms::PlatformKind::Codex;
+        let turn =
+            crate::recap::collect_latest_turn_text_incremental(platform, file.path(), &mut None)
+                .unwrap()
+                .unwrap();
+        assert!(turn.activity.len() > 28_000);
+        let summary = crate::recap::collect_latest_turn_text(platform, Some(file.path())).unwrap();
+        assert!(summary.activity.chars().count() < 28_100);
+
+        let cwd = Path::new("/tmp/crabigator-pr-test");
+        let mut tracker = PrTracker::new();
+        for (number, repo) in [
+            (1437, "portal"),
+            (2889, "rqh"),
+            (66, "evals"),
+            (1438, "portal"),
+            (2890, "rqh"),
+        ] {
+            let mut pr = SessionPr::test_stub(number, "o", repo);
+            pr.state = "OPEN".to_string();
+            tracker.pending.insert(pr.url.clone(), mpsc::channel().1);
+            tracker.prs.push(pr);
+        }
+        tracker.set_prompt_count(1);
+        tracker.scan_prompt(turn.user_prompt.as_deref().unwrap(), cwd);
+        tracker.scan_text(&turn.activity, cwd);
+        tracker.reclassify("main", cwd);
+        let primaries: Vec<_> = tracker
+            .prs()
+            .iter()
+            .filter(|pr| pr.primary)
+            .map(|pr| pr.url.as_str())
+            .collect();
+        assert_eq!(primaries, vec![portal, rqh]);
+        assert!(tracker.prs()[..3].iter().all(|pr| !pr.created_here));
+        let before = tracker.prs.clone();
+        let activity_before = tracker.pr_active_at.clone();
+        assert!(!tracker.scan_text(&turn.activity, cwd));
+        assert_eq!(
+            tracker.prs, before,
+            "rescans must not inflate mention counts"
+        );
+        assert_eq!(
+            tracker.pr_active_at, activity_before,
+            "rescans must not restart polling"
+        );
+    }
+
+    #[test]
+    fn create_results_follow_a_yielded_exec_cell() {
+        let text = r#"[tool]
+exec text(await tools.exec_command({cmd:"gh pr create"}));
+[tool_result]
+Script running with cell ID 17
+[tool]
+functions.wait {"cell_id":"17"}
+[tool_result]
+{"content":[{"type":"text","text":"{\"exit_code\":0,\"output\":\"https://github.com/o/r/pull/100\"}"}]}
+"#;
+        assert!(scan_events(text)
+            .iter()
+            .any(|event| matches!(event, ScanEvent::Created(loc) if loc.number == 100)));
+    }
+
+    #[test]
     fn adopts_prs_a_gh_command_targets() {
         let mut tracker = PrTracker::new();
         let transcript = "\n[tool]\nexec_command {\"cmd\":\"gh pr ready 1011 --repo Tavus-Engineering/developer-portal\"}\n\
@@ -2880,8 +3503,11 @@ mod tests {
 
         for (turn, end) in boundaries.iter().skip(1).enumerate() {
             std::fs::write(&replay_path, lines[..*end].join("\n")).expect("replay file written");
-            let Ok(text) = crate::recap::collect_latest_turn_text(platform, Some(&replay_path))
-            else {
+            let Ok(Some(text)) = crate::recap::collect_latest_turn_text_incremental(
+                platform,
+                &replay_path,
+                &mut None,
+            ) else {
                 continue;
             };
             scanned_chars += text.activity.len() + text.user_prompt.as_deref().unwrap_or("").len();
@@ -2917,6 +3543,81 @@ mod tests {
             "\n{} turns, {scanned_chars} chars scanned\nlocated: {numbers:?}\nmentioned in cwd: {mentioned:?}",
             boundaries.len() - 1
         );
+    }
+
+    /// Read-only audit of a live session. Rebuild its full conversation ownership
+    /// from the transcript, using mirrored GitHub facts without network calls.
+    #[test]
+    #[ignore]
+    fn replay_pr_classification_from_mirror() {
+        let path =
+            std::env::var("CRABIGATOR_MIRROR").expect("set CRABIGATOR_MIRROR=<inspect.json>");
+        let mirror: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let transcript = Path::new(mirror["transcript_path"].as_str().unwrap());
+        let mut update = crate::recap::collect_tracking_turns_incremental(
+            crate::platforms::PlatformKind::Codex,
+            transcript,
+            &mut None,
+        )
+        .unwrap()
+        .unwrap();
+        let mut tracker = PrTracker::new();
+        tracker.prs = serde_json::from_value(mirror["prs"].clone()).unwrap();
+        for pr in &mut tracker.prs {
+            pr.created_here = false;
+            pr.branch_matched = false;
+            pr.mentions = 0;
+            pr.user_mentions = 0;
+            pr.first_mentioned_at = 0;
+            pr.last_mentioned_at = 0;
+            pr.last_mention_prompt = 0;
+            tracker.pending.insert(pr.url.clone(), mpsc::channel().1);
+        }
+        let cwd = Path::new("/tmp/crabigator-pr-audit");
+        tracker
+            .pending
+            .insert(format!("branch:{}", cwd.display()), mpsc::channel().1);
+        for turn in &mut update.turns {
+            // Unknown bare numbers remain unresolved in this offline audit.
+            turn.cwd = None;
+            let text = format!(
+                "{}\n{}",
+                turn.transcript.user_prompt.as_deref().unwrap_or_default(),
+                turn.transcript.activity
+            );
+            for event in scan_events(&text) {
+                if let ScanEvent::Mentioned { number, .. } = event {
+                    tracker.pending.insert(
+                        format!("mention:{}#{number}", cwd.display()),
+                        mpsc::channel().1,
+                    );
+                }
+            }
+            tracker.scan_transcript_turn(turn, cwd, true);
+        }
+        tracker.reclassify("main", cwd);
+        let mut primary: Vec<_> = tracker
+            .prs()
+            .iter()
+            .filter(|pr| pr.primary)
+            .map(|pr| format!("{}/{}#{}", pr.owner, pr.repo, pr.number))
+            .collect();
+        primary.sort();
+        eprintln!(
+            "Replayed {} turns, {} characters. Primary PRs: {primary:?}",
+            update.turns.len(),
+            update
+                .turns
+                .iter()
+                .map(|turn| turn.transcript.activity.len())
+                .sum::<usize>()
+        );
+        if let Ok(expected) = std::env::var("CRABIGATOR_EXPECT_PRIMARY") {
+            let mut expected: Vec<_> = expected.split(',').map(str::to_string).collect();
+            expected.sort();
+            assert_eq!(primary, expected);
+        }
     }
 
     /// End-to-end against the live GitHub CLI: run the review-thread query and

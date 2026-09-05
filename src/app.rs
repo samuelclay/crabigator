@@ -1718,7 +1718,6 @@ impl App {
     ) -> Result<()> {
         let old_effective_state = self.session_stats.effective_state();
         let old_last_updated = self.session_stats.platform_stats.last_updated;
-        let old_prompts = self.session_stats.platform_stats.prompts;
         let old_transcript = self.session_stats.platform_stats.transcript_path.clone();
         self.session_stats
             .refresh_platform_stats(self.platform.as_ref(), &self.stats_cwd.to_string_lossy());
@@ -1732,11 +1731,6 @@ impl App {
         {
             self.on_conversation_switched();
         }
-        if self.session_stats.platform_stats.prompts > old_prompts {
-            self.pr_tracker.on_prompt_observed();
-        }
-        self.pr_tracker
-            .set_prompt_count(self.session_stats.platform_stats.prompts);
 
         // Update transcript path for scrollback capture
         if let Some(ref path) = self.session_stats.platform_stats.transcript_path {
@@ -1901,16 +1895,13 @@ impl App {
         // cycle observes prompts++. By that point it's already visually stale.
         if key.code == KeyCode::Enter && !key.modifiers.contains(KeyModifiers::SHIFT) {
             let effective = self.session_stats.effective_state();
-            if matches!(effective, SessionState::Ready | SessionState::Complete) {
-                // A new turn begins: stop attributing later PR URLs to the previous
-                // turn's `gh pr create` (see PrTracker::on_new_prompt).
-                self.pr_tracker.on_new_prompt();
-                if self.recap_manager.note_user_submitted_prompt() {
-                    if let Some(ref mut client) = self.cloud_client {
-                        client.send_event(SessionEventBuilder::recap(self.recap_manager.state()));
-                    }
-                    self.draw_status_bar()?;
+            if matches!(effective, SessionState::Ready | SessionState::Complete)
+                && self.recap_manager.note_user_submitted_prompt()
+            {
+                if let Some(ref mut client) = self.cloud_client {
+                    client.send_event(SessionEventBuilder::recap(self.recap_manager.state()));
                 }
+                self.draw_status_bar()?;
             }
         }
 
@@ -2019,12 +2010,9 @@ impl App {
         }
     }
 
-    /// Scan the current turn's transcript for PR activity and exact Slack
-    /// metadata returned by the assistant's Slack tools.
-    ///
-    /// Uses `collect_latest_turn_text`, which parses both Claude and Codex
-    /// transcripts, rather than `scrollback.log` (which is only populated for
-    /// Claude). Returns true if tracked session links changed.
+    /// Restore PR and Slack links from the full transcript when a conversation
+    /// is adopted, then scan its current and newly recorded turns. Returns true
+    /// if tracked session links changed.
     fn scan_session_links_from_transcript(&mut self, turn_completed: bool) -> bool {
         let Some(path) = self.session_stats.platform_stats.transcript_path.clone() else {
             return false;
@@ -2040,20 +2028,30 @@ impl App {
             return false;
         }
         self.last_transcript_scan = Instant::now();
-        let Ok(Some(turn)) = crate::recap::collect_latest_turn_text_incremental(
+        let had_cursor = self.transcript_scan_cursor.is_some();
+        let Ok(Some(update)) = crate::recap::collect_tracking_turns_incremental(
             self.platform.kind(),
             std::path::Path::new(&path),
             &mut self.transcript_scan_cursor,
         ) else {
             return false;
         };
-        // A PR the user pastes into the prompt is the strongest signal there is,
-        // and the prompt is kept out of `activity`, so scan it too.
-        let mut changed = false;
-        if let Some(prompt) = turn.user_prompt.as_deref() {
-            changed |= self.pr_tracker.scan_prompt(prompt, &self.cwd);
+        if update.reset && had_cursor {
+            self.pr_tracker.reset_conversation();
+            self.pr_tracker.resolve_current_branch(&self.cwd);
         }
-        changed | self.pr_tracker.scan_text(&turn.activity, &self.cwd)
+        let mut changed = update.reset;
+        for turn in &update.turns {
+            let historical = update.reset
+                && turn.timestamp < (self.session_stats.session_start_unix() * 1000.0) as u64;
+            changed |= self
+                .pr_tracker
+                .scan_transcript_turn(turn, &self.cwd, historical);
+        }
+        if update.reset {
+            self.pr_tracker.refresh_restored_prs();
+        }
+        changed
     }
 
     /// Send the current session PR list to the cloud (recap panel).

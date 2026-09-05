@@ -60,6 +60,9 @@ pub struct CodexState {
     /// True when `session_path` is a conversation adopted after an in-pane
     /// resume rather than the rollout that started with this pane.
     pub resume_followed: bool,
+    pub resume_requested: bool,
+    pub resume_all: bool,
+    pub explicit_resume_id: Option<String>,
     /// The rollout that started with this pane, kept while following a resume
     /// so a resume back to the original conversation is preferred.
     pub native_session_path: Option<PathBuf>,
@@ -86,6 +89,9 @@ impl Default for CodexState {
             app_start: SystemTime::now(),
             session_started_at: None,
             resume_followed: false,
+            resume_requested: false,
+            resume_all: false,
+            explicit_resume_id: None,
             native_session_path: None,
             native_session_started_at: None,
             native_mtime_at_switch: None,
