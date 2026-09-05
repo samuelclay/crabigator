@@ -503,6 +503,7 @@ function effectiveSessionPr(
         && (pr.primary_source === 'session' || pr.primary_source === 'override');
     if (
         !explicitlySecondary
+        && !pr.worktree_visit
         && !pr.dismissed
         && pr.state !== 'CLOSED'
         && prAttachedToSession(row, pr)
