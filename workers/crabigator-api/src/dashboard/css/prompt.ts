@@ -132,6 +132,71 @@ export const promptCss = `
     box-shadow: 0 8px 20px var(--glow-cyan);
 }
 
+/* Multi-select pages: each option is a checkbox */
+.prompt-option.prompt-check {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.prompt-checkbox {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    margin-right: 10px;
+    border: 1px solid var(--text-dim);
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--bg-abyss);
+    transition: all 0.15s;
+}
+.prompt-check.checked {
+    border-color: var(--accent-green);
+    background: rgba(74, 222, 128, 0.08);
+}
+.prompt-check.checked .prompt-checkbox {
+    background: var(--accent-green);
+    border-color: var(--accent-green);
+}
+.prompt-check .prompt-option-desc {
+    flex-basis: 100%;
+    padding-left: 50px;
+}
+.prompt-submit-hint {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-dim);
+    font-size: 11px;
+}
+
+/* "Review your answers" page */
+.prompt-review {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+.prompt-review-item {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+}
+.prompt-review-q {
+    color: var(--text-mid);
+}
+.prompt-review-a {
+    color: var(--accent-green);
+    padding-left: 16px;
+    white-space: pre-wrap;
+}
+.prompt-review-ask {
+    color: var(--text-bright);
+    font-size: 13px;
+    margin: 6px 0 2px;
+}
+
 /* Inline tab instruction inputs */
 .prompt-option-row {
     display: flex;

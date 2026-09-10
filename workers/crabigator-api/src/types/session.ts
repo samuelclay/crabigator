@@ -349,11 +349,34 @@ export interface QuestionData {
 }
 
 /**
+ * One answered question on the "Review your answers" page
+ */
+export interface QuestionReviewAnswer {
+    question: string;
+    answer: string;
+}
+
+/**
  * Question prompt data (AskUserQuestion)
+ *
+ * The page fields mirror what Claude Code's dialog shows on the terminal
+ * right now. The desktop reads them from the screen because page changes,
+ * checkbox toggles and the review page send no hook event. They are absent
+ * when the desktop could not read the screen (or predates them).
  */
 export interface QuestionPrompt {
     prompt_type: 'question';
     questions: QuestionData[];
+    /** Index into `questions` of the page on screen */
+    current_question?: number;
+    /** Ticked rows on a multi-select page (1-indexed; "Type something" is options.length + 1) */
+    checked?: number[];
+    /** Text typed into the "Type something" row */
+    custom_text?: string;
+    /** Row the terminal cursor is on: the options, then "Type something", then Submit */
+    cursor_row?: number;
+    /** The review page: every question with the answer it will send */
+    review?: QuestionReviewAnswer[];
 }
 
 /**
@@ -438,7 +461,7 @@ export interface KeyMessage {
  * A single step in a key sequence
  */
 export type KeyStep =
-    | { type: 'key'; key: string }      // Named key: "up", "down", "tab", "enter"
+    | { type: 'key'; key: string }      // Named key: "up", "down", "left", "right", "tab", "enter", "backspace"
     | { type: 'text'; text: string }    // Raw text to type
     | { type: 'delay'; ms: number };    // Wait in milliseconds
 
