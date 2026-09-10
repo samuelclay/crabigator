@@ -396,7 +396,6 @@ impl CaptureManager {
     }
 
     /// Check if capture is enabled.
-    #[allow(dead_code)]
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }

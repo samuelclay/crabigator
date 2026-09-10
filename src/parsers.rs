@@ -7,6 +7,7 @@ mod generic;
 mod objc;
 pub mod permission_prompt;
 mod python;
+pub mod question_prompt;
 mod rust;
 mod scope_walker;
 pub mod suggestion;
@@ -23,6 +24,7 @@ pub use permission_prompt::{
     PermissionPrompt,
 };
 pub use python::PythonParser;
+pub use question_prompt::QuestionScreen;
 pub use rust::RustParser;
 pub use suggestion::SuggestionTracker;
 pub use summary::{DiffParser, DiffSummary};

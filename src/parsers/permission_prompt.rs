@@ -258,7 +258,7 @@ impl PermissionPrompt {
 }
 
 /// Strip ANSI escape codes from text
-fn strip_ansi_codes(text: &str) -> String {
+pub(super) fn strip_ansi_codes(text: &str) -> String {
     // First, replace cursor-forward sequences (CUF) with spaces.
     // The vt100 crate emits ESC[C (1 space) or ESC[nC (n spaces) for empty cells
     // instead of literal space characters. Without this, words run together.

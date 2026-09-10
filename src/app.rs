@@ -203,6 +203,9 @@ pub struct App {
     last_exit_plan_option_count: usize,
     /// Retry counter for exit plan prompt parsing (limits fallback sends)
     last_exit_plan_retry_count: usize,
+    /// The AskUserQuestion page last sent to the cloud, so page changes,
+    /// checkbox toggles and the review page reach the dashboard once each
+    last_question_screen: Option<crate::parsers::QuestionScreen>,
     /// Pairing state for mobile device linking
     pairing_state: PairingState,
     /// Automatic per-turn recap state
@@ -384,6 +387,7 @@ impl App {
             last_cloud_active_prompt_was_some: false,
             last_exit_plan_option_count: 0,
             last_exit_plan_retry_count: 0,
+            last_question_screen: None,
             pairing_state,
             recap_manager,
             pr_tracker,
@@ -1604,6 +1608,12 @@ impl App {
                 .session_stats
                 .set_screen_question(screen_question, screen_active_prompt);
 
+            // Claude Code's AskUserQuestion dialog turns pages, ticks
+            // checkboxes and shows its review page without any hook event,
+            // so mirror the page on screen to the dashboard as it changes.
+            let question_screen_changed = self.claude_question_open()
+                && crate::parsers::QuestionScreen::parse(&screen) != self.last_question_screen;
+
             let new_effective_state = self.session_stats.effective_state();
             let new_active_prompt = self.session_stats.active_prompt().cloned();
             if old_effective_state != new_effective_state {
@@ -1620,7 +1630,9 @@ impl App {
                     self.send_cloud_prompt_event();
                 }
                 self.draw_status_bar().ok();
-            } else if screen_prompt_changed && old_active_prompt != new_active_prompt {
+            } else if (screen_prompt_changed && old_active_prompt != new_active_prompt)
+                || question_screen_changed
+            {
                 self.send_cloud_prompt_event();
             }
 
@@ -2325,6 +2337,15 @@ impl App {
         hasher.finish()
     }
 
+    /// Whether Claude Code is showing an AskUserQuestion dialog right now.
+    fn claude_question_open(&self) -> bool {
+        self.platform.kind() == crate::platforms::PlatformKind::Claude
+            && matches!(
+                self.session_stats.active_prompt(),
+                Some(crate::platforms::ActivePrompt::Question { .. })
+            )
+    }
+
     /// Send prompt event to cloud (for interactive dashboard)
     fn send_cloud_prompt_event(&mut self) {
         if self.cloud_client.is_none() {
@@ -2349,7 +2370,8 @@ impl App {
                     if matches!(
                         active_prompt.as_ref(),
                         Some(crate::platforms::ActivePrompt::ExitPlan)
-                    ) {
+                    ) && self.capture_manager.is_enabled()
+                    {
                         let debug_path = self.capture_manager.capture_dir().join("parse_debug.txt");
                         let valid = parsed.as_ref().map(|p| p.is_valid()).unwrap_or(false);
                         let debug_info = format!(
@@ -2401,8 +2423,34 @@ impl App {
             self.last_exit_plan_option_count = new_option_count;
         }
 
+        // Read the AskUserQuestion page from the screen so the dashboard can
+        // mirror it. Only Claude Code draws this dialog. Read the terminal
+        // directly: with --no-capture the capture manager returns nothing.
+        let question_screen = if self.claude_question_open() {
+            let screen = screen_to_string(self.platform_pty.screen());
+            crate::parsers::QuestionScreen::parse(&screen)
+        } else {
+            None
+        };
+        self.last_question_screen = question_screen.clone();
+
         // Build and send the event
-        let event = SessionEventBuilder::prompt(active_prompt.as_ref(), permission_prompt.as_ref());
+        let event = SessionEventBuilder::prompt(
+            active_prompt.as_ref(),
+            permission_prompt.as_ref(),
+            question_screen.as_ref(),
+        );
+
+        // Debug builds keep the last prompt event on disk so a question
+        // page can be checked without a dashboard. Without capture there is
+        // no session directory to write to.
+        #[cfg(debug_assertions)]
+        if self.capture_manager.is_enabled() {
+            if let Ok(json) = serde_json::to_string_pretty(&event) {
+                let debug_path = self.capture_manager.capture_dir().join("prompt_debug.json");
+                let _ = std::fs::write(&debug_path, json);
+            }
+        }
         if let Some(ref mut client) = self.cloud_client {
             client.send_event(event);
         }
@@ -2520,8 +2568,11 @@ impl App {
                             let bytes: &[u8] = match key.as_str() {
                                 "up" => &[0x1b, b'[', b'A'],        // CSI A - cursor up
                                 "down" => &[0x1b, b'[', b'B'],      // CSI B - cursor down
+                                "right" => &[0x1b, b'[', b'C'],     // CSI C - cursor right
+                                "left" => &[0x1b, b'[', b'D'],      // CSI D - cursor left
                                 "tab" => &[0x09],                   // Tab
                                 "enter" => &[0x0D],                 // Carriage return
+                                "backspace" => &[0x7f],             // DEL - backspace
                                 "shift_tab" => &[0x1b, b'[', b'Z'], // CSI Z - shift+tab
                                 _ => continue,
                             };

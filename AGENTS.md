@@ -108,7 +108,7 @@ The application uses a **scroll region approach** to layer UI:
 - **config.rs**: `~/.crabigator/config.toml` loading/saving (platform, IDE, terminal preferences).
 - **terminal/**: Terminal handling - `pty.rs` manages the PTY via `portable-pty`, `input.rs` forwards keyboard input, `escape.rs` centralizes all ANSI escape sequences (add new sequences here rather than inline), `osc.rs`/`dsr.rs` handle terminal queries, `redraw.rs` manages repaints.
 - **git/**: Git state tracking via `git status --porcelain` and `git diff`.
-- **parsers/**: Language-specific diff parsers (Rust, TypeScript, Python, Swift, Objective-C, generic) that extract semantic information (functions, classes, nested scopes) from git diffs. `scope_walker.rs` attributes changes to nested scopes; `summary.rs` builds the changes summary; `permission_prompt.rs` and `suggestion.rs` parse assistant screen content.
+- **parsers/**: Language-specific diff parsers (Rust, TypeScript, Python, Swift, Objective-C, generic) that extract semantic information (functions, classes, nested scopes) from git diffs. `scope_walker.rs` attributes changes to nested scopes; `summary.rs` builds the changes summary; `permission_prompt.rs`, `question_prompt.rs` (Claude's AskUserQuestion pages: checkboxes, custom text, cursor row, and the "Review your answers" page, mirrored to the dashboard) and `suggestion.rs` parse assistant screen content.
 - **platforms/**: Platform abstraction layer:
   - `claude_code/`: Claude Code hooks (`stats_hook.py`, `hook_script.rs`) and transcript parsing (writes to `~/.claude/crabigator/`)
   - `codex_cli/`: Codex CLI session log and transcript parsing (reads `~/.codex/sessions`)

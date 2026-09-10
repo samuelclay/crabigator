@@ -445,12 +445,42 @@ pub struct CloudQuestion {
     pub allows_other: bool,
 }
 
+/// One answered question on the "Review your answers" page
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionReviewAnswer {
+    pub question: String,
+    pub answer: String,
+}
+
 /// Prompt data for the dashboard
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "prompt_type", rename_all = "snake_case")]
 pub enum CloudPromptData {
-    /// AskUserQuestion prompt
-    Question { questions: Vec<CloudQuestion> },
+    /// AskUserQuestion prompt. The page fields mirror what Claude Code's
+    /// dialog shows on the terminal screen right now, so the dashboard can
+    /// follow checkbox toggles, page changes and the review page, none of
+    /// which send a hook event. They are absent when the screen could not
+    /// be read.
+    Question {
+        questions: Vec<CloudQuestion>,
+        /// Index into `questions` of the page on screen
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        current_question: Option<usize>,
+        /// Ticked rows on a multi-select page (1-indexed; the "Type
+        /// something" row is `options.len() + 1`)
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        checked: Vec<u32>,
+        /// Text typed into the "Type something" row
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        custom_text: Option<String>,
+        /// Row the terminal cursor is on: the options, then "Type
+        /// something", then Submit on multi-select pages
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor_row: Option<u32>,
+        /// The review page: every question with the answer it will send
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        review: Option<Vec<QuestionReviewAnswer>>,
+    },
     /// Permission request for a tool
     Permission {
         tool_name: String,
@@ -623,6 +653,96 @@ pub enum CloudToDesktopMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         platform: Option<String>,
     },
+}
+
+/// The page fields of a question prompt, read from the terminal screen.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct QuestionPageState {
+    current_question: Option<usize>,
+    checked: Vec<u32>,
+    custom_text: Option<String>,
+    cursor_row: Option<u32>,
+    review: Option<Vec<QuestionReviewAnswer>>,
+}
+
+impl QuestionPageState {
+    /// Match the dialog on screen against the questions the hook reported.
+    fn from_screen(
+        questions: &[crate::platforms::Question],
+        screen: Option<&crate::parsers::QuestionScreen>,
+    ) -> Self {
+        use crate::parsers::QuestionScreen;
+
+        match screen {
+            None => Self::default(),
+            Some(QuestionScreen::Review { answers }) => Self {
+                review: Some(
+                    answers
+                        .iter()
+                        .map(|a| QuestionReviewAnswer {
+                            question: a.question.clone(),
+                            answer: a.answer.clone(),
+                        })
+                        .collect(),
+                ),
+                ..Self::default()
+            },
+            Some(QuestionScreen::Page {
+                question,
+                rows,
+                submit_row,
+            }) => {
+                let current_question = find_question(questions, question);
+                let option_count = current_question
+                    .map(|i| questions[i].options.len() as u32)
+                    .unwrap_or_else(|| rows.len().saturating_sub(1) as u32);
+                let custom_row = option_count + 1;
+                let submit_row_number = option_count + 2;
+
+                let checked = rows
+                    .iter()
+                    .filter(|r| r.checked == Some(true))
+                    .map(|r| r.number)
+                    .collect();
+                let custom_text = rows
+                    .iter()
+                    .find(|r| r.number == custom_row && !r.is_placeholder())
+                    .map(|r| r.label.clone())
+                    .filter(|label| !label.is_empty());
+                let cursor_row = rows
+                    .iter()
+                    .find(|r| r.cursor)
+                    .map(|r| r.number)
+                    .or_else(|| (*submit_row == Some(true)).then_some(submit_row_number));
+
+                Self {
+                    current_question,
+                    checked,
+                    custom_text,
+                    cursor_row,
+                    review: None,
+                }
+            }
+        }
+    }
+}
+
+/// Find which question the screen shows. The screen wraps long questions
+/// and may cut them off, so accept a prefix match either way.
+fn find_question(questions: &[crate::platforms::Question], shown: &str) -> Option<usize> {
+    fn normalize(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+    let shown = normalize(shown);
+    if shown.is_empty() {
+        return None;
+    }
+    let normalized: Vec<String> = questions.iter().map(|q| normalize(&q.question)).collect();
+    normalized.iter().position(|q| *q == shown).or_else(|| {
+        normalized
+            .iter()
+            .position(|q| !q.is_empty() && (q.starts_with(&shown) || shown.starts_with(q)))
+    })
 }
 
 /// Helper for building events from crabigator's internal state
@@ -824,6 +944,7 @@ impl SessionEventBuilder {
     pub fn prompt(
         active_prompt: Option<&crate::platforms::ActivePrompt>,
         permission_prompt: Option<&crate::parsers::PermissionPrompt>,
+        question_screen: Option<&crate::parsers::QuestionScreen>,
     ) -> CloudEvent {
         use crate::platforms::ActivePrompt;
 
@@ -848,8 +969,14 @@ impl SessionEventBuilder {
                         allows_other: true, // AskUserQuestion always allows "Other"
                     })
                     .collect();
+                let page = QuestionPageState::from_screen(questions, question_screen);
                 CloudPromptData::Question {
                     questions: cloud_questions,
+                    current_question: page.current_question,
+                    checked: page.checked,
+                    custom_text: page.custom_text,
+                    cursor_row: page.cursor_row,
+                    review: page.review,
                 }
             }
             ActivePrompt::Permission {
@@ -951,5 +1078,113 @@ fn change_type_label(change_type: &ChangeType) -> &'static str {
         ChangeType::Added => "added",
         ChangeType::Modified => "modified",
         ChangeType::Deleted => "deleted",
+    }
+}
+
+#[cfg(test)]
+mod question_page_tests {
+    use super::*;
+    use crate::parsers::QuestionScreen;
+    use crate::platforms::{Question, QuestionOption};
+
+    fn questions() -> Vec<Question> {
+        let option = |label: &str| QuestionOption {
+            label: label.to_string(),
+            description: None,
+        };
+        vec![
+            Question {
+                question: "Which crust?".to_string(),
+                header: Some("Crust".to_string()),
+                options: vec![option("Thin"), option("Thick"), option("Stuffed")],
+                multi_select: false,
+            },
+            Question {
+                question: "Which toppings do you want on the pizza?".to_string(),
+                header: Some("Toppings".to_string()),
+                options: vec![
+                    option("Cheese"),
+                    option("Pepperoni"),
+                    option("Mushrooms"),
+                    option("Olives"),
+                ],
+                multi_select: true,
+            },
+        ]
+    }
+
+    const MULTI_PAGE: &str = "\
+←  ☒ Crust  ☐ Toppings  ✔ Submit  →
+Which toppings do you want on the
+pizza?
+  1. [✔] Cheese
+  2. [ ] Pepperoni
+  3. [✔] Mushrooms
+  4. [ ] Olives
+  5. [✔] extra garlic
+❯    Submit
+────────────
+  6. Chat about this
+";
+
+    #[test]
+    fn mirrors_a_multi_select_page() {
+        let screen = QuestionScreen::parse(MULTI_PAGE).unwrap();
+        let page = QuestionPageState::from_screen(&questions(), Some(&screen));
+        assert_eq!(page.current_question, Some(1));
+        assert_eq!(page.checked, vec![1, 3, 5]);
+        assert_eq!(page.custom_text.as_deref(), Some("extra garlic"));
+        assert_eq!(page.cursor_row, Some(6));
+        assert!(page.review.is_none());
+    }
+
+    #[test]
+    fn mirrors_a_single_select_page() {
+        let screen = QuestionScreen::parse(
+            "←  ☐ Crust  ☐ Toppings  ✔ Submit  →\nWhich crust?\n  1. Thin\n  2. Thick\n  3. Stuffed\n❯ 4. Type something.\n",
+        )
+        .unwrap();
+        let page = QuestionPageState::from_screen(&questions(), Some(&screen));
+        assert_eq!(page.current_question, Some(0));
+        assert!(page.checked.is_empty());
+        assert_eq!(page.custom_text, None);
+        assert_eq!(page.cursor_row, Some(4));
+    }
+
+    #[test]
+    fn mirrors_the_review_page() {
+        let screen = QuestionScreen::parse(
+            "←  ☒ Crust  ☒ Toppings  ✔ Submit  →\nReview your answers\n ● Which crust?\n   → Thick\nReady to submit your answers?\n❯ 1. Submit answers\n  2. Cancel\n",
+        )
+        .unwrap();
+        let page = QuestionPageState::from_screen(&questions(), Some(&screen));
+        assert_eq!(page.current_question, None);
+        let review = page.review.expect("review answers");
+        assert_eq!(review.len(), 1);
+        assert_eq!(review[0].answer, "Thick");
+    }
+
+    #[test]
+    fn leaves_page_fields_empty_without_a_screen() {
+        assert_eq!(
+            QuestionPageState::from_screen(&questions(), None),
+            QuestionPageState::default()
+        );
+    }
+
+    #[test]
+    fn serializes_page_fields_only_when_present() {
+        let event = SessionEventBuilder::prompt(
+            Some(&crate::platforms::ActivePrompt::Question {
+                questions: questions(),
+            }),
+            None,
+            None,
+        );
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"multi_select\":true"));
+        assert!(!json.contains("current_question"));
+        assert!(!json.contains("\"checked\""));
+        assert!(!json.contains("\"review\""));
     }
 }
