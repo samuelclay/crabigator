@@ -479,14 +479,18 @@ fn format_edit_diff(old: &str, new: &str) -> String {
     out
 }
 
-/// Truncate a string with ellipsis
-fn truncate(s: &str, max_len: usize) -> String {
-    let s = s.replace('\n', " ");
-    if s.len() <= max_len {
-        s
-    } else {
-        format!("{}...", &s[..max_len - 3])
+/// Truncate a string with ellipsis, counting characters rather than bytes
+/// so multi-byte text such as emoji never splits mid-character.
+fn truncate(s: &str, max_chars: usize) -> String {
+    let single_line = s.replace('\n', " ");
+    if single_line.chars().count() <= max_chars {
+        return single_line;
     }
+    let prefix: String = single_line
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect();
+    format!("{prefix}...")
 }
 
 /// Shorten a file path by replacing home dir and common prefixes
@@ -524,6 +528,18 @@ mod tests {
     fn test_truncate() {
         assert_eq!(truncate("short", 10), "short");
         assert_eq!(truncate("this is a longer string", 10), "this is...");
+    }
+
+    #[test]
+    fn truncate_cuts_between_characters_not_bytes() {
+        // A real command that crashed the session: byte 57 of a 60-char cut
+        // lands inside the four-byte 🎯.
+        let cmd = "gh pr view 2960 --json body --jq .body | sed -n '1,/^## 🎯 Scope/p' | grep -v '^$' | cut -c1-400";
+        let out = truncate(cmd, 60);
+        assert_eq!(out.chars().count(), 60);
+        assert!(out.ends_with("🎯..."), "{out:?}");
+        assert_eq!(truncate("🎯🎯🎯🎯", 4), "🎯🎯🎯🎯");
+        assert_eq!(truncate("🎯🎯🎯🎯🎯", 4), "🎯...");
     }
 
     #[test]
