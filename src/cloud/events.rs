@@ -456,11 +456,10 @@ pub struct QuestionReviewAnswer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "prompt_type", rename_all = "snake_case")]
 pub enum CloudPromptData {
-    /// AskUserQuestion prompt. The page fields mirror what Claude Code's
-    /// dialog shows on the terminal screen right now, so the dashboard can
-    /// follow checkbox toggles, page changes and the review page, none of
-    /// which send a hook event. They are absent when the screen could not
-    /// be read.
+    /// AskUserQuestion prompt. The page fields mirror the terminal dialog
+    /// (Claude's pages, Grok's question card) so the dashboard can follow
+    /// checkbox toggles and page changes that send no hook event. They are
+    /// absent when the screen could not be read.
     Question {
         questions: Vec<CloudQuestion>,
         /// Index into `questions` of the page on screen
@@ -480,6 +479,11 @@ pub enum CloudPromptData {
         /// The review page: every question with the answer it will send
         #[serde(default, skip_serializing_if = "Option::is_none")]
         review: Option<Vec<QuestionReviewAnswer>>,
+        /// `"grok_card"` when Grok's native question card is on screen.
+        /// The dashboard uses Grok keys (digits, Space, ←/→) instead of
+        /// Claude's numbered rows.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ui: Option<String>,
     },
     /// Permission request for a tool
     Permission {
@@ -691,8 +695,11 @@ impl QuestionPageState {
                 question,
                 rows,
                 submit_row,
+                page_index,
             }) => {
-                let current_question = find_question(questions, question);
+                let current_question = page_index
+                    .filter(|&i| i < questions.len())
+                    .or_else(|| find_question(questions, question));
                 let option_count = current_question
                     .map(|i| questions[i].options.len() as u32)
                     .unwrap_or_else(|| rows.len().saturating_sub(1) as u32);
@@ -945,6 +952,7 @@ impl SessionEventBuilder {
         active_prompt: Option<&crate::platforms::ActivePrompt>,
         permission_prompt: Option<&crate::parsers::PermissionPrompt>,
         question_screen: Option<&crate::parsers::QuestionScreen>,
+        question_ui: Option<&str>,
     ) -> CloudEvent {
         use crate::platforms::ActivePrompt;
 
@@ -977,6 +985,7 @@ impl SessionEventBuilder {
                     custom_text: page.custom_text,
                     cursor_row: page.cursor_row,
                     review: page.review,
+                    ui: question_ui.map(str::to_string),
                 }
             }
             ActivePrompt::Permission {
@@ -1180,11 +1189,61 @@ pizza?
             }),
             None,
             None,
+            None,
         );
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"multi_select\":true"));
         assert!(!json.contains("current_question"));
         assert!(!json.contains("\"checked\""));
         assert!(!json.contains("\"review\""));
+        assert!(!json.contains("\"ui\""));
+    }
+
+    #[test]
+    fn grok_custom_text_row_is_the_cursor_while_typing() {
+        let screen = QuestionScreen::parse(
+            "┃\n┃  What is your favorite color?\n┃\n┃  1 (○) Red\n┃  2 (○) Blue\n┃  3 (○) Green\n┃  z (●) ❯ periwinkle\n┃\n┃  ↑/↓ navigate · y copy\n",
+        )
+        .unwrap();
+        let option = |label: &str| QuestionOption {
+            label: label.to_string(),
+            description: None,
+        };
+        let questions = vec![Question {
+            question: "What is your favorite color?".to_string(),
+            header: None,
+            options: vec![option("Red"), option("Blue"), option("Green")],
+            multi_select: false,
+        }];
+        let page = QuestionPageState::from_screen(&questions, Some(&screen));
+        assert_eq!(page.current_question, Some(0));
+        assert_eq!(page.custom_text.as_deref(), Some("periwinkle"));
+        assert_eq!(page.cursor_row, Some(4));
+    }
+
+    #[test]
+    fn mirrors_a_grok_checkbox_page() {
+        let screen = QuestionScreen::parse(
+            "┃\n┃  Which toppings do you want on the pizza?\n┃\n┃  1 [x] Cheese\n┃  2 [ ] Pepperoni\n┃  3 [x] Mushrooms\n┃  4 [ ] Olives\n┃  z [x] extra garlic\n┃\n┃  [2/4] ↑/↓ navigate · ←/→ question · y copy\n",
+        )
+        .unwrap();
+        let page = QuestionPageState::from_screen(&questions(), Some(&screen));
+        assert_eq!(page.current_question, Some(1));
+        assert_eq!(page.checked, vec![1, 3, 5]);
+        assert_eq!(page.custom_text.as_deref(), Some("extra garlic"));
+    }
+
+    #[test]
+    fn serializes_grok_card_ui() {
+        let event = SessionEventBuilder::prompt(
+            Some(&crate::platforms::ActivePrompt::Question {
+                questions: questions(),
+            }),
+            None,
+            None,
+            Some("grok_card"),
+        );
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"ui\":\"grok_card\""));
     }
 }

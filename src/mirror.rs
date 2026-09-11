@@ -15,7 +15,7 @@ use serde::Serialize;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::parsers::{ChangeType, DiffSummary};
-use crate::platforms::PlatformKind;
+use crate::platforms::{ActivePrompt, PlatformKind};
 use crate::pr::SessionPr;
 use crate::recap::{RecapState, TurnRecap};
 use crate::slack::SlackThread;
@@ -132,6 +132,9 @@ pub struct StatsMirrorData {
     pub tool_timestamps: Vec<f64>,
     /// Session start time as Unix timestamp
     pub session_start: f64,
+    /// Question or permission waiting on the user, when one is open.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_prompt: Option<ActivePrompt>,
 }
 
 /// Simplified git data for JSON
@@ -412,6 +415,11 @@ impl MirrorPublisher {
         stats.platform_stats.compressions.hash(&mut hasher);
         format!("{:?}", stats.effective_state()).hash(&mut hasher);
         stats.platform_stats.mode.as_str().hash(&mut hasher);
+        if let Some(prompt) = stats.active_prompt() {
+            serde_json::to_string(prompt)
+                .unwrap_or_default()
+                .hash(&mut hasher);
+        }
 
         // Hash key fields from git
         git.repo_owner.hash(&mut hasher);
@@ -544,6 +552,7 @@ impl MirrorPublisher {
                         compressions: stats.platform_stats.compressions,
                         tool_timestamps: stats.platform_stats.tool_timestamps.clone(),
                         session_start: stats.session_start_unix(),
+                        active_prompt: stats.active_prompt().cloned(),
                     },
                     rendered: render_stats_preview(stats),
                 },

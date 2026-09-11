@@ -195,6 +195,17 @@ export const promptJs = `
             return !!prompt && (typeof prompt.current_question === 'number' || Array.isArray(prompt.review));
         }
 
+        function isGrokCard(prompt) {
+            return !!prompt && prompt.ui === 'grok_card';
+        }
+
+        // Grok picks answers with 1-9 then a-f.
+        function grokOptionKey(num) {
+            if (num >= 1 && num <= 9) return String(num);
+            if (num >= 10 && num <= 15) return String.fromCharCode('a'.charCodeAt(0) + (num - 10));
+            return String(num);
+        }
+
         function currentQuestion(sessionId) {
             const prompt = sessionPromptData.get(sessionId);
             const qIdx = sessionQuestionIndex.get(sessionId) || 0;
@@ -328,12 +339,17 @@ export const promptJs = `
             return steps;
         }
 
-        // Digits type into the "Type something" row while the terminal
-        // cursor sits on it, so step off it before pressing one. Records
-        // the move so later steps know where the cursor ended up.
-        function leaveTextRowSteps(prompt, q) {
+        // Digits type into the free-text row while the cursor sits on it,
+        // so step off it before pressing one. Claude moves up; Grok leaves
+        // edit mode with Escape. Records the move so later steps know
+        // where the cursor ended up.
+        function leaveTextRowSteps(prompt, q, grok) {
             const textRow = (q?.options?.length || 0) + 1;
             if (prompt?.cursor_row !== textRow) return [];
+            if (grok) {
+                prompt.cursor_row = Math.max(1, textRow - 1);
+                return [{ type: 'key', key: 'escape' }];
+            }
             prompt.cursor_row = textRow - 1;
             return [{ type: 'key', key: 'up' }];
         }
@@ -350,8 +366,16 @@ export const promptJs = `
             const optionsEl = document.getElementById('prompt-options-' + sessionId);
             if (optionsEl) optionsEl.innerHTML = renderMultiSelectOptions(sessionId, q.options, checked);
 
-            const steps = leaveTextRowSteps(prompt, q);
-            steps.push({ type: 'text', text: String(num) });
+            const grok = isGrokCard(prompt);
+            const steps = leaveTextRowSteps(prompt, q, grok);
+            if (grok) {
+                const cursor = typeof prompt.cursor_row === 'number' ? prompt.cursor_row : 1;
+                steps.push(...moveSteps(cursor, num));
+                prompt.cursor_row = num;
+                steps.push({ type: 'key', key: 'space' });
+            } else {
+                steps.push({ type: 'text', text: String(num) });
+            }
             try {
                 await postKeySequence(sessionId, steps);
             } catch (err) {
@@ -373,26 +397,40 @@ export const promptJs = `
             const checked = sessionCheckedLocal.get(sessionId) || new Set();
             const existing = isScreenDriven(prompt) ? (prompt.custom_text || '') : '';
             let cursor = typeof prompt.cursor_row === 'number' ? prompt.cursor_row : 1;
+            const grok = isGrokCard(prompt);
 
             const steps = [];
-            if (text) {
-                steps.push(...moveSteps(cursor, textRow));
-                cursor = textRow;
-                if (existing !== text) {
+            if (grok) {
+                steps.push(...leaveTextRowSteps(prompt, q, true));
+                if (text && text !== existing) {
+                    steps.push({ type: 'text', text: 'z' });
                     steps.push(...backspaceSteps(existing));
                     steps.push({ type: 'text', text });
-                    steps.push({ type: 'delay', ms: 50 });
-                } else if (!checked.has(textRow)) {
+                    steps.push({ type: 'key', key: 'escape' });
+                }
+                const qIdx = sessionQuestionIndex.get(sessionId) || 0;
+                const last = qIdx + 1 >= (prompt.questions?.length || 0);
+                steps.push({ type: 'key', key: last ? 'enter' : 'right' });
+            } else {
+                if (text) {
+                    steps.push(...moveSteps(cursor, textRow));
+                    cursor = textRow;
+                    if (existing !== text) {
+                        steps.push(...backspaceSteps(existing));
+                        steps.push({ type: 'text', text });
+                        steps.push({ type: 'delay', ms: 50 });
+                    } else if (!checked.has(textRow)) {
+                        steps.push({ type: 'key', key: 'enter' });
+                    }
+                } else if (existing && checked.has(textRow)) {
+                    // The viewer cleared the text: untick what the terminal still holds
+                    steps.push(...moveSteps(cursor, textRow));
+                    cursor = textRow;
                     steps.push({ type: 'key', key: 'enter' });
                 }
-            } else if (existing && checked.has(textRow)) {
-                // The viewer cleared the text: untick what the terminal still holds
-                steps.push(...moveSteps(cursor, textRow));
-                cursor = textRow;
+                steps.push(...moveSteps(cursor, submitRow));
                 steps.push({ type: 'key', key: 'enter' });
             }
-            steps.push(...moveSteps(cursor, submitRow));
-            steps.push({ type: 'key', key: 'enter' });
 
             try {
                 if (!(await postKeySequence(sessionId, steps))) return;
@@ -442,11 +480,12 @@ export const promptJs = `
             const prompt = sessionPromptData.get(sessionId);
             const q = prompt?.questions?.[qIdx];
             const screenDriven = isScreenDriven(prompt);
+            const grok = isGrokCard(prompt);
 
             const steps = [];
-            if (screenDriven) {
-                steps.push(...leaveTextRowSteps(prompt, q));
-                steps.push({ type: 'text', text: String(optionIdx) });
+            if (screenDriven || grok) {
+                steps.push(...leaveTextRowSteps(prompt, q, grok));
+                steps.push({ type: 'text', text: grok ? grokOptionKey(optionIdx) : String(optionIdx) });
             } else {
                 for (let i = 1; i < optionIdx; i++) {
                     steps.push({ type: 'key', key: 'down' });
@@ -554,9 +593,13 @@ export const promptJs = `
             const numOptions = q?.options?.length || 3;
             const textRow = numOptions + 1;
             const screenDriven = isScreenDriven(prompt);
+            const grok = isGrokCard(prompt);
 
             const steps = [];
-            if (screenDriven) {
+            if (grok) {
+                steps.push({ type: 'text', text: 'z' });
+                steps.push(...backspaceSteps(prompt.custom_text));
+            } else if (screenDriven) {
                 // The row's digit moves the cursor onto it; typing there fills it in
                 if (prompt.cursor_row !== textRow) steps.push({ type: 'text', text: String(textRow) });
                 steps.push(...backspaceSteps(prompt.custom_text));

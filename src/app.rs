@@ -1608,10 +1608,10 @@ impl App {
                 .session_stats
                 .set_screen_question(screen_question, screen_active_prompt);
 
-            // Claude Code's AskUserQuestion dialog turns pages, ticks
-            // checkboxes and shows its review page without any hook event,
-            // so mirror the page on screen to the dashboard as it changes.
-            let question_screen_changed = self.claude_question_open()
+            // Claude's AskUserQuestion dialog and Grok's question card turn
+            // pages and tick checkboxes without a hook event, so mirror the
+            // page on screen to the dashboard as it changes.
+            let question_screen_changed = self.question_screen_open()
                 && crate::parsers::QuestionScreen::parse(&screen) != self.last_question_screen;
 
             let new_effective_state = self.session_stats.effective_state();
@@ -2337,13 +2337,16 @@ impl App {
         hasher.finish()
     }
 
-    /// Whether Claude Code is showing an AskUserQuestion dialog right now.
-    fn claude_question_open(&self) -> bool {
-        self.platform.kind() == crate::platforms::PlatformKind::Claude
-            && matches!(
-                self.session_stats.active_prompt(),
-                Some(crate::platforms::ActivePrompt::Question { .. })
-            )
+    /// Whether the assistant is showing a question dialog we can read from
+    /// the screen (Claude's AskUserQuestion pages or Grok's question card).
+    fn question_screen_open(&self) -> bool {
+        matches!(
+            self.platform.kind(),
+            crate::platforms::PlatformKind::Claude | crate::platforms::PlatformKind::Grok
+        ) && matches!(
+            self.session_stats.active_prompt(),
+            Some(crate::platforms::ActivePrompt::Question { .. })
+        )
     }
 
     /// Send prompt event to cloud (for interactive dashboard)
@@ -2423,10 +2426,10 @@ impl App {
             self.last_exit_plan_option_count = new_option_count;
         }
 
-        // Read the AskUserQuestion page from the screen so the dashboard can
-        // mirror it. Only Claude Code draws this dialog. Read the terminal
-        // directly: with --no-capture the capture manager returns nothing.
-        let question_screen = if self.claude_question_open() {
+        // Read the question page from the screen so the dashboard can
+        // mirror it. Read the terminal directly: with --no-capture the
+        // capture manager returns nothing.
+        let question_screen = if self.question_screen_open() {
             let screen = screen_to_string(self.platform_pty.screen());
             crate::parsers::QuestionScreen::parse(&screen)
         } else {
@@ -2434,11 +2437,15 @@ impl App {
         };
         self.last_question_screen = question_screen.clone();
 
+        let question_ui =
+            (self.platform.kind() == crate::platforms::PlatformKind::Grok).then_some("grok_card");
+
         // Build and send the event
         let event = SessionEventBuilder::prompt(
             active_prompt.as_ref(),
             permission_prompt.as_ref(),
             question_screen.as_ref(),
+            question_ui,
         );
 
         // Debug builds keep the last prompt event on disk so a question
@@ -2574,6 +2581,8 @@ impl App {
                                 "enter" => &[0x0D],                 // Carriage return
                                 "backspace" => &[0x7f],             // DEL - backspace
                                 "shift_tab" => &[0x1b, b'[', b'Z'], // CSI Z - shift+tab
+                                "space" => b" ",
+                                "escape" | "esc" => &[0x1b],
                                 _ => continue,
                             };
                             self.platform_pty.write(bytes)?;

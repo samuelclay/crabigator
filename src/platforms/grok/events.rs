@@ -214,6 +214,12 @@ impl EventState {
             .and_then(Value::as_str)
             .unwrap_or("tool")
             .to_string();
+        // ask_user_question auto-allows with wait_ms 0. Treating it as a
+        // permission prompt would replace the question card on the dashboard.
+        if is_ask_user_question(&tool) {
+            self.record_history("permission_requested:ask_user_question");
+            return;
+        }
         self.pending_permission = Some(tool);
         self.set_permission_state();
         self.record_history("permission_requested");
@@ -351,19 +357,10 @@ impl EventState {
 
     fn on_tool_call(&mut self, update: &Value) {
         let name = acp::tool_name(update);
-        let call_id = update
-            .get("toolCallId")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let call_id = tool_call_id(update).map(str::to_string);
         let lower = name.to_ascii_lowercase();
-        if is_ask_user_question(&lower) {
-            if let Some(questions) = parse_questions(update) {
-                self.set_question(
-                    call_id,
-                    ActivePrompt::Question { questions },
-                    "ask_user_question",
-                );
-            }
+        if is_ask_user_question(name) {
+            self.open_ask_user_question(update, call_id);
             return;
         }
         if is_exit_plan_mode(&lower) {
@@ -403,12 +400,28 @@ impl EventState {
         self.record_history(event);
     }
 
+    fn open_ask_user_question(&mut self, update: &Value, call_id: Option<String>) {
+        if let Some(questions) = parse_questions(update) {
+            self.set_question(
+                call_id,
+                ActivePrompt::Question { questions },
+                "ask_user_question",
+            );
+        }
+    }
+
     fn on_tool_call_update(&mut self, update: &Value) {
         let status = update.get("status").and_then(Value::as_str).unwrap_or("");
         if !matches!(status, "completed" | "failed" | "cancelled" | "error") {
+            if is_ask_user_question(acp::tool_name(update)) {
+                let call_id = tool_call_id(update)
+                    .map(str::to_string)
+                    .or_else(|| self.pending_call_id.clone());
+                self.open_ask_user_question(update, call_id);
+            }
             return;
         }
-        let Some(call_id) = update.get("toolCallId").and_then(Value::as_str) else {
+        let Some(call_id) = tool_call_id(update) else {
             return;
         };
         if self.pending_call_id.as_deref() == Some(call_id) {
@@ -421,8 +434,12 @@ impl EventState {
     }
 }
 
-fn is_ask_user_question(lower: &str) -> bool {
-    lower == "ask_user_question" || lower == "askuserquestion"
+fn tool_call_id(update: &Value) -> Option<&str> {
+    update.get("toolCallId").and_then(Value::as_str)
+}
+
+fn is_ask_user_question(name: &str) -> bool {
+    name.eq_ignore_ascii_case("ask_user_question") || name.eq_ignore_ascii_case("askuserquestion")
 }
 
 fn is_exit_plan_mode(lower: &str) -> bool {
@@ -577,6 +594,70 @@ mod tests {
         }));
         assert_eq!(state.stats.state, SessionState::Thinking);
         assert!(state.stats.active_prompt.is_none());
+    }
+
+    #[test]
+    fn ask_user_question_permission_does_not_replace_the_card() {
+        let mut state = EventState::default();
+        state.apply_line(&json!({
+            "type": "permission_requested",
+            "tool_name": "ask_user_question"
+        }));
+        assert_ne!(state.stats.state, SessionState::Permission);
+        assert!(state.stats.active_prompt.is_none());
+
+        state.apply_line(&json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "call-1",
+            "title": "ask_user_question",
+            "rawInput": {
+                "questions": [{
+                    "question": "Which toppings?",
+                    "multiSelect": true,
+                    "options": [
+                        {"label": "Cheese"},
+                        {"label": "Pepperoni"}
+                    ]
+                }]
+            },
+            "_meta": {"x.ai/tool": {"name": "ask_user_question"}}
+        }));
+        state.apply_line(&json!({
+            "type": "permission_requested",
+            "tool_name": "ask_user_question"
+        }));
+        match &state.stats.active_prompt {
+            Some(ActivePrompt::Question { questions }) => {
+                assert_eq!(questions[0].question, "Which toppings?");
+                assert!(questions[0].multi_select);
+            }
+            other => panic!("expected question, got {other:?}"),
+        }
+        assert_eq!(state.stats.state, SessionState::Question);
+    }
+
+    #[test]
+    fn ask_user_question_from_tool_call_update() {
+        let mut state = EventState::default();
+        state.apply_line(&json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-2",
+            "title": "Ask 2 questions",
+            "rawInput": {
+                "questions": [{
+                    "question": "Which crust?",
+                    "options": [{"label": "Thin"}, {"label": "Thick"}]
+                }]
+            },
+            "_meta": {"x.ai/tool": {"name": "ask_user_question"}}
+        }));
+        match &state.stats.active_prompt {
+            Some(ActivePrompt::Question { questions }) => {
+                assert_eq!(questions[0].question, "Which crust?");
+                assert!(!questions[0].multi_select);
+            }
+            other => panic!("expected question, got {other:?}"),
+        }
     }
 
     #[test]

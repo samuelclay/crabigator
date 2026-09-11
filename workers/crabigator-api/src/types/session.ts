@@ -377,6 +377,8 @@ export interface QuestionPrompt {
     cursor_row?: number;
     /** The review page: every question with the answer it will send */
     review?: QuestionReviewAnswer[];
+    /** `"grok_card"` when Grok's native question card is on screen */
+    ui?: string;
 }
 
 /**
