@@ -32,7 +32,27 @@ export const pairingJs = `
                 clearPairing();
                 return true;
             }
+            if (resp.status === 403 && resp.headers.get('X-Error-Code') === 'NO_DESKTOPS') {
+                showAttachDesktopGate();
+                return true;
+            }
             return false;
+        }
+
+        function socialLoginButtons(intent) {
+            if (!SOCIAL_LOGIN_ENABLED) return '';
+            const tokenParam = intent === 'connect' && mobileToken
+                ? '&token=' + encodeURIComponent(mobileToken)
+                : '';
+            const buttons = [];
+            if (SOCIAL_PROVIDERS.github) {
+                buttons.push('<a class="social-btn" href="/api/auth/github?intent=' + intent + tokenParam + '">Continue with GitHub</a>');
+            }
+            if (SOCIAL_PROVIDERS.google) {
+                buttons.push('<a class="social-btn" href="/api/auth/google?intent=' + intent + tokenParam + '">Continue with Google</a>');
+            }
+            if (!buttons.length) return '';
+            return '<div class="social-login-stack">' + buttons.join('') + '</div><div class="pairing-divider">or</div>';
         }
 
         // Auto-setup via URL parameter (for Chrome MCP)
@@ -182,8 +202,11 @@ export const pairingJs = `
                     </div>
                     <h2>Pair with Desktop</h2>
                     <p class="pairing-description">
-                        Enter the pairing code shown in your terminal to connect this device.
+                        \${SOCIAL_LOGIN_ENABLED
+                            ? 'Sign in with GitHub or Google, or enter the pairing code shown in your terminal.'
+                            : 'Enter the pairing code shown in your terminal to connect this device.'}
                     </p>
+                    \${socialLoginButtons('login')}
                     <div class="pairing-form">
                         <input
                             type="text"
@@ -235,6 +258,126 @@ export const pairingJs = `
                 if (e.key === 'Enter') submitPairingCode();
             });
             input.focus();
+        }
+
+        function showAttachDesktopGate() {
+            const container = document.getElementById('sessions');
+            container.innerHTML = '';
+            container.dataset.layout = '1';
+            container.style.display = 'flex';
+            container.style.justifyContent = 'center';
+            container.style.alignItems = 'center';
+            container.style.minHeight = 'calc(100vh - 80px)';
+
+            const gate = document.createElement('div');
+            gate.className = 'pairing-gate';
+            gate.innerHTML = \`
+                <div class="pairing-card">
+                    <div class="pairing-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="3" width="20" height="14" rx="2"/>
+                            <line x1="8" y1="21" x2="16" y2="21"/>
+                            <line x1="12" y1="17" x2="12" y2="21"/>
+                        </svg>
+                    </div>
+                    <h2>Link a desktop</h2>
+                    <p class="pairing-description">
+                        You're signed in. Enter a pairing code from <code>crabigator pair</code> to attach this machine.
+                    </p>
+                    <div class="pairing-form">
+                        <input
+                            type="text"
+                            id="pairing-code-input"
+                            placeholder="ABC-DEF-GHI"
+                            maxlength="11"
+                            autocomplete="off"
+                            autocorrect="off"
+                            autocapitalize="characters"
+                            spellcheck="false"
+                        />
+                        <button id="pairing-submit-btn" onclick="submitAttachDesktop()">
+                            Link
+                        </button>
+                    </div>
+                    <div id="pairing-error" class="pairing-error"></div>
+                    <p class="pairing-help">
+                        Start <code>crabigator</code> on your desktop to see the pairing code.
+                    </p>
+                </div>
+            \`;
+            container.appendChild(gate);
+            const attachInput = document.getElementById('pairing-code-input');
+            attachInput.addEventListener('input', formatPairingInput);
+            attachInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') submitAttachDesktop();
+            });
+            attachInput.focus();
+        }
+
+        async function submitAttachDesktop() {
+            const input = document.getElementById('pairing-code-input');
+            const errorEl = document.getElementById('pairing-error');
+            const submitBtn = document.getElementById('pairing-submit-btn');
+            const code = input.value.trim().toUpperCase();
+            if (!code.match(/^[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$/)) {
+                errorEl.textContent = 'Please enter a valid code (e.g., ABC-DEF-GHI)';
+                return;
+            }
+            input.disabled = true;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Linking...';
+            errorEl.textContent = '';
+            try {
+                const response = await fetch('/api/account/attach', {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ pairing_token: code })
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to link desktop');
+                }
+                location.reload();
+            } catch (err) {
+                errorEl.textContent = err.message;
+                input.disabled = false;
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Link';
+            }
+        }
+
+        async function refreshAccountMenu() {
+            const statusEl = document.getElementById('account-logins-status');
+            const listEl = document.getElementById('account-identities');
+            const rowEl = document.getElementById('account-connect-row');
+            if (!statusEl || !listEl || !rowEl || !isPaired) return;
+            try {
+                const resp = await fetch('/api/account', { headers: getAuthHeaders() });
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const identities = data.identities || [];
+                if (identities.length) {
+                    statusEl.textContent = data.needs_desktop
+                        ? 'Signed in. Link a desktop with a pairing code.'
+                        : 'Signed in. Connect the other provider if you want both logins on this account.';
+                    listEl.innerHTML = identities.map((identity) => {
+                        const label = identity.username || identity.email || identity.provider;
+                        return '<div>' + escapeHtml(identity.provider) + ': ' + escapeHtml(label) + '</div>';
+                    }).join('');
+                } else {
+                    statusEl.textContent = 'Pairing code only. Connect GitHub or Google to use the same account on MCP.';
+                    listEl.innerHTML = '';
+                }
+                const connected = new Set(identities.map((identity) => identity.provider));
+                const buttons = [];
+                if (SOCIAL_LOGIN_ENABLED && SOCIAL_PROVIDERS.github && !connected.has('github')) {
+                    buttons.push('<a class="social-btn" href="/api/auth/github?intent=connect&token=' + encodeURIComponent(mobileToken) + '">Connect GitHub</a>');
+                }
+                if (SOCIAL_LOGIN_ENABLED && SOCIAL_PROVIDERS.google && !connected.has('google')) {
+                    buttons.push('<a class="social-btn" href="/api/auth/google?intent=connect&token=' + encodeURIComponent(mobileToken) + '">Connect Google</a>');
+                }
+                rowEl.innerHTML = buttons.join('');
+            } catch {}
         }
 
         function formatPairingInput(e) {
@@ -313,9 +456,16 @@ export const pairingJs = `
         }
 
         function clearPairing() {
+            const token = mobileToken;
             localStorage.removeItem('crabigator_mobile_token');
             mobileToken = null;
             isPaired = false;
+            if (token) {
+                fetch('/api/account/logout', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                }).catch(() => {});
+            }
             location.reload();
         }
 

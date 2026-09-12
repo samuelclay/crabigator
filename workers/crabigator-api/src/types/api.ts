@@ -159,6 +159,7 @@ export interface MobileAuth {
     desktop_id: string;
     mobile_id: string;
     group_id?: string;
+    account_id?: string;
 }
 
 export interface ShareAuth {

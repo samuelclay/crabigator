@@ -6,6 +6,8 @@ export const constantsJs = `
         const TRANSCRIPTION_ENABLED = APP_CONFIG.capabilities.transcription === true;
         const BILLING_ENABLED = APP_CONFIG.capabilities.billing === true;
         const GIFTS_ENABLED = APP_CONFIG.capabilities.gifts === true;
+        const SOCIAL_LOGIN_ENABLED = APP_CONFIG.capabilities.social_login === true;
+        const SOCIAL_PROVIDERS = APP_CONFIG.social_providers || { github: false, google: false };
         const sessions = new Map(); // sessionId -> { eventSocket, state, element, git, changes, stats }
         let allSessions = []; // All sessions from API (for popover)
         let allProjects = []; // All known projects from API (for history)

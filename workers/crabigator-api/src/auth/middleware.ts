@@ -4,15 +4,30 @@ import { sha256, hmacVerify } from './tokens';
 
 const TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
 const MOBILE_TOKEN_TTL = 60 * 60 * 24 * 365; // 1 year
+const VIEWER_COOKIE = 'crabigator_viewer';
 
-interface MobileTokenData {
+interface ViewerTokenData {
+    account_id?: string;
+    group_id?: string;
     desktop_id: string;
     mobile_id: string;
-    group_id?: string;
+}
+
+function jsonError(error: string, code: string, status: number): Response {
+    return new Response(
+        JSON.stringify({ error, code }),
+        {
+            status,
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Error-Code': code,
+            },
+        },
+    );
 }
 
 /**
- * Extract a bearer token from a header or streaming URL query parameter.
+ * Extract a bearer token from a header, query parameter, or viewer cookie.
  */
 export function extractToken(request: Request): string | null {
     const authHeader = request.headers.get('Authorization');
@@ -20,7 +35,27 @@ export function extractToken(request: Request): string | null {
         return authHeader.slice(7);
     }
     const url = new URL(request.url);
-    return url.searchParams.get('token');
+    const queryToken = url.searchParams.get('token');
+    if (queryToken) return queryToken;
+    return readCookie(request, VIEWER_COOKIE);
+}
+
+export function viewerCookie(token: string, secure: boolean): string {
+    const parts = [
+        `${VIEWER_COOKIE}=${token}`,
+        'Path=/',
+        'HttpOnly',
+        'SameSite=Lax',
+        `Max-Age=${MOBILE_TOKEN_TTL}`,
+    ];
+    if (secure) parts.push('Secure');
+    return parts.join('; ');
+}
+
+function readCookie(request: Request, name: string): string | null {
+    const cookie = request.headers.get('Cookie') || '';
+    const match = cookie.match(new RegExp(`(?:^|; )${name}=([^;]+)`));
+    return match ? decodeURIComponent(match[1]) : null;
 }
 
 /**
@@ -90,15 +125,29 @@ export async function verifyMobileToken(
 
     const tokenHash = await sha256(token);
 
-    // Look up in KV
-    const data = await env.TOKENS.get(`mobile:${tokenHash}`, 'json') as MobileTokenData | null;
+    const data = await env.TOKENS.get(`mobile:${tokenHash}`, 'json') as ViewerTokenData | null;
 
     if (!data) {
         return null;
     }
 
-    // Check if link is still valid and resolve the current group from D1.
-    // KV can contain stale group_id values after desktop groups are merged.
+    if (data.account_id) {
+        const account = await env.DB.prepare(
+            'SELECT group_id FROM accounts WHERE id = ?',
+        ).bind(data.account_id).first<{ group_id: string | null }>();
+        if (!account) {
+            await env.TOKENS.delete(`mobile:${tokenHash}`);
+            return null;
+        }
+        return {
+            type: 'mobile',
+            desktop_id: data.desktop_id || '',
+            mobile_id: data.mobile_id,
+            group_id: account.group_id || undefined,
+            account_id: data.account_id,
+        };
+    }
+
     const link = await env.DB.prepare(`
         SELECT ld.id, d.group_id
         FROM linked_devices ld
@@ -107,7 +156,6 @@ export async function verifyMobileToken(
     `).bind(data.desktop_id, data.mobile_id).first<{ id: string; group_id: string | null }>();
 
     if (!link) {
-        // Link was revoked, clean up KV
         await env.TOKENS.delete(`mobile:${tokenHash}`);
         return null;
     }
@@ -150,13 +198,11 @@ export async function authenticate(
     request: Request,
     env: Env
 ): Promise<AuthContext | null> {
-    // Try device signature
     const deviceAuth = await verifyDeviceSignature(request, env);
     if (deviceAuth) {
         return deviceAuth;
     }
 
-    // Try mobile token
     const mobileAuth = await verifyMobileToken(request, env);
     if (mobileAuth) {
         return mobileAuth;
@@ -165,66 +211,51 @@ export async function authenticate(
     return null;
 }
 
-/**
- * Require authentication - returns error response if not authenticated
- */
 export async function requireAuth(
     request: Request,
     env: Env
 ): Promise<{ auth: AuthContext } | { error: Response }> {
     const auth = await authenticate(request, env);
     if (!auth) {
-        return {
-            error: new Response(
-                JSON.stringify({ error: 'Unauthorized', code: 'UNAUTHORIZED' }),
-                { status: 401, headers: { 'Content-Type': 'application/json' } }
-            ),
-        };
+        return { error: jsonError('Unauthorized', 'UNAUTHORIZED', 401) };
     }
     return { auth };
 }
 
-/**
- * Require device authentication specifically
- */
 export async function requireDeviceAuth(
     request: Request,
     env: Env
 ): Promise<{ auth: DeviceAuth } | { error: Response }> {
     const auth = await verifyDeviceSignature(request, env);
     if (!auth) {
-        return {
-            error: new Response(
-                JSON.stringify({ error: 'Device authentication required', code: 'DEVICE_AUTH_REQUIRED' }),
-                { status: 401, headers: { 'Content-Type': 'application/json' } }
-            ),
-        };
+        return { error: jsonError('Device authentication required', 'DEVICE_AUTH_REQUIRED', 401) };
     }
     return { auth };
 }
 
-/**
- * Require mobile authentication specifically (includes group_id)
- */
 export async function requireMobileAuth(
     request: Request,
     env: Env
 ): Promise<{ auth: MobileAuth & { group_id: string } } | { error: Response }> {
     const auth = await verifyMobileToken(request, env);
-    if (!auth || !auth.group_id) {
-        return {
-            error: new Response(
-                JSON.stringify({ error: 'Mobile authentication required', code: 'MOBILE_AUTH_REQUIRED' }),
-                { status: 401, headers: { 'Content-Type': 'application/json' } }
-            ),
-        };
+    if (!auth) {
+        return { error: jsonError('Mobile authentication required', 'MOBILE_AUTH_REQUIRED', 401) };
+    }
+    if (!auth.group_id) {
+        if (auth.account_id) {
+            return {
+                error: jsonError(
+                    'No desktops linked. Run crabigator pair and enter the code.',
+                    'NO_DESKTOPS',
+                    403,
+                ),
+            };
+        }
+        return { error: jsonError('Mobile authentication required', 'MOBILE_AUTH_REQUIRED', 401) };
     }
     return { auth: auth as MobileAuth & { group_id: string } };
 }
 
-/**
- * Require access to a session based on mobile group membership
- */
 export async function requireSessionAccess(
     request: Request,
     env: Env,
@@ -243,21 +274,11 @@ export async function requireSessionAccess(
     `).bind(sessionId).first<{ group_id: string | null }>();
 
     if (!session) {
-        return {
-            error: new Response(
-                JSON.stringify({ error: 'Session not found', code: 'NOT_FOUND' }),
-                { status: 404, headers: { 'Content-Type': 'application/json' } }
-            ),
-        };
+        return { error: jsonError('Session not found', 'NOT_FOUND', 404) };
     }
 
     if (!session.group_id || session.group_id !== authResult.auth.group_id) {
-        return {
-            error: new Response(
-                JSON.stringify({ error: 'Forbidden', code: 'FORBIDDEN' }),
-                { status: 403, headers: { 'Content-Type': 'application/json' } }
-            ),
-        };
+        return { error: jsonError('Forbidden', 'FORBIDDEN', 403) };
     }
 
     return authResult;

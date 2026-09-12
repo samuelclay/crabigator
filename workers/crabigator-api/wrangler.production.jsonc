@@ -47,6 +47,12 @@
   "routes": [
     { "pattern": "drinkcrabigator.com/api/*", "zone_name": "drinkcrabigator.com" },
     { "pattern": "drinkcrabigator.com/dashboard*", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/oauth/*", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/mcp*", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/authorize*", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/token", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/register", "zone_name": "drinkcrabigator.com" },
+    { "pattern": "drinkcrabigator.com/.well-known/*", "zone_name": "drinkcrabigator.com" },
     { "pattern": "drinkcrabigator.com/pair/*", "zone_name": "drinkcrabigator.com" },
     { "pattern": "drinkcrabigator.com/staff*", "zone_name": "drinkcrabigator.com" },
     { "pattern": "drinkcrabigator.com/pr-action*", "zone_name": "drinkcrabigator.com" },
@@ -65,7 +71,9 @@
         "outbound_email": true,
         "marketing_analytics": true,
         "traffic_alerts": true,
-        "staff": true
+        "staff": true,
+        "social_login": true,
+        "mcp": true
       },
       "billing": {
         "visible_session_limit": 3,

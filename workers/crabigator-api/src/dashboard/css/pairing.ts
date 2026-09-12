@@ -135,6 +135,69 @@ export const pairingCss = `
     border-radius: 4px;
     color: var(--accent-cyan);
 }
+.social-login-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 22px;
+}
+.social-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 12px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border-dim);
+    background: var(--bg-abyss);
+    color: var(--text-bright);
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.2s;
+}
+.social-btn:hover {
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 18px var(--glow-cyan);
+}
+.pairing-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-dim);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 8px 0 22px;
+}
+.pairing-divider::before,
+.pairing-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-dim);
+}
+.account-identities {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 8px 0 12px;
+    color: var(--text-mid);
+    font-size: 12px;
+}
+.account-connect-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.account-connect-row .social-btn {
+    width: auto;
+    padding: 8px 12px;
+    font-size: 12px;
+}
 
 /* Install card (shown on pairing page) */
 .install-card {

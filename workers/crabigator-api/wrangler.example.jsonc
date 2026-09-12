@@ -57,7 +57,9 @@
         "outbound_email": false,
         "marketing_analytics": false,
         "traffic_alerts": false,
-        "staff": false
+        "staff": false,
+        "social_login": true,
+        "mcp": true
       },
       "billing": {
         // This cap applies only while billing is enabled.
@@ -85,6 +87,13 @@
       }
     }
   },
+
+  // Optional social login for the dashboard and MCP OAuth. Set as secrets:
+  //   GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
+  //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+  // GitHub callback: {origin}/oauth/github/callback
+  // Google callback: {origin}/oauth/google/callback
+  // MCP endpoint: {origin}/mcp
 
   "observability": {
     "enabled": true,

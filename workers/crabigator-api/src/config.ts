@@ -10,6 +10,8 @@ export interface AppConfig {
         marketing_analytics?: boolean;
         traffic_alerts?: boolean;
         staff?: boolean;
+        social_login?: boolean;
+        mcp?: boolean;
     };
     billing?: {
         visible_session_limit?: number;
@@ -36,6 +38,8 @@ export interface Capabilities {
     marketing_analytics: boolean;
     traffic_alerts: boolean;
     staff: boolean;
+    social_login: boolean;
+    mcp: boolean;
 }
 
 export interface RuntimeConfig {
@@ -45,6 +49,7 @@ export interface RuntimeConfig {
     billing_period: string;
     capabilities: Capabilities;
     missing_config: string[];
+    social_providers: { github: boolean; google: boolean };
 }
 
 function hasStripe(env: Env, config: AppConfig): boolean {
@@ -96,6 +101,9 @@ export function getRuntimeConfig(request: Request, env: Env): RuntimeConfig {
         env.MAILGUN_API_KEY && config.email?.mailgun_domain && config.email?.from,
     );
     const billingReady = hasStripe(env, config) || hasPayPal(env);
+    const githubReady = Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
+    const googleReady = Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+    const socialReady = githubReady || googleReady;
     const capabilities: Capabilities = {
         core: true,
         transcription: Boolean(requested.transcription && env.OPENAI_API_KEY),
@@ -110,6 +118,8 @@ export function getRuntimeConfig(request: Request, env: Env): RuntimeConfig {
             && config.email?.traffic_alert_recipient,
         ),
         staff: Boolean(requested.staff && env.STAFF_ACCESS_KEY),
+        social_login: requested.social_login !== false && socialReady,
+        mcp: requested.mcp !== false,
     };
     const missing = new Set<string>();
     if (requested.transcription && !env.OPENAI_API_KEY) missing.add('OPENAI_API_KEY');
@@ -122,6 +132,7 @@ export function getRuntimeConfig(request: Request, env: Env): RuntimeConfig {
         missing.add('traffic_alert_recipient');
     }
     if (requested.staff && !env.STAFF_ACCESS_KEY) missing.add('STAFF_ACCESS_KEY');
+    if (requested.social_login && !socialReady) missing.add('social_oauth');
 
     return {
         origin: getPublicOrigin(request, config),
@@ -130,6 +141,7 @@ export function getRuntimeConfig(request: Request, env: Env): RuntimeConfig {
         billing_period: config.billing?.price_period || 'per month',
         capabilities,
         missing_config: [...missing],
+        social_providers: { github: githubReady, google: googleReady },
     };
 }
 

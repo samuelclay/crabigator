@@ -23,6 +23,14 @@ import { handleAnalyticsBeacon, handleAnalyticsEvent } from './handlers/analytic
 import { fetchNpmStats, checkTrafficAnomalies } from './handlers/npm-stats';
 import { cleanupZombieSessions } from './handlers/cleanup';
 import { handleTranscribe } from './handlers/transcribe';
+import {
+    startAccountOAuth,
+    handleSocialCallback,
+    getAccountStatus,
+    attachAccountDesktop,
+    logoutAccount,
+} from './handlers/account';
+import { handleMcp, isMcpPath } from './mcp/server';
 
 const PROJECT_HISTORY_RETENTION_DAYS = 14;
 const SECONDS_PER_DAY = 24 * 60 * 60;
@@ -194,6 +202,12 @@ router.post('/api/pairing/generate', generatePairingToken);
 router.post('/api/pairing/claim', claimPairingToken);
 router.post('/api/pairing/invite', generateInviteCode);
 router.get('/api/pairing/:token/status', getPairingStatus);
+
+router.get('/api/auth/:provider', startAccountOAuth);
+router.get('/oauth/:provider/callback', handleSocialCallback);
+router.get('/api/account', getAccountStatus);
+router.post('/api/account/attach', attachAccountDesktop);
+router.post('/api/account/logout', logoutAccount);
 
 // Public pairing code page (no auth)
 router.get('/pair/:token', getPairingCodePage);
@@ -902,6 +916,10 @@ router.get('/api/health', async (request, env) => {
 
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
+        const pathname = new URL(request.url).pathname;
+        if (isMcpPath(pathname)) {
+            return handleMcp(request, env);
+        }
         return router.handle(request, env);
     },
 

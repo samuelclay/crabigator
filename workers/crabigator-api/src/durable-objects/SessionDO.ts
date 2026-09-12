@@ -281,6 +281,8 @@ export class SessionDO implements DurableObject {
                 }
             case '/state':
                 return this.handleGetState();
+            case '/snapshot':
+                return this.handleSnapshot();
             case '/prs':
                 // Dump the stored PR list — used to backfill session_prs in
                 // D1 for sessions that predate the write-through.
@@ -1347,6 +1349,46 @@ export class SessionDO implements DurableObject {
         return new Response(JSON.stringify({ text }), {
             headers: { 'Content-Type': 'application/json' }
         });
+    }
+
+    /**
+     * One JSON blob for MCP tools and other late joiners that do not want
+     * a WebSocket replay of every event type.
+     */
+    private async handleSnapshot(): Promise<Response> {
+        const draft = await this.state.storage.get<string>('draft') || '';
+        const interactive = this.persistentState.state === 'permission'
+            || this.persistentState.state === 'question';
+        return new Response(
+            JSON.stringify({
+                id: this.persistentState.sessionId || this.sessionInfo?.id || null,
+                cwd: this.sessionInfo?.cwd || null,
+                platform: this.sessionInfo?.platform || null,
+                started_at: this.sessionInfo?.started_at || null,
+                desktop_connected: this.desktopWs !== null,
+                state: this.persistentState.state,
+                title: this.persistentState.lastTitle,
+                title_history: this.persistentState.lastTitleHistory,
+                prompt: interactive ? this.persistentState.currentPrompt : null,
+                recap: this.persistentState.lastRecap,
+                recap_history: this.persistentState.lastRecapHistory,
+                prs: this.persistentState.lastPrs,
+                slack_threads: this.persistentState.lastSlackThreads,
+                pr_slack_threads: this.persistentState.lastPrSlackThreads,
+                commit_history: this.persistentState.lastCommitHistory,
+                git: this.ephemeralState.lastGit,
+                changes: this.ephemeralState.lastChanges,
+                stats: this.ephemeralState.lastStats,
+                screen: this.ephemeralState.lastScreen,
+                scrollback: this.ephemeralState.scrollbackContent,
+                scrollback_lines: this.ephemeralState.lastScrollbackLine,
+                draft,
+                hibernated_ephemeral: !this.ephemeralState.lastScreen
+                    && !this.ephemeralState.scrollbackContent
+                    && this.desktopWs !== null,
+            }),
+            { headers: { 'Content-Type': 'application/json' } },
+        );
     }
 
     /**

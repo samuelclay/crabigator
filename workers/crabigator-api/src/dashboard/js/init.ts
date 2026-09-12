@@ -32,6 +32,7 @@ export const initJs = `
             } else {
                 // Paired - load sessions normally
                 initSidebar();
+                refreshAccountMenu();
                 loadSessions();
                 connectSessionListStream();
                 // Start viewer activity tracking for streaming optimization

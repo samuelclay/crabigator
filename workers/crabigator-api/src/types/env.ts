@@ -22,4 +22,9 @@ export type Env = Omit<Cloudflare.Env, 'APP_CONFIG'> & {
     OPENAI_API_KEY?: string;
     MAILGUN_API_KEY?: string;
     STAFF_ACCESS_KEY?: string;
+    GITHUB_CLIENT_ID?: string;
+    GITHUB_CLIENT_SECRET?: string;
+    GOOGLE_CLIENT_ID?: string;
+    GOOGLE_CLIENT_SECRET?: string;
+    COOKIE_ENCRYPTION_KEY?: string;
 };

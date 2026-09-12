@@ -8,6 +8,8 @@ import type {
 import { jsonResponse } from '../router';
 import { requireDeviceAuth, verifyMobileToken } from '../auth/middleware';
 import { generateToken, generatePairingCode, generateUUID, sha256 } from '../auth/tokens';
+import { getOrCreateDeviceGroup } from '../auth/groups';
+import { firstDesktopInGroup } from '../auth/accounts';
 
 const PAIRING_TOKEN_TTL = 60 * 60 * 24 * 365; // 1 year (display only)
 const MOBILE_TOKEN_TTL = 60 * 60 * 24 * 365; // 1 year
@@ -488,7 +490,19 @@ export async function generateInviteCode(
         );
     }
 
-    const { desktop_id } = mobileAuth;
+    let desktopId = mobileAuth.desktop_id;
+    if (!desktopId && mobileAuth.group_id) {
+        desktopId = (await firstDesktopInGroup(env, mobileAuth.group_id)) || '';
+    }
+    if (!desktopId) {
+        return new Response(
+            JSON.stringify({ error: 'No desktops linked', code: 'NO_DESKTOPS' }),
+            {
+                status: 403,
+                headers: { 'Content-Type': 'application/json', 'X-Error-Code': 'NO_DESKTOPS' },
+            },
+        );
+    }
 
     // Generate pairing token and code
     const token = generateToken(32);
@@ -497,7 +511,7 @@ export async function generateInviteCode(
 
     // Store token data in KV (same structure as desktop-generated tokens)
     const tokenData: PairingTokenData = {
-        device_id: desktop_id,
+        device_id: desktopId,
         code,
         expires_at: expiresAt,
         claimed: false,
@@ -513,47 +527,17 @@ export async function generateInviteCode(
         token
     );
 
-    await addPairingTokenForDevice(env, desktop_id, token);
+    await addPairingTokenForDevice(env, desktopId, token);
 
     // Return code and URL
     const response: GeneratePairingTokenResponse = {
         token,
         expires_at: expiresAt,
-        qr_data: `crabigator://pair?t=${token}&d=${desktop_id}`,
+        qr_data: `crabigator://pair?t=${token}&d=${desktopId}`,
         code,
     };
 
     return jsonResponse(response);
-}
-
-/**
- * Get or create a device group for a desktop device
- */
-async function getOrCreateDeviceGroup(env: Env, deviceId: string): Promise<string> {
-    // Check if device already has a group
-    const device = await env.DB.prepare(
-        'SELECT group_id FROM devices WHERE id = ?'
-    ).bind(deviceId).first<{ group_id: string | null }>();
-
-    if (device?.group_id) {
-        return device.group_id;
-    }
-
-    // Create new group
-    const groupId = generateUUID();
-    const now = Math.floor(Date.now() / 1000);
-
-    await env.DB.prepare(`
-        INSERT INTO device_groups (id, created_at)
-        VALUES (?, ?)
-    `).bind(groupId, now).run();
-
-    // Associate device with group
-    await env.DB.prepare(`
-        UPDATE devices SET group_id = ? WHERE id = ?
-    `).bind(groupId, deviceId).run();
-
-    return groupId;
 }
 
 async function addPairingTokenForDevice(env: Env, deviceId: string, token: string): Promise<void> {

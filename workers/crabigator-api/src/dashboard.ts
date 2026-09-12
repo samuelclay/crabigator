@@ -148,6 +148,13 @@ export const dashboardHtml = `<!DOCTYPE html>
                     </button>
                 </div>
                 <div class="settings-divider"></div>
+                <div class="settings-section" id="account-logins-section">
+                    <div class="settings-section-label">Sign-in</div>
+                    <p class="settings-description" id="account-logins-status">Pairing code only. Connect GitHub or Google to use the same account on MCP.</p>
+                    <div id="account-identities" class="account-identities"></div>
+                    <div class="account-connect-row" id="account-connect-row"></div>
+                </div>
+                <div class="settings-divider"></div>
                 <div class="settings-section">
                     <div class="settings-section-label">Pair another device</div>
                     <p class="settings-description">Generate a code to pair another phone, tablet, or browser.</p>
@@ -332,6 +339,7 @@ export function renderDashboardHtml(runtime: RuntimeConfig, metaPixelId = ''): s
     const browserConfig = JSON.stringify({
         capabilities: runtime.capabilities,
         visible_session_limit: runtime.visible_session_limit,
+        social_providers: runtime.social_providers,
     }).replace(/</g, '\\u003c');
     const disabledStyles = [
         !runtime.capabilities.transcription
@@ -341,6 +349,7 @@ export function renderDashboardHtml(runtime: RuntimeConfig, metaPixelId = ''): s
             ? '.usage-display,.settings-divider:first-of-type,.paywall-overlay,#session-limit-banner{display:none!important}'
             : '',
         !runtime.capabilities.gifts ? '.gift-overlay{display:none!important}' : '',
+        !runtime.capabilities.social_login ? '#account-logins-section,.social-login-stack,.pairing-divider{display:none!important}' : '',
     ].join('');
     const pixel = runtime.capabilities.marketing_analytics ? metaPixelHtml(metaPixelId) : '';
 
