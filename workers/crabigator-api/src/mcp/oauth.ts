@@ -193,7 +193,7 @@ async function handleAuthorizeGet(request: Request, env: Env): Promise<Response>
 
     const auth = await verifyMobileToken(request, env);
     if (!auth) {
-        return loginPage(request, env, url);
+        return loginPage(env, url);
     }
     if (!auth.group_id) {
         return attachPage(url);
@@ -528,7 +528,7 @@ function appendQuery(uri: string, params: Record<string, string>): string {
     return url.toString();
 }
 
-function loginPage(request: Request, env: Env, authorizeUrl: URL): Response {
+function loginPage(env: Env, authorizeUrl: URL): Response {
     const providers = socialProviders(env);
     const social = anySocialConfigured(env);
     const returnTo = authorizeUrl.pathname + authorizeUrl.search;

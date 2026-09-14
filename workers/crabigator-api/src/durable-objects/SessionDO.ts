@@ -1453,30 +1453,6 @@ export class SessionDO implements DurableObject {
     }
 
     /**
-     * Record viewer heartbeat in UsageDO for usage tracking
-     * Fire-and-forget to avoid blocking the response
-     */
-    private recordUsageHeartbeat(): void {
-        if (!this.sessionInfo?.group_id || !this.persistentState.sessionId) {
-            return;
-        }
-
-        const groupId = this.sessionInfo.group_id;
-        const sessionId = this.persistentState.sessionId;
-
-        // Fire and forget - don't await
-        const doId = this.env.USAGE.idFromName(groupId);
-        const stub = this.env.USAGE.get(doId);
-        stub.fetch(new Request(`https://internal/heartbeat?group_id=${groupId}`, {
-            method: 'POST',
-            body: JSON.stringify({ session_id: sessionId }),
-            headers: { 'Content-Type': 'application/json' },
-        })).catch((error) => {
-            console.error('Error recording usage heartbeat:', error);
-        });
-    }
-
-    /**
      * Check if there are active viewers (heartbeat within timeout)
      */
     private hasActiveViewers(): boolean {
@@ -1526,7 +1502,7 @@ export class SessionDO implements DurableObject {
     /**
      * WebSocket Hibernation API - called when an accepted WebSocket closes.
      */
-    async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
+    async webSocketClose(ws: WebSocket, _code: number, _reason: string, _wasClean: boolean): Promise<void> {
         if (!this.state.getTags(ws).includes('desktop')) {
             return;
         }
