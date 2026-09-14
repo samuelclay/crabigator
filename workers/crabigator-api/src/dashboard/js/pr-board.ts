@@ -317,6 +317,11 @@ export const prBoardJs = `
                 prBoardSessions = data.sessions || [];
                 prBoardSlack = new Map((data.slack || []).map(t => [t.url, t]));
                 prBoardLoaded = true;
+                const boardSessions = [...prBoardSessions];
+                for (const entry of prBoardEntries) {
+                    for (const session of entry.sessions || []) boardSessions.push(session);
+                }
+                claimMarksFor(boardSessions);
                 renderPrBoardBody();
             } catch (e) {
                 if (body) body.innerHTML = '<div class="prb-empty">Could not load the PR board.</div>';
@@ -1025,6 +1030,7 @@ export const prBoardJs = `
         function prbSessionLabelHtml(s) {
             const headline = s.recap && s.recap.headline ? s.recap.headline : '';
             return '<span class="prb-sub-bullet">◆</span>'
+                + sessionMarkChipHtml(s)
                 + '<span class="prb-sub-title">' + escapeHtml(prbSessionTitle(s)) + '</span>'
                 + (headline
                     ? '<span class="prb-sub-headline">— ' + escapeHtml(headline) + '</span>'

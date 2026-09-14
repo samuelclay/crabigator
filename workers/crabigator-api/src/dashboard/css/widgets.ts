@@ -33,12 +33,12 @@ export const widgetsCss = `
 .widgets-title {
     color: var(--accent-cyan);
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
     white-space: nowrap;
-    min-width: 0;
+    flex-shrink: 0;
+}
+.widgets-title .session-mark {
+    font-weight: 500;
 }
 .widgets-title.official { color: #bc8cff; }
 .widgets-state {

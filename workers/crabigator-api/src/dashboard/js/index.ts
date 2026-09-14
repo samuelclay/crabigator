@@ -25,10 +25,12 @@ import { pairingJs } from './pairing';
 import { giftClaimJs } from './gift-claim';
 import { paywallJs } from './paywall';
 import { prBoardJs } from './pr-board';
+import { sessionMarkJs } from './session-mark';
 import { initJs } from './init';
 
 export const dashboardJs = [
     constantsJs,
+    sessionMarkJs,
     scrollbackJs,
     styleJs,
     sessionsPopoverJs,

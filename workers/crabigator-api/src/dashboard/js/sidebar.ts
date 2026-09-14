@@ -491,13 +491,15 @@ export const sidebarJs = `
             const isLoading = session.title === 'Untitled' && !sessions.has(session.id);
             const titleHtml = isLoading
                 ? '<span class="session-item-title sidebar-shimmer"></span>'
-                : '<span class="session-item-titles">'
+                : '<span class="session-item-ident">'
+                    + sessionMarkChipHtml(session)
+                    + '<span class="session-item-titles">'
                     + '<span class="session-item-title' + (session.hasOfficialTitle ? ' official' : '') + '">'
                     + escapeHtml(session.title) + '</span>'
                     + (session.generatedTitle
                         ? '<span class="session-item-generated-title">' + escapeHtml(session.generatedTitle) + '</span>'
                         : '')
-                    + '</span>';
+                    + '</span></span>';
 
             return \`
                 <div class="\${classes.join(' ')}" data-session-id="\${session.id}">

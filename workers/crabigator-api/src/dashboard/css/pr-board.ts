@@ -201,6 +201,7 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
 /* PR view (p): session sub-rows beneath each primary PR's header */
 .prb-sub-left { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding-left: 19px; }
 .prb-sub-bullet { color: #585858; flex-shrink: 0; }
+.prb-sub-left .session-mark, .prb-l1-left .session-mark { margin-right: 2px; }
 .prb-sub-title { color: #5fafff; white-space: nowrap; flex-shrink: 0; }
 .prb-sub-headline { color: #8a8a8a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 /* Ended sessions dim in whole so the live ones stand out. */

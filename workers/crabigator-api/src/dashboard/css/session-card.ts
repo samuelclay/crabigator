@@ -47,6 +47,17 @@ export const sessionCardCss = `
     flex-direction: column;
     gap: 4px;
 }
+.session-mark {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-variant-ligatures: none;
+    font-feature-settings: "calt" 0, "liga" 0;
+    padding: 0 1ch;
+    border-radius: 2px;
+    white-space: pre;
+    display: inline-block;
+    line-height: 1.2;
+    flex-shrink: 0;
+}
 .session-header .title {
     font-family: 'JetBrains Mono', monospace;
     font-size: 13px;

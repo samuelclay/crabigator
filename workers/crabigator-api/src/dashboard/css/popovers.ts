@@ -406,6 +406,13 @@ export const popoversCss = `
     gap: 8px;
     min-width: 0;
 }
+.session-item-ident {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+}
 .session-item-titles {
     display: flex;
     flex: 1;

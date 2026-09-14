@@ -6,6 +6,7 @@ import { watchedPrRows, watchedPlaceholderPr, deleteWatchedPr } from './watched-
 
 interface BoardSessionRow {
     session_id: string;
+    client_session_id: string | null;
     platform: 'claude' | 'codex' | 'grok' | 'opencode' | null;
     cwd: string | null;
     pr_scope: string | null;
@@ -252,6 +253,8 @@ interface BoardEntry {
     /** Sessions created with this PR or currently working on its branch. */
     sessions: {
         session_id: string;
+        /** Local crabigator id; the session mark hashes this. */
+        client_session_id: string;
         platform: 'claude' | 'codex' | 'grok' | 'opencode';
         /** The scope this session's own PR dispositions use: 'path:<cwd>'
          * inside a linked worktree, else 'session:<id>'. */
@@ -364,6 +367,7 @@ function boardSession(row: BoardSessionRow): BoardSession {
     const dirName = cwd.split('/').filter(Boolean).pop() || cwd;
     return {
         session_id: row.session_id,
+        client_session_id: row.client_session_id || '',
         platform: row.platform || 'claude',
         pr_scope: row.pr_scope || `session:${row.session_id}`,
         dir_name: dirName,
@@ -561,6 +565,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     const rows = await env.DB.prepare(
         `SELECT sp.owner, sp.repo, sp.number, sp.data, sp.updated_at, sp.session_id,
                 sp.is_primary,
+                s.client_session_id,
                 s.platform, s.cwd, s.pr_scope, s.state AS session_state, s.is_active, s.last_seen_at,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,
@@ -728,7 +733,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     // Return every active account session separately. Clients keep any session
     // without a same-repository primary PR as its own peer row.
     const sessionRows = await env.DB.prepare(
-        `SELECT s.id AS session_id, s.platform, s.cwd, s.pr_scope, s.state AS session_state,
+        `SELECT s.id AS session_id, s.client_session_id, s.platform, s.cwd, s.pr_scope, s.state AS session_state,
                 s.is_active, s.last_seen_at,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,
