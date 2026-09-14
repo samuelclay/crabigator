@@ -421,11 +421,13 @@ pub(crate) fn session_view_pr_row_text(
 }
 
 /// Render an active session without a PR in the same columns as PR rows.
+/// The `◇` keeps the board's purple identity color; `title_color` paints the
+/// title, normally the same blue as a PR's session sub-rows.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn session_row_text_with_activity(
     width: u16,
     title: &str,
-    identity_color: u8,
+    title_color: u8,
     additions: i64,
     deletions: i64,
     branch: &str,
@@ -441,9 +443,9 @@ pub(crate) fn session_row_text_with_activity(
     let identity_visible = "◇ ".width() + mark_span + title_text.width();
     let identity_styled = format!(
         "{}◇ {RESET_FG}{} {}{title_text}{RESET_FG}",
-        fg(identity_color),
+        fg(color::PURPLE),
         mark.chip(),
-        fg(identity_color),
+        fg(title_color),
     );
     // The diff sits where a PR row's diff does, at the head of an otherwise
     // empty status cluster.

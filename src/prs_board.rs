@@ -2940,8 +2940,10 @@ fn marked_session_title(session: &SessionRef) -> String {
     crate::title::mark_provider_title(session.platform, name)
 }
 
+/// A session without a PR shows its title in the same blue as the session
+/// sub-rows beneath a PR, so every session title reads alike.
 fn workspace_title(entry: &WorkspaceEntry) -> (String, u8) {
-    (marked_session_title(&entry.session), color::PURPLE)
+    (marked_session_title(&entry.session), color::LIGHT_BLUE)
 }
 
 fn workspace_diff_text(entry: &WorkspaceEntry) -> String {
@@ -7591,7 +7593,7 @@ mod tests {
         .lines
         .join("\n");
         assert!(styled.contains(&format!("{}◇ ", fg(color::PURPLE))));
-        assert!(styled.contains(&format!("{}⟁  Standalone work", fg(color::PURPLE))));
+        assert!(styled.contains(&format!("{}⟁  Standalone work", fg(color::LIGHT_BLUE))));
         assert!(styled.contains(&format!("{}Kept standalone rows visible", fg(color::GRAY))));
         let frame = crate::parsers::strip_ansi_for_debug(&styled);
         assert_eq!(frame.matches("Standalone work").count(), 1);
@@ -7606,7 +7608,7 @@ mod tests {
     }
 
     #[test]
-    fn untitled_standalone_session_uses_primary_identity_color() {
+    fn untitled_standalone_session_title_matches_pr_session_titles() {
         let workspaces = local_workspaces(&[snapshot("crabigator", Vec::new())], &[]);
         let rows = [WorkspaceRow {
             entry: &workspaces[0],
@@ -7624,7 +7626,7 @@ mod tests {
         .lines
         .join("\n");
         assert!(styled.contains(&format!("{}◇ ", fg(color::PURPLE))));
-        assert!(styled.contains(&format!("{}ᛝ  crabigator", fg(color::PURPLE))));
+        assert!(styled.contains(&format!("{}ᛝ  crabigator", fg(color::LIGHT_BLUE))));
     }
 
     #[test]
