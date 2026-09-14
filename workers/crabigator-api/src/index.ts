@@ -865,7 +865,7 @@ router.get('/api/staff/analytics', withStaffSession(handleStaffAnalytics));
 router.get('/api/staff/session-analytics', withStaffSession(handleStaffSessionAnalytics));
 router.get('/api/staff/mcp-logs', withStaffSession(async (request, env) => {
     const limit = Number(new URL(request.url).searchParams.get('limit') || 100);
-    return jsonResponse({ calls: await listMcpLogs(env, limit) });
+    return jsonResponse({ calls: await listMcpLogs(env, limit, { includeSse: true }) });
 }));
 router.post('/api/staff/sync-usage', withStaffSession(handleStaffSyncUsage));
 

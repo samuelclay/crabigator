@@ -396,6 +396,19 @@ describe('MCP server', () => {
         expect(toolCall).toBeTruthy();
         expect(toolCall!.ms).toBeGreaterThanOrEqual(0);
         expect(toolCall!.spans.some((span) => span.name === 'tool:list_sessions')).toBe(true);
+
+        let parsed: { calls?: Array<{ tool?: string }> } = {};
+        for (let attempt = 0; attempt < 10; attempt++) {
+            const own = await mcpRpc(token, 'tools/call', {
+                name: 'get_mcp_logs',
+                arguments: { tool: 'list_sessions' },
+            });
+            const ownBody = await own.json() as { result?: { content?: Array<{ text: string }> } };
+            parsed = JSON.parse(ownBody.result?.content?.[0]?.text || '{}') as typeof parsed;
+            if (parsed.calls?.some((call) => call.tool === 'list_sessions')) break;
+            await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(parsed.calls?.some((call) => call.tool === 'list_sessions')).toBe(true);
     });
 });
 

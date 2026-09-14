@@ -26,6 +26,7 @@ export const toolGroups: ToolGroup[] = [
             'get_pr_board',
             'get_draft',
             'wait_for_attention',
+            'get_mcp_logs',
         ],
     },
     {
@@ -298,6 +299,30 @@ export const toolExamples: Record<string, ToolExample> = {
             slack: [],
         },
         notes: 'Same payload the website PR board uses. days defaults to 1.',
+    },
+    get_mcp_logs: {
+        args: { limit: 5, tool: 'send_input' },
+        output: {
+            calls: [
+                {
+                    ts: 1740000120000,
+                    request_id: 'a1b2c3d4',
+                    method: 'tools/call',
+                    tool: 'send_input',
+                    session_id: SAMPLE_SESSION_ID,
+                    text_len: 41,
+                    text_preview: 'approve the install, then run make test',
+                    ms: 48,
+                    ok: true,
+                    spans: [
+                        { name: 'auth', ms: 12 },
+                        { name: 'session_fetch /answer', ms: 31 },
+                        { name: 'tool:send_input', ms: 33 },
+                    ],
+                },
+            ],
+        },
+        notes: 'Only this account’s calls. Hide SSE reconnects unless include_sse is true. Match request_id to the X-Mcp-Request-Id response header.',
     },
     get_draft: {
         args: { session_id: SAMPLE_SESSION_ID },

@@ -336,6 +336,16 @@ Tools cover the dashboard: list and inspect sessions, screen and scrollback, pro
 
 Connect with the MCP inspector or any remote MCP client using `https://drinkcrabigator.com/mcp`. Local inspect.json remains `crabigator inspect`.
 
+### Reading MCP logs from another repo
+
+Use this when a sibling repo (or any MCP client) sent `send_input` / `send_keys` / `choose_option` and the Crabigator session did not react. Full recipe: `https://drinkcrabigator.com/mcp-tools#logs`.
+
+1. On the **client**, log every `POST https://drinkcrabigator.com/mcp`: JSON-RPC `id`, `params.name`, `params.arguments.session_id`, `text` length (and a short preview for `send_input`), HTTP status, and the response headers `X-Mcp-Request-Id`, `Server-Timing`, and `cf-ray`.
+2. On the **server**, call the `get_mcp_logs` MCP tool (same account). Each row is one request this account made. Match `request_id` to `X-Mcp-Request-Id`. `send_input` rows include `text_len` and `text_preview`. SSE `GET /mcp` reconnects (~25s) are hidden unless `include_sse` is true.
+3. Read the mismatch: no matching `request_id` means the POST never reached Crabigator; `ok: false` means the server rejected it (`error` says why); `ok: true` means the server accepted it and a quiet terminal is a desktop/session problem.
+
+Staff can see every account at `/staff` → MCP calls. Operators can also `wrangler kv key get mcp-call-log` on the `TOKENS` namespace (production id in `wrangler.production.jsonc`).
+
 ## Browser Testing
 
 Use the Chrome browser automation tools (Claude-in-Chrome MCP) to test the dashboard and landing page visually.

@@ -132,6 +132,8 @@ Then open `/mcps` and press `i` to sign in. Self-hosted Workers expose `{origin}
 
 Sessions that never stream to the cloud are invisible here, same as on the website.
 
+To see whether a client call reached the server, call `get_mcp_logs` or follow [drinkcrabigator.com/mcp-tools#logs](https://drinkcrabigator.com/mcp-tools#logs). Match the client's `X-Mcp-Request-Id` response header to `request_id`.
+
 ## How It Works
 
 ```

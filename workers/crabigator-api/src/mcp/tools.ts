@@ -15,7 +15,7 @@ import {
     type McpAuth,
 } from './session';
 import { formatScreen, tailLines, toolError, toolText } from './text';
-import { mcpSpan } from './log';
+import { listMcpLogs, mcpSpan } from './log';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -223,6 +223,29 @@ export const toolDefs: ToolDef[] = [
             const days = typeof args.days === 'number' ? args.days : 1;
             const request = authedApiRequest(origin, `/api/prs/board?days=${days}`, auth.token, 'GET');
             return jsonFromHandler(await getPrBoard(request, env));
+        },
+    },
+    {
+        name: 'get_mcp_logs',
+        description: 'Recent MCP requests this account sent to Crabigator. Use this from another repo or client to see whether a send_input (or any tool) reached the server. Matches X-Mcp-Request-Id. SSE reconnects are hidden unless include_sse is true.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                limit: { type: 'number', description: 'How many rows to return. Default 50, max 100.' },
+                include_sse: { type: 'boolean', description: 'Include GET /mcp notification streams. Default false.' },
+                session_id: { type: 'string', description: 'Only rows for this cloud session id' },
+                tool: { type: 'string', description: 'Only this tool name, e.g. send_input' },
+            },
+        },
+        handler: async (args, auth, env) => {
+            const limit = typeof args.limit === 'number' ? args.limit : 50;
+            const calls = await listMcpLogs(env, limit, {
+                groupId: auth.group_id,
+                includeSse: args.include_sse === true,
+                sessionId: typeof args.session_id === 'string' ? args.session_id : undefined,
+                tool: typeof args.tool === 'string' ? args.tool : undefined,
+            });
+            return { calls };
         },
     },
     {

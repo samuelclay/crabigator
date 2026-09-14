@@ -113,6 +113,63 @@ function mcpDemoHtml(): string {
             </div>`;
 }
 
+function mcpLogsGuideHtml(): string {
+    return `
+            <article class="mcp-guide" id="logs" data-tool="logs" data-search="logs diagnose send_input request_id">
+                <h2>Read the logs from another repo</h2>
+                <p>
+                    If a client sent <code>send_input</code> (or any tool) and the Crabigator session did not change,
+                    compare the client's send log with what this server stored. Public recipe:
+                    <code>https://drinkcrabigator.com/mcp-tools#logs</code>
+                </p>
+                <h3 class="mcp-subhead">1. What the client should log</h3>
+                <p>On every <code>POST https://drinkcrabigator.com/mcp</code> JSON-RPC call, record:</p>
+                <ul>
+                    <li>JSON-RPC <code>id</code>, <code>method</code> (usually <code>tools/call</code>), <code>params.name</code>, and <code>params.arguments.session_id</code></li>
+                    <li>For <code>send_input</code>: <code>text.length</code> and the first 80 characters</li>
+                    <li>HTTP status</li>
+                    <li>Response headers <code>X-Mcp-Request-Id</code>, <code>Server-Timing</code>, and <code>cf-ray</code></li>
+                </ul>
+                <h3 class="mcp-subhead">2. What the server stored</h3>
+                <p>
+                    Call the <a href="#get_mcp_logs"><code>get_mcp_logs</code></a> tool on this same MCP server.
+                    Each row is one request this account made. <code>request_id</code> is the
+                    <code>X-Mcp-Request-Id</code> header. For typed input you also get <code>text_len</code>
+                    and <code>text_preview</code>.
+                </p>
+                <p>
+                    <code>GET /mcp</code> is the notification stream. It reconnects about every 25 seconds and is
+                    not a tool call. <code>get_mcp_logs</code> hides those rows unless you pass <code>include_sse: true</code>.
+                </p>
+                <h3 class="mcp-subhead">3. How to read a mismatch</h3>
+                <table>
+                    <thead><tr><th>Client</th><th>Server log</th><th>Meaning</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td>Sent <code>tools/call</code></td>
+                            <td>No matching <code>request_id</code></td>
+                            <td>The POST never reached Crabigator (wrong URL, auth failed, or the client never sent it).</td>
+                        </tr>
+                        <tr>
+                            <td>Sent <code>send_input</code></td>
+                            <td><code>ok: false</code></td>
+                            <td>The server got it and rejected it. Read <code>error</code> (often desktop offline or bad session id).</td>
+                        </tr>
+                        <tr>
+                            <td>Sent <code>send_input</code></td>
+                            <td><code>ok: true</code></td>
+                            <td>The server accepted it. If the terminal did not type, the desktop is not attached to that session.</td>
+                        </tr>
+                        <tr>
+                            <td>Nothing sent</td>
+                            <td>Only SSE <code>GET</code> rows</td>
+                            <td>The client is idle on the notification stream. It is not calling tools.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </article>`;
+}
+
 export function renderMcpToolsHtml(runtime: RuntimeConfig, metaPixelId = ''): string {
     const pixel = runtime.capabilities.marketing_analytics ? metaPixelHtml(metaPixelId) : '';
     const tools = listToolDescriptors();
@@ -173,6 +230,10 @@ export function renderMcpToolsHtml(runtime: RuntimeConfig, metaPixelId = ''): st
             <div class="mcp-toc-label">Tools</div>
             <input type="search" class="mcp-filter" id="mcp-filter" placeholder="Filter tools" aria-label="Filter tools">
             <div class="mcp-toc-links">
+                <div class="mcp-toc-group">
+                    <div class="mcp-toc-group-title">Diagnose</div>
+                    <a href="#logs" data-tool="logs">Read the logs</a>
+                </div>
                 ${toolGroups.map((group) => `
                 <div class="mcp-toc-group">
                     <div class="mcp-toc-group-title">${escapeHtml(group.title)}</div>
@@ -181,6 +242,7 @@ export function renderMcpToolsHtml(runtime: RuntimeConfig, metaPixelId = ''): st
             </div>
         </aside>
         <main>
+            ${mcpLogsGuideHtml()}
             ${tools.map(toolCardHtml).join('')}
         </main>
     </div>

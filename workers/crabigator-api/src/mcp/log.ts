@@ -5,6 +5,10 @@ export const MCP_LOG_KEY = 'mcp-call-log';
 const MCP_LOG_LIMIT = 300;
 const MCP_LOG_TTL = 60 * 60 * 24 * 3;
 
+function groupLogKey(groupId: string): string {
+    return `mcp-call-log:group:${groupId}`;
+}
+
 export interface McpSpan {
     name: string;
     ms: number;
@@ -28,6 +32,10 @@ export interface McpCallLog {
     result_bytes?: number;
     spans: McpSpan[];
     arg_keys?: string[];
+    text_len?: number;
+    text_preview?: string;
+    value?: string;
+    key?: string;
     sse?: boolean;
     cf_ray?: string;
 }
@@ -68,13 +76,37 @@ export async function persistMcpLog(
     else await write;
 }
 
-export async function listMcpLogs(env: Env, limit = 100): Promise<McpCallLog[]> {
-    const raw = await env.TOKENS.get(MCP_LOG_KEY);
+export interface McpLogFilter {
+    groupId?: string;
+    includeSse?: boolean;
+    sessionId?: string;
+    tool?: string;
+}
+
+export async function listMcpLogs(
+    env: Env,
+    limit = 100,
+    filter: McpLogFilter = {},
+): Promise<McpCallLog[]> {
+    const cap = Math.max(1, Math.min(limit, MCP_LOG_LIMIT));
+    const key = filter.groupId ? groupLogKey(filter.groupId) : MCP_LOG_KEY;
+    let rows = await readLogKey(env, key);
+    if (filter.groupId && !rows.length) {
+        rows = (await readLogKey(env, MCP_LOG_KEY)).filter((row) => row.group_id === filter.groupId);
+    }
+    if (!filter.includeSse) rows = rows.filter((row) => !row.sse);
+    if (filter.sessionId) rows = rows.filter((row) => row.session_id === filter.sessionId);
+    if (filter.tool) rows = rows.filter((row) => row.tool === filter.tool);
+    if (filter.groupId) rows = rows.filter((row) => row.group_id === filter.groupId);
+    return rows.slice(0, cap);
+}
+
+async function readLogKey(env: Env, key: string): Promise<McpCallLog[]> {
+    const raw = await env.TOKENS.get(key);
     if (!raw) return [];
     try {
         const parsed = JSON.parse(raw) as McpCallLog[];
-        if (!Array.isArray(parsed)) return [];
-        return parsed.slice(0, Math.max(1, Math.min(limit, MCP_LOG_LIMIT)));
+        return Array.isArray(parsed) ? parsed : [];
     } catch {
         return [];
     }
@@ -82,21 +114,33 @@ export async function listMcpLogs(env: Env, limit = 100): Promise<McpCallLog[]> 
 
 async function appendMcpLog(env: Env, entry: McpCallLog): Promise<void> {
     try {
-        const existing = await listMcpLogs(env, MCP_LOG_LIMIT);
-        existing.unshift(entry);
-        await env.TOKENS.put(MCP_LOG_KEY, JSON.stringify(existing.slice(0, MCP_LOG_LIMIT)), {
-            expirationTtl: MCP_LOG_TTL,
-        });
+        await writeLogKey(env, MCP_LOG_KEY, entry);
+        if (entry.group_id) await writeLogKey(env, groupLogKey(entry.group_id), entry);
     } catch (error) {
         console.error('MCP log persist failed', error);
     }
 }
 
-export function summarizeArgs(raw: unknown): { arg_keys?: string[]; session_id?: string } {
+async function writeLogKey(env: Env, key: string, entry: McpCallLog): Promise<void> {
+    const existing = await readLogKey(env, key);
+    existing.unshift(entry);
+    await env.TOKENS.put(key, JSON.stringify(existing.slice(0, MCP_LOG_LIMIT)), {
+        expirationTtl: MCP_LOG_TTL,
+    });
+}
+
+export function summarizeArgs(raw: unknown): Pick<McpCallLog, 'arg_keys' | 'session_id' | 'text_len' | 'text_preview' | 'value' | 'key'> {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     const args = raw as Record<string, unknown>;
-    const sessionId = typeof args.session_id === 'string' ? args.session_id : undefined;
-    return { arg_keys: Object.keys(args), session_id: sessionId };
+    const summary: ReturnType<typeof summarizeArgs> = { arg_keys: Object.keys(args) };
+    if (typeof args.session_id === 'string') summary.session_id = args.session_id;
+    if (typeof args.text === 'string') {
+        summary.text_len = args.text.length;
+        summary.text_preview = args.text.slice(0, 80);
+    }
+    if (typeof args.value === 'string') summary.value = args.value;
+    if (typeof args.key === 'string') summary.key = args.key;
+    return summary;
 }
 
 export function serverTimingHeader(totalMs: number, spans: McpSpan[]): string {

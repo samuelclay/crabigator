@@ -413,6 +413,40 @@ export const mcpCss = `
 .mcp-jn { color: var(--accent-orange); }
 .mcp-jb { color: var(--accent-magenta); }
 
+.mcp-guide {
+    background: var(--bg-deep);
+    border: 1px solid var(--border-dim);
+    border-radius: 12px;
+    padding: 28px;
+    margin-bottom: 20px;
+    scroll-margin-top: 96px;
+}
+.mcp-guide h2 {
+    font-size: 22px;
+    margin-bottom: 12px;
+}
+.mcp-guide p, .mcp-guide li {
+    font-size: 15px;
+    color: var(--text-mid);
+    line-height: 1.55;
+    margin-bottom: 10px;
+}
+.mcp-guide ol, .mcp-guide ul { padding-left: 20px; margin-bottom: 16px; }
+.mcp-guide code {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--accent-cyan);
+    font-size: 13px;
+}
+.mcp-guide table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 14px; }
+.mcp-guide th, .mcp-guide td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-dim);
+    vertical-align: top;
+    color: var(--text-mid);
+}
+.mcp-guide th { color: var(--text-dim); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
 .mcp-hidden { display: none !important; }
 
 @media (max-width: 1100px) {
