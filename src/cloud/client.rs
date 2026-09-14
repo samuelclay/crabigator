@@ -63,6 +63,10 @@ pub struct CloudBoardEntry {
 pub struct CloudBoardSession {
     #[serde(default)]
     pub session_id: String,
+    /// Local crabigator id used to hash the session mark. Empty on older
+    /// Worker responses; the board then hashes `session_id`.
+    #[serde(default)]
+    pub client_session_id: String,
     /// Provider is absent only when talking to an older Worker response.
     #[serde(default)]
     pub platform: Option<crate::platforms::PlatformKind>,

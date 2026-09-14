@@ -8,6 +8,7 @@
 use unicode_width::UnicodeWidthStr;
 
 use crate::pr::SessionPr;
+use crate::session_mark::SessionMark;
 use crate::terminal::escape::{
     self, color, fg, BOLD, RESET, RESET_BOLD, RESET_FG, RESET_UNDERLINE, UNDERLINE,
 };
@@ -432,8 +433,18 @@ pub(crate) fn session_row_text_with_activity(
     styled_activity: String,
     activity_visible: usize,
     activity_width: usize,
+    mark: SessionMark,
 ) -> String {
-    let identity = truncate_to_width(&format!("◇ {title}"), widths.identity);
+    let mark_span = mark.width() + 1;
+    let title_budget = widths.identity.saturating_sub("◇ ".width() + mark_span);
+    let title_text = truncate_to_width(title, title_budget);
+    let identity_visible = "◇ ".width() + mark_span + title_text.width();
+    let identity_styled = format!(
+        "{}◇ {RESET_FG}{} {}{title_text}{RESET_FG}",
+        fg(identity_color),
+        mark.chip(),
+        fg(identity_color),
+    );
     // The diff sits where a PR row's diff does, at the head of an otherwise
     // empty status cluster.
     let status = if widths.stats_cell_width() == 0 {
@@ -451,7 +462,7 @@ pub(crate) fn session_row_text_with_activity(
         stats_right_cell(&diff_cell, widths.right_width())
     };
     let left_cells = [
-        colored_cell(&identity, identity_color, widths.identity),
+        (identity_styled, identity_visible, widths.identity),
         (String::new(), 0, widths.number),
         (String::new(), 0, 0),
         (String::new(), 0, 0),

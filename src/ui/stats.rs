@@ -14,6 +14,7 @@ use super::{WidgetArea, COMPLETION_ICON, PROMPT_ICON};
 use crate::cloud::CloudStatus;
 use crate::hooks::SessionStats;
 use crate::platforms::SessionState;
+use crate::session_mark::SessionMark;
 use crate::terminal::escape::{self, bg, color, fg, RESET};
 use crate::ui::cooldown::{tint_text, Tint};
 
@@ -172,6 +173,7 @@ pub fn stats_render_rows(available_rows: u16, stats: &SessionStats) -> u16 {
 }
 
 /// Draw the stats widget at the given position
+#[allow(clippy::too_many_arguments)]
 pub fn draw_stats_widget(
     stdout: &mut Stdout,
     area: WidgetArea,
@@ -180,6 +182,7 @@ pub fn draw_stats_widget(
     is_paired: bool,
     pairing_code: Option<&str>,
     state_tint: Option<Tint>,
+    session_mark: SessionMark,
 ) -> Result<()> {
     write!(
         stdout,
@@ -204,6 +207,7 @@ pub fn draw_stats_widget(
             is_paired,
             pairing_code,
             state_tint,
+            session_mark,
         )
     } else {
         draw_normal_row(
@@ -214,6 +218,7 @@ pub fn draw_stats_widget(
             is_paired,
             pairing_code,
             state_tint,
+            session_mark,
         )
     };
 
@@ -352,6 +357,15 @@ fn build_header_left(
     }
 }
 
+/// `◉` plus the session chip, or the chip alone when the row is too narrow.
+fn session_time_label(mark: SessionMark, with_bullet: bool) -> String {
+    if with_bullet {
+        format!("{}◉{RESET} {}", fg(color::GRAY), mark.chip())
+    } else {
+        mark.chip()
+    }
+}
+
 fn compact_metric_cell(labels: &[String], value: &str, width: usize) -> String {
     let value_len = strip_ansi_len(value);
     let value_gap = usize::from(!value.is_empty());
@@ -434,6 +448,7 @@ fn compact_columns(left: String, right: String, width: usize) -> String {
 }
 
 /// Draw a row in compact mode (two metrics per row, each with label and value)
+#[allow(clippy::too_many_arguments)]
 fn draw_compact_row(
     row: u16,
     width: u16,
@@ -442,6 +457,7 @@ fn draw_compact_row(
     is_paired: bool,
     pairing_code: Option<&str>,
     state_tint: Option<Tint>,
+    session_mark: SessionMark,
 ) -> String {
     let content_width = (width as usize).saturating_sub(1);
     let left_width = content_width / 2;
@@ -464,9 +480,8 @@ fn draw_compact_row(
         }
         2 => {
             let session_labels = [
-                format!("{}◉ Session{}", fg(color::GRAY), RESET),
-                format!("{}◉ Sess{}", fg(color::GRAY), RESET),
-                format!("{}◉{}", fg(color::GRAY), RESET),
+                session_time_label(session_mark, true),
+                session_time_label(session_mark, false),
             ];
             let session_value = format!("{}{}{}", fg(color::BLUE), stats.format_work(), RESET);
             let session = compact_metric_cell(&session_labels, &session_value, left_width);
@@ -532,6 +547,7 @@ fn draw_compact_row(
 }
 
 /// Draw a row in normal mode (full labels, single column)
+#[allow(clippy::too_many_arguments)]
 fn draw_normal_row(
     row: u16,
     width: u16,
@@ -540,6 +556,7 @@ fn draw_normal_row(
     is_paired: bool,
     pairing_code: Option<&str>,
     state_tint: Option<Tint>,
+    session_mark: SessionMark,
 ) -> String {
     match row {
         1 => {
@@ -557,8 +574,8 @@ fn draw_normal_row(
             format!("{}{:gap$}{}", header, "", state, gap = gap)
         }
         2 => {
-            // Session/work time (right-aligned)
-            let label = format!("{}◉ Session{}", fg(color::GRAY), RESET);
+            // Work time. The chip stands in for the word "Session".
+            let label = session_time_label(session_mark, true);
             let value = format!("{}{}{}", fg(color::BLUE), stats.format_work(), RESET);
             let label_len = strip_ansi_len(&label);
             let value_len = strip_ansi_len(&value);
@@ -720,11 +737,14 @@ mod tests {
         let stats = SessionStats::default();
         let width = 70;
 
-        let first = draw_compact_row(2, width, &stats, None, false, None, None);
-        let second = draw_compact_row(3, width, &stats, None, false, None, None);
-        let third = draw_compact_row(4, width, &stats, None, false, None, None);
+        let mark = SessionMark::from_seed("stats-compact");
+        let first = draw_compact_row(2, width, &stats, None, false, None, None, mark);
+        let second = draw_compact_row(3, width, &stats, None, false, None, None, mark);
+        let third = draw_compact_row(4, width, &stats, None, false, None, None, mark);
 
-        assert!(first.contains("Session"));
+        assert!(first.contains("◉"));
+        assert!(first.contains(mark.glyph));
+        assert!(!first.contains("Session"));
         assert!(first.contains("Thinking"));
         assert!(!first.contains("Prompts"));
         assert!(second.contains("Prompts"));
@@ -734,6 +754,17 @@ mod tests {
         assert_eq!(visible(&first), width as usize);
         assert_eq!(visible(&second), width as usize);
         assert_eq!(visible(&third), width as usize);
+    }
+
+    #[test]
+    fn session_row_replaces_the_session_word_with_the_chip() {
+        let stats = SessionStats::default();
+        let mark = SessionMark::from_seed("stats-normal");
+        let row = draw_normal_row(2, 32, &stats, None, false, None, None, mark);
+        assert!(row.contains(mark.glyph));
+        assert!(row.contains("◉"));
+        assert!(!row.contains("Session"));
+        assert_eq!(visible(&row), 32);
     }
 
     #[test]

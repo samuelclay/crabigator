@@ -26,6 +26,7 @@ use crate::parsers::DiffSummary;
 use crate::platforms::{Platform, PlatformKind, SessionState};
 use crate::pr::PrTracker;
 use crate::recap::RecapManager;
+use crate::session_mark::SessionMark;
 use crate::slack::SlackThread;
 use crate::terminal::{
     escape, forward_key_to_pty, forward_mouse_to_pty, DsrChunk, DsrHandler, OscScanner,
@@ -248,6 +249,8 @@ pub struct App {
     cooldowns: Cooldowns,
     /// Session ID for cloud registration retry
     session_id: String,
+    /// Colored identity chip shown in stats and on the PR board.
+    session_mark: SessionMark,
     /// Number of cloud init retry attempts
     cloud_init_retry_count: u32,
     /// Last cloud init attempt time
@@ -316,6 +319,7 @@ impl App {
 
         // Create mirror publisher (always enabled for inspection by other instances)
         let session_id = std::env::var("CRABIGATOR_SESSION_ID").unwrap_or_default();
+        let session_mark = SessionMark::assign(&session_id);
         let mut mirror_publisher = MirrorPublisher::new(
             true,
             session_id.clone(),
@@ -323,6 +327,7 @@ impl App {
             cwd_str.clone(),
             capture_enabled,
         );
+        mirror_publisher.set_session_mark(session_mark);
 
         // Worktree sessions scope their PR dispositions to the directory, so a
         // dismissal sticks for future sessions there without touching the
@@ -405,6 +410,7 @@ impl App {
             suggestion_tracker: crate::parsers::SuggestionTracker::new(),
             last_status_bar_hash: None,
             cooldowns: Cooldowns::default(),
+            session_mark,
             session_id,
             cloud_init_retry_count: 0,
             last_cloud_init_attempt: None,
@@ -1489,6 +1495,7 @@ impl App {
             cursor_position,
             &self.cooldowns,
             now_ms,
+            self.session_mark,
         )?;
 
         // The transcript path arrives with the first hook/session event, so keep

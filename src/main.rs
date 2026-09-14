@@ -19,6 +19,7 @@ mod pr;
 mod pr_rank;
 mod prs_board;
 mod recap;
+mod session_mark;
 mod slack;
 mod terminal;
 mod terminal_spawner;

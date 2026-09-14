@@ -34,6 +34,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::platforms::{PlatformKind, SessionState};
 use crate::pr::{SessionPr, WatchAdd};
 use crate::pr_rank::{attached_to_worktree, PrDisposition, ScopedOverrides};
+use crate::session_mark::SessionMark;
 use crate::slack::{SlackDirectory, SlackThread};
 use crate::terminal::escape::{self, color, fg, RESET, RESET_FG, RESET_UNDERLINE, UNDERLINE};
 use crate::ui::cooldown::Cooldowns;
@@ -334,6 +335,7 @@ struct SessionSnapshot {
     /// Unix seconds when the completion count last changed.
     completed_at: u64,
     prs: Vec<SessionPr>,
+    mark: SessionMark,
 }
 
 /// One PR aggregated across every session that mentions it.
@@ -374,6 +376,7 @@ struct SessionRef {
     /// The session is over. Always false for live local mirrors; cloud
     /// records carry the durable answer.
     ended: bool,
+    mark: SessionMark,
 }
 
 /// One session-view block: a session with every PR it touches beneath it —
@@ -541,12 +544,16 @@ fn snapshot_from_instance(
     for thread in &mut slack_threads {
         activity_history.slack_directory.enrich_thread(thread);
     }
+    let local_session_id = data
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
     let session_id = data
         .get("cloud_session_id")
         .and_then(|v| v.as_str())
-        .or_else(|| data.get("session_id").and_then(|v| v.as_str()))
-        .unwrap_or_default()
+        .unwrap_or(local_session_id)
         .to_string();
+    let mark = SessionMark::from_mirror(data.get("session_mark"), local_session_id);
     // Worktree sessions publish a path scope; everything else keys its
     // dispositions by session id.
     let pr_scope = data
@@ -589,6 +596,7 @@ fn snapshot_from_instance(
         prompted_at: activity.prompted_at,
         completed_at: activity.completed_at,
         prs,
+        mark,
     })
 }
 
@@ -1356,6 +1364,7 @@ fn board_session_ref(session: &SessionSnapshot) -> SessionRef {
         prompted_at: session.prompted_at,
         completed_at: session.completed_at,
         ended: false,
+        mark: session.mark,
     }
 }
 
@@ -1635,6 +1644,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
                     } else {
                         s.pr_scope
                     },
+                    mark: SessionMark::from_ids(&s.client_session_id, &s.session_id),
                     session_id: s.session_id,
                     platform: cloud_session_platform(s.platform, &s.title),
                     dir_name: s.dir_name,
@@ -1690,6 +1700,7 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
             } else {
                 session.pr_scope.clone()
             },
+            mark: SessionMark::from_ids(&session.client_session_id, &session.session_id),
             session_id: session.session_id,
             platform: cloud_session_platform(session.platform, &session.title),
             dir_name: session.dir_name,
@@ -2810,7 +2821,11 @@ fn session_title_cell(
         (color::LIGHT_BLUE, color::GRAY)
     };
 
-    let budget = widths.board_left_width().saturating_sub(prefix.width());
+    let chip = session.mark.chip();
+    let mark_span = session.mark.width() + 1;
+    let budget = widths
+        .board_left_width()
+        .saturating_sub(prefix.width() + mark_span);
     let mut separator = if branch_text.is_empty() { "" } else { " " };
     let title_reserved = title.width().min(SESSION_TITLE_MIN);
     if !branch_text.is_empty() && title_reserved + separator.width() + branch_text.width() > budget
@@ -2822,9 +2837,10 @@ fn session_title_cell(
         &title,
         budget.saturating_sub(branch_text.width() + separator.width()),
     );
-    let visible = prefix.width() + title_text.width() + separator.width() + branch_text.width();
+    let visible =
+        prefix.width() + mark_span + title_text.width() + separator.width() + branch_text.width();
     let styled = format!(
-        "{gray}{prefix}{}{title_text}{gray}{separator}{}{branch_text}{RESET_FG}",
+        "{gray}{prefix}{chip} {}{title_text}{gray}{separator}{}{branch_text}{RESET_FG}",
         fg(title_color),
         fg(text_color),
         gray = fg(color::DARK_GRAY),
@@ -2973,6 +2989,7 @@ fn render_workspace_board_row(
         activity.styled,
         activity.visible,
         activity_width,
+        entry.session.mark,
     );
     let mut lines = vec![format!("{row}{RESET}")];
     if detail > DEFAULT_DETAIL {
@@ -3236,7 +3253,7 @@ fn render_at(
         let entry = workspace_rows[index].entry;
         let (title, _) = workspace_title(entry);
         widths.include_board_row(
-            &format!("◇ {title}"),
+            &format!("◇  {}  {title}", entry.session.mark.glyph),
             &workspace_diff_text(entry),
             &workspace_branch_text(entry),
             shared_width as usize,
@@ -4949,6 +4966,7 @@ mod tests {
     fn snapshot(dir: &str, prs: Vec<SessionPr>) -> SessionSnapshot {
         SessionSnapshot {
             session_id: dir.to_string(),
+            mark: SessionMark::from_seed(dir),
             platform: PlatformKind::Claude,
             cwd: format!("/tmp/{dir}"),
             pr_scope: format!("session:{dir}"),
@@ -5044,6 +5062,7 @@ mod tests {
             prompted_at,
             completed_at: 0,
             ended,
+            mark: SessionMark::from_seed(name),
         }
     }
 
@@ -5169,7 +5188,7 @@ mod tests {
             .find(|line| line.trim_start().starts_with('◆'))
             .expect("the session sub-row renders");
         assert!(
-            !sub_row.contains('⟩') && !sub_row.contains('⋖'),
+            !sub_row.contains('⋖') && !sub_row.contains("30m") && !sub_row.contains("5m"),
             "sub-rows leave the activity to the header: {sub_row}"
         );
     }
@@ -5962,21 +5981,21 @@ mod tests {
         );
 
         assert_eq!(frame.matches("samuelclay/crabigator").count(), 1);
-        let no_pr_offset = frame.find("◇ ᛝ  Newest completed session").unwrap();
+        let no_pr_offset = frame.find("Newest completed session").unwrap();
         let pr_offset = frame.find("#7:").unwrap();
         assert!(no_pr_offset < pr_offset, "newer prompt sorts first");
 
         let no_pr_row = frame
             .lines()
-            .find(|line| line.contains("◇ ᛝ  Newest completed session"))
+            .find(|line| line.contains("Newest completed session"))
             .unwrap();
         let crab_header_row = frame
             .lines()
-            .find(|line| line.contains("◆ ⟁  crabigator"))
+            .find(|line| line.contains("⟁  crabigator"))
             .expect("the PR session's block leads with the session");
         let portal_header_row = frame
             .lines()
-            .find(|line| line.contains("◆ ᛝ  developer-portal"))
+            .find(|line| line.contains("ᛝ  developer-portal"))
             .unwrap();
         let crab_pr_row = frame.lines().find(|line| line.contains("7:")).unwrap();
         let portal_pr_row = frame.lines().find(|line| line.contains("9:")).unwrap();
@@ -6047,7 +6066,7 @@ mod tests {
                 .unwrap();
             let header_row = lines
                 .iter()
-                .position(|line| line.contains("◆ ᛝ  PR session"))
+                .position(|line| line.contains("ᛝ  PR session"))
                 .unwrap();
             let pr_row = lines
                 .iter()
@@ -6055,7 +6074,7 @@ mod tests {
                 .unwrap();
             let peer_row = lines
                 .iter()
-                .position(|line| line.contains("◇ ᛝ  Peer session"))
+                .position(|line| line.contains("ᛝ  Peer session"))
                 .unwrap();
             let blank_lines: Vec<usize> = lines[crabigator..]
                 .iter()
@@ -6309,7 +6328,7 @@ mod tests {
             assert!(frame.contains("2 sessions"));
             let header_row = frame
                 .lines()
-                .find(|line| line.contains("◆ ᛝ  PR owner session"))
+                .find(|line| line.contains("ᛝ  PR owner session"))
                 .expect("the owning session leads its block");
             assert!(header_row.contains(PROMPT_ICON));
             assert!(header_row.contains(COMPLETION_ICON));
@@ -6320,7 +6339,7 @@ mod tests {
             );
             let session_row = frame
                 .lines()
-                .find(|line| line.contains("◇ ᛝ  Independent session"))
+                .find(|line| line.contains("ᛝ  Independent session"))
                 .unwrap();
             assert!(session_row.contains(PROMPT_ICON));
             assert!(session_row.contains(COMPLETION_ICON));
@@ -6493,6 +6512,12 @@ mod tests {
             frame.matches("Shared builder document work").count(),
             2,
             "each PR block shows the shared session title: {frame}"
+        );
+        let mark = SessionMark::from_seed("developer-portal");
+        assert_eq!(
+            frame.matches(mark.glyph).count(),
+            2,
+            "each session row carries the identity chip: {frame}"
         );
         for number in [1099, 2573] {
             let row = frame
@@ -7116,6 +7141,7 @@ mod tests {
                 prompted_at: 0,
                 completed_at: 0,
                 ended: false,
+                mark: SessionMark::from_seed("portal"),
             }],
             slack_threads: Vec::new(),
             stale: false,
@@ -7252,7 +7278,7 @@ mod tests {
             .unwrap();
         let generated_plain = crate::parsers::strip_ansi_for_debug(generated_line);
         assert!(
-            generated_plain.trim_start().starts_with("◆ ᛝ  "),
+            generated_plain.contains("◆") && generated_plain.contains("ᛝ  "),
             "the session sub-row sits below the PR header: {generated_plain}"
         );
         assert!(
@@ -7374,6 +7400,7 @@ mod tests {
                 prompted_at: now - 4 * 60 * 60,
                 completed_at: now - 8 * 60 * 60,
                 ended: false,
+                mark: SessionMark::from_seed("older"),
             },
             SessionRef {
                 session_id: "newer".to_string(),
@@ -7389,6 +7416,7 @@ mod tests {
                 prompted_at: now - 30 * 60,
                 completed_at: now - 2 * 60 * 60,
                 ended: false,
+                mark: SessionMark::from_seed("newer"),
             },
         ];
         let activity = activity_cell(&sessions, now * 1000, 0, &Cooldowns::default());
@@ -7463,6 +7491,7 @@ mod tests {
                 prompted_at: 1,
                 completed_at: 1,
                 ended: false,
+                mark: SessionMark::from_seed("state"),
             };
             let activity = activity_cell(&[session], 1000, 0, &Cooldowns::default());
             let plain = crate::parsers::strip_ansi_for_debug(&activity.styled);
@@ -7496,6 +7525,7 @@ mod tests {
             prompted_at: 1,
             completed_at: 1,
             ended: false,
+            mark: SessionMark::from_seed("thinking"),
         };
         let first = activity_cell(
             std::slice::from_ref(&thinking),
@@ -7560,7 +7590,8 @@ mod tests {
         )
         .lines
         .join("\n");
-        assert!(styled.contains(&format!("{}◇ ⟁  Standalone work", fg(color::PURPLE))));
+        assert!(styled.contains(&format!("{}◇ ", fg(color::PURPLE))));
+        assert!(styled.contains(&format!("{}⟁  Standalone work", fg(color::PURPLE))));
         assert!(styled.contains(&format!("{}Kept standalone rows visible", fg(color::GRAY))));
         let frame = crate::parsers::strip_ansi_for_debug(&styled);
         assert_eq!(frame.matches("Standalone work").count(), 1);
@@ -7592,7 +7623,8 @@ mod tests {
         )
         .lines
         .join("\n");
-        assert!(styled.contains(&format!("{}◇ ᛝ  crabigator", fg(color::PURPLE))));
+        assert!(styled.contains(&format!("{}◇ ", fg(color::PURPLE))));
+        assert!(styled.contains(&format!("{}ᛝ  crabigator", fg(color::PURPLE))));
     }
 
     #[test]
@@ -7612,6 +7644,7 @@ mod tests {
             prompted_at: now - 8 * 60,
             completed_at: now - 13 * 60 * 60,
             ended: false,
+            mark: SessionMark::from_seed("one"),
         };
         assert_eq!(
             activity_sort_time(std::slice::from_ref(&session)),

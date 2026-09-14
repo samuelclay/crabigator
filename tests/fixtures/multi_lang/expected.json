@@ -6,14 +6,27 @@
     "scrollback_path": "/tmp/crabigator-fixture-multi_lang/scrollback.log"
   },
   "cwd": "multi_lang",
-  "platform": "claude",
   "last_updated": 0.0,
   "launch_timing": {
     "diff_time_ms": 10,
     "git_time_ms": 42,
     "uptime_secs": 0
   },
+  "platform": "claude",
   "session_id": "fixture-multi_lang",
+  "session_mark": {
+    "bg": [
+      74,
+      8,
+      40
+    ],
+    "fg": [
+      255,
+      192,
+      216
+    ],
+    "glyph": "⌈✦⌉"
+  },
   "terminal_title": null,
   "title_history": [],
   "widgets": {
@@ -137,7 +150,7 @@
       },
       "rendered": [
         "Stats - Complete",
-        "Session: just now",
+        "⌈✦⌉ just now",
         "Thinking: —",
         "Prompts: 0",
         "Completions: 1",

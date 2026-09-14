@@ -14,6 +14,7 @@ use crate::ide::IdeKind;
 use crate::parsers::DiffSummary;
 use crate::pr::SessionPr;
 use crate::recap::RecapState;
+use crate::session_mark::SessionMark;
 use crate::slack::SlackThread;
 use crate::terminal::escape::{self, color, RESET};
 use crate::title::session_title_hierarchy;
@@ -190,6 +191,7 @@ pub fn draw_status_bar(
     cursor_position: Option<(u16, u16)>, // (row, col) from vt100 parser, 0-indexed
     cooldowns: &Cooldowns,
     now_ms: u64,
+    session_mark: SessionMark,
 ) -> Result<()> {
     // Begin synchronized update - terminal batches all our drawing
     // so cursor movements don't interfere with Claude's incremental updates
@@ -338,6 +340,7 @@ pub fn draw_status_bar(
             is_paired,
             pairing_state.pairing_code.as_deref(),
             state_tint,
+            session_mark,
         )?;
 
         // Separator

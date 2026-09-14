@@ -18,6 +18,7 @@ use crate::parsers::{ChangeType, DiffSummary};
 use crate::platforms::{ActivePrompt, PlatformKind};
 use crate::pr::SessionPr;
 use crate::recap::{RecapState, TurnRecap};
+use crate::session_mark::SessionMark;
 use crate::slack::SlackThread;
 use crate::terminal::ghostty::GhosttyContext;
 
@@ -36,6 +37,8 @@ pub struct WidgetMirror<T: Serialize> {
 pub struct MirrorState {
     pub session_id: String,
     pub platform: PlatformKind,
+    /// Identity chip hashed from `session_id`.
+    pub session_mark: SessionMark,
     /// Cloud session id used for streaming — the status bar shows its first 8
     /// characters as "Streaming <id>", and `/tmp/crabigator-<cloud id>` links here.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -200,6 +203,7 @@ pub struct MirrorPublisher {
     last_publish: Instant,
     last_hash: u64,
     app_start: Instant,
+    session_mark: SessionMark,
 }
 
 impl MirrorPublisher {
@@ -220,6 +224,7 @@ impl MirrorPublisher {
 
         Self {
             enabled,
+            session_mark: SessionMark::from_seed(&session_id),
             session_id,
             platform,
             cloud_session_id: None,
@@ -237,6 +242,13 @@ impl MirrorPublisher {
             last_publish: Instant::now() - Duration::from_secs(10),
             last_hash: 0,
             app_start: Instant::now(),
+        }
+    }
+
+    pub fn set_session_mark(&mut self, session_mark: SessionMark) {
+        if self.session_mark != session_mark {
+            self.session_mark = session_mark;
+            self.last_hash = 0;
         }
     }
 
@@ -517,9 +529,11 @@ impl MirrorPublisher {
             .unwrap_or_default()
             .as_secs_f64();
 
+        let session_mark = self.session_mark;
         MirrorState {
             session_id: self.session_id.clone(),
             platform: self.platform,
+            session_mark,
             cloud_session_id: self.cloud_session_id.clone(),
             transcript_path: self.transcript_path.clone(),
             pr_scope: self.pr_scope.clone(),
@@ -554,7 +568,7 @@ impl MirrorPublisher {
                         session_start: stats.session_start_unix(),
                         active_prompt: stats.active_prompt().cloned(),
                     },
-                    rendered: render_stats_preview(stats),
+                    rendered: render_stats_preview(stats, session_mark),
                 },
                 git: WidgetMirror {
                     data: GitMirrorData {
@@ -632,10 +646,10 @@ fn title_changed_at_ms() -> Option<u64> {
 
 // Preview rendering functions (ANSI-stripped text)
 
-fn render_stats_preview(stats: &SessionStats) -> Vec<String> {
+fn render_stats_preview(stats: &SessionStats, mark: SessionMark) -> Vec<String> {
     let mut lines = vec![
         format!("Stats - {:?}", stats.effective_state()),
-        format!("Session: {}", stats.format_work()),
+        format!("{} {}", mark.glyph, stats.format_work()),
     ];
     let thinking = stats.format_thinking().unwrap_or_else(|| "—".to_string());
     lines.push(format!("Thinking: {}", thinking));

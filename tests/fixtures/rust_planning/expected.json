@@ -6,14 +6,27 @@
     "scrollback_path": "/tmp/crabigator-fixture-rust_planning/scrollback.log"
   },
   "cwd": "rust_planning",
-  "platform": "claude",
   "last_updated": 0.0,
   "launch_timing": {
     "diff_time_ms": 10,
     "git_time_ms": 42,
     "uptime_secs": 0
   },
+  "platform": "claude",
   "session_id": "fixture-rust_planning",
+  "session_mark": {
+    "bg": [
+      196,
+      92,
+      18
+    ],
+    "fg": [
+      26,
+      18,
+      8
+    ],
+    "glyph": "◖◆◗"
+  },
   "terminal_title": null,
   "title_history": [],
   "widgets": {
@@ -111,7 +124,7 @@
       },
       "rendered": [
         "Stats - Thinking",
-        "Session: 2m",
+        "◖◆◗ 2m",
         "Thinking: —",
         "Prompts: 0",
         "Completions: 2",
