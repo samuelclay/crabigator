@@ -1148,7 +1148,7 @@ export const prBoardJs = `
                 + '" data-key="' + escapeHtml(item.key) + '">';
             html += '<div class="prb-l1"><span class="prb-l1-left">'
                 + '<span class="prb-diamond">◇</span>'
-                + '<span class="prb-ident">' + escapeHtml(title) + '</span>'
+                + '<span class="prb-session-title">' + escapeHtml(title) + '</span>'
                 + '<span class="prb-branch">⎇ ' + escapeHtml(s.branch || '(no branch)') + '</span></span>'
                 + prbActivityHtml(item, idx, now)
                 + prbStatsCells('', s.additions, s.deletions, s.uncommitted)

@@ -129,6 +129,15 @@ export const prBoardCss = `
 .prb-star.secondary { color: #6c6c6c; }
 .prb-star:hover { color: #d6bffb; }
 .prb-diamond { color: #af87ff; flex-shrink: 0; }
+/* A session without a PR carries its title in the same blue as the session
+   sub-rows beneath a PR, so every session title reads alike. */
+.prb-session-title {
+    color: #5fafff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
 .prb-ident {
     color: #af87ff;
     font-weight: 600;
