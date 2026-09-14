@@ -1,37 +1,9 @@
-// Keep in step with src/session_mark.rs — same glyphs, palettes, FNV-1a seed,
-// and occupancy walk so live sessions do not share a drawing until all 30 are used.
+import { SESSION_MARK_GLYPHS, SESSION_MARK_PALETTES } from '../../session-mark';
+
+// Glyphs and palettes are inlined from src/session_mark.json at build time.
 export const sessionMarkJs = `
-        const SESSION_MARK_GLYPHS = [
-            '▀▄▀', '▛█▜', '◢█◣', '▐█▌', '░█░', '⣏⣉⣹', '⢸⣿⡇', '⣀⣾⣀', '⠶⣿⠶', '⣹⠶⣏',
-            '╭◈╮', '⟨※⟩', '╱◆╲', '◖◆◗', '⊏◆⊐', '⌈✦⌉', '◎◆◎', '◕‿◕', 'ᵔᴥᵔ', 'ᓚᘏᓗ',
-            '◉ω◉', '¬‿¬', 'ᚼᛉᚼ', 'ᛏᛏ', '╠╬╣', '≈△≈', '◆◇◆', '▰▱▰', '⌬⌬', '⍟⍟'
-        ];
-        const SESSION_MARK_PALETTES = [
-            [[122, 16, 36], [255, 210, 168]],
-            [[58, 34, 8], [240, 192, 64]],
-            [[0, 24, 72], [94, 240, 255]],
-            [[42, 23, 96], [228, 212, 255]],
-            [[23, 36, 76], [183, 212, 255]],
-            [[16, 32, 16], [180, 240, 106]],
-            [[26, 26, 26], [232, 220, 192]],
-            [[59, 18, 102], [240, 216, 120]],
-            [[92, 42, 0], [255, 232, 200]],
-            [[74, 8, 40], [255, 192, 216]],
-            [[10, 42, 50], [126, 224, 232]],
-            [[106, 16, 56], [255, 240, 224]],
-            [[32, 16, 64], [208, 176, 255]],
-            [[196, 92, 18], [26, 18, 8]],
-            [[0, 60, 80], [128, 240, 200]],
-            [[200, 232, 120], [26, 40, 8]],
-            [[8, 40, 56], [240, 192, 64]],
-            [[240, 200, 160], [58, 24, 16]],
-            [[18, 72, 48], [232, 220, 192]],
-            [[42, 16, 64], [224, 192, 255]],
-            [[26, 32, 48], [159, 216, 200]],
-            [[74, 32, 128], [232, 208, 255]],
-            [[20, 48, 24], [192, 232, 120]],
-            [[216, 224, 112], [26, 40, 8]]
-        ];
+        const SESSION_MARK_GLYPHS = ${JSON.stringify(SESSION_MARK_GLYPHS)};
+        const SESSION_MARK_PALETTES = ${JSON.stringify(SESSION_MARK_PALETTES)};
 
         function sessionMarkFnv1a(seed) {
             let hash = 0xcbf29ce484222325n;

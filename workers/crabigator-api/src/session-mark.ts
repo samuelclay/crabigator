@@ -1,7 +1,9 @@
 /**
- * Per-session identity chip. Keep glyphs, palettes, and the FNV-1a seed in
- * step with src/session_mark.rs and dashboard/js/session-mark.ts.
+ * Per-session identity chip. Glyphs and palettes come from
+ * src/session_mark.json, the same file the TUI includes.
  */
+
+import markData from '../../../src/session_mark.json' with { type: 'json' };
 
 export interface SessionMark {
     glyph: string;
@@ -11,40 +13,10 @@ export interface SessionMark {
     bg_hex: string;
 }
 
-const GLYPHS = [
-    '▀▄▀', '▛█▜', '◢█◣', '▐█▌', '░█░', '⣏⣉⣹', '⢸⣿⡇', '⣀⣾⣀', '⠶⣿⠶', '⣹⠶⣏',
-    '╭◈╮', '⟨※⟩', '╱◆╲', '◖◆◗', '⊏◆⊐', '⌈✦⌉', '◎◆◎', '◕‿◕', 'ᵔᴥᵔ', 'ᓚᘏᓗ',
-    '◉ω◉', '¬‿¬', 'ᚼᛉᚼ', 'ᛏᛏ', '╠╬╣', '≈△≈', '◆◇◆', '▰▱▰', '⌬⌬', '⍟⍟',
-] as const;
-
 type Rgb = [number, number, number];
 
-const PALETTES: Array<[Rgb, Rgb]> = [
-    [[122, 16, 36], [255, 210, 168]],
-    [[58, 34, 8], [240, 192, 64]],
-    [[0, 24, 72], [94, 240, 255]],
-    [[42, 23, 96], [228, 212, 255]],
-    [[23, 36, 76], [183, 212, 255]],
-    [[16, 32, 16], [180, 240, 106]],
-    [[26, 26, 26], [232, 220, 192]],
-    [[59, 18, 102], [240, 216, 120]],
-    [[92, 42, 0], [255, 232, 200]],
-    [[74, 8, 40], [255, 192, 216]],
-    [[10, 42, 50], [126, 224, 232]],
-    [[106, 16, 56], [255, 240, 224]],
-    [[32, 16, 64], [208, 176, 255]],
-    [[196, 92, 18], [26, 18, 8]],
-    [[0, 60, 80], [128, 240, 200]],
-    [[200, 232, 120], [26, 40, 8]],
-    [[8, 40, 56], [240, 192, 64]],
-    [[240, 200, 160], [58, 24, 16]],
-    [[18, 72, 48], [232, 220, 192]],
-    [[42, 16, 64], [224, 192, 255]],
-    [[26, 32, 48], [159, 216, 200]],
-    [[74, 32, 128], [232, 208, 255]],
-    [[20, 48, 24], [192, 232, 120]],
-    [[216, 224, 112], [26, 40, 8]],
-];
+export const SESSION_MARK_GLYPHS: string[] = markData.glyphs;
+export const SESSION_MARK_PALETTES: Array<[Rgb, Rgb]> = markData.palettes as Array<[Rgb, Rgb]>;
 
 function rgbHex(rgb: Rgb): string {
     return `#${rgb.map((n) => n.toString(16).padStart(2, '0')).join('')}`;
@@ -70,13 +42,13 @@ function colorKey(mark: { bg: Rgb; fg: Rgb }): string {
 /** Occupancy-aware pick. Glyphs stay unique until every drawing is taken. */
 export function sessionMarkClaim(seed: string, taken: SessionMark[] = []): SessionMark {
     const hash = fnv1a64(seed);
-    const preferredGlyph = Number(hash % BigInt(GLYPHS.length));
-    const preferredPalette = Number((hash >> 8n) % BigInt(PALETTES.length));
+    const preferredGlyph = Number(hash % BigInt(SESSION_MARK_GLYPHS.length));
+    const preferredPalette = Number((hash >> 8n) % BigInt(SESSION_MARK_PALETTES.length));
     const usedGlyphs = new Set(taken.map((mark) => mark.glyph));
-    let glyph: string = GLYPHS[preferredGlyph];
-    if (usedGlyphs.size < GLYPHS.length) {
-        for (let offset = 0; offset < GLYPHS.length; offset++) {
-            const candidate = GLYPHS[(preferredGlyph + offset) % GLYPHS.length];
+    let glyph: string = SESSION_MARK_GLYPHS[preferredGlyph];
+    if (usedGlyphs.size < SESSION_MARK_GLYPHS.length) {
+        for (let offset = 0; offset < SESSION_MARK_GLYPHS.length; offset++) {
+            const candidate = SESSION_MARK_GLYPHS[(preferredGlyph + offset) % SESSION_MARK_GLYPHS.length];
             if (!usedGlyphs.has(candidate)) {
                 glyph = candidate;
                 break;
@@ -86,9 +58,9 @@ export function sessionMarkClaim(seed: string, taken: SessionMark[] = []): Sessi
     const usedColors = new Set(
         taken.filter((mark) => mark.glyph === glyph).map(colorKey),
     );
-    let pair = PALETTES[preferredPalette];
-    for (let offset = 0; offset < PALETTES.length; offset++) {
-        const candidate = PALETTES[(preferredPalette + offset) % PALETTES.length];
+    let pair = SESSION_MARK_PALETTES[preferredPalette];
+    for (let offset = 0; offset < SESSION_MARK_PALETTES.length; offset++) {
+        const candidate = SESSION_MARK_PALETTES[(preferredPalette + offset) % SESSION_MARK_PALETTES.length];
         if (!usedColors.has(colorKey({ bg: candidate[0], fg: candidate[1] }))) {
             pair = candidate;
             break;

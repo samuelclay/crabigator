@@ -6,9 +6,10 @@
 //! drawing is already in use (more than 30 live sessions).
 
 use std::collections::HashSet;
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use unicode_width::UnicodeWidthStr;
 
 use crate::terminal::escape::{bg_rgb, fg_rgb, RESET};
@@ -28,71 +29,35 @@ pub struct SessionMark {
     pub bg: (u8, u8, u8),
 }
 
-/// Left-right symmetric drawings. Keep this list in step with
-/// `workers/crabigator-api/src/dashboard/js/session-mark.ts`.
-const GLYPHS: &[&str] = &[
-    "▀▄▀",
-    "▛█▜",
-    "◢█◣",
-    "▐█▌",
-    "░█░",
-    "⣏⣉⣹",
-    "⢸⣿⡇",
-    "⣀⣾⣀",
-    "⠶⣿⠶",
-    "⣹⠶⣏",
-    "╭◈╮",
-    "⟨※⟩",
-    "╱◆╲",
-    "◖◆◗",
-    "⊏◆⊐",
-    "⌈✦⌉",
-    "◎◆◎",
-    "◕‿◕",
-    "ᵔᴥᵔ",
-    "ᓚᘏᓗ",
-    "◉ω◉",
-    "¬‿¬",
-    "ᚼᛉᚼ",
-    "ᛏᛏ",
-    "╠╬╣",
-    "≈△≈",
-    "◆◇◆",
-    "▰▱▰",
-    "⌬⌬",
-    "⍟⍟",
-];
-
 type Rgb = (u8, u8, u8);
 
-/// High-contrast pairs, independent of the glyph so two sessions can share a
-/// drawing and still read apart. Keep in step with the dashboard picker.
-const PALETTES: &[(Rgb, Rgb)] = &[
-    ((122, 16, 36), (255, 210, 168)),
-    ((58, 34, 8), (240, 192, 64)),
-    ((0, 24, 72), (94, 240, 255)),
-    ((42, 23, 96), (228, 212, 255)),
-    ((23, 36, 76), (183, 212, 255)),
-    ((16, 32, 16), (180, 240, 106)),
-    ((26, 26, 26), (232, 220, 192)),
-    ((59, 18, 102), (240, 216, 120)),
-    ((92, 42, 0), (255, 232, 200)),
-    ((74, 8, 40), (255, 192, 216)),
-    ((10, 42, 50), (126, 224, 232)),
-    ((106, 16, 56), (255, 240, 224)),
-    ((32, 16, 64), (208, 176, 255)),
-    ((196, 92, 18), (26, 18, 8)),
-    ((0, 60, 80), (128, 240, 200)),
-    ((200, 232, 120), (26, 40, 8)),
-    ((8, 40, 56), (240, 192, 64)),
-    ((240, 200, 160), (58, 24, 16)),
-    ((18, 72, 48), (232, 220, 192)),
-    ((42, 16, 64), (224, 192, 255)),
-    ((26, 32, 48), (159, 216, 200)),
-    ((74, 32, 128), (232, 208, 255)),
-    ((20, 48, 24), (192, 232, 120)),
-    ((216, 224, 112), (26, 40, 8)),
-];
+/// Glyphs and palettes live in `session_mark.json`. The dashboard and MCP
+/// server read that same file.
+#[derive(Deserialize)]
+struct MarkData {
+    glyphs: Vec<String>,
+    palettes: Vec<(Rgb, Rgb)>,
+}
+
+fn mark_data() -> &'static MarkData {
+    static DATA: OnceLock<MarkData> = OnceLock::new();
+    DATA.get_or_init(|| {
+        serde_json::from_str(include_str!("session_mark.json"))
+            .expect("session_mark.json")
+    })
+}
+
+fn glyphs() -> &'static [String] {
+    &mark_data().glyphs
+}
+
+fn palettes() -> &'static [(Rgb, Rgb)] {
+    &mark_data().palettes
+}
+
+fn glyph_at(index: usize) -> &'static str {
+    glyphs()[index].as_str()
+}
 
 impl SessionMark {
     /// Pick a stable mark from a session id (the local crabigator id).
@@ -105,26 +70,28 @@ impl SessionMark {
     /// first so two sessions with the same drawing stay distinguishable.
     pub fn claim(seed: &str, taken: &[Self]) -> Self {
         let hash = fnv1a64(seed.as_bytes());
-        let preferred_glyph = (hash as usize) % GLYPHS.len();
-        let preferred_palette = ((hash >> 8) as usize) % PALETTES.len();
+        let glyph_count = glyphs().len();
+        let palette_count = palettes().len();
+        let preferred_glyph = (hash as usize) % glyph_count;
+        let preferred_palette = ((hash >> 8) as usize) % palette_count;
         let used_glyphs: HashSet<&str> = taken.iter().map(|mark| mark.glyph).collect();
-        let glyph = if used_glyphs.len() >= GLYPHS.len() {
-            GLYPHS[preferred_glyph]
+        let glyph = if used_glyphs.len() >= glyph_count {
+            glyph_at(preferred_glyph)
         } else {
-            (0..GLYPHS.len())
-                .map(|offset| GLYPHS[(preferred_glyph + offset) % GLYPHS.len()])
+            (0..glyph_count)
+                .map(|offset| glyph_at((preferred_glyph + offset) % glyph_count))
                 .find(|glyph| !used_glyphs.contains(glyph))
-                .unwrap_or(GLYPHS[preferred_glyph])
+                .unwrap_or_else(|| glyph_at(preferred_glyph))
         };
         let used_colors: HashSet<_> = taken
             .iter()
             .filter(|mark| mark.glyph == glyph)
             .map(|mark| (mark.bg, mark.fg))
             .collect();
-        let (bg, fg) = (0..PALETTES.len())
-            .map(|offset| PALETTES[(preferred_palette + offset) % PALETTES.len()])
+        let (bg, fg) = (0..palette_count)
+            .map(|offset| palettes()[(preferred_palette + offset) % palette_count])
             .find(|pair| !used_colors.contains(pair))
-            .unwrap_or(PALETTES[preferred_palette]);
+            .unwrap_or_else(|| palettes()[preferred_palette]);
         Self { glyph, fg, bg }
     }
 
@@ -139,7 +106,7 @@ impl SessionMark {
         publish_stub(session_id, mark);
         let taken = live_taken_marks(session_id);
         let used_glyphs = taken.iter().map(|other| other.glyph).collect::<HashSet<_>>();
-        if used_glyphs.contains(mark.glyph) && used_glyphs.len() < GLYPHS.len() {
+        if used_glyphs.contains(mark.glyph) && used_glyphs.len() < glyphs().len() {
             mark = Self::claim(session_id, &taken);
             publish_stub(session_id, mark);
         }
@@ -165,7 +132,7 @@ impl SessionMark {
     fn from_json(value: &serde_json::Value) -> Option<Self> {
         let glyph = value.get("glyph")?.as_str()?;
         Some(Self {
-            glyph: GLYPHS.iter().copied().find(|item| *item == glyph)?,
+            glyph: glyphs().iter().map(|item| item.as_str()).find(|item| *item == glyph)?,
             fg: rgb_array(value.get("fg")?)?,
             bg: rgb_array(value.get("bg")?)?,
         })
@@ -278,8 +245,8 @@ mod tests {
 
     #[test]
     fn glyphs_fit_the_chip_budget() {
-        for glyph in GLYPHS {
-            let width = glyph.width();
+        for glyph in glyphs() {
+            let width = glyph.as_str().width();
             assert!(
                 (2..=5).contains(&width),
                 "{glyph:?} is {width} columns, want 2–5"
@@ -330,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn known_seed_matches_the_dashboard_picker() {
+    fn known_seed_is_stable() {
         let mark = SessionMark::from_seed("crabigator-test");
         assert_eq!(mark.glyph, "⊏◆⊐");
         assert_eq!(mark.bg, (122, 16, 36));
@@ -354,7 +321,7 @@ mod tests {
     #[test]
     fn live_sessions_get_unique_glyphs_until_the_set_is_full() {
         let mut taken = Vec::new();
-        for index in 0..GLYPHS.len() {
+        for index in 0..glyphs().len() {
             let mark = SessionMark::claim(&format!("session-{index}"), &taken);
             assert!(
                 taken.iter().all(|other: &SessionMark| other.glyph != mark.glyph),
@@ -363,7 +330,7 @@ mod tests {
             );
             taken.push(mark);
         }
-        assert_eq!(taken.len(), GLYPHS.len());
+        assert_eq!(taken.len(), glyphs().len());
         let extra = SessionMark::claim("session-overflow", &taken);
         assert!(taken.iter().any(|mark| mark.glyph == extra.glyph));
         assert!(
