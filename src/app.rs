@@ -493,8 +493,8 @@ impl App {
         self.cloud_client = Some(client);
         self.link_cloud_session();
         self.cloud_init_retry_count = 0;
-        let current_state = self.session_stats.effective_state();
-        self.send_cloud_state_event(current_state);
+        // The state goes out with the connection sync in
+        // maybe_send_initial_scrollback, the same path a reconnect uses.
         if let Some(title) = self.display_title.clone() {
             self.send_cloud_title_event(title);
         }
@@ -1860,8 +1860,14 @@ impl App {
             // If PTY is busy, status_draw_interval will catch this soon
         }
 
-        // Send initial state once, then on changes
-        if self.last_cloud_state.is_none() || old_effective_state != new_effective_state {
+        // Send the state whenever the cloud's copy is stale: the first time,
+        // on every transition, and after drift. Drift happens when a secondary
+        // signal (the title spinner, "Esc to cancel") changes the effective
+        // state between two refreshes, so the old/new comparison above never
+        // sees a change. The check must not wait for platform activity: a
+        // Codex session that never writes a log would otherwise stay wrong in
+        // the cloud until its next prompt.
+        if self.last_cloud_state != Some(new_effective_state) {
             self.send_cloud_state_event(new_effective_state);
 
             let is_interactive = matches!(
@@ -2507,6 +2513,16 @@ impl App {
                     .update_screen(self.platform_pty.screen())
                 {
                     self.send_cloud_screen_event(contents);
+                }
+
+                // Resend the state on every (re)connection. Events written
+                // while the socket was dropping are lost, so the cloud may
+                // still hold the state from before the disconnect.
+                self.last_cloud_state = None;
+                let state = self.session_stats.effective_state();
+                self.send_cloud_state_event(state);
+                if matches!(state, SessionState::Question | SessionState::Permission) {
+                    self.send_cloud_prompt_event();
                 }
             }
         }
