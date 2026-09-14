@@ -32,6 +32,7 @@ import {
     logoutAccount,
 } from './handlers/account';
 import { handleMcp, isMcpPath } from './mcp/server';
+import { listMcpLogs } from './mcp/log';
 
 const PROJECT_HISTORY_RETENTION_DAYS = 14;
 const SECONDS_PER_DAY = 24 * 60 * 60;
@@ -862,6 +863,10 @@ router.get('/staff', withFeature('staff', async (request, env) => {
 router.get('/api/staff/telemetry', withStaffSession(handleStaffTelemetry));
 router.get('/api/staff/analytics', withStaffSession(handleStaffAnalytics));
 router.get('/api/staff/session-analytics', withStaffSession(handleStaffSessionAnalytics));
+router.get('/api/staff/mcp-logs', withStaffSession(async (request, env) => {
+    const limit = Number(new URL(request.url).searchParams.get('limit') || 100);
+    return jsonResponse({ calls: await listMcpLogs(env, limit) });
+}));
 router.post('/api/staff/sync-usage', withStaffSession(handleStaffSyncUsage));
 
 // Staff gift management
@@ -927,10 +932,10 @@ router.get('/api/health', async (request, env) => {
 // ============================================
 
 export default {
-    async fetch(request: Request, env: Env): Promise<Response> {
+    async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
         const pathname = new URL(request.url).pathname;
         if (isMcpPath(pathname)) {
-            return handleMcp(request, env);
+            return handleMcp(request, env, ctx);
         }
         return router.handle(request, env);
     },

@@ -245,9 +245,57 @@ export const staffDashboardJs = `
             }
         }
 
+        async function fetchMcpLogs() {
+            try {
+                const response = await fetch('/api/staff/mcp-logs?limit=80');
+                if (!response.ok) throw new Error('Failed to fetch MCP logs');
+                const data = await response.json();
+                renderMcpLogs(data.calls || []);
+            } catch (err) {
+                console.error('MCP log fetch error:', err);
+            }
+        }
+
+        function renderMcpLogs(calls) {
+            const tbody = document.getElementById('mcp-log-table');
+            const count = document.getElementById('mcp-log-count');
+            const sumCount = document.getElementById('sum-mcp-count');
+            const sumSlow = document.getElementById('sum-mcp-slow');
+            if (!tbody) return;
+            if (count) count.textContent = String(calls.length);
+            if (sumCount) sumCount.textContent = String(calls.length);
+            const slowest = calls.reduce((max, call) => Math.max(max, call.ms || 0), 0);
+            if (sumSlow) sumSlow.textContent = slowest ? slowest + 'ms' : '-';
+            if (!calls.length) {
+                tbody.innerHTML = '<tr><td colspan="8" class="loading">No MCP calls yet</td></tr>';
+                return;
+            }
+            tbody.innerHTML = calls.map((call) => {
+                const when = new Date(call.ts).toLocaleTimeString();
+                const label = call.tool || call.resource || call.method || '';
+                const session = call.session_id ? String(call.session_id).slice(0, 8) : '';
+                const group = call.group_id ? String(call.group_id).slice(0, 8) : '';
+                const spans = (call.spans || []).map((span) => span.name + ':' + span.ms + 'ms').join(', ');
+                const rowClass = call.ok === false ? 'mcp-log-error' : (call.ms >= 1000 ? 'mcp-log-slow' : '');
+                const error = call.error ? String(call.error).slice(0, 120) : '';
+                return '<tr class="' + rowClass + '">'
+                    + '<td>' + when + '</td>'
+                    + '<td>' + call.ms + '</td>'
+                    + '<td>' + (call.method || '') + (call.sse ? ' sse' : '') + '</td>'
+                    + '<td>' + label + '</td>'
+                    + '<td>' + session + '</td>'
+                    + '<td>' + group + '</td>'
+                    + '<td>' + spans + '</td>'
+                    + '<td>' + error + '</td>'
+                    + '</tr>';
+            }).join('');
+        }
+
         // Initial load and auto-refresh every 5 seconds
         fetchData();
+        fetchMcpLogs();
         setInterval(fetchData, 5000);
+        setInterval(fetchMcpLogs, 5000);
 
         // ============================================
         // Website Analytics

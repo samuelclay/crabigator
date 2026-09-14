@@ -15,6 +15,7 @@ import {
     type McpAuth,
 } from './session';
 import { formatScreen, tailLines, toolError, toolText } from './text';
+import { mcpSpan } from './log';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -518,7 +519,7 @@ export async function callTool(
     if (!tool) return toolError(`Unknown tool: ${name}`);
     try {
         const args = (rawArgs && typeof rawArgs === 'object') ? rawArgs as Record<string, unknown> : {};
-        const result = await tool.handler(args, auth, env, origin);
+        const result = await mcpSpan(`tool:${name}`, () => tool.handler(args, auth, env, origin));
         return toolText(result);
     } catch (error) {
         if (error instanceof McpToolError) return toolError(`${error.code}: ${error.message}`);

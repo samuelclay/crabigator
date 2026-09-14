@@ -30,6 +30,48 @@ ${staffDashboardCss}
             </div>
         </header>
 
+        <div class="collapsible-section" id="section-mcp" data-section="mcp">
+            <div class="section-header" onclick="toggleSection('mcp')">
+                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+                <div class="section-name">MCP calls</div>
+                <div class="section-summary">
+                    <span class="summary-item">recent: <span class="summary-value" id="sum-mcp-count">-</span></span>
+                    <span class="summary-item">slowest: <span class="summary-value" id="sum-mcp-slow">-</span></span>
+                </div>
+            </div>
+            <div class="section-content">
+                <div class="section-content-inner">
+                    <div class="signups-table-container">
+                        <div class="table-header">
+                            <span class="table-title">Recent MCP requests</span>
+                            <span class="table-count" id="mcp-log-count">-</span>
+                        </div>
+                        <div class="table-scroll">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>When</th>
+                                        <th>ms</th>
+                                        <th>Method</th>
+                                        <th>Tool / resource</th>
+                                        <th>Session</th>
+                                        <th>Group</th>
+                                        <th>Spans</th>
+                                        <th>Error</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="mcp-log-table">
+                                    <tr><td colspan="8" class="loading">Loading...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- App Telemetry Section -->
         <div class="collapsible-section" id="section-telemetry" data-section="telemetry">
             <div class="section-header" onclick="toggleSection('telemetry')">

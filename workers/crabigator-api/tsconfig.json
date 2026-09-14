@@ -13,6 +13,6 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["worker-configuration.d.ts", "src/**/*.ts", "../../src/session_mark.json"],
+  "include": ["worker-configuration.d.ts", "src/**/*.ts", "src/**/*.d.ts", "../../src/session_mark.json"],
   "exclude": ["node_modules"]
 }

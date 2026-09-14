@@ -14,6 +14,15 @@ import {
 } from './session';
 import { formatScreen } from './text';
 import { handleMcpOAuth, isMcpOAuthPath, mcpAccessAllowed } from './oauth';
+import {
+    McpTrace,
+    persistMcpLog,
+    runMcpTrace,
+    mcpSpan,
+    summarizeArgs,
+    serverTimingHeader,
+    type McpCallLog,
+} from './log';
 
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
 const SUPPORTED_PROTOCOL_VERSIONS = new Set([
@@ -37,6 +46,7 @@ export function isMcpPath(pathname: string): boolean {
 export async function handleMcp(
     request: Request,
     env: Env,
+    ctx?: ExecutionContext,
 ): Promise<Response> {
     const url = new URL(request.url);
     if (isMcpOAuthPath(url.pathname)) {
@@ -49,6 +59,20 @@ export async function handleMcp(
         return new Response(null, { status: 204, headers: corsHeaders() });
     }
 
+    const requestId = crypto.randomUUID().slice(0, 8);
+    const started = Date.now();
+    const trace = new McpTrace();
+    return runMcpTrace(trace, () => handleMcpTraced(request, env, ctx, requestId, started, trace));
+}
+
+async function handleMcpTraced(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext | undefined,
+    requestId: string,
+    started: number,
+    trace: McpTrace,
+): Promise<Response> {
     const runtime = getRuntimeConfig(request, env);
     if (!runtime.capabilities.mcp) {
         return json({ error: 'MCP is disabled', code: 'FEATURE_DISABLED' }, 404);
@@ -57,13 +81,30 @@ export async function handleMcp(
         return json({ error: 'Unsupported MCP-Protocol-Version' }, 400);
     }
 
-    const auth = await mcpAuth(request, env);
+    const authStarted = Date.now();
+    const auth = await mcpSpan('auth', () => mcpAuth(request, env));
+    const authMs = Date.now() - authStarted;
     if (!auth) {
-        return unauthorized(request, env);
+        const response = unauthorized(request, env);
+        await finishMcpLog(env, ctx, request, requestId, started, trace, {
+            method: request.method,
+            ok: false,
+            error: 'unauthorized',
+            auth_ms: authMs,
+        });
+        return timedResponse(response, requestId, started, trace);
     }
 
     if (request.method === 'GET') {
-        return attentionStream(env, auth);
+        await finishMcpLog(env, ctx, request, requestId, started, trace, {
+            method: 'GET',
+            ok: true,
+            sse: true,
+            group_id: auth.group_id,
+            account_id: auth.account_id,
+            auth_ms: authMs,
+        });
+        return attentionStream(env, auth, requestId);
     }
     if (request.method !== 'POST') {
         return json({ error: 'Method not allowed' }, 405);
@@ -77,17 +118,33 @@ export async function handleMcp(
     }
 
     const origin = getPublicOrigin(request, getAppConfig(env));
-    if (Array.isArray(payload)) {
-        const results = [];
-        for (const item of payload) {
-            const result = await handleRpc(item, auth, env, origin);
-            if (result) results.push(result);
-        }
-        return json(results);
+    const messages = Array.isArray(payload) ? payload : [payload];
+    const results = [];
+    for (const item of messages) {
+        const result = await handleRpc(item, auth, env, origin);
+        if (result) results.push(result);
+        await finishMcpLog(env, ctx, request, requestId, started, trace, {
+            method: item.method || '',
+            rpc_id: item.id ?? null,
+            ok: !rpcFailed(result),
+            error: rpcErrorMessage(result),
+            result_bytes: result ? JSON.stringify(result).length : 0,
+            group_id: auth.group_id,
+            account_id: auth.account_id,
+            auth_ms: authMs,
+            ...rpcLogFields(item),
+        });
     }
-    const result = await handleRpc(payload, auth, env, origin);
-    if (!result) return new Response(null, { status: 202, headers: corsHeaders() });
-    return json(result);
+    if (!Array.isArray(payload) && !results.length) {
+        return timedResponse(
+            new Response(null, { status: 202, headers: corsHeaders() }),
+            requestId,
+            started,
+            trace,
+        );
+    }
+    const body = Array.isArray(payload) ? results : results[0];
+    return timedResponse(json(body), requestId, started, trace);
 }
 
 async function mcpAuth(request: Request, env: Env): Promise<McpAuth | null> {
@@ -229,9 +286,11 @@ async function readResource(env: Env, auth: McpAuth, origin: string, uri: string
         );
     }
     if (uri === 'crabigator://prs') {
-        const request = authedApiRequest(origin, '/api/prs/board', auth.token, 'GET');
-        const response = await getPrBoard(request, env);
-        return resourceJson(uri, await response.json());
+        return mcpSpan('resource_prs', async () => {
+            const request = authedApiRequest(origin, '/api/prs/board', auth.token, 'GET');
+            const response = await getPrBoard(request, env);
+            return resourceJson(uri, await response.json());
+        });
     }
     const match = uri.match(/^crabigator:\/\/sessions\/([^/]+)(?:\/(screen|scrollback|prompt))?$/);
     if (match) {
@@ -263,7 +322,7 @@ function resourceText(uri: string, text: string) {
     };
 }
 
-function attentionStream(env: Env, auth: McpAuth): Response {
+function attentionStream(env: Env, auth: McpAuth, requestId?: string): Response {
     const encoder = new TextEncoder();
     let closed = false;
     const stream = new ReadableStream({
@@ -279,6 +338,15 @@ function attentionStream(env: Env, auth: McpAuth): Response {
             });
             const started = Date.now();
             let last = '';
+            console.log(JSON.stringify({
+                mcp_call: true,
+                sse: true,
+                event: 'sse_start',
+                request_id: requestId,
+                group_id: auth.group_id,
+                account_id: auth.account_id,
+                ts: started,
+            }));
             while (!closed && Date.now() - started < 25000) {
                 try {
                     const sessions = await listGroupSessions(env, auth.group_id);
@@ -296,6 +364,15 @@ function attentionStream(env: Env, auth: McpAuth): Response {
                 }
                 await new Promise((resolve) => setTimeout(resolve, 2000));
             }
+            console.log(JSON.stringify({
+                mcp_call: true,
+                sse: true,
+                event: 'sse_end',
+                request_id: requestId,
+                group_id: auth.group_id,
+                ms: Date.now() - started,
+                ts: Date.now(),
+            }));
             try { controller.close(); } catch { /* already closed */ }
         },
         cancel() {
@@ -341,11 +418,82 @@ function json(data: unknown, status = 200): Response {
     });
 }
 
+function timedResponse(
+    response: Response,
+    requestId: string,
+    started: number,
+    trace: McpTrace,
+): Response {
+    const headers = new Headers(response.headers);
+    headers.set('X-Mcp-Request-Id', requestId);
+    headers.set('Server-Timing', serverTimingHeader(Date.now() - started, trace.spans));
+    headers.set('Access-Control-Expose-Headers', 'WWW-Authenticate, Mcp-Session-Id, X-Mcp-Request-Id, Server-Timing');
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+    });
+}
+
+function rpcFailed(result: unknown): boolean {
+    if (!result || typeof result !== 'object') return false;
+    const body = result as { error?: unknown; result?: { isError?: boolean } };
+    return Boolean(body.error) || body.result?.isError === true;
+}
+
+function rpcErrorMessage(result: unknown): string | undefined {
+    if (!result || typeof result !== 'object') return undefined;
+    const body = result as {
+        error?: { message?: string };
+        result?: { isError?: boolean; content?: Array<{ text?: string }> };
+    };
+    if (body.error?.message) return body.error.message;
+    if (body.result?.isError) return body.result.content?.[0]?.text;
+    return undefined;
+}
+
+function rpcLogFields(message: JsonRpcRequest): Partial<McpCallLog> {
+    const params = message.params || {};
+    if (message.method === 'tools/call') {
+        const args = summarizeArgs(params.arguments);
+        return { tool: String(params.name || ''), ...args };
+    }
+    if (message.method === 'resources/read') {
+        const uri = String(params.uri || '');
+        const sessionMatch = uri.match(/^crabigator:\/\/sessions\/([^/]+)/);
+        return { resource: uri, session_id: sessionMatch?.[1] };
+    }
+    return {};
+}
+
+async function finishMcpLog(
+    env: Env,
+    ctx: ExecutionContext | undefined,
+    request: Request,
+    requestId: string,
+    started: number,
+    trace: McpTrace,
+    extra: Partial<McpCallLog>,
+): Promise<void> {
+    const entry: McpCallLog = {
+        ts: Date.now(),
+        request_id: requestId,
+        http_method: request.method,
+        method: extra.method || '',
+        ms: Date.now() - started,
+        ok: extra.ok !== false,
+        spans: trace.spans,
+        cf_ray: request.headers.get('cf-ray') || undefined,
+        ...extra,
+    };
+    await persistMcpLog(env, entry, ctx);
+}
+
 function corsHeaders(): Record<string, string> {
     return {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, MCP-Protocol-Version, Mcp-Session-Id',
-        'Access-Control-Expose-Headers': 'WWW-Authenticate, Mcp-Session-Id',
+        'Access-Control-Expose-Headers': 'WWW-Authenticate, Mcp-Session-Id, X-Mcp-Request-Id, Server-Timing',
     };
 }

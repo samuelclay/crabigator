@@ -358,6 +358,45 @@ describe('MCP server', () => {
         });
         expect(response.status).toBe(400);
     });
+
+    it('records timing for tool calls and exposes them to staff', async () => {
+        const { token } = await linkedAccount('LG1');
+        const listed = await mcpRpc(token, 'tools/list');
+        expect(listed.status).toBe(200);
+        expect(listed.headers.get('X-Mcp-Request-Id')).toBeTruthy();
+        expect(listed.headers.get('Server-Timing') || '').toContain('total;dur=');
+
+        const sessions = await mcpRpc(token, 'tools/call', {
+            name: 'list_sessions',
+            arguments: {},
+        });
+        expect(sessions.status).toBe(200);
+
+        const login = await SELF.fetch(`${ORIGIN}/api/staff/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+            body: JSON.stringify({ access_key: 'test-only-staff-access-key' }),
+        });
+        expect(login.status).toBe(200);
+        const cookie = login.headers.get('Set-Cookie')!.split(';', 1)[0];
+        let body: {
+            calls: Array<{ method: string; tool?: string; ms: number; spans: Array<{ name: string; ms: number }> }>;
+        } = { calls: [] };
+        for (let attempt = 0; attempt < 10; attempt++) {
+            const logs = await SELF.fetch(`${ORIGIN}/api/staff/mcp-logs`, {
+                headers: { Cookie: cookie },
+            });
+            expect(logs.status).toBe(200);
+            body = await logs.json() as typeof body;
+            if (body.calls.some((call) => call.tool === 'list_sessions')) break;
+            await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(body.calls.some((call) => call.method === 'tools/list')).toBe(true);
+        const toolCall = body.calls.find((call) => call.tool === 'list_sessions');
+        expect(toolCall).toBeTruthy();
+        expect(toolCall!.ms).toBeGreaterThanOrEqual(0);
+        expect(toolCall!.spans.some((span) => span.name === 'tool:list_sessions')).toBe(true);
+    });
 });
 
 describe('MCP tools listing page', () => {

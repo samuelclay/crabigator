@@ -199,6 +199,9 @@ export const staffDashboardCss = `
             background: rgba(255,255,255,0.02);
         }
 
+        tr.mcp-log-slow td:nth-child(2) { color: #d29922; }
+        tr.mcp-log-error td { color: #f85149; }
+
         .device-id {
             max-width: 200px;
             overflow: hidden;

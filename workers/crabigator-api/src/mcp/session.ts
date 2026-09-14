@@ -1,6 +1,7 @@
 import type { Env } from '../types/env';
 import type { MobileAuth } from '../types/api';
 import { assignSessionMarks, withSessionMark } from '../session-mark';
+import { mcpSpan } from './log';
 
 export interface McpAuth extends MobileAuth {
     group_id: string;
@@ -8,13 +9,15 @@ export interface McpAuth extends MobileAuth {
 }
 
 export async function listGroupSessions(env: Env, groupId: string): Promise<Array<Record<string, unknown>>> {
-    const doId = env.SESSION_LIST.idFromName('global');
-    const stub = env.SESSION_LIST.get(doId);
-    const url = new URL('https://internal/sessions');
-    url.searchParams.set('group_id', groupId);
-    const response = await stub.fetch(new Request(url.toString()));
-    const data = await response.json() as { sessions?: Array<Record<string, unknown>> };
-    return data.sessions || [];
+    return mcpSpan('list_group_sessions', async () => {
+        const doId = env.SESSION_LIST.idFromName('global');
+        const stub = env.SESSION_LIST.get(doId);
+        const url = new URL('https://internal/sessions');
+        url.searchParams.set('group_id', groupId);
+        const response = await stub.fetch(new Request(url.toString()));
+        const data = await response.json() as { sessions?: Array<Record<string, unknown>> };
+        return data.sessions || [];
+    });
 }
 
 interface SessionMetaRow {
@@ -94,6 +97,14 @@ export async function enrichSessions(
     sessions: Array<Record<string, unknown>>,
     groupId?: string,
 ): Promise<Array<Record<string, unknown>>> {
+    return mcpSpan('enrich_sessions', () => enrichSessionsInner(env, sessions, groupId));
+}
+
+async function enrichSessionsInner(
+    env: Env,
+    sessions: Array<Record<string, unknown>>,
+    groupId?: string,
+): Promise<Array<Record<string, unknown>>> {
     if (!sessions.length) return sessions;
     const ids = sessions
         .map((session) => String(session.id || session.session_id || ''))
@@ -169,18 +180,20 @@ export async function assertSessionInGroup(
     groupId: string,
     sessionId: string,
 ): Promise<void> {
-    const session = await env.DB.prepare(`
-        SELECT devices.group_id as group_id
-        FROM sessions
-        JOIN devices ON devices.id = sessions.device_id
-        WHERE sessions.id = ?
-    `).bind(sessionId).first<{ group_id: string | null }>();
-    if (!session) {
-        throw new McpToolError('Session not found', 'NOT_FOUND');
-    }
-    if (session.group_id !== groupId) {
-        throw new McpToolError('Forbidden', 'FORBIDDEN');
-    }
+    return mcpSpan('assert_session_in_group', async () => {
+        const session = await env.DB.prepare(`
+            SELECT devices.group_id as group_id
+            FROM sessions
+            JOIN devices ON devices.id = sessions.device_id
+            WHERE sessions.id = ?
+        `).bind(sessionId).first<{ group_id: string | null }>();
+        if (!session) {
+            throw new McpToolError('Session not found', 'NOT_FOUND');
+        }
+        if (session.group_id !== groupId) {
+            throw new McpToolError('Forbidden', 'FORBIDDEN');
+        }
+    });
 }
 
 export async function sessionFetch(
@@ -189,20 +202,24 @@ export async function sessionFetch(
     path: string,
     init?: RequestInit,
 ): Promise<Response> {
-    const stub = env.SESSION.get(env.SESSION.idFromName(sessionId));
-    return stub.fetch(new Request(`https://internal${path}`, init));
+    return mcpSpan(`session_fetch ${path}`, async () => {
+        const stub = env.SESSION.get(env.SESSION.idFromName(sessionId));
+        return stub.fetch(new Request(`https://internal${path}`, init));
+    });
 }
 
 export async function sessionSnapshot(
     env: Env,
     sessionId: string,
 ): Promise<Record<string, unknown>> {
-    await sessionFetch(env, sessionId, '/viewer-active', { method: 'POST' }).catch(() => null);
-    const response = await sessionFetch(env, sessionId, '/snapshot');
-    if (!response.ok) {
-        throw new McpToolError('Failed to read session', 'SNAPSHOT_FAILED');
-    }
-    return await response.json() as Record<string, unknown>;
+    return mcpSpan('session_snapshot', async () => {
+        await sessionFetch(env, sessionId, '/viewer-active', { method: 'POST' }).catch(() => null);
+        const response = await sessionFetch(env, sessionId, '/snapshot');
+        if (!response.ok) {
+            throw new McpToolError('Failed to read session', 'SNAPSHOT_FAILED');
+        }
+        return await response.json() as Record<string, unknown>;
+    });
 }
 
 export class McpToolError extends Error {
