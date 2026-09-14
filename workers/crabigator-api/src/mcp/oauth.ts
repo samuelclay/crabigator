@@ -4,11 +4,16 @@ import { generateToken, sha256 } from '../auth/tokens';
 import { extractToken, verifyMobileToken, viewerCookie } from '../auth/middleware';
 import { socialProviders, anySocialConfigured } from '../auth/social';
 import { claimPairingToken } from '../handlers/pairing';
-import { AccountError, attachDesktopToAccount } from '../auth/accounts';
+import {
+    AccountError,
+    attachDesktopToAccount,
+    type ViewerTokenData,
+} from '../auth/accounts';
 
 const AUTH_CODE_TTL = 5 * 60;
 const CLIENT_TTL = 60 * 60 * 24 * 365;
-const REFRESH_TTL = 60 * 60 * 24 * 365;
+const ACCESS_TTL = 60 * 60 * 24;
+const REFRESH_TTL = 60 * 60 * 24 * 90;
 
 interface RegisteredClient {
     client_id: string;
@@ -22,8 +27,17 @@ interface AuthCode {
     redirect_uri: string;
     code_challenge: string;
     token: string;
-    group_id?: string;
-    account_id?: string;
+    resource: string;
+}
+
+type McpTokenData = ViewerTokenData & { aud?: string };
+
+interface RefreshPayload {
+    identity?: McpTokenData;
+    // Refresh rows minted before dedicated MCP tokens stored the viewer token.
+    token?: string;
+    client_id: string;
+    resource: string;
 }
 
 export function isMcpOAuthPath(pathname: string): boolean {
@@ -31,6 +45,7 @@ export function isMcpOAuthPath(pathname: string): boolean {
         || pathname === '/token'
         || pathname === '/register'
         || pathname === '/.well-known/oauth-authorization-server'
+        || pathname === '/.well-known/oauth-authorization-server/mcp'
         || pathname === '/.well-known/oauth-protected-resource'
         || pathname === '/.well-known/oauth-protected-resource/mcp';
 }
@@ -45,6 +60,7 @@ export async function handleMcpOAuth(
     const url = new URL(request.url);
     switch (url.pathname) {
         case '/.well-known/oauth-authorization-server':
+        case '/.well-known/oauth-authorization-server/mcp':
             return oauthJson(authorizationServerMetadata(request, env));
         case '/.well-known/oauth-protected-resource':
         case '/.well-known/oauth-protected-resource/mcp':
@@ -78,13 +94,50 @@ function authorizationServerMetadata(request: Request, env: Env) {
         code_challenge_methods_supported: ['S256'],
         token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
         scopes_supported: ['crabigator'],
+        authorization_response_iss_parameter_supported: true,
     };
+}
+
+function stripSlash(value: string): string {
+    return value.replace(/\/$/, '');
+}
+
+function mcpResourceUrl(origin: string): string {
+    return `${stripSlash(origin)}/mcp`;
+}
+
+function resourceMatches(origin: string, resource: string): boolean {
+    if (!resource) return true;
+    const normalized = stripSlash(resource);
+    const host = stripSlash(origin);
+    return normalized === host || normalized === `${host}/mcp`;
+}
+
+function resolveTokenResource(
+    origin: string,
+    requested: string,
+    stored: string | undefined,
+): string | null {
+    const resource = requested || stored || mcpResourceUrl(origin);
+    if (!resourceMatches(origin, resource)) return null;
+    if (stored && !resourceMatches(origin, stored)) return null;
+    return mcpResourceUrl(origin);
+}
+
+export async function mcpAccessAllowed(
+    request: Request,
+    env: Env,
+    token: string,
+): Promise<boolean> {
+    const data = await env.TOKENS.get(`mobile:${await sha256(token)}`, 'json') as McpTokenData | null;
+    if (!data?.aud) return true;
+    return resourceMatches(originOf(request, env), data.aud);
 }
 
 function protectedResourceMetadata(request: Request, env: Env) {
     const origin = originOf(request, env);
     return {
-        resource: `${origin}/mcp`,
+        resource: mcpResourceUrl(origin),
         authorization_servers: [origin],
         bearer_methods_supported: ['header'],
         scopes_supported: ['crabigator'],
@@ -134,7 +187,8 @@ async function loadClient(env: Env, clientId: string): Promise<RegisteredClient 
 async function handleAuthorizeGet(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const params = authorizeParams(url);
-    const error = await validateAuthorizeParams(env, params);
+    const origin = originOf(request, env);
+    const error = await validateAuthorizeParams(env, params, origin);
     if (error) return oauthPage(error, false);
 
     const auth = await verifyMobileToken(request, env);
@@ -162,7 +216,8 @@ async function handleAuthorizePost(request: Request, env: Env): Promise<Response
         }
     }
     const params = authorizeParams(url);
-    const error = await validateAuthorizeParams(env, params);
+    const origin = originOf(request, env);
+    const error = await validateAuthorizeParams(env, params, origin);
     if (error) return oauthPage(error, false);
 
     const auth = await verifyMobileToken(request, env);
@@ -179,20 +234,20 @@ async function handleAuthorizePost(request: Request, env: Env): Promise<Response
     const token = extractToken(request);
     if (!token) return oauthPage('Sign in again.', false);
 
+    const resource = mcpResourceUrl(origin);
     const code = generateToken(20);
     const payload: AuthCode = {
         client_id: params.client_id,
         redirect_uri: params.redirect_uri,
         code_challenge: params.code_challenge,
         token,
-        group_id: auth.group_id,
-        account_id: auth.account_id,
+        resource,
     };
     await env.TOKENS.put(`oauth_code:${code}`, JSON.stringify(payload), {
         expirationTtl: AUTH_CODE_TTL,
     });
     return Response.redirect(
-        appendQuery(params.redirect_uri, { code, state: params.state }),
+        appendQuery(params.redirect_uri, { code, state: params.state, iss: origin }),
         302,
     );
 }
@@ -204,6 +259,7 @@ interface AuthorizeParams {
     code_challenge: string;
     code_challenge_method: string;
     response_type: string;
+    resource: string;
 }
 
 function authorizeParams(url: URL): AuthorizeParams {
@@ -214,10 +270,15 @@ function authorizeParams(url: URL): AuthorizeParams {
         code_challenge: url.searchParams.get('code_challenge') || '',
         code_challenge_method: url.searchParams.get('code_challenge_method') || 'S256',
         response_type: url.searchParams.get('response_type') || '',
+        resource: url.searchParams.get('resource') || '',
     };
 }
 
-async function validateAuthorizeParams(env: Env, params: AuthorizeParams): Promise<string | null> {
+async function validateAuthorizeParams(
+    env: Env,
+    params: AuthorizeParams,
+    origin: string,
+): Promise<string | null> {
     if (params.response_type !== 'code') return 'Unsupported response type.';
     if (!params.client_id || !params.redirect_uri || !params.code_challenge) {
         return 'Missing OAuth parameters.';
@@ -227,6 +288,9 @@ async function validateAuthorizeParams(env: Env, params: AuthorizeParams): Promi
     if (!client) return 'Unknown OAuth client. Register at /register first.';
     if (!client.redirect_uris.includes(params.redirect_uri)) {
         return 'Redirect URI is not registered for this client.';
+    }
+    if (params.resource && !resourceMatches(origin, params.resource)) {
+        return 'This client asked for a different resource than this MCP server.';
     }
     return null;
 }
@@ -290,7 +354,7 @@ async function handleToken(request: Request, env: Env): Promise<Response> {
     const form = await readTokenForm(request);
     const grant = form.get('grant_type');
     if (grant === 'refresh_token') {
-        return refreshAccessToken(env, form.get('refresh_token') || '');
+        return refreshAccessToken(request, env, form);
     }
     if (grant !== 'authorization_code') {
         return oauthJson({ error: 'unsupported_grant_type' }, 400);
@@ -302,34 +366,133 @@ async function handleToken(request: Request, env: Env): Promise<Response> {
     if (!raw) return oauthJson({ error: 'invalid_grant' }, 400);
     await env.TOKENS.delete(`oauth_code:${code}`);
     const payload = JSON.parse(raw) as AuthCode;
+    const clientError = await assertTokenClient(request, env, form, payload.client_id);
+    if (clientError) return clientError;
     if (payload.redirect_uri !== redirectUri) return oauthJson({ error: 'invalid_grant' }, 400);
     const challenge = await pkceS256(verifier);
     if (challenge !== payload.code_challenge) return oauthJson({ error: 'invalid_grant' }, 400);
+    const resource = resolveTokenResource(
+        originOf(request, env),
+        form.get('resource') || '',
+        payload.resource,
+    );
+    if (!resource) return oauthJson({ error: 'invalid_target' }, 400);
 
-    const refresh = generateToken(24);
-    await env.TOKENS.put(`oauth_refresh:${refresh}`, JSON.stringify({ token: payload.token }), {
-        expirationTtl: REFRESH_TTL,
-    });
-    return oauthJson({
-        access_token: payload.token,
-        token_type: 'Bearer',
-        expires_in: REFRESH_TTL,
-        refresh_token: refresh,
-        scope: 'crabigator',
-    });
+    const identity = await loadViewerIdentity(env, payload.token);
+    if (!identity) return oauthJson({ error: 'invalid_grant' }, 400);
+    return oauthJson(await issueMcpTokens(env, identity, payload.client_id, resource));
 }
 
-async function refreshAccessToken(env: Env, refresh: string): Promise<Response> {
+async function refreshAccessToken(
+    request: Request,
+    env: Env,
+    form: URLSearchParams,
+): Promise<Response> {
+    const refresh = form.get('refresh_token') || '';
     const raw = await env.TOKENS.get(`oauth_refresh:${refresh}`);
     if (!raw) return oauthJson({ error: 'invalid_grant' }, 400);
-    const payload = JSON.parse(raw) as { token: string };
-    return oauthJson({
-        access_token: payload.token,
+    const payload = JSON.parse(raw) as RefreshPayload;
+    const clientError = await assertTokenClient(request, env, form, payload.client_id);
+    if (clientError) return clientError;
+    const resource = resolveTokenResource(
+        originOf(request, env),
+        form.get('resource') || '',
+        payload.resource,
+    );
+    if (!resource) return oauthJson({ error: 'invalid_target' }, 400);
+    await env.TOKENS.delete(`oauth_refresh:${refresh}`);
+
+    const identity = payload.identity
+        || (payload.token ? await loadViewerIdentity(env, payload.token) : null);
+    if (!identity) return oauthJson({ error: 'invalid_grant' }, 400);
+    return oauthJson(await issueMcpTokens(env, identity, payload.client_id, resource));
+}
+
+async function assertTokenClient(
+    request: Request,
+    env: Env,
+    form: URLSearchParams,
+    expectedClientId: string,
+): Promise<Response | null> {
+    const auth = tokenClientAuth(request, form);
+    if (!auth.client_id || auth.client_id !== expectedClientId) {
+        return oauthJson({ error: 'invalid_client' }, 401);
+    }
+    const client = await loadClient(env, expectedClientId);
+    if (!client) return oauthJson({ error: 'invalid_client' }, 401);
+    if (client.client_secret && client.client_secret !== auth.client_secret) {
+        return oauthJson({ error: 'invalid_client' }, 401);
+    }
+    return null;
+}
+
+function tokenClientAuth(
+    request: Request,
+    form: URLSearchParams,
+): { client_id: string; client_secret: string } {
+    const header = request.headers.get('Authorization') || '';
+    if (header.startsWith('Basic ')) {
+        try {
+            const decoded = atob(header.slice(6));
+            const idx = decoded.indexOf(':');
+            return {
+                client_id: decodeURIComponent(decoded.slice(0, idx)),
+                client_secret: decodeURIComponent(decoded.slice(idx + 1)),
+            };
+        } catch {
+            return { client_id: '', client_secret: '' };
+        }
+    }
+    return {
+        client_id: form.get('client_id') || '',
+        client_secret: form.get('client_secret') || '',
+    };
+}
+
+async function loadViewerIdentity(env: Env, token: string): Promise<ViewerTokenData | null> {
+    const raw = await env.TOKENS.get(`mobile:${await sha256(token)}`, 'json');
+    return raw ? raw as ViewerTokenData : null;
+}
+
+async function issueMcpTokens(
+    env: Env,
+    identity: ViewerTokenData,
+    clientId: string,
+    resource: string,
+): Promise<{
+    access_token: string;
+    token_type: 'Bearer';
+    expires_in: number;
+    refresh_token: string;
+    scope: string;
+}> {
+    const access = generateToken(32);
+    const accessData: McpTokenData = {
+        desktop_id: identity.desktop_id,
+        mobile_id: identity.mobile_id,
+        account_id: identity.account_id,
+        group_id: identity.group_id,
+        aud: resource,
+    };
+    await env.TOKENS.put(`mobile:${await sha256(access)}`, JSON.stringify(accessData), {
+        expirationTtl: ACCESS_TTL,
+    });
+    const refresh = generateToken(24);
+    const refreshPayload: RefreshPayload = {
+        identity: accessData,
+        client_id: clientId,
+        resource,
+    };
+    await env.TOKENS.put(`oauth_refresh:${refresh}`, JSON.stringify(refreshPayload), {
+        expirationTtl: REFRESH_TTL,
+    });
+    return {
+        access_token: access,
         token_type: 'Bearer',
-        expires_in: REFRESH_TTL,
+        expires_in: ACCESS_TTL,
         refresh_token: refresh,
         scope: 'crabigator',
-    });
+    };
 }
 
 async function readTokenForm(request: Request): Promise<URLSearchParams> {
@@ -338,7 +501,12 @@ async function readTokenForm(request: Request): Promise<URLSearchParams> {
         const body = await request.json() as Record<string, string>;
         return new URLSearchParams(body);
     }
-    return new URLSearchParams(await request.text());
+    const form = await request.formData();
+    const params = new URLSearchParams();
+    for (const [key, value] of form.entries()) {
+        params.set(key, String(value));
+    }
+    return params;
 }
 
 async function pkceS256(verifier: string): Promise<string> {
@@ -425,12 +593,7 @@ function consentPage(params: AuthorizeParams, who: string): Response {
 }
 
 function hiddenAuthorizeFields(url: URL): string {
-    return ['client_id', 'redirect_uri', 'state', 'code_challenge', 'code_challenge_method', 'response_type']
-        .map((key) => {
-            const value = url.searchParams.get(key) || '';
-            return `<input type="hidden" name="${key}" value="${escapeAttr(value)}">`;
-        })
-        .join('');
+    return hiddenFields(authorizeParams(url));
 }
 
 function hiddenFields(params: AuthorizeParams): string {

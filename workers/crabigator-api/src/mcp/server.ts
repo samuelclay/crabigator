@@ -12,7 +12,15 @@ import {
     type McpAuth,
 } from './session';
 import { formatScreen } from './text';
-import { handleMcpOAuth, isMcpOAuthPath } from './oauth';
+import { handleMcpOAuth, isMcpOAuthPath, mcpAccessAllowed } from './oauth';
+
+const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
+const SUPPORTED_PROTOCOL_VERSIONS = new Set([
+    '2024-11-05',
+    '2025-03-26',
+    DEFAULT_PROTOCOL_VERSION,
+    '2025-11-25',
+]);
 
 interface JsonRpcRequest {
     jsonrpc?: string;
@@ -44,14 +52,16 @@ export async function handleMcp(
     if (!runtime.capabilities.mcp) {
         return json({ error: 'MCP is disabled', code: 'FEATURE_DISABLED' }, 404);
     }
+    if (!protocolVersionSupported(request)) {
+        return json({ error: 'Unsupported MCP-Protocol-Version' }, 400);
+    }
 
     const auth = await mcpAuth(request, env);
-    if (!auth && request.method !== 'GET') {
+    if (!auth) {
         return unauthorized(request, env);
     }
 
     if (request.method === 'GET') {
-        if (!auth) return unauthorized(request, env);
         return attentionStream(env, auth);
     }
     if (request.method !== 'POST') {
@@ -83,7 +93,14 @@ async function mcpAuth(request: Request, env: Env): Promise<McpAuth | null> {
     const auth = await verifyMobileToken(request, env);
     const token = extractToken(request);
     if (!auth || !token) return null;
+    if (!await mcpAccessAllowed(request, env, token)) return null;
     return { ...auth, group_id: auth.group_id || '', token };
+}
+
+function protocolVersionSupported(request: Request): boolean {
+    const version = request.headers.get('MCP-Protocol-Version');
+    if (!version) return true;
+    return SUPPORTED_PROTOCOL_VERSIONS.has(version);
 }
 
 async function handleRpc(
@@ -101,17 +118,22 @@ async function handleRpc(
     }
 
     switch (method) {
-        case 'initialize':
+        case 'initialize': {
+            const requested = String(params.protocolVersion || DEFAULT_PROTOCOL_VERSION);
+            const protocolVersion = SUPPORTED_PROTOCOL_VERSIONS.has(requested)
+                ? requested
+                : DEFAULT_PROTOCOL_VERSION;
             return jsonRpcResult(id, {
-                protocolVersion: '2025-06-18',
+                protocolVersion,
                 capabilities: {
                     tools: { listChanged: false },
-                    resources: { subscribe: true, listChanged: true },
+                    resources: { subscribe: false, listChanged: false },
                 },
                 serverInfo: { name: 'crabigator', version: '0.1.0' },
                 instructions:
                     'Crabigator MCP. List sessions, inspect screens, answer prompts, and drive the PR board. If no desktops are linked, tell the user to run crabigator pair.',
             });
+        }
         case 'ping':
             return jsonRpcResult(id, {});
         case 'tools/list':
@@ -289,7 +311,7 @@ function unauthorized(request: Request, env: Env): Response {
             status: 401,
             headers: {
                 'Content-Type': 'application/json',
-                'WWW-Authenticate': `Bearer realm="crabigator", resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
+                'WWW-Authenticate': `Bearer realm="crabigator", resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
                 ...corsHeaders(),
             },
         },
