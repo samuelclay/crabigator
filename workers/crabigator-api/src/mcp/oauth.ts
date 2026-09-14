@@ -616,9 +616,14 @@ function oauthPage(body: string, ok: boolean): Response {
         h1 { font-size: 1.4rem; margin: 0 0 0.75rem; }
         p, li { color: #a1a1aa; line-height: 1.5; }
         code { color: #22d3ee; }
-        .stack { display: flex; flex-direction: column; gap: 0.6rem; margin: 1rem 0; }
-        .btn, button { display: block; width: 100%; text-align: center; padding: 0.75rem 1rem; border-radius: 10px;
-            background: #22d3ee; color: #042f2e; font-weight: 700; text-decoration: none; border: 0; cursor: pointer; }
+        .stack { display: flex; flex-direction: column; gap: 0.6rem; margin: 1rem 0; width: 100%; }
+        .btn, button {
+            display: block; box-sizing: border-box; width: 100%; margin: 0; padding: 0.75rem 1rem;
+            border: 0; border-radius: 10px; background: #22d3ee; color: #042f2e;
+            font-family: inherit; font-size: 1rem; font-weight: 700; line-height: 1.25;
+            text-align: center; text-decoration: none; cursor: pointer;
+            -webkit-appearance: none; appearance: none;
+        }
         button.secondary { background: #27272a; color: #e5e5e5; margin-top: 0.6rem; }
         input { width: 100%; box-sizing: border-box; margin: 0.75rem 0; padding: 0.75rem; border-radius: 10px;
             border: 1px solid #3f3f46; background: #0a0a0a; color: #fff; font-size: 1rem; letter-spacing: 0.12em; text-align: center; }
