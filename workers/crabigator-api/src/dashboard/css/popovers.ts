@@ -199,6 +199,12 @@ export const popoversCss = `
     margin-bottom: 14px;
     line-height: 1.5;
 }
+.settings-description code {
+    color: var(--accent-cyan);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    word-break: break-all;
+}
 .settings-divider {
     height: 1px;
     background: linear-gradient(90deg, transparent, var(--border-dim), transparent);

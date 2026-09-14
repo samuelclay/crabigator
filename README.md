@@ -112,6 +112,26 @@ The board saves these view choices between sessions. The full history also lives
 
 Supports [Claude Code](https://claude.ai/code) (Anthropic), [Codex CLI](https://github.com/openai/codex) (OpenAI), [opencode](https://opencode.ai), and [Grok](https://grok.com).
 
+### <img src="assets/plug.svg" width="20" height="20"> MCP
+
+Point a remote MCP client at your live sessions:
+
+```
+https://drinkcrabigator.com/mcp
+```
+
+The client signs in with GitHub or Google. If this account has no desktop yet, enter a pairing code from `crabigator pair`. After that, the agent can list sessions, read screens, answer prompts, and drive the PR board — the same actions as the dashboard.
+
+Claude Desktop, Claude.ai custom connectors, Cursor, Grok, and the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) all use that URL. In Grok:
+
+```bash
+grok mcp add --transport http crabigator https://drinkcrabigator.com/mcp
+```
+
+Then open `/mcps` and press `i` to sign in. Self-hosted Workers expose `{origin}/mcp` when `features.mcp` is enabled (the default).
+
+Sessions that never stream to the cloud are invisible here, same as on the website.
+
 ## How It Works
 
 ```

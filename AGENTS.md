@@ -330,7 +330,7 @@ Key tables: `page_views`, `analytics_events`, `funnel_events`, `email_signups`, 
 
 ## MCP server
 
-Hosted at `https://drinkcrabigator.com/mcp` (same Worker; self-hosted deploys get `/mcp` too). MCP clients use OAuth 2.1: GitHub or Google login, then a pairing code from `crabigator pair` if no desktop is attached yet. The access token is a viewer token for the account's device group.
+Hosted at `https://drinkcrabigator.com/mcp` (same Worker; self-hosted deploys get `/mcp` too). MCP clients use OAuth 2.1: GitHub or Google login, then a pairing code from `crabigator pair` if no desktop is attached yet. The access token is a dedicated MCP token for the account's device group (24-hour access, rotating refresh).
 
 Tools cover the dashboard: list and inspect sessions, screen and scrollback, prompts, recaps, the PR board, send input, choose prompt options, keys, spawn, voice transcription, and PR dispositions. `wait_for_attention` blocks until a session is in `question` or `permission`. Sessions that never stream to the cloud are invisible, same as the website.
 

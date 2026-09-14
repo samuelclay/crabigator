@@ -155,6 +155,12 @@ export const dashboardHtml = `<!DOCTYPE html>
                     <div class="account-connect-row" id="account-connect-row"></div>
                 </div>
                 <div class="settings-divider"></div>
+                <div class="settings-section" id="mcp-section">
+                    <div class="settings-section-label">MCP</div>
+                    <p class="settings-description">Connect Claude, Cursor, Grok, or another agent to this account. Sign in with GitHub or Google when the client opens a browser.</p>
+                    <p class="settings-description"><code id="mcp-url"></code></p>
+                </div>
+                <div class="settings-divider"></div>
                 <div class="settings-section">
                     <div class="settings-section-label">Pair another device</div>
                     <p class="settings-description">Generate a code to pair another phone, tablet, or browser.</p>

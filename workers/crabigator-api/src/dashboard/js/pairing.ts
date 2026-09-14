@@ -347,6 +347,8 @@ export const pairingJs = `
         }
 
         async function refreshAccountMenu() {
+            const mcpUrl = document.getElementById('mcp-url');
+            if (mcpUrl) mcpUrl.textContent = window.location.origin + '/mcp';
             const statusEl = document.getElementById('account-logins-status');
             const listEl = document.getElementById('account-identities');
             const rowEl = document.getElementById('account-connect-row');
