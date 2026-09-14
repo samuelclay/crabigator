@@ -1,10 +1,12 @@
 // Landing page HTML served at /
 import { landingCss } from './landing/css';
+import { mcpCss } from './landing/mcp-css';
 import { landingJs } from './landing/js';
 import { palmWebglJs } from './landing/palm-webgl';
 import { analyticsJs } from './landing/analytics';
 import type { RuntimeConfig } from './config';
 import { metaPixelHtml, usePublicOrigin } from './html-render';
+import { mcpLandingSectionHtml } from './mcp/docs';
 import {
     iconCrabigator,
     iconCrabigatorEncoded,
@@ -79,7 +81,7 @@ export const landingHtml = `<!DOCTYPE html>
     <meta name="twitter:description" content="Answer permissions, approve plans, and respond to questions from your phone.">
     <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-landing.png">
     <link rel="icon" href="data:image/svg+xml,${iconCrabigatorEncoded}">
-    <style>${landingCss}</style>
+    <style>${landingCss}${mcpCss}</style>
 </head>
 <body>
     <!-- Navigation -->
@@ -90,6 +92,7 @@ export const landingHtml = `<!DOCTYPE html>
         </a>
         <div class="nav-links">
             <a href="#features" class="nav-link">Features</a>
+            <a href="#mcp" class="nav-link">MCP</a>
             <a href="#security" class="nav-link">Security</a>
             <a href="#install" class="nav-link">Install</a>
             <a href="/dashboard" class="nav-btn" data-track="dashboard_nav" data-label="nav">Open Dashboard</a>
@@ -649,6 +652,8 @@ export const landingHtml = `<!DOCTYPE html>
         </div>
     </section>
 
+    ${mcpLandingSectionHtml()}
+
     <!-- Security Section -->
     <section class="section security" id="security">
         <div class="section-header">
@@ -994,6 +999,7 @@ export const landingHtml = `<!DOCTYPE html>
             </div>
             <div class="footer-links">
                 <a href="/dashboard" class="footer-link">Dashboard</a>
+                <a href="/mcp-tools" class="footer-link">MCP</a>
                 <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener" class="footer-link">GitHub</a>
                 <a href="https://github.com/samuelclay/crabigator#readme" target="_blank" rel="noopener" class="footer-link">Documentation</a>
             </div>
@@ -1015,6 +1021,7 @@ export const landingHtml = `<!DOCTYPE html>
 export function renderLandingHtml(runtime: RuntimeConfig, metaPixelId = ''): string {
     const pixel = runtime.capabilities.marketing_analytics ? metaPixelHtml(metaPixelId) : '';
     const disabledStyles = [
+        !runtime.capabilities.mcp ? '#mcp,.nav-link[href="#mcp"],.footer-link[href="/mcp-tools"]{display:none!important}' : '',
         !runtime.capabilities.marketing_analytics ? '.cta-form,.email-form{display:none!important}' : '',
     ].join('');
     let html = usePublicOrigin(landingHtml, runtime.origin)

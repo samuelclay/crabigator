@@ -120,7 +120,7 @@ Point a remote MCP client at your live sessions:
 https://drinkcrabigator.com/mcp
 ```
 
-The client signs in with GitHub or Google. If this account has no desktop yet, enter a pairing code from `crabigator pair`. After that, the agent can list sessions, read screens, answer prompts, and drive the PR board — the same actions as the dashboard.
+The client signs in with GitHub or Google. If this account has no desktop yet, enter a pairing code from `crabigator pair`. After that, the agent can list sessions, read screens, answer prompts, and drive the PR board — the same actions as the dashboard. Every tool, with example output, is listed at [drinkcrabigator.com/mcp-tools](https://drinkcrabigator.com/mcp-tools).
 
 Claude Desktop, Claude.ai custom connectors, Cursor, Grok, and the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) all use that URL. In Grok:
 

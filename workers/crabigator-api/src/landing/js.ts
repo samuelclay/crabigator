@@ -197,6 +197,24 @@ export const landingJs = `
         window.addEventListener('resize', scaleDevices, { passive: true });
     }
 
+    function bindCopyTargets() {
+        document.querySelectorAll('[data-copy-target]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const id = button.getAttribute('data-copy-target');
+                const source = id ? document.getElementById(id) : null;
+                const text = source ? source.textContent.trim() : '';
+                if (!text) return;
+                navigator.clipboard.writeText(text).then(() => {
+                    button.classList.add('copied');
+                    setTimeout(() => button.classList.remove('copied'), 1600);
+                    if (window.crabAnalytics) {
+                        window.crabAnalytics.trackClick('copy_mcp', id || 'mcp');
+                    }
+                }).catch(() => {});
+            });
+        });
+    }
+
     // Initialize
     document.addEventListener('DOMContentLoaded', function() {
         // Hero email form
@@ -216,5 +234,7 @@ export const landingJs = `
 
         // Initialize hero devices scaling
         initHeroDevicesScaling();
+
+        bindCopyTargets();
     });
 `;

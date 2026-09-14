@@ -29,6 +29,12 @@ describe('self-hosted runtime configuration', () => {
             missing_config: [],
         });
 
+        const toolsPage = await SELF.fetch('https://self-host.example/mcp-tools');
+        expect(toolsPage.status).toBe(200);
+        const toolsHtml = await toolsPage.text();
+        expect(toolsHtml).toContain('https://self-host.example/mcp');
+        expect(toolsHtml).not.toContain('https://drinkcrabigator.com');
+
         const dashboard = await SELF.fetch('https://self-host.example/dashboard');
         const html = await dashboard.text();
         expect(html).not.toContain('visible_session_limit');

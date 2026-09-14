@@ -359,3 +359,39 @@ describe('MCP server', () => {
         expect(response.status).toBe(400);
     });
 });
+
+describe('MCP tools listing page', () => {
+    it('covers every live tool with an example and a group', async () => {
+        const { listToolDescriptors } = await import('../src/mcp/tools');
+        const { toolExamples, toolGroups } = await import('../src/mcp/examples');
+        const names = listToolDescriptors().map((tool) => tool.name);
+        const grouped = toolGroups.flatMap((group) => group.tools);
+        expect(new Set(grouped).size).toBe(grouped.length);
+        expect(grouped.sort()).toEqual([...names].sort());
+        for (const name of names) {
+            expect(toolExamples[name], name).toBeTruthy();
+            expect(toolExamples[name].output).toBeDefined();
+        }
+    });
+
+    it('serves the public listing and the landing MCP section', async () => {
+        const tools = await SELF.fetch(`${ORIGIN}/mcp-tools`);
+        expect(tools.status).toBe(200);
+        const toolsHtml = await tools.text();
+        expect(toolsHtml).toContain('MCP tools');
+        expect(toolsHtml).toContain('id="list_sessions"');
+        expect(toolsHtml).toContain('id="choose_option"');
+        expect(toolsHtml).toContain('id="get_pr_board"');
+        expect(toolsHtml).toContain('Example output');
+        expect(toolsHtml).toContain(`${ORIGIN}/mcp`);
+        expect(toolsHtml).not.toContain('https://drinkcrabigator.com');
+
+        const landing = await SELF.fetch(`${ORIGIN}/`);
+        const landingHtml = await landing.text();
+        expect(landingHtml).toContain('id="mcp"');
+        expect(landingHtml).toContain('/mcp-tools');
+        expect(landingHtml).toContain('list_sessions');
+        expect(landingHtml).toContain('Let another agent drive your sessions');
+    });
+});
+

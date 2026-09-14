@@ -29,6 +29,20 @@ const sessionIdProp = {
     session_id: { type: 'string', description: 'Cloud session id' },
 };
 
+const formatProp = {
+    format: {
+        type: 'string',
+        enum: ['text', 'ansi'],
+        description: 'Plain text (default) or raw ANSI',
+    },
+};
+
+const prIdProps = {
+    owner: { type: 'string', description: 'GitHub owner' },
+    repo: { type: 'string', description: 'Repository name' },
+    number: { type: 'number', description: 'Pull request number' },
+};
+
 export const toolDefs: ToolDef[] = [
     {
         name: 'list_sessions',
@@ -36,10 +50,16 @@ export const toolDefs: ToolDef[] = [
         inputSchema: {
             type: 'object',
             properties: {
-                needs_attention: { type: 'boolean' },
-                state: { type: 'string' },
-                cwd: { type: 'string' },
-                platform: { type: 'string' },
+                needs_attention: {
+                    type: 'boolean',
+                    description: 'Only sessions in question or permission',
+                },
+                state: {
+                    type: 'string',
+                    description: 'ready, thinking, permission, question, or complete',
+                },
+                cwd: { type: 'string', description: 'Exact working directory' },
+                platform: { type: 'string', description: 'claude, codex, grok, or opencode' },
             },
         },
         handler: async (args, auth, env) => {
@@ -96,7 +116,7 @@ export const toolDefs: ToolDef[] = [
             required: ['session_id'],
             properties: {
                 ...sessionIdProp,
-                format: { type: 'string', enum: ['text', 'ansi'] },
+                ...formatProp,
             },
         },
         handler: async (args, auth, env) => {
@@ -121,9 +141,9 @@ export const toolDefs: ToolDef[] = [
             required: ['session_id'],
             properties: {
                 ...sessionIdProp,
-                tail: { type: 'number' },
-                query: { type: 'string' },
-                format: { type: 'string', enum: ['text', 'ansi'] },
+                tail: { type: 'number', description: 'Keep only the last N lines' },
+                query: { type: 'string', description: 'Keep lines that contain this text (min 3 characters)' },
+                ...formatProp,
             },
         },
         handler: async (args, auth, env) => {
@@ -154,7 +174,7 @@ export const toolDefs: ToolDef[] = [
         inputSchema: {
             type: 'object',
             required: ['query'],
-            properties: { query: { type: 'string' } },
+            properties: { query: { type: 'string', description: 'Search text, at least 3 characters' } },
         },
         handler: async (args, auth, env, origin) => {
             const query = requireString(args, 'query');
@@ -196,7 +216,7 @@ export const toolDefs: ToolDef[] = [
         description: 'Cross-session PR board for this account, same payload as the website: PRs, per-session titles, recaps, git, Slack, and identity chips (glyph + colors). Enough to recreate the board.',
         inputSchema: {
             type: 'object',
-            properties: { days: { type: 'number' } },
+            properties: { days: { type: 'number', description: 'Look back this many days. Default 1.' } },
         },
         handler: async (args, auth, env, origin) => {
             const days = typeof args.days === 'number' ? args.days : 1;
@@ -224,7 +244,12 @@ export const toolDefs: ToolDef[] = [
         description: 'Wait until a session is in question or permission state, or until timeout_seconds (default 20, max 25).',
         inputSchema: {
             type: 'object',
-            properties: { timeout_seconds: { type: 'number' } },
+            properties: {
+                timeout_seconds: {
+                    type: 'number',
+                    description: 'Seconds to wait. Default 20, max 25.',
+                },
+            },
         },
         handler: async (args, auth, env) => {
             const timeoutMs = Math.min(Math.max(Number(args.timeout_seconds) || 20, 1), 25) * 1000;
@@ -247,7 +272,7 @@ export const toolDefs: ToolDef[] = [
             required: ['session_id', 'text'],
             properties: {
                 ...sessionIdProp,
-                text: { type: 'string' },
+                text: { type: 'string', description: 'Text to type, then Enter' },
             },
         },
         handler: async (args, auth, env) => {
@@ -264,8 +289,8 @@ export const toolDefs: ToolDef[] = [
             required: ['session_id', 'value'],
             properties: {
                 ...sessionIdProp,
-                value: { type: 'string' },
-                instructions: { type: 'string' },
+                value: { type: 'string', description: 'Option value, usually "1", "2", …' },
+                instructions: { type: 'string', description: 'Optional Tab-instructions before confirming' },
             },
         },
         handler: async (args, auth, env) => {
@@ -292,8 +317,14 @@ export const toolDefs: ToolDef[] = [
             required: ['session_id'],
             properties: {
                 ...sessionIdProp,
-                key: { type: 'string' },
-                steps: { type: 'array' },
+                key: {
+                    type: 'string',
+                    description: 'Named key: shift_tab, escape, tab, enter, up, down, ctrl_c',
+                },
+                steps: {
+                    type: 'array',
+                    description: 'Key sequence of { type: "key"|"text", key?, text? } steps',
+                },
             },
         },
         handler: async (args, auth, env) => {
@@ -314,7 +345,7 @@ export const toolDefs: ToolDef[] = [
             required: ['session_id', 'text'],
             properties: {
                 ...sessionIdProp,
-                text: { type: 'string' },
+                text: { type: 'string', description: 'Unsent input to save' },
             },
         },
         handler: async (args, auth, env) => {
@@ -330,8 +361,8 @@ export const toolDefs: ToolDef[] = [
             type: 'object',
             required: ['cwd'],
             properties: {
-                cwd: { type: 'string' },
-                platform: { type: 'string' },
+                cwd: { type: 'string', description: 'Working directory for the new session' },
+                platform: { type: 'string', description: 'claude, codex, grok, or opencode' },
             },
         },
         handler: async (args, auth, env) => {
@@ -361,7 +392,7 @@ export const toolDefs: ToolDef[] = [
         inputSchema: {
             type: 'object',
             required: ['cwd'],
-            properties: { cwd: { type: 'string' } },
+            properties: { cwd: { type: 'string', description: 'Project directory to hide' } },
         },
         handler: async (args, auth, env) => {
             const cwd = requireString(args, 'cwd');
@@ -380,9 +411,9 @@ export const toolDefs: ToolDef[] = [
             type: 'object',
             required: ['audio_base64'],
             properties: {
-                audio_base64: { type: 'string' },
-                mime_type: { type: 'string' },
-                filename: { type: 'string' },
+                audio_base64: { type: 'string', description: 'Audio bytes, base64-encoded' },
+                mime_type: { type: 'string', description: 'Audio MIME type. Default audio/webm.' },
+                filename: { type: 'string', description: 'Original filename' },
             },
         },
         handler: async (args, auth, env, origin) => {
@@ -407,11 +438,9 @@ export const toolDefs: ToolDef[] = [
             type: 'object',
             required: ['owner', 'repo', 'number'],
             properties: {
-                owner: { type: 'string' },
-                repo: { type: 'string' },
-                number: { type: 'number' },
-                url: { type: 'string' },
-                remove: { type: 'boolean' },
+                ...prIdProps,
+                url: { type: 'string', description: 'Optional GitHub PR URL' },
+                remove: { type: 'boolean', description: 'Set true to unwatch' },
             },
         },
         handler: async (args, auth, env, origin) => {
@@ -431,11 +460,7 @@ export const toolDefs: ToolDef[] = [
         inputSchema: {
             type: 'object',
             required: ['owner', 'repo', 'number'],
-            properties: {
-                owner: { type: 'string' },
-                repo: { type: 'string' },
-                number: { type: 'number' },
-            },
+            properties: prIdProps,
         },
         handler: async (args, auth, env, origin) => {
             const request = authedApiRequest(origin, '/api/prs/watched', auth.token, 'POST', {
@@ -454,11 +479,15 @@ export const toolDefs: ToolDef[] = [
             type: 'object',
             required: ['owner', 'repo', 'number', 'disposition'],
             properties: {
-                owner: { type: 'string' },
-                repo: { type: 'string' },
-                number: { type: 'number' },
-                disposition: { type: 'string' },
-                scope: { type: 'string' },
+                ...prIdProps,
+                disposition: {
+                    type: 'string',
+                    description: 'primary, secondary, dismissed, or auto',
+                },
+                scope: {
+                    type: 'string',
+                    description: 'session:<id> or path:<cwd>. Empty applies group-wide.',
+                },
             },
         },
         handler: async (args, auth, env, origin) => {

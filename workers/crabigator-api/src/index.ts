@@ -10,6 +10,7 @@ import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCo
 import { requireAuth, requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
 import { dashboardHtml, renderDashboardHtml } from './dashboard';
 import { renderLandingHtml } from './landing';
+import { renderMcpToolsHtml, MCP_TOOLS_PATH } from './mcp/docs';
 import { featureUnavailable, getAppConfig, getRuntimeConfig, type Capabilities } from './config';
 import { clearStaffSession, createStaffSession, requireStaffSession, staffLoginPage } from './auth/staff';
 import { createStripeCheckout } from './handlers/payments/stripe';
@@ -90,6 +91,17 @@ router.get('/dashboard', async (request, env) => {
         }
     });
 });
+
+router.get(MCP_TOOLS_PATH, withFeature('mcp', async (request, env) => {
+    const runtime = getRuntimeConfig(request, env);
+    const appConfig = getAppConfig(env);
+    return new Response(renderMcpToolsHtml(runtime, appConfig.marketing?.meta_pixel_id), {
+        headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'public, max-age=3600',
+        },
+    });
+}));
 
 // Landing page
 router.get('/', async (request, env) => {
