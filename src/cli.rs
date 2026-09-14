@@ -40,6 +40,11 @@ pub enum Command {
     Key { api_key: Option<String> },
     /// Configure the Crabigator cloud service
     Cloud(CloudCommand),
+    /// Open a new Crabigator session in the user's terminal
+    Spawn {
+        cwd: Option<String>,
+        platform: Option<PlatformKind>,
+    },
 }
 
 #[derive(Clone)]
@@ -165,6 +170,11 @@ pub fn parse_args() -> Args {
                 args.command = Command::Cloud(parse_cloud_command(iter.collect()));
                 return args;
             }
+            "spawn" => {
+                iter.next(); // consume "spawn"
+                args.command = parse_spawn_command(iter.collect());
+                return args;
+            }
             _ => {}
         }
     }
@@ -179,16 +189,8 @@ pub fn parse_args() -> Args {
             }
             "--platform" | "-p" => {
                 if let Some(value) = iter.next() {
-                    if let Some(platform) = PlatformKind::parse(&value) {
-                        args.platform = Some(platform);
-                        platform_selected = true;
-                    } else {
-                        eprintln!(
-                            "Unknown platform: {}. Use 'claude', 'codex', 'opencode', or 'grok'.",
-                            value
-                        );
-                        std::process::exit(1);
-                    }
+                    args.platform = Some(require_platform(&value));
+                    platform_selected = true;
                 }
             }
             "-r" | "--resume" => {
@@ -215,6 +217,58 @@ pub fn parse_args() -> Args {
     }
 
     args
+}
+
+fn require_platform(value: &str) -> PlatformKind {
+    match PlatformKind::parse(value) {
+        Some(kind) => kind,
+        None => {
+            eprintln!("Unknown platform: {value}. Use 'claude', 'codex', 'opencode', or 'grok'.");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn spawn_usage_error() -> ! {
+    eprintln!("Usage: crabigator spawn [--cwd <dir>] [claude|codex|opencode|grok]");
+    std::process::exit(1);
+}
+
+fn parse_spawn_command(args: Vec<String>) -> Command {
+    let mut iter = args.into_iter();
+    let mut cwd = None;
+    let mut platform = None;
+
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--cwd" => {
+                let Some(dir) = iter.next().filter(|value| !value.starts_with('-')) else {
+                    spawn_usage_error();
+                };
+                cwd = Some(dir);
+            }
+            "--platform" | "-p" => {
+                let Some(value) = iter.next() else {
+                    spawn_usage_error();
+                };
+                platform = Some(require_platform(&value));
+            }
+            value if !value.starts_with('-') => {
+                if platform.is_none() {
+                    if let Some(kind) = PlatformKind::parse(value) {
+                        platform = Some(kind);
+                        continue;
+                    }
+                }
+                if cwd.is_none() {
+                    cwd = Some(arg);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Command::Spawn { cwd, platform }
 }
 
 fn parse_cloud_command(args: Vec<String>) -> CloudCommand {

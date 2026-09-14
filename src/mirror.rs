@@ -252,6 +252,13 @@ impl MirrorPublisher {
         }
     }
 
+    /// Ghostty window that launched this session, when we captured one.
+    pub fn ghostty_window_id(&self) -> Option<&str> {
+        self.ghostty
+            .as_ref()
+            .map(|context| context.window_id.as_str())
+    }
+
     /// Get the session directory path
     pub fn session_dir(&self) -> PathBuf {
         PathBuf::from(format!("/tmp/crabigator-{}", self.session_id))

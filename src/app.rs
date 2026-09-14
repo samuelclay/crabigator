@@ -2531,6 +2531,7 @@ impl App {
     /// Check for answers and key commands from cloud and inject into PTY
     fn check_cloud_commands(&mut self) -> Result<()> {
         let platform_kind = self.platform.kind();
+        let ghostty_window_id = self.mirror_publisher.ghostty_window_id();
         if let Some(ref mut client) = self.cloud_client {
             // Handle incoming text answers
             while let Some(answer) = client.try_recv_answer() {
@@ -2578,11 +2579,13 @@ impl App {
 
             // Handle incoming spawn requests
             while let Some(spawn_req) = client.try_recv_spawn() {
-                // Spawn in background thread to avoid blocking the event loop
+                let window_id = ghostty_window_id.map(str::to_string);
+                // Spawn in a background thread so AppleScript cannot stall the event loop.
                 std::thread::spawn(move || {
-                    if let Err(e) = crate::terminal_spawner::spawn_terminal(
+                    if let Err(e) = crate::terminal_spawner::spawn_terminal_in_window(
                         &spawn_req.cwd,
                         spawn_req.platform.as_deref(),
+                        window_id.as_deref(),
                     ) {
                         eprintln!("Failed to spawn terminal: {}", e);
                     }
