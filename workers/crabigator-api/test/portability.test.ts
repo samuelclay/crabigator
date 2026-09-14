@@ -31,10 +31,8 @@ describe('self-hosted runtime configuration', () => {
 
         const dashboard = await SELF.fetch('https://self-host.example/dashboard');
         const html = await dashboard.text();
-        expect(html).toContain('"visible_session_limit":7');
-        expect(html).toContain('Free accounts show the 7 most recently active sessions.');
-        expect(html).toContain('<div class="paywall-price">€5</div>');
-        expect(html).toContain('<div class="paywall-price-period">per week</div>');
+        expect(html).not.toContain('visible_session_limit');
+        expect(html).not.toContain('paywall');
         expect(html).toContain('.voice-btn');
         expect(html).not.toContain('https://drinkcrabigator.com');
         expect(html).not.toContain("fbq('init'");

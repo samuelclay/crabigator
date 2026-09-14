@@ -93,19 +93,7 @@ body::before {
 /* 3. Neon Palm Tree - Interactive section (WebGL canvas created dynamically) */
 .interactive > * { position: relative; z-index: 2; }
 
-/* 4. ASCII grid - Pricing section - sparse terminal chars on monospace grid */
-.pricing::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='240'%3E%3Cstyle%3Etext%7Bfill:rgba(34,211,238,0.2);font-family:monospace;font-size:10px%7D%3C/style%3E%3Ctext x='40' y='30'%3E%24%3E%3C/text%3E%3Ctext x='160' y='30'%3E0x7F%3C/text%3E%3Ctext x='280' y='30'%3EEOF%3C/text%3E%3Ctext x='0' y='60'%3E::1%3C/text%3E%3Ctext x='120' y='60'%3E%26%26%3C/text%3E%3Ctext x='240' y='90'%3E%7C%7C%3C/text%3E%3Ctext x='80' y='90'%3ENULL%3C/text%3E%3Ctext x='200' y='120'%3E%23!%3C/text%3E%3Ctext x='40' y='150'%3Esudo%3C/text%3E%3Ctext x='280' y='150'%3E~/%3C/text%3E%3Ctext x='160' y='180'%3E0xFF%3C/text%3E%3Ctext x='0' y='180'%3Epipe%3C/text%3E%3Ctext x='120' y='210'%3E%24PATH%3C/text%3E%3Ctext x='240' y='210'%3Ebin%3C/text%3E%3Ctext x='80' y='240'%3E0x00%3C/text%3E%3C/svg%3E");
-    background-size: 320px 240px;
-    pointer-events: none;
-}
-.pricing > * { position: relative; z-index: 1; }
-
-/* 5. Vertical lines (RGB subpixel) - Open Source section */
+/* 4. Vertical lines (RGB subpixel) - Open Source section */
 .open-source::before {
     content: '';
     position: absolute;
@@ -126,7 +114,7 @@ body::before {
 }
 .open-source > * { position: relative; z-index: 1; }
 
-/* 6. Binary/hex grid - Mobile Apps section - sparse hex on monospace grid */
+/* 5. Binary/hex grid - Mobile Apps section - sparse hex on monospace grid */
 .mobile-apps::before {
     content: '';
     position: absolute;
@@ -2510,130 +2498,6 @@ code, .mono {
     }
 }
 
-/* === PRICING === */
-.pricing {
-    background: var(--bg-abyss);
-    position: relative;
-}
-.pricing::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 600px;
-    height: 600px;
-    background: radial-gradient(circle, rgba(34, 211, 238, 0.05) 0%, transparent 70%);
-    pointer-events: none;
-}
-
-.pricing-cards {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 24px;
-    max-width: 800px;
-    margin: 0 auto;
-}
-
-.pricing-card {
-    background: var(--bg-deep);
-    border: 1px solid var(--border-dim);
-    border-radius: 16px;
-    padding: 40px;
-    position: relative;
-    overflow: hidden;
-}
-.pricing-card.featured {
-    border: 2px solid var(--accent-cyan);
-    box-shadow: 0 0 60px var(--glow-cyan);
-}
-.pricing-card.featured::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(ellipse at 30% 0%, rgba(34, 211, 238, 0.15) 0%, transparent 50%),
-                radial-gradient(ellipse at 70% 100%, rgba(139, 92, 246, 0.1) 0%, transparent 50%);
-    opacity: 0.8;
-    animation: pulse-glow 4s ease-in-out infinite alternate;
-}
-@keyframes pulse-glow {
-    0% { opacity: 0.5; }
-    100% { opacity: 1; }
-}
-.pricing-inner {
-    position: relative;
-    z-index: 1;
-}
-.pricing-tier {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    color: var(--text-dim);
-    margin-bottom: 12px;
-}
-.pricing-card.featured .pricing-tier {
-    color: var(--accent-cyan);
-}
-.pricing-amount {
-    font-size: 64px;
-    font-weight: 800;
-    letter-spacing: -2px;
-    margin-bottom: 8px;
-    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--text-bright) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-.pricing-period {
-    font-size: 18px;
-    font-weight: 400;
-    color: var(--text-mid);
-}
-.pricing-features {
-    list-style: none;
-    margin: 32px 0;
-}
-.pricing-features li {
-    padding: 12px 0;
-    color: var(--text-mid);
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    font-size: 15px;
-    border-bottom: 1px solid var(--border-dim);
-}
-.pricing-features li:last-child { border-bottom: none; }
-.pricing-features .check {
-    color: var(--accent-cyan);
-    font-weight: bold;
-    font-size: 18px;
-    display: flex;
-    align-items: center;
-}
-.pricing-features .check svg {
-    width: 20px;
-    height: 20px;
-    fill: currentColor;
-}
-.pricing-features .check.dim {
-    color: var(--text-dim);
-}
-.pricing-features .dim {
-    color: var(--text-dim);
-}
-.pricing-cta {
-    width: 100%;
-    justify-content: center;
-}
-.pricing-note {
-    font-size: 13px;
-    color: var(--text-dim);
-    margin-top: 20px;
-    text-align: center;
-}
-
 /* === INSTALL === */
 .install {
     background: var(--bg-deep);
@@ -3617,10 +3481,6 @@ code, .mono {
     }
     .browser-content { min-height: auto; padding: 12px; }
     .browser-url { font-size: 9px; padding: 4px 8px; }
-
-    .pricing-cards { grid-template-columns: 1fr; }
-    .pricing-card { padding: 32px 24px; }
-    .pricing-amount { font-size: 48px; }
 
     .install-steps {
         grid-template-columns: 1fr;

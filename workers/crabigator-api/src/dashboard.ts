@@ -1,9 +1,9 @@
 // Dashboard HTML served at /dashboard
 import { dashboardCss } from './dashboard/css';
 import { dashboardJs } from './dashboard/js';
-import { faviconSvg } from './dashboard/icons';
+import { faviconSvg, iconChevronRight } from './dashboard/icons';
 import type { RuntimeConfig } from './config';
-import { escapeHtml, metaPixelHtml, usePublicOrigin } from './html-render';
+import { metaPixelHtml, usePublicOrigin } from './html-render';
 
 export const dashboardHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -134,20 +134,15 @@ export const dashboardHtml = `<!DOCTYPE html>
                 Account
             </button>
             <div class="settings-popover" id="settings-popover">
-                <div class="settings-section usage-display" id="usage-display">
-                    <div class="usage-header">
-                        <span class="usage-label">Visible Sessions</span>
-                        <span class="usage-time" id="usage-time">0 / 3 visible</span>
-                    </div>
-                    <div class="usage-bar-container">
-                        <div class="usage-bar" id="usage-bar" style="width: 0%"></div>
-                    </div>
-                    <div class="usage-note">Free accounts show the 3 most recently active sessions.</div>
-                    <button class="upgrade-btn" id="upgrade-btn" onclick="showUpgradeModal()">
-                        Upgrade to Pro
+                <div class="settings-section" id="subscription-section" hidden>
+                    <div class="settings-section-label">Subscription</div>
+                    <p class="settings-description">Crabigator is now free. This account still has a paid subscription; cancel it any time.</p>
+                    <button class="manage-subscription-link" onclick="openSubscriptionPortal()">
+                        Manage subscription
+                        ${iconChevronRight}
                     </button>
                 </div>
-                <div class="settings-divider"></div>
+                <div class="settings-divider" id="subscription-divider" hidden></div>
                 <div class="settings-section" id="account-logins-section">
                     <div class="settings-section-label">Sign-in</div>
                     <p class="settings-description" id="account-logins-status">Pairing code only. Connect GitHub or Google to use the same account on MCP.</p>
@@ -237,102 +232,8 @@ export const dashboardHtml = `<!DOCTYPE html>
             <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
         </div>
         <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
-        <div class="session-limit-banner" id="session-limit-banner" hidden>
-            <div class="session-limit-kicker">Free session limit</div>
-            <div class="session-limit-title" id="session-limit-hidden-count">0 active sessions hidden</div>
-            <div class="session-limit-detail" id="session-limit-detail">Free accounts show the 3 most recently active sessions.</div>
-            <button class="session-limit-upgrade" onclick="showUpgradeModal()">Upgrade to Pro</button>
-        </div>
         <div class="container" id="sessions" data-layout="1" data-grouping="all"></div>
         <div class="pr-board" id="pr-board-view" hidden></div>
-    </div>
-
-    <!-- Gift Claim Overlay -->
-    <div class="gift-overlay" id="gift-overlay">
-        <div class="gift-modal">
-            <div class="gift-content" id="gift-content">
-                <div class="gift-icon">🎁</div>
-                <h2 class="gift-title">You've Been Gifted!</h2>
-                <p class="gift-subtitle">Someone has sent you a gift subscription to Crabigator Pro.</p>
-                <div class="gift-duration">
-                    <div class="gift-duration-label">Gift Duration</div>
-                    <div class="gift-duration-value" id="gift-duration-text">Month</div>
-                </div>
-                <div class="gift-code-label">Gift Code: <span class="gift-code-value" id="gift-code-display">XXXXXXXX</span></div>
-                <button class="gift-claim-btn" id="gift-claim-btn" onclick="claimGift()">
-                    Claim Your Gift
-                </button>
-                <button class="gift-dismiss" onclick="dismissGift()">Maybe later</button>
-            </div>
-            <div class="gift-loading" id="gift-loading">
-                <div class="gift-loading-spinner"></div>
-                <div class="gift-loading-text">Loading gift...</div>
-            </div>
-            <div class="gift-success" id="gift-success">
-                <div class="gift-success-icon">✓</div>
-                <div class="gift-success-text" id="gift-success-text">Gift claimed successfully!</div>
-            </div>
-            <div class="gift-error" id="gift-error">
-                <div class="gift-error-icon">😢</div>
-                <div class="gift-error-text" id="gift-error-text">Something went wrong</div>
-                <button class="gift-retry-btn" onclick="closeGiftOverlay()">Close</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Paywall Overlay -->
-    <div class="paywall-overlay" id="paywall-overlay">
-        <div class="paywall-modal">
-            <div class="paywall-content" id="paywall-content">
-                <div class="paywall-icon">🦀</div>
-                <h2 class="paywall-title" id="paywall-title">Upgrade to Pro</h2>
-                <p class="paywall-subtitle" id="paywall-subtitle">Show every active session at once. Free accounts show the 3 most recently active sessions.</p>
-                <div class="paywall-usage" id="paywall-usage-section" style="display: none;">
-                    <span class="paywall-usage-text"><span class="used" id="paywall-usage">3</span> visible sessions on Free</span>
-                </div>
-                <div class="paywall-price">$3</div>
-                <div class="paywall-price-period">per month</div>
-                <div class="paywall-features">
-                    <div class="paywall-feature">
-                        <span class="paywall-feature-icon">✓</span>
-                        <span>Unlimited visible sessions</span>
-                    </div>
-                    <div class="paywall-feature">
-                        <span class="paywall-feature-icon">✓</span>
-                        <span>Real-time session monitoring</span>
-                    </div>
-                    <div class="paywall-feature">
-                        <span class="paywall-feature-icon">✓</span>
-                        <span>Answer permissions from anywhere</span>
-                    </div>
-                    <div class="paywall-feature">
-                        <span class="paywall-feature-icon">✓</span>
-                        <span>Multi-device support</span>
-                    </div>
-                </div>
-                <div class="paywall-buttons">
-                    <button class="paywall-btn stripe" id="paywall-stripe-btn" onclick="initiateStripePayment()">
-                        Pay with Card
-                    </button>
-                    <button class="paywall-btn paypal" id="paywall-paypal-btn" onclick="initiatePayPalPayment()">
-                        Pay with PayPal
-                    </button>
-                </div>
-                <button class="paywall-dismiss" onclick="dismissPaywall()">Maybe later</button>
-            </div>
-            <div class="paywall-loading" id="paywall-loading">
-                <div class="paywall-loading-spinner"></div>
-                <div class="paywall-loading-text">Verifying payment...</div>
-            </div>
-            <div class="paywall-success" id="paywall-success">
-                <div class="paywall-success-icon">✓</div>
-                <div class="paywall-success-text">Welcome to Pro!</div>
-            </div>
-            <div class="paywall-error" id="paywall-error">
-                <div class="paywall-error-text" id="paywall-error-text">Payment processing failed. Please try again.</div>
-                <button class="paywall-retry-btn" onclick="showPaywallContent()">Try Again</button>
-            </div>
-        </div>
     </div>
 
     <script>${dashboardJs}</script>
@@ -340,30 +241,18 @@ export const dashboardHtml = `<!DOCTYPE html>
 </html>`;
 
 export function renderDashboardHtml(runtime: RuntimeConfig, metaPixelId = ''): string {
-    const limit = runtime.visible_session_limit;
-    const freeLimitCopy = `Free accounts show the ${limit} most recently active sessions.`;
     const browserConfig = JSON.stringify({
         capabilities: runtime.capabilities,
-        visible_session_limit: runtime.visible_session_limit,
         social_providers: runtime.social_providers,
     }).replace(/</g, '\\u003c');
     const disabledStyles = [
         !runtime.capabilities.transcription
             ? '.voice-btn,.voice-cancel-btn,.voice-actions,.voice-overlay{display:none!important}'
             : '',
-        !runtime.capabilities.billing
-            ? '.usage-display,.settings-divider:first-of-type,.paywall-overlay,#session-limit-banner{display:none!important}'
-            : '',
-        !runtime.capabilities.gifts ? '.gift-overlay{display:none!important}' : '',
         !runtime.capabilities.social_login ? '#account-logins-section,.social-login-stack,.pairing-divider{display:none!important}' : '',
     ].join('');
     const pixel = runtime.capabilities.marketing_analytics ? metaPixelHtml(metaPixelId) : '';
 
     return usePublicOrigin(dashboardHtml, runtime.origin)
-        .replaceAll('Free accounts show the 3 most recently active sessions.', freeLimitCopy)
-        .replace('id="usage-time">0 / 3 visible', `id="usage-time">0 / ${limit} visible`)
-        .replace('id="paywall-usage">3', `id="paywall-usage">${limit}`)
-        .replace('<div class="paywall-price">$3</div>', `<div class="paywall-price">${escapeHtml(runtime.billing_price)}</div>`)
-        .replace('<div class="paywall-price-period">per month</div>', `<div class="paywall-price-period">${escapeHtml(runtime.billing_period)}</div>`)
         .replace('</head>', `${pixel}<script>window.CRABIGATOR_CONFIG=${browserConfig};</script><style>${disabledStyles}</style></head>`);
 }

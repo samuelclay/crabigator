@@ -4,7 +4,6 @@ import {
     dotGridShader,
     scanlinesShader,
     crosshatchShader,
-    asciiNoiseShader,
     verticalLinesShader,
     binaryRainShader,
 } from './shaders';
@@ -29,7 +28,6 @@ export const webglJs = `
         'cta-section': ${JSON.stringify(dotGridShader)},
         'showcase': ${JSON.stringify(scanlinesShader)},
         'interactive': ${JSON.stringify(crosshatchShader)},
-        'pricing': ${JSON.stringify(asciiNoiseShader)},
         'open-source': ${JSON.stringify(verticalLinesShader)},
         'mobile-apps': ${JSON.stringify(binaryRainShader)},
     };
@@ -135,7 +133,7 @@ export const webglJs = `
     }
 
     // Intersection Observer to detect which section is visible
-    const sections = document.querySelectorAll('.cta-section, .showcase, .interactive, .pricing, .open-source, .mobile-apps');
+    const sections = document.querySelectorAll('.cta-section, .showcase, .interactive, .open-source, .mobile-apps');
 
     const observer = new IntersectionObserver((entries) => {
         let maxRatio = 0;
@@ -145,7 +143,7 @@ export const webglJs = `
             if (entry.intersectionRatio > maxRatio) {
                 maxRatio = entry.intersectionRatio;
                 maxSection = entry.target.className.split(' ').find(c =>
-                    ['cta-section', 'showcase', 'interactive', 'pricing', 'open-source', 'mobile-apps'].includes(c)
+                    ['cta-section', 'showcase', 'interactive', 'open-source', 'mobile-apps'].includes(c)
                 );
             }
         });

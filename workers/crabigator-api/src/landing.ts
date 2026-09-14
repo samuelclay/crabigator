@@ -4,7 +4,7 @@ import { landingJs } from './landing/js';
 import { palmWebglJs } from './landing/palm-webgl';
 import { analyticsJs } from './landing/analytics';
 import type { RuntimeConfig } from './config';
-import { escapeHtml, metaPixelHtml, usePublicOrigin } from './html-render';
+import { metaPixelHtml, usePublicOrigin } from './html-render';
 import {
     iconCrabigator,
     iconCrabigatorEncoded,
@@ -34,7 +34,6 @@ import {
     iconLines,
     iconMouse,
     iconBolt,
-    iconDollar,
     iconMail,
     iconBell,
     iconClock,
@@ -92,7 +91,6 @@ export const landingHtml = `<!DOCTYPE html>
         <div class="nav-links">
             <a href="#features" class="nav-link">Features</a>
             <a href="#security" class="nav-link">Security</a>
-            <a href="#pricing" class="nav-link">Pricing</a>
             <a href="#install" class="nav-link">Install</a>
             <a href="/dashboard" class="nav-btn" data-track="dashboard_nav" data-label="nav">Open Dashboard</a>
             <a href="https://github.com/samuelclay/crabigator" target="_blank" rel="noopener" class="nav-github">
@@ -746,44 +744,6 @@ export const landingHtml = `<!DOCTYPE html>
         </div>
     </section>
 
-    <!-- Pricing Section -->
-    <section class="section pricing" id="pricing">
-        <div class="section-header">
-            <p class="section-label">${iconDollar} Pricing</p>
-            <h2 class="section-title">Simple, transparent pricing</h2>
-        </div>
-        <div class="pricing-cards">
-            <div class="pricing-card">
-                <div class="pricing-inner">
-                    <div class="pricing-tier">Free</div>
-                    <div class="pricing-amount">$0<span class="pricing-period">/month</span></div>
-                    <ul class="pricing-features">
-                        <li><span class="check">${iconCheck}</span> Unlimited Claude Code, Codex, opencode &amp; Grok sessions</li>
-                        <li><span class="check">${iconCheck}</span> Answer permissions & questions</li>
-                        <li><span class="check">${iconCheck}</span> Unlimited web and mobile access</li>
-                        <li><span class="check">${iconCheck}</span> Real-time sync</li>
-                        <li><span class="check dim">${iconCheck}</span> <span class="dim">3 visible active sessions</span></li>
-                    </ul>
-                    <a href="#install" class="btn-primary pricing-cta outline" data-track="pricing_cta" data-label="free">Get Started</a>
-                </div>
-            </div>
-            <div class="pricing-card featured">
-                <div class="pricing-inner">
-                    <div class="pricing-tier">Pro</div>
-                    <div class="pricing-amount">$3<span class="pricing-period">/month</span></div>
-                    <ul class="pricing-features">
-                        <li><span class="check">${iconCheck}</span> Unlimited Claude Code, Codex, opencode &amp; Grok sessions</li>
-                        <li><span class="check">${iconCheck}</span> Answer permissions & questions</li>
-                        <li><span class="check">${iconCheck}</span> Unlimited web and mobile access</li>
-                        <li><span class="check">${iconCheck}</span> Real-time sync</li>
-                        <li><span class="check">${iconCheck}</span> Unlimited visible active sessions</li>
-                    </ul>
-                    <a href="#install" class="btn-primary pricing-cta" data-track="pricing_cta" data-label="pro">Get Started</a>
-                </div>
-            </div>
-        </div>
-    </section>
-
     <!-- Installation Section -->
     <section class="section install" id="install">
         <div class="section-header">
@@ -1055,14 +1015,9 @@ export const landingHtml = `<!DOCTYPE html>
 export function renderLandingHtml(runtime: RuntimeConfig, metaPixelId = ''): string {
     const pixel = runtime.capabilities.marketing_analytics ? metaPixelHtml(metaPixelId) : '';
     const disabledStyles = [
-        !runtime.capabilities.billing ? '#pricing,.nav-link[href="#pricing"]{display:none!important}' : '',
         !runtime.capabilities.marketing_analytics ? '.cta-form,.email-form{display:none!important}' : '',
     ].join('');
     let html = usePublicOrigin(landingHtml, runtime.origin)
-        .replace(
-            '<div class="pricing-amount">$3<span class="pricing-period">/month</span></div>',
-            `<div class="pricing-amount">${escapeHtml(runtime.billing_price)}<span class="pricing-period">${escapeHtml(runtime.billing_period)}</span></div>`,
-        )
         .replace('</head>', `${pixel}<style>${disabledStyles}</style></head>`);
     if (!runtime.capabilities.marketing_analytics) {
         html = html.replace(`<script>${analyticsJs}</script>`, '');
