@@ -6,6 +6,7 @@ import { callTool, listToolDescriptors } from './tools';
 import {
     assertSessionInGroup,
     authedApiRequest,
+    enrichSessions,
     listGroupSessions,
     sessionSnapshot,
     McpToolError,
@@ -204,21 +205,28 @@ function requireLinked(auth: McpAuth | null, id: string | number | null): unknow
 }
 
 async function listResources(env: Env, auth: McpAuth) {
-    const sessions = await listGroupSessions(env, auth.group_id);
+    const sessions = await enrichSessions(env, await listGroupSessions(env, auth.group_id), auth.group_id);
     return [
         { uri: 'crabigator://sessions', name: 'Live sessions', mimeType: 'application/json' },
         { uri: 'crabigator://prs', name: 'PR board', mimeType: 'application/json' },
-        ...sessions.map((session) => ({
-            uri: `crabigator://sessions/${session.id}`,
-            name: String(session.title || session.cwd || session.id),
-            mimeType: 'application/json',
-        })),
+        ...sessions.map((session) => {
+            const mark = session.session_mark as { glyph?: string } | null;
+            const label = String(session.title || session.cwd || session.id);
+            return {
+                uri: `crabigator://sessions/${session.id}`,
+                name: mark?.glyph ? `${mark.glyph} ${label}` : label,
+                mimeType: 'application/json',
+            };
+        }),
     ];
 }
 
 async function readResource(env: Env, auth: McpAuth, origin: string, uri: string) {
     if (uri === 'crabigator://sessions') {
-        return resourceJson(uri, await listGroupSessions(env, auth.group_id));
+        return resourceJson(
+            uri,
+            await enrichSessions(env, await listGroupSessions(env, auth.group_id), auth.group_id),
+        );
     }
     if (uri === 'crabigator://prs') {
         const request = authedApiRequest(origin, '/api/prs/board', auth.token, 'GET');

@@ -68,7 +68,31 @@ export async function ensureAccountSchema(env: Env): Promise<void> {
                 tool_calls INTEGER NOT NULL DEFAULT 0,
                 thinking_seconds INTEGER NOT NULL DEFAULT 0,
                 prompts_changed_at INTEGER,
-                completions_changed_at INTEGER
+                completions_changed_at INTEGER,
+                titles TEXT,
+                titles_changed_at INTEGER,
+                recap TEXT,
+                repo_owner TEXT,
+                repo_name TEXT,
+                branch TEXT,
+                uncommitted_files INTEGER,
+                additions INTEGER,
+                deletions INTEGER,
+                pr_scope TEXT
+            )
+        `),
+        env.DB.prepare(`
+            CREATE TABLE IF NOT EXISTS session_prs (
+                session_id TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                repo TEXT NOT NULL,
+                number INTEGER NOT NULL,
+                url TEXT NOT NULL,
+                state TEXT,
+                is_primary INTEGER DEFAULT 0,
+                data TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, owner, repo, number)
             )
         `),
     ]);

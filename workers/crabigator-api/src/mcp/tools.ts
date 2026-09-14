@@ -6,6 +6,7 @@ import { handleTranscribe } from '../handlers/transcribe';
 import {
     assertSessionInGroup,
     authedApiRequest,
+    enrichSessions,
     listGroupSessions,
     needsAttention,
     sessionFetch,
@@ -31,7 +32,7 @@ const sessionIdProp = {
 export const toolDefs: ToolDef[] = [
     {
         name: 'list_sessions',
-        description: 'List live Crabigator sessions for this account. Use needs_attention to find question or permission prompts.',
+        description: 'List live Crabigator sessions for this account. Each session includes its identity chip (glyph + colors), title, and PRs — the same fields the PR board uses. Use needs_attention to find question or permission prompts.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -53,12 +54,12 @@ export const toolDefs: ToolDef[] = [
             if (typeof args.platform === 'string') {
                 sessions = sessions.filter((session) => session.platform === args.platform);
             }
-            return { sessions };
+            return { sessions: await enrichSessions(env, sessions, auth.group_id) };
         },
     },
     {
         name: 'get_session',
-        description: 'Snapshot of one session: state, prompt, recap, PRs, git, stats, title. Does not include the full screen.',
+        description: 'Snapshot of one session: identity chip (glyph + colors), title, PRs, recap, git, stats, prompt. Does not include the full screen.',
         inputSchema: {
             type: 'object',
             required: ['session_id'],
@@ -73,8 +74,13 @@ export const toolDefs: ToolDef[] = [
                 scrollback: _scrollback,
                 ...rest
             } = snap;
+            const [enriched] = await enrichSessions(env, [{ id: sessionId, ...rest }], auth.group_id);
+            const livePrs = Array.isArray(rest.prs) ? rest.prs as unknown[] : [];
             return {
-                ...rest,
+                ...enriched,
+                title: rest.title || enriched.title,
+                title_history: rest.title_history || enriched.title_history,
+                prs: livePrs.length ? livePrs : enriched.prs,
                 has_screen: Boolean(snap.screen),
                 scrollback_preview: typeof snap.scrollback === 'string'
                     ? tailLines(String(snap.scrollback), 20)
@@ -187,7 +193,7 @@ export const toolDefs: ToolDef[] = [
     },
     {
         name: 'get_pr_board',
-        description: 'Cross-session PR board for this account, same data as the website.',
+        description: 'Cross-session PR board for this account, same payload as the website: PRs, per-session titles, recaps, git, Slack, and identity chips (glyph + colors). Enough to recreate the board.',
         inputSchema: {
             type: 'object',
             properties: { days: { type: 'number' } },

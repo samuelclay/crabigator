@@ -3,6 +3,7 @@ import type { SessionPr } from '../types/session';
 import { jsonResponse } from '../router';
 import { requireDeviceAuth, requireMobileAuth } from '../auth/middleware';
 import { watchedPrRows, watchedPlaceholderPr, deleteWatchedPr } from './watched-prs';
+import { assignSessionMarks, withSessionMark } from '../session-mark';
 
 interface BoardSessionRow {
     session_id: string;
@@ -753,5 +754,16 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     collectSlackThreads(rows.results ?? [], slack);
     collectSlackThreads(sessionRows.results ?? [], slack);
 
-    return jsonResponse({ prs, sessions, slack: [...slack.values()] });
+    const markPool = [...sessions];
+    for (const entry of prs) markPool.push(...entry.sessions);
+    const marks = assignSessionMarks(markPool);
+
+    return jsonResponse({
+        prs: prs.map((entry) => ({
+            ...entry,
+            sessions: entry.sessions.map((session) => withSessionMark(session, marks)),
+        })),
+        sessions: sessions.map((session) => withSessionMark(session, marks)),
+        slack: [...slack.values()],
+    });
 }

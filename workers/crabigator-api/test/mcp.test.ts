@@ -1,6 +1,8 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { mintViewerToken, upsertAccountFromProfile, attachDesktopToAccount, getAccount } from '../src/auth/accounts';
+import { enrichSessions } from '../src/mcp/session';
+import { sessionMarkFromSeed } from '../src/session-mark';
 import type { Env } from '../src/types/env';
 import { ensureAccountSchema } from './schema';
 
@@ -288,6 +290,59 @@ describe('MCP server', () => {
         const body = await response.json() as { result?: { isError?: boolean; content?: Array<{ text: string }> } };
         expect(body.result?.isError).toBe(true);
         expect(body.result?.content?.[0]?.text).toMatch(/FORBIDDEN|NOT_FOUND/);
+    });
+
+    it('attaches identity chips, titles, and PRs to sessions', async () => {
+        const alice = await linkedAccount('MK1');
+        const account = await getAccount(testEnv, alice.accountId);
+        const sessionId = 'sess-mark-1';
+        await testEnv.DB.prepare(`
+            INSERT INTO sessions (id, device_id, client_session_id, cwd, platform, state, titles, titles_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+            sessionId,
+            alice.deviceId,
+            'local-mark-1',
+            '/tmp/mark',
+            'claude',
+            'ready',
+            JSON.stringify(['old title', 'Ship the chip']),
+            1_700_000_000,
+        ).run();
+        await testEnv.DB.prepare(`
+            INSERT INTO session_prs (session_id, owner, repo, number, url, state, is_primary, data, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+            sessionId,
+            'acme',
+            'app',
+            42,
+            'https://github.com/acme/app/pull/42',
+            'OPEN',
+            1,
+            JSON.stringify({ title: 'Add chips', branch: 'feat/chips', additions: 10, deletions: 2 }),
+            1_700_000_000,
+        ).run();
+
+        const enriched = await enrichSessions(testEnv, [{
+            id: sessionId,
+            cwd: '/tmp/mark',
+            platform: 'claude',
+            state: 'ready',
+        }], account?.group_id || undefined);
+
+        expect(enriched[0].title).toBe('Ship the chip');
+        expect(enriched[0].title_history).toEqual(['old title', 'Ship the chip']);
+        expect(enriched[0].client_session_id).toBe('local-mark-1');
+        expect(enriched[0].session_mark).toEqual(sessionMarkFromSeed('local-mark-1'));
+        expect(enriched[0].prs).toEqual([expect.objectContaining({
+            owner: 'acme',
+            repo: 'app',
+            number: 42,
+            title: 'Add chips',
+            primary: true,
+            url: 'https://github.com/acme/app/pull/42',
+        })]);
     });
 
     it('rejects an unknown protocol version header', async () => {
