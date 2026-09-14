@@ -154,6 +154,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                     <div class="settings-section-label">MCP</div>
                     <p class="settings-description">Connect Claude, Cursor, Grok, or another agent to this account. Sign in with GitHub or Google when the client opens a browser.</p>
                     <p class="settings-description"><code id="mcp-url"></code></p>
+                    <p class="settings-description"><a href="/mcp-tools">See every tool and example output</a></p>
                 </div>
                 <div class="settings-divider"></div>
                 <div class="settings-section">
