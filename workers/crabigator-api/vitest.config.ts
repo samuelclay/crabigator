@@ -19,11 +19,6 @@ export default defineConfig({
                             traffic_alerts: false,
                             staff: true,
                         },
-                        billing: {
-                            visible_session_limit: 7,
-                            price_display: '€5',
-                            price_period: 'per week',
-                        },
                     },
                     STAFF_ACCESS_KEY: 'test-only-staff-access-key',
                 },

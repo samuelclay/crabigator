@@ -22,8 +22,7 @@ import { voiceJs } from './voice';
 import { sseJs } from './sse';
 import { viewerActivityJs } from './viewer-activity';
 import { pairingJs } from './pairing';
-import { giftClaimJs } from './gift-claim';
-import { paywallJs } from './paywall';
+import { subscriptionJs } from './subscription';
 import { prBoardJs } from './pr-board';
 import { sessionMarkJs } from './session-mark';
 import { initJs } from './init';
@@ -53,8 +52,7 @@ export const dashboardJs = [
     voiceJs,
     sseJs,
     pairingJs,
-    giftClaimJs,  // Must be after pairingJs (uses isPaired and getAuthHeaders)
-    paywallJs,  // Must be after pairingJs (uses auth functions)
+    subscriptionJs,  // Must be after pairingJs (uses getAuthHeaders)
     prBoardJs,  // Must be after pairingJs and changesWidgetJs (uses getAuthHeaders, PR helpers)
     initJs
 ].join('\n');

@@ -14,9 +14,6 @@ export interface AppConfig {
         mcp?: boolean;
     };
     billing?: {
-        visible_session_limit?: number;
-        price_display?: string;
-        price_period?: string;
         stripe_mode?: 'test' | 'live';
         paypal_mode?: 'sandbox' | 'live';
     };
@@ -44,9 +41,6 @@ export interface Capabilities {
 
 export interface RuntimeConfig {
     origin: string;
-    visible_session_limit: number;
-    billing_price: string;
-    billing_period: string;
     capabilities: Capabilities;
     missing_config: string[];
     social_providers: { github: boolean; google: boolean };
@@ -136,9 +130,6 @@ export function getRuntimeConfig(request: Request, env: Env): RuntimeConfig {
 
     return {
         origin: getPublicOrigin(request, config),
-        visible_session_limit: Math.max(1, config.billing?.visible_session_limit || 3),
-        billing_price: config.billing?.price_display || '$3',
-        billing_period: config.billing?.price_period || 'per month',
         capabilities,
         missing_config: [...missing],
         social_providers: { github: githubReady, google: googleReady },

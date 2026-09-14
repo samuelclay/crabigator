@@ -38,14 +38,6 @@ export const sessionJs = `
             return raw > 1000000000000 ? raw / 1000 : raw;
         }
 
-        function sortSessionsByRecentActivity(sessionList) {
-            return [...sessionList].sort((a, b) => {
-                const activityDelta = getSessionActivityTime(b) - getSessionActivityTime(a);
-                if (activityDelta !== 0) return activityDelta;
-                return (b.started_at || 0) - (a.started_at || 0);
-            });
-        }
-
         function sortSessionsByNewestStart(sessionList) {
             return [...sessionList].sort((a, b) => {
                 const startedDelta = getSessionStartedTime(b) - getSessionStartedTime(a);
@@ -54,48 +46,11 @@ export const sessionJs = `
             });
         }
 
-        function getSessionVisibilityLimit() {
-            return isProUser ? Infinity : FREE_VISIBLE_SESSION_LIMIT;
-        }
-
+        // Every account sees every session. Only the focus filter narrows the list.
         function getRenderableSessions(sessionList) {
-            const candidates = singleSessionId
+            return singleSessionId
                 ? sessionList.filter(session => sessionMatchesFocus(session))
                 : [...sessionList];
-            const limit = getSessionVisibilityLimit();
-
-            let renderable;
-            if (!Number.isFinite(limit)) {
-                // Pro / single-session view: no cap, no lock.
-                renderable = candidates;
-            } else if (lockedVisibleSessionIds) {
-                // Free tier with the lock already established at first render.
-                // Only show the originally-chosen IDs that still exist as
-                // active sessions. Don't promote hidden sessions just because
-                // their last_activity_at bumped — that's the churn we want
-                // to avoid. A page reload picks a fresh top-N.
-                renderable = candidates.filter(s => lockedVisibleSessionIds.has(s.id));
-            } else if (candidates.length > 0) {
-                // Free tier, first non-empty render: pick the top N by recent
-                // activity and freeze that selection for the lifetime of the page.
-                renderable = sortSessionsByRecentActivity(candidates).slice(0, limit);
-                lockedVisibleSessionIds = new Set(renderable.map(s => s.id));
-                console.info(
-                    '[crabigator] locked visible sessions (' + renderable.length + '/' +
-                    candidates.length + '):',
-                    renderable.map(s => s.id.split('-')[0] + ' @ ' + (s.cwd || '?'))
-                );
-            } else {
-                // No candidates yet — leave the lock null so a later non-empty
-                // render still has a chance to set it.
-                renderable = [];
-            }
-
-            hiddenSessionCount = Number.isFinite(limit)
-                ? Math.max(0, candidates.length - renderable.length)
-                : 0;
-            visibleSessionIds = new Set(renderable.map(session => session.id));
-            return renderable;
         }
 
         function getSidebarSessions(sessionList) {
@@ -125,27 +80,6 @@ export const sessionJs = `
             }
         }
 
-        function updateSessionLimitBanner() {
-            const banner = document.getElementById('session-limit-banner');
-            const countEl = document.getElementById('session-limit-hidden-count');
-            const detailEl = document.getElementById('session-limit-detail');
-            if (!banner) return;
-
-            if (isProUser || isFocusedMode() || hiddenSessionCount <= 0) {
-                banner.hidden = true;
-                return;
-            }
-
-            const total = allSessions.length;
-            banner.hidden = false;
-            if (countEl) {
-                countEl.textContent = hiddenSessionCount + ' active session' + (hiddenSessionCount === 1 ? '' : 's') + ' hidden';
-            }
-            if (detailEl) {
-                detailEl.textContent = 'Free accounts show the ' + FREE_VISIBLE_SESSION_LIMIT + ' most recently active sessions. Upgrade to Pro to see all ' + total + ' active sessions at once.';
-            }
-        }
-
         function syncRenderedSessions() {
             const container = document.getElementById('sessions');
             if (!container) return;
@@ -156,20 +90,10 @@ export const sessionJs = `
                 let needsRerender = false;
 
                 updateSessionsCount();
-                updateSessionLimitBanner();
-                if (typeof updateUsageDisplay === 'function') {
-                    updateUsageDisplay();
-                }
 
                 for (const [id, session] of sessions) {
                     if (!renderableIds.has(id)) {
-                        console.info(
-                            '[crabigator] removing session card',
-                            id.split('-')[0],
-                            lockedVisibleSessionIds && !lockedVisibleSessionIds.has(id)
-                                ? '(not in locked set)'
-                                : '(no longer active)'
-                        );
+                        console.info('[crabigator] removing session card', id.split('-')[0]);
                         // Snapshot last-known metadata into allSessions before we
                         // drop the live connection, so the sidebar (which lists
                         // every session) keeps showing real titles/state/stats
@@ -274,14 +198,13 @@ export const sessionJs = `
                 allSessions = data.sessions;
                 claimMarksFor(allSessions);
 
-                // Filter the main content to the focused session if specified, then apply the Free visibility cap.
+                // Filter the main content to the focused session if specified.
                 const filteredSessions = getRenderableSessions(data.sessions);
                 if (isFocusedMode()) {
                     applyFocusMode();
                 }
                 // Always update session count in sessions button
                 updateSessionsCount();
-                updateSessionLimitBanner();
 
                 const container = document.getElementById('sessions');
                 const restorePagePosition = capturePageScrollRestorer();

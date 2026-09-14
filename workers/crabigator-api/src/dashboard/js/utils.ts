@@ -62,7 +62,6 @@ export const utilsJs = `
             window.history[historyMethod]({}, '', url.pathname + url.search + url.hash);
 
             singleSessionId = nextSessionId;
-            resetVisibleSessionLock();
             applyFocusMode();
 
             if (!isFocusedMode() && typeof setLayout === 'function') {
@@ -89,7 +88,6 @@ export const utilsJs = `
 
         window.addEventListener('popstate', () => {
             singleSessionId = readFocusedSessionId();
-            resetVisibleSessionLock();
             applyFocusMode();
 
             if (!isFocusedMode() && typeof setLayout === 'function') {

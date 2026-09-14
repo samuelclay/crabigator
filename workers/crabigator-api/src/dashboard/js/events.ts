@@ -262,10 +262,6 @@ export const eventsJs = `
                             if (allIdx !== -1) {
                                 allSessions.splice(allIdx, 1);
                                 updateSessionsCount();
-                                updateSessionLimitBanner();
-                                if (typeof updateUsageDisplay === 'function') {
-                                    updateUsageDisplay();
-                                }
                             }
                             const cwd = card.querySelector('.cwd')?.textContent;
                             card.remove();

@@ -19,11 +19,6 @@ export const initJs = `
                 return;
             }
 
-            // Check for gift claim via URL parameter
-            const handledGift = GIFTS_ENABLED ? await handleGiftParam() : false;
-            // Note: Gift handling shows overlay but doesn't block normal init
-            // User can dismiss and still use the dashboard
-
             // Check pairing status - if not paired, show pairing gate
             if (!checkPairingStatus()) {
                 showPairingGate();
@@ -37,10 +32,8 @@ export const initJs = `
                 connectSessionListStream();
                 // Start viewer activity tracking for streaming optimization
                 startViewerActivityTracking();
-                // Initialize usage tracking and paywall
-                if (BILLING_ENABLED) initUsageTracking();
-                // Check for pending gift that was claimed before pairing
-                if (GIFTS_ENABLED) resolvePendingGift();
+                // Offer the billing portal to accounts that still pay
+                if (BILLING_ENABLED) fetchSubscription();
             }
         })();
 `;

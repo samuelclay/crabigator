@@ -456,7 +456,7 @@ export const styleJs = `
                     }
 
                     // Add empty groups for historical projects (only in single-device mode)
-                    if (!isFocusedMode() && allProjects && allProjects.length > 0 && hiddenSessionCount === 0) {
+                    if (!isFocusedMode() && allProjects && allProjects.length > 0) {
                         for (const project of allProjects) {
                             if (!groups.has(project.cwd)) {
                                 groups.set(project.cwd, { sessions: [], mostRecentTime: project.last_active || 0 });

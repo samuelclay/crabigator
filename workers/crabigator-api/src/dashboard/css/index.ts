@@ -12,8 +12,7 @@ import { promptCss } from './prompt';
 import { pairingCss } from './pairing';
 import { layoutCss } from './layout';
 import { sidebarCss } from './sidebar';
-import { paywallCss } from './paywall';
-import { giftCss } from './gift';
+import { subscriptionCss } from './subscription';
 import { voiceCss } from './voice';
 import { prBoardCss } from './pr-board';
 
@@ -31,8 +30,7 @@ export const dashboardCss = [
     pairingCss,
     layoutCss,
     sidebarCss,
-    paywallCss,
-    giftCss,
+    subscriptionCss,
     voiceCss,
     prBoardCss,
 ].join('\n');

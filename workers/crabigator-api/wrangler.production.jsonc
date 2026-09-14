@@ -76,9 +76,6 @@
         "mcp": true
       },
       "billing": {
-        "visible_session_limit": 3,
-        "price_display": "$3",
-        "price_period": "per month",
         "stripe_mode": "live",
         "paypal_mode": "live"
       },

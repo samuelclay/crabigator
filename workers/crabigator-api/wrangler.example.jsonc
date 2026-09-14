@@ -62,11 +62,6 @@
         "mcp": true
       },
       "billing": {
-        // This cap applies only while billing is enabled.
-        "visible_session_limit": 3,
-        // Text shown for the paid plan. These values are display-only.
-        "price_display": "$3",
-        "price_period": "per month",
         // Modes choose which provider secrets the Worker reads.
         "stripe_mode": "test",
         "paypal_mode": "sandbox"

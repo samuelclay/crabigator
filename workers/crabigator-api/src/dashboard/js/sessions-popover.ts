@@ -24,7 +24,7 @@ export const sessionsPopoverJs = `
 
             const count = isFocusedMode()
                 ? allSessions.length
-                : (visibleSessionIds.size || getRenderableSessions(allSessions).length);
+                : getRenderableSessions(allSessions).length;
             setText(countEl, count);
             setText(labelEl, count === 1 ? 'session' : 'sessions');
             setAttr(buttonEl, 'aria-label', count + (count === 1 ? ' session' : ' sessions'));
