@@ -118,6 +118,7 @@ export const layoutCss = `
     align-items: center;
     gap: 12px;
     flex-shrink: 0;
+    position: relative;
 }
 .project-collapse-icon {
     width: 20px;
@@ -184,6 +185,38 @@ export const layoutCss = `
     background: var(--bg-surface);
     color: var(--accent-green);
     border-color: var(--accent-green);
+}
+.spawn-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    flex-direction: column;
+    min-width: 148px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-dim);
+    border-radius: 8px;
+    padding: 6px;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+    z-index: 30;
+}
+.spawn-menu.visible {
+    display: flex;
+}
+.spawn-menu button {
+    font-family: 'JetBrains Mono', monospace;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+}
+.spawn-menu button:hover {
+    background: var(--bg-surface);
+    color: var(--accent-cyan);
 }
 .project-close-btn {
     font-family: 'JetBrains Mono', monospace;

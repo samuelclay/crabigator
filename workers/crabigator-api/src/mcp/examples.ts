@@ -340,7 +340,7 @@ export const toolExamples: Record<string, ToolExample> = {
     spawn_session: {
         args: { cwd: '/Users/sclay/projects/api', platform: 'claude' },
         output: { ok: true },
-        notes: 'Asks a live desktop to open a new terminal. If none is connected, returns { ok: false, fallback: "url_scheme", url: "crabigator://spawn?cwd=..." }.',
+        notes: 'Asks a live desktop to open a new session. Ghostty opens a tab in an existing window. If none is connected, returns { ok: false, fallback: "url_scheme", url: "crabigator://spawn?cwd=..." }.',
     },
     hide_project: {
         args: { cwd: '/Users/sclay/projects/old-app' },

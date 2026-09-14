@@ -357,7 +357,7 @@ export const toolDefs: ToolDef[] = [
     },
     {
         name: 'spawn_session',
-        description: 'Ask a live desktop to open a new Crabigator terminal in cwd.',
+        description: 'Ask a live desktop to open a new Claude, Codex, opencode, or Grok session in cwd. Ghostty opens a tab in an existing window.',
         inputSchema: {
             type: 'object',
             required: ['cwd'],

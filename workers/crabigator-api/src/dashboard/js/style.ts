@@ -234,6 +234,9 @@ export const styleJs = `
             if (sidebarSettingsPopover && sidebarSettingsBtn && !sidebarSettingsPopover.contains(e.target) && !sidebarSettingsBtn.contains(e.target)) {
                 closeSidebarSettings();
             }
+            if (!e.target.closest('.spawn-menu, .project-add-btn')) {
+                closeSpawnMenus();
+            }
         });
 
         // Session grouping mode
@@ -545,7 +548,13 @@ export const styleJs = `
                         <span class="project-name">\${escapeHtml(projectName)}</span>
                         <span class="project-path">\${escapeHtml(cwd)}</span>
                         <span class="project-count">\${sessionCards.length} session\${sessionCards.length !== 1 ? 's' : ''}</span>
-                        <button class="project-add-btn" onclick="event.stopPropagation(); spawnSession('\${escapeHtml(cwd)}')" title="New terminal in \${escapeHtml(projectName)}">+</button>
+                        <button class="project-add-btn" onclick="event.stopPropagation(); toggleSpawnMenu(this)" title="New session in \${escapeHtml(projectName)}">+</button>
+                        <div class="spawn-menu" onclick="event.stopPropagation()">
+                            <button type="button" onclick="spawnSessionFromMenu(this, 'claude')">Claude</button>
+                            <button type="button" onclick="spawnSessionFromMenu(this, 'codex')">Codex</button>
+                            <button type="button" onclick="spawnSessionFromMenu(this, 'opencode')">opencode</button>
+                            <button type="button" onclick="spawnSessionFromMenu(this, 'grok')">Grok</button>
+                        </div>
                         \${sessionCards.length === 0 ? \`<button class="project-close-btn" onclick="event.stopPropagation(); closeProject('\${escapeHtml(cwd)}')" title="Remove project">×</button>\` : ''}
                     </div>
                 </div>
@@ -567,12 +576,34 @@ export const styleJs = `
             return group;
         }
 
-        async function spawnSession(cwd) {
+        function toggleSpawnMenu(btn) {
+            const menu = btn.parentElement?.querySelector('.spawn-menu');
+            if (!menu) return;
+            const alreadyOpen = menu.classList.contains('visible');
+            closeSpawnMenus();
+            if (!alreadyOpen) menu.classList.add('visible');
+        }
+
+        function closeSpawnMenus() {
+            document.querySelectorAll('.spawn-menu.visible').forEach((menu) => {
+                menu.classList.remove('visible');
+            });
+        }
+
+        function spawnSessionFromMenu(btn, platform) {
+            const cwd = btn.closest('.project-group')?.dataset.project;
+            closeSpawnMenus();
+            if (cwd) spawnSession(cwd, platform);
+        }
+
+        async function spawnSession(cwd, platform) {
+            const spawnUrl = 'crabigator://spawn?cwd=' + encodeURIComponent(cwd)
+                + (platform ? '&platform=' + encodeURIComponent(platform) : '');
             try {
                 const resp = await fetch(API_BASE + '/spawn', {
                     method: 'POST',
                     headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ cwd }),
+                    body: JSON.stringify({ cwd, platform }),
                 });
                 const data = await resp.json().catch(() => ({}));
                 if (data.fallback === 'url_scheme' && data.url) {
@@ -584,7 +615,7 @@ export const styleJs = `
                 }
             } catch (err) {
                 console.error('Spawn error:', err);
-                window.location.href = 'crabigator://spawn?cwd=' + encodeURIComponent(cwd);
+                window.location.href = spawnUrl;
             }
         }
 
