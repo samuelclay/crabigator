@@ -389,13 +389,14 @@ impl CaptureManager {
         Ok(contents)
     }
 
-    /// Get the capture directory path.
-    #[allow(dead_code)]
+    /// Capture directory for debug dumps. Only called from debug builds.
+    #[cfg(debug_assertions)]
     pub fn capture_dir(&self) -> &PathBuf {
         &self.capture_dir
     }
 
-    /// Check if capture is enabled.
+    /// Whether capture is on. Only called from debug builds.
+    #[cfg(debug_assertions)]
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }
