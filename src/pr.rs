@@ -27,12 +27,15 @@ use crate::slack::{extract_threads, has_only_channel_id, SlackDirectory, SlackTh
 
 /// Minimum time between `gh pr view` refreshes for a single PR.
 const REFRESH_THROTTLE: Duration = Duration::from_secs(30);
-/// PR status and review-thread counts stay responsive while a PR is being
-/// discussed or updated, then refresh hourly to remain eventually consistent.
-const PR_ACTIVE_THROTTLE: Duration = Duration::from_secs(60);
-const PR_IDLE_THROTTLE: Duration = Duration::from_secs(60 * 60);
-const COMMENTS_IDLE_THROTTLE: Duration = Duration::from_secs(60 * 60);
-const PR_ACTIVE_WINDOW: Duration = Duration::from_secs(15 * 60);
+/// How often to poll GitHub from how recently the session or PR moved:
+/// every minute for 30 minutes, every 15 minutes for 6 hours, then hourly
+/// for 48 hours.
+const PR_HOT_WINDOW: Duration = Duration::from_secs(30 * 60);
+const PR_HOT_THROTTLE: Duration = Duration::from_secs(60);
+const PR_WARM_WINDOW: Duration = Duration::from_secs(6 * 60 * 60);
+const PR_WARM_THROTTLE: Duration = Duration::from_secs(15 * 60);
+const PR_COOL_WINDOW: Duration = Duration::from_secs(48 * 60 * 60);
+const PR_COOL_THROTTLE: Duration = Duration::from_secs(60 * 60);
 /// How many pasted-prompt URLs to keep for branch matching.
 const PROMPT_URLS_KEPT: usize = 32;
 /// How long a pasted Slack permalink keeps claiming new PRs as their origin.
@@ -693,9 +696,11 @@ pub struct PrTracker {
     /// Last review-thread query attempt per PR URL. Failures back off like
     /// successes, so a PR whose threads we can't read isn't re-queried each tick.
     comments_attempted_at: HashMap<String, Instant>,
-    /// Last observed mention, push, or creation per PR URL. Recent activity uses
-    /// a one-minute status/review cadence; older PRs use the idle fallback.
+    /// Last observed mention, push, or creation per PR URL. Recent activity
+    /// uses a faster status/review cadence.
     pr_active_at: HashMap<String, Instant>,
+    /// Latest prompt or completion time for this session (unix seconds).
+    session_activity_at: Option<f64>,
     /// Update commands already handled in the current turn, counted by their
     /// command text so rescanning the growing transcript does not make one push
     /// look perpetually recent.
@@ -757,6 +762,7 @@ impl PrTracker {
             fetch_failures: HashMap::new(),
             comments_attempted_at: HashMap::new(),
             pr_active_at: HashMap::new(),
+            session_activity_at: None,
             update_commands_seen: HashMap::new(),
             pending_pr_active: HashMap::new(),
             prompt_count: 0,
@@ -1440,21 +1446,30 @@ impl PrTracker {
     ///
     /// Merged and closed PRs are skipped — their conversations are moot, and the
     /// count they last had is cleared by [`apply_fetch`] — so this only costs a
-    /// GraphQL round trip for work still in flight. Recently mentioned or updated
-    /// PRs refresh every minute; inactive PRs refresh hourly.
+    /// GraphQL round trip for work still in flight. Cadence follows session
+    /// and PR recency: every minute, every 15 minutes, then hourly.
     fn refresh_review_threads(&mut self) {
+        let now = now_unix_ms();
+        let session_activity_at = self.session_activity_at;
         let due: Vec<String> = self
             .prs
             .iter()
             .filter(|pr| pr.state == "OPEN" && !pr.url.is_empty())
-            .map(|pr| pr.url.clone())
-            .filter(|url| !self.pending.contains_key(&threads_key(url)))
-            .filter(|url| {
+            .filter(|pr| !self.pending.contains_key(&threads_key(&pr.url)))
+            .filter(|pr| {
                 review_threads_due(
-                    self.comments_attempted_at.get(url).map(Instant::elapsed),
-                    self.pr_active_at.get(url).map(Instant::elapsed),
+                    self.comments_attempted_at
+                        .get(&pr.url)
+                        .map(Instant::elapsed),
+                    activity_age(
+                        self.pr_active_at.get(&pr.url).map(Instant::elapsed),
+                        pr.last_mentioned_at,
+                        session_activity_at,
+                        now,
+                    ),
                 )
             })
+            .map(|pr| pr.url.clone())
             .collect();
         for url in due {
             self.spawn_threads_fetch(url);
@@ -1575,11 +1590,18 @@ impl PrTracker {
         self.comments_attempted_at.remove(url);
     }
 
-    /// Refresh open PR status every minute for 15 minutes after the latest
-    /// mention, push, or creation, then hourly while it remains open. Mentions
-    /// themselves bypass the cadence and refresh immediately.
+    /// The session's latest prompt or completion, so idle sessions still poll
+    /// GitHub on the recency cadence instead of waiting for another mention.
+    pub fn note_session_activity(&mut self, unix_secs: Option<f64>) {
+        self.session_activity_at = unix_secs;
+    }
+
+    /// Refresh open PR status on a recency cadence: every minute for 30
+    /// minutes, every 15 minutes for 6 hours, then hourly for 48 hours.
+    /// Mentions bypass the cadence and refresh immediately.
     fn refresh_open_prs(&mut self) {
         let now = now_unix_ms();
+        let session_activity_at = self.session_activity_at;
         let due: Vec<String> = self
             .prs
             .iter()
@@ -1589,7 +1611,12 @@ impl PrTracker {
                     self.refresh_attempted_at.get(&pr.url).map(Instant::elapsed),
                     (pr.refreshed_at != 0)
                         .then(|| Duration::from_millis(now.saturating_sub(pr.refreshed_at))),
-                    self.pr_active_at.get(&pr.url).map(Instant::elapsed),
+                    activity_age(
+                        self.pr_active_at.get(&pr.url).map(Instant::elapsed),
+                        pr.last_mentioned_at,
+                        session_activity_at,
+                        now,
+                    ),
                 )
             })
             .map(|pr| pr.url.clone())
@@ -2131,14 +2158,49 @@ fn pr_does_not_exist(error: &str) -> bool {
         || error.contains("no pull requests found")
 }
 
-/// Whether a review-thread query is due at the active or idle cadence.
+/// How recently a PR or its session last moved.
+fn activity_age(
+    pr_active_elapsed: Option<Duration>,
+    last_mentioned_at: u64,
+    session_activity_at: Option<f64>,
+    now_ms: u64,
+) -> Option<Duration> {
+    let mut ages = Vec::new();
+    if let Some(age) = pr_active_elapsed {
+        ages.push(age);
+    }
+    if last_mentioned_at > 0 {
+        ages.push(Duration::from_millis(
+            now_ms.saturating_sub(last_mentioned_at),
+        ));
+    }
+    if let Some(secs) = session_activity_at {
+        ages.push(Duration::from_millis(
+            now_ms.saturating_sub((secs * 1000.0) as u64),
+        ));
+    }
+    ages.into_iter().min()
+}
+
+/// How often to poll GitHub for one PR, from how recently it or the session
+/// moved. `None` means the activity is too old to keep polling.
+fn status_refresh_interval(activity_age: Option<Duration>) -> Option<Duration> {
+    match activity_age {
+        Some(age) if age < PR_HOT_WINDOW => Some(PR_HOT_THROTTLE),
+        Some(age) if age < PR_WARM_WINDOW => Some(PR_WARM_THROTTLE),
+        Some(age) if age < PR_COOL_WINDOW => Some(PR_COOL_THROTTLE),
+        Some(_) => None,
+        None => Some(PR_COOL_THROTTLE),
+    }
+}
+
+/// Whether a review-thread query is due at the recency cadence.
 fn review_threads_due(
     last_attempt_age: Option<Duration>,
     last_activity_age: Option<Duration>,
 ) -> bool {
-    let throttle = match last_activity_age {
-        Some(age) if age < PR_ACTIVE_WINDOW => PR_ACTIVE_THROTTLE,
-        _ => COMMENTS_IDLE_THROTTLE,
+    let Some(throttle) = status_refresh_interval(last_activity_age) else {
+        return false;
     };
     last_attempt_age.map(|age| age >= throttle).unwrap_or(true)
 }
@@ -2149,9 +2211,8 @@ fn pr_status_refresh_due(
     last_refresh_age: Option<Duration>,
     last_activity_age: Option<Duration>,
 ) -> bool {
-    let throttle = match last_activity_age {
-        Some(age) if age < PR_ACTIVE_WINDOW => PR_ACTIVE_THROTTLE,
-        _ => PR_IDLE_THROTTLE,
+    let Some(throttle) = status_refresh_interval(last_activity_age) else {
+        return false;
     };
     let freshest_age = match (last_attempt_age, last_refresh_age) {
         (Some(attempt), Some(refresh)) => Some(attempt.min(refresh)),
@@ -3848,7 +3909,8 @@ functions.wait {"cell_id":"17"}
         let just_under_a_minute = Duration::from_secs(59);
         let just_over_a_minute = Duration::from_secs(61);
         let recently_pushed = Duration::from_secs(5 * 60);
-        let inactive = Duration::from_secs(20 * 60);
+        let warm = Duration::from_secs(2 * 60 * 60);
+        let cool = Duration::from_secs(12 * 60 * 60);
 
         assert!(!review_threads_due(
             Some(just_under_a_minute),
@@ -3860,42 +3922,62 @@ functions.wait {"cell_id":"17"}
         ));
 
         assert!(!review_threads_due(
+            Some(Duration::from_secs(14 * 60)),
+            Some(warm)
+        ));
+        assert!(review_threads_due(
+            Some(Duration::from_secs(15 * 60)),
+            Some(warm)
+        ));
+
+        assert!(!review_threads_due(
             Some(Duration::from_secs(59 * 60)),
-            Some(inactive)
+            Some(cool)
         ));
         assert!(review_threads_due(
             Some(Duration::from_secs(60 * 60)),
-            Some(inactive)
+            Some(cool)
         ));
         assert!(review_threads_due(None, None));
     }
 
     #[test]
-    fn pr_status_refresh_uses_active_and_idle_cadences() {
+    fn pr_status_refresh_uses_hot_warm_and_cool_cadences() {
         let just_under_a_minute = Duration::from_secs(59);
         let just_over_a_minute = Duration::from_secs(61);
-        let recently_mentioned = Duration::from_secs(5 * 60);
-        let inactive = Duration::from_secs(15 * 60);
+        let hot = Duration::from_secs(10 * 60);
+        let warm = Duration::from_secs(2 * 60 * 60);
+        let cool = Duration::from_secs(12 * 60 * 60);
 
         assert!(!pr_status_refresh_due(
             Some(just_under_a_minute),
             None,
-            Some(recently_mentioned)
+            Some(hot)
         ));
         assert!(pr_status_refresh_due(
             Some(just_over_a_minute),
             None,
-            Some(recently_mentioned)
+            Some(hot)
+        ));
+        assert!(!pr_status_refresh_due(
+            Some(Duration::from_secs(14 * 60)),
+            None,
+            Some(warm)
+        ));
+        assert!(pr_status_refresh_due(
+            Some(Duration::from_secs(15 * 60)),
+            None,
+            Some(warm)
         ));
         assert!(!pr_status_refresh_due(
             Some(Duration::from_secs(59 * 60)),
             None,
-            Some(inactive)
+            Some(cool)
         ));
         assert!(pr_status_refresh_due(
             Some(Duration::from_secs(60 * 60)),
             None,
-            Some(inactive)
+            Some(cool)
         ));
         assert!(!pr_status_refresh_due(
             None,
@@ -3908,6 +3990,35 @@ functions.wait {"cell_id":"17"}
             None
         ));
         assert!(pr_status_refresh_due(None, None, None));
+        assert!(!pr_status_refresh_due(
+            Some(Duration::from_secs(60 * 60)),
+            None,
+            Some(Duration::from_secs(49 * 60 * 60))
+        ));
+        assert_eq!(
+            status_refresh_interval(Some(Duration::from_secs(49 * 60 * 60))),
+            None
+        );
+    }
+
+    #[test]
+    fn session_activity_keeps_a_stale_mention_on_the_hot_cadence() {
+        let now_ms = 10_000_000;
+        let mentioned_two_hours_ago = now_ms - 2 * 60 * 60 * 1000;
+        let session_prompt_ten_minutes_ago = (now_ms as f64 / 1000.0) - 10.0 * 60.0;
+        let age = activity_age(
+            None,
+            mentioned_two_hours_ago,
+            Some(session_prompt_ten_minutes_ago),
+            now_ms,
+        );
+        assert_eq!(age, Some(Duration::from_secs(10 * 60)));
+        assert_eq!(status_refresh_interval(age), Some(PR_HOT_THROTTLE));
+        assert!(pr_status_refresh_due(
+            Some(Duration::from_secs(15 * 60)),
+            None,
+            age
+        ));
     }
 
     #[test]

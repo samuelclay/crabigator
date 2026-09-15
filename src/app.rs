@@ -1828,6 +1828,15 @@ impl App {
         let mut prs_changed = recap_notes_changed;
         prs_changed |= self.scan_session_links_from_transcript(turn_completed);
         self.send_cloud_slack_threads_event();
+        self.pr_tracker.note_session_activity(
+            [
+                self.session_stats.prompts_changed_at,
+                self.session_stats.completions_changed_at,
+            ]
+            .into_iter()
+            .flatten()
+            .max_by(|a, b| a.total_cmp(b)),
+        );
         prs_changed |= self.pr_tracker.poll();
         self.send_cloud_pr_slack_threads_event();
         prs_changed |= self
