@@ -1055,12 +1055,12 @@ fn aggregate(
     let now = now_secs();
     let mut merged: HashMap<String, BoardPr> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
-    // PRs a session holds a verified claim on, and same-organization primary
-    // PRs that do not match its checkout. Resolve the latter after the merge
-    // pass so a verified owner wins; otherwise every primary PR keeps the
-    // session title, state, and activity that it shares.
+    // PRs a session holds a verified claim on, and primary PRs that do not
+    // match its checkout. Resolve the latter after the merge pass so a
+    // verified owner wins; otherwise every primary PR keeps the session
+    // title, state, and activity that it shares.
     let mut verified_owner_keys: HashSet<String> = HashSet::new();
-    let mut same_org_primary_candidates: Vec<(&SessionSnapshot, String)> = Vec::new();
+    let mut primary_candidates: Vec<(&SessionSnapshot, String)> = Vec::new();
 
     for session in snapshots {
         for stored_pr in &session.prs {
@@ -1146,23 +1146,20 @@ fn aggregate(
             if represents_session {
                 attach_session(entry, session, now);
                 verified_owner_keys.insert(key);
-            } else if pr.primary
-                && !pr.dismissed
-                && !session.repo_owner.is_empty()
-                && session.repo_owner.eq_ignore_ascii_case(&pr.owner)
-            {
-                // Same-org only: a session that merely discusses another
-                // org's PR must not migrate into that repository's group.
-                same_org_primary_candidates.push((session, key));
+            } else if pr.primary && !pr.dismissed {
+                // The session's own primary still identifies the PR when
+                // nobody else owns it — including a checkout in another
+                // repo or org, which is how a session that followed a
+                // directory still shows under its official PR.
+                primary_candidates.push((session, key));
             }
         }
     }
 
-    // A same-organization primary can live in a sibling repository while one
-    // session works a paired change. Carry that session onto every such PR so
-    // each block shows the shared title, state, prompt time, and completion
-    // time. A verified claim from another session still wins.
-    for (session, key) in same_org_primary_candidates {
+    // Carry the session onto every unowned primary so each block shows its
+    // title, chip, state, and activity. A verified claim from another
+    // session still wins.
+    for (session, key) in primary_candidates {
         if verified_owner_keys.contains(&key) {
             continue;
         }
@@ -6382,27 +6379,30 @@ mod tests {
     }
 
     #[test]
-    fn cross_org_primaries_never_identify_sessions() {
-        // A session in a personal repo that heavily discusses another org's
-        // PR must keep its workspace row instead of migrating into that
-        // organization's group.
+    fn unowned_cross_org_primaries_identify_sessions() {
+        // A session whose official work is another org's PR still belongs
+        // under that PR when nobody else owns it — following a directory
+        // into a personal checkout must not hide the chip and title.
         let mut discussed_pr = board_pr(1, "portal");
         make_primary(&mut discussed_pr);
         discussed_pr.created_here = false;
         discussed_pr.branch = "ryan/feature".to_string();
-        let mut bystander = snapshot("crabigator", vec![discussed_pr]);
-        bystander.session_id = "bystander".to_string();
-        bystander.repo_owner = "someone-else".to_string();
-        bystander.branch = "main".to_string();
+        let mut session = snapshot("crabigator", vec![discussed_pr]);
+        session.session_id = "visitor".to_string();
+        session.repo_owner = "someone-else".to_string();
+        session.branch = "main".to_string();
 
-        let snapshots = vec![bystander];
+        let snapshots = vec![session];
         let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert_eq!(entries.len(), 1);
-        assert!(entries[0].sessions.is_empty());
-        assert_eq!(workspaces.len(), 1);
-        assert_eq!(workspaces[0].session.session_id, "bystander");
+        assert_eq!(entries[0].sessions.len(), 1);
+        assert_eq!(entries[0].sessions[0].session_id, "visitor");
+        assert!(
+            workspaces.is_empty(),
+            "the attached session needs no workspace row"
+        );
     }
 
     #[test]
@@ -6538,20 +6538,29 @@ mod tests {
     }
 
     #[test]
-    fn prs_opened_in_another_org_still_need_a_matching_checkout() {
+    fn cross_org_primaries_defer_to_a_session_that_owns_the_pr() {
         let mut foreign_pr = board_pr(7, "portal");
         make_primary(&mut foreign_pr);
+        foreign_pr.created_here = false;
         foreign_pr.branch = "sam/fix".to_string();
-        let mut session = snapshot("crabigator", vec![foreign_pr]);
-        session.repo_owner = "someone-else".to_string();
-        session.branch = "main".to_string();
+        let mut visitor = snapshot("crabigator", vec![foreign_pr.clone()]);
+        visitor.session_id = "visitor".to_string();
+        visitor.repo_owner = "someone-else".to_string();
+        visitor.branch = "main".to_string();
 
-        let snapshots = vec![session];
+        let mut owner = snapshot("portal", vec![foreign_pr]);
+        owner.session_id = "owner".to_string();
+        owner.branch = "sam/fix".to_string();
+
+        let snapshots = vec![visitor, owner];
         let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
         let workspaces = local_workspaces(&snapshots, &entries);
 
-        assert!(entries[0].sessions.is_empty());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].sessions.len(), 1);
+        assert_eq!(entries[0].sessions[0].session_id, "owner");
         assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].session.session_id, "visitor");
     }
 
     #[test]
