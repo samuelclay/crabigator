@@ -340,7 +340,6 @@ pub fn draw_status_bar(
             is_paired,
             pairing_state.pairing_code.as_deref(),
             state_tint,
-            session_mark,
         )?;
 
         // Separator
@@ -383,6 +382,7 @@ pub fn draw_status_bar(
             slack_threads,
             ide,
             cwd,
+            session_mark,
         )?;
     }
 

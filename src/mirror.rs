@@ -575,7 +575,7 @@ impl MirrorPublisher {
                         session_start: stats.session_start_unix(),
                         active_prompt: stats.active_prompt().cloned(),
                     },
-                    rendered: render_stats_preview(stats, session_mark),
+                    rendered: render_stats_preview(stats),
                 },
                 git: WidgetMirror {
                     data: GitMirrorData {
@@ -653,10 +653,10 @@ fn title_changed_at_ms() -> Option<u64> {
 
 // Preview rendering functions (ANSI-stripped text)
 
-fn render_stats_preview(stats: &SessionStats, mark: SessionMark) -> Vec<String> {
+fn render_stats_preview(stats: &SessionStats) -> Vec<String> {
     let mut lines = vec![
         format!("Stats - {:?}", stats.effective_state()),
-        format!("{} {}", mark.glyph, stats.format_work()),
+        format!("Session: {}", stats.format_work()),
     ];
     let thinking = stats.format_thinking().unwrap_or_else(|| "—".to_string());
     lines.push(format!("Thinking: {}", thinking));

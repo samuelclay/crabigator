@@ -143,27 +143,26 @@ pub(crate) fn display_title(
     title.map(|title| mark_provider_title(platform, title))
 }
 
-/// The two title levels shown for one session. A primary PR title becomes the
-/// official title; the assistant's own title remains visible underneath it.
+/// The two title levels shown for one session. A primary PR is the official
+/// title; the assistant's own title remains visible underneath it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SessionTitleHierarchy<'a> {
-    pub(crate) pr_title: Option<&'a str>,
+    pub(crate) official_pr: Option<&'a SessionPr>,
     pub(crate) generated_title: Option<&'a str>,
 }
 
 impl SessionTitleHierarchy<'_> {
     pub(crate) fn row_count(self) -> u16 {
-        u16::from(self.pr_title.is_some()) + u16::from(self.generated_title.is_some())
+        u16::from(self.official_pr.is_some()) + u16::from(self.generated_title.is_some())
     }
 }
 
 /// Choose the most recently mentioned enriched primary PR. The refresh time
 /// and PR number make the result deterministic when mention times tie.
-pub(crate) fn official_pr_title(prs: &[SessionPr]) -> Option<&str> {
+fn pick_official_pr(prs: &[SessionPr]) -> Option<&SessionPr> {
     prs.iter()
         .filter(|pr| pr.primary && !pr.dismissed && !pr.title.trim().is_empty())
         .max_by_key(|pr| (pr.last_mentioned_at, pr.refreshed_at, pr.number))
-        .map(|pr| pr.title.trim())
 }
 
 /// Build the display hierarchy while avoiding a repeated subtitle when the
@@ -172,15 +171,16 @@ pub(crate) fn session_title_hierarchy<'a>(
     prs: &'a [SessionPr],
     generated_title: Option<&'a str>,
 ) -> SessionTitleHierarchy<'a> {
-    let pr_title = official_pr_title(prs);
+    let official_pr = pick_official_pr(prs);
     let generated_title = generated_title
         .map(str::trim)
         .filter(|title| !title.is_empty())
         .filter(|title| {
-            pr_title.is_none_or(|pr_title| strip_provider_title_marker(title).trim() != pr_title)
+            official_pr
+                .is_none_or(|pr| strip_provider_title_marker(title).trim() != pr.title.trim())
         });
     SessionTitleHierarchy {
-        pr_title,
+        official_pr,
         generated_title,
     }
 }
@@ -316,7 +316,10 @@ mod tests {
 
         let prs = [older, newer, dismissed];
         let titles = session_title_hierarchy(&prs, Some("⟁  Automatic title"));
-        assert_eq!(titles.pr_title, Some("Newer official title"));
+        assert_eq!(
+            titles.official_pr.map(|pr| (pr.number, pr.title.trim())),
+            Some((9, "Newer official title"))
+        );
         assert_eq!(titles.generated_title, Some("⟁  Automatic title"));
         assert_eq!(titles.row_count(), 2);
     }
@@ -324,7 +327,7 @@ mod tests {
     #[test]
     fn generated_title_is_the_fallback_and_is_not_repeated() {
         let no_prs = session_title_hierarchy(&[], Some("ᛝ  Automatic title"));
-        assert_eq!(no_prs.pr_title, None);
+        assert_eq!(no_prs.official_pr, None);
         assert_eq!(no_prs.generated_title, Some("ᛝ  Automatic title"));
 
         let mut pr = SessionPr::test_stub(9, "o", "repo");
@@ -332,7 +335,10 @@ mod tests {
         pr.title = "Same title".to_string();
         let prs = [pr];
         let same = session_title_hierarchy(&prs, Some("⟁  Same title"));
-        assert_eq!(same.pr_title, Some("Same title"));
+        assert_eq!(
+            same.official_pr.map(|pr| (pr.number, pr.title.trim())),
+            Some((9, "Same title"))
+        );
         assert_eq!(same.generated_title, None);
         assert_eq!(same.row_count(), 1);
     }

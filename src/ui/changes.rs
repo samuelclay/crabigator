@@ -10,8 +10,12 @@ use anyhow::Result;
 
 use crate::ide::IdeKind;
 use crate::parsers::{ChangeNode, ChangeType, DiffSummary, LanguageChanges, NodeKind};
+use crate::pr::SessionPr;
+use crate::session_mark::SessionMark;
 use crate::slack::{compact_display_label, SlackThread};
-use crate::terminal::escape::{self, color, fg, hyperlink, ITALIC, RESET};
+use crate::terminal::escape::{
+    self, color, fg, hyperlink, BOLD, ITALIC, RESET, RESET_BOLD, RESET_UNDERLINE, UNDERLINE,
+};
 use crate::title::SessionTitleHierarchy;
 
 use super::pr_cells::truncate_to_width;
@@ -160,6 +164,7 @@ fn slack_row_count(threads: &[SlackThread]) -> u16 {
 }
 
 /// Draw the changes widget at the given position
+#[allow(clippy::too_many_arguments)]
 pub fn draw_changes_widget(
     stdout: &mut Stdout,
     area: WidgetArea,
@@ -168,6 +173,7 @@ pub fn draw_changes_widget(
     slack_threads: &[SlackThread],
     ide: IdeKind,
     cwd: &Path,
+    session_mark: SessionMark,
 ) -> Result<()> {
     write!(
         stdout,
@@ -185,29 +191,9 @@ pub fn draw_changes_widget(
     let title_rows = titles.row_count();
     let prefix_rows = title_rows.saturating_add(slack_row_count(slack_threads));
 
-    // The primary PR title is the official top line. The assistant's automatic
-    // title stays directly below it, or takes the top line when there is no PR.
-    let title_row = match area.row {
-        1 => titles
-            .pr_title
-            .map(|title| (title, color::PURPLE))
-            .or_else(|| {
-                titles
-                    .generated_title
-                    .map(|title| (title, color::LIGHT_BLUE))
-            }),
-        2 if titles.pr_title.is_some() => titles
-            .generated_title
-            .map(|title| (title, color::LIGHT_BLUE)),
-        _ => None,
-    };
-    if let Some((title, title_color)) = title_row {
-        let trimmed = if title.chars().count() > inner_width_usize {
-            truncate_path(title, inner_width_usize)
-        } else {
-            title.to_string()
-        };
-        let header = format!("{}{}{}", fg(title_color), trimmed, RESET);
+    // Official `#N: title` on row 1; generated title under it, or on row 1
+    // when there is no PR.
+    if let Some(header) = title_header_row(titles, area.row, inner_width_usize, session_mark) {
         write_padded_row(stdout, &header, inner_width_usize)?;
         return Ok(());
     }
@@ -316,6 +302,70 @@ fn slack_snippet_row(thread: &SlackThread, text: &str, width: usize) -> String {
         hyperlink(&thread.url, &snippet),
         RESET
     )
+}
+
+fn title_header_row(
+    titles: SessionTitleHierarchy<'_>,
+    row: u16,
+    width: usize,
+    session_mark: SessionMark,
+) -> Option<String> {
+    match (row, titles.official_pr, titles.generated_title) {
+        (1, Some(pr), _) => Some(format_official_title_row(pr, width, Some(session_mark))),
+        (1, None, Some(title)) => Some(format_title_row(
+            title,
+            color::LIGHT_BLUE,
+            width,
+            Some(session_mark),
+        )),
+        (2, Some(_), Some(title)) => Some(format_title_row(title, color::LIGHT_BLUE, width, None)),
+        _ => None,
+    }
+}
+
+fn title_chip_prefix(mark: Option<SessionMark>) -> (String, usize) {
+    match mark {
+        Some(mark) => (format!("{} ", mark.chip()), mark.width() + 1),
+        None => (String::new(), 0),
+    }
+}
+
+fn format_title_row(
+    title: &str,
+    title_color: u8,
+    width: usize,
+    mark: Option<SessionMark>,
+) -> String {
+    let (prefix, chip_span) = title_chip_prefix(mark);
+    format!(
+        "{}{}{}{}",
+        prefix,
+        fg(title_color),
+        truncate_path(title, width.saturating_sub(chip_span)),
+        RESET
+    )
+}
+
+/// `#N: title` with a GitHub link and an emphasized number, matching the board.
+fn format_official_title_row(pr: &SessionPr, width: usize, mark: Option<SessionMark>) -> String {
+    let number = format!("#{}", pr.number);
+    let (prefix, chip_span) = title_chip_prefix(mark);
+    let identity = truncate_path(
+        &format!("{number}: {}", pr.title.trim()),
+        width.saturating_sub(chip_span),
+    );
+    // Truncation that cuts into `#N` leaves the number unstyled, same as the board.
+    let labeled = identity.replacen(
+        &number,
+        &format!("{BOLD}{UNDERLINE}{number}{RESET_UNDERLINE}{RESET_BOLD}"),
+        1,
+    );
+    let body = if pr.url.is_empty() {
+        labeled
+    } else {
+        hyperlink(&pr.url, &labeled)
+    };
+    format!("{}{}{}{}", prefix, fg(color::PURPLE), body, RESET)
 }
 
 fn write_padded_row(stdout: &mut Stdout, content: &str, width: usize) -> Result<()> {
@@ -739,5 +789,42 @@ mod tests {
         assert_eq!(strip_ansi_len(&row), 30);
 
         assert!(slack_snippet_row(&thread, "text", 2).is_empty());
+    }
+
+    #[test]
+    fn first_title_row_prefixes_the_identity_chip() {
+        let mark = SessionMark::from_seed("changes-title");
+        let row = format_title_row("Fix the title chip", color::LIGHT_BLUE, 40, Some(mark));
+        assert!(row.contains(mark.glyph));
+        assert!(row.contains("Fix the title chip"));
+        assert!(row.contains(&fg(color::LIGHT_BLUE)));
+        assert_eq!(
+            strip_ansi_len(&row),
+            mark.width() + 1 + "Fix the title chip".len()
+        );
+
+        let subtitle = format_title_row("generated subtitle", color::LIGHT_BLUE, 40, None);
+        assert!(!subtitle.contains(mark.glyph));
+        assert!(subtitle.starts_with(&fg(color::LIGHT_BLUE)));
+    }
+
+    #[test]
+    fn official_title_row_matches_the_pr_board_identity() {
+        let mut pr = SessionPr::test_stub(42, "acme", "widgets");
+        pr.primary = true;
+        pr.title = "Ship the title chip".to_string();
+        pr.url = "https://github.com/acme/widgets/pull/42".to_string();
+        let mark = SessionMark::from_seed("changes-pr-title");
+        let row = format_official_title_row(&pr, 60, Some(mark));
+        assert!(row.contains(mark.glyph));
+        assert!(row.contains("#42"));
+        assert!(row.contains("Ship the title chip"));
+        assert!(row.contains(&pr.url));
+        assert!(row.contains(BOLD));
+        assert!(row.contains(UNDERLINE));
+        assert_eq!(
+            strip_ansi_len(&row),
+            mark.width() + 1 + "#42: Ship the title chip".len()
+        );
     }
 }
