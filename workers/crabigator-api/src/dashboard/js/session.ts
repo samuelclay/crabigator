@@ -414,7 +414,7 @@ export const sessionJs = `
                         <div class="widgets-panel" id="widgets-\${session.id}">
                             <div class="widgets-header" onclick="toggleWidgets('\${session.id}')">
                                 <div class="widgets-header-row1">
-                                    <span class="widgets-title" id="widgets-title-\${session.id}">\${sessionMarkChipHtml(session)}</span>
+                                    <span class="widgets-title" id="widgets-title-\${session.id}">Session</span>
                                     <span class="widgets-state" id="widgets-state-\${session.id}">○ Ready</span>
                                     <span class="widgets-header-spacer"></span>
                                     <button class="collapse-btn" id="widgets-btn-\${session.id}" title="Toggle Git & Changes widgets">▼</button>

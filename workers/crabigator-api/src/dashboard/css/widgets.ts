@@ -33,12 +33,10 @@ export const widgetsCss = `
 .widgets-title {
     color: var(--accent-cyan);
     font-weight: 600;
-    overflow: visible;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
-    flex-shrink: 0;
-}
-.widgets-title .session-mark {
-    font-weight: 500;
+    min-width: 0;
 }
 .widgets-title.official { color: #bc8cff; }
 .widgets-state {
@@ -200,6 +198,28 @@ export const widgetsCss = `
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+.changes-pr-title,
+.changes-generated-title.main {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+.changes-pr-title > :last-child,
+.changes-generated-title.main > :last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.changes-pr-ident {
+    color: inherit;
+    text-decoration: none;
+}
+.changes-pr-ident:hover { text-decoration: underline; }
+.changes-pr-num { font-weight: 700; text-decoration: underline; }
+.changes-session-titles .session-mark {
+    font-weight: 500;
 }
 .changes-pr-title {
     color: #bc8cff;

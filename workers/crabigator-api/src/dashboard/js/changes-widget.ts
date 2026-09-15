@@ -184,15 +184,23 @@ export const changesWidgetJs = `
 
             const slackThreadsHtml = renderSlackThreads(slackThreads);
             const commitHistoryHtml = renderCommitHistory(commitHistory, hasChanges || hasSlackThreads);
-            const mainTitleClass = titleHierarchy.hasOfficial
+            const primaryPr = primaryPrForSession(sessionData);
+            const mainTitleClass = primaryPr
                 ? 'changes-pr-title'
                 : 'changes-generated-title main';
             const generatedTitleHtml = titleHierarchy.generated
                 ? '<div class="changes-generated-title">' + escapeHtml(titleHierarchy.generated) + '</div>'
                 : '';
+            const titleChip = sessionData ? sessionMarkChipHtml(sessionData) : '';
+            const mainTitleHtml = primaryPr
+                ? officialChangesTitleHtml(primaryPr)
+                : '<span>' + escapeHtml(titleHierarchy.main) + '</span>';
             const sessionTitlesHtml = titleHierarchy.main
                 ? '<div class="changes-session-titles">'
-                    + '<div class="' + mainTitleClass + '">' + escapeHtml(titleHierarchy.main) + '</div>'
+                    + '<div class="' + mainTitleClass + '">'
+                    + titleChip
+                    + mainTitleHtml
+                    + '</div>'
                     + generatedTitleHtml
                     + '</div>'
                 : '';
@@ -613,6 +621,16 @@ export const changesWidgetJs = `
                 || (b.refreshed_at || 0) - (a.refreshed_at || 0)
                 || (b.number || 0) - (a.number || 0));
             return primaryPrs[0] || null;
+        }
+
+        function officialChangesTitleHtml(pr) {
+            const ident = '<span class="changes-pr-num">#' + pr.number + '</span>: '
+                + escapeHtml(String(pr.title || '').trim());
+            if (!pr.url) {
+                return '<span>' + ident + '</span>';
+            }
+            return '<a class="changes-pr-ident" href="' + escapeHtml(pr.url)
+                + '" target="_blank" rel="noopener">' + ident + '</a>';
         }
 
         function stripGeneratedTitleMarker(title) {
