@@ -583,12 +583,12 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         .all<SessionPrRow>();
 
     const merged = new Map<string, BoardEntry & { disposition: string | null }>();
-    // PRs a session holds a verified claim on, and same-organization primary
-    // PRs that do not match its checkout. Resolve the latter after the merge
-    // pass so a verified owner wins; otherwise every primary PR keeps the
-    // session title, state, and activity that it shares.
+    // PRs a session holds a verified claim on, and primary PRs that do not
+    // match its checkout. Resolve the latter after the merge pass so a
+    // verified owner wins; otherwise every primary PR keeps the session
+    // title, state, and activity that it shares.
     const verifiedOwnerKeys = new Set<string>();
-    const sameOrgPrimaryCandidates: Array<{ key: string; row: SessionPrRow }> = [];
+    const primaryCandidates: Array<{ key: string; row: SessionPrRow }> = [];
     for (const row of rows.results ?? []) {
         const storedPr = parseSessionPr(row.data);
         if (!storedPr) continue;
@@ -660,23 +660,17 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         if (representsSession) {
             verifiedOwnerKeys.add(key);
             entry.sessions.push(boardSession(row));
-        } else if (
-            pr.primary
-            && !pr.dismissed
-            && !!row.repo_owner
-            && row.repo_owner.toLowerCase() === (pr.owner || '').toLowerCase()
-        ) {
-            // Same-org only: a session that merely discusses another org's PR
-            // must not migrate into that repository's group.
-            sameOrgPrimaryCandidates.push({ key, row });
+        } else if (pr.primary && !pr.dismissed) {
+            // The session's own primary still identifies the PR when nobody
+            // else owns it — including a checkout in another repo or org.
+            primaryCandidates.push({ key, row });
         }
     }
 
-    // A same-organization primary can live in a sibling repository while one
-    // session works a paired change. Carry that session onto every such PR so
-    // each block shows the shared title, state, prompt time, and completion
-    // time. A verified claim from another session still wins.
-    for (const candidate of sameOrgPrimaryCandidates) {
+    // Carry the session onto every unowned primary so each block shows its
+    // title, chip, state, and activity. A verified claim from another
+    // session still wins.
+    for (const candidate of primaryCandidates) {
         if (verifiedOwnerKeys.has(candidate.key)) continue;
         merged.get(candidate.key)?.sessions.push(boardSession(candidate.row));
     }
