@@ -1821,6 +1821,204 @@ code, .mono {
     font-weight: 600;
 }
 
+/* PR board section */
+.pr-board-section {
+    padding: 80px 32px 100px;
+}
+.pr-board-content {
+    max-width: 1280px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(280px, 400px) 1fr;
+    gap: 56px;
+    align-items: center;
+}
+.pr-board-text .section-title {
+    text-align: left;
+    margin-bottom: 16px;
+}
+.pr-board-text .section-subtitle {
+    margin: 0;
+    text-align: left;
+}
+.pr-board-text .section-subtitle code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.92em;
+    background: var(--bg-surface);
+    padding: 1px 7px;
+    border-radius: 4px;
+    color: var(--accent-cyan);
+    border: 1px solid var(--border-dim);
+}
+.pr-board-cmd {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 28px;
+    background: var(--bg-abyss);
+    border: 1px solid var(--border-dim);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+}
+.pr-board-window {
+    transform: none;
+    width: 100%;
+}
+.pr-board-window:hover {
+    transform: none;
+}
+.prb-mock {
+    padding: 12px 14px 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    color: #8a8a8a;
+}
+.prb-mock-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    margin-bottom: 10px;
+}
+.prb-mock-hdr {
+    color: #af87ff;
+    font-weight: 700;
+    font-size: 13px;
+}
+.prb-mock-counts { color: #585858; }
+.prb-mock-ctl { color: #585858; }
+.prb-mock-ctl.on { color: #ffd700; }
+.prb-mock-search {
+    margin-left: auto;
+    color: #585858;
+}
+.prb-mock-bucket {
+    margin: 10px 0 4px;
+    padding: 1px 8px;
+    font-weight: 700;
+    border-radius: 3px;
+    width: fit-content;
+}
+.prb-mock-bucket.hour { background: #00ffff; color: #000; }
+.prb-mock-bucket.later { background: #00d7ff; color: #000; }
+.prb-mock-repo {
+    color: #ffd700;
+    font-weight: 700;
+    margin: 6px 0 2px;
+}
+.prb-mock-block {
+    padding: 2px 4px 6px;
+    border-radius: 4px;
+}
+.prb-mock-block.selected {
+    background: rgba(0, 215, 255, 0.14);
+}
+.prb-mock-pr,
+.prb-mock-sess {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr) 40px 72px 22px 58px;
+    align-items: baseline;
+    column-gap: 8px;
+    min-width: 0;
+}
+.prb-mock-pr { padding: 2px 0; }
+.prb-mock-sess { padding: 1px 0; padding-left: 0; }
+.prb-mock-sess.peeking {
+    background: rgba(0, 215, 255, 0.12);
+    border-radius: 3px;
+}
+.prb-mock-star { color: #af87ff; }
+.prb-mock-ident {
+    color: #af87ff;
+    font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.prb-mock-num {
+    font-weight: 700;
+    text-decoration: underline;
+}
+.prb-mock-age {
+    justify-self: end;
+    font-weight: 600;
+}
+.prb-mock-age.hour { color: #00ffff; }
+.prb-mock-age.later { color: #00d7ff; }
+.prb-mock-diff { justify-self: end; }
+.prb-mock-diff .add { color: #5fff5f; font-weight: 700; }
+.prb-mock-diff .del { color: #ff5f5f; font-weight: 700; }
+.prb-mock-files { color: #585858; justify-self: end; }
+.prb-mock-ci { justify-self: end; font-weight: 700; }
+.prb-mock-ci.ok { color: #5fff5f; }
+.prb-mock-ci.merged { color: #af87ff; }
+.prb-mock-diamond { color: #585858; padding-left: 4px; }
+.prb-mock-sess-title {
+    color: #5fafff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    grid-column: 2 / 5;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+.prb-mock-state {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    padding: 0 5px;
+    border-radius: 3px;
+    justify-self: end;
+    grid-column: 5 / 7;
+}
+.prb-mock-state.thinking { color: #000; background: #fbbf24; }
+.prb-mock-state.permission { color: #000; background: #ff8700; }
+.prb-mock-state.complete { color: #000; background: #5fff5f; }
+.session-chip {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-variant-ligatures: none;
+    font-feature-settings: "calt" 0, "liga" 0;
+    padding: 1px 0.5em;
+    border-radius: 2px;
+    white-space: pre;
+    display: inline-block;
+    line-height: 1.3;
+    flex-shrink: 0;
+    font-size: 13px;
+}
+.prb-mock-peek {
+    margin: 10px -14px 0;
+    padding: 10px 14px 12px;
+    border-top: 1px solid var(--border-dim);
+    background: rgba(0, 0, 0, 0.28);
+}
+.prb-mock-peek-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.prb-mock-peek-title {
+    color: #5fafff;
+    font-weight: 600;
+}
+.prb-mock-peek-path {
+    margin-left: auto;
+    color: #585858;
+}
+.prb-mock-peek-body {
+    color: var(--text-mid);
+    font-size: 11px;
+    line-height: 1.55;
+}
+
 /* Prompt Mockup */
 .prompt-mockup {
     background: var(--bg-deep);
@@ -3257,12 +3455,43 @@ code, .mono {
         max-width: 400px;
         margin: 32px auto 0;
     }
+    .pr-board-content {
+        grid-template-columns: 1fr;
+        gap: 40px;
+    }
+    .pr-board-text .section-title,
+    .pr-board-text .section-subtitle {
+        text-align: center;
+    }
+    .pr-board-text .interactive-features {
+        margin-left: auto;
+        margin-right: auto;
+    }
+    .pr-board-cmd {
+        display: flex;
+        width: fit-content;
+        margin-left: auto;
+        margin-right: auto;
+    }
+    .pr-board-visual {
+        order: -1;
+    }
 }
 
 @media (max-width: 768px) {
     .nav { padding: 12px 16px; }
     .nav-links { gap: 4px; }
     .nav-link { display: none; }
+    .pr-board-section { padding: 60px 16px 80px; }
+    .prb-mock { font-size: 11px; }
+    .prb-mock-diff, .prb-mock-files, .prb-mock-ci, .prb-mock-search { display: none; }
+    .prb-mock-peek-path { display: none; }
+    .prb-mock-pr,
+    .prb-mock-sess {
+        grid-template-columns: 14px minmax(0, 1fr) auto;
+    }
+    .prb-mock-sess-title { grid-column: 2; }
+    .prb-mock-state { grid-column: 3; }
     .nav-btn { padding: 8px 16px; font-size: 11px; }
     .nav-logo { font-size: 16px; }
     .nav-logo svg { width: 20px; height: 20px; }

@@ -72,6 +72,10 @@ function brandName(
     return `<span class="brand-token">${before}<span class="brand brand-${kind}">${mark}${label}</span>${after}</span>`;
 }
 
+function sessionChip(glyph: string, bg: string, fg: string): string {
+    return `<span class="session-chip" style="background:${bg};color:${fg}">${glyph}</span>`;
+}
+
 export const landingHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -101,6 +105,7 @@ export const landingHtml = `<!DOCTYPE html>
         </a>
         <div class="nav-links">
             <a href="#features" class="nav-link">Features</a>
+            <a href="#pr-board" class="nav-link">PRs</a>
             <a href="#mcp" class="nav-link">MCP</a>
             <a href="#security" class="nav-link">Security</a>
             <a href="#install" class="nav-link">Install</a>
@@ -492,6 +497,132 @@ export const landingHtml = `<!DOCTYPE html>
                         <span class="feature-text"><strong>Review plans</strong> before it starts coding</span>
                     </li>
                 </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- PR board -->
+    <section class="section pr-board-section" id="pr-board">
+        <div class="pr-board-content">
+            <div class="pr-board-text">
+                <h2 class="section-title">PR Dashboard</h2>
+                <p class="section-subtitle">
+                    Run <code>crabigator pr</code> to see every live session in one place.
+                    Pull requests sit on top. Each session has its own glyph.
+                </p>
+                <ul class="interactive-features">
+                    <li>
+                        <span class="feature-icon">${iconPullRequest}</span>
+                        <span class="feature-text"><strong>One block per PR</strong>, with its sessions listed underneath</span>
+                    </li>
+                    <li>
+                        <span class="feature-icon">${iconCheck}</span>
+                        <span class="feature-text"><strong>Press p</strong> to flip to session view</span>
+                    </li>
+                    <li>
+                        <span class="feature-icon">${iconSearch}</span>
+                        <span class="feature-text"><strong>Search</strong> greps every live transcript</span>
+                    </li>
+                    <li>
+                        <span class="feature-icon">${iconPlay}</span>
+                        <span class="feature-text"><strong>Enter</strong> opens a live look at a session</span>
+                    </li>
+                </ul>
+                <div class="pr-board-cmd">
+                    <span class="hero-install-prompt">$</span>
+                    <span class="hero-install-text">crabigator pr</span>
+                </div>
+            </div>
+            <div class="pr-board-visual">
+                <div class="terminal-window pr-board-window">
+                    <div class="terminal-bar">
+                        <div class="terminal-dot red"></div>
+                        <div class="terminal-dot yellow"></div>
+                        <div class="terminal-dot green"></div>
+                        <span class="terminal-title">crabigator pr</span>
+                    </div>
+                    <div class="prb-mock">
+                        <div class="prb-mock-head">
+                            <span class="prb-mock-hdr">PR board</span>
+                            <span class="prb-mock-counts">3 PRs · 5 sessions</span>
+                            <span class="prb-mock-ctl on">live</span>
+                            <span class="prb-mock-ctl">recaps</span>
+                            <span class="prb-mock-ctl">24h</span>
+                            <span class="prb-mock-search">/ search</span>
+                        </div>
+                        <div class="prb-mock-bucket hour">Last hour</div>
+                        <div class="prb-mock-repo">crabigator</div>
+                        <div class="prb-mock-block selected">
+                            <div class="prb-mock-pr">
+                                <span class="prb-mock-star">★</span>
+                                <span class="prb-mock-ident"><span class="prb-mock-num">#412</span> Stream recaps to the dashboard</span>
+                                <span class="prb-mock-age hour">2m</span>
+                                <span class="prb-mock-diff"><span class="add">+18</span> <span class="del">−4</span></span>
+                                <span class="prb-mock-files">3</span>
+                                <span class="prb-mock-ci ok">CI ✓</span>
+                            </div>
+                            <div class="prb-mock-sess peeking">
+                                <span class="prb-mock-diamond">◆</span>
+                                <span class="prb-mock-sess-title">${sessionChip('▀▄▀', '#7A1024', '#FFD2A8')} Rewrite the viewer handshake</span>
+                                <span class="prb-mock-state thinking">thinking</span>
+                            </div>
+                            <div class="prb-mock-sess">
+                                <span class="prb-mock-diamond">◆</span>
+                                <span class="prb-mock-sess-title">${sessionChip('◕‿◕', '#001848', '#5EF0FF')} Pairing from a second laptop</span>
+                                <span class="prb-mock-state permission">permission</span>
+                            </div>
+                        </div>
+                        <div class="prb-mock-block">
+                            <div class="prb-mock-pr">
+                                <span class="prb-mock-star">★</span>
+                                <span class="prb-mock-ident"><span class="prb-mock-num">#408</span> Drop the eyebrows from the homepage</span>
+                                <span class="prb-mock-age hour">18m</span>
+                                <span class="prb-mock-diff"><span class="add">+61</span> <span class="del">−61</span></span>
+                                <span class="prb-mock-files">2</span>
+                                <span class="prb-mock-ci merged">merged</span>
+                            </div>
+                            <div class="prb-mock-sess">
+                                <span class="prb-mock-diamond">◆</span>
+                                <span class="prb-mock-sess-title">${sessionChip('╭◈╮', '#2A1760', '#E4D4FF')} Write the homepage in plain language</span>
+                                <span class="prb-mock-state complete">complete</span>
+                            </div>
+                        </div>
+                        <div class="prb-mock-bucket later">1–3 hours</div>
+                        <div class="prb-mock-repo">api</div>
+                        <div class="prb-mock-block">
+                            <div class="prb-mock-pr">
+                                <span class="prb-mock-star">★</span>
+                                <span class="prb-mock-ident"><span class="prb-mock-num">#2469</span> Wire wait_for_attention</span>
+                                <span class="prb-mock-age later">2h</span>
+                                <span class="prb-mock-diff"><span class="add">+120</span> <span class="del">−12</span></span>
+                                <span class="prb-mock-files">8</span>
+                                <span class="prb-mock-ci ok">CI ✓</span>
+                            </div>
+                            <div class="prb-mock-sess">
+                                <span class="prb-mock-diamond">◆</span>
+                                <span class="prb-mock-sess-title">${sessionChip('≈△≈', '#C45C12', '#1A1208')} Add the MCP wait tool</span>
+                                <span class="prb-mock-state thinking">thinking</span>
+                            </div>
+                            <div class="prb-mock-sess">
+                                <span class="prb-mock-diamond">◆</span>
+                                <span class="prb-mock-sess-title">${sessionChip('⌈✦⌉', '#082838', '#F0C040')} Fix the pairing timeout</span>
+                                <span class="prb-mock-state complete">complete</span>
+                            </div>
+                        </div>
+                        <div class="prb-mock-peek">
+                            <div class="prb-mock-peek-head">
+                                ${sessionChip('▀▄▀', '#7A1024', '#FFD2A8')}
+                                <span class="prb-mock-peek-title">Rewrite the viewer handshake</span>
+                                <span class="prb-mock-peek-path">~/projects/crabigator</span>
+                            </div>
+                            <div class="prb-mock-peek-body">
+                                <div>╭─ Claude is thinking <span class="terminal-thinking"><span></span><span></span><span></span></span></div>
+                                <div>│ Reading src/prs_board.rs</div>
+                                <div>│ Drawing session glyphs on each row</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
