@@ -55,14 +55,9 @@ export function mcpLandingSectionHtml(): string {
                     answer prompts, and manage PRs. Same as the dashboard.
                 </p>
                 ${mcpConnectHtml()}
-                <div class="mcp-intro-actions">
-                    <a href="${MCP_TOOLS_PATH}" class="btn-primary" data-track="mcp_tools" data-label="landing">
-                        See all ${count} tools
-                    </a>
-                    <p class="mcp-intro-note">
-                        If this account has no desktop yet, enter a pairing code from <code>crabigator pair</code>.
-                    </p>
-                </div>
+                <a href="${MCP_TOOLS_PATH}" class="btn-primary" data-track="mcp_tools" data-label="landing">
+                    See all ${count} tools
+                </a>
             </div>
             ${mcpDemoHtml()}
         </div>

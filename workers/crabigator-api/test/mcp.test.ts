@@ -451,6 +451,7 @@ describe('MCP tools listing page', () => {
         expect(landingHtml).not.toContain('Look around');
         expect(landingHtml).not.toContain('Take action');
         expect(landingHtml).not.toContain('mcp-groups');
+        expect(landingHtml).not.toContain('no desktop yet');
         expect(landingHtml).toContain(`claude mcp add --transport http crabigator ${ORIGIN}/mcp`);
         expect(landingHtml).toContain(`codex mcp add crabigator --url ${ORIGIN}/mcp`);
         expect(landingHtml).toContain(`opencode mcp add crabigator --url ${ORIGIN}/mcp`);
