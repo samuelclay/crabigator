@@ -284,6 +284,8 @@ interface BoardEntry {
         /** The session's latest recap brief, when one was recorded. */
         recap: SessionRecapBrief | null;
     }[];
+    /** Trackers that don't own this PR. Session view still groups them here. */
+    touching: BoardEntry['sessions'];
 }
 
 type BoardSession = BoardEntry['sessions'][number];
@@ -361,6 +363,10 @@ function stringArray(value: unknown): string[] {
     return Array.isArray(value)
         ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
         : [];
+}
+
+function hasBoardSession(sessions: BoardSession[], sessionId: string): boolean {
+    return sessions.some((session) => session.session_id === sessionId);
 }
 
 function boardSession(row: BoardSessionRow): BoardSession {
@@ -589,6 +595,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     // title, state, and activity that it shares.
     const verifiedOwnerKeys = new Set<string>();
     const primaryCandidates: Array<{ key: string; row: SessionPrRow }> = [];
+    const touchingCandidates: Array<{ key: string; row: SessionPrRow }> = [];
     for (const row of rows.results ?? []) {
         const storedPr = parseSessionPr(row.data);
         if (!storedPr) continue;
@@ -608,6 +615,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
                 pr: { ...pr, mentions: 0, user_mentions: 0, last_mentioned_at: 0 },
                 updated_at: row.updated_at,
                 sessions: [],
+                touching: [],
                 disposition: overrides.get(key)?.get('') ?? null,
             };
             merged.set(key, entry);
@@ -664,6 +672,9 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             // The session's own primary still identifies the PR when nobody
             // else owns it — including a checkout in another repo or org.
             primaryCandidates.push({ key, row });
+            touchingCandidates.push({ key, row });
+        } else if (!pr.dismissed) {
+            touchingCandidates.push({ key, row });
         }
     }
 
@@ -673,6 +684,16 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     for (const candidate of primaryCandidates) {
         if (verifiedOwnerKeys.has(candidate.key)) continue;
         merged.get(candidate.key)?.sessions.push(boardSession(candidate.row));
+    }
+
+    // Session view lists every PR a session still tracks, even when PR view
+    // will not put that session under the PR.
+    for (const candidate of touchingCandidates) {
+        const entry = merged.get(candidate.key);
+        if (!entry) continue;
+        const id = candidate.row.session_id;
+        if (hasBoardSession(entry.sessions, id) || hasBoardSession(entry.touching, id)) continue;
+        entry.touching.push(boardSession(candidate.row));
     }
 
     // Explicitly watched PRs join the board even when no session tracks
@@ -722,6 +743,7 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
             pr,
             updated_at: row.refreshed_at || row.added_at,
             sessions: [],
+            touching: [],
         });
     }
 
@@ -749,13 +771,16 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
     collectSlackThreads(sessionRows.results ?? [], slack);
 
     const markPool = [...sessions];
-    for (const entry of prs) markPool.push(...entry.sessions);
+    for (const entry of prs) {
+        markPool.push(...entry.sessions, ...entry.touching);
+    }
     const marks = assignSessionMarks(markPool);
 
     return jsonResponse({
         prs: prs.map((entry) => ({
             ...entry,
             sessions: entry.sessions.map((session) => withSessionMark(session, marks)),
+            touching: entry.touching.map((session) => withSessionMark(session, marks)),
         })),
         sessions: sessions.map((session) => withSessionMark(session, marks)),
         slack: [...slack.values()],

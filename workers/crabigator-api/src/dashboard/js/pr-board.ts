@@ -529,25 +529,45 @@ export const prBoardJs = `
             return badge + ' '
                 + prbAgePart('⟩', prompted, now) + ' ' + prbAgePart('⋖', completed, now);
         }
-        // Rows order by when the user last prompted a session; completions
-        // never move a row.
-        function prbSessionFreshness(s) {
+        // Thinking, permission, or question — in-flight work, not a finished turn.
+        function prbSessionIsWorking(s) {
+            if (!s || s.active === false) return false;
+            const st = prbSessionState(s);
+            return st === 'thinking' || st === 'permission' || st === 'question';
+        }
+        // Last prompt, or now when the session is still working.
+        function prbSessionFreshness(s, now) {
+            if (prbSessionIsWorking(s)) return now;
             return s.prompts_changed_at || 0;
         }
-        function prbActivityTime(sessions) {
-            return Math.max(0, ...sessions.map(s => prbSessionFreshness(s)));
+        function prbActivityTime(sessions, now) {
+            return Math.max(0, ...sessions.map(s => prbSessionFreshness(s, now)));
         }
         // A PR row's recency, unix seconds: its sessions' newest prompt. With
         // no prompt to follow (a watch, or sessions that never prompted) the
         // PR's own events place it — GitHub's updatedAt, the close, or its
         // last mention here.
-        function prbEntryRecency(e, sessions) {
-            const prompted = prbActivityTime(sessions);
+        function prbEntryRecency(e, sessions, now) {
+            const prompted = prbActivityTime(sessions, now);
             if (prompted) return prompted;
             return Math.max(
                 Math.floor((e.pr.updated_at || 0) / 1000),
                 Math.floor((e.pr.closed_at || 0) / 1000),
                 Math.floor((e.pr.last_mentioned_at || 0) / 1000));
+        }
+        // Owners first, then other sessions that track the PR, each id once.
+        function prbContributorSessions(e) {
+            const out = [];
+            const seen = new Set();
+            for (const list of [e.sessions, e.touching]) {
+                for (const s of list || []) {
+                    const key = s.session_id || s.dir_name;
+                    if (!key || seen.has(key)) continue;
+                    seen.add(key);
+                    out.push(s);
+                }
+            }
+            return out;
         }
 
         // Provider markers: ᛝ Claude, ⟁ Codex, ↯ Grok, ▣ opencode.
@@ -1455,13 +1475,16 @@ export const prBoardJs = `
                 // The server already drops scope-dismissed sessions; filtering
                 // here lets a dismissal made just now reshape the board before
                 // the next fetch.
-                const sessions = (e.sessions || []).filter(s =>
-                    prbSessionDisposition(e.pr, s) !== 'dismissed');
-                if (prView || !sessions.length) {
+                const notDismissed = s => prbSessionDisposition(e.pr, s) !== 'dismissed';
+                const sessions = (e.sessions || []).filter(notDismissed);
+                const contributors = prView
+                    ? sessions
+                    : prbContributorSessions(e).filter(notDismissed);
+                if (prView || !contributors.length) {
                     if (prView && !primary && !e.pr.watched) continue;
                     const ordered = sessions.slice().sort((a, b) =>
                         (a.active ? 0 : 1) - (b.active ? 0 : 1)
-                        || prbSessionFreshness(b) - prbSessionFreshness(a));
+                        || prbSessionFreshness(b, now) - prbSessionFreshness(a, now));
                     entries.push({
                         kind: 'prview',
                         entry: e,
@@ -1469,12 +1492,12 @@ export const prBoardJs = `
                         sessions: ordered,
                         // A watch with no sessions is being watched, not stale.
                         stale: ordered.length ? !ordered.some(s => s.active) : !e.pr.watched,
-                        activity: prbEntryRecency(e, ordered),
+                        activity: prbEntryRecency(e, ordered, now),
                         key: e.owner + '/' + e.repo + '#' + e.number,
                     });
                     continue;
                 }
-                for (const s of sessions) {
+                for (const s of contributors) {
                     const sessKey = s.session_id || s.dir_name;
                     if (!sessBlocks.has(sessKey)) {
                         sessBlocks.set(sessKey, {
@@ -1500,8 +1523,8 @@ export const prBoardJs = `
                     || (b.entry.pr.last_mentioned_at || 0) - (a.entry.pr.last_mentioned_at || 0));
                 block.entry = block.prs[0].entry;
                 block.primary = true;
-                block.activity = prbSessionFreshness(block.session)
-                    || Math.max(0, ...block.prs.map(sub => prbEntryRecency(sub.entry, [])));
+                block.activity = prbSessionFreshness(block.session, now)
+                    || Math.max(0, ...block.prs.map(sub => prbEntryRecency(sub.entry, [], now)));
                 entries.push(block);
             }
             // Attention first, then primaries, then recency of discussion —
@@ -1522,14 +1545,16 @@ export const prBoardJs = `
             const workspaces = [];
             for (const s of prBoardSessions) {
                 if (!s.active) continue;
+                const sessKey = s.session_id || s.dir_name;
+                if (!prView && sessBlocks.has(sessKey)) continue;
                 const represented = !!s.session_id && prBoardEntries.some(e =>
                     (e.sessions || []).some(es => es.session_id === s.session_id));
                 if (represented) continue;
                 workspaces.push({
                     kind: 'session',
                     session: s,
-                    activity: prbSessionFreshness(s),
-                    key: 'ws:' + (s.session_id || s.dir_name),
+                    activity: prbSessionFreshness(s, now),
+                    key: 'ws:' + sessKey,
                 });
             }
 
