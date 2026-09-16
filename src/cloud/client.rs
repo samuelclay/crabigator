@@ -57,6 +57,9 @@ pub struct CloudBoardEntry {
     pub pr: crate::pr::SessionPr,
     #[serde(default)]
     pub sessions: Vec<CloudBoardSession>,
+    /// Trackers that don't own this PR. Older Workers omit the field.
+    #[serde(default)]
+    pub touching: Vec<CloudBoardSession>,
 }
 
 #[derive(Debug, Deserialize)]

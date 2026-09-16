@@ -343,9 +343,22 @@ struct SessionSnapshot {
 struct BoardPr {
     /// Freshest copy of the GitHub stats (newest `refreshed_at` wins).
     pr: SessionPr,
+    /// Owners for PR-view sub-rows (created the PR or match its checkout).
     sessions: Vec<SessionRef>,
+    /// Trackers that don't own this PR. Session view still groups them here.
+    touching: Vec<SessionRef>,
     slack_threads: Vec<SlackThread>,
     stale: bool,
+}
+
+impl BoardPr {
+    fn tracked_sessions(&self) -> impl Iterator<Item = &SessionRef> {
+        self.sessions.iter().chain(self.touching.iter())
+    }
+
+    fn tracked_sessions_mut(&mut self) -> impl Iterator<Item = &mut SessionRef> {
+        self.sessions.iter_mut().chain(self.touching.iter_mut())
+    }
 }
 
 #[derive(Clone)]
@@ -1058,9 +1071,11 @@ fn aggregate(
     // PRs a session holds a verified claim on, and primary PRs that do not
     // match its checkout. Resolve the latter after the merge pass so a
     // verified owner wins; otherwise every primary PR keeps the session
-    // title, state, and activity that it shares.
+    // title, state, and activity that it shares. Trackers land last so
+    // session view can still group them.
     let mut verified_owner_keys: HashSet<String> = HashSet::new();
     let mut primary_candidates: Vec<(&SessionSnapshot, String)> = Vec::new();
+    let mut touching_candidates: Vec<(&SessionSnapshot, String)> = Vec::new();
 
     for session in snapshots {
         for stored_pr in &session.prs {
@@ -1085,6 +1100,7 @@ fn aggregate(
                 BoardPr {
                     pr: seed,
                     sessions: Vec::new(),
+                    touching: Vec::new(),
                     slack_threads: Vec::new(),
                     stale: true,
                 }
@@ -1151,7 +1167,10 @@ fn aggregate(
                 // nobody else owns it — including a checkout in another
                 // repo or org, which is how a session that followed a
                 // directory still shows under its official PR.
-                primary_candidates.push((session, key));
+                primary_candidates.push((session, key.clone()));
+                touching_candidates.push((session, key));
+            } else if !pr.dismissed {
+                touching_candidates.push((session, key));
             }
         }
     }
@@ -1165,6 +1184,14 @@ fn aggregate(
         }
         if let Some(entry) = merged.get_mut(&key) {
             attach_session(entry, session, now);
+        }
+    }
+
+    // Session view lists every PR a session still tracks, even when PR view
+    // will not put that session under the PR.
+    for (session, key) in touching_candidates {
+        if let Some(entry) = merged.get_mut(&key) {
+            attach_touching(entry, session);
         }
     }
 
@@ -1234,20 +1261,23 @@ fn session_view_entries(entries: Vec<BoardPr>) -> ShapedEntries {
     let mut prs = Vec::new();
     let mut sessions: Vec<SessionEntry> = Vec::new();
     for entry in entries {
-        if entry.sessions.is_empty() {
+        if entry.sessions.is_empty() && entry.touching.is_empty() {
             prs.push(entry);
             continue;
         }
         let BoardPr {
             pr,
-            sessions: entry_sessions,
+            sessions: owners,
+            touching,
             slack_threads,
             stale,
         } = entry;
-        for session in entry_sessions {
+        let contributors = unique_session_refs(owners, touching);
+        for session in contributors {
             let sub = BoardPr {
                 pr: pr.clone(),
                 sessions: Vec::new(),
+                touching: Vec::new(),
                 slack_threads: slack_threads.clone(),
                 stale,
             };
@@ -1256,7 +1286,7 @@ fn session_view_entries(entries: Vec<BoardPr>) -> ShapedEntries {
                 .find(|block| session_key(&block.session) == session_key(&session))
             {
                 Some(block) => {
-                    block.stale &= stale || session.ended;
+                    block.stale &= session.ended;
                     // Copies of one session are near-identical; keep one whose
                     // local mirror the quick look pane can open.
                     if block.session.session_dir.is_none() && session.session_dir.is_some() {
@@ -1265,7 +1295,7 @@ fn session_view_entries(entries: Vec<BoardPr>) -> ShapedEntries {
                     block.prs.push(sub);
                 }
                 None => sessions.push(SessionEntry {
-                    stale: stale || session.ended,
+                    stale: session.ended,
                     session,
                     prs: vec![sub],
                 }),
@@ -1278,19 +1308,35 @@ fn session_view_entries(entries: Vec<BoardPr>) -> ShapedEntries {
     ShapedEntries { prs, sessions }
 }
 
-/// The clock a session block sorts and buckets by: the session's newest
-/// prompt, falling back to its PRs' own events for sessions that never
-/// prompted.
-fn session_entry_recency(entry: &SessionEntry) -> u64 {
-    if entry.session.prompted_at > 0 {
-        return entry.session.prompted_at;
+/// Owners first, then other sessions that track the PR, each id once.
+fn unique_session_refs(owners: Vec<SessionRef>, touching: Vec<SessionRef>) -> Vec<SessionRef> {
+    let mut out = owners;
+    for session in touching {
+        let key = session_key(&session);
+        if !out.iter().any(|seen| session_key(seen) == key) {
+            out.push(session);
+        }
     }
-    entry.prs.iter().map(entry_recency_time).max().unwrap_or(0)
+    out
+}
+
+/// Session clock, or the PRs' own events when the session never prompted.
+fn session_entry_recency(entry: &SessionEntry, now: u64) -> u64 {
+    let clock = session_clock(&entry.session, now);
+    if clock > 0 {
+        return clock;
+    }
+    entry
+        .prs
+        .iter()
+        .map(|pr| entry_recency_time(pr, now))
+        .max()
+        .unwrap_or(0)
 }
 
 /// The recency band a session block belongs to on that same clock.
 fn session_entry_bucket(entry: &SessionEntry, now: u64) -> RecencyBucket {
-    RecencyBucket::from_age(now.saturating_sub(session_entry_recency(entry)))
+    RecencyBucket::from_age(now.saturating_sub(session_entry_recency(entry, now)))
 }
 
 /// Apply current worktree ownership while reading a session snapshot. Older
@@ -1343,7 +1389,27 @@ fn attach_session(entry: &mut BoardPr, session: &SessionSnapshot, now: f64) {
         merge_slack_thread(&mut entry.slack_threads, thread.clone());
     }
     entry.stale &= (now - session.last_updated).max(0.0) > STALE_SESSION_SECS;
-    entry.sessions.push(board_session_ref(session));
+    if !session_listed(&entry.sessions, session) {
+        entry.sessions.push(board_session_ref(session));
+    }
+}
+
+/// Record a tracker that doesn't own this PR. PR view ignores this list.
+fn attach_touching(entry: &mut BoardPr, session: &SessionSnapshot) {
+    if session_listed(&entry.sessions, session) || session_listed(&entry.touching, session) {
+        return;
+    }
+    entry.touching.push(board_session_ref(session));
+}
+
+fn session_listed(sessions: &[SessionRef], snapshot: &SessionSnapshot) -> bool {
+    sessions.iter().any(|session| {
+        if !snapshot.session_id.is_empty() {
+            session.session_id == snapshot.session_id
+        } else {
+            session.session_id.is_empty() && session.dir_name == snapshot.dir_name
+        }
+    })
 }
 
 fn board_session_ref(session: &SessionSnapshot) -> SessionRef {
@@ -1402,7 +1468,7 @@ fn local_workspaces(snapshots: &[SessionSnapshot], entries: &[BoardPr]) -> Vec<W
             deletions: snapshot.deletions,
         });
     }
-    sort_workspaces(&mut workspaces);
+    sort_workspaces(&mut workspaces, now as u64);
     workspaces
 }
 
@@ -1479,15 +1545,15 @@ fn attach_live_mirrors(
 ) {
     let sessions = entries
         .iter_mut()
-        .flat_map(|entry| entry.sessions.iter_mut())
+        .flat_map(|entry| entry.tracked_sessions_mut())
         .chain(workspaces.iter_mut().map(|entry| &mut entry.session));
     for session in sessions {
         session.session_dir = mirrors.get(&session.session_id).cloned();
     }
 }
 
-fn sort_workspaces(workspaces: &mut [WorkspaceEntry]) {
-    workspaces.sort_by_key(|entry| std::cmp::Reverse(activity_sort_time(entry.sessions())));
+fn sort_workspaces(workspaces: &mut [WorkspaceEntry], now: u64) {
+    workspaces.sort_by_key(|entry| std::cmp::Reverse(activity_sort_time(entry.sessions(), now)));
 }
 
 /// Overlay live mirrors on the durable session list. This keeps `a` mode's
@@ -1529,7 +1595,7 @@ fn merge_live_workspaces(
             workspaces.push(live);
         }
     }
-    sort_workspaces(workspaces);
+    sort_workspaces(workspaces, now_secs() as u64);
 }
 
 /// Keep the strongest source among the session copies that called this PR
@@ -1616,51 +1682,15 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
             .into_iter()
             .map(|s| {
                 represented.insert(s.session_id.clone());
-                let active = s.active;
-                let state = parse_session_state(&s.state).unwrap_or(if active {
-                    SessionState::Ready
-                } else {
-                    SessionState::Complete
-                });
-                let recap = s.recap.and_then(|r| {
-                    (!r.headline.is_empty()).then_some(RecapBrief {
-                        headline: r.headline,
-                        bullets: r.bullets,
-                        next_prompt_notes: r.next_prompt_notes,
-                        artifacts: r.artifacts,
-                        generated_at: r.generated_at,
-                        line_delta: crate::recap::TurnLineDelta {
-                            additions: r.additions,
-                            deletions: r.deletions,
-                        },
-                    })
-                });
-                SessionRef {
-                    pr_scope: if s.pr_scope.is_empty() {
-                        format!("session:{}", s.session_id)
-                    } else {
-                        s.pr_scope
-                    },
-                    mark: SessionMark::from_ids(&s.client_session_id, &s.session_id),
-                    session_id: s.session_id,
-                    platform: cloud_session_platform(s.platform, &s.title),
-                    dir_name: s.dir_name,
-                    session_dir: None,
-                    title_set_at: s.title_set_at,
-                    title: s.title,
-                    branch: s.branch,
-                    recap,
-                    state,
-                    prompted_at: activity_timestamp_secs(s.prompts_changed_at),
-                    completed_at: activity_timestamp_secs(s.completions_changed_at),
-                    ended: !active,
-                }
+                cloud_session_ref(s)
             })
             .collect();
+        let touching: Vec<SessionRef> = entry.touching.into_iter().map(cloud_session_ref).collect();
         let stale = sessions.iter().all(|session| session.ended);
         out.push(BoardPr {
             pr,
             sessions,
+            touching,
             slack_threads,
             stale,
         });
@@ -1677,50 +1707,59 @@ fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec
         } else {
             session.repo_name.clone()
         };
-        let recap = session.recap.and_then(|recap| {
-            (!recap.headline.is_empty()).then_some(RecapBrief {
-                headline: recap.headline,
-                bullets: recap.bullets,
-                next_prompt_notes: recap.next_prompt_notes,
-                artifacts: recap.artifacts,
-                generated_at: recap.generated_at,
-                line_delta: crate::recap::TurnLineDelta {
-                    additions: recap.additions,
-                    deletions: recap.deletions,
-                },
-            })
-        });
-        let session_ref = SessionRef {
-            state: parse_session_state(&session.state).unwrap_or(SessionState::Ready),
-            pr_scope: if session.pr_scope.is_empty() {
-                format!("session:{}", session.session_id)
-            } else {
-                session.pr_scope.clone()
-            },
-            mark: SessionMark::from_ids(&session.client_session_id, &session.session_id),
-            session_id: session.session_id,
-            platform: cloud_session_platform(session.platform, &session.title),
-            dir_name: session.dir_name,
-            session_dir: None,
-            title_set_at: session.title_set_at,
-            title: session.title,
-            branch: session.branch.clone(),
-            recap,
-            prompted_at: activity_timestamp_secs(session.prompts_changed_at),
-            completed_at: activity_timestamp_secs(session.completions_changed_at),
-            ended: !session.active,
-        };
         workspaces.push(WorkspaceEntry {
-            repo_owner: session.repo_owner,
+            repo_owner: session.repo_owner.clone(),
             repo_name,
-            branch: session.branch,
-            session: session_ref,
+            branch: session.branch.clone(),
             additions: session.additions,
             deletions: session.deletions,
+            session: cloud_session_ref(session),
         });
     }
-    sort_workspaces(&mut workspaces);
+    sort_workspaces(&mut workspaces, now_secs() as u64);
     (out, workspaces)
+}
+
+fn cloud_session_ref(session: crate::cloud::CloudBoardSession) -> SessionRef {
+    let active = session.active;
+    let state = parse_session_state(&session.state).unwrap_or(if active {
+        SessionState::Ready
+    } else {
+        SessionState::Complete
+    });
+    let recap = session.recap.and_then(|r| {
+        (!r.headline.is_empty()).then_some(RecapBrief {
+            headline: r.headline,
+            bullets: r.bullets,
+            next_prompt_notes: r.next_prompt_notes,
+            artifacts: r.artifacts,
+            generated_at: r.generated_at,
+            line_delta: crate::recap::TurnLineDelta {
+                additions: r.additions,
+                deletions: r.deletions,
+            },
+        })
+    });
+    SessionRef {
+        pr_scope: if session.pr_scope.is_empty() {
+            format!("session:{}", session.session_id)
+        } else {
+            session.pr_scope
+        },
+        mark: SessionMark::from_ids(&session.client_session_id, &session.session_id),
+        session_id: session.session_id,
+        platform: cloud_session_platform(session.platform, &session.title),
+        dir_name: session.dir_name,
+        session_dir: None,
+        title_set_at: session.title_set_at,
+        title: session.title,
+        branch: session.branch,
+        recap,
+        state,
+        prompted_at: activity_timestamp_secs(session.prompts_changed_at),
+        completed_at: activity_timestamp_secs(session.completions_changed_at),
+        ended: !active,
+    }
 }
 
 fn cloud_session_platform(platform: Option<PlatformKind>, title: &str) -> PlatformKind {
@@ -1856,7 +1895,7 @@ fn observe_cooldowns(
 ) {
     let sessions = entries
         .iter()
-        .flat_map(|entry| entry.sessions.iter())
+        .flat_map(|entry| entry.tracked_sessions())
         .chain(workspaces.iter().map(|entry| &entry.session));
     for session in sessions {
         cooldowns.observe_session_state(
@@ -1873,24 +1912,40 @@ fn observe_cooldowns(
 fn board_has_thinking(entries: &[BoardPr], workspaces: &[WorkspaceEntry]) -> bool {
     entries
         .iter()
-        .flat_map(|entry| entry.sessions.iter())
+        .flat_map(|entry| entry.tracked_sessions())
         .chain(workspaces.iter().map(|entry| &entry.session))
         .any(|session| session.state == SessionState::Thinking)
 }
 
-/// Sort each row by its newest prompt. Completions never move a row: the
-/// board orders by when the user last spoke to a session, not by when the
-/// assistant finished.
-fn activity_sort_time(sessions: &[SessionRef]) -> u64 {
+/// Thinking, permission, or question — in-flight work, not a finished turn.
+fn session_is_working(session: &SessionRef) -> bool {
+    !session.ended
+        && matches!(
+            session.state,
+            SessionState::Thinking | SessionState::Permission | SessionState::Question
+        )
+}
+
+/// Last prompt, or now when the session is still working.
+fn session_clock(session: &SessionRef, now: u64) -> u64 {
+    if session_is_working(session) {
+        now
+    } else {
+        session.prompted_at
+    }
+}
+
+/// Newest session clock among these rows. Completions never move a row.
+fn activity_sort_time(sessions: &[SessionRef], now: u64) -> u64 {
     sessions
         .iter()
-        .map(|session| session.prompted_at)
+        .map(|session| session_clock(session, now))
         .max()
         .unwrap_or(0)
 }
 
 fn activity_bucket(sessions: &[SessionRef], now: u64) -> RecencyBucket {
-    RecencyBucket::from_age(now.saturating_sub(activity_sort_time(sessions)))
+    RecencyBucket::from_age(now.saturating_sub(activity_sort_time(sessions, now)))
 }
 
 /// The clock a PR row sorts and buckets by, in unix seconds: the newest
@@ -1898,8 +1953,8 @@ fn activity_bucket(sessions: &[SessionRef], now: u64) -> RecencyBucket {
 /// sessions that never prompted — falls back to the PR's own events: GitHub's
 /// updatedAt (which moves on any push, comment, review, or merge), the close,
 /// or its last mention here.
-fn entry_recency_time(entry: &BoardPr) -> u64 {
-    let prompted = activity_sort_time(&entry.sessions);
+fn entry_recency_time(entry: &BoardPr, now: u64) -> u64 {
+    let prompted = activity_sort_time(&entry.sessions, now);
     if prompted > 0 {
         return prompted;
     }
@@ -1910,7 +1965,7 @@ fn entry_recency_time(entry: &BoardPr) -> u64 {
 
 /// The recency band a PR row belongs to on that same clock.
 fn entry_bucket(entry: &BoardPr, now: u64) -> RecencyBucket {
-    RecencyBucket::from_age(now.saturating_sub(entry_recency_time(entry)))
+    RecencyBucket::from_age(now.saturating_sub(entry_recency_time(entry, now)))
 }
 
 fn activity_part(label: &str, timestamp: u64, now: u64, event_color: u8) -> ActivityCell {
@@ -2761,7 +2816,11 @@ fn pr_view_activity_cell(
     cooldowns: &Cooldowns,
 ) -> ActivityCell {
     if entry.sessions.is_empty() {
-        return timestamp_cell(entry_recency_time(entry) * 1000, now_ms, activity_width);
+        return timestamp_cell(
+            entry_recency_time(entry, now_ms / 1000) * 1000,
+            now_ms,
+            activity_width,
+        );
     }
     activity_cell(&entry.sessions, now_ms, throbber_frame, cooldowns)
 }
@@ -3089,6 +3148,13 @@ fn render_at(
         .iter()
         .enumerate()
         .filter_map(|(index, row)| {
+            // Session view already drew this session as a block with its PRs.
+            if session_rows
+                .iter()
+                .any(|block| session_key(&block.entry.session) == session_key(&row.entry.session))
+            {
+                return None;
+            }
             (activity_bucket(row.entry.sessions(), now) <= oldest_visible_bucket).then_some(index)
         })
         .collect();
@@ -3324,7 +3390,7 @@ fn render_at(
             let row = &rows[index];
             add_row(
                 format!("{}/{}", row.entry.pr.owner, row.entry.pr.repo),
-                entry_recency_time(row.entry),
+                entry_recency_time(row.entry, now),
                 SectionRow::Pr(index),
             );
         }
@@ -3340,7 +3406,7 @@ fn render_at(
                 .unwrap_or_default();
             add_row(
                 repo,
-                session_entry_recency(row.entry),
+                session_entry_recency(row.entry, now),
                 SectionRow::Session(index),
             );
         }
@@ -3353,7 +3419,7 @@ fn render_at(
             };
             add_row(
                 repo,
-                activity_sort_time(row.entry.sessions()),
+                activity_sort_time(row.entry.sessions(), now),
                 SectionRow::Workspace(index),
             );
         }
@@ -3673,6 +3739,7 @@ fn merge_watched_entries(
         entries.push(BoardPr {
             pr: pr.clone(),
             sessions: Vec::new(),
+            touching: Vec::new(),
             slack_threads,
             stale: false,
         });
@@ -4387,27 +4454,34 @@ async fn board_loop(
                         })
                 })
                 .collect();
-            let filtered_workspaces: Vec<WorkspaceRow> = workspaces
-                .iter()
-                .filter_map(|entry| {
-                    if activity_bucket(entry.sessions(), now) > view.oldest_visible_bucket {
-                        return None;
-                    }
-                    let preview_lines = build_session_previews(
-                        entry.sessions(),
-                        &mut transcripts,
-                        query,
-                        width,
-                        expanded,
-                    );
-                    (workspace_matches_search(entry, query) || !preview_lines.is_empty()).then_some(
-                        WorkspaceRow {
-                            entry,
-                            preview_lines,
-                        },
-                    )
-                })
-                .collect();
+            let filtered_workspaces: Vec<WorkspaceRow> =
+                workspaces
+                    .iter()
+                    .filter_map(|entry| {
+                        if view.mode == BoardMode::Sessions
+                            && shaped.sessions.iter().any(|block| {
+                                session_key(&block.session) == session_key(&entry.session)
+                            })
+                        {
+                            return None;
+                        }
+                        if activity_bucket(entry.sessions(), now) > view.oldest_visible_bucket {
+                            return None;
+                        }
+                        let preview_lines = build_session_previews(
+                            entry.sessions(),
+                            &mut transcripts,
+                            query,
+                            width,
+                            expanded,
+                        );
+                        (workspace_matches_search(entry, query) || !preview_lines.is_empty())
+                            .then_some(WorkspaceRow {
+                                entry,
+                                preview_lines,
+                            })
+                    })
+                    .collect();
             matched = filtered.len() + filtered_sessions.len() + filtered_workspaces.len();
             let fresh = render_at(
                 &filtered,
@@ -5391,6 +5465,7 @@ mod tests {
         let mut entry = BoardPr {
             pr,
             sessions: vec![test_session_ref("old", now - 30 * 3600, false)],
+            touching: Vec::new(),
             slack_threads: Vec::new(),
             stale: false,
         };
@@ -5412,6 +5487,13 @@ mod tests {
             RecencyBucket::LastHour,
             "with no prompt to follow, the PR's own events place it"
         );
+        entry.sessions = vec![test_session_ref("old", now - 30 * 3600, false)];
+        entry.sessions[0].state = SessionState::Thinking;
+        assert_eq!(
+            entry_bucket(&entry, now),
+            RecencyBucket::LastHour,
+            "a session still thinking sits in Last hour even with an old prompt"
+        );
     }
 
     #[test]
@@ -5425,6 +5507,7 @@ mod tests {
                 test_session_ref("ended-fresh", now - 60, true),
                 test_session_ref("live-old", now - 7200, false),
             ],
+            touching: Vec::new(),
             slack_threads: Vec::new(),
             stale: false,
         };
@@ -6353,6 +6436,103 @@ mod tests {
     }
 
     #[test]
+    fn session_view_keeps_worktree_visits_under_the_working_session() {
+        // A session that hopped into another repo still tracks those open
+        // PRs as worktree visits. Session view must not split them into
+        // orphan Last-hour PR blocks plus a 1–3 hour no-PR workspace.
+        let now = now_secs() as u64;
+        let mut portal = board_pr(1551, "developer-portal");
+        portal.primary = false;
+        portal.primary_source = "auto".to_string();
+        portal.created_here = false;
+        portal.worktree_visit = true;
+        portal.branch = "sam/builder-context-on-demand".to_string();
+        portal.updated_at = (now - 60) * 1000;
+        let mut handler = board_pr(2989, "request-handler");
+        handler.primary = false;
+        handler.primary_source = "auto".to_string();
+        handler.created_here = false;
+        handler.worktree_visit = true;
+        handler.branch = "sam/builder-context-on-demand".to_string();
+        handler.updated_at = (now - 12 * 60) * 1000;
+
+        let mut session = snapshot("pal-maker-evals", vec![portal, handler]);
+        session.session_id = "handoff".to_string();
+        session.repo_owner = "Tavus-Engineering".to_string();
+        session.repo_name = "pal-maker-evals".to_string();
+        session.branch = "lazy-faces-eval".to_string();
+        session.title = "Deploy Handoff Incomplete".to_string();
+        session.state = SessionState::Thinking;
+        session.prompted_at = now - 90 * 60;
+        session.completed_at = now - 30;
+
+        let snapshots = vec![session];
+        let entries = aggregate(&snapshots, &ScopedOverrides::default(), 0);
+        assert_eq!(entries.len(), 2, "both open visits stay visible");
+        assert!(
+            entries.iter().all(|entry| entry.sessions.is_empty()),
+            "worktree visits do not own the PRs"
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.touching.len())
+                .sum::<usize>(),
+            2
+        );
+        let workspaces = local_workspaces(&snapshots, &entries);
+        assert_eq!(
+            workspaces.len(),
+            1,
+            "PR view still keeps the session as a peer row"
+        );
+
+        let shaped = entries_for_mode(entries, BoardMode::Sessions);
+        assert!(
+            shaped.prs.is_empty(),
+            "session view must not emit orphan PR blocks: {:?}",
+            shaped
+                .prs
+                .iter()
+                .map(|entry| entry.pr.number)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(shaped.sessions.len(), 1);
+        assert_eq!(shaped.sessions[0].session.session_id, "handoff");
+        let mut numbers: Vec<u64> = shaped.sessions[0]
+            .prs
+            .iter()
+            .map(|entry| entry.pr.number)
+            .collect();
+        numbers.sort_unstable();
+        assert_eq!(numbers, [1551, 2989]);
+        assert_eq!(
+            session_entry_bucket(&shaped.sessions[0], now),
+            RecencyBucket::LastHour,
+            "a session still thinking belongs in Last hour"
+        );
+
+        let frame = crate::parsers::strip_ansi_for_debug(
+            &render_session_view_frame(&shaped, &workspaces, DEFAULT_DETAIL)
+                .lines
+                .join("\n"),
+        );
+        assert!(frame.contains("● Last hour"), "{frame}");
+        assert!(!frame.contains("● 1–3 hours"), "{frame}");
+        assert_eq!(frame.matches("Deploy Handoff Incomplete").count(), 1);
+        assert!(frame.contains("#1551:"));
+        assert!(frame.contains("#2989:"));
+        let header = frame
+            .lines()
+            .find(|line| line.contains("Deploy Handoff Incomplete"))
+            .unwrap();
+        assert!(
+            !header.contains("#1551:"),
+            "the session leads; PRs sit beneath: {header}"
+        );
+    }
+
+    #[test]
     fn cross_repo_primary_prs_identify_otherwise_unrepresented_sessions() {
         // A session working someone else's PR in another repository: the
         // strict ownership gate fails (repo and branch both differ), but no
@@ -7154,6 +7334,7 @@ mod tests {
                 ended: false,
                 mark: SessionMark::from_seed("portal"),
             }],
+            touching: Vec::new(),
             slack_threads: Vec::new(),
             stale: false,
         };
@@ -7658,7 +7839,7 @@ mod tests {
             mark: SessionMark::from_seed("one"),
         };
         assert_eq!(
-            activity_sort_time(std::slice::from_ref(&session)),
+            activity_sort_time(std::slice::from_ref(&session), now),
             session.prompted_at
         );
         assert_eq!(
@@ -7668,8 +7849,20 @@ mod tests {
 
         session.completed_at = now - 30;
         assert_eq!(
-            activity_sort_time(std::slice::from_ref(&session)),
+            activity_sort_time(std::slice::from_ref(&session), now),
             session.prompted_at
+        );
+
+        session.state = SessionState::Thinking;
+        session.prompted_at = now - 2 * 3600;
+        assert_eq!(
+            activity_sort_time(std::slice::from_ref(&session), now),
+            now,
+            "in-flight work keeps the session in Last hour"
+        );
+        assert_eq!(
+            activity_bucket(std::slice::from_ref(&session), now),
+            RecencyBucket::LastHour
         );
     }
 
