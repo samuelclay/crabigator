@@ -10,6 +10,13 @@ describe('public origin rendering', () => {
             origin,
         )).toBe(`${origin}/dashboard preview.drinkcrabigator.com`);
     });
+
+    it('keeps the official host on loopback previews', () => {
+        const snippet = 'https://drinkcrabigator.com/mcp';
+        expect(usePublicOrigin(snippet, 'http://127.0.0.1:8787')).toBe(snippet);
+        expect(usePublicOrigin(snippet, 'http://localhost:8787')).toBe(snippet);
+        expect(usePublicOrigin(snippet, 'http://[::1]:8787')).toBe(snippet);
+    });
 });
 
 describe('self-hosted runtime configuration', () => {

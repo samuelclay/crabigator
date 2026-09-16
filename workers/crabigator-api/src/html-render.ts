@@ -12,10 +12,19 @@ export function escapeHtml(value: string): string {
     })[character] || character);
 }
 
+function isLoopbackHost(hostname: string): boolean {
+    return hostname === 'localhost'
+        || hostname === '127.0.0.1'
+        || hostname === '::1'
+        || hostname === '[::1]';
+}
+
 export function usePublicOrigin(html: string, origin: string): string {
+    const publicUrl = new URL(origin);
+    if (isLoopbackHost(publicUrl.hostname)) return html;
     return html
         .replaceAll(OFFICIAL_ORIGIN, ORIGIN_PLACEHOLDER)
-        .replaceAll(OFFICIAL_HOST, new URL(origin).host)
+        .replaceAll(OFFICIAL_HOST, publicUrl.host)
         .replaceAll(ORIGIN_PLACEHOLDER, origin);
 }
 
