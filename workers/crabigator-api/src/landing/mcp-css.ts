@@ -72,8 +72,8 @@ export const mcpCss = `
     padding: 12px 14px;
     flex: 1;
     min-width: 0;
-    overflow-x: auto;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 .mcp-connect-copy {
     background: transparent;
@@ -457,9 +457,6 @@ export const mcpCss = `
     .mcp-connect-value {
         grid-area: value;
         font-size: 11px;
-        white-space: normal;
-        overflow-wrap: anywhere;
-        word-break: break-word;
         width: 100%;
     }
     .mcp-toc-links { display: block; }
