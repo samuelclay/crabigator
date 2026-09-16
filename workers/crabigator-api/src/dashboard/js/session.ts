@@ -479,6 +479,7 @@ export const sessionJs = `
                                       rows="1"
                                       enterkeyhint="send"
                                       aria-label="Message"
+                                      title="Enter or ⌘Enter to send, Shift+Enter for a new line"
                                       placeholder="Type a command or answer..."
                                       oninput="handleInputChange('\${session.id}', this.value)"
                                       onkeydown="handleInputKeydown(event, '\${session.id}')"></textarea>

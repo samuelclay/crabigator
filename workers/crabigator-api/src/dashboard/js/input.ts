@@ -93,17 +93,36 @@ export const inputJs = `
             updateSendButton(sessionId);
         }
 
+        function insertTextAtCursor(textarea, text) {
+            const start = textarea.selectionStart ?? textarea.value.length;
+            const end = textarea.selectionEnd ?? start;
+            textarea.value = textarea.value.slice(0, start) + text + textarea.value.slice(end);
+            const pos = start + text.length;
+            textarea.setSelectionRange(pos, pos);
+        }
+
         function handleInputKeydown(event, sessionId) {
-            if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-                event.preventDefault();
-                sendAnswer(sessionId);
-            } else if (event.key === 'Tab') {
+            if (event.isComposing) return;
+
+            if (event.key === 'Tab') {
                 const suggestion = inputSuggestions.get(sessionId);
                 if (suggestion && !event.target.value.trim()) {
                     event.preventDefault();
                     event.target.value = suggestion;
                     handleInputChange(sessionId, suggestion);
                 }
+                return;
+            }
+
+            if (event.key !== 'Enter') return;
+
+            event.preventDefault();
+            // Shift+Enter inserts a newline. Enter, Cmd+Enter, and Ctrl+Enter send.
+            if (event.shiftKey && !event.metaKey && !event.ctrlKey) {
+                insertTextAtCursor(event.target, '\\n');
+                handleInputChange(sessionId, event.target.value);
+            } else {
+                sendAnswer(sessionId);
             }
         }
 
