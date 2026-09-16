@@ -310,6 +310,12 @@ pub mod key {
 
     // === CSI Sequences for Special Keys ===
 
+    /// Modified Enter using CSI u (13 is the Enter key code).
+    #[inline]
+    pub fn enter_modified(modifier: u8) -> Vec<u8> {
+        format!("\x1b[13;{modifier}u").into_bytes()
+    }
+
     /// Shift+Tab / Back Tab (CSI Z)
     pub const BACK_TAB: [u8; 3] = [ESC, b'[', b'Z'];
 

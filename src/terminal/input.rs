@@ -43,6 +43,8 @@ fn encode_key(key: KeyEvent) -> Vec<u8> {
 
     match key.code {
         KeyCode::Char(c) => encode_char(c, has_ctrl, has_alt, has_shift),
+        // Preserve Shift+Enter rather than turning a newline shortcut into submit.
+        KeyCode::Enter if has_shift => key::enter_modified(modifier_code),
         KeyCode::Enter => vec![key::CR],
         KeyCode::Backspace => encode_backspace(has_alt, has_ctrl),
         KeyCode::Tab => encode_tab(has_shift, has_ctrl, modifier_code),
@@ -253,6 +255,26 @@ fn sgr_button(button: MouseButton) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shift_enter_preserves_the_newline_key() {
+        assert_eq!(
+            encode_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+            b"\x1b[13;2u"
+        );
+    }
+
+    #[test]
+    fn plain_enter_and_ctrl_j_stay_distinct() {
+        assert_eq!(
+            encode_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            b"\r"
+        );
+        assert_eq!(
+            encode_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
+            b"\n"
+        );
+    }
 
     fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
         MouseEvent {
