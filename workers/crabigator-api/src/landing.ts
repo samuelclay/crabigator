@@ -63,16 +63,16 @@ export const landingHtml = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crabigator - control Claude Code, Codex, opencode, and Grok from anywhere</title>
-    <meta name="description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code, Codex, opencode, and Grok sessions.">
-    <meta property="og:title" content="Crabigator - Control Claude Code, Codex, opencode, and Grok from anywhere">
-    <meta property="og:description" content="Answer permissions, approve plans, and respond to questions from your phone. Real-time monitoring and remote control for Claude Code, Codex, opencode, and Grok sessions.">
+    <title>Crabigator - control Claude Code, Codex, opencode, and Grok from your phone</title>
+    <meta name="description" content="Answer permissions, approve plans, and respond to questions from your phone. Watch Claude Code, Codex, opencode, and Grok sessions as they run.">
+    <meta property="og:title" content="Crabigator - Control Claude Code, Codex, opencode, and Grok from your phone">
+    <meta property="og:description" content="Answer permissions, approve plans, and respond to questions from your phone. Watch Claude Code, Codex, opencode, and Grok sessions as they run.">
     <meta property="og:image" content="https://drinkcrabigator.com/assets/og-landing.png">
     <meta property="og:url" content="https://drinkcrabigator.com/">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Crabigator">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Crabigator - Control Claude Code, Codex, opencode, and Grok from anywhere">
+    <meta name="twitter:title" content="Crabigator - Control Claude Code, Codex, opencode, and Grok from your phone">
     <meta name="twitter:description" content="Answer permissions, approve plans, and respond to questions from your phone.">
     <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-landing.png">
     <link rel="icon" href="data:image/svg+xml,${iconCrabigatorEncoded}">
@@ -102,11 +102,11 @@ export const landingHtml = `<!DOCTYPE html>
         <div class="hero-content">
             <div class="hero-text">
                 <h1 class="hero-headline">
-                    Control <span class="highlight">Claude Code</span>, Codex, opencode &amp; Grok from anywhere
+                    Control <span class="highlight">Claude Code</span>, Codex, opencode &amp; Grok from your phone
                 </h1>
                 <p class="hero-subheadline">
-                    Answer permissions, approve plans, and respond to questions—all from your phone.
-                    Claude Code, Codex, opencode, and Grok run natively on Mac, Windows, or Linux—exactly as intended.
+                    Answer permissions, approve plans, and questions without sitting at the computer.
+                    The agent still runs on your Mac, Windows, or Linux machine.
                 </p>
                 <div class="hero-install">
                     <div class="hero-install-command">
@@ -132,7 +132,7 @@ export const landingHtml = `<!DOCTYPE html>
                         <div class="terminal-dot red"></div>
                         <div class="terminal-dot yellow"></div>
                         <div class="terminal-dot green"></div>
-                        <span class="terminal-title">crabigator — ~/projects/api</span>
+                        <span class="terminal-title">crabigator  ~/projects/api</span>
                     </div>
                     <div class="terminal-content">
                         <div class="terminal-line">
@@ -316,9 +316,9 @@ export const landingHtml = `<!DOCTYPE html>
             <div class="cta-card">
                 <div class="cta-header">
                     ${iconMail}
-                    <span class="cta-label">Stay in the loop</span>
+                    <span class="cta-label">Email updates</span>
                 </div>
-                <p class="cta-text">Get updates on new features and mobile app launches.</p>
+                <p class="cta-text">News about new features and the mobile apps.</p>
                 <form class="cta-form" id="hero-email-form">
                     <input type="email" class="cta-input" placeholder="you@example.com" required>
                     <button type="submit" class="cta-btn">Subscribe</button>
@@ -336,8 +336,8 @@ export const landingHtml = `<!DOCTYPE html>
             <div class="showcase-text">
                 <h2 class="section-title">Check in from phone or desktop</h2>
                 <p class="section-subtitle">
-                    No Tmux. No Tailscale. No Termius. Native integration built for Claude Code, Codex, opencode, and Grok.
-                    Pair any device in seconds—monitor progress and respond to prompts on the go.
+                    No Tmux. No Tailscale. No Termius. Built for Claude Code, Codex, opencode, and Grok.
+                    Pair a phone in seconds. Watch progress and answer prompts without sitting at the computer.
                 </p>
                 <div class="showcase-status">
                     <div class="status-pills">
@@ -346,7 +346,7 @@ export const landingHtml = `<!DOCTYPE html>
                         <span class="status-pill question">Question</span>
                         <span class="status-pill complete">Complete</span>
                     </div>
-                    <p class="status-hint">Real-time state updates across all sessions</p>
+                    <p class="status-hint">State updates as each session changes</p>
                 </div>
             </div>
             <div class="showcase-devices">
@@ -455,10 +455,10 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
             </div>
             <div class="interactive-text">
-                <h2 class="section-title">Respond from anywhere</h2>
+                <h2 class="section-title">Answer from your phone</h2>
                 <p class="section-subtitle">
-                    Answer permissions, review plans, and respond to questions—all from your phone or any browser.
-                    Add custom instructions before approving to guide your agent's next steps.
+                    Answer permissions, review plans, and questions from your phone or a browser.
+                    You can add instructions before you approve.
                 </p>
                 <ul class="interactive-features">
                     <li>
@@ -467,15 +467,15 @@ export const landingHtml = `<!DOCTYPE html>
                     </li>
                     <li>
                         <span class="feature-icon">${iconCheck}</span>
-                        <span class="feature-text"><strong>Add instructions</strong> before approving—guide the agent's approach</span>
+                        <span class="feature-text"><strong>Add instructions</strong> when you approve</span>
                     </li>
                     <li>
                         <span class="feature-icon">${iconCheck}</span>
-                        <span class="feature-text"><strong>Answer questions</strong> when your agent needs clarification</span>
+                        <span class="feature-text"><strong>Answer questions</strong> when the agent asks</span>
                     </li>
                     <li>
                         <span class="feature-icon">${iconCheck}</span>
-                        <span class="feature-text"><strong>Review plans</strong> before your agent starts implementing</span>
+                        <span class="feature-text"><strong>Review plans</strong> before it starts coding</span>
                     </li>
                 </ul>
             </div>
@@ -485,14 +485,14 @@ export const landingHtml = `<!DOCTYPE html>
     <!-- Features Bento Grid -->
     <section class="section features-section" id="features">
         <div class="section-header">
-            <h2 class="section-title">Everything you need to stay connected</h2>
+            <h2 class="section-title">What Crabigator adds</h2>
         </div>
         <div class="bento-grid">
             <!-- Row 1-2: Session Stats (tall) + Git Changes (tall) + Cloud Dashboard + Mobile -->
             <div class="bento-card tall">
                 <div class="bento-icon">${iconChartBento}</div>
-                <h3 class="bento-title">Session Statistics</h3>
-                <p class="bento-desc">Real-time metrics that update as your agent works. Track prompts, completions, tool calls, and session duration at a glance.</p>
+                <h3 class="bento-title">Session stats</h3>
+                <p class="bento-desc">Prompts, completions, tool calls, and how long the session has been running.</p>
                 <div class="bento-visual">
                     <div class="mini-widget">
                         <div class="widget-header-mini">${iconChart} Session Stats</div>
@@ -534,8 +534,8 @@ export const landingHtml = `<!DOCTYPE html>
             </div>
             <div class="bento-card tall">
                 <div class="bento-icon">${iconFolderBento}</div>
-                <h3 class="bento-title">Git Changes</h3>
-                <p class="bento-desc">See every file your agent modifies with visual diff bars. Additions in green, deletions in red—know exactly what's changing.</p>
+                <h3 class="bento-title">Git changes</h3>
+                <p class="bento-desc">Every file the agent touches. Additions in green, deletions in red.</p>
                 <div class="bento-visual">
                     <div class="mini-widget">
                         <div class="widget-header-mini">${iconFolder} 6 files</div>
@@ -569,25 +569,25 @@ export const landingHtml = `<!DOCTYPE html>
             </div>
             <div class="bento-card small">
                 <div class="bento-icon">${iconPhoneBento}</div>
-                <h3 class="bento-title">Mobile Access</h3>
+                <h3 class="bento-title">From your phone</h3>
                 <p class="bento-desc">Approve permissions and answer questions from your phone.</p>
             </div>
             <div class="bento-card small">
                 <div class="bento-icon anthropic">${iconCube}</div>
                 <h3 class="bento-title">Claude Code</h3>
-                <p class="bento-desc">First-class support with deep hook integration.</p>
+                <p class="bento-desc">Hooks into Claude Code for stats, permissions, and session state.</p>
             </div>
             <div class="bento-card small">
                 <div class="bento-icon openai">${iconDiamond}</div>
                 <h3 class="bento-title">Codex, opencode &amp; Grok</h3>
-                <p class="bento-desc">Works seamlessly with OpenAI's Codex CLI, opencode, and Grok Build.</p>
+                <p class="bento-desc">Also works with Codex, opencode, and Grok Build.</p>
             </div>
 
             <!-- Row 3-4: Semantic Diff (wide + tall) + File Links (tall) -->
             <div class="bento-card wide tall">
                 <div class="bento-icon">${iconSemanticDiff}</div>
-                <h3 class="bento-title">Semantic Diff Parsing</h3>
-                <p class="bento-desc">Changes grouped by language with function and method names extracted. See exactly which functions are being modified, not just file names.</p>
+                <h3 class="bento-title">Diffs by function</h3>
+                <p class="bento-desc">Groups changes by language and names the function or method that changed.</p>
                 <div class="bento-visual">
                     <div class="mini-widget semantic">
                         <div class="lang-group">
@@ -607,8 +607,8 @@ export const landingHtml = `<!DOCTYPE html>
             </div>
             <div class="bento-card tall">
                 <div class="bento-icon">${iconLink}</div>
-                <h3 class="bento-title">Clickable File Links</h3>
-                <p class="bento-desc">Every file path is a link. Click to open directly in VS Code, Cursor, Zed, or your preferred editor.</p>
+                <h3 class="bento-title">File links</h3>
+                <p class="bento-desc">File paths are links. Click one to open it in VS Code, Cursor, or Zed.</p>
                 <div class="bento-visual">
                     <div class="mini-widget file-links">
                         <div class="link-row"><span class="link-path">src/app.rs</span><span class="link-line">:142</span></div>
@@ -622,23 +622,23 @@ export const landingHtml = `<!DOCTYPE html>
             <!-- Row 5: CLI + Scrollback + Mouse + ? -->
             <div class="bento-card small">
                 <div class="bento-icon">${iconSearch}</div>
-                <h3 class="bento-title">CLI Inspection</h3>
-                <p class="bento-desc">Use <code>crabigator inspect</code> to view running instances. Perfect for automation.</p>
+                <h3 class="bento-title">Inspect</h3>
+                <p class="bento-desc">Use <code>crabigator inspect</code> to list running sessions from a script.</p>
             </div>
             <div class="bento-card small">
                 <div class="bento-icon">${iconLines}</div>
-                <h3 class="bento-title">Native Scrollback</h3>
-                <p class="bento-desc">Uses your terminal's primary buffer—unlike tmux. Scroll naturally.</p>
+                <h3 class="bento-title">Scrollback</h3>
+                <p class="bento-desc">Uses your terminal's own scrollback, not a tmux pane.</p>
             </div>
             <div class="bento-card small">
                 <div class="bento-icon">${iconMouse}</div>
-                <h3 class="bento-title">Mouse Selection</h3>
-                <p class="bento-desc">Select and copy text naturally—no tmux capture mode.</p>
+                <h3 class="bento-title">Mouse selection</h3>
+                <p class="bento-desc">Select and copy text as you would in any terminal. No capture mode.</p>
             </div>
             <div class="bento-card small">
                 <div class="bento-icon">${iconBolt}</div>
-                <h3 class="bento-title">Instant Pairing</h3>
-                <p class="bento-desc">Scan a QR code or enter a short code. Connected in seconds.</p>
+                <h3 class="bento-title">Pairing</h3>
+                <p class="bento-desc">Scan a QR code or type a short code.</p>
             </div>
         </div>
     </section>
@@ -648,10 +648,10 @@ export const landingHtml = `<!DOCTYPE html>
     <!-- Security Section -->
     <section class="section security" id="security">
         <div class="section-header">
-            <h2 class="security-headline">Text-only streaming. Zero persistence.</h2>
+            <h2 class="security-headline">Text-only streaming. Nothing stored.</h2>
             <p class="security-subtitle">
-                Only terminal output is transmitted—no file access, no credentials, no system resources.
-                Nothing is retained after your session ends.
+                Only terminal output is sent. No file access, no credentials, no system resources.
+                Nothing is kept after your session ends.
             </p>
         </div>
 
@@ -703,7 +703,7 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
                 <div class="security-feature-content">
                     <div class="security-feature-title">TLS 1.3+ Encryption</div>
-                    <div class="security-feature-desc">All traffic encrypted end-to-end via Cloudflare's edge network.</div>
+                    <div class="security-feature-desc">Traffic is encrypted with TLS 1.3 on Cloudflare's network.</div>
                 </div>
             </div>
 
@@ -713,7 +713,7 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
                 <div class="security-feature-content">
                     <div class="security-feature-title">Text-Only Streaming</div>
-                    <div class="security-feature-desc">Only terminal output is transmitted. No filesystem access, no credentials.</div>
+                    <div class="security-feature-desc">Only terminal output is sent. No filesystem access, no credentials.</div>
                 </div>
             </div>
 
@@ -733,7 +733,7 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
                 <div class="security-feature-content">
                     <div class="security-feature-title">HMAC-SHA256 Auth</div>
-                    <div class="security-feature-desc">Cryptographic device pairing. No passwords stored on servers.</div>
+                    <div class="security-feature-desc">Devices pair with HMAC. No passwords on the server.</div>
                 </div>
             </div>
         </div>
@@ -742,7 +742,7 @@ export const landingHtml = `<!DOCTYPE html>
     <!-- Installation Section -->
     <section class="section install" id="install">
         <div class="section-header">
-            <h2 class="section-title">Install in 30 seconds</h2>
+            <h2 class="section-title">Install with npm</h2>
         </div>
         <div class="install-content">
             <div class="install-terminal">
@@ -786,7 +786,7 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
             </div>
             <p class="github-desc">
-                A Rust TUI wrapper for Claude Code, Codex, opencode, and Grok with real-time mobile streaming. MIT licensed.
+                A Rust TUI wrapper for Claude Code, Codex, opencode, and Grok. Streams the session to your phone. MIT licensed.
             </p>
             <div class="github-meta">
                 <span class="github-lang">
@@ -938,27 +938,27 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
             </div>
             <div class="mobile-info">
-                <h2 class="section-title">Native mobile apps</h2>
+                <h2 class="section-title">iOS and Android apps</h2>
                 <div class="mobile-features">
                     <div class="mobile-feature">
                         ${iconBell}
                         <div>
                             <strong>Push notifications</strong>
-                            <span>Know instantly when Claude needs your approval</span>
+                            <span>A notification when Claude needs approval</span>
                         </div>
                     </div>
                     <div class="mobile-feature">
                         ${iconArrowRight}
                         <div>
-                            <strong>Native performance</strong>
-                            <span>Smooth 60fps animations and instant response</span>
+                            <strong>A real app</strong>
+                            <span>Not a browser tab</span>
                         </div>
                     </div>
                     <div class="mobile-feature">
                         ${iconCloudFilled}
                         <div>
-                            <strong>Offline support</strong>
-                            <span>Review sessions even without internet</span>
+                            <strong>Offline</strong>
+                            <span>Read past sessions without internet</span>
                         </div>
                     </div>
                 </div>
@@ -969,7 +969,7 @@ export const landingHtml = `<!DOCTYPE html>
                 <div class="email-success" id="email-success">
                     ${iconCheck} You're on the list!
                 </div>
-                <p class="email-privacy">Get notified about product launches and updates.</p>
+                <p class="email-privacy">We'll email you when the apps are ready.</p>
             </div>
         </div>
     </section>
@@ -978,8 +978,8 @@ export const landingHtml = `<!DOCTYPE html>
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-cta">
-                <span class="footer-cta-text">Ready to control Claude Code from anywhere?</span>
-                <a href="#install" class="btn-primary" data-track="install_cta" data-label="footer">Install Now</a>
+                <span class="footer-cta-text">Install Crabigator</span>
+                <a href="#install" class="btn-primary" data-track="install_cta" data-label="footer">Install</a>
             </div>
             <div class="footer-links">
                 <a href="/dashboard" class="footer-link">Dashboard</a>

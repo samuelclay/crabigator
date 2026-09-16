@@ -46,8 +46,8 @@ export function mcpLandingSectionHtml(): string {
                 <h2 class="section-title">Let another agent drive your sessions</h2>
                 <p class="section-subtitle">
                     Point Claude, Cursor, Grok, or any MCP client at your live Crabigator sessions.
-                    Sign in with GitHub or Google. Then the agent can list sessions, read screens,
-                    answer prompts, and manage PRs — the same actions as the dashboard.
+                    Sign in with GitHub or Google. The agent can list sessions, read screens,
+                    answer prompts, and manage PRs. Same as the dashboard.
                 </p>
                 ${mcpConnectHtml()}
                 <div class="mcp-intro-actions">
@@ -249,8 +249,8 @@ export function renderMcpToolsHtml(runtime: RuntimeConfig, metaPixelId = ''): st
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-cta">
-                <span class="footer-cta-text">Ready to control Claude Code from anywhere?</span>
-                <a href="/#install" class="btn-primary" data-track="install_cta" data-label="mcp-tools">Install Now</a>
+                <span class="footer-cta-text">Install Crabigator</span>
+                <a href="/#install" class="btn-primary" data-track="install_cta" data-label="mcp-tools">Install</a>
             </div>
             <div class="footer-links">
                 <a href="/dashboard" class="footer-link">Dashboard</a>
