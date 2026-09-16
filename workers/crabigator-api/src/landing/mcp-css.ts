@@ -28,7 +28,6 @@ export const mcpCss = `
     align-items: start;
     min-width: 0;
 }
-.mcp-intro-copy .section-label { justify-content: flex-start; }
 .mcp-intro-copy .section-subtitle {
     margin: 0 0 28px;
     max-width: 540px;
@@ -226,7 +225,23 @@ export const mcpCss = `
     box-sizing: border-box;
     overflow-x: hidden;
 }
-.mcp-docs-hero .section-label { justify-content: flex-start; }
+.mcp-docs-hero .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--accent-magenta);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+}
+.mcp-docs-hero .section-label svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+}
 .mcp-docs-hero h1 {
     font-size: clamp(32px, 5vw, 52px);
     letter-spacing: -1px;
@@ -458,7 +473,6 @@ export const mcpCss = `
         grid-template-columns: 1fr;
         gap: 36px;
     }
-    .mcp-intro-copy .section-label { justify-content: center; }
     .mcp-intro-copy { text-align: center; }
     .mcp-intro-copy .section-subtitle { margin-left: auto; margin-right: auto; }
     .mcp-intro-copy .section-title {

@@ -13,19 +13,15 @@ import {
     iconCrabigatorMono,
     iconCrabigatorPhoneLogo,
     iconCheck,
-    iconCheckAlt,
     iconPhone,
     iconPhoneOutline,
     iconPhoneBento,
     iconPlay,
-    iconPlayCircle,
     iconChart,
     iconChartBento,
     iconFolder,
     iconFolderBento,
     iconChanges,
-    iconMultiDevice,
-    iconFeatures,
     iconCloud,
     iconCloudFilled,
     iconCube,
@@ -54,7 +50,6 @@ import {
     iconBook,
     iconTag,
     iconChat,
-    iconShield,
     iconLock,
     iconKey,
     iconTerminal,
@@ -106,7 +101,6 @@ export const landingHtml = `<!DOCTYPE html>
     <section class="hero">
         <div class="hero-content">
             <div class="hero-text">
-                <p class="hero-tagline">${iconPhone} Remote AI Control</p>
                 <h1 class="hero-headline">
                     Control <span class="highlight">Claude Code</span>, Codex, opencode &amp; Grok from anywhere
                 </h1>
@@ -340,7 +334,6 @@ export const landingHtml = `<!DOCTYPE html>
     <section class="section showcase">
         <div class="showcase-content">
             <div class="showcase-text">
-                <p class="section-label">${iconMultiDevice} Multi-device</p>
                 <h2 class="section-title">Check in from phone or desktop</h2>
                 <p class="section-subtitle">
                     No Tmux. No Tailscale. No Termius. Native integration built for Claude Code, Codex, opencode, and Grok.
@@ -462,7 +455,6 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
             </div>
             <div class="interactive-text">
-                <p class="section-label">${iconPlayCircle} Interactive</p>
                 <h2 class="section-title">Respond from anywhere</h2>
                 <p class="section-subtitle">
                     Answer permissions, review plans, and respond to questions—all from your phone or any browser.
@@ -493,7 +485,6 @@ export const landingHtml = `<!DOCTYPE html>
     <!-- Features Bento Grid -->
     <section class="section features-section" id="features">
         <div class="section-header">
-            <p class="section-label">${iconFeatures} Features</p>
             <h2 class="section-title">Everything you need to stay connected</h2>
         </div>
         <div class="bento-grid">
@@ -657,7 +648,6 @@ export const landingHtml = `<!DOCTYPE html>
     <!-- Security Section -->
     <section class="section security" id="security">
         <div class="section-header">
-            <p class="section-label">${iconShield} Security</p>
             <h2 class="security-headline">Text-only streaming. Zero persistence.</h2>
             <p class="security-subtitle">
                 Only terminal output is transmitted—no file access, no credentials, no system resources.
@@ -752,7 +742,6 @@ export const landingHtml = `<!DOCTYPE html>
     <!-- Installation Section -->
     <section class="section install" id="install">
         <div class="section-header">
-            <p class="section-label">${iconCheckAlt} Get Started</p>
             <h2 class="section-title">Install in 30 seconds</h2>
         </div>
         <div class="install-content">
@@ -787,9 +776,6 @@ export const landingHtml = `<!DOCTYPE html>
 
     <!-- Open Source Section -->
     <section class="section open-source" id="open-source">
-        <div class="section-header">
-            <p class="section-label">${iconGithubSmall} Open Source</p>
-        </div>
         <div class="github-card">
             <div class="github-header">
                 ${iconGithubLogo}
@@ -854,7 +840,6 @@ export const landingHtml = `<!DOCTYPE html>
     <!-- Why Crabigator Easter Egg -->
     <section class="why-crabigator">
         <div class="why-inner">
-            <p class="section-label">${iconGator} Origin</p>
             <div class="why-question">Why "Crabigator"?</div>
             <div class="why-equation">
                 <div class="why-term">
@@ -953,7 +938,6 @@ export const landingHtml = `<!DOCTYPE html>
                 </div>
             </div>
             <div class="mobile-info">
-                <p class="section-label">${iconPhone} Coming Soon</p>
                 <h2 class="section-title">Native mobile apps</h2>
                 <div class="mobile-features">
                     <div class="mobile-feature">

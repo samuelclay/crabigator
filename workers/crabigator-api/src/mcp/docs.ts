@@ -43,7 +43,6 @@ export function mcpLandingSectionHtml(): string {
     <section class="section mcp-section" id="mcp">
         <div class="mcp-intro">
             <div class="mcp-intro-copy">
-                <p class="section-label">${iconPlug} MCP</p>
                 <h2 class="section-title">Let another agent drive your sessions</h2>
                 <p class="section-subtitle">
                     Point Claude, Cursor, Grok, or any MCP client at your live Crabigator sessions.

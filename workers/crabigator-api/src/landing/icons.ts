@@ -24,9 +24,6 @@ export const iconCrabigatorMono = `<svg viewBox="0 0 512 512"><path d="M379.204,
 // Checkmark in circle - used extensively for features and success states
 export const iconCheck = `<svg class="icon" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm45.66,85.66-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35a8,8,0,0,1,11.32,11.32Z"/></svg>`;
 
-// Alternative checkmark for install section (slightly different styling)
-export const iconCheckAlt = `<svg class="icon" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm49.53,85.8-58.67,56a8,8,0,0,1-11.05,0l-29.33-28a8,8,0,0,1,11.05-11.62L116,149.91l53.14-50.69a8,8,0,0,1,11.06.06A8,8,0,0,1,177.53,109.8Z"/></svg>`;
-
 // Phone icon (filled) - mobile access
 export const iconPhone = `<svg class="icon" viewBox="0 0 256 256"><path d="M176,16H80A24,24,0,0,0,56,40V216a24,24,0,0,0,24,24h96a24,24,0,0,0,24-24V40A24,24,0,0,0,176,16ZM140,208H116a8,8,0,0,1,0-16h24a8,8,0,0,1,0,16Z"/></svg>`;
 
@@ -38,9 +35,6 @@ export const iconPhoneBento = `<svg viewBox="0 0 256 256"><path d="M176,16H80A24
 
 // Play triangle (terminal prompt)
 export const iconPlay = `<svg class="icon" viewBox="0 0 256 256"><path d="M181.66,133.66l-80,80A8,8,0,0,1,88,208V48a8,8,0,0,1,13.66-5.66l80,80A8,8,0,0,1,181.66,133.66Z"/></svg>`;
-
-// Play circle (interactive section label)
-export const iconPlayCircle = `<svg class="icon" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm36.71,118.79-48,36A8,8,0,0,1,104,172V100a8,8,0,0,1,12.71-6.47l48,36a8,8,0,0,1,0,12.94Z"/></svg>`;
 
 // Chart/Stats icon
 export const iconChart = `<svg class="icon-widget" viewBox="0 0 256 256"><path d="M232,208a8,8,0,0,1-8,8H32a8,8,0,0,1-8-8V48a8,8,0,0,1,16,0V156.69l50.34-50.35a8,8,0,0,1,11.32,0L128,132.69,180.69,80H160a8,8,0,0,1,0-16h40a8,8,0,0,1,8,8v40a8,8,0,0,1-16,0V91.31l-58.34,58.35a8,8,0,0,1-11.32,0L96,123.31l-56,56V200H224A8,8,0,0,1,232,208Z"/></svg>`;
@@ -56,12 +50,6 @@ export const iconFolderBento = `<svg viewBox="0 0 256 256"><path d="M216,72H131.
 
 // Code changes/branch icon
 export const iconChanges = `<svg class="icon-widget" viewBox="0 0 256 256"><path d="M200,204.5V232a8,8,0,0,1-16,0V204.5a63.67,63.67,0,0,1-35.38-18.24L124.31,162H72a8,8,0,0,1,0-16h44.69l30.35-30.34A63.65,63.65,0,0,1,184,97.5V56a8,8,0,0,1,16,0V97.5a79.58,79.58,0,0,0,22.63,55.37l5.66,5.66a8,8,0,0,1-11.32,11.32l-5.65-5.66A79.75,79.75,0,0,0,200,204.5Z"/></svg>`;
-
-// Multi-device icon
-export const iconMultiDevice = `<svg class="icon" viewBox="0 0 256 256"><path d="M224,72H208V48a24,24,0,0,0-24-24H40A24,24,0,0,0,16,48V152a24,24,0,0,0,24,24H152v24a24,24,0,0,0,24,24h48a24,24,0,0,0,24-24V96A24,24,0,0,0,224,72ZM40,160a8,8,0,0,1-8-8V48a8,8,0,0,1,8-8H184a8,8,0,0,1,8,8V72H176a24,24,0,0,0-24,24v64Zm192,40a8,8,0,0,1-8,8H176a8,8,0,0,1-8-8V96a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8Z"/></svg>`;
-
-// Robot/features icon (gamepad)
-export const iconFeatures = `<svg class="icon" viewBox="0 0 256 256"><path d="M176,48H80A56,56,0,0,0,24,104v48a56,56,0,0,0,56,56h96a56,56,0,0,0,56-56V104A56,56,0,0,0,176,48ZM80,176a24,24,0,1,1,24-24A24,24,0,0,1,80,176Zm96,0a24,24,0,1,1,24-24A24,24,0,0,1,176,176Z"/></svg>`;
 
 // Cloud icon
 export const iconCloud = `<svg viewBox="0 0 256 256"><path d="M160.06,40A88.1,88.1,0,0,0,81.29,88.67,64,64,0,1,0,72,216h88a88,88,0,0,0,.06-176Z"/></svg>`;
@@ -95,7 +83,6 @@ export const iconBolt = `<svg viewBox="0 0 256 256"><path d="M213.85,125.46l-112
 
 // Plug icon (MCP)
 export const iconPlug = `<svg class="icon" viewBox="0 0 256 256" fill="currentColor"><path d="M237.66,66.34a8,8,0,0,0-11.32,0L192,100.69,155.31,64l34.35-34.34a8,8,0,1,0-11.32-11.32L144,52.69,117.66,26.34a8,8,0,0,0-11.32,11.32L117.69,49,65.23,101.46a40,40,0,0,0,0,56.57l6.63,6.63L26.34,210.34a8,8,0,0,0,11.32,11.32l45.68-45.69,6.63,6.63a40,40,0,0,0,56.57,0L198.85,130l11.49,11.49a8,8,0,0,0,11.32-11.32L187.31,96,221.66,61.66,237.66,77.66a8,8,0,0,0,11.32-11.32ZM135.23,171.29a24,24,0,0,1-33.94,0l-16.58-16.58a24,24,0,0,1,0-33.94L137.17,68.31,187.69,118.83Z"/></svg>`;
-
 
 // Mail/envelope icon (CTA section)
 export const iconMail = `<svg class="cta-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/><path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/></svg>`;
@@ -158,9 +145,6 @@ export const iconChat = `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M
 // ============================================================================
 // Security Section Icons
 // ============================================================================
-
-// Shield icon (security section label)
-export const iconShield = `<svg class="icon" viewBox="0 0 256 256"><path d="M208,40H48A16,16,0,0,0,32,56v56c0,52.72,25.52,84.67,46.93,102.19,23.06,18.86,46,26.07,47.48,26.53a8,8,0,0,0,5.18,0c1.5-.46,24.42-7.67,47.48-26.53C200.48,196.67,224,164.72,224,112V56A16,16,0,0,0,208,40Zm0,72c0,37.07-13.66,67.16-40.6,89.42A129.3,129.3,0,0,1,128,223.62a128.25,128.25,0,0,1-38.92-21.81C61.82,179.51,48,149.3,48,112l0-56,160,0Z"/></svg>`;
 
 // Lock icon (encryption indicator)
 export const iconLock = `<svg viewBox="0 0 256 256"><path d="M208,80H176V56a48,48,0,0,0-96,0V80H48A16,16,0,0,0,32,96V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V96A16,16,0,0,0,208,80ZM96,56a32,32,0,0,1,64,0V80H96ZM208,208H48V96H208V208Zm-80-32a12,12,0,1,1,12-12A12,12,0,0,1,128,176Z"/></svg>`;

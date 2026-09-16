@@ -321,29 +321,6 @@ code, .mono {
     max-width: 420px;
 }
 
-.hero-tagline {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: var(--accent-cyan);
-    text-transform: uppercase;
-    letter-spacing: 3px;
-    margin-bottom: 24px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-.hero-tagline svg {
-    width: 16px;
-    height: 16px;
-    fill: currentColor;
-}
-.hero-tagline::before {
-    content: '';
-    width: 40px;
-    height: 1px;
-    background: linear-gradient(90deg, var(--accent-cyan), transparent);
-}
-
 .hero-headline {
     font-size: clamp(48px, 6vw, 72px);
     font-weight: 700;
@@ -1303,24 +1280,6 @@ code, .mono {
     text-align: center;
 }
 
-.section-label {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: var(--accent-magenta);
-    text-transform: uppercase;
-    letter-spacing: 3px;
-    margin-bottom: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-}
-.section-label svg {
-    width: 16px;
-    height: 16px;
-    fill: currentColor;
-}
-
 .section-title {
     font-size: clamp(32px, 5vw, 48px);
     font-weight: 700;
@@ -1650,9 +1609,6 @@ code, .mono {
 .showcase-text {
     max-width: 500px;
 }
-.showcase-text .section-label {
-    justify-content: flex-start;
-}
 
 .showcase-devices {
     position: relative;
@@ -1809,9 +1765,6 @@ code, .mono {
 }
 .interactive-text {
     max-width: 500px;
-}
-.interactive-text .section-label {
-    justify-content: flex-start;
 }
 .interactive-features {
     list-style: none;
@@ -2987,9 +2940,6 @@ code, .mono {
 .mobile-info {
     text-align: left;
 }
-.mobile-info .section-label {
-    justify-content: flex-start;
-}
 .mobile-info .section-title {
     text-align: left;
     margin-bottom: 24px;
@@ -3107,9 +3057,6 @@ code, .mono {
     }
     .mobile-info {
         text-align: center;
-    }
-    .mobile-info .section-label {
-        justify-content: center;
     }
     .mobile-info .section-title {
         text-align: center;
@@ -3282,9 +3229,6 @@ code, .mono {
         max-width: 600px;
         margin: 0 auto;
         text-align: center;
-    }
-    .interactive-text .section-label {
-        justify-content: center;
     }
     .interactive-features {
         text-align: left;
@@ -3519,7 +3463,6 @@ code, .mono {
     }
     .footer-cta { flex-direction: column; }
     .footer-links { flex-wrap: wrap; justify-content: center; gap: 16px; }
-    .section-label { font-size: 11px; letter-spacing: 2px; }
     .section-title { word-break: break-word; }
 }
 `;
