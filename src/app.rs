@@ -80,6 +80,22 @@ fn remote_answer_submit_delay(platform: PlatformKind) -> Duration {
     }
 }
 
+/// Encode a dashboard/MCP answer for the child prompt.
+///
+/// Newlines must not be typed as Enter (`\r`), which submits.
+/// Claude, Codex, and opencode use Ctrl+J (`\n`). Grok uses Alt+Enter
+/// (`\x1b\r`) because Ctrl+J is a scroll binding there.
+fn encode_remote_answer(text: &str, platform: PlatformKind) -> Vec<u8> {
+    let text = text.trim_end().replace("\r\n", "\n").replace('\r', "\n");
+    if text.is_empty() {
+        return Vec::new();
+    }
+    match platform {
+        PlatformKind::Grok => text.replace('\n', "\x1b\r").into_bytes(),
+        PlatformKind::Claude | PlatformKind::Codex | PlatformKind::Opencode => text.into_bytes(),
+    }
+}
+
 /// Result from background git refresh
 struct GitRefreshResult {
     cwd: PathBuf,
@@ -2544,14 +2560,14 @@ impl App {
         if let Some(ref mut client) = self.cloud_client {
             // Handle incoming text answers
             while let Some(answer) = client.try_recv_answer() {
-                let text = answer.trim_end();
+                let bytes = encode_remote_answer(&answer, platform_kind);
+                if bytes.is_empty() {
+                    continue;
+                }
                 self.platform.note_user_input();
-                // Write text as a single block
-                self.platform_pty.write(text.as_bytes())?;
-                // Small delay to ensure text is processed before Enter
+                self.platform_pty.write(&bytes)?;
                 std::thread::sleep(remote_answer_submit_delay(platform_kind));
-                // Send Enter key (CR = 0x0D)
-                self.platform_pty.write(&[0x0D])?;
+                self.platform_pty.write(&[escape::key::CR])?;
             }
 
             // Handle incoming key commands
@@ -2800,5 +2816,40 @@ fn session_state_label(state: SessionState) -> &'static str {
         SessionState::Question => "question",
         SessionState::Complete => "complete",
         SessionState::Interrupted => "interrupted",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_answer_keeps_a_single_line() {
+        assert_eq!(
+            encode_remote_answer("hello", PlatformKind::Claude),
+            b"hello"
+        );
+        assert_eq!(encode_remote_answer("hello", PlatformKind::Grok), b"hello");
+    }
+
+    #[test]
+    fn remote_answer_turns_newlines_into_prompt_newlines() {
+        assert_eq!(
+            encode_remote_answer("hello\nworld", PlatformKind::Claude),
+            b"hello\nworld"
+        );
+        assert_eq!(
+            encode_remote_answer("hello\nworld", PlatformKind::Grok),
+            b"hello\x1b\rworld"
+        );
+    }
+
+    #[test]
+    fn remote_answer_normalizes_line_endings_and_trims_the_tail() {
+        assert_eq!(
+            encode_remote_answer("hello\r\nworld\n", PlatformKind::Codex),
+            b"hello\nworld"
+        );
+        assert!(encode_remote_answer("  \n", PlatformKind::Opencode).is_empty());
     }
 }
