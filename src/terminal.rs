@@ -11,6 +11,7 @@ pub mod dsr;
 pub mod escape;
 pub mod ghostty;
 pub mod input;
+pub mod kitty;
 pub mod osc;
 pub mod pty;
 pub mod queries;
@@ -19,6 +20,7 @@ pub mod redraw;
 
 pub use dsr::{DsrChunk, DsrHandler};
 pub use input::{forward_key_to_pty, forward_mouse_to_pty};
+pub use kitty::KittyKeyboardTracker;
 pub use osc::OscScanner;
 pub use pty::PlatformPty;
 pub use queries::QueryResponder;

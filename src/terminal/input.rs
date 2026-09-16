@@ -10,9 +10,16 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use super::escape::key;
 use super::pty::PlatformPty;
 
-/// Forward a key event to the PTY with proper encoding
-pub fn forward_key_to_pty(key: KeyEvent, pty: &mut PlatformPty) -> Result<()> {
-    let bytes = encode_key(key);
+/// Forward a key event to the PTY with proper encoding.
+///
+/// `kitty_keyboard` says whether the child has pushed the kitty keyboard
+/// protocol, which changes how a modified Enter is spelled.
+pub fn forward_key_to_pty(
+    key: KeyEvent,
+    pty: &mut PlatformPty,
+    kitty_keyboard: bool,
+) -> Result<()> {
+    let bytes = encode_key(key, kitty_keyboard);
     if !bytes.is_empty() {
         pty.write(&bytes)?;
     }
@@ -28,7 +35,7 @@ pub fn forward_mouse_to_pty(mouse: MouseEvent, pty: &mut PlatformPty, pty_rows: 
 }
 
 /// Encode a key event into bytes for the PTY
-fn encode_key(key: KeyEvent) -> Vec<u8> {
+fn encode_key(key: KeyEvent, kitty_keyboard: bool) -> Vec<u8> {
     let has_shift = key.modifiers.contains(KeyModifiers::SHIFT);
     let has_alt = key.modifiers.contains(KeyModifiers::ALT);
     let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -43,9 +50,7 @@ fn encode_key(key: KeyEvent) -> Vec<u8> {
 
     match key.code {
         KeyCode::Char(c) => encode_char(c, has_ctrl, has_alt, has_shift),
-        // Preserve Shift+Enter rather than turning a newline shortcut into submit.
-        KeyCode::Enter if has_shift => key::enter_modified(modifier_code),
-        KeyCode::Enter => vec![key::CR],
+        KeyCode::Enter => encode_enter(has_shift, has_alt, has_ctrl, modifier_code, kitty_keyboard),
         KeyCode::Backspace => encode_backspace(has_alt, has_ctrl),
         KeyCode::Tab => encode_tab(has_shift, has_ctrl, modifier_code),
         KeyCode::BackTab => key::BACK_TAB.to_vec(),
@@ -65,6 +70,29 @@ fn encode_key(key: KeyEvent) -> Vec<u8> {
         KeyCode::F(n) => encode_function_key(n, has_modifiers, modifier_code),
         KeyCode::Null => vec![key::NUL],
         _ => vec![],
+    }
+}
+
+/// Keep the modifiers on Enter instead of turning a newline shortcut into
+/// submit.
+///
+/// A host terminal only reports Shift or Ctrl on Enter in an enhanced keyboard
+/// mode that the child asked for, so the CSI u form is what the child expects.
+/// Alt is the exception: a legacy terminal with Option as Meta sends `ESC CR`,
+/// and the child only understands CSI u once it has pushed the kitty protocol.
+fn encode_enter(
+    has_shift: bool,
+    has_alt: bool,
+    has_ctrl: bool,
+    modifier_code: u8,
+    kitty_keyboard: bool,
+) -> Vec<u8> {
+    if has_shift || has_ctrl || (has_alt && kitty_keyboard) {
+        key::enter_modified(modifier_code)
+    } else if has_alt {
+        key::alt_char(&[key::CR])
+    } else {
+        vec![key::CR]
     }
 }
 
@@ -259,7 +287,40 @@ mod tests {
     #[test]
     fn shift_enter_preserves_the_newline_key() {
         assert_eq!(
-            encode_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+            encode_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), false),
+            b"\x1b[13;2u"
+        );
+    }
+
+    #[test]
+    fn alt_enter_follows_the_keyboard_protocol_the_child_asked_for() {
+        // Ghostty in kitty mode reports Option+Enter as CSI 13;3u; hand it back as such.
+        assert_eq!(
+            encode_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT), true),
+            b"\x1b[13;3u"
+        );
+        // A legacy terminal with Option as Meta sent ESC CR; keep that spelling.
+        assert_eq!(
+            encode_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT), false),
+            b"\x1b\r"
+        );
+    }
+
+    #[test]
+    fn other_modified_enters_keep_their_modifiers() {
+        assert_eq!(
+            encode_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL), false),
+            b"\x1b[13;5u"
+        );
+        assert_eq!(
+            encode_key(
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT | KeyModifiers::ALT),
+                false
+            ),
+            b"\x1b[13;4u"
+        );
+        assert_eq!(
+            encode_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), true),
             b"\x1b[13;2u"
         );
     }
@@ -267,11 +328,14 @@ mod tests {
     #[test]
     fn plain_enter_and_ctrl_j_stay_distinct() {
         assert_eq!(
-            encode_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            encode_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), false),
             b"\r"
         );
         assert_eq!(
-            encode_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
+            encode_key(
+                KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+                false
+            ),
             b"\n"
         );
     }

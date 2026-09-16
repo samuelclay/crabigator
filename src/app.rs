@@ -29,8 +29,8 @@ use crate::recap::RecapManager;
 use crate::session_mark::SessionMark;
 use crate::slack::SlackThread;
 use crate::terminal::{
-    escape, forward_key_to_pty, forward_mouse_to_pty, DsrChunk, DsrHandler, OscScanner,
-    PlatformPty, QueryResponder, ScrollRegionFilter,
+    escape, forward_key_to_pty, forward_mouse_to_pty, DsrChunk, DsrHandler, KittyKeyboardTracker,
+    OscScanner, PlatformPty, QueryResponder, ScrollRegionFilter,
 };
 use crate::ui::cooldown::{self, Cooldowns};
 use crate::ui::{
@@ -184,6 +184,9 @@ pub struct App {
     /// Handles terminal DSR responses for CLIs that request cursor position
     dsr_handler: DsrHandler,
     query_responder: QueryResponder,
+    /// Follows the child's kitty keyboard protocol push/pop so modified keys
+    /// are encoded the way it expects
+    kitty_keyboard: KittyKeyboardTracker,
     /// Scans for OSC title sequences from the CLI
     osc_scanner: OscScanner,
     /// Keeps child PTY scroll-region resets constrained to Crabigator's PTY area
@@ -390,6 +393,7 @@ impl App {
             capture_manager,
             dsr_handler: DsrHandler::new(),
             query_responder: QueryResponder::new(platform_strips_alt_screen),
+            kitty_keyboard: KittyKeyboardTracker::new(),
             osc_scanner: OscScanner::new(),
             scroll_region_filter: ScrollRegionFilter::new(pty_rows)
                 .with_alt_screen_strip(platform_strips_alt_screen),
@@ -1232,6 +1236,9 @@ impl App {
                     if passthrough.is_empty() {
                         continue;
                     }
+                    // The host terminal sees these push/pop sequences too, so
+                    // its key reports change mode along with the child.
+                    self.kitty_keyboard.scan(&passthrough);
 
                     // Keep debug capture tied to the real PTY stream, then
                     // render/process the virtualized stream that the user's
@@ -1989,7 +1996,7 @@ impl App {
             }
         }
 
-        forward_key_to_pty(key, &mut self.platform_pty)?;
+        forward_key_to_pty(key, &mut self.platform_pty, self.kitty_keyboard.active())?;
         Ok(())
     }
 
