@@ -17,23 +17,28 @@ export const MCP_TOOLS_PATH = '/mcp-tools';
 
 type JsonSchema = Record<string, unknown>;
 
-function mcpConnectHtml(): string {
+function mcpConnectRow(label: string, id: string, value: string, copyLabel: string): string {
     return `
-                <div class="mcp-connect">
                     <div class="mcp-connect-row">
-                        <span class="mcp-connect-label">URL</span>
-                        <code class="mcp-connect-value" id="mcp-url-text">https://drinkcrabigator.com/mcp</code>
-                        <button type="button" class="mcp-connect-copy" data-copy-target="mcp-url-text" aria-label="Copy MCP URL">
+                        <span class="mcp-connect-label">${label}</span>
+                        <code class="mcp-connect-value" id="${id}">${value}</code>
+                        <button type="button" class="mcp-connect-copy" data-copy-target="${id}" aria-label="${copyLabel}">
                             ${iconCopy}
                         </button>
-                    </div>
-                    <div class="mcp-connect-row">
-                        <span class="mcp-connect-label">Grok</span>
-                        <code class="mcp-connect-value" id="mcp-grok-text">grok mcp add --transport http crabigator https://drinkcrabigator.com/mcp</code>
-                        <button type="button" class="mcp-connect-copy" data-copy-target="mcp-grok-text" aria-label="Copy Grok command">
-                            ${iconCopy}
-                        </button>
-                    </div>
+                    </div>`;
+}
+
+function mcpConnectHtml(): string {
+    const url = 'https://drinkcrabigator.com/mcp';
+    const rows = [
+        mcpConnectRow('URL', 'mcp-url-text', url, 'Copy MCP URL'),
+        mcpConnectRow('Claude', 'mcp-claude-text', `claude mcp add --transport http crabigator ${url}`, 'Copy Claude command'),
+        mcpConnectRow('Codex', 'mcp-codex-text', `codex mcp add crabigator --url ${url}`, 'Copy Codex command'),
+        mcpConnectRow('opencode', 'mcp-opencode-text', `opencode mcp add crabigator --url ${url}`, 'Copy opencode command'),
+        mcpConnectRow('Grok', 'mcp-grok-text', `grok mcp add --transport http crabigator ${url}`, 'Copy Grok command'),
+    ].join('');
+    return `
+                <div class="mcp-connect">${rows}
                 </div>`;
 }
 

@@ -63,6 +63,7 @@ export const mcpCss = `
     align-items: center;
     white-space: nowrap;
     background: var(--bg-surface);
+    min-width: 8.4em;
 }
 .mcp-connect-value {
     font-family: 'JetBrains Mono', monospace;

@@ -436,6 +436,10 @@ describe('MCP tools listing page', () => {
         expect(toolsHtml).toContain('id="get_pr_board"');
         expect(toolsHtml).toContain('Example output');
         expect(toolsHtml).toContain(`${ORIGIN}/mcp`);
+        expect(toolsHtml).toContain(`claude mcp add --transport http crabigator ${ORIGIN}/mcp`);
+        expect(toolsHtml).toContain(`codex mcp add crabigator --url ${ORIGIN}/mcp`);
+        expect(toolsHtml).toContain(`opencode mcp add crabigator --url ${ORIGIN}/mcp`);
+        expect(toolsHtml).toContain(`grok mcp add --transport http crabigator ${ORIGIN}/mcp`);
         expect(toolsHtml).not.toContain('https://drinkcrabigator.com');
 
         const landing = await SELF.fetch(`${ORIGIN}/`);
@@ -444,6 +448,10 @@ describe('MCP tools listing page', () => {
         expect(landingHtml).toContain('/mcp-tools');
         expect(landingHtml).toContain('list_sessions');
         expect(landingHtml).toContain('Let another agent drive your sessions');
+        expect(landingHtml).toContain(`claude mcp add --transport http crabigator ${ORIGIN}/mcp`);
+        expect(landingHtml).toContain(`codex mcp add crabigator --url ${ORIGIN}/mcp`);
+        expect(landingHtml).toContain(`opencode mcp add crabigator --url ${ORIGIN}/mcp`);
+        expect(landingHtml).toContain(`grok mcp add --transport http crabigator ${ORIGIN}/mcp`);
     });
 });
 
