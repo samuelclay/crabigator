@@ -21,7 +21,7 @@ export const mcpCss = `
 
 .mcp-intro {
     max-width: 1200px;
-    margin: 0 auto 48px;
+    margin: 0 auto;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
     gap: 64px;
@@ -170,51 +170,6 @@ export const mcpCss = `
     overflow-x: auto;
     max-width: 100%;
     white-space: pre;
-}
-
-.mcp-groups {
-    max-width: 1200px;
-    margin: 0 auto;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-}
-.mcp-group {
-    background: var(--bg-deep);
-    border: 1px solid var(--border-dim);
-    border-radius: 12px;
-    padding: 24px;
-}
-.mcp-group-title {
-    font-size: 18px;
-    font-weight: 600;
-    margin-bottom: 8px;
-}
-.mcp-group-blurb {
-    font-size: 14px;
-    color: var(--text-mid);
-    margin-bottom: 16px;
-    line-height: 1.5;
-}
-.mcp-group-tools {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-.mcp-group-tools a {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
-    color: var(--accent-cyan);
-    padding: 6px 10px;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    display: block;
-}
-.mcp-group-tools a:hover {
-    border-color: var(--border-dim);
-    background: rgba(34, 211, 238, 0.06);
-    text-decoration: none;
 }
 
 /* === MCP TOOLS PAGE === */
@@ -485,7 +440,6 @@ export const mcpCss = `
     .mcp-connect { text-align: left; }
     .mcp-intro-actions { align-items: center; }
     .mcp-intro-note { margin-left: auto; margin-right: auto; text-align: center; }
-    .mcp-groups { grid-template-columns: 1fr; }
     .mcp-docs-layout {
         grid-template-columns: 1fr;
         gap: 24px;

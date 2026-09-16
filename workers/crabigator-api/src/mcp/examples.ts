@@ -4,9 +4,8 @@ export interface ToolExample {
     notes?: string;
 }
 
-export interface ToolGroup {
+interface ToolGroup {
     title: string;
-    blurb: string;
     tools: string[];
 }
 
@@ -15,7 +14,6 @@ export const SAMPLE_SESSION_ID = '7f3c1a90-2b4e-4d11-9c8a-1e6b0d4f2a18';
 export const toolGroups: ToolGroup[] = [
     {
         title: 'Look around',
-        blurb: 'Find sessions, read the screen, and search transcripts.',
         tools: [
             'list_sessions',
             'get_session',
@@ -31,7 +29,6 @@ export const toolGroups: ToolGroup[] = [
     },
     {
         title: 'Take action',
-        blurb: 'Type, approve, spawn a terminal, or hide a project.',
         tools: [
             'send_input',
             'choose_option',
@@ -44,7 +41,6 @@ export const toolGroups: ToolGroup[] = [
     },
     {
         title: 'Pull requests',
-        blurb: 'Watch PRs and set how they rank on the board.',
         tools: [
             'watch_pr',
             'unwatch_pr',

@@ -10,7 +10,7 @@ import {
     iconGithubSmall,
     iconPlug,
 } from '../landing/icons';
-import { SAMPLE_SESSION_ID, toolExamples, toolGroups, type ToolExample, type ToolGroup } from './examples';
+import { SAMPLE_SESSION_ID, toolExamples, toolGroups, type ToolExample } from './examples';
 import { listToolDescriptors } from './tools';
 
 export const MCP_TOOLS_PATH = '/mcp-tools';
@@ -66,23 +66,7 @@ export function mcpLandingSectionHtml(): string {
             </div>
             ${mcpDemoHtml()}
         </div>
-        <div class="mcp-groups">
-            ${toolGroups.map(groupHtml).join('')}
-        </div>
     </section>`;
-}
-
-function groupHtml(group: ToolGroup): string {
-    return `
-            <div class="mcp-group">
-                <h3 class="mcp-group-title">${escapeHtml(group.title)}</h3>
-                <p class="mcp-group-blurb">${escapeHtml(group.blurb)}</p>
-                <ul class="mcp-group-tools">
-                    ${group.tools.map((name) => (
-                        `<li><a href="${MCP_TOOLS_PATH}#${escapeHtml(name)}">${escapeHtml(name)}</a></li>`
-                    )).join('')}
-                </ul>
-            </div>`;
 }
 
 function mcpDemoHtml(): string {
