@@ -22,6 +22,10 @@ export const landingCss = `
     --accent-red: #f87171;
     --glow-cyan: rgba(34, 211, 238, 0.4);
     --glow-magenta: rgba(232, 121, 249, 0.3);
+    --brand-claude: #D97757;
+    --brand-codex: #10A37F;
+    --brand-opencode: #E8E0D5;
+    --brand-grok: #F5F5F5;
 }
 
 html { scroll-behavior: smooth; }
@@ -328,12 +332,30 @@ code, .mono {
     margin-bottom: 24px;
     letter-spacing: -2px;
 }
-.hero-headline .highlight {
-    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-magenta) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+.brand-token {
+    white-space: nowrap;
 }
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2em;
+    white-space: nowrap;
+    vertical-align: baseline;
+}
+.brand .brand-icon {
+    width: 0.82em;
+    height: 0.82em;
+    flex-shrink: 0;
+    fill: currentColor;
+}
+.hero-headline .brand .brand-icon {
+    width: 0.62em;
+    height: 0.62em;
+}
+.brand-claude { color: var(--brand-claude); }
+.brand-codex { color: var(--brand-codex); }
+.brand-opencode { color: var(--brand-opencode); }
+.brand-grok { color: var(--brand-grok); }
 
 .hero-subheadline {
     font-size: 18px;
@@ -1551,12 +1573,12 @@ code, .mono {
 
 /* Icon variants */
 .bento-icon.anthropic {
-    background: linear-gradient(135deg, rgba(204, 120, 97, 0.3) 0%, rgba(204, 120, 97, 0.1) 100%);
-    color: #cc7861;
+    background: linear-gradient(135deg, rgba(217, 119, 87, 0.3) 0%, rgba(217, 119, 87, 0.1) 100%);
+    color: var(--brand-claude);
 }
 .bento-icon.openai {
     background: linear-gradient(135deg, rgba(16, 163, 127, 0.3) 0%, rgba(16, 163, 127, 0.1) 100%);
-    color: #10a37f;
+    color: var(--brand-codex);
 }
 
 .status-pills {

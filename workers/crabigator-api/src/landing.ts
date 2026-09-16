@@ -26,6 +26,10 @@ import {
     iconCloudFilled,
     iconCube,
     iconDiamond,
+    iconClaude,
+    iconCodex,
+    iconOpencode,
+    iconGrok,
     iconSemanticDiff,
     iconLink,
     iconSearch,
@@ -57,6 +61,16 @@ import {
     iconDesktop,
     iconCloudEdge,
 } from './landing/icons';
+
+function brandName(
+    kind: 'claude' | 'codex' | 'opencode' | 'grok',
+    label: string,
+    after = '',
+    before = '',
+): string {
+    const mark = { claude: iconClaude, codex: iconCodex, opencode: iconOpencode, grok: iconGrok }[kind];
+    return `<span class="brand-token">${before}<span class="brand brand-${kind}">${mark}${label}</span>${after}</span>`;
+}
 
 export const landingHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -102,7 +116,7 @@ export const landingHtml = `<!DOCTYPE html>
         <div class="hero-content">
             <div class="hero-text">
                 <h1 class="hero-headline">
-                    Control <span class="highlight">Claude Code</span>, Codex, opencode &amp; Grok from your phone
+                    Control ${brandName('claude', 'Claude Code', ',')} ${brandName('codex', 'Codex', ',')} ${brandName('opencode', 'opencode')} ${brandName('grok', 'Grok', '', '&amp; ')} from your phone
                 </h1>
                 <p class="hero-subheadline">
                     Answer permissions, approve plans, and questions without sitting at the computer.
@@ -336,7 +350,7 @@ export const landingHtml = `<!DOCTYPE html>
             <div class="showcase-text">
                 <h2 class="section-title">Check in from phone or desktop</h2>
                 <p class="section-subtitle">
-                    No Tmux. No Tailscale. No Termius. Built for Claude Code, Codex, opencode, and Grok.
+                    No Tmux. No Tailscale. No Termius. Built for ${brandName('claude', 'Claude Code', ',')} ${brandName('codex', 'Codex', ',')} ${brandName('opencode', 'opencode', ',')} and ${brandName('grok', 'Grok')}.
                     Pair a phone in seconds. Watch progress and answer prompts without sitting at the computer.
                 </p>
                 <div class="showcase-status">
@@ -574,12 +588,12 @@ export const landingHtml = `<!DOCTYPE html>
             </div>
             <div class="bento-card small">
                 <div class="bento-icon anthropic">${iconCube}</div>
-                <h3 class="bento-title">Claude Code</h3>
+                <h3 class="bento-title">${brandName('claude', 'Claude Code')}</h3>
                 <p class="bento-desc">Hooks into Claude Code for stats, permissions, and session state.</p>
             </div>
             <div class="bento-card small">
                 <div class="bento-icon openai">${iconDiamond}</div>
-                <h3 class="bento-title">Codex, opencode &amp; Grok</h3>
+                <h3 class="bento-title">${brandName('codex', 'Codex', ',')} ${brandName('opencode', 'opencode')} ${brandName('grok', 'Grok', '', '&amp; ')}</h3>
                 <p class="bento-desc">Also works with Codex, opencode, and Grok Build.</p>
             </div>
 
