@@ -143,8 +143,10 @@ pub(crate) fn display_title(
     title.map(|title| mark_provider_title(platform, title))
 }
 
-/// The two title levels shown for one session. A primary PR is the official
-/// title; the assistant's own title remains visible underneath it.
+/// The two title levels shown for one session: the assistant's own title
+/// and a primary PR. The changes widget shows the session title with the
+/// identity chip first and the PR underneath, matching the PR board's
+/// session view.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SessionTitleHierarchy<'a> {
     pub(crate) official_pr: Option<&'a SessionPr>,

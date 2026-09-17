@@ -191,8 +191,8 @@ pub fn draw_changes_widget(
     let title_rows = titles.row_count();
     let prefix_rows = title_rows.saturating_add(slack_row_count(slack_threads));
 
-    // Official `#N: title` on row 1; generated title under it, or on row 1
-    // when there is no PR.
+    // Session title + chip on row 1; purple `#N: title` under it. The PR
+    // takes row 1 when there is no session title.
     if let Some(header) = title_header_row(titles, area.row, inner_width_usize, session_mark) {
         write_padded_row(stdout, &header, inner_width_usize)?;
         return Ok(());
@@ -310,15 +310,10 @@ fn title_header_row(
     width: usize,
     session_mark: SessionMark,
 ) -> Option<String> {
-    match (row, titles.official_pr, titles.generated_title) {
-        (1, Some(pr), _) => Some(format_official_title_row(pr, width, Some(session_mark))),
-        (1, None, Some(title)) => Some(format_title_row(
-            title,
-            color::LIGHT_BLUE,
-            width,
-            Some(session_mark),
-        )),
-        (2, Some(_), Some(title)) => Some(format_title_row(title, color::LIGHT_BLUE, width, None)),
+    match (row, titles.generated_title, titles.official_pr) {
+        (1, Some(title), _) => Some(format_session_title_row(title, width, session_mark)),
+        (1, None, Some(pr)) => Some(format_official_title_row(pr, width, Some(session_mark))),
+        (2, Some(_), Some(pr)) => Some(format_official_title_row(pr, width, None)),
         _ => None,
     }
 }
@@ -330,18 +325,12 @@ fn title_chip_prefix(mark: Option<SessionMark>) -> (String, usize) {
     }
 }
 
-fn format_title_row(
-    title: &str,
-    title_color: u8,
-    width: usize,
-    mark: Option<SessionMark>,
-) -> String {
-    let (prefix, chip_span) = title_chip_prefix(mark);
+fn format_session_title_row(title: &str, width: usize, mark: SessionMark) -> String {
     format!(
-        "{}{}{}{}",
-        prefix,
-        fg(title_color),
-        truncate_path(title, width.saturating_sub(chip_span)),
+        "{} {}{}{}",
+        mark.chip(),
+        fg(color::LIGHT_BLUE),
+        truncate_path(title, width.saturating_sub(mark.width() + 1)),
         RESET
     )
 }
@@ -794,7 +783,7 @@ mod tests {
     #[test]
     fn first_title_row_prefixes_the_identity_chip() {
         let mark = SessionMark::from_seed("changes-title");
-        let row = format_title_row("Fix the title chip", color::LIGHT_BLUE, 40, Some(mark));
+        let row = format_session_title_row("Fix the title chip", 40, mark);
         assert!(row.contains(mark.glyph));
         assert!(row.contains("Fix the title chip"));
         assert!(row.contains(&fg(color::LIGHT_BLUE)));
@@ -802,10 +791,6 @@ mod tests {
             strip_ansi_len(&row),
             mark.width() + 1 + "Fix the title chip".len()
         );
-
-        let subtitle = format_title_row("generated subtitle", color::LIGHT_BLUE, 40, None);
-        assert!(!subtitle.contains(mark.glyph));
-        assert!(subtitle.starts_with(&fg(color::LIGHT_BLUE)));
     }
 
     #[test]
@@ -826,5 +811,48 @@ mod tests {
             strip_ansi_len(&row),
             mark.width() + 1 + "#42: Ship the title chip".len()
         );
+    }
+
+    #[test]
+    fn title_stack_matches_the_pr_board_session_view() {
+        let mut pr = SessionPr::test_stub(1578, "acme", "widgets");
+        pr.primary = true;
+        pr.title = "preserve typed prompts".to_string();
+        pr.url = "https://github.com/acme/widgets/pull/1578".to_string();
+        let titles = SessionTitleHierarchy {
+            official_pr: Some(&pr),
+            generated_title: Some("E2E Test Coverage Verification"),
+        };
+        let mark = SessionMark::from_seed("changes-stack");
+
+        let row1 = title_header_row(titles, 1, 80, mark).expect("session title");
+        assert!(row1.contains(mark.glyph), "{row1}");
+        assert!(row1.contains("E2E Test Coverage Verification"), "{row1}");
+        assert!(!row1.contains("#1578"), "{row1}");
+        assert!(row1.contains(&fg(color::LIGHT_BLUE)), "{row1}");
+
+        let row2 = title_header_row(titles, 2, 80, mark).expect("PR title");
+        assert!(!row2.contains(mark.glyph), "{row2}");
+        assert!(row2.contains("#1578"), "{row2}");
+        assert!(row2.contains("preserve typed prompts"), "{row2}");
+        assert!(row2.contains(&fg(color::PURPLE)), "{row2}");
+        assert!(row2.contains(&pr.url), "{row2}");
+        assert!(title_header_row(titles, 3, 80, mark).is_none());
+    }
+
+    #[test]
+    fn pr_keeps_the_chip_when_it_is_the_only_title() {
+        let mut pr = SessionPr::test_stub(42, "acme", "widgets");
+        pr.primary = true;
+        pr.title = "Ship the title chip".to_string();
+        let titles = SessionTitleHierarchy {
+            official_pr: Some(&pr),
+            generated_title: None,
+        };
+        let mark = SessionMark::from_seed("changes-pr-only");
+        let row1 = title_header_row(titles, 1, 80, mark).expect("PR title");
+        assert!(row1.contains(mark.glyph), "{row1}");
+        assert!(row1.contains("#42"), "{row1}");
+        assert!(title_header_row(titles, 2, 80, mark).is_none());
     }
 }
