@@ -613,7 +613,7 @@ export const changesWidgetJs = `
                 + '" target="_blank" rel="noopener">' + ident + '</a>';
         }
 
-        // Session title with the chip on top; purple `#N: title` under it,
+        // Session title with the chip on top; purple #N: title under it,
         // matching the PR board. The PR takes the top row when there is no
         // session title of its own.
         function renderChangesSessionTitles(sessionData) {
