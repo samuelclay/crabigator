@@ -195,22 +195,24 @@ export const widgetsCss = `
 }
 .changes-pr-title,
 .changes-generated-title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.changes-pr-title,
-.changes-generated-title.main {
     display: flex;
     align-items: baseline;
     gap: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 600;
 }
 .changes-pr-title > :last-child,
-.changes-generated-title.main > :last-child {
+.changes-generated-title > :last-child {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+.changes-session-titles .changes-pr-title:not(:first-child) {
+    font-weight: 500;
 }
 .changes-pr-ident {
     color: inherit;
@@ -221,19 +223,8 @@ export const widgetsCss = `
 .changes-session-titles .session-mark {
     font-weight: 500;
 }
-.changes-pr-title {
-    color: #bc8cff;
-    font-size: 12px;
-    font-weight: 600;
-}
-.changes-generated-title {
-    color: #58a6ff;
-    font-size: 10px;
-}
-.changes-generated-title.main {
-    font-size: 12px;
-    font-weight: 600;
-}
+.changes-pr-title { color: #bc8cff; }
+.changes-generated-title { color: #58a6ff; }
 
 /* Single column when changes hidden (Git spans full width) */
 .widgets-content.no-changes { grid-template-columns: 1fr; }

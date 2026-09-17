@@ -105,12 +105,12 @@ export const changesWidgetJs = `
             const sessionData = sessions.get(sessionId);
             const commitHistory = visibleSections.commits ? (sessionData?.commitHistory || []) : [];
             const slackThreads = sessionData?.slackThreads || [];
-            const titleHierarchy = sessionTitleHierarchy(sessionData);
+            const sessionTitlesHtml = renderChangesSessionTitles(sessionData);
             const totalChanges = byLanguage.reduce((sum, lang) => sum + (lang.changes?.length || 0), 0);
             const hasChanges = totalChanges > 0;
             const hasCommits = commitHistory.length > 0;
             const hasSlackThreads = slackThreads.length > 0;
-            const hasTitle = !!titleHierarchy.main;
+            const hasTitle = !!sessionTitlesHtml;
 
             if (!hasChanges && !hasCommits && !hasSlackThreads && !hasTitle) {
                 // Hide widget entirely when it has no title, links, changes, or commits.
@@ -184,26 +184,6 @@ export const changesWidgetJs = `
 
             const slackThreadsHtml = renderSlackThreads(slackThreads);
             const commitHistoryHtml = renderCommitHistory(commitHistory, hasChanges || hasSlackThreads);
-            const primaryPr = primaryPrForSession(sessionData);
-            const mainTitleClass = primaryPr
-                ? 'changes-pr-title'
-                : 'changes-generated-title main';
-            const generatedTitleHtml = titleHierarchy.generated
-                ? '<div class="changes-generated-title">' + escapeHtml(titleHierarchy.generated) + '</div>'
-                : '';
-            const titleChip = sessionData ? sessionMarkChipHtml(sessionData) : '';
-            const mainTitleHtml = primaryPr
-                ? officialChangesTitleHtml(primaryPr)
-                : '<span>' + escapeHtml(titleHierarchy.main) + '</span>';
-            const sessionTitlesHtml = titleHierarchy.main
-                ? '<div class="changes-session-titles">'
-                    + '<div class="' + mainTitleClass + '">'
-                    + titleChip
-                    + mainTitleHtml
-                    + '</div>'
-                    + generatedTitleHtml
-                    + '</div>'
-                : '';
             const bodyHtml = slackThreadsHtml
                 + (hasChanges ? \`<div class="changes-list\${hasSlackThreads ? ' with-divider' : ''}">\${changesHtml}</div>\` : '')
                 + commitHistoryHtml;
@@ -631,6 +611,32 @@ export const changesWidgetJs = `
             }
             return '<a class="changes-pr-ident" href="' + escapeHtml(pr.url)
                 + '" target="_blank" rel="noopener">' + ident + '</a>';
+        }
+
+        // Session title with the chip on top; purple `#N: title` under it,
+        // matching the PR board. The PR takes the top row when there is no
+        // session title of its own.
+        function renderChangesSessionTitles(sessionData) {
+            const hierarchy = sessionTitleHierarchy(sessionData);
+            const primaryPr = primaryPrForSession(sessionData);
+            const sessionTitle = hierarchy.hasOfficial ? hierarchy.generated : hierarchy.main;
+            let chip = sessionData ? sessionMarkChipHtml(sessionData) : '';
+
+            let rows = '';
+            if (sessionTitle) {
+                rows += '<div class="changes-generated-title">'
+                    + chip
+                    + '<span>' + escapeHtml(sessionTitle) + '</span>'
+                    + '</div>';
+                chip = '';
+            }
+            if (primaryPr) {
+                rows += '<div class="changes-pr-title">'
+                    + chip
+                    + officialChangesTitleHtml(primaryPr)
+                    + '</div>';
+            }
+            return rows ? '<div class="changes-session-titles">' + rows + '</div>' : '';
         }
 
         function stripGeneratedTitleMarker(title) {
