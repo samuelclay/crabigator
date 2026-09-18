@@ -40,11 +40,12 @@ export const prBoardJs = `
         let prBoardPeekLines = [];
 
         // View preferences, mirroring the CLI's [pr_board] config keys.
-        const PRB_VIEW_DEFAULTS = { detail: 0, maxAgeHours: null, lingerDays: 1, liveOnly: false, view: 'prs' };
+        const PRB_VIEW_DEFAULTS = { detail: 0, maxAgeHours: null, liveOnly: false, view: 'prs' };
         let prBoardViewPrefs = (() => {
             try {
-                return Object.assign({}, PRB_VIEW_DEFAULTS,
-                    JSON.parse(localStorage.getItem('crabigatorPrBoardView') || '{}'));
+                const stored = JSON.parse(localStorage.getItem('crabigatorPrBoardView') || '{}');
+                delete stored.lingerDays;
+                return Object.assign({}, PRB_VIEW_DEFAULTS, stored);
             } catch (e) { return Object.assign({}, PRB_VIEW_DEFAULTS); }
         })();
         function savePrBoardView() {
@@ -113,16 +114,33 @@ export const prBoardJs = `
             }
         }
 
+        // Underline the key in the label, or prefix it when it isn't there.
+        function prbMnemonic(key, label) {
+            if (key.length === 1) {
+                const idx = label.toLowerCase().indexOf(key.toLowerCase());
+                if (idx >= 0) {
+                    return label.slice(0, idx) + '<u>' + label.charAt(idx) + '</u>' + label.slice(idx + 1);
+                }
+            }
+            return '<u>' + key + '</u> ' + label;
+        }
+
         function prbShellHtml() {
+            const keys = [
+                prbMnemonic('↑↓', 'select'),
+                prbMnemonic('⏎', 'peek'),
+                prbMnemonic('/', 'search'),
+                prbMnemonic('w', 'watch'),
+                prbMnemonic('q', 'quit'),
+            ].join(' · ');
             return '<div class="prb-head">'
                 + '<span class="prb-hdr">⑆ Crabigator PR board</span>'
                 + '<span class="prb-counts" id="prb-counts"></span>'
                 + '<span class="prb-ctl" id="prb-ctl-live" onclick="prBoardToggleLive()" title="Only sessions running right now, or the full durable history (s)"></span>'
-                + '<span class="prb-ctl" id="prb-ctl-days" title="How long finished primary PRs linger (+/-)"></span>'
                 + '<span class="prb-ctl" id="prb-ctl-view" onclick="prBoardToggleView()" title="One row per session, or one block per primary PR with its sessions beneath (p)"></span>'
                 + '<span class="prb-ctl" id="prb-ctl-recap" onclick="prBoardToggleRecap()" title="Show per-session recaps (r)"></span>'
                 + '<span class="prb-ctl" id="prb-ctl-age" onclick="prBoardCycleAge()" title="Hide rows idle longer than this (a)"></span>'
-                + '<span class="prb-keys"><u>↑↓</u> select · <u>⏎</u> peek · <u>/</u> search · <u>+/-</u> days · <u>q</u> quit</span>'
+                + '<span class="prb-keys">' + keys + '</span>'
                 + '<span class="prb-addwrap"><input id="prb-add" placeholder="◉ watch a PR URL (w)" spellcheck="false" autocomplete="off"></span>'
                 + '<span class="prb-searchwrap"><input id="prb-search" placeholder="/ search" spellcheck="false" autocomplete="off"><span id="prb-matches"></span></span>'
                 + '</div><div class="prb-body" id="prb-body"></div>'
@@ -262,8 +280,6 @@ export const prBoardJs = `
             else if (e.key === 'p') prBoardToggleView();
             else if (e.key === 'a') prBoardCycleAge();
             else if (e.key === 's') prBoardToggleLive();
-            else if (e.key === '+' || e.key === '=') prBoardDays(1);
-            else if (e.key === '-' || e.key === '_') prBoardDays(-1);
             else if (e.key === 'Escape' && prBoardQuery) prbClearSearch();
             else if (e.key === 'q' || e.key === 'Escape') togglePrBoard();
         });
@@ -294,18 +310,10 @@ export const prBoardJs = `
             savePrBoardView();
             renderPrBoard();
         }
-        function prBoardDays(delta) {
-            // The linger window filters server-side, so a change refetches.
-            prBoardViewPrefs.lingerDays = Math.min(90, Math.max(0, (prBoardViewPrefs.lingerDays || 0) + delta));
-            savePrBoardView();
-            updatePrBoardControls();
-            loadPrBoard();
-        }
-
         async function loadPrBoard() {
             const body = document.getElementById('prb-body');
             try {
-                const res = await fetch('/api/prs/board?days=' + (prBoardViewPrefs.lingerDays || 0),
+                const res = await fetch('/api/prs/board',
                     { headers: getAuthHeaders() });
                 if (!res.ok) {
                     if (body) body.innerHTML = '<div class="prb-empty">Could not load the PR board ('
@@ -336,19 +344,14 @@ export const prBoardJs = `
                 el.innerHTML = html;
             };
             set('prb-ctl-live', prBoardViewPrefs.liveOnly,
-                '<u>s</u> ' + (prBoardViewPrefs.liveOnly ? 'live' : 'all sessions'));
-            const days = prBoardViewPrefs.lingerDays;
-            set('prb-ctl-days', days !== 1,
-                '<span class="prb-step" onclick="prBoardDays(-1);event.stopPropagation()">−</span> '
-                + (days === 0 ? 'open only' : 'primary done ≤ ' + days + 'd')
-                + ' <span class="prb-step" onclick="prBoardDays(1);event.stopPropagation()">+</span>');
+                prbMnemonic('s', prBoardViewPrefs.liveOnly ? 'live' : 'all sessions'));
             set('prb-ctl-view', prBoardViewPrefs.view !== 'prs',
-                '<u>p</u> ' + (prBoardViewPrefs.view === 'prs' ? 'prs' : 'sessions'));
+                prbMnemonic('p', prBoardViewPrefs.view === 'prs' ? 'prs' : 'sessions'));
             set('prb-ctl-recap', prBoardViewPrefs.detail === 1,
-                '<u>r</u> ' + (prBoardViewPrefs.detail === 1 ? 'recap' : 'compact'));
+                prbMnemonic('r', prBoardViewPrefs.detail === 1 ? 'recap' : 'compact'));
             const bucket = prBoardViewPrefs.maxAgeHours === null
                 ? null : PRB_BUCKETS.find(b => b.hours === prBoardViewPrefs.maxAgeHours);
-            set('prb-ctl-age', !!bucket, '<u>a</u> ' + (bucket ? 'age ≤ ' + bucket.ageLabel : 'all ages'));
+            set('prb-ctl-age', !!bucket, prbMnemonic('a', bucket ? 'age ≤ ' + bucket.ageLabel : 'all ages'));
         }
 
         function renderPrBoard() {
@@ -1085,8 +1088,8 @@ export const prBoardJs = `
                 const ident = prbIdentHtml(pr, prbPrTitle(pr, []));
                 const branch = pr.branch
                     ? '<span class="prb-branch">⎇ ' + escapeHtml(pr.branch) + '</span>' : '';
-                html += '<div class="prb-sub' + (sub.primary || pr.watched ? '' : ' prb-secondary')
-                    + '"><span class="prb-l1-left prb-pr-sub">' + star + ident + branch + '</span>'
+                html += '<div class="prb-sub"><span class="prb-l1-left prb-pr-sub">'
+                    + star + ident + branch + '</span>'
                     + '<span class="prb-activity"></span>'
                     + prbStatsCells(pr.url, pr.additions, pr.deletions, pr.changed_files)
                     + '<span class="prb-status">' + prbStatusCells(pr, idx, sub.primary, subIdx, prbSessScope(s))
@@ -1457,13 +1460,13 @@ export const prBoardJs = `
 
             // Dispositions applied server-side too, but a toggle made just now
             // should reshape the board before the next fetch. PR view keeps
-            // one block per primary PR, its sessions sorted live-first then
-            // freshest-first (the sub-row and ←→ order). Session view
-            // transposes that, like the CLI board: one block per session —
-            // the board lists sessions one-to-one — with every PR the session
-            // touches beneath it; sessions that ended render stale so the
-            // live ones stand out. Session-less PRs (watches) stay PR blocks
-            // in both views.
+            // one block per primary or watched PR, its sessions sorted
+            // live-first then freshest-first (the sub-row and ←→ order).
+            // Session view transposes that, like the CLI board: one block per
+            // session — the board lists sessions one-to-one — with every
+            // primary or watched PR the session touches beneath it; sessions
+            // that ended render stale so the live ones stand out.
+            // Session-less PRs (watches) stay PR blocks in both views.
             const prView = prBoardViewPrefs.view === 'prs';
             prbObserveBoard();
             const entries = [];
@@ -1498,6 +1501,11 @@ export const prBoardJs = `
                     continue;
                 }
                 for (const s of contributors) {
+                    // A flip scoped to this session outranks the entry.
+                    // Secondaries stay off the board unless they are watched.
+                    const sd = prbSessionDisposition(e.pr, s);
+                    const subPrimary = sd ? sd === 'primary' : primary;
+                    if (!subPrimary && !e.pr.watched) continue;
                     const sessKey = s.session_id || s.dir_name;
                     if (!sessBlocks.has(sessKey)) {
                         sessBlocks.set(sessKey, {
@@ -1509,10 +1517,7 @@ export const prBoardJs = `
                             key: 'sess:' + sessKey,
                         });
                     }
-                    // A flip scoped to this session outranks the entry-level
-                    // classification on its own row.
-                    const sd = prbSessionDisposition(e.pr, s);
-                    sessBlocks.get(sessKey).prs.push({ entry: e, primary: sd ? sd === 'primary' : primary });
+                    sessBlocks.get(sessKey).prs.push({ entry: e, primary: subPrimary });
                 }
             }
             for (const block of sessBlocks.values()) {

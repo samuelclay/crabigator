@@ -2,7 +2,7 @@ import type { Env } from '../types/env';
 import type { SessionPr } from '../types/session';
 import { jsonResponse } from '../router';
 import { requireDeviceAuth, requireMobileAuth } from '../auth/middleware';
-import { watchedPrRows, watchedPlaceholderPr, deleteWatchedPr } from './watched-prs';
+import { watchedPrRows, watchedPlaceholderPr } from './watched-prs';
 import { assignSessionMarks, withSessionMark } from '../session-mark';
 
 interface BoardSessionRow {
@@ -525,21 +525,14 @@ function effectiveSessionPr(
     return pr;
 }
 
-function visiblePr(pr: SessionPr, lingerMs: number, nowMs: number, updatedAt: number): boolean {
-    if (pr.dismissed) return false;
-    // A classified primary remains actionable while GitHub enrichment
-    // retries, and a watched PR is wanted by definition.
-    const wanted = !!pr.primary || !!pr.watched;
-    if (!pr.refreshed_at) return wanted;
-    if (pr.state === 'OPEN') return true;
-    if (!wanted || (!pr.watched && foreignWithoutExplicitInterest(pr))) return false;
-    const latest = Math.max(
-        pr.closed_at || 0,
-        pr.last_mentioned_at || 0,
-        pr.updated_at || 0,
-        updatedAt * 1000
-    );
-    return !!lingerMs && !!latest && nowMs - latest <= lingerMs;
+function visiblePr(pr: SessionPr): boolean {
+    if (pr.dismissed || !(pr.primary || pr.watched)) return false;
+    // Unrefreshed and open PRs stay. Finished foreign primaries with no
+    // explicit interest hide. Age filtering happens on the client, not here.
+    return !pr.refreshed_at
+        || pr.state === 'OPEN'
+        || !!pr.watched
+        || !foreignWithoutExplicitInterest(pr);
 }
 
 /**
@@ -548,13 +541,13 @@ function visiblePr(pr: SessionPr, lingerMs: number, nowMs: number, updatedAt: nu
  * GitHub stats win, engagement counters sum, Slack links union, and stored
  * dispositions override classification (dismissed PRs are omitted).
  * Accepts dashboard bearer auth or desktop HMAC auth (the TUI's all-sessions
- * view). `?days=N` bounds how long finished primary PRs linger (default 1, max 90).
+ * view).
  */
 export async function getPrBoard(request: Request, env: Env): Promise<Response> {
     const groupId = await boardGroupId(request, env);
     if (groupId instanceof Response) return groupId;
     try {
-        return await buildPrBoard(request, env, groupId);
+        return await buildPrBoard(env, groupId);
     } catch (error) {
         // Authed endpoint: the message helps the TUI/dashboard report failures.
         return jsonResponse(
@@ -564,10 +557,7 @@ export async function getPrBoard(request: Request, env: Env): Promise<Response> 
     }
 }
 
-async function buildPrBoard(request: Request, env: Env, groupId: string): Promise<Response> {
-    const daysParam = parseInt(new URL(request.url).searchParams.get('days') ?? '1', 10);
-    const lingerDays = Number.isFinite(daysParam) ? Math.min(Math.max(daysParam, 0), 90) : 1;
-
+async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
     const overrides = await loadOverrides(env, groupId);
     const rows = await env.DB.prepare(
         `SELECT sp.owner, sp.repo, sp.number, sp.data, sp.updated_at, sp.session_id,
@@ -686,8 +676,8 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         merged.get(candidate.key)?.sessions.push(boardSession(candidate.row));
     }
 
-    // Session view lists every PR a session still tracks, even when PR view
-    // will not put that session under the PR.
+    // Session view lists every primary or watched PR a session still tracks,
+    // even when PR view will not put that session under the PR.
     for (const candidate of touchingCandidates) {
         const entry = merged.get(candidate.key);
         if (!entry) continue;
@@ -708,8 +698,6 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
         }
     }
 
-    const lingerMs = lingerDays * 24 * 3600 * 1000;
-    const nowMs = Date.now();
     const prs = [...merged.values()]
         .filter((entry) => {
             if (entry.disposition === 'dismissed') return false;
@@ -721,21 +709,17 @@ async function buildPrBoard(request: Request, env: Env, groupId: string): Promis
                 entry.pr.primary = false;
                 entry.pr.primary_source = 'override';
             }
-            return visiblePr(entry.pr, lingerMs, nowMs, entry.updated_at);
+            return visiblePr(entry.pr);
         })
         .map(({ disposition: _disposition, ...entry }) => entry);
 
-    // Watch-only PRs (no session row) render from their relayed stats; a
-    // watch whose PR finished and aged past the linger window clears itself.
+    // Watch-only PRs (no session row) render from their relayed stats.
     const seenKeys = new Set(prs.map((entry) => `${entry.owner}/${entry.repo}#${entry.number}`));
     for (const row of watched) {
         if (seenKeys.has(`${row.owner}/${row.repo}#${row.number}`)) continue;
         const pr = parseSessionPr(row.data || '') ?? watchedPlaceholderPr(row);
         pr.watched = true;
-        if (!visiblePr(pr, lingerMs, nowMs, row.refreshed_at || row.added_at)) {
-            await deleteWatchedPr(env, groupId, row.owner, row.repo, row.number);
-            continue;
-        }
+        if (!visiblePr(pr)) continue;
         prs.push({
             owner: row.owner,
             repo: row.repo,

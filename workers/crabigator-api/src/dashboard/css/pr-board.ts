@@ -39,7 +39,7 @@ export const prBoardCss = `
 }
 .pr-board[hidden] { display: none !important; }
 
-/* Header: title, counts, and the CLI's s/r/a/+- controls as chips */
+/* Header: title, counts, and the CLI's s/p/r/a controls as chips */
 .prb-head {
     display: flex;
     align-items: center;
@@ -53,8 +53,6 @@ export const prBoardCss = `
 .prb-ctl:hover { color: #8a8a8a; }
 .prb-ctl.active { color: #ffd700; }
 .prb-ctl u { text-underline-offset: 2px; }
-.prb-step { padding: 0 2px; }
-.prb-step:hover { color: #ffd700; }
 .prb-keys { color: #585858; white-space: nowrap; }
 .prb-keys u { text-underline-offset: 2px; }
 .prb-addwrap { margin-left: auto; }
@@ -108,9 +106,6 @@ export const prBoardCss = `
     border-radius: 4px;
 }
 .prb-row:hover { background: rgba(255, 255, 255, 0.035); }
-/* Secondary PRs recede so the primary being worked on stands out. */
-.prb-row.prb-secondary { opacity: 0.75; }
-.prb-row.prb-secondary:hover { opacity: 1; }
 /* Rows whose sessions have all ended dim like the CLI's stale rows. */
 .prb-row.prb-stale { opacity: 0.55; }
 .prb-row.prb-stale:hover { opacity: 0.8; }
@@ -150,7 +145,6 @@ export const prBoardCss = `
 a.prb-ident:hover { text-decoration: underline; }
 /* The PR's handle is bold and underlined so it stands out and reads as the link it is. */
 .prb-num { font-weight: 700; text-decoration: underline; }
-.prb-secondary .prb-ident { color: #6c6c6c; }
 .prb-branch {
     color: #585858;
     overflow: hidden;
@@ -216,10 +210,8 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
 /* Ended sessions dim in whole so the live ones stand out. */
 .prb-sub.prb-ended .prb-sub-title, .prb-sub.prb-ended .prb-sub-headline { color: #585858; }
 /* A session block's PR sub-rows: the PR-view anatomy indented beneath the
-   session header, secondaries receding like top-level rows. */
+   session header. */
 .prb-pr-sub { padding-left: 19px; }
-.prb-sub.prb-secondary { opacity: 0.75; }
-.prb-sub.prb-secondary:hover { opacity: 1; }
 
 /* Search previews: recap excerpts confirming why a row matched */
 .prb-pv {
