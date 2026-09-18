@@ -142,12 +142,11 @@ pub struct CloudBoard {
 }
 
 /// Fetch the group's durable PR board from D1 — every PR any session ever
-/// tracked, with overrides already applied and finished PRs bounded by
-/// `linger_days` (0 = open only).
-pub async fn fetch_pr_board_standalone(linger_days: u64) -> Result<CloudBoard> {
+/// tracked, with overrides already applied.
+pub async fn fetch_pr_board_standalone() -> Result<CloudBoard> {
     let endpoints = CloudEndpoints::load()?;
     let device = DeviceIdentity::load_or_create()?;
-    let url = format!("{}/prs/board?days={}", endpoints.api_url(), linger_days);
+    let url = format!("{}/prs/board", endpoints.api_url());
     let headers = device.auth_headers("GET", "/api/prs/board")?;
     let mut req = HttpClient::new().get(&url);
     for (key, value) in headers {

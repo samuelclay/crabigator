@@ -62,9 +62,6 @@ pub struct PrBoardPreferences {
     /// Recap visibility: 0 = hidden, 1 = shown.
     #[serde(default)]
     pub detail: u8,
-    /// Number of days to keep completed PRs on the board.
-    #[serde(default = "default_pr_board_linger_days")]
-    pub linger_days: u64,
     /// Oldest activity shown by default, in hours. None means all activity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_visible_hours: Option<u64>,
@@ -82,10 +79,6 @@ fn default_platform() -> String {
     "claude".to_string()
 }
 
-fn default_pr_board_linger_days() -> u64 {
-    1
-}
-
 fn default_pr_board_view() -> String {
     "prs".to_string()
 }
@@ -95,7 +88,6 @@ impl Default for PrBoardPreferences {
         Self {
             include_ended: false,
             detail: 0,
-            linger_days: default_pr_board_linger_days(),
             oldest_visible_hours: None,
             view: default_pr_board_view(),
         }
@@ -235,7 +227,6 @@ mod tests {
         let config: Config = toml::from_str("default_platform = \"codex\"").unwrap();
         assert!(!config.pr_board.include_ended);
         assert_eq!(config.pr_board.detail, 0);
-        assert_eq!(config.pr_board.linger_days, 1);
         assert_eq!(config.pr_board.oldest_visible_hours, None);
         assert_eq!(config.pr_board.view, "prs");
         assert!(config.cloud.url.is_none());
@@ -262,7 +253,6 @@ mod tests {
         let mut config = Config::default();
         config.pr_board.include_ended = true;
         config.pr_board.detail = 1;
-        config.pr_board.linger_days = 7;
         config.pr_board.oldest_visible_hours = Some(9);
         config.pr_board.view = "sessions".to_string();
 
@@ -270,20 +260,20 @@ mod tests {
         let decoded: Config = toml::from_str(&encoded).unwrap();
         assert!(decoded.pr_board.include_ended);
         assert_eq!(decoded.pr_board.detail, 1);
-        assert_eq!(decoded.pr_board.linger_days, 7);
+        assert!(!encoded.contains("linger_days"));
         assert_eq!(decoded.pr_board.oldest_visible_hours, Some(9));
         assert_eq!(decoded.pr_board.view, "sessions");
     }
 
     #[test]
     fn existing_pr_board_detail_is_loaded() {
+        // linger_days from older configs is ignored; the field is gone.
         let config: Config =
             toml::from_str("[pr_board]\ninclude_ended = true\ndetail = 3\nlinger_days = 7\n")
                 .unwrap();
 
         assert!(config.pr_board.include_ended);
         assert_eq!(config.pr_board.detail, 3);
-        assert_eq!(config.pr_board.linger_days, 7);
         assert_eq!(config.pr_board.oldest_visible_hours, None);
     }
 }

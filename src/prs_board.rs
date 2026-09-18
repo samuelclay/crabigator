@@ -50,10 +50,7 @@ const OVERRIDES_REFRESH: Duration = Duration::from_secs(60);
 const CLOUD_BOARD_REFRESH: Duration = Duration::from_secs(15);
 /// A mirror this old is a session that stopped updating; its rows dim.
 const STALE_SESSION_SECS: f64 = 300.0;
-/// How long merged/closed primary PRs linger by default; +/- adjusts at runtime.
-const DEFAULT_LINGER_DAYS: u64 = 1;
-/// Ceiling for the +key so the window can't run away unbounded.
-const MAX_LINGER_DAYS: u64 = 90;
+
 /// Transcript search needs this many characters before it kicks in — one or
 /// two letters match nearly every line and would light up the whole board.
 const TRANSCRIPT_QUERY_MIN: usize = 3;
@@ -275,17 +272,34 @@ fn detail_name(detail: u8) -> &'static str {
     }
 }
 
-/// One of the header's view toggles, as ` · <key> <state>`. A setting that is
-/// off its default turns yellow so a changed view is obvious at a glance.
+/// Underline `key` in `label` when it appears there; otherwise prefix it.
+fn header_mnemonic(key: &str, label: &str) -> String {
+    let mut chars = key.chars();
+    if let (Some(needle), None) = (chars.next(), chars.next()) {
+        if let Some((idx, ch)) = label
+            .char_indices()
+            .find(|(_, c)| c.eq_ignore_ascii_case(&needle))
+        {
+            let (prefix, rest) = label.split_at(idx);
+            let (hit, suffix) = rest.split_at(ch.len_utf8());
+            return format!("{prefix}{UNDERLINE}{hit}{RESET_UNDERLINE}{suffix}");
+        }
+    }
+    format!("{UNDERLINE}{key}{RESET_UNDERLINE} {label}")
+}
+
+/// ` · <labeled>`, yellow when the setting is off its default.
 fn header_control(key: char, state: &str, changed: bool) -> String {
+    let labeled = header_mnemonic(&key.to_string(), state);
     if changed {
         format!(
-            " · {}{UNDERLINE}{key}{RESET_UNDERLINE} {state}{}",
+            " · {}{}{}",
             fg(color::YELLOW),
+            labeled,
             fg(color::DARK_GRAY)
         )
     } else {
-        format!(" · {UNDERLINE}{key}{RESET_UNDERLINE} {state}")
+        format!(" · {labeled}")
     }
 }
 
@@ -1059,12 +1073,8 @@ fn now_secs() -> f64 {
 
 /// Merge session snapshots into deduped board entries, honoring overrides —
 /// scoped ones against the session they cover, group-wide ones everywhere.
-/// `linger_days` bounds how long finished primary PRs stay visible (0 = open only).
-fn aggregate(
-    snapshots: &[SessionSnapshot],
-    overrides: &ScopedOverrides,
-    linger_days: u64,
-) -> Vec<BoardPr> {
+/// Only primary and watched PRs stay; age filtering happens at render.
+fn aggregate(snapshots: &[SessionSnapshot], overrides: &ScopedOverrides) -> Vec<BoardPr> {
     let now = now_secs();
     let mut merged: HashMap<String, BoardPr> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
@@ -1187,15 +1197,14 @@ fn aggregate(
         }
     }
 
-    // Session view lists every PR a session still tracks, even when PR view
-    // will not put that session under the PR.
+    // Session view lists every primary or watched PR a session still tracks,
+    // even when PR view will not put that session under the PR.
     for (session, key) in touching_candidates {
         if let Some(entry) = merged.get_mut(&key) {
             attach_touching(entry, session);
         }
     }
 
-    let now_ms = (now * 1000.0) as u64;
     let mut out: Vec<BoardPr> = order
         .into_iter()
         .filter_map(|key| {
@@ -1213,7 +1222,7 @@ fn aggregate(
                 }
                 None => {}
             }
-            visible_pr(&entry.pr, linger_days, now_ms).then_some(entry)
+            visible_pr(&entry.pr).then_some(entry)
         })
         .collect();
 
@@ -1231,10 +1240,10 @@ struct ShapedEntries {
 }
 
 /// Shape merged entries for the active view. PR view keeps one block per
-/// primary PR, its sessions sorted live-first then freshest-first (the
-/// sub-row and ←→ order). Session view transposes that: one block per
-/// session — so the board lists sessions one-to-one — with every PR the
-/// session touches beneath it.
+/// primary or watched PR, its sessions sorted live-first then freshest-first
+/// (the sub-row and ←→ order). Session view transposes that: one block per
+/// session — so the board lists sessions one-to-one — with every primary
+/// or watched PR the session touches beneath it.
 fn entries_for_mode(entries: Vec<BoardPr>, mode: BoardMode) -> ShapedEntries {
     match mode {
         BoardMode::Sessions => session_view_entries(entries),
@@ -1519,10 +1528,9 @@ fn repository_matches(owner: &str, repo: &str, other_owner: &str, other_repo: &s
 fn local_board(
     history: &mut ActivityHistory,
     overrides: &ScopedOverrides,
-    linger_days: u64,
 ) -> Result<LocalBoard> {
     let snapshots = gather(history)?;
-    let mut entries = aggregate(&snapshots, overrides, linger_days);
+    let mut entries = aggregate(&snapshots, overrides);
     history.enrich_slack_threads(&mut entries);
     let workspaces = local_workspaces(&snapshots, &entries);
     // Live mirror directories by session id (the cloud id once registered),
@@ -1626,29 +1634,16 @@ fn primary_source_rank(source: &str) -> u8 {
     }
 }
 
-fn visible_pr(pr: &SessionPr, linger_days: u64, now_ms: u64) -> bool {
-    if pr.dismissed {
+fn visible_pr(pr: &SessionPr) -> bool {
+    if pr.dismissed || !(pr.primary || pr.watched) {
         return false;
     }
-    // Unverified references are usually scanning artifacts. A primary is
-    // different: the session classifier has enough ownership evidence to keep
-    // it visible as "fetching" while enrichment retries — and a watched PR is
-    // wanted by definition.
-    let wanted = pr.primary || pr.watched;
-    if pr.refreshed_at == 0 {
-        return wanted;
-    }
-    if pr.state == "OPEN" {
-        return true;
-    }
-    // Finished secondaries disappear immediately. Finished primaries and
-    // watches retain the adjustable grace window; the foreign-author gate
-    // never applies to a watch, which is explicit interest.
-    if !wanted || (!pr.watched && foreign_without_explicit_interest(pr)) {
-        return false;
-    }
-    let latest = pr.closed_at.max(pr.last_mentioned_at).max(pr.updated_at);
-    linger_days > 0 && latest > 0 && now_ms.saturating_sub(latest) <= linger_days * 24 * 3600 * 1000
+    // Unrefreshed and open PRs stay. Finished foreign primaries with no
+    // explicit interest hide. Age filtering happens at render, not here.
+    pr.refreshed_at == 0
+        || pr.state == "OPEN"
+        || pr.watched
+        || !foreign_without_explicit_interest(pr)
 }
 
 fn foreign_without_explicit_interest(pr: &SessionPr) -> bool {
@@ -1668,8 +1663,8 @@ fn sort_entries(entries: &mut [BoardPr]) {
 }
 
 /// Map the cloud board (durable D1 records, ended sessions included) into
-/// the same shape the live aggregation produces. Overrides and the linger
-/// window are already applied server-side.
+/// the same shape the live aggregation produces. Overrides are already
+/// applied server-side.
 fn cloud_entries_to_board(cloud: crate::cloud::CloudBoard) -> (Vec<BoardPr>, Vec<WorkspaceEntry>) {
     let mut represented = HashSet::new();
     let mut out: Vec<BoardPr> = Vec::new();
@@ -3071,7 +3066,6 @@ fn render(
     session_rows: &[SessionBlockRow],
     workspace_rows: &[WorkspaceRow],
     width: u16,
-    linger_days: u64,
     include_ended: bool,
     view: BoardView,
 ) -> RenderedBoard {
@@ -3081,7 +3075,6 @@ fn render(
         session_rows,
         workspace_rows,
         width,
-        linger_days,
         include_ended,
         view,
         RenderState {
@@ -3113,7 +3106,6 @@ fn render_at(
     session_rows: &[SessionBlockRow],
     workspace_rows: &[WorkspaceRow],
     width: u16,
-    linger_days: u64,
     include_ended: bool,
     view: BoardView,
     state: RenderState<'_>,
@@ -3180,29 +3172,19 @@ fn render_at(
         })
         .collect::<HashSet<_>>()
         .len();
-    let window_text = match linger_days {
-        0 => "open only".to_string(),
-        days => format!("primary done ≤ {days}d"),
-    };
-    let window = if linger_days == DEFAULT_LINGER_DAYS {
-        window_text
-    } else {
-        format!(
-            "{}{}{}",
-            fg(color::YELLOW),
-            window_text,
-            fg(color::DARK_GRAY)
-        )
-    };
-    let source = if include_ended {
-        format!(
-            "{}{UNDERLINE}s{RESET_UNDERLINE} all sessions{}",
-            fg(color::YELLOW),
-            fg(color::DARK_GRAY)
-        )
-    } else {
-        format!("{UNDERLINE}s{RESET_UNDERLINE} live")
-    };
+    let source = header_control(
+        's',
+        if include_ended { "all sessions" } else { "live" },
+        include_ended,
+    );
+    let keys = [
+        header_mnemonic("↑↓", "select"),
+        header_mnemonic("⏎", "peek"),
+        header_mnemonic("/", "search"),
+        header_mnemonic("w", "watch"),
+        header_mnemonic("q", "quit"),
+    ]
+    .join(" · ");
     let mode_label = header_control('p', mode.label(), mode != BoardMode::default());
     let detail_label = header_control('r', detail_name(detail), detail != DEFAULT_DETAIL);
     let age_label = if oldest_visible_bucket == DEFAULT_OLDEST_VISIBLE_BUCKET {
@@ -3227,17 +3209,17 @@ fn render_at(
     let mut spans: Vec<RowSpan> = Vec::new();
     let mut lines = vec![
         format!(
-            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions · {} · {}{}{}{} · {UNDERLINE}↑↓{RESET_UNDERLINE} select · {UNDERLINE}⏎{RESET_UNDERLINE} peek · {UNDERLINE}/{RESET_UNDERLINE} search · {UNDERLINE}w{RESET_UNDERLINE} watch · {UNDERLINE}+/-{RESET_UNDERLINE} days · {UNDERLINE}q{RESET_UNDERLINE} quit{}",
+            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions{}{}{}{} · {}{}",
             fg(color::PURPLE),
             RESET_FG,
             fg(color::DARK_GRAY),
             pr_count,
             session_count,
             source,
-            window,
             mode_label,
             detail_label,
             age_label,
+            keys,
             RESET_FG,
         ),
         String::new(),
@@ -3619,8 +3601,7 @@ impl WatchedBoard {
     }
 
     /// Start `gh` enrichment for every watched PR that is due: never-enriched
-    /// ones immediately, open ones each minute. Finished PRs only linger, so
-    /// they stop refreshing.
+    /// ones immediately, open ones each minute. Finished PRs stop refreshing.
     fn spawn_due_refreshes(&mut self) {
         let due: Vec<(String, String)> = self
             .prs
@@ -3710,9 +3691,7 @@ fn merge_watched_entries(
     entries: &mut Vec<BoardPr>,
     watched: &HashMap<String, SessionPr>,
     overrides: &ScopedOverrides,
-    linger_days: u64,
 ) {
-    let now_ms = (now_secs() * 1000.0) as u64;
     for (key, pr) in watched {
         // Watches are group-level, so only a group-wide dismissal hides one.
         if matches!(overrides.group(key), Some(PrDisposition::Dismissed)) {
@@ -3731,7 +3710,7 @@ fn merge_watched_entries(
             }
             continue;
         }
-        if !visible_pr(pr, linger_days, now_ms) {
+        if !visible_pr(pr) {
             continue;
         }
         let mut slack_threads = Vec::new();
@@ -3784,9 +3763,7 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             RecencyBucket::from_max_age_hours(preferences.oldest_visible_hours),
         )
         .with_mode(BoardMode::parse(&preferences.view));
-        let linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
-        let (mut entries, workspaces, _) =
-            local_board(&mut activity_history, &overrides, linger_days)?;
+        let (mut entries, workspaces, _) = local_board(&mut activity_history, &overrides)?;
         // Watched PRs render from their cloud-relayed stats; the one-frame
         // print doesn't run its own `gh` enrichment.
         let watched: HashMap<String, SessionPr> = crate::cloud::fetch_watched_prs_standalone()
@@ -3795,7 +3772,7 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             .into_iter()
             .map(cloud_watch_entry)
             .collect();
-        merge_watched_entries(&mut entries, &watched, &overrides, linger_days);
+        merge_watched_entries(&mut entries, &watched, &overrides);
         let shaped = entries_for_mode(entries, view.mode);
         let rows: Vec<BoardRow> = shaped
             .prs
@@ -3825,7 +3802,6 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             &session_rows,
             &workspace_rows,
             width,
-            linger_days,
             false,
             view,
         )
@@ -4188,11 +4164,10 @@ fn draw_changed_lines<W: Write>(
     Ok(true)
 }
 
-fn save_board_preferences(include_ended: bool, linger_days: u64, view: BoardView) -> Result<()> {
+fn save_board_preferences(include_ended: bool, view: BoardView) -> Result<()> {
     let mut config = crate::config::Config::load()?;
     config.pr_board.include_ended = include_ended;
     config.pr_board.detail = view.detail;
-    config.pr_board.linger_days = linger_days;
     config.pr_board.oldest_visible_hours = view.oldest_visible_bucket.max_age_hours();
     config.pr_board.view = view.mode.label().to_string();
     config.save()
@@ -4245,10 +4220,9 @@ async fn board_loop(
         RecencyBucket::from_max_age_hours(preferences.oldest_visible_hours),
     )
     .with_mode(BoardMode::parse(&preferences.view));
-    let mut linger_days = preferences.linger_days.min(MAX_LINGER_DAYS);
     let mut include_ended = preferences.include_ended;
     // Cloud fetches are throttled well below the local tick; toggling the
-    // source or changing the day window forces one.
+    // source forces one.
     let mut cloud_fetch_due = false;
     let mut cloud_fetched: Option<Instant> = None;
     let mut dirty = false;
@@ -4264,7 +4238,6 @@ async fn board_loop(
         &[],
         &[],
         initial_width,
-        linger_days,
         include_ended,
         view,
         RenderState {
@@ -4286,7 +4259,7 @@ async fn board_loop(
                     *overrides = fresh;
                     pending_overrides = None;
                     if loading {
-                        entries = aggregate(&initial_snapshots, overrides, linger_days);
+                        entries = aggregate(&initial_snapshots, overrides);
                         workspaces = local_workspaces(&initial_snapshots, &entries);
                         needs_render = true;
                     } else {
@@ -4332,7 +4305,7 @@ async fn board_loop(
                 match rx.try_recv() {
                     Ok(InitialLoadUpdate::Snapshot(snapshot)) => {
                         initial_snapshots.push(*snapshot);
-                        entries = aggregate(&initial_snapshots, overrides, linger_days);
+                        entries = aggregate(&initial_snapshots, overrides);
                         workspaces = local_workspaces(&initial_snapshots, &entries);
                         needs_render = true;
                     }
@@ -4364,13 +4337,13 @@ async fn board_loop(
                 if cloud_fetch_due || stale {
                     cloud_fetch_due = false;
                     cloud_fetched = Some(Instant::now());
-                    if let Ok(cloud) = crate::cloud::fetch_pr_board_standalone(linger_days).await {
+                    if let Ok(cloud) = crate::cloud::fetch_pr_board_standalone().await {
                         (entries, durable_workspaces) = cloud_entries_to_board(cloud);
                         durable_history_loaded = true;
                     }
                 }
                 let (live_entries, live_workspaces, live_mirrors) =
-                    local_board(activity_history.as_mut().unwrap(), overrides, linger_days)?;
+                    local_board(activity_history.as_mut().unwrap(), overrides)?;
                 if !durable_history_loaded {
                     entries = live_entries;
                 }
@@ -4379,7 +4352,7 @@ async fn board_loop(
                 attach_live_mirrors(&mut entries, &mut workspaces, &live_mirrors);
             } else {
                 (entries, workspaces, _) =
-                    local_board(activity_history.as_mut().unwrap(), overrides, linger_days)?;
+                    local_board(activity_history.as_mut().unwrap(), overrides)?;
             }
             activity_history
                 .as_mut()
@@ -4409,7 +4382,6 @@ async fn board_loop(
                 &mut merged_entries,
                 &watched_board.prs,
                 overrides,
-                linger_days,
             );
             observe_cooldowns(&mut cooldowns, &merged_entries, &workspaces, now_ms);
             let shaped = entries_for_mode(merged_entries, view.mode);
@@ -4488,7 +4460,6 @@ async fn board_loop(
                 &filtered_sessions,
                 &filtered_workspaces,
                 width,
-                linger_days,
                 include_ended,
                 view,
                 RenderState {
@@ -4601,7 +4572,7 @@ async fn board_loop(
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
-                        save_board_preferences(include_ended, linger_days, view)?;
+                        save_board_preferences(include_ended, view)?;
                         return Ok(());
                     }
                     // While the add-a-watch input is open, printable keys edit
@@ -4691,7 +4662,7 @@ async fn board_loop(
                                 dirty = true;
                             }
                             KeyCode::Char('q') | KeyCode::Esc => {
-                                save_board_preferences(include_ended, linger_days, view)?;
+                                save_board_preferences(include_ended, view)?;
                                 return Ok(());
                             }
                             KeyCode::Char('/') => {
@@ -4706,30 +4677,12 @@ async fn board_loop(
                                 add_error = None;
                                 dirty = true;
                             }
-                            // Widen or narrow how long finished PRs linger.
-                            // The filter runs during aggregation (server-side
-                            // for the cloud view), so force a fresh pass
-                            // rather than waiting out the tick.
-                            KeyCode::Char('+') | KeyCode::Char('=') => {
-                                linger_days = (linger_days + 1).min(MAX_LINGER_DAYS);
-                                save_board_preferences(include_ended, linger_days, view)?;
-                                cloud_fetch_due = true;
-                                last_refresh = Instant::now() - REFRESH_INTERVAL;
-                                last_frame_hash = 0;
-                            }
-                            KeyCode::Char('-') | KeyCode::Char('_') => {
-                                linger_days = linger_days.saturating_sub(1);
-                                save_board_preferences(include_ended, linger_days, view)?;
-                                cloud_fetch_due = true;
-                                last_refresh = Instant::now() - REFRESH_INTERVAL;
-                                last_frame_hash = 0;
-                            }
                             // Flip between one block per primary PR and one
                             // block per session. Selection keys differ
                             // between the views, so it starts fresh.
                             KeyCode::Char('p') => {
                                 view.toggle_mode();
-                                save_board_preferences(include_ended, linger_days, view)?;
+                                save_board_preferences(include_ended, view)?;
                                 selected = None;
                                 peek_open = false;
                                 peek_scroll = None;
@@ -4741,13 +4694,13 @@ async fn board_loop(
                             // Recap visibility and age filtering are independent.
                             KeyCode::Char('r') => {
                                 view.toggle_recap();
-                                save_board_preferences(include_ended, linger_days, view)?;
+                                save_board_preferences(include_ended, view)?;
                                 needs_render = true;
                                 dirty = true;
                             }
                             KeyCode::Char('a') => {
                                 view.cycle_age();
-                                save_board_preferences(include_ended, linger_days, view)?;
+                                save_board_preferences(include_ended, view)?;
                                 scroll = 0;
                                 needs_render = true;
                                 dirty = true;
@@ -4756,7 +4709,7 @@ async fn board_loop(
                             // record, which includes ended sessions.
                             KeyCode::Char('s') => {
                                 include_ended = !include_ended;
-                                save_board_preferences(include_ended, linger_days, view)?;
+                                save_board_preferences(include_ended, view)?;
                                 cloud_fetch_due = true;
                                 scroll = 0;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
@@ -4979,7 +4932,6 @@ mod tests {
             &[],
             &[],
             160,
-            DEFAULT_LINGER_DAYS,
             false,
             BoardView::new(detail, oldest_visible_bucket),
         )
@@ -4992,44 +4944,62 @@ mod tests {
     }
 
     #[test]
+    fn header_mnemonic_underlines_the_key_inside_the_label() {
+        assert_eq!(
+            header_mnemonic("p", "prs"),
+            format!("{UNDERLINE}p{RESET_UNDERLINE}rs")
+        );
+        assert_eq!(
+            header_mnemonic("s", "live"),
+            format!("{UNDERLINE}s{RESET_UNDERLINE} live")
+        );
+        assert_eq!(
+            header_mnemonic("s", "all sessions"),
+            format!("all {UNDERLINE}s{RESET_UNDERLINE}essions")
+        );
+        assert_eq!(
+            header_mnemonic("↑↓", "select"),
+            format!("{UNDERLINE}↑↓{RESET_UNDERLINE} select")
+        );
+    }
+
+    #[test]
     fn header_shows_the_saved_view_controls() {
         let styled = render_frame(&[]);
-        for (shortcut, label) in [
-            ("s", "live"),
-            ("p", "prs"),
-            ("r", "compact"),
-            ("a", "all ages"),
-            ("↑↓", "select"),
-            ("⏎", "peek"),
-            ("/", "search"),
-            ("+/-", "days"),
-            ("q", "quit"),
-        ] {
-            assert!(styled.contains(&format!("{UNDERLINE}{shortcut}{RESET_UNDERLINE} {label}")));
-        }
+        assert!(styled.contains(&format!("{UNDERLINE}s{RESET_UNDERLINE} live")));
+        assert!(styled.contains(&format!("{UNDERLINE}p{RESET_UNDERLINE}rs")));
+        assert!(styled.contains(&format!("{UNDERLINE}r{RESET_UNDERLINE} compact")));
+        assert!(styled.contains(&format!("{UNDERLINE}a{RESET_UNDERLINE}ll ages")));
+        assert!(styled.contains(&format!("{UNDERLINE}↑↓{RESET_UNDERLINE} select")));
+        assert!(styled.contains(&format!("{UNDERLINE}⏎{RESET_UNDERLINE} peek")));
+        assert!(styled.contains(&format!("{UNDERLINE}/{RESET_UNDERLINE} search")));
+        assert!(styled.contains(&format!("{UNDERLINE}w{RESET_UNDERLINE}atch")));
+        assert!(styled.contains(&format!("{UNDERLINE}q{RESET_UNDERLINE}uit")));
+        assert!(!styled.contains("linger"));
+        assert!(!styled.contains("+/-"));
 
         let frame = crate::parsers::strip_ansi_for_debug(&styled);
-        assert!(frame.contains("s live · primary done ≤ 1d · p prs · r compact · a all ages"));
+        assert!(frame.contains("s live · prs · r compact · all ages"));
+        assert!(frame.contains("↑↓ select · ⏎ peek · / search · watch · quit"));
         assert!(!frame.contains("r recap · a age · s live/all"));
         assert!(!frame.contains("e/c recap/compact"));
         assert!(!frame.contains("[/] age"));
 
         let recap = render_frame_with_oldest(&[], MAX_DETAIL, RecencyBucket::LastSixHours);
-        assert!(recap.contains(&format!("{UNDERLINE}r{RESET_UNDERLINE} recap")));
-        assert!(recap.contains(&format!("{UNDERLINE}a{RESET_UNDERLINE} age ≤ 6h")));
+        assert!(recap.contains(&format!("{UNDERLINE}r{RESET_UNDERLINE}ecap")));
+        assert!(recap.contains(&format!("{UNDERLINE}a{RESET_UNDERLINE}ge ≤ 6h")));
 
         let all_sessions = render(
             &[],
             &[],
             &[],
             160,
-            DEFAULT_LINGER_DAYS,
             true,
             BoardView::default(),
         )
         .lines
         .join("\n");
-        assert!(all_sessions.contains(&format!("{UNDERLINE}s{RESET_UNDERLINE} all sessions")));
+        assert!(all_sessions.contains(&format!("all {UNDERLINE}s{RESET_UNDERLINE}essions")));
     }
 
     fn now_ms() -> u64 {
@@ -5075,7 +5045,6 @@ mod tests {
             &[],
             &[],
             160,
-            DEFAULT_LINGER_DAYS,
             false,
             BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET).with_mode(BoardMode::Prs),
         )
@@ -5114,7 +5083,6 @@ mod tests {
             &session_rows,
             &workspace_rows,
             160,
-            DEFAULT_LINGER_DAYS,
             false,
             BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET).with_mode(BoardMode::Sessions),
         )
@@ -5164,7 +5132,6 @@ mod tests {
         let merged = aggregate(
             &[one, two],
             &ScopedOverrides::default(),
-            DEFAULT_LINGER_DAYS,
         );
         let entries = entries_for_mode(merged, BoardMode::Prs).prs;
         assert_eq!(
@@ -5217,7 +5184,7 @@ mod tests {
         session.prompted_at = now_secs() as u64 - 30 * 60;
         session.completed_at = now_secs() as u64 - 5 * 60;
 
-        let merged = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let merged = aggregate(&[session], &ScopedOverrides::default());
         let entries = entries_for_mode(merged, BoardMode::Prs).prs;
         let rendered = render_prs_frame(&entries, DEFAULT_DETAIL);
         // Cells link to GitHub, so the hyperlink wrappers go too.
@@ -5276,7 +5243,7 @@ mod tests {
         let mut session = snapshot("one", vec![pr.clone()]);
         session.repo_name = "portal".to_string();
         session.state = SessionState::Thinking;
-        let before = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let before = aggregate(&[session], &ScopedOverrides::default());
 
         let now_ms = now_ms();
         let mut cooldowns = Cooldowns::default();
@@ -5294,7 +5261,6 @@ mod tests {
                 &[],
                 &[],
                 160,
-                DEFAULT_LINGER_DAYS,
                 false,
                 BoardView::new(DEFAULT_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET),
                 RenderState {
@@ -5317,7 +5283,7 @@ mod tests {
         let mut session = snapshot("one", vec![pr]);
         session.repo_name = "portal".to_string();
         session.state = SessionState::Complete;
-        let after = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let after = aggregate(&[session], &ScopedOverrides::default());
         observe_cooldowns(&mut cooldowns, &after, &[], now_ms + 2_000);
         assert!(cooldowns.active(now_ms + 2_000));
 
@@ -5361,7 +5327,7 @@ mod tests {
         make_primary(&mut tracked);
         let mut session = snapshot("one", vec![tracked]);
         session.repo_name = "portal".to_string();
-        let mut entries = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let mut entries = aggregate(&[session], &ScopedOverrides::default());
 
         let mut solo = SessionPr::watched_stub("o", "elsewhere", 9);
         solo.state = "OPEN".to_string();
@@ -5378,7 +5344,6 @@ mod tests {
             &mut entries,
             &watched,
             &ScopedOverrides::default(),
-            DEFAULT_LINGER_DAYS,
         );
 
         assert_eq!(entries.len(), 2);
@@ -5410,29 +5375,26 @@ mod tests {
             watch_key("o", "elsewhere", 9),
             PrDisposition::Dismissed,
         )]));
-        merge_watched_entries(&mut entries, &watched, &overrides, DEFAULT_LINGER_DAYS);
+        merge_watched_entries(&mut entries, &watched, &overrides);
         assert!(entries.iter().all(|e| e.pr.repo != "elsewhere"));
     }
 
     #[test]
-    fn watched_prs_use_the_primary_linger_rules() {
+    fn watched_prs_stay_when_merged() {
         let now_ms = now_ms();
         let mut merged = SessionPr::watched_stub("o", "r", 7);
         merged.refreshed_at = 1_000;
         merged.state = "MERGED".to_string();
         merged.closed_at = now_ms - 3600 * 1000;
-        assert!(
-            visible_pr(&merged, 1, now_ms),
-            "a freshly merged watch lingers"
-        );
+        assert!(visible_pr(&merged), "a merged watch stays on the board");
         merged.closed_at = now_ms - 3 * 24 * 3600 * 1000;
         merged.updated_at = merged.closed_at;
         assert!(
-            !visible_pr(&merged, 1, now_ms),
-            "an aged-out watch drops off"
+            visible_pr(&merged),
+            "age, not a linger window, hides old watches at render"
         );
         assert!(
-            visible_pr(&SessionPr::watched_stub("o", "r", 8), 1, now_ms),
+            visible_pr(&SessionPr::watched_stub("o", "r", 8)),
             "a never-enriched watch stays while fetching"
         );
     }
@@ -5445,8 +5407,9 @@ mod tests {
         let mut session = snapshot("one", vec![primary, secondary]);
         session.repo_name = "portal".to_string();
 
-        let merged = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
-        assert_eq!(merged.len(), 2, "session view shows the open secondary");
+        let merged = aggregate(&[session], &ScopedOverrides::default());
+        assert_eq!(merged.len(), 1, "open secondaries stay off the board");
+        assert_eq!(merged[0].pr.number, 1);
 
         let prs = entries_for_mode(merged, BoardMode::Prs).prs;
         assert_eq!(prs.len(), 1, "PR view watches primaries only");
@@ -5602,7 +5565,6 @@ mod tests {
             aggregate(
                 &[two, one],
                 &ScopedOverrides::default(),
-                DEFAULT_LINGER_DAYS,
             ),
             BoardMode::Sessions,
         );
@@ -5706,7 +5668,6 @@ mod tests {
         let entries = aggregate(
             &[live, captureless],
             &ScopedOverrides::default(),
-            DEFAULT_LINGER_DAYS,
         );
         let rows: Vec<BoardRow> = entries
             .iter()
@@ -5720,7 +5681,6 @@ mod tests {
             &[],
             &[],
             160,
-            DEFAULT_LINGER_DAYS,
             false,
             BoardView::default(),
         );
@@ -5852,7 +5812,6 @@ mod tests {
         let mut entries = aggregate(
             &[snapshot],
             &ScopedOverrides::default(),
-            DEFAULT_LINGER_DAYS,
         );
         entries[0].sessions[0].session_dir = None;
 
@@ -5881,7 +5840,6 @@ mod tests {
             &[],
             &[],
             120,
-            DEFAULT_LINGER_DAYS,
             false,
             BoardView::default(),
             RenderState {
@@ -5915,7 +5873,7 @@ mod tests {
         second.title = "Second active session".to_string();
 
         let snapshots = vec![first, second];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         let workspaces = local_workspaces(&snapshots, &entries);
         assert_eq!(workspaces.len(), 2);
 
@@ -5931,7 +5889,6 @@ mod tests {
             &[],
             &rows,
             160,
-            DEFAULT_LINGER_DAYS,
             false,
             BoardView::default(),
         )
@@ -6010,7 +5967,7 @@ mod tests {
         pr.branch = "old-branch".to_string();
         let mut durable = snapshot("crabigator", vec![pr]);
         durable.session_id = "cloud-session".to_string();
-        let entries = aggregate(&[durable], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&[durable], &ScopedOverrides::default());
 
         let mut current = snapshot("crabigator", Vec::new());
         current.session_id = "cloud-session".to_string();
@@ -6053,7 +6010,7 @@ mod tests {
         portal_session.prompted_at = now - 300;
 
         let snapshots = vec![pr_session, no_pr_session, portal_session];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         let workspaces = local_workspaces(&snapshots, &entries);
         let shaped = entries_for_mode(entries, BoardMode::Sessions);
         let frame = crate::parsers::strip_ansi_for_debug(
@@ -6128,7 +6085,7 @@ mod tests {
         other_repo.completed_at = now - 300;
 
         let snapshots = vec![pr_session, peer_session, other_repo];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         let workspaces = local_workspaces(&snapshots, &entries);
         let shaped = entries_for_mode(entries, BoardMode::Sessions);
 
@@ -6189,7 +6146,7 @@ mod tests {
                 session
             })
             .collect();
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         let rendered = render_frame(&entries);
         for (label, bucket_color, text_color) in [
             ("● Last hour", RECENCY_1H, color::BLACK),
@@ -6323,7 +6280,7 @@ mod tests {
             session
         })
         .collect();
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
 
         let six_hours = crate::parsers::strip_ansi_for_debug(&render_frame_with_oldest(
             &entries,
@@ -6365,7 +6322,7 @@ mod tests {
         make_primary(&mut pr);
         let session = snapshot("crabigator", vec![pr]);
         let snapshots = vec![session];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         assert_eq!(entries.len(), 1);
         assert!(local_workspaces(&snapshots, &entries).is_empty());
     }
@@ -6393,7 +6350,7 @@ mod tests {
         secondary.completed_at = now - 30;
 
         let snapshots = vec![primary, secondary];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         let workspaces = local_workspaces(&snapshots, &entries);
         assert_eq!(entries.len(), 1);
         assert_eq!(workspaces.len(), 1);
@@ -6436,10 +6393,10 @@ mod tests {
     }
 
     #[test]
-    fn session_view_keeps_worktree_visits_under_the_working_session() {
+    fn session_view_drops_worktree_visit_secondaries() {
         // A session that hopped into another repo still tracks those open
-        // PRs as worktree visits. Session view must not split them into
-        // orphan Last-hour PR blocks plus a 1–3 hour no-PR workspace.
+        // PRs as worktree visits. They are secondaries, so they stay off
+        // the board; the session itself remains as a no-PR row.
         let now = now_secs() as u64;
         let mut portal = board_pr(1551, "developer-portal");
         portal.primary = false;
@@ -6467,50 +6424,18 @@ mod tests {
         session.completed_at = now - 30;
 
         let snapshots = vec![session];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), 0);
-        assert_eq!(entries.len(), 2, "both open visits stay visible");
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         assert!(
-            entries.iter().all(|entry| entry.sessions.is_empty()),
-            "worktree visits do not own the PRs"
-        );
-        assert_eq!(
-            entries
-                .iter()
-                .map(|entry| entry.touching.len())
-                .sum::<usize>(),
-            2
+            entries.is_empty(),
+            "worktree-visit secondaries stay off the board"
         );
         let workspaces = local_workspaces(&snapshots, &entries);
-        assert_eq!(
-            workspaces.len(),
-            1,
-            "PR view still keeps the session as a peer row"
-        );
+        assert_eq!(workspaces.len(), 1, "the session remains as a no-PR row");
+        assert_eq!(workspaces[0].session.session_id, "handoff");
 
         let shaped = entries_for_mode(entries, BoardMode::Sessions);
-        assert!(
-            shaped.prs.is_empty(),
-            "session view must not emit orphan PR blocks: {:?}",
-            shaped
-                .prs
-                .iter()
-                .map(|entry| entry.pr.number)
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(shaped.sessions.len(), 1);
-        assert_eq!(shaped.sessions[0].session.session_id, "handoff");
-        let mut numbers: Vec<u64> = shaped.sessions[0]
-            .prs
-            .iter()
-            .map(|entry| entry.pr.number)
-            .collect();
-        numbers.sort_unstable();
-        assert_eq!(numbers, [1551, 2989]);
-        assert_eq!(
-            session_entry_bucket(&shaped.sessions[0], now),
-            RecencyBucket::LastHour,
-            "a session still thinking belongs in Last hour"
-        );
+        assert!(shaped.prs.is_empty());
+        assert!(shaped.sessions.is_empty());
 
         let frame = crate::parsers::strip_ansi_for_debug(
             &render_session_view_frame(&shaped, &workspaces, DEFAULT_DETAIL)
@@ -6518,18 +6443,9 @@ mod tests {
                 .join("\n"),
         );
         assert!(frame.contains("● Last hour"), "{frame}");
-        assert!(!frame.contains("● 1–3 hours"), "{frame}");
         assert_eq!(frame.matches("Deploy Handoff Incomplete").count(), 1);
-        assert!(frame.contains("#1551:"));
-        assert!(frame.contains("#2989:"));
-        let header = frame
-            .lines()
-            .find(|line| line.contains("Deploy Handoff Incomplete"))
-            .unwrap();
-        assert!(
-            !header.contains("#1551:"),
-            "the session leads; PRs sit beneath: {header}"
-        );
+        assert!(!frame.contains("#1551:"), "{frame}");
+        assert!(!frame.contains("#2989:"), "{frame}");
     }
 
     #[test]
@@ -6546,7 +6462,7 @@ mod tests {
         reviewer.branch = "main".to_string();
 
         let snapshots = vec![reviewer];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert_eq!(entries.len(), 1);
@@ -6573,7 +6489,7 @@ mod tests {
         session.branch = "main".to_string();
 
         let snapshots = vec![session];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert_eq!(entries.len(), 1);
@@ -6600,7 +6516,7 @@ mod tests {
         owner.branch = "ryan/feature".to_string();
 
         let snapshots = vec![reviewer, owner];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert_eq!(entries.len(), 1);
@@ -6625,7 +6541,7 @@ mod tests {
         session.branch = "sam/pal-force-refresh".to_string();
 
         let snapshots = vec![session];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert_eq!(entries.len(), 2);
@@ -6663,7 +6579,7 @@ mod tests {
         session.completed_at = now - 120;
 
         let snapshots = vec![session];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert_eq!(entries.len(), 2);
@@ -6733,7 +6649,7 @@ mod tests {
         owner.branch = "sam/fix".to_string();
 
         let snapshots = vec![visitor, owner];
-        let entries = aggregate(&snapshots, &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
         let workspaces = local_workspaces(&snapshots, &entries);
 
         assert_eq!(entries.len(), 1);
@@ -6766,7 +6682,6 @@ mod tests {
                 snapshot("older", vec![enriched]),
             ],
             &ScopedOverrides::default(),
-            DEFAULT_LINGER_DAYS,
         );
 
         assert_eq!(entries.len(), 1);
@@ -6787,7 +6702,6 @@ mod tests {
         let entries = aggregate(
             &[old_mirror],
             &ScopedOverrides::default(),
-            DEFAULT_LINGER_DAYS,
         );
 
         assert_eq!(entries.len(), 1);
@@ -6822,12 +6736,12 @@ mod tests {
         let entries = aggregate(
             &[old_mirror],
             &ScopedOverrides::from(overrides),
-            DEFAULT_LINGER_DAYS,
         );
 
-        assert_eq!(entries.len(), 1);
-        assert!(!entries[0].pr.primary);
-        assert!(entries[0].sessions.is_empty());
+        assert!(
+            entries.is_empty(),
+            "a secondary override keeps the PR off the board"
+        );
     }
 
     #[test]
@@ -6844,7 +6758,6 @@ mod tests {
                 vec![board_pr(5, "portal"), board_pr(6, "portal")],
             )],
             &overrides,
-            DEFAULT_LINGER_DAYS,
         );
         assert_eq!(entries.len(), 1, "dismissed PR is gone");
         assert!(entries[0].pr.primary, "override promotes");
@@ -6871,7 +6784,6 @@ mod tests {
                 snapshot("two", vec![pr.clone()]),
             ],
             &overrides,
-            DEFAULT_LINGER_DAYS,
         );
         assert_eq!(entries.len(), 1, "the PR survives for the other session");
         assert!(!entries[0].pr.dismissed);
@@ -6888,7 +6800,6 @@ mod tests {
         let entries = aggregate(
             &[snapshot("one", vec![pr.clone()]), snapshot("two", vec![pr])],
             &overrides,
-            DEFAULT_LINGER_DAYS,
         );
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].sessions.len(), 1);
@@ -6898,6 +6809,7 @@ mod tests {
     #[test]
     fn attention_order_puts_failures_first() {
         let mut failing = board_pr(1, "portal");
+        make_primary(&mut failing);
         failing.checks_total = 3;
         failing.checks_failed = 1;
         let mut merged = board_pr(2, "portal");
@@ -6906,6 +6818,7 @@ mod tests {
         make_primary(&mut merged);
         let ready = {
             let mut pr = board_pr(3, "portal");
+            make_primary(&mut pr);
             pr.review_decision = "APPROVED".to_string();
             pr.checks_total = 2;
             pr.checks_passed = 2;
@@ -6915,7 +6828,6 @@ mod tests {
         let entries = aggregate(
             &[snapshot("one", vec![merged, ready, failing])],
             &ScopedOverrides::default(),
-            DEFAULT_LINGER_DAYS,
         );
         let numbers: Vec<u64> = entries.iter().map(|e| e.pr.number).collect();
         assert_eq!(numbers, vec![1, 3, 2], "failing → ready → merged");
@@ -6976,7 +6888,7 @@ mod tests {
                 text: None,
             },
         ];
-        let entries = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&[session], &ScopedOverrides::default());
         let compact = render_frame_at(&entries, 0);
         assert!(compact.contains("Builder Signals dashboard"));
         assert!(crate::parsers::strip_ansi_for_debug(&compact).contains("#9: Fix the flow"));
@@ -7065,7 +6977,7 @@ mod tests {
             author: Some("Samuel Clay".to_string()),
             text: None,
         }];
-        let entries = aggregate(&[session], &ScopedOverrides::default(), DEFAULT_LINGER_DAYS);
+        let entries = aggregate(&[session], &ScopedOverrides::default());
 
         // The styled frame line whose text holds `needle`.
         fn row_with<'a>(frame: &'a str, needle: &str) -> &'a str {
@@ -7125,16 +7037,16 @@ mod tests {
         let entries = aggregate(
             &[snapshot("one", vec![phantom, primary])],
             &ScopedOverrides::default(),
-            DEFAULT_LINGER_DAYS,
         );
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].pr.number, 501);
     }
 
-    /// Merged and closed primaries linger for a day, judged by close time when
-    /// known, else the last mention; with neither signal they hide at once.
+    /// Finished primaries stay in the aggregate; the age filter hides stale
+    /// rows at render. Silent closed PRs with no events still count as long
+    /// as they are primary.
     #[test]
-    fn finished_prs_age_off_after_a_day() {
+    fn finished_primaries_stay_on_the_board() {
         let day_ms: u64 = 24 * 3600 * 1000;
         let mut fresh = board_pr(1, "portal");
         fresh.state = "MERGED".to_string();
@@ -7146,7 +7058,7 @@ mod tests {
         recently_discussed.state = "CLOSED".to_string();
         recently_discussed.last_mentioned_at = now_ms() - 60_000;
         let mut silent = board_pr(4, "portal");
-        silent.state = "CLOSED".to_string(); // no close time, no mentions
+        silent.state = "CLOSED".to_string();
 
         for pr in [&mut fresh, &mut old, &mut recently_discussed, &mut silent] {
             make_primary(pr);
@@ -7157,41 +7069,10 @@ mod tests {
                 vec![fresh, old, recently_discussed, silent],
             )],
             &ScopedOverrides::default(),
-            DEFAULT_LINGER_DAYS,
         );
-        let numbers: Vec<u64> = entries.iter().map(|e| e.pr.number).collect();
-        assert_eq!(
-            numbers,
-            vec![1, 3],
-            "fresh merge and closed-but-discussed stay"
-        );
-    }
-
-    /// +/- widen or narrow how far back finished PRs are pulled from.
-    #[test]
-    fn linger_window_scales_with_days() {
-        let mut merged = board_pr(1, "portal");
-        merged.state = "MERGED".to_string();
-        merged.closed_at = now_ms() - 2 * 24 * 3600 * 1000; // two days ago
-        make_primary(&mut merged);
-        let snapshots = [snapshot("one", vec![merged])];
-
-        assert!(aggregate(&snapshots, &ScopedOverrides::default(), 1).is_empty());
-        assert_eq!(
-            aggregate(&snapshots, &ScopedOverrides::default(), 3).len(),
-            1
-        );
-        // Zero shows open PRs only, no matter how fresh the merge.
-        let mut fresh = board_pr(2, "portal");
-        fresh.state = "MERGED".to_string();
-        fresh.closed_at = now_ms();
-        make_primary(&mut fresh);
-        assert!(aggregate(
-            &[snapshot("one", vec![fresh])],
-            &ScopedOverrides::default(),
-            0
-        )
-        .is_empty());
+        let mut numbers: Vec<u64> = entries.iter().map(|e| e.pr.number).collect();
+        numbers.sort_unstable();
+        assert_eq!(numbers, vec![1, 2, 3, 4]);
     }
 
     #[test]
@@ -7214,7 +7095,6 @@ mod tests {
         let entries = aggregate(
             &[snapshot("one", vec![secondary, foreign, mentioned])],
             &ScopedOverrides::default(),
-            DEFAULT_LINGER_DAYS,
         );
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].pr.number, 3);
@@ -7389,7 +7269,6 @@ mod tests {
         aggregate(
             &[with_title, bare],
             &ScopedOverrides::default(),
-            DEFAULT_LINGER_DAYS,
         )
     }
 
@@ -7432,7 +7311,7 @@ mod tests {
         assert!(recaps.contains("Next: Ready to merge once checks finish"));
         assert!(!recaps.contains("ago"), "expanded ages stay compact");
         assert!(
-            crate::parsers::strip_ansi_for_debug(&recaps).contains(" · r recap"),
+            crate::parsers::strip_ansi_for_debug(&recaps).contains(" · recap"),
             "header uses the level name"
         );
         assert!(recaps.contains("⟩ 30m"));
@@ -7776,7 +7655,6 @@ mod tests {
             &[],
             &rows,
             160,
-            DEFAULT_LINGER_DAYS,
             false,
             BoardView::new(MAX_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET),
         )
@@ -7809,7 +7687,6 @@ mod tests {
             &[],
             &rows,
             160,
-            DEFAULT_LINGER_DAYS,
             false,
             BoardView::default(),
         )
