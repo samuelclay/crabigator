@@ -105,7 +105,7 @@ export const sessionJs = `
                             if (session.state) meta.state = session.state;
                             if (session.stats) meta.stats = session.stats;
                         }
-                        session.eventSocket?.close();
+                        closeSessionSocket(session);
                         sessions.delete(id);
                         if (activeTerminalId === id) activeTerminalId = null;
                         const card = document.getElementById('session-' + id);
@@ -219,7 +219,7 @@ export const sessionJs = `
                     }
 
                     for (const [, session] of sessions) {
-                        session.eventSocket?.close();
+                        closeSessionSocket(session);
                     }
                     sessions.clear();
                     activeTerminalId = null;
@@ -281,7 +281,7 @@ export const sessionJs = `
                 // Close event sockets for removed sessions
                 for (const [id, session] of sessions) {
                     if (!filteredSessions.find(s => s.id === id)) {
-                        session.eventSocket?.close();
+                        closeSessionSocket(session);
                         sessions.delete(id);
                         if (activeTerminalId === id) activeTerminalId = null;
                     }
@@ -295,6 +295,10 @@ export const sessionJs = `
                         connectToSession(session.id);
                     } else {
                         updateSessionHeader(session);
+                        const ws = sessions.get(session.id)?.eventSocket;
+                        if (!ws || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+                            connectToSession(session.id);
+                        }
                     }
                 }
 
@@ -303,6 +307,9 @@ export const sessionJs = `
                     rerenderSessions();
                 }
                 restorePagePosition();
+                if (restoreViewedSessionAfterLoad) {
+                    restoreLastViewedSession();
+                }
             } catch (err) {
                 sessionsLoadInFlight = false;
                 console.error('Failed to load sessions:', err);

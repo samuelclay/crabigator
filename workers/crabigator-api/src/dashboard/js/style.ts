@@ -365,6 +365,73 @@ export const styleJs = `
             }
         }
 
+        const LAST_VIEWED_KEY = 'crabigator-last-viewed';
+        let restoreViewedSessionAfterLoad = true;
+        let rememberViewedSessionTimer = null;
+
+        function rememberViewedSession() {
+            try {
+                const focused = isFocusedMode();
+                const anchor = capturePageScrollAnchor();
+                const sessionId = focused
+                    ? singleSessionId
+                    : (anchor.sessionId || sidebarActiveSessionId);
+                if (!sessionId) return;
+                localStorage.setItem(LAST_VIEWED_KEY, JSON.stringify({
+                    sessionId,
+                    offsetFromCardTop: focused ? 0 : (anchor.offsetFromCardTop || 0),
+                    focused,
+                    ts: Date.now(),
+                }));
+            } catch {
+                // Private mode or full storage should not break the dashboard.
+            }
+        }
+
+        function scheduleRememberViewedSession() {
+            if (rememberViewedSessionTimer) return;
+            rememberViewedSessionTimer = setTimeout(() => {
+                rememberViewedSessionTimer = null;
+                rememberViewedSession();
+            }, 250);
+        }
+
+        function readLastViewedSession() {
+            try {
+                const data = JSON.parse(localStorage.getItem(LAST_VIEWED_KEY) || 'null');
+                return data?.sessionId ? data : null;
+            } catch {
+                return null;
+            }
+        }
+
+        function restoreLastViewedSession() {
+            const last = readLastViewedSession();
+            if (!last || isFocusedMode()) {
+                restoreViewedSessionAfterLoad = false;
+                return;
+            }
+
+            const card = document.getElementById('session-' + last.sessionId);
+            if (!card) {
+                if (!sessionsAreStillLoading()) restoreViewedSessionAfterLoad = false;
+                return;
+            }
+
+            restoreViewedSessionAfterLoad = false;
+            if (typeof window.suppressScrollSpy === 'function') window.suppressScrollSpy();
+            expandSessionCardForScroll(last.sessionId);
+            restorePageScrollAnchor({
+                sessionId: last.sessionId,
+                offsetFromCardTop: last.offsetFromCardTop || 0,
+                fallbackTop: 0,
+                fallbackLeft: 0,
+                referenceY: getScrollAnchorReferenceY(),
+            });
+            sidebarActiveSessionId = last.sessionId;
+            updateSidebarActiveState();
+        }
+
         function rerenderSessions() {
             const container = document.getElementById('sessions');
 

@@ -147,24 +147,42 @@ export const sseJs = `
             }
         }
 
-        // Detect when tab becomes visible again and check connection
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') {
-                // Check if the WebSocket connection is still alive.
-                if (sessionListSocket && sessionListSocket.readyState === WebSocket.CLOSED) {
-                    console.log('Session list WebSocket closed while tab was hidden, reconnecting...');
-                    // Don't show deploy overlay for tab visibility changes - just reconnect silently
-                    streamRetryCount = 0;
-                    loadSessions();
-                    connectSessionListStream();
-                } else if (!sessionListSocket) {
-                    // No WebSocket connection at all - reconnect
-                    console.log('No session list WebSocket, reconnecting...');
-                    streamRetryCount = 0;
-                    loadSessions();
-                    connectSessionListStream();
-                }
+        let dashboardHidden = document.visibilityState === 'hidden';
+        let lastDashboardResumeAt = 0;
+
+        function resumeDashboardConnections() {
+            const now = Date.now();
+            if (now - lastDashboardResumeAt < 400) return;
+            lastDashboardResumeAt = now;
+            restoreViewedSessionAfterLoad = true;
+            streamRetryCount = 0;
+            console.log('Resuming dashboard connections');
+            connectSessionListStream();
+            for (const sessionId of sessions.keys()) {
+                connectToSession(sessionId);
             }
+        }
+
+        function onDashboardHidden() {
+            dashboardHidden = true;
+            rememberViewedSession();
+        }
+
+        function onDashboardVisible(force) {
+            if (!force && !dashboardHidden) return;
+            dashboardHidden = false;
+            resumeDashboardConnections();
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') onDashboardHidden();
+            else onDashboardVisible();
         });
+        window.addEventListener('pagehide', onDashboardHidden);
+        window.addEventListener('pageshow', (event) => {
+            onDashboardVisible(event.persisted);
+        });
+        document.addEventListener('freeze', onDashboardHidden);
+        document.addEventListener('resume', () => onDashboardVisible(true));
 
 `;

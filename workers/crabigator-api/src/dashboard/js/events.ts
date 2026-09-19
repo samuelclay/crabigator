@@ -35,7 +35,41 @@ export const eventsJs = `
             return recap;
         }
 
+        const sessionReconnectTimers = new Map();
+
+        function cancelSessionReconnect(sessionId) {
+            const timer = sessionReconnectTimers.get(sessionId);
+            if (!timer) return;
+            clearTimeout(timer);
+            sessionReconnectTimers.delete(sessionId);
+        }
+
+        function closeSessionSocket(session) {
+            if (session?.sessionId) cancelSessionReconnect(session.sessionId);
+            const ws = session?.eventSocket;
+            if (!ws) return;
+            session.eventSocket = null;
+            ws.onclose = null;
+            ws.onerror = null;
+            ws.onmessage = null;
+            ws.onopen = null;
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                ws.close();
+            }
+        }
+
+        function scheduleSessionReconnect(sessionId) {
+            if (document.visibilityState === 'hidden') return;
+            if (sessionReconnectTimers.has(sessionId)) return;
+            sessionReconnectTimers.set(sessionId, setTimeout(() => {
+                sessionReconnectTimers.delete(sessionId);
+                if (!sessions.has(sessionId)) return;
+                connectToSession(sessionId);
+            }, 250));
+        }
+
         function connectToSession(sessionId) {
+            closeSessionSocket(sessions.get(sessionId));
             console.log('Connecting WebSocket for session:', sessionId);
             const eventSocket = new WebSocket(getWebSocketUrl('/sessions/' + sessionId + '/events'));
 
@@ -87,34 +121,17 @@ export const eventsJs = `
             };
 
             eventSocket.onclose = () => {
-                // Clean up so the session can be recreated on next poll
                 const session = sessions.get(sessionId);
                 if (!session || session.eventSocket !== eventSocket) return;
-                sessions.delete(sessionId);
-                if (activeTerminalId === sessionId) activeTerminalId = null;
-                // Remove the card - it will be recreated if session is still active
-                const card = document.getElementById('session-' + sessionId);
-                if (card) {
-                    const cwd = card.querySelector('.cwd')?.textContent;
-                    card.remove();
-                    // Update project group count if in grouped mode
-                    if (groupingMode === 'project' && cwd) {
-                        updateProjectGroupCount(cwd);
-                    }
-                }
-                updateFitLayout();
-
-                // If all sessions disconnected, verify the build before showing
-                // deploy UI. Otherwise retry silently and recreate live sessions.
-                if (sessions.size === 0 && hadSessionsBefore) {
-                    if (!isDeploying) {
-                        void checkVersionAndReload();
-                    }
-                    setTimeout(loadSessions, 1000);
-                }
+                session.eventSocket = null;
+                // Keep the card. Phone lock and tab freezes drop sockets;
+                // tearing down the card is what makes the dashboard reload
+                // and lose the session you were looking at.
                 if (isDeploying) {
                     scheduleReconnect();
+                    return;
                 }
+                scheduleSessionReconnect(sessionId);
             };
 
             const session = sessions.get(sessionId);
@@ -253,7 +270,7 @@ export const eventsJs = `
                             // Desktop disconnected - remove session from view
                             const session = sessions.get(sessionId);
                             if (session) {
-                                session.eventSocket?.close();
+                                closeSessionSocket(session);
                                 sessions.delete(sessionId);
                                 if (activeTerminalId === sessionId) activeTerminalId = null;
                             }

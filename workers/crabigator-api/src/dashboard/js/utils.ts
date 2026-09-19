@@ -84,6 +84,7 @@ export const utilsJs = `
             if (typeof hideSidebarPopover === 'function') {
                 hideSidebarPopover();
             }
+            rememberViewedSession();
         }
 
         window.addEventListener('popstate', () => {

@@ -26,6 +26,10 @@ export const initJs = `
                 if (statusEl) statusEl.textContent = 'Not paired';
             } else {
                 // Paired - load sessions normally
+                const lastView = readLastViewedSession();
+                if (!isFocusedMode() && lastView?.focused && lastView.sessionId) {
+                    setSessionFocus(lastView.sessionId, { replace: true });
+                }
                 initSidebar();
                 refreshAccountMenu();
                 loadSessions();

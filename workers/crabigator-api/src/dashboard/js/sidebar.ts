@@ -142,6 +142,7 @@ export const sidebarJs = `
                         const sidebarItem = document.querySelector('.sidebar .session-item[data-session-id="' + sessionId + '"]');
                         if (sidebarItem) sidebarItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                     }
+                    if (sessionId) scheduleRememberViewedSession();
                 });
             }
 
@@ -333,6 +334,7 @@ export const sidebarJs = `
                 focusOnSession(sessionId);
             } else {
                 scrollToSession(sessionId);
+                rememberViewedSession();
             }
         }
 
@@ -709,6 +711,7 @@ export const sidebarJs = `
                 if (bestId && bestId !== sidebarActiveSessionId) {
                     sidebarActiveSessionId = bestId;
                     updateSidebarActiveState();
+                    scheduleRememberViewedSession();
                     // Scroll the sidebar item into view if needed
                     const sidebarItem = document.querySelector('.sidebar .session-item[data-session-id="' + bestId + '"]');
                     if (sidebarItem) {
