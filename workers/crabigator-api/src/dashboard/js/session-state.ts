@@ -15,6 +15,7 @@ export const sessionStateJs = `
                     cwdEl.textContent = session.cwd;
                 }
             }
+            setSessionPlatform(session.id, session.platform);
             if (sessionData) {
                 if (session.state) sessionData.state = session.state;
                 if (session.last_activity_at || session.last_seen_at || session.last_seen) {

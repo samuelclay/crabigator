@@ -462,7 +462,7 @@ export const sessionJs = `
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'shift_tab')"><kbd>⇧Tab</kbd> Cycle mode</button>
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'escape')"><kbd>Esc</kbd> Cancel / exit</button>
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'up')"><kbd>↑</kbd> Navigate up</button>
-                                    <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'option_up')"><kbd>⌥↑</kbd> Previous message</button>
+                                    <button class="key-btn key-btn-codex-only" onclick="sendSessionKey('\${session.id}', 'option_up')"><kbd>⌥↑</kbd> Open questions</button>
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'down')"><kbd>↓</kbd> Navigate down</button>
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'ctrl_c')"><kbd>Ctrl+C</kbd> Interrupt</button>
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'tab')"><kbd>Tab</kbd> Autocomplete</button>
@@ -547,6 +547,7 @@ export const sessionJs = `
                 lastScrollTop: 0,
                 startedAt: session.started_at,
                 cwd: session.cwd,
+                platform: null,
                 deviceName: session.device_name || null,
                 lastActivityAt: getSessionActivityTime(session),
                 recapHistory: [],
@@ -556,6 +557,7 @@ export const sessionJs = `
                 scrollbackBuffer: [],      // Full scrollback lines
                 scrollbackRendered: 0,     // How many lines currently rendered
             });
+            setSessionPlatform(session.id, session.platform);
             applyCollapsedState(session.id);
             applyWidgetsCollapsedState(session.id);
             applySessionCardStatsVisibility(card);

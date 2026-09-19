@@ -195,6 +195,12 @@ export const inputCss = `
     text-align: center;
     flex-shrink: 0;
 }
+.keyboard-popover .key-btn-codex-only {
+    display: none;
+}
+.session-card[data-platform="codex"] .keyboard-popover .key-btn-codex-only {
+    display: flex;
+}
 
 @media (max-width: 768px) {
     .input-area {

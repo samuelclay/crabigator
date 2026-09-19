@@ -1,5 +1,14 @@
 // Dashboard JavaScript - keyboard shortcuts popover
 export const keyboardJs = `
+        function setSessionPlatform(sessionId, platform) {
+            if (!platform) return;
+            const normalized = String(platform).toLowerCase();
+            const card = document.getElementById('session-' + sessionId);
+            if (card) card.dataset.platform = normalized;
+            const session = sessions.get(sessionId);
+            if (session) session.platform = normalized;
+        }
+
         function toggleKeyboardPopover(sessionId) {
             // Close all other keyboard popovers
             document.querySelectorAll('.keyboard-popover.visible').forEach(p => {

@@ -348,7 +348,7 @@ export const toolExamples: Record<string, ToolExample> = {
             key: 'shift_tab',
         },
         output: { ok: true },
-        notes: 'Named keys: shift_tab, escape, tab, enter, up, down, option_up, ctrl_c. Or pass steps for a sequence.',
+        notes: 'Named keys: shift_tab, escape, tab, enter, up, down, option_up, ctrl_c. option_up opens Codex pending questions. Or pass steps for a sequence.',
     },
     set_draft: {
         args: {

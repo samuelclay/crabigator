@@ -23,6 +23,7 @@ export const statsWidgetJs = `
                 }
             }
             if (stats.platform) {
+                setSessionPlatform(sessionId, stats.platform);
                 const platformRow = document.getElementById('info-platform-' + sessionId);
                 const platformValue = document.getElementById('info-platform-value-' + sessionId);
                 if (platformRow && platformValue) {
