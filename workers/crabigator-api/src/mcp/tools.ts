@@ -335,7 +335,7 @@ export const toolDefs: ToolDef[] = [
     },
     {
         name: 'send_keys',
-        description: 'Send a named key (shift_tab, escape, tab, enter, up, down, ctrl_c) or a key-sequence of steps.',
+        description: 'Send a named key (shift_tab, escape, tab, enter, up, down, option_up, ctrl_c) or a key-sequence of steps.',
         inputSchema: {
             type: 'object',
             required: ['session_id'],
@@ -343,7 +343,7 @@ export const toolDefs: ToolDef[] = [
                 ...sessionIdProp,
                 key: {
                     type: 'string',
-                    description: 'Named key: shift_tab, escape, tab, enter, up, down, ctrl_c',
+                    description: 'Named key: shift_tab, escape, tab, enter, up, down, option_up, ctrl_c',
                 },
                 steps: {
                     type: 'array',

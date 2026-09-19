@@ -456,7 +456,7 @@ export interface PingMessage {
  */
 export interface KeyMessage {
     type: 'key';
-    key: string;            // Key identifier: "shift_tab", etc.
+    key: string;            // Key identifier: "shift_tab", "option_up", etc.
 }
 
 /**

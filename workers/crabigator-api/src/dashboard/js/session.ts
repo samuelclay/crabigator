@@ -462,6 +462,7 @@ export const sessionJs = `
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'shift_tab')"><kbd>⇧Tab</kbd> Cycle mode</button>
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'escape')"><kbd>Esc</kbd> Cancel / exit</button>
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'up')"><kbd>↑</kbd> Navigate up</button>
+                                    <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'option_up')"><kbd>⌥↑</kbd> Previous message</button>
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'down')"><kbd>↓</kbd> Navigate down</button>
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'ctrl_c')"><kbd>Ctrl+C</kbd> Interrupt</button>
                                     <button class="key-btn" onclick="sendSessionKey('\${session.id}', 'tab')"><kbd>Tab</kbd> Autocomplete</button>

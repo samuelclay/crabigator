@@ -20,7 +20,7 @@ export const keyboardJs = `
 
             // Determine positioning: up or down
             const rect = container.getBoundingClientRect();
-            if (rect.top < 350) {
+            if (rect.top < 400) {
                 popover.classList.add('drop-down');
             } else {
                 popover.classList.remove('drop-down');
