@@ -465,7 +465,7 @@ export const styleJs = `
                         }
                         const pg = dg.projects.get(cwd);
                         pg.sessions.push({ id, card, startedAt: getSessionStartedTime(sessionData) });
-                        const sessionTime = sessionData.lastActivityAt || sessionData.startedAt || 0;
+                        const sessionTime = getSessionActivityTime(sessionData);
                         if (sessionTime > pg.mostRecentTime) pg.mostRecentTime = sessionTime;
                         if (sessionTime > dg.mostRecentTime) dg.mostRecentTime = sessionTime;
                     }
@@ -507,7 +507,7 @@ export const styleJs = `
                         }
                         const group = groups.get(cwd);
                         group.sessions.push({ id, card, startedAt: getSessionStartedTime(sessionData) });
-                        const sessionTime = sessionData.lastActivityAt || sessionData.startedAt || 0;
+                        const sessionTime = getSessionActivityTime(sessionData);
                         if (sessionTime > group.mostRecentTime) group.mostRecentTime = sessionTime;
                     }
 
