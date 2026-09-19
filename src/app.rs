@@ -80,6 +80,28 @@ fn remote_answer_submit_delay(platform: PlatformKind) -> Duration {
     }
 }
 
+/// Bytes to inject into the PTY for a named dashboard/MCP key.
+///
+/// Option+Up uses the same xterm modified-arrow sequence a local
+/// Option+Up produces (`CSI 1;3A`).
+fn cloud_key_bytes(key: &str) -> Option<&'static [u8]> {
+    match key {
+        "shift_tab" => Some(b"\x1b[Z"),
+        "escape" | "esc" => Some(b"\x1b"),
+        "up" => Some(b"\x1b[A"),
+        "option_up" | "alt_up" => Some(b"\x1b[1;3A"),
+        "down" => Some(b"\x1b[B"),
+        "right" => Some(b"\x1b[C"),
+        "left" => Some(b"\x1b[D"),
+        "ctrl_c" => Some(b"\x03"),
+        "tab" => Some(b"\t"),
+        "enter" => Some(b"\r"),
+        "backspace" => Some(b"\x7f"),
+        "space" => Some(b" "),
+        _ => None,
+    }
+}
+
 /// Encode a dashboard/MCP answer for the child prompt.
 ///
 /// Newlines must not be typed as Enter (`\r`), which submits.
@@ -2580,32 +2602,8 @@ impl App {
             // Handle incoming key commands
             while let Some(key) = client.try_recv_key() {
                 self.platform.note_user_input();
-                match key.as_str() {
-                    "shift_tab" => {
-                        // Shift+Tab: CSI Z (ESC [ Z) - cycles Claude Code modes
-                        self.platform_pty.write(&[0x1b, b'[', b'Z'])?;
-                    }
-                    "escape" => {
-                        self.platform_pty.write(&[0x1b])?;
-                    }
-                    "up" => {
-                        self.platform_pty.write(&[0x1b, b'[', b'A'])?;
-                    }
-                    "down" => {
-                        self.platform_pty.write(&[0x1b, b'[', b'B'])?;
-                    }
-                    "ctrl_c" => {
-                        self.platform_pty.write(&[0x03])?;
-                    }
-                    "tab" => {
-                        self.platform_pty.write(&[0x09])?;
-                    }
-                    "enter" => {
-                        self.platform_pty.write(&[0x0D])?;
-                    }
-                    _ => {
-                        // Unknown key command - ignore
-                    }
+                if let Some(bytes) = cloud_key_bytes(&key) {
+                    self.platform_pty.write(bytes)?;
                 }
             }
 
@@ -2630,18 +2628,8 @@ impl App {
                 for step in steps {
                     match step {
                         crate::cloud::KeyStep::Key { key } => {
-                            let bytes: &[u8] = match key.as_str() {
-                                "up" => &[0x1b, b'[', b'A'],        // CSI A - cursor up
-                                "down" => &[0x1b, b'[', b'B'],      // CSI B - cursor down
-                                "right" => &[0x1b, b'[', b'C'],     // CSI C - cursor right
-                                "left" => &[0x1b, b'[', b'D'],      // CSI D - cursor left
-                                "tab" => &[0x09],                   // Tab
-                                "enter" => &[0x0D],                 // Carriage return
-                                "backspace" => &[0x7f],             // DEL - backspace
-                                "shift_tab" => &[0x1b, b'[', b'Z'], // CSI Z - shift+tab
-                                "space" => b" ",
-                                "escape" | "esc" => &[0x1b],
-                                _ => continue,
+                            let Some(bytes) = cloud_key_bytes(&key) else {
+                                continue;
                             };
                             self.platform_pty.write(bytes)?;
                         }
@@ -2858,5 +2846,13 @@ mod tests {
             b"hello\nworld"
         );
         assert!(encode_remote_answer("  \n", PlatformKind::Opencode).is_empty());
+    }
+
+    #[test]
+    fn cloud_key_bytes_sends_option_up_as_xterm_alt_up() {
+        assert_eq!(cloud_key_bytes("option_up"), Some(&b"\x1b[1;3A"[..]));
+        assert_eq!(cloud_key_bytes("alt_up"), Some(&b"\x1b[1;3A"[..]));
+        assert_eq!(cloud_key_bytes("up"), Some(&b"\x1b[A"[..]));
+        assert_eq!(cloud_key_bytes("not_a_key"), None);
     }
 }
