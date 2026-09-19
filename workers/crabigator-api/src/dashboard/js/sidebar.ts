@@ -514,6 +514,51 @@ export const sidebarJs = `
             \`;
         }
 
+        function cleanDeviceName(name) {
+            if (!name) return '';
+            return name.replace(/\\.local$/, '');
+        }
+
+        function sidebarSessionView(session) {
+            const liveData = sessions.get(session.id);
+            const titleHierarchy = sessionTitleHierarchy(liveData, session.title || 'Untitled');
+            return {
+                id: session.id,
+                client_session_id: session.client_session_id,
+                title: titleHierarchy.main || 'Untitled',
+                generatedTitle: titleHierarchy.generated,
+                hasOfficialTitle: titleHierarchy.hasOfficial,
+                state: liveData?.state || session.state || 'ready',
+                stats: liveData?.stats || session.stats || null,
+                deviceName: session.device_name || liveData?.deviceName || null,
+                last_activity_at: getSessionActivityTime(liveData || session),
+                cwd: session.cwd || 'Unknown',
+            };
+        }
+
+        function addSessionToProjectGroup(groups, session) {
+            if (!groups.has(session.cwd)) groups.set(session.cwd, { sessions: [], mostRecentTime: 0 });
+            const group = groups.get(session.cwd);
+            group.sessions.push(session);
+            if (session.last_activity_at > group.mostRecentTime) group.mostRecentTime = session.last_activity_at;
+        }
+
+        function renderSidebarProjectGroup(cwd, groupSessions) {
+            const projectName = cwd.split('/').pop() || cwd;
+            let html = \`
+                <div class="sessions-group">
+                    <div class="sessions-group-header">
+                        <span class="sessions-group-name">\${escapeHtml(projectName)}</span>
+                        <span class="sessions-group-path">\${escapeHtml(cwd)}</span>
+                        <span class="sessions-group-count">\${groupSessions.length}</span>
+                    </div>
+            \`;
+            for (const session of groupSessions) {
+                html += renderSidebarSessionItem(session);
+            }
+            return html + '</div>';
+        }
+
         function updateSidebarContent() {
             const content = document.getElementById('sidebar-content');
             if (!content) return;
@@ -535,124 +580,50 @@ export const sidebarJs = `
                 return;
             }
 
-            function cleanDeviceName(name) {
-                if (!name) return '';
-                return name.replace(/\\.local$/, '');
-            }
+            const views = sidebarSessions.map(sidebarSessionView);
 
-            // Group sessions by cwd, tracking timestamps for sorting
-            const groups = new Map();
-            for (const session of sidebarSessions) {
-                const cwd = session.cwd || 'Unknown';
-                if (!groups.has(cwd)) groups.set(cwd, { sessions: [], mostRecentTime: 0 });
-
-                const liveData = sessions.get(session.id);
-                const titleHierarchy = sessionTitleHierarchy(liveData, session.title || 'Untitled');
-                const startedAt = getSessionStartedTime(session);
-                const activityAt = getSessionActivityTime(session);
-                const g = groups.get(cwd);
-                g.sessions.push({
-                    id: session.id,
-                    client_session_id: session.client_session_id,
-                    title: titleHierarchy.main || 'Untitled',
-                    generatedTitle: titleHierarchy.generated,
-                    hasOfficialTitle: titleHierarchy.hasOfficial,
-                    state: liveData?.state || session.state || 'ready',
-                    stats: liveData?.stats || session.stats || null,
-                    deviceName: session.device_name || liveData?.deviceName || null,
-                    startedAt,
-                    last_activity_at: activityAt
-                });
-                if (startedAt > g.mostRecentTime) g.mostRecentTime = startedAt;
-            }
-
-            // Sort sessions within each group by startedAt, newest first for quick switching.
-            for (const [, g] of groups) {
-                g.sessions.sort((a, b) => b.startedAt - a.startedAt);
-            }
-
-            // Sort projects using same logic as main content
-            function sortedProjectKeys(projectMap) {
-                if (projectOrderMode === 'alpha') {
-                    return [...projectMap.keys()].sort((a, b) => {
-                        const nameA = a.split('/').pop()?.toLowerCase() || a;
-                        const nameB = b.split('/').pop()?.toLowerCase() || b;
-                        return nameA.localeCompare(nameB);
-                    });
+            // Use the saved grouping preference so focused mode does not flatten the sidebar.
+            if (groupingMode !== 'project') {
+                let html = '';
+                for (const session of views) {
+                    html += renderSidebarSessionItem(session);
                 }
-                return [...projectMap.keys()].sort((a, b) => {
-                    return projectMap.get(b).mostRecentTime - projectMap.get(a).mostRecentTime;
-                });
+                if (render(html)) updateSidebarActiveState();
+                return;
             }
 
-            const allDeviceNames = new Set(sidebarSessions.map(s => s.device_name).filter(Boolean));
-            const multiDevice = allDeviceNames.size > 1;
-
+            const multiDevice = new Set(views.map(s => s.deviceName).filter(Boolean)).size > 1;
             let html = '';
 
             if (multiDevice) {
                 const deviceGroups = new Map();
-                for (const [cwd, g] of groups) {
-                    for (const session of g.sessions) {
-                        const device = session.deviceName || 'Unknown';
-                        if (!deviceGroups.has(device)) deviceGroups.set(device, { projects: new Map(), mostRecentTime: 0 });
-                        const dg = deviceGroups.get(device);
-                        if (!dg.projects.has(cwd)) dg.projects.set(cwd, { sessions: [], mostRecentTime: 0 });
-                        const pg = dg.projects.get(cwd);
-                        pg.sessions.push(session);
-                        if (session.startedAt > pg.mostRecentTime) pg.mostRecentTime = session.startedAt;
-                        if (session.startedAt > dg.mostRecentTime) dg.mostRecentTime = session.startedAt;
-                    }
+                for (const session of views) {
+                    const device = session.deviceName || 'Unknown';
+                    if (!deviceGroups.has(device)) deviceGroups.set(device, { projects: new Map(), mostRecentTime: 0 });
+                    const dg = deviceGroups.get(device);
+                    addSessionToProjectGroup(dg.projects, session);
+                    if (session.last_activity_at > dg.mostRecentTime) dg.mostRecentTime = session.last_activity_at;
                 }
 
-                // Sort devices by most recent session (matching main content)
-                const sortedDevices = [...deviceGroups.keys()].sort((a, b) => {
-                    return deviceGroups.get(b).mostRecentTime - deviceGroups.get(a).mostRecentTime;
-                });
-
-                for (const device of sortedDevices) {
+                for (const device of sortKeysByMostRecent(deviceGroups)) {
                     const dg = deviceGroups.get(device);
-                    const sortedCwds = sortedProjectKeys(dg.projects);
                     html += \`
                         <div class="sessions-device-section">
                             <div class="sessions-device-header"><span class="sessions-device-dot">●</span> \${escapeHtml(cleanDeviceName(device))}</div>
                             <div class="sessions-device-projects">
                     \`;
-                    for (const cwd of sortedCwds) {
-                        const pg = dg.projects.get(cwd);
-                        const projectName = cwd.split('/').pop() || cwd;
-                        html += \`
-                            <div class="sessions-group">
-                                <div class="sessions-group-header">
-                                    <span class="sessions-group-name">\${escapeHtml(projectName)}</span>
-                                    <span class="sessions-group-path">\${escapeHtml(cwd)}</span>
-                                    <span class="sessions-group-count">\${pg.sessions.length}</span>
-                                </div>
-                        \`;
-                        for (const session of pg.sessions) {
-                            html += renderSidebarSessionItem(session);
-                        }
-                        html += '</div>';
+                    for (const cwd of sortProjectKeysByOrder(dg.projects)) {
+                        html += renderSidebarProjectGroup(cwd, dg.projects.get(cwd).sessions);
                     }
                     html += '</div></div>';
                 }
             } else {
-                const sortedCwds = sortedProjectKeys(groups);
-                for (const cwd of sortedCwds) {
-                    const g = groups.get(cwd);
-                    const projectName = cwd.split('/').pop() || cwd;
-                    html += \`
-                        <div class="sessions-group">
-                            <div class="sessions-group-header">
-                                <span class="sessions-group-name">\${escapeHtml(projectName)}</span>
-                                <span class="sessions-group-path">\${escapeHtml(cwd)}</span>
-                                <span class="sessions-group-count">\${g.sessions.length}</span>
-                            </div>
-                    \`;
-                    for (const session of g.sessions) {
-                        html += renderSidebarSessionItem(session);
-                    }
-                    html += '</div>';
+                const groups = new Map();
+                for (const session of views) {
+                    addSessionToProjectGroup(groups, session);
+                }
+                for (const cwd of sortProjectKeysByOrder(groups)) {
+                    html += renderSidebarProjectGroup(cwd, groups.get(cwd).sessions);
                 }
             }
 

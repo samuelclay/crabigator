@@ -470,10 +470,7 @@ export const styleJs = `
                         if (sessionTime > dg.mostRecentTime) dg.mostRecentTime = sessionTime;
                     }
 
-                    // Sort devices by most recent session
-                    const sortedDevices = [...deviceGroups.keys()].sort((a, b) => {
-                        return deviceGroups.get(b).mostRecentTime - deviceGroups.get(a).mostRecentTime;
-                    });
+                    const sortedDevices = sortKeysByMostRecent(deviceGroups);
 
                     // Clear container
                     container.innerHTML = '';
@@ -485,18 +482,7 @@ export const styleJs = `
                         for (const [, pg] of dg.projects) {
                             pg.sessions.sort((a, b) => a.startedAt - b.startedAt);
                         }
-                        let sortedCwds;
-                        if (projectOrderMode === 'alpha') {
-                            sortedCwds = [...dg.projects.keys()].sort((a, b) => {
-                                const nameA = a.split('/').pop()?.toLowerCase() || a;
-                                const nameB = b.split('/').pop()?.toLowerCase() || b;
-                                return nameA.localeCompare(nameB);
-                            });
-                        } else {
-                            sortedCwds = [...dg.projects.keys()].sort((a, b) => {
-                                return dg.projects.get(b).mostRecentTime - dg.projects.get(a).mostRecentTime;
-                            });
-                        }
+                        const sortedCwds = sortProjectKeysByOrder(dg.projects);
 
                         // Count total sessions for this device
                         let deviceSessionCount = 0;
@@ -538,18 +524,7 @@ export const styleJs = `
                         group.sessions.sort((a, b) => a.startedAt - b.startedAt);
                     }
 
-                    let sortedCwds;
-                    if (projectOrderMode === 'alpha') {
-                        sortedCwds = [...groups.keys()].sort((a, b) => {
-                            const nameA = a.split('/').pop()?.toLowerCase() || a;
-                            const nameB = b.split('/').pop()?.toLowerCase() || b;
-                            return nameA.localeCompare(nameB);
-                        });
-                    } else {
-                        sortedCwds = [...groups.keys()].sort((a, b) => {
-                            return groups.get(b).mostRecentTime - groups.get(a).mostRecentTime;
-                        });
-                    }
+                    const sortedCwds = sortProjectKeysByOrder(groups);
 
                     container.innerHTML = '';
                     for (const cwd of sortedCwds) {

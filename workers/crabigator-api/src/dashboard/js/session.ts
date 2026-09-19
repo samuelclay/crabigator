@@ -38,12 +38,29 @@ export const sessionJs = `
             return raw > 1000000000000 ? raw / 1000 : raw;
         }
 
-        function sortSessionsByNewestStart(sessionList) {
+        function sortSessionsByOldestStart(sessionList) {
             return [...sessionList].sort((a, b) => {
-                const startedDelta = getSessionStartedTime(b) - getSessionStartedTime(a);
+                const startedDelta = getSessionStartedTime(a) - getSessionStartedTime(b);
                 if (startedDelta !== 0) return startedDelta;
-                return getSessionActivityTime(b) - getSessionActivityTime(a);
+                return getSessionActivityTime(a) - getSessionActivityTime(b);
             });
+        }
+
+        function sortKeysByMostRecent(groupMap) {
+            return [...groupMap.keys()].sort((a, b) => {
+                return groupMap.get(b).mostRecentTime - groupMap.get(a).mostRecentTime;
+            });
+        }
+
+        function sortProjectKeysByOrder(projectMap) {
+            if (projectOrderMode === 'alpha') {
+                return [...projectMap.keys()].sort((a, b) => {
+                    const nameA = a.split('/').pop()?.toLowerCase() || a;
+                    const nameB = b.split('/').pop()?.toLowerCase() || b;
+                    return nameA.localeCompare(nameB);
+                });
+            }
+            return sortKeysByMostRecent(projectMap);
         }
 
         // Every account sees every session. Only the focus filter narrows the list.
@@ -54,10 +71,9 @@ export const sessionJs = `
         }
 
         function getSidebarSessions(sessionList) {
-            const candidates = isFocusedMode()
-                ? [...sessionList]
-                : getRenderableSessions(sessionList);
-            return sortSessionsByNewestStart(candidates);
+            // Focused mode still lists every session in the sidebar.
+            const candidates = isFocusedMode() ? sessionList : getRenderableSessions(sessionList);
+            return sortSessionsByOldestStart(candidates);
         }
 
         function mergeSessionListUpdate(sessionUpdate) {
