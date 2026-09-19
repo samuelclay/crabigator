@@ -559,6 +559,52 @@ export const sidebarJs = `
             return html + '</div>';
         }
 
+        function sidebarViewForCard(card) {
+            const id = card.id.replace('session-', '');
+            const session = allSessions.find(s => s.id === id) || { id, cwd: sessions.get(id)?.cwd };
+            return sidebarSessionView(session);
+        }
+
+        function renderSidebarGroupFromCards(groupEl) {
+            const sessionCards = [...groupEl.querySelectorAll('.session-card')];
+            if (sessionCards.length === 0) return '';
+            return renderSidebarProjectGroup(groupEl.dataset.project, sessionCards.map(sidebarViewForCard));
+        }
+
+        function renderSidebarFromMainCards() {
+            const container = document.getElementById('sessions');
+            if (!container) return null;
+
+            const devices = [...container.querySelectorAll(':scope > .device-group')];
+            if (devices.length > 0) {
+                let html = '';
+                for (const deviceEl of devices) {
+                    const projectHtml = [...deviceEl.querySelectorAll('.project-group')]
+                        .map(renderSidebarGroupFromCards)
+                        .filter(Boolean);
+                    if (projectHtml.length === 0) continue;
+                    html += \`
+                        <div class="sessions-device-section">
+                            <div class="sessions-device-header"><span class="sessions-device-dot">●</span> \${escapeHtml(cleanDeviceName(deviceEl.dataset.device || 'Unknown'))}</div>
+                            <div class="sessions-device-projects">
+                    \`;
+                    html += projectHtml.join('');
+                    html += '</div></div>';
+                }
+                return html || null;
+            }
+
+            const groups = [...container.querySelectorAll(':scope > .project-group')];
+            if (groups.length > 0) {
+                const html = groups.map(renderSidebarGroupFromCards).filter(Boolean).join('');
+                return html || null;
+            }
+
+            const cards = [...container.querySelectorAll(':scope > .session-card')];
+            if (cards.length === 0) return null;
+            return cards.map(card => renderSidebarSessionItem(sidebarViewForCard(card))).join('');
+        }
+
         function updateSidebarContent() {
             const content = document.getElementById('sidebar-content');
             if (!content) return;
@@ -572,6 +618,16 @@ export const sidebarJs = `
                 content.innerHTML = html;
                 return true;
             };
+
+            // When the main cards are on screen, copy their order so the list
+            // cannot drift. Focused mode still lists every session.
+            if (!isFocusedMode()) {
+                const fromMain = renderSidebarFromMainCards();
+                if (fromMain != null) {
+                    if (render(fromMain)) updateSidebarActiveState();
+                    return;
+                }
+            }
 
             const sidebarSessions = getSidebarSessions(allSessions);
 

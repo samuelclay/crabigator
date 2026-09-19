@@ -564,6 +564,9 @@ export const styleJs = `
             }
 
                 updateFitLayout();
+                if (typeof scheduleSidebarUpdate === 'function') {
+                    scheduleSidebarUpdate();
+                }
             });
         }
 
