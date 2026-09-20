@@ -51,8 +51,8 @@ export const keyboardJs = `
         }
 
         const NAMED_KEY_BYTES = {
-            option_up: '\x1b[1;3A',
-            alt_up: '\x1b[1;3A',
+            option_up: String.fromCharCode(27) + '[1;3A',
+            alt_up: String.fromCharCode(27) + '[1;3A',
         };
 
         async function sendSessionKey(sessionId, key) {
