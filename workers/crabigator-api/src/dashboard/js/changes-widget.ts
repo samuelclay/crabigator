@@ -226,7 +226,7 @@ export const changesWidgetJs = `
             // Latest title is already in the header, show previous titles as history
             const latestTitle = titleHistory[titleHistory.length - 1];
             const escapedLatest = latestTitle.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            const previousTitles = titleHistory.slice(0, -1);
+            const previousTitles = titleHistory.slice(0, -1).slice(-19);
 
             // Multiple titles - latest as title, previous as history (newest first)
             const historyHtml = previousTitles.slice().reverse().map(title => {

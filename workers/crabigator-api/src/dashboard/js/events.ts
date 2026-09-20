@@ -1,27 +1,64 @@
 // Dashboard JavaScript - events
 export const eventsJs = `
-        // Coalesce screen updates to one render per animation frame
+        // Coalesce screen updates. Grok's TUI redraws many times a second;
+        // painting every frame stalls typing in the message box.
         const pendingScreenUpdates = new Map();
+        const screenUpdateTimers = new Map();
+
+        function sessionInputIsFocused(sessionId) {
+            const input = document.getElementById('input-' + sessionId);
+            return !!(input && document.activeElement === input);
+        }
+
+        function applyScreenUpdate(sessionId, content) {
+            const screenEl = document.getElementById('screen-' + sessionId);
+            if (screenEl) screenEl.innerHTML = ansiToHtml(content);
+            const sessionData = sessions.get(sessionId);
+            const terminal = document.getElementById('terminal-' + sessionId);
+            if (sessionData?.pinned && terminal) {
+                terminal.scrollTop = terminal.scrollHeight;
+                sessionData.lastScrollTop = terminal.scrollTop;
+            }
+        }
 
         function scheduleScreenUpdate(sessionId, content) {
-            const hadPending = pendingScreenUpdates.has(sessionId);
             pendingScreenUpdates.set(sessionId, content);
-            if (!hadPending) {
-                requestAnimationFrame(() => {
-                    const latestContent = pendingScreenUpdates.get(sessionId);
-                    pendingScreenUpdates.delete(sessionId);
-                    if (latestContent !== undefined) {
-                        const screenEl = document.getElementById('screen-' + sessionId);
-                        if (screenEl) screenEl.innerHTML = ansiToHtml(latestContent);
-                        const sessionData = sessions.get(sessionId);
-                        const terminal = document.getElementById('terminal-' + sessionId);
-                        if (sessionData?.pinned && terminal) {
-                            terminal.scrollTop = terminal.scrollHeight;
-                            sessionData.lastScrollTop = terminal.scrollTop;
-                        }
-                    }
-                });
+            if (screenUpdateTimers.has(sessionId)) return;
+            const delay = sessionInputIsFocused(sessionId) ? 250 : 80;
+            screenUpdateTimers.set(sessionId, setTimeout(() => {
+                screenUpdateTimers.delete(sessionId);
+                const latestContent = pendingScreenUpdates.get(sessionId);
+                pendingScreenUpdates.delete(sessionId);
+                if (latestContent !== undefined) {
+                    applyScreenUpdate(sessionId, latestContent);
+                }
+            }, delay));
+        }
+
+        function grokStatusLooksLike(text) {
+            return /^(Waiting for response|Thinking|Responding|Preparing\b|Running:|Writing edit|Updating todo)/i.test(String(text || '').trim());
+        }
+
+        function grokStableTitle(title) {
+            let text = String(title || '').replace(/^↯\s+/, '').trim();
+            text = text.replace(/\s+-\s+grok$/i, '').trim();
+            text = text.replace(/^-\s+/, '').trim();
+            if (!text || /^grok( build)?$/i.test(text)) return null;
+            const sep = text.lastIndexOf(' - ');
+            if (sep !== -1) {
+                const status = text.slice(0, sep).trim();
+                const prompt = text.slice(sep + 3).trim();
+                if (prompt && grokStatusLooksLike(status)) return '↯  ' + prompt;
             }
+            if (grokStatusLooksLike(text)) return null;
+            return '↯  ' + text;
+        }
+
+        function sessionLooksLikeGrok(sessionId) {
+            const sessionData = sessions.get(sessionId);
+            const card = document.getElementById('session-' + sessionId);
+            const platform = sessionData?.platform || card?.dataset?.platform || '';
+            return String(platform).toLowerCase() === 'grok';
         }
 
         function isActiveRecapTurnState(state) {
@@ -242,12 +279,23 @@ export const eventsJs = `
                 case 'title':
                     // Keep the assistant's title separately. A primary PR title,
                     // when present, is the official title shown above it.
-                    if (sessionData) {
-                        sessionData.title = event.title;
-                        sessionData.generatedTitle = event.title;
+                    // Grok's OSC title is a live status line; keep the prompt.
+                    {
+                        let title = event.title;
+                        if (sessionLooksLikeGrok(sessionId)) {
+                            title = grokStableTitle(title);
+                            if (!title) break;
+                        }
+                        if (sessionData && sessionData.title === title) {
+                            break;
+                        }
+                        if (sessionData) {
+                            sessionData.title = title;
+                            sessionData.generatedTitle = title;
+                        }
+                        updateSessionTitleHierarchy(sessionId);
+                        updateTitlesWidget(sessionId, [title]);
                     }
-                    updateSessionTitleHierarchy(sessionId);
-                    updateTitlesWidget(sessionId, [event.title]);
                     if (sessionData) {
                         updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
                     }
@@ -295,7 +343,21 @@ export const eventsJs = `
                     }
                     break;
                 case 'title_history':
-                    updateTitlesWidget(sessionId, event.history);
+                    {
+                        let history = event.history;
+                        if (sessionLooksLikeGrok(sessionId) && Array.isArray(history)) {
+                            const seen = new Set();
+                            history = [];
+                            for (const item of event.history) {
+                                const stable = grokStableTitle(item);
+                                if (stable && !seen.has(stable)) {
+                                    seen.add(stable);
+                                    history.push(stable);
+                                }
+                            }
+                        }
+                        updateTitlesWidget(sessionId, history);
+                    }
                     if (sessionData) {
                         updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
                     }
