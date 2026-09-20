@@ -136,11 +136,53 @@ pub(crate) fn display_title(
     let title = match platform {
         PlatformKind::Claude => native_title,
         PlatformKind::Codex => recap_title.or(native_title),
-        // opencode and Grok title their sessions natively, with the recap
-        // title as fallback if the user turns terminal titles off.
-        PlatformKind::Opencode | PlatformKind::Grok => native_title.or(recap_title),
+        // opencode titles its sessions natively. Grok's OSC title is a live
+        // status line (`Running: grep - prompt - grok`); keep the prompt,
+        // not the status prefix, so the dashboard card does not bounce.
+        PlatformKind::Opencode => native_title.or(recap_title),
+        PlatformKind::Grok => grok_stable_osc_title(native_title).or(recap_title),
     };
     title.map(|title| mark_provider_title(platform, title))
+}
+
+fn grok_osc_is_status(text: &str) -> bool {
+    let text = text.trim();
+    let lower = text.to_ascii_lowercase();
+    lower.starts_with("waiting for response")
+        || lower.starts_with("thinking")
+        || lower.starts_with("responding")
+        || lower.starts_with("preparing ")
+        || lower.starts_with("running:")
+        || lower.starts_with("writing edit")
+        || lower.starts_with("updating todo")
+}
+
+/// Pull the stable prompt out of a Grok OSC title, or `None` when the title
+/// is only a live status (`Thinking`, `Running: grep`, …).
+pub(crate) fn grok_stable_osc_title(native: Option<&str>) -> Option<&str> {
+    let text = native?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let text = text
+        .strip_suffix(" - grok")
+        .or_else(|| text.strip_suffix(" - Grok"))
+        .unwrap_or(text)
+        .trim();
+    let text = text.strip_prefix("- ").unwrap_or(text).trim();
+    if text.is_empty() || matches!(text, "Grok" | "grok" | "Grok Build" | "grok build") {
+        return None;
+    }
+    if let Some((status, prompt)) = text.rsplit_once(" - ") {
+        let prompt = prompt.trim();
+        if !prompt.is_empty() && grok_osc_is_status(status) {
+            return Some(prompt);
+        }
+    }
+    if grok_osc_is_status(text) {
+        return None;
+    }
+    Some(text)
 }
 
 /// The two title levels shown for one session: the assistant's own title
@@ -277,6 +319,38 @@ mod tests {
         );
         assert_eq!(
             display_title(PlatformKind::Grok, None, Some("Recap Title")).as_deref(),
+            Some("↯  Recap Title")
+        );
+    }
+
+    #[test]
+    fn grok_keeps_the_prompt_and_drops_live_status() {
+        assert_eq!(
+            grok_stable_osc_title(Some(
+                "Running: grep - Add an option up to the keyboard on the …"
+            )),
+            Some("Add an option up to the keyboard on the …")
+        );
+        assert_eq!(
+            grok_stable_osc_title(Some("- Thinking - Codex-only Option+Up dashboard keyboard …")),
+            Some("Codex-only Option+Up dashboard keyboard …")
+        );
+        assert_eq!(
+            grok_stable_osc_title(Some("Waiting for response…")),
+            None
+        );
+        assert_eq!(grok_stable_osc_title(Some("Preparing grep (2)…")), None);
+        assert_eq!(
+            display_title(
+                PlatformKind::Grok,
+                Some("- Running: grep - Add an option up to the keyboard - grok"),
+                Some("Ignored Recap")
+            )
+            .as_deref(),
+            Some("↯  Add an option up to the keyboard")
+        );
+        assert_eq!(
+            display_title(PlatformKind::Grok, Some("Thinking"), Some("Recap Title")).as_deref(),
             Some("↯  Recap Title")
         );
     }

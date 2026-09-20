@@ -2202,7 +2202,12 @@ impl App {
     /// Recompute the displayed title and, when it changes, force a redraw,
     /// record it in the title history, and publish it to the cloud/dashboard.
     fn refresh_display_title(&mut self) {
-        let next = self.compute_display_title();
+        let mut next = self.compute_display_title();
+        // Grok status OSC titles yield no stable name. Keep the last real title
+        // so the dashboard does not blank or bounce on every tool.
+        if next.is_none() && self.platform.kind() == crate::platforms::PlatformKind::Grok {
+            next = self.display_title.clone();
+        }
         if next == self.display_title {
             return;
         }
