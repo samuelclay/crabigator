@@ -10,6 +10,7 @@ export const sessionCardCss = `
     break-inside: avoid;
     margin-bottom: 16px;
     max-width: 100%;
+    scroll-margin-top: calc(var(--header-height, 67px) + 12px);
     transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
 .session-card::before {

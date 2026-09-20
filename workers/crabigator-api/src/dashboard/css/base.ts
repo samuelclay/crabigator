@@ -31,6 +31,7 @@ html {
     overflow-x: hidden;
     width: 100%;
     scroll-behavior: smooth;
+    scroll-padding-top: calc(var(--header-height, 67px) + 12px);
     touch-action: pan-x pan-y;
 }
 

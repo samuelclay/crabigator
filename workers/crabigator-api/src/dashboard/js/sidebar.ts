@@ -332,10 +332,12 @@ export const sidebarJs = `
             hideSidebarPopover();
             if (isFocusedMode() || sessionClickAction === 'focus') {
                 focusOnSession(sessionId);
-            } else {
-                scrollToSession(sessionId);
-                rememberViewedSession();
+                return;
             }
+            // Wait for the sessions popover to close so layout is final.
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => scrollToSession(sessionId));
+            });
         }
 
         function expandSessionCardForScroll(sessionId) {
@@ -379,26 +381,30 @@ export const sidebarJs = `
         }
 
         function scrollSessionCardIntoView(card, smooth) {
-            if (smooth) {
-                card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            const scrollEl = document.scrollingElement || document.documentElement;
+            if (!scrollEl || !card) return;
+            const referenceY = typeof getScrollAnchorReferenceY === 'function'
+                ? getScrollAnchorReferenceY()
+                : 79;
+            const top = Math.max(0, scrollEl.scrollTop + card.getBoundingClientRect().top - referenceY);
+            if (!smooth) {
+                const root = document.documentElement;
+                const previous = root.style.scrollBehavior;
+                root.style.scrollBehavior = 'auto';
+                scrollEl.scrollTop = top;
+                root.style.scrollBehavior = previous;
                 return;
             }
-            const root = document.documentElement;
-            const previous = root.style.scrollBehavior;
-            root.style.scrollBehavior = 'auto';
-            card.scrollIntoView({ block: 'center' });
-            root.style.scrollBehavior = previous;
+            scrollEl.scrollTo({ top, behavior: 'smooth' });
         }
 
         function sessionCardNeedsRescroll(card) {
-            const headerHeight = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--header-height'), 10) || 67;
+            const referenceY = typeof getScrollAnchorReferenceY === 'function'
+                ? getScrollAnchorReferenceY()
+                : 79;
             const rect = card.getBoundingClientRect();
-            const viewTop = headerHeight;
-            const viewBottom = window.innerHeight;
-            if (rect.bottom < viewTop + 24 || rect.top > viewBottom - 24) return true;
-            const viewMid = (viewTop + viewBottom) / 2;
-            const cardMid = rect.top + Math.min(rect.height, viewBottom - viewTop) / 2;
-            return Math.abs(cardMid - viewMid) > 120;
+            if (rect.bottom < referenceY + 24 || rect.top > window.innerHeight - 24) return true;
+            return Math.abs(rect.top - referenceY) > 80;
         }
 
         function highlightScrolledSession(card, sessionId) {
@@ -432,6 +438,7 @@ export const sidebarJs = `
                     scrollSessionCardIntoView(next, false);
                 }
                 if (!card) highlightScrolledSession(next, sessionId);
+                rememberViewedSession();
             };
             setTimeout(resettle, 60);
             setTimeout(resettle, 280);
