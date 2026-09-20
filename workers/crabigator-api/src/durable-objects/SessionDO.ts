@@ -12,6 +12,30 @@ import type {
 } from '../types/session';
 import type { Env } from '../types/env';
 
+// Named keys older desktops do not recognize. Send the PTY bytes as a
+// text step so a dashboard Option+Up still reaches Codex.
+const NAMED_KEY_BYTES: Record<string, string> = {
+    option_up: '\x1b[1;3A',
+    alt_up: '\x1b[1;3A',
+};
+
+function desktopKeyMessage(key: string): CloudToDesktopMessage {
+    const bytes = NAMED_KEY_BYTES[key];
+    if (bytes) {
+        return { type: 'key_sequence', steps: [{ type: 'text', text: bytes }] };
+    }
+    return { type: 'key', key };
+}
+
+function expandKeySequenceSteps(steps: KeyStep[]): KeyStep[] {
+    return steps.map((step) => {
+        if (step.type === 'key' && NAMED_KEY_BYTES[step.key]) {
+            return { type: 'text', text: NAMED_KEY_BYTES[step.key] };
+        }
+        return step;
+    });
+}
+
 /**
  * Persistent state - written to storage only on meaningful changes
  * (state transitions, prompt changes, title changes)
@@ -1192,10 +1216,7 @@ export class SessionDO implements DurableObject {
             );
         }
 
-        const message: CloudToDesktopMessage = {
-            type: 'key',
-            key: body.key,
-        };
+        const message = desktopKeyMessage(body.key);
 
         try {
             this.desktopWs.send(JSON.stringify(message));
@@ -1248,7 +1269,7 @@ export class SessionDO implements DurableObject {
 
         const message: CloudToDesktopMessage = {
             type: 'key_sequence',
-            steps: body.steps,
+            steps: expandKeySequenceSteps(body.steps),
         };
 
         try {
