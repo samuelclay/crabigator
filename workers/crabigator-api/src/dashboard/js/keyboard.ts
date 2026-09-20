@@ -50,12 +50,28 @@ export const keyboardJs = `
             });
         }
 
+        const NAMED_KEY_BYTES = {
+            option_up: '\x1b[1;3A',
+            alt_up: '\x1b[1;3A',
+        };
+
         async function sendSessionKey(sessionId, key) {
             // Close popover
             const popover = document.querySelector('#session-' + sessionId + ' .keyboard-popover');
             if (popover) popover.classList.remove('visible');
 
             try {
+                const bytes = NAMED_KEY_BYTES[key];
+                if (bytes) {
+                    // Older desktops ignore unknown named keys. Send the PTY
+                    // bytes as a text step so Option+Up still opens Codex questions.
+                    await fetch(API_BASE + '/sessions/' + sessionId + '/key-sequence', {
+                        method: 'POST',
+                        headers: getAuthHeaders(),
+                        body: JSON.stringify({ steps: [{ type: 'text', text: bytes }] }),
+                    });
+                    return;
+                }
                 await fetch(API_BASE + '/sessions/' + sessionId + '/key', {
                     method: 'POST',
                     headers: getAuthHeaders(),
