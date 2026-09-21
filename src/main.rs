@@ -1,5 +1,6 @@
 mod app;
 mod attach;
+mod attach_modules;
 mod banner;
 mod capture;
 mod cli;

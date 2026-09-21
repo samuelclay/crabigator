@@ -27,7 +27,7 @@ pub enum Command {
     },
     /// Generate a pairing code for Chrome MCP auto-login
     Pair,
-    /// Cross-session PR board: every tracked PR from every live session
+    /// Cross-session PR board. `crabigator attach` opens this same board.
     Prs {
         /// Print one frame and exit instead of the live view
         once: bool,
@@ -143,8 +143,9 @@ pub fn parse_args() -> Args {
                 args.command = Command::Pair;
                 return args;
             }
-            "prs" => {
-                iter.next(); // consume "prs"
+            // `attach` is the same board. Fullscreen typing is the `f` key.
+            "prs" | "attach" => {
+                iter.next();
                 let once = iter.any(|arg| arg == "--once" || arg == "-1");
                 args.command = Command::Prs { once };
                 return args;

@@ -10,6 +10,8 @@
 //! minute so dashboard toggles apply here too. The default view reads live
 //! session mirrors under /tmp; `s` flips to the durable cloud record, which
 //! includes ended sessions' PRs (tagged for resurrection) at ~1min lag.
+//! `f` fullscreens a live session on this computer and types into it.
+//! Ctrl-] leaves that view. The agent keeps running.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -29,7 +31,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, size as terminal_size, EnterAlternateScreen,
     LeaveAlternateScreen,
 };
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::platforms::{PlatformKind, SessionState};
 use crate::pr::{SessionPr, WatchAdd};
@@ -1525,10 +1527,7 @@ fn repository_matches(owner: &str, repo: &str, other_owner: &str, other_repo: &s
         && repo.eq_ignore_ascii_case(other_repo)
 }
 
-fn local_board(
-    history: &mut ActivityHistory,
-    overrides: &ScopedOverrides,
-) -> Result<LocalBoard> {
+fn local_board(history: &mut ActivityHistory, overrides: &ScopedOverrides) -> Result<LocalBoard> {
     let snapshots = gather(history)?;
     let mut entries = aggregate(&snapshots, overrides);
     history.enrich_slack_threads(&mut entries);
@@ -2696,11 +2695,18 @@ struct RowSpan {
 }
 
 /// A session whose live screen the quick look pane can show.
+#[derive(Clone)]
 struct PeekTarget {
     title: String,
     dir_name: String,
     /// The session's /tmp mirror, holding screen.txt and scrollback.log.
     session_dir: PathBuf,
+}
+
+/// Fullscreen attach: the live screen, plus a socket into that session.
+struct AttachedSession {
+    target: PeekTarget,
+    client: crate::attach::AttachClient,
 }
 
 /// The identity a session contributes to a row key: the session id, or the
@@ -3174,12 +3180,17 @@ fn render_at(
         .len();
     let source = header_control(
         's',
-        if include_ended { "all sessions" } else { "live" },
+        if include_ended {
+            "all sessions"
+        } else {
+            "live"
+        },
         include_ended,
     );
     let keys = [
         header_mnemonic("↑↓", "select"),
         header_mnemonic("⏎", "peek"),
+        header_mnemonic("f", "fullscreen"),
         header_mnemonic("/", "search"),
         header_mnemonic("w", "watch"),
         header_mnemonic("q", "quit"),
@@ -3797,16 +3808,7 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
                 preview_lines: Vec::new(),
             })
             .collect();
-        for line in render(
-            &rows,
-            &session_rows,
-            &workspace_rows,
-            width,
-            false,
-            view,
-        )
-        .lines
-        {
+        for line in render(&rows, &session_rows, &workspace_rows, width, false, view).lines {
             println!("{line}");
         }
         return Ok(());
@@ -4062,7 +4064,7 @@ fn peek_placeholder() -> String {
 }
 
 /// The box's top edge, carrying the pane title and its keys:
-/// `┏━ ▶ title · dir ━━…━━ ←→ switch · ↑↓ scroll · ⏎ close ━┓`.
+/// `┏━ ▶ title · dir ━━…━━ ←→ switch · ↑↓ scroll · ⏎ close · f type ━┓`.
 /// While scrolled into the transcript, the glyph flips to `≡` and the keys
 /// give way to how far back the view is anchored.
 fn peek_top_border(target: Option<&PeekTarget>, width: u16, lines_back: Option<usize>) -> String {
@@ -4075,8 +4077,8 @@ fn peek_top_border(target: Option<&PeekTarget>, width: u16, lines_back: Option<u
         None => ("quick look", String::new()),
     };
     let (glyph, hint_text) = match lines_back {
-        Some(back) => ("≡", format!("{back} back · ↓ live · ⏎ close")),
-        None => ("▶", "←→ switch · ↑↓ scroll · ⏎ close".to_string()),
+        Some(back) => ("≡", format!("{back} back · ↓ live · ⏎ close · f type")),
+        None => ("▶", "←→ switch · ↑↓ scroll · ⏎ close · f type".to_string()),
     };
     // `┏━ ` + label (+ dir) + ` ` + ━ fill (+ ` hint `) + `━┓`
     let label = crate::ui::pr_cells::truncate_to_width(
@@ -4114,6 +4116,214 @@ fn peek_interior_row(content: &str, width: u16) -> String {
     )
 }
 
+/// Fullscreen attach. The live screen sits above the session's own modules
+/// (recap, PRs, stats, git, changes). The last row is the amber Secondary bar.
+fn build_attach_view(target: &PeekTarget, width: u16, height: u16) -> Vec<String> {
+    let rows = height as usize;
+    if rows == 0 {
+        return Vec::new();
+    }
+    let modules = crate::attach_modules::session_modules(&target.session_dir, width, height);
+    let body = rows.saturating_sub(modules.len() + 1).max(1);
+    let mut content = attach_screen_lines(&target.session_dir, body);
+    content.truncate(body);
+    content.resize(body, String::new());
+    content.extend(modules);
+    content.push(attach_status_bar(&target.title, &target.dir_name, width));
+    let overflow = content.len().saturating_sub(rows);
+    if overflow > 0 {
+        content.drain(..overflow.min(body));
+    }
+    content
+}
+
+fn attach_screen_lines(session_dir: &Path, body: usize) -> Vec<String> {
+    let Some(bytes) = std::fs::read(session_dir.join("screen.txt")).ok() else {
+        return vec![format!("{} no live screen{}", fg(color::GRAY), RESET_FG)];
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let cursor = read_attach_cursor(session_dir);
+    // A cursor below the last drawn row still needs a line to sit on.
+    if let Some((row, _)) = cursor {
+        if row >= lines.len() {
+            lines.resize(row + 1, String::new());
+        }
+    }
+    if body == 0 {
+        return Vec::new();
+    }
+    // Keep the cursor on screen. When it sits in the tail, this is the same
+    // bottom-aligned window as before.
+    let skip = match cursor {
+        Some((row, _)) => row
+            .saturating_sub(body.saturating_sub(1))
+            .min(lines.len().saturating_sub(body)),
+        None => lines.len().saturating_sub(body),
+    };
+    let mut window: Vec<String> = lines.into_iter().skip(skip).collect();
+    if let Some((row, col)) = cursor {
+        if row >= skip {
+            let index = row - skip;
+            if let Some(line) = window.get_mut(index) {
+                *line = show_cursor_on_line(line, col);
+            }
+        }
+    }
+    window
+}
+
+/// `cursor.txt` is `row col` from the live screen, or empty when the child
+/// has hidden the cursor.
+fn read_attach_cursor(session_dir: &Path) -> Option<(usize, usize)> {
+    let text = std::fs::read_to_string(session_dir.join("cursor.txt")).ok()?;
+    let mut parts = text.split_whitespace();
+    let row = parts.next()?.parse().ok()?;
+    let col = parts.next()?.parse().ok()?;
+    Some((row, col))
+}
+
+/// Reverse the cell at display column `col`, or a block after the line when
+/// the cursor is past the text.
+fn show_cursor_on_line(line: &str, col: usize) -> String {
+    let mut out = String::new();
+    let mut chars = line.chars().peekable();
+    let mut display_col = 0usize;
+    let mut placed = false;
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            out.push(ch);
+            copy_escape(&mut chars, &mut out);
+            continue;
+        }
+        let width = ch.width().unwrap_or(0);
+        if !placed && width > 0 && display_col <= col && col < display_col + width {
+            out.push_str("\x1b[7m");
+            out.push(ch);
+            while chars
+                .peek()
+                .is_some_and(|next| *next != '\u{1b}' && next.width().unwrap_or(0) == 0)
+            {
+                out.push(chars.next().unwrap());
+            }
+            out.push_str("\x1b[27m");
+            placed = true;
+            display_col += width;
+            continue;
+        }
+        display_col += width;
+        out.push(ch);
+    }
+    if !placed {
+        out.push_str(&" ".repeat(col.saturating_sub(display_col)));
+        out.push_str("\x1b[7m \x1b[27m");
+    }
+    out
+}
+
+/// Copy one escape sequence that starts just after the ESC, including the
+/// introducer.
+fn copy_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, out: &mut String) {
+    let Some(next) = chars.next() else {
+        return;
+    };
+    out.push(next);
+    match next {
+        '[' => {
+            for nc in chars.by_ref() {
+                out.push(nc);
+                if nc.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        }
+        ']' => {
+            while let Some(nc) = chars.next() {
+                out.push(nc);
+                if nc == '\u{7}' {
+                    break;
+                }
+                if nc == '\u{1b}' {
+                    if chars.peek() == Some(&'\\') {
+                        out.push(chars.next().unwrap());
+                    }
+                    break;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Full-width amber bar. `Secondary` is the label, so this terminal is
+/// obviously not the one that owns the agent.
+fn attach_status_bar(title: &str, dir_name: &str, width: u16) -> String {
+    let width = width as usize;
+    let hint = "ctrl-] detach";
+    let dir = if dir_name.is_empty() || dir_name == title {
+        String::new()
+    } else {
+        format!(" · {dir_name}")
+    };
+    let left = format!(" Secondary  {title}{dir}");
+    let hint_width = hint.width();
+    let left_budget = width.saturating_sub(hint_width + 2);
+    let left = crate::ui::pr_cells::truncate_to_width(&left, left_budget);
+    let gap = width.saturating_sub(left.width() + hint_width);
+    let mut text = format!("{left}{}{hint}", " ".repeat(gap));
+    if text.width() > width {
+        text = crate::ui::pr_cells::truncate_to_width(&text, width);
+    }
+    let text = format!("{text}{}", " ".repeat(width.saturating_sub(text.width())));
+    format!(
+        "{}{}{text}{}",
+        escape::bg(color::YELLOW),
+        fg(color::BLACK),
+        RESET
+    )
+}
+
+fn attach_error_banner(message: &str, width: u16) -> String {
+    let width = width as usize;
+    let text = crate::ui::pr_cells::truncate_to_width(&format!(" {message}"), width);
+    let pad = width.saturating_sub(text.width());
+    format!(
+        "{}{}{text}{}{}",
+        escape::bg(color::YELLOW),
+        fg(color::BLACK),
+        " ".repeat(pad),
+        RESET
+    )
+}
+
+/// Connect to the selected live session, or the first one when nothing is
+/// selected yet. `Err(None)` means there is no live screen to attach to.
+fn open_attach(
+    spans: &[RowSpan],
+    selected: &mut Option<String>,
+    peek_index: usize,
+) -> std::result::Result<AttachedSession, Option<String>> {
+    let selectable = selectable_positions(spans);
+    if selectable.is_empty() {
+        return Err(None);
+    }
+    let position = selected_position(spans, &selectable, selected.as_deref()).unwrap_or(0);
+    let span = &spans[selectable[position]];
+    *selected = Some(span.key.clone());
+    let Some(target) = selected_peek(spans, selected.as_deref(), peek_index).cloned() else {
+        return Err(None);
+    };
+    match crate::attach::AttachClient::connect(&target.session_dir) {
+        Ok(client) => Ok(AttachedSession { target, client }),
+        Err(_) => Err(Some(crate::attach::NOT_RUNNING.to_string())),
+    }
+}
+
+fn detach_attach(attach: &mut Option<AttachedSession>, attach_frame: &mut Vec<String>) {
+    *attach = None;
+    attach_frame.clear();
+}
+
 fn peek_bottom_border(width: u16) -> String {
     format!(
         "{}┗{}┛{}",
@@ -4132,6 +4342,52 @@ fn search_banner(query: &str, matched: usize, width: u16) -> String {
     );
     let padded = format!("{text:<width$}", width = width as usize);
     format!("{}{}{}{}", escape::bg(color::YELLOW), fg(16), padded, RESET)
+}
+
+/// The board page, including pinned banners and the quick look pane.
+#[allow(clippy::too_many_arguments)]
+fn board_visible_lines(
+    lines: &[String],
+    spans: &[RowSpan],
+    selected: Option<&str>,
+    scroll: usize,
+    page: usize,
+    width: u16,
+    search: Option<&str>,
+    matched: usize,
+    add_input: Option<&str>,
+    add_error: Option<&str>,
+    attach_error: Option<&str>,
+    peek_open: bool,
+    banner_rows: usize,
+    pane_lines: &[String],
+) -> Vec<String> {
+    let mut visible_lines = Vec::new();
+    if let Some(query) = search {
+        visible_lines.push(search_banner(query, matched, width));
+    }
+    if let Some(input) = add_input {
+        visible_lines.push(watch_banner(input, add_error, width));
+    }
+    if let Some(message) = attach_error {
+        visible_lines.push(attach_error_banner(message, width));
+    }
+    let band = selected.and_then(|key| spans.iter().find(|span| span.key == key));
+    for (offset, line) in lines.iter().skip(scroll).take(page).enumerate() {
+        let index = scroll + offset;
+        let on_selected_row = band.is_some_and(|span| (span.start..span.end).contains(&index));
+        visible_lines.push(if on_selected_row {
+            selection_band_line(line, width)
+        } else {
+            line.clone()
+        });
+    }
+    if peek_open {
+        // Pin the pane to the bottom half even when the board is short.
+        visible_lines.resize(banner_rows + page, String::new());
+        visible_lines.extend(pane_lines.iter().cloned());
+    }
+    visible_lines
 }
 
 fn draw_changed_lines<W: Write>(
@@ -4198,6 +4454,12 @@ async fn board_loop(
     // hold several; a session block just its own).
     let mut peek_index: usize = 0;
     let mut pane_lines: Vec<String> = Vec::new();
+    // Fullscreen typing into one live session. Ctrl-] drops this without
+    // quitting the agent. `attach_error` is the one-line reason `f` stayed
+    // on the board.
+    let mut attach: Option<AttachedSession> = None;
+    let mut attach_error: Option<String> = None;
+    let mut attach_frame: Vec<String> = Vec::new();
     // Transcript search state: cached scrollbacks plus the Tab-toggled
     // context view for the inline previews.
     let mut transcripts = TranscriptCache::default();
@@ -4378,11 +4640,7 @@ async fn board_loop(
             // The canonical entries stay merged (one per PR); the watch list
             // overlays them, then the active view shapes its own rows.
             let mut merged_entries = entries.clone();
-            merge_watched_entries(
-                &mut merged_entries,
-                &watched_board.prs,
-                overrides,
-            );
+            merge_watched_entries(&mut merged_entries, &watched_board.prs, overrides);
             observe_cooldowns(&mut cooldowns, &merged_entries, &workspaces, now_ms);
             let shaped = entries_for_mode(merged_entries, view.mode);
             // A row stays visible when its metadata matches, or when any of
@@ -4481,7 +4739,9 @@ async fn board_loop(
 
         // The banner is pinned above the scrolled content while searching;
         // the quick look pane claims the bottom half of the terminal.
-        let banner_rows = usize::from(search.is_some()) + usize::from(add_input.is_some());
+        let banner_rows = usize::from(search.is_some())
+            + usize::from(add_input.is_some())
+            + usize::from(attach_error.is_some());
         let pane_rows = if peek_open { peek_pane_rows(height) } else { 0 };
         let page = (height as usize)
             .saturating_sub(banner_rows)
@@ -4514,39 +4774,47 @@ async fn board_loop(
             dirty = true;
         }
 
+        // The fullscreen view follows screen.txt. Compare every pass so a
+        // quiet board still repaints when the attached session draws.
+        if let Some(session) = &attach {
+            let frame = build_attach_view(&session.target, width, height);
+            if frame != attach_frame {
+                attach_frame = frame;
+                dirty = true;
+            }
+        } else if !attach_frame.is_empty() {
+            attach_frame.clear();
+            dirty = true;
+        }
+
         if dirty {
             dirty = false;
-            let mut visible_lines = Vec::new();
-            if let Some(query) = &search {
-                visible_lines.push(search_banner(query, matched, width));
-            }
-            if let Some(input) = &add_input {
-                visible_lines.push(watch_banner(input, add_error.as_deref(), width));
-            }
-            let band = selected
-                .as_deref()
-                .and_then(|key| spans.iter().find(|span| span.key == key));
-            for (offset, line) in lines.iter().skip(scroll).take(page).enumerate() {
-                let index = scroll + offset;
-                let on_selected_row =
-                    band.is_some_and(|span| (span.start..span.end).contains(&index));
-                visible_lines.push(if on_selected_row {
-                    selection_band_line(line, width)
-                } else {
-                    line.clone()
-                });
-            }
-            if peek_open {
-                // Pin the pane to the bottom half even when the board is short.
-                visible_lines.resize(banner_rows + page, String::new());
-                visible_lines.extend(pane_lines.iter().cloned());
-            }
+            let visible_lines = if attach.is_some() {
+                attach_frame.clone()
+            } else {
+                board_visible_lines(
+                    &lines,
+                    &spans,
+                    selected.as_deref(),
+                    scroll,
+                    page,
+                    width,
+                    search.as_deref(),
+                    matched,
+                    add_input.as_deref(),
+                    add_error.as_deref(),
+                    attach_error.as_deref(),
+                    peek_open,
+                    banner_rows,
+                    &pane_lines,
+                )
+            };
             if draw_changed_lines(out, &mut drawn_lines, &visible_lines)? {
                 out.flush()?;
             }
         }
 
-        let poll_interval = if animating || peek_open {
+        let poll_interval = if animating || peek_open || attach.is_some() {
             Duration::from_millis(100)
         } else {
             Duration::from_millis(250)
@@ -4557,7 +4825,19 @@ async fn board_loop(
                     // Bracketed paste arrives as one event. A paste outside
                     // an input is inert instead of firing every matching
                     // shortcut in the pasted text.
-                    if let Some(input) = &mut add_input {
+                    if attach.is_some() {
+                        let frame = crate::attach::AttachFrame::Paste { text };
+                        let failed = attach
+                            .as_mut()
+                            .is_some_and(|session| session.client.send(&frame).is_err());
+                        if failed {
+                            detach_attach(&mut attach, &mut attach_frame);
+                            attach_error = Some(crate::attach::NOT_RUNNING.to_string());
+                            needs_render = true;
+                            last_frame_hash = 0;
+                            dirty = true;
+                        }
+                    } else if let Some(input) = &mut add_input {
                         input.push_str(text.trim());
                         add_error = None;
                         dirty = true;
@@ -4568,7 +4848,34 @@ async fn board_loop(
                         dirty = true;
                     }
                 }
-                Event::Key(key) => {
+                Event::Key(key) => 'board_key: {
+                    if attach.is_some() {
+                        match crate::attach::attach_key_action(key) {
+                            crate::attach::AttachKeyAction::Detach => {
+                                detach_attach(&mut attach, &mut attach_frame);
+                                needs_render = true;
+                                last_frame_hash = 0;
+                                dirty = true;
+                            }
+                            crate::attach::AttachKeyAction::Forward(frame) => {
+                                let failed = attach
+                                    .as_mut()
+                                    .is_some_and(|session| session.client.send(&frame).is_err());
+                                if failed {
+                                    detach_attach(&mut attach, &mut attach_frame);
+                                    attach_error = Some(crate::attach::NOT_RUNNING.to_string());
+                                    needs_render = true;
+                                    last_frame_hash = 0;
+                                    dirty = true;
+                                }
+                            }
+                            crate::attach::AttachKeyAction::Ignore => {}
+                        }
+                        break 'board_key;
+                    }
+                    if attach_error.take().is_some() {
+                        dirty = true;
+                    }
                     if key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
@@ -4714,6 +5021,25 @@ async fn board_loop(
                                 scroll = 0;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
+                            }
+                            // Fullscreen the selected live session and type
+                            // into it. Ctrl-] returns here.
+                            KeyCode::Char('f')
+                                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+                            {
+                                match open_attach(&spans, &mut selected, peek_index) {
+                                    Ok(session) => {
+                                        attach = Some(session);
+                                        attach_error = None;
+                                        dirty = true;
+                                    }
+                                    Err(Some(message)) => {
+                                        attach_error = Some(message);
+                                        dirty = true;
+                                    }
+                                    Err(None) => {}
+                                }
                             }
                             _ => {}
                         }
@@ -4944,6 +5270,58 @@ mod tests {
     }
 
     #[test]
+    fn header_offers_fullscreen() {
+        let frame = render_frame(&[]);
+        assert!(frame.contains(&format!("{UNDERLINE}f{RESET_UNDERLINE}ullscreen")));
+    }
+
+    #[test]
+    fn peek_border_offers_typing() {
+        let live = peek_top_border(None, 100, None);
+        let scrolled = peek_top_border(None, 100, Some(12));
+        assert!(live.contains("f type"));
+        assert!(live.contains("⏎ close"));
+        assert!(scrolled.contains("f type"));
+    }
+
+    #[test]
+    fn attach_bar_marks_the_secondary_session() {
+        let bar = attach_status_bar("Fix the parser", "crabigator", 80);
+        assert!(bar.contains("Secondary"));
+        assert!(bar.contains("Fix the parser"));
+        assert!(bar.contains("crabigator"));
+        assert!(bar.contains("ctrl-] detach"));
+        assert!(bar.contains(&escape::bg(color::YELLOW)));
+        assert_eq!(crate::ui::utils::strip_ansi_len(&bar), 80);
+
+        let narrow = attach_status_bar("Fix the parser", "crabigator", 32);
+        assert!(narrow.contains("Secondary"));
+        assert!(narrow.contains("ctrl-] detach"));
+        assert_eq!(crate::ui::utils::strip_ansi_len(&narrow), 32);
+    }
+
+    #[test]
+    fn attach_view_shows_the_cursor_cell() {
+        assert_eq!(show_cursor_on_line("hello", 1), "h\u{1b}[7me\u{1b}[27mllo");
+        assert_eq!(show_cursor_on_line("hi", 4), "hi  \u{1b}[7m \u{1b}[27m");
+        assert_eq!(
+            show_cursor_on_line("\u{1b}[31mred\u{1b}[0m", 0),
+            "\u{1b}[31m\u{1b}[7mr\u{1b}[27med\u{1b}[0m"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("screen.txt"), "hello\nsecond\n").unwrap();
+        std::fs::write(dir.path().join("cursor.txt"), "1 2\n").unwrap();
+        let lines = attach_screen_lines(dir.path(), 10);
+        assert_eq!(lines[0], "hello");
+        assert_eq!(lines[1], "se\u{1b}[7mc\u{1b}[27mond");
+
+        std::fs::write(dir.path().join("cursor.txt"), "").unwrap();
+        let hidden = attach_screen_lines(dir.path(), 10);
+        assert_eq!(hidden, ["hello", "second"]);
+    }
+
+    #[test]
     fn header_mnemonic_underlines_the_key_inside_the_label() {
         assert_eq!(
             header_mnemonic("p", "prs"),
@@ -4989,16 +5367,9 @@ mod tests {
         assert!(recap.contains(&format!("{UNDERLINE}r{RESET_UNDERLINE}ecap")));
         assert!(recap.contains(&format!("{UNDERLINE}a{RESET_UNDERLINE}ge ≤ 6h")));
 
-        let all_sessions = render(
-            &[],
-            &[],
-            &[],
-            160,
-            true,
-            BoardView::default(),
-        )
-        .lines
-        .join("\n");
+        let all_sessions = render(&[], &[], &[], 160, true, BoardView::default())
+            .lines
+            .join("\n");
         assert!(all_sessions.contains(&format!("all {UNDERLINE}s{RESET_UNDERLINE}essions")));
     }
 
@@ -5129,10 +5500,7 @@ mod tests {
         let mut two = snapshot("two", vec![twin]);
         two.repo_name = "portal".to_string();
 
-        let merged = aggregate(
-            &[one, two],
-            &ScopedOverrides::default(),
-        );
+        let merged = aggregate(&[one, two], &ScopedOverrides::default());
         let entries = entries_for_mode(merged, BoardMode::Prs).prs;
         assert_eq!(
             entries.len(),
@@ -5340,11 +5708,7 @@ mod tests {
             ),
             (watch_key("o", "elsewhere", 9), solo),
         ]);
-        merge_watched_entries(
-            &mut entries,
-            &watched,
-            &ScopedOverrides::default(),
-        );
+        merge_watched_entries(&mut entries, &watched, &ScopedOverrides::default());
 
         assert_eq!(entries.len(), 2);
         let tracked = entries.iter().find(|e| e.pr.repo == "portal").unwrap();
@@ -5562,10 +5926,7 @@ mod tests {
             "https://t.slack.com/archives/C0/p1723500000000000 https://t.slack.com/archives/C1/p1723500001000000 https://t.slack.com/archives/C4/p1723500003000000",
         );
         let shaped = entries_for_mode(
-            aggregate(
-                &[two, one],
-                &ScopedOverrides::default(),
-            ),
+            aggregate(&[two, one], &ScopedOverrides::default()),
             BoardMode::Sessions,
         );
         assert!(shaped.prs.is_empty(), "every PR is under a session block");
@@ -5665,10 +6026,7 @@ mod tests {
         captureless.repo_name = "portal".to_string();
         captureless.session_dir = capture.path().join("missing");
 
-        let entries = aggregate(
-            &[live, captureless],
-            &ScopedOverrides::default(),
-        );
+        let entries = aggregate(&[live, captureless], &ScopedOverrides::default());
         let rows: Vec<BoardRow> = entries
             .iter()
             .map(|entry| BoardRow {
@@ -5676,14 +6034,7 @@ mod tests {
                 preview_lines: Vec::new(),
             })
             .collect();
-        let rendered = render(
-            &rows,
-            &[],
-            &[],
-            160,
-            false,
-            BoardView::default(),
-        );
+        let rendered = render(&rows, &[], &[], 160, false, BoardView::default());
         assert_eq!(rendered.spans.len(), 2, "every row gets a span");
 
         let selectable = selectable_positions(&rendered.spans);
@@ -5809,10 +6160,7 @@ mod tests {
         make_primary(&mut pr);
         let mut snapshot = snapshot("cloudid", vec![pr]);
         snapshot.repo_name = "portal".to_string();
-        let mut entries = aggregate(
-            &[snapshot],
-            &ScopedOverrides::default(),
-        );
+        let mut entries = aggregate(&[snapshot], &ScopedOverrides::default());
         entries[0].sessions[0].session_dir = None;
 
         let mirrors: HashMap<String, PathBuf> = [(
@@ -5884,16 +6232,9 @@ mod tests {
                 preview_lines: Vec::new(),
             })
             .collect();
-        let frame = render(
-            &[],
-            &[],
-            &rows,
-            160,
-            false,
-            BoardView::default(),
-        )
-        .lines
-        .join("\n");
+        let frame = render(&[], &[], &rows, 160, false, BoardView::default())
+            .lines
+            .join("\n");
         let plain = crate::parsers::strip_ansi_for_debug(&frame);
         assert!(plain.lines().any(|line| line == "samuelclay/crabigator"));
         assert!(frame.contains(&format!("{}samuelclay/crabigator", fg(color::YELLOW))));
@@ -6699,10 +7040,7 @@ mod tests {
         old_mirror.repo_name = "portal".to_string();
         old_mirror.title = "⟁ Fix builder autosave".to_string();
 
-        let entries = aggregate(
-            &[old_mirror],
-            &ScopedOverrides::default(),
-        );
+        let entries = aggregate(&[old_mirror], &ScopedOverrides::default());
 
         assert_eq!(entries.len(), 1);
         assert!(entries[0].pr.primary);
@@ -6733,10 +7071,7 @@ mod tests {
         let mut overrides = HashMap::new();
         overrides.insert("o/portal#1206".to_string(), PrDisposition::Secondary);
 
-        let entries = aggregate(
-            &[old_mirror],
-            &ScopedOverrides::from(overrides),
-        );
+        let entries = aggregate(&[old_mirror], &ScopedOverrides::from(overrides));
 
         assert!(
             entries.is_empty(),
@@ -7266,10 +7601,7 @@ mod tests {
         let mut bare = snapshot("other-dir", vec![pr]);
         bare.prompted_at = now_secs() as u64 - 4 * 60 * 60;
         bare.completed_at = now_secs() as u64 - 5 * 60 * 60;
-        aggregate(
-            &[with_title, bare],
-            &ScopedOverrides::default(),
-        )
+        aggregate(&[with_title, bare], &ScopedOverrides::default())
     }
 
     /// The title stays on the PR row; `r` adds the complete recap beneath it.
@@ -7682,16 +8014,9 @@ mod tests {
             entry: &workspaces[0],
             preview_lines: Vec::new(),
         }];
-        let styled = render(
-            &[],
-            &[],
-            &rows,
-            160,
-            false,
-            BoardView::default(),
-        )
-        .lines
-        .join("\n");
+        let styled = render(&[], &[], &rows, 160, false, BoardView::default())
+            .lines
+            .join("\n");
         assert!(styled.contains(&format!("{}◇ ", fg(color::PURPLE))));
         assert!(styled.contains(&format!("{}ᛝ  crabigator", fg(color::LIGHT_BLUE))));
     }

@@ -48,6 +48,28 @@ pub struct SessionStats {
 }
 
 impl SessionStats {
+    /// Rebuild the numbers the status bar shows from a published mirror.
+    ///
+    /// The attach view uses this so its stats column matches the original
+    /// session without sharing that session's live clocks.
+    pub(crate) fn from_published(
+        work_seconds: u64,
+        thinking_seconds: u64,
+        platform_stats: crate::platforms::PlatformStats,
+        prompts_changed_at: Option<f64>,
+        completions_changed_at: Option<f64>,
+        compressions_changed_at: Option<f64>,
+    ) -> Self {
+        let mut stats = Self::new();
+        stats.work_seconds = work_seconds;
+        stats.thinking_base = thinking_seconds;
+        stats.platform_stats = platform_stats;
+        stats.prompts_changed_at = prompts_changed_at;
+        stats.completions_changed_at = completions_changed_at;
+        stats.compressions_changed_at = compressions_changed_at;
+        stats
+    }
+
     pub fn new() -> Self {
         let now_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
