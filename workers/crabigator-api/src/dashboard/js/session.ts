@@ -356,7 +356,7 @@ export const sessionJs = `
             card.innerHTML = \`
                 <div class="session-header">
                     <div class="session-info">
-                        <span class="title" id="title-\${session.id}"></span>
+                        <span class="title-row"><span id="title-mark-\${session.id}"></span><span class="title" id="title-\${session.id}"></span></span>
                         <span class="generated-title" id="generated-title-\${session.id}"></span>
                         <span class="cwd">\${session.cwd}</span>
                         <span class="branch" id="branch-\${session.id}" style="color:#7ee787; font-size:11px;"></span>
@@ -437,6 +437,7 @@ export const sessionJs = `
                         <div class="widgets-panel" id="widgets-\${session.id}">
                             <div class="widgets-header" onclick="toggleWidgets('\${session.id}')">
                                 <div class="widgets-header-row1">
+                                    <span id="widgets-mark-\${session.id}"></span>
                                     <span class="widgets-title" id="widgets-title-\${session.id}">Session</span>
                                     <span class="widgets-state" id="widgets-state-\${session.id}">○ Ready</span>
                                     <span class="widgets-header-spacer"></span>
@@ -552,6 +553,7 @@ export const sessionJs = `
                     container.appendChild(card);
                 }
             }
+            paintSessionTitleMark(session.id);
             sessions.set(session.id, {
                 element: card,
                 sessionId: session.id,

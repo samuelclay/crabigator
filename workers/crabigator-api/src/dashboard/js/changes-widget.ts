@@ -657,6 +657,14 @@ export const changesWidgetJs = `
             };
         }
 
+        function paintSessionTitleMark(sessionId) {
+            const html = sessionMarkChipHtml({ id: sessionId });
+            const header = document.getElementById('title-mark-' + sessionId);
+            if (header) header.innerHTML = html;
+            const widgets = document.getElementById('widgets-mark-' + sessionId);
+            if (widgets) widgets.innerHTML = html;
+        }
+
         function updateSessionTitleHierarchy(sessionId) {
             const hierarchy = sessionTitleHierarchy(sessions.get(sessionId));
             const titleEl = document.getElementById('title-' + sessionId);
@@ -664,6 +672,7 @@ export const changesWidgetJs = `
                 titleEl.textContent = hierarchy.main;
                 titleEl.classList.toggle('official', hierarchy.hasOfficial);
             }
+            paintSessionTitleMark(sessionId);
             const generatedEl = document.getElementById('generated-title-' + sessionId);
             if (generatedEl) generatedEl.textContent = hierarchy.generated;
             const widgetsTitleEl = document.getElementById('widgets-title-' + sessionId);

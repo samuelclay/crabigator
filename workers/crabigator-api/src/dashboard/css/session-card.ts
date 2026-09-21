@@ -59,11 +59,19 @@ export const sessionCardCss = `
     line-height: 1.2;
     flex-shrink: 0;
 }
+.session-header .title-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+}
 .session-header .title {
     font-family: 'JetBrains Mono', monospace;
     font-size: 13px;
     font-weight: 600;
     color: var(--accent-cyan);
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
