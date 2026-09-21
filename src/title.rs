@@ -187,8 +187,7 @@ pub(crate) fn grok_stable_osc_title(native: Option<&str>) -> Option<&str> {
 
 /// The two title levels shown for one session: the assistant's own title
 /// and a primary PR. The changes widget shows the session title with the
-/// identity chip first and the PR underneath, matching the PR board's
-/// session view.
+/// PR underneath. The identity chip sits alone on the right edge.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SessionTitleHierarchy<'a> {
     pub(crate) official_pr: Option<&'a SessionPr>,

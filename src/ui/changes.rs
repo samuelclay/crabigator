@@ -6,6 +6,8 @@
 use std::io::Write;
 use std::path::Path;
 
+use unicode_width::UnicodeWidthStr;
+
 use anyhow::Result;
 
 use crate::ide::IdeKind;
@@ -19,7 +21,7 @@ use crate::terminal::escape::{
 use crate::title::SessionTitleHierarchy;
 
 use super::pr_cells::truncate_to_width;
-use super::utils::{digit_count, strip_ansi_len, truncate_middle, truncate_path};
+use super::utils::{digit_count, strip_ansi_len, truncate_middle};
 use super::WidgetArea;
 
 /// Columns the message snippet is indented from the Slack link above it.
@@ -191,8 +193,9 @@ pub fn draw_changes_widget(
     let title_rows = titles.row_count();
     let prefix_rows = title_rows.saturating_add(slack_row_count(slack_threads));
 
-    // Session title + chip on row 1; purple `#N: title` under it. The PR
-    // takes row 1 when there is no session title.
+    // Session title on row 1, with the identity chip alone at the right edge.
+    // Purple `#N: title` sits under the session title and stops short of that
+    // chip. The PR takes row 1 when there is no session title.
     if let Some(header) = title_header_row(titles, area.row, inner_width_usize, session_mark) {
         write_padded_row(stdout, &header, inner_width_usize)?;
         return Ok(());
@@ -310,51 +313,77 @@ fn title_header_row(
     width: usize,
     session_mark: SessionMark,
 ) -> Option<String> {
+    // The chip owns the right edge of the first title row. The row under it
+    // stops one column short of that chip so the glyph has an empty lane.
+    let under_chip = width.saturating_sub(session_mark.width().saturating_add(1));
     match (row, titles.generated_title, titles.official_pr) {
         (1, Some(title), _) => Some(format_session_title_row(title, width, session_mark)),
         (1, None, Some(pr)) => Some(format_official_title_row(pr, width, Some(session_mark))),
-        (2, Some(_), Some(pr)) => Some(format_official_title_row(pr, width, None)),
+        (2, Some(_), Some(pr)) => Some(format_official_title_row(pr, under_chip, None)),
         _ => None,
     }
 }
 
-fn title_chip_prefix(mark: Option<SessionMark>) -> (String, usize) {
-    match mark {
-        Some(mark) => (format!("{} ", mark.chip()), mark.width() + 1),
-        None => (String::new(), 0),
+fn format_session_title_row(title: &str, width: usize, mark: SessionMark) -> String {
+    // The chip is reserved at the right edge. Only the title is shortened,
+    // from the end, so a narrow column cannot eat the glyph.
+    if width <= mark.width() {
+        return mark.chip();
     }
+    let text = truncate_to_width(title, width - mark.width() - 1);
+    let left = if text.is_empty() {
+        String::new()
+    } else {
+        format!("{}{text}{RESET}", fg(color::LIGHT_BLUE))
+    };
+    place_mark_on_the_right(&left, width, mark)
 }
 
-fn format_session_title_row(title: &str, width: usize, mark: SessionMark) -> String {
-    format!(
-        "{} {}{}{}",
-        mark.chip(),
-        fg(color::LIGHT_BLUE),
-        truncate_path(title, width.saturating_sub(mark.width() + 1)),
-        RESET
-    )
+/// Title text on the left, identity chip flush with the right edge.
+fn place_mark_on_the_right(left: &str, width: usize, mark: SessionMark) -> String {
+    let gap = width.saturating_sub(strip_ansi_len(left) + mark.width());
+    format!("{left}{:gap$}{}", "", mark.chip(), gap = gap)
 }
 
 /// `#N: title` with a GitHub link and an emphasized number, matching the board.
 fn format_official_title_row(pr: &SessionPr, width: usize, mark: Option<SessionMark>) -> String {
+    if let Some(mark) = mark {
+        if width <= mark.width() {
+            return mark.chip();
+        }
+    }
+    // One clear column between the title and the chip. The chip is never clipped.
+    let reserve = mark.map(|mark| mark.width() + 1).unwrap_or(0);
+    let budget = width.saturating_sub(reserve);
     let number = format!("#{}", pr.number);
-    let (prefix, chip_span) = title_chip_prefix(mark);
-    let identity = truncate_path(
-        &format!("{number}: {}", pr.title.trim()),
-        width.saturating_sub(chip_span),
-    );
-    // Truncation that cuts into `#N` leaves the number unstyled, same as the board.
+    let head = format!("{number}: ");
+    let title = truncate_to_width(pr.title.trim(), budget.saturating_sub(head.width()));
+    let identity = if !title.is_empty() && head.width() + title.width() <= budget {
+        format!("{head}{title}")
+    } else if number.width() <= budget {
+        number.clone()
+    } else {
+        String::new()
+    };
     let labeled = identity.replacen(
         &number,
         &format!("{BOLD}{UNDERLINE}{number}{RESET_UNDERLINE}{RESET_BOLD}"),
         1,
     );
-    let body = if pr.url.is_empty() {
+    let body = if pr.url.is_empty() || identity.is_empty() {
         labeled
     } else {
         hyperlink(&pr.url, &labeled)
     };
-    format!("{}{}{}{}", prefix, fg(color::PURPLE), body, RESET)
+    let left = if body.is_empty() {
+        String::new()
+    } else {
+        format!("{}{body}{RESET}", fg(color::PURPLE))
+    };
+    match mark {
+        Some(mark) => place_mark_on_the_right(&left, width, mark),
+        None => left,
+    }
 }
 
 fn write_padded_row(stdout: &mut dyn Write, content: &str, width: usize) -> Result<()> {
@@ -781,16 +810,46 @@ mod tests {
     }
 
     #[test]
-    fn first_title_row_prefixes_the_identity_chip() {
+    fn truncated_session_title_keeps_the_glyph() {
+        let mark = SessionMark::from_seed("narrow-title");
+        let title = "gpt-6-astra high · ~/projects/developer-portal · Investigate Slack thread";
+        let width = mark.width() + 8;
+        let row = format_session_title_row(title, width, mark);
+        assert!(row.contains(mark.glyph), "{row}");
+        assert!(row.ends_with(&mark.chip()), "{row}");
+        assert_eq!(strip_ansi_len(&row), width);
+
+        let tight = format_session_title_row(title, mark.width(), mark);
+        assert_eq!(tight, mark.chip());
+        assert_eq!(strip_ansi_len(&tight), mark.width());
+    }
+
+    #[test]
+    fn truncated_pr_title_keeps_the_glyph_and_number() {
+        let mut pr = SessionPr::test_stub(3055, "acme", "request-handler");
+        pr.primary = true;
+        pr.title = "400 invalid objectives_id on persona PATCH that runs on and on".to_string();
+        let mark = SessionMark::from_seed("narrow-pr-title");
+        let width = mark.width() + 1 + "#3055: 400 inv".len();
+        let row = format_official_title_row(&pr, width, Some(mark));
+        assert!(row.contains(mark.glyph), "{row}");
+        assert!(row.contains("#3055"), "{row}");
+        assert!(row.find("#3055") < row.find(mark.glyph), "{row}");
+        assert!(row.ends_with(&mark.chip()), "{row}");
+        assert_eq!(strip_ansi_len(&row), width);
+    }
+
+    #[test]
+    fn session_title_puts_the_glyph_on_the_right() {
         let mark = SessionMark::from_seed("changes-title");
-        let row = format_session_title_row("Fix the title chip", 40, mark);
+        let title = "Fix the title chip";
+        let row = format_session_title_row(title, 40, mark);
         assert!(row.contains(mark.glyph));
-        assert!(row.contains("Fix the title chip"));
+        assert!(row.contains(title));
         assert!(row.contains(&fg(color::LIGHT_BLUE)));
-        assert_eq!(
-            strip_ansi_len(&row),
-            mark.width() + 1 + "Fix the title chip".len()
-        );
+        assert!(row.find(title) < row.find(mark.glyph), "{row}");
+        assert!(row.ends_with(&mark.chip()), "{row}");
+        assert_eq!(strip_ansi_len(&row), 40);
     }
 
     #[test]
@@ -807,10 +866,9 @@ mod tests {
         assert!(row.contains(&pr.url));
         assert!(row.contains(BOLD));
         assert!(row.contains(UNDERLINE));
-        assert_eq!(
-            strip_ansi_len(&row),
-            mark.width() + 1 + "#42: Ship the title chip".len()
-        );
+        assert!(row.find("#42") < row.find(mark.glyph), "{row}");
+        assert!(row.ends_with(&mark.chip()), "{row}");
+        assert_eq!(strip_ansi_len(&row), 60);
     }
 
     #[test]
@@ -827,9 +885,15 @@ mod tests {
 
         let row1 = title_header_row(titles, 1, 80, mark).expect("session title");
         assert!(row1.contains(mark.glyph), "{row1}");
+        assert!(row1.ends_with(&mark.chip()), "{row1}");
+        assert!(
+            row1.find("E2E Test Coverage Verification") < row1.find(mark.glyph),
+            "{row1}"
+        );
         assert!(row1.contains("E2E Test Coverage Verification"), "{row1}");
         assert!(!row1.contains("#1578"), "{row1}");
         assert!(row1.contains(&fg(color::LIGHT_BLUE)), "{row1}");
+        assert_eq!(strip_ansi_len(&row1), 80);
 
         let row2 = title_header_row(titles, 2, 80, mark).expect("PR title");
         assert!(!row2.contains(mark.glyph), "{row2}");
@@ -837,7 +901,28 @@ mod tests {
         assert!(row2.contains("preserve typed prompts"), "{row2}");
         assert!(row2.contains(&fg(color::PURPLE)), "{row2}");
         assert!(row2.contains(&pr.url), "{row2}");
+        assert!(strip_ansi_len(&row2) <= 80 - mark.width() - 1, "{row2}");
         assert!(title_header_row(titles, 3, 80, mark).is_none());
+    }
+
+    #[test]
+    fn pr_line_under_the_session_title_stops_before_the_glyph() {
+        let mut pr = SessionPr::test_stub(9, "acme", "widgets");
+        pr.primary = true;
+        pr.title = "preserve typed prompts ".repeat(20);
+        let titles = SessionTitleHierarchy {
+            official_pr: Some(&pr),
+            generated_title: Some("Session"),
+        };
+        let mark = SessionMark::from_seed("gutter");
+        let width = 36;
+        let row = title_header_row(titles, 2, width, mark).expect("pr");
+        assert!(!row.contains(mark.glyph), "{row}");
+        assert!(
+            strip_ansi_len(&row) <= width - mark.width() - 1,
+            "{} wider than the gutter",
+            strip_ansi_len(&row)
+        );
     }
 
     #[test]
@@ -853,6 +938,9 @@ mod tests {
         let row1 = title_header_row(titles, 1, 80, mark).expect("PR title");
         assert!(row1.contains(mark.glyph), "{row1}");
         assert!(row1.contains("#42"), "{row1}");
+        assert!(row1.find("#42") < row1.find(mark.glyph), "{row1}");
+        assert!(row1.ends_with(&mark.chip()), "{row1}");
+        assert_eq!(strip_ansi_len(&row1), 80);
         assert!(title_header_row(titles, 2, 80, mark).is_none());
     }
 }
