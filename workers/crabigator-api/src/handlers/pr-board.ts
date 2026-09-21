@@ -3,7 +3,7 @@ import type { SessionPr } from '../types/session';
 import { jsonResponse } from '../router';
 import { requireDeviceAuth, requireMobileAuth } from '../auth/middleware';
 import { watchedPrRows, watchedPlaceholderPr } from './watched-prs';
-import { assignSessionMarks, withSessionMark } from '../session-mark';
+import { assignSessionMarks, parseStoredSessionMark, withSessionMark, type SessionMark } from '../session-mark';
 
 interface BoardSessionRow {
     session_id: string;
@@ -26,6 +26,7 @@ interface BoardSessionRow {
     additions: number | null;
     deletions: number | null;
     slack_threads: string | null;
+    session_mark: string | null;
 }
 
 interface SessionPrRow extends BoardSessionRow {
@@ -254,8 +255,10 @@ interface BoardEntry {
     /** Sessions created with this PR or currently working on its branch. */
     sessions: {
         session_id: string;
-        /** Local crabigator id; the session mark hashes this. */
+        /** Local crabigator id. Fallback chips hash this when no mark is stored. */
         client_session_id: string;
+        /** Glyph and colors the desktop stored for this session. */
+        session_mark: SessionMark | null;
         platform: 'claude' | 'codex' | 'grok' | 'opencode';
         /** The scope this session's own PR dispositions use: 'path:<cwd>'
          * inside a linked worktree, else 'session:<id>'. */
@@ -375,6 +378,7 @@ function boardSession(row: BoardSessionRow): BoardSession {
     return {
         session_id: row.session_id,
         client_session_id: row.client_session_id || '',
+        session_mark: parseStoredSessionMark(row.session_mark),
         platform: row.platform || 'claude',
         pr_scope: row.pr_scope || `session:${row.session_id}`,
         dir_name: dirName,
@@ -567,7 +571,8 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,
                 s.repo_owner, s.repo_name, s.branch,
-                s.uncommitted_files, s.additions, s.deletions, s.slack_threads
+                s.uncommitted_files, s.additions, s.deletions, s.slack_threads,
+                s.session_mark
          FROM session_prs sp
          JOIN sessions s ON s.id = sp.session_id
          JOIN devices d ON d.id = s.device_id
@@ -739,7 +744,8 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,
                 s.repo_owner, s.repo_name, s.branch,
-                s.uncommitted_files, s.additions, s.deletions, s.slack_threads
+                s.uncommitted_files, s.additions, s.deletions, s.slack_threads,
+                s.session_mark
          FROM sessions s
          JOIN devices d ON d.id = s.device_id
          WHERE d.group_id = ? AND s.is_active = 1

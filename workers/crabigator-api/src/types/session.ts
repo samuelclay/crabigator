@@ -531,4 +531,10 @@ export interface SessionInfo {
         /** Unix timestamp when completions count last changed */
         completions_changed_at?: number;
     };
+    /** Glyph and colors the desktop stored for this session. */
+    session_mark?: {
+        glyph: string;
+        fg: [number, number, number];
+        bg: [number, number, number];
+    } | null;
 }

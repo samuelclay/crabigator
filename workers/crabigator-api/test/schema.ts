@@ -78,7 +78,8 @@ export async function ensureAccountSchema(env: Env): Promise<void> {
                 uncommitted_files INTEGER,
                 additions INTEGER,
                 deletions INTEGER,
-                pr_scope TEXT
+                pr_scope TEXT,
+                session_mark TEXT
             )
         `),
         env.DB.prepare(`

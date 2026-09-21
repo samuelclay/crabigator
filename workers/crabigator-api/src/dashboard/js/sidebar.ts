@@ -532,6 +532,7 @@ export const sidebarJs = `
             return {
                 id: session.id,
                 client_session_id: session.client_session_id,
+                session_mark: session.session_mark || null,
                 title: titleHierarchy.main || 'Untitled',
                 generatedTitle: titleHierarchy.generated,
                 hasOfficialTitle: titleHierarchy.hasOfficial,

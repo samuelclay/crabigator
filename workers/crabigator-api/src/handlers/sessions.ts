@@ -11,6 +11,7 @@ import type { SessionInfo, SessionState } from '../types/session';
 import { jsonResponse } from '../router';
 import { requireAuth, requireDeviceAuth } from '../auth/middleware';
 import { generateUUID } from '../auth/tokens';
+import { parseStoredSessionMark, sessionMarkJson } from '../session-mark';
 
 /** Desktop heartbeats are sent every 2h; wait for multiple misses before culling. */
 const SESSION_HEARTBEAT_TIMEOUT_SECONDS = 6 * 60 * 60;
@@ -64,6 +65,8 @@ export async function createSession(
     const prScope = typeof body.pr_scope === 'string' && body.pr_scope.startsWith('path:/')
         ? body.pr_scope.slice(0, 512)
         : null;
+    const markJson = sessionMarkJson(body.session_mark);
+    const storedMark = markJson ? parseStoredSessionMark(markJson) : null;
 
     if (!client_session_id || !cwd || !platform) {
         return new Response(
@@ -93,12 +96,13 @@ export async function createSession(
             SET cwd = ?,
                 platform = ?,
                 pr_scope = ?,
+                session_mark = COALESCE(?, session_mark),
                 state = CASE WHEN is_active = 1 THEN state ELSE 'ready' END,
                 ended_at = NULL,
                 is_active = 1,
                 last_seen_at = ?
             WHERE id = ?
-        `).bind(cwd, platform, prScope, now, existing.id).run();
+        `).bind(cwd, platform, prScope, markJson, now, existing.id).run();
 
         // Session already exists, return existing ID
         const url = new URL(request.url);
@@ -114,9 +118,9 @@ export async function createSession(
 
     // Create new session
     await env.DB.prepare(`
-        INSERT INTO sessions (id, device_id, client_session_id, cwd, platform, pr_scope, state, started_at, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, 'ready', ?, 1)
-    `).bind(sessionId, device_id, client_session_id, cwd, platform, prScope, now).run();
+        INSERT INTO sessions (id, device_id, client_session_id, cwd, platform, pr_scope, session_mark, state, started_at, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, 1)
+    `).bind(sessionId, device_id, client_session_id, cwd, platform, prScope, markJson, now).run();
 
     // Unhide project if it was manually hidden
     const device = await env.DB.prepare('SELECT group_id, name as device_name FROM devices WHERE id = ?')
@@ -151,6 +155,7 @@ export async function createSession(
             last_activity_at: now,
             is_active: true,
             device_name: device?.device_name || undefined,
+            session_mark: storedMark,
             stats: { prompts: 0, completions: 0, tool_calls: 0, thinking_seconds: 0 },
         },
     });
@@ -206,6 +211,7 @@ export async function listSessions(
                sessions.started_at, sessions.ended_at, sessions.is_active, sessions.last_seen_at,
                sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds,
                sessions.prompts_changed_at, sessions.completions_changed_at,
+               sessions.session_mark,
                devices.name as device_name
         FROM sessions
         JOIN devices ON devices.id = sessions.device_id
@@ -244,6 +250,7 @@ export async function listSessions(
         thinking_seconds: number;
         prompts_changed_at: number | null;
         completions_changed_at: number | null;
+        session_mark: string | null;
         device_name: string | null;
     }>();
 
@@ -320,6 +327,7 @@ export async function listSessions(
             ended_at: row.ended_at,
             is_active: row.is_active === 1,
             device_name: row.device_name || undefined,
+            session_mark: parseStoredSessionMark(row.session_mark),
             stats: {
                 prompts: row.prompts,
                 completions: row.completions,
@@ -370,7 +378,7 @@ export async function getSession(
                sessions.started_at, sessions.ended_at, sessions.is_active,
                sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds,
                sessions.prompts_changed_at, sessions.completions_changed_at,
-               sessions.share_token
+               sessions.session_mark, sessions.share_token
         FROM sessions
     `;
     const sessionParams: (string | number)[] = [sessionId];
@@ -400,6 +408,7 @@ export async function getSession(
         thinking_seconds: number;
         prompts_changed_at: number | null;
         completions_changed_at: number | null;
+        session_mark: string | null;
         share_token: string | null;
     }>();
 
@@ -432,6 +441,7 @@ export async function getSession(
             prompts_changed_at: session.prompts_changed_at || undefined,
             completions_changed_at: session.completions_changed_at || undefined,
         },
+        session_mark: parseStoredSessionMark(session.session_mark),
         share_url: shareUrl,
     };
     return jsonResponse(response);
@@ -490,6 +500,8 @@ export async function updateSession(
     const now = Math.floor(Date.now() / 1000);
     let promptsChangedAt = session.prompts_changed_at;
     let completionsChangedAt = session.completions_changed_at;
+    const markJson = sessionMarkJson(body.session_mark);
+    const storedMark = markJson ? parseStoredSessionMark(markJson) : null;
 
     if (body.ended_at !== undefined) {
         updates.push('ended_at = ?');
@@ -500,6 +512,11 @@ export async function updateSession(
     if (body.state !== undefined) {
         updates.push('state = ?');
         values.push(body.state);
+    }
+
+    if (markJson) {
+        updates.push('session_mark = ?');
+        values.push(markJson);
     }
 
     if (body.stats) {
@@ -545,6 +562,7 @@ export async function updateSession(
                 last_activity_at: now,
                 ended_at: body.ended_at,
                 is_active: body.ended_at ? false : undefined,
+                session_mark: storedMark || undefined,
                 stats: body.stats ? {
                     prompts: body.stats.prompts ?? session.prompts,
                     completions: body.stats.completions ?? session.completions,

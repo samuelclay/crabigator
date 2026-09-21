@@ -345,6 +345,38 @@ describe('MCP server', () => {
         })]);
     });
 
+    it('uses the identity chip stored on the session', async () => {
+        const alice = await linkedAccount('MK2');
+        const account = await getAccount(testEnv, alice.accountId);
+        const stored = { glyph: '✶✶', fg: [9, 8, 7], bg: [6, 5, 4] };
+        await testEnv.DB.prepare(`
+            INSERT INTO sessions (id, device_id, client_session_id, cwd, platform, state, session_mark)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+            'sess-mark-2',
+            alice.deviceId,
+            'local-mark-2',
+            '/tmp/mark',
+            'claude',
+            'ready',
+            JSON.stringify(stored),
+        ).run();
+
+        const enriched = await enrichSessions(testEnv, [{
+            id: 'sess-mark-2',
+            cwd: '/tmp/mark',
+            platform: 'claude',
+            state: 'ready',
+        }], account?.group_id || undefined);
+
+        expect(enriched[0].session_mark).toMatchObject({
+            ...stored,
+            fg_hex: '#090807',
+            bg_hex: '#060504',
+        });
+        expect(enriched[0].session_mark).not.toEqual(sessionMarkFromSeed('local-mark-2'));
+    });
+
     it('rejects an unknown protocol version header', async () => {
         const { token } = await linkedAccount('PV1');
         const response = await SELF.fetch(`${ORIGIN}/mcp`, {

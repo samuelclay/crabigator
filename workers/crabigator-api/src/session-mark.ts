@@ -1,6 +1,9 @@
 /**
- * Per-session identity chip. Glyphs and palettes come from
- * src/session_mark.json, the same file the TUI includes.
+ * Per-session identity chip. The desktop chooses the glyph and colors and
+ * stores them on the session. Callers draw that stored mark. The seed picker
+ * below is only for sessions that have not published one yet.
+ *
+ * Glyphs and palettes come from src/session_mark.json, the same file the TUI includes.
  */
 
 import markData from '../../../src/session_mark.json' with { type: 'json' };
@@ -73,6 +76,40 @@ export function sessionMarkFromSeed(seed: string): SessionMark {
     return sessionMarkClaim(seed, []);
 }
 
+function rgb(value: unknown): Rgb | null {
+    if (!Array.isArray(value) || value.length !== 3) return null;
+    const nums = value.map((item) => (typeof item === 'number' ? item : Number.NaN));
+    if (nums.some((item) => !Number.isInteger(item) || item < 0 || item > 255)) return null;
+    return [nums[0], nums[1], nums[2]];
+}
+
+/** A mark the desktop stored: a short glyph plus two RGB colors. */
+export function parseStoredSessionMark(value: unknown): SessionMark | null {
+    let raw = value;
+    if (typeof raw === 'string') {
+        if (!raw) return null;
+        try {
+            raw = JSON.parse(raw);
+        } catch {
+            return null;
+        }
+    }
+    if (!raw || typeof raw !== 'object') return null;
+    const obj = raw as { glyph?: unknown; fg?: unknown; bg?: unknown };
+    const glyph = typeof obj.glyph === 'string' ? obj.glyph : '';
+    const fg = rgb(obj.fg);
+    const bg = rgb(obj.bg);
+    if (!glyph || glyph.length > 16 || !fg || !bg) return null;
+    return pack(glyph, bg, fg);
+}
+
+/** JSON for the sessions.session_mark column, or null when the value is not a mark. */
+export function sessionMarkJson(value: unknown): string | null {
+    const mark = parseStoredSessionMark(value);
+    if (!mark) return null;
+    return JSON.stringify({ glyph: mark.glyph, fg: mark.fg, bg: mark.bg });
+}
+
 /** Local crabigator id when present; otherwise the cloud session id. */
 export function sessionMarkSeed(session: {
     client_session_id?: unknown;
@@ -85,16 +122,33 @@ export function sessionMarkSeed(session: {
     return client || sessionId || id;
 }
 
+function storedOn<T extends object>(session: T): SessionMark | null {
+    return parseStoredSessionMark((session as { session_mark?: unknown }).session_mark);
+}
+
 /**
- * Assign chips the way the dashboard does: unique seeds, sorted, then claim
- * so two sessions in this set do not share a drawing until every drawing is used.
+ * Marks for a set of sessions. A mark stored on the session wins. Sessions
+ * without one still get a unique fallback drawing.
  */
 export function assignSessionMarks<T extends object>(sessions: T[]): Map<string, SessionMark> {
     const marks = new Map<string, SessionMark>();
-    const pending = [...new Set(sessions.map(sessionMarkSeed).filter(Boolean))]
-        .sort((a, b) => a.localeCompare(b));
+    const taken: SessionMark[] = [];
+    const seeds = new Set<string>();
+    for (const session of sessions) {
+        const seed = sessionMarkSeed(session);
+        if (!seed) continue;
+        seeds.add(seed);
+        const stored = storedOn(session);
+        if (stored && !marks.has(seed)) {
+            marks.set(seed, stored);
+            taken.push(stored);
+        }
+    }
+    const pending = [...seeds].filter((seed) => !marks.has(seed)).sort((a, b) => a.localeCompare(b));
     for (const seed of pending) {
-        marks.set(seed, sessionMarkClaim(seed, [...marks.values()]));
+        const mark = sessionMarkClaim(seed, taken);
+        marks.set(seed, mark);
+        taken.push(mark);
     }
     return marks;
 }
@@ -105,6 +159,6 @@ export function withSessionMark<T extends object>(
 ): T & { session_mark: SessionMark | null } {
     return {
         ...session,
-        session_mark: marks.get(sessionMarkSeed(session)) ?? null,
+        session_mark: storedOn(session) ?? marks.get(sessionMarkSeed(session)) ?? null,
     };
 }

@@ -63,6 +63,8 @@ export interface CreateSessionRequest {
     /** 'path:<cwd>' when the session runs in a linked git worktree; its PR
      * dispositions then stick to the directory instead of the session. */
     pr_scope?: string;
+    /** Glyph and colors the desktop drew for this session. */
+    session_mark?: unknown;
 }
 
 export interface CreateSessionResponse {
@@ -99,6 +101,8 @@ export interface UpdateSessionRequest {
         }>;
         titles?: string[];
     };
+    /** Glyph and colors the desktop drew for this session. */
+    session_mark?: unknown;
 }
 
 export interface UpdateSessionResponse {

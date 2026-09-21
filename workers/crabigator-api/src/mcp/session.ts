@@ -1,6 +1,6 @@
 import type { Env } from '../types/env';
 import type { MobileAuth } from '../types/api';
-import { assignSessionMarks, withSessionMark } from '../session-mark';
+import { assignSessionMarks, parseStoredSessionMark, withSessionMark } from '../session-mark';
 import { mcpSpan } from './log';
 
 export interface McpAuth extends MobileAuth {
@@ -33,6 +33,7 @@ interface SessionMetaRow {
     additions: number | null;
     deletions: number | null;
     pr_scope: string | null;
+    session_mark: string | null;
 }
 
 interface SessionPrRow {
@@ -113,7 +114,8 @@ async function enrichSessionsInner(
 
     const meta = await env.DB.prepare(`
         SELECT id, client_session_id, titles, titles_changed_at, recap,
-               repo_owner, repo_name, branch, uncommitted_files, additions, deletions, pr_scope
+               repo_owner, repo_name, branch, uncommitted_files, additions, deletions, pr_scope,
+               session_mark
         FROM sessions
         WHERE id IN (${placeholders(ids.length)})
     `).bind(...ids).all<SessionMetaRow>();
@@ -151,17 +153,22 @@ async function enrichSessionsInner(
             deletions: row?.deletions || 0,
             pr_scope: row?.pr_scope || session.pr_scope || '',
             prs: prsById.get(id) || [],
+            session_mark: parseStoredSessionMark(row?.session_mark) ?? session.session_mark ?? null,
         };
     });
     const occupancy: object[] = [...merged];
     if (groupId) {
         const siblings = await env.DB.prepare(`
-            SELECT sessions.id, sessions.client_session_id
+            SELECT sessions.id, sessions.client_session_id, sessions.session_mark
             FROM sessions
             JOIN devices ON devices.id = sessions.device_id
             WHERE devices.group_id = ? AND sessions.is_active = 1
-        `).bind(groupId).all<{ id: string; client_session_id: string | null }>();
-        occupancy.push(...(siblings.results || []));
+        `).bind(groupId).all<{ id: string; client_session_id: string | null; session_mark: string | null }>();
+        occupancy.push(...(siblings.results || []).map((row) => ({
+            id: row.id,
+            client_session_id: row.client_session_id,
+            session_mark: parseStoredSessionMark(row.session_mark),
+        })));
     }
     const marks = assignSessionMarks(occupancy);
     return merged.map((session) => withSessionMark(session, marks));

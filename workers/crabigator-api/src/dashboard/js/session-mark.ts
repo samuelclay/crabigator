@@ -53,8 +53,32 @@ export const sessionMarkJs = `
             return (session && (session.client_session_id || session.session_id || session.id)) || '';
         }
 
+        function storedSessionMark(session) {
+            const mark = session && session.session_mark;
+            if (!mark || typeof mark.glyph !== 'string' || !mark.glyph) return null;
+            if (!Array.isArray(mark.bg) || !Array.isArray(mark.fg)) return null;
+            if (mark.bg.length !== 3 || mark.fg.length !== 3) return null;
+            return { glyph: mark.glyph, bg: mark.bg, fg: mark.fg };
+        }
+
+        function sessionForMark(session) {
+            if (storedSessionMark(session)) return session;
+            const id = session && (session.id || session.sessionId || session.session_id);
+            if (!id || typeof allSessions === 'undefined') return session;
+            const listed = allSessions.find(function (item) {
+                return item && (item.id === id || item.session_id === id);
+            });
+            return listed || session;
+        }
+
         function sessionMarkFor(session) {
-            const seed = sessionMarkSeed(session);
+            const record = sessionForMark(session);
+            const stored = storedSessionMark(record);
+            const seed = sessionMarkSeed(record);
+            if (stored) {
+                if (seed) sessionMarkAssigned.set(seed, stored);
+                return stored;
+            }
             if (sessionMarkAssigned.has(seed)) return sessionMarkAssigned.get(seed);
             const mark = sessionMarkClaim(seed, Array.from(sessionMarkAssigned.values()));
             sessionMarkAssigned.set(seed, mark);
@@ -62,7 +86,13 @@ export const sessionMarkJs = `
         }
 
         function claimMarksFor(sessions) {
-            const pending = (sessions || [])
+            const list = sessions || [];
+            for (const session of list) {
+                const stored = storedSessionMark(session);
+                const seed = sessionMarkSeed(session);
+                if (stored && seed) sessionMarkAssigned.set(seed, stored);
+            }
+            const pending = list
                 .filter(session => sessionMarkSeed(session) && !sessionMarkAssigned.has(sessionMarkSeed(session)))
                 .sort((a, b) => sessionMarkSeed(a).localeCompare(sessionMarkSeed(b)));
             for (const session of pending) sessionMarkFor(session);
@@ -70,7 +100,8 @@ export const sessionMarkJs = `
 
         function sessionMarkChipHtml(session) {
             const mark = sessionMarkFor(session);
+            if (!mark) return '';
             return '<span class="session-mark" style="background:rgb(' + mark.bg.join(',')
-                + ');color:rgb(' + mark.fg.join(',') + ')">' + mark.glyph + '</span>';
+                + ');color:rgb(' + mark.fg.join(',') + ')">' + escapeHtml(mark.glyph) + '</span>';
         }
 `;
