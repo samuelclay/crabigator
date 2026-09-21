@@ -3,7 +3,9 @@
 //!
 //! The preferred glyph is hashed from the local crabigator session id, then
 //! walked forward so two live sessions never share a drawing until every
-//! drawing is already in use (more than 30 live sessions).
+//! drawing is already in use (more than 30 live sessions). The chosen mark
+//! is published to the cloud with the session. The dashboard draws that
+//! stored mark instead of picking its own.
 
 use std::collections::HashSet;
 use std::sync::OnceLock;
@@ -42,8 +44,7 @@ struct MarkData {
 fn mark_data() -> &'static MarkData {
     static DATA: OnceLock<MarkData> = OnceLock::new();
     DATA.get_or_init(|| {
-        serde_json::from_str(include_str!("session_mark.json"))
-            .expect("session_mark.json")
+        serde_json::from_str(include_str!("session_mark.json")).expect("session_mark.json")
     })
 }
 
@@ -105,7 +106,10 @@ impl SessionMark {
         let mut mark = Self::claim(session_id, &live_taken_marks(session_id));
         publish_stub(session_id, mark);
         let taken = live_taken_marks(session_id);
-        let used_glyphs = taken.iter().map(|other| other.glyph).collect::<HashSet<_>>();
+        let used_glyphs = taken
+            .iter()
+            .map(|other| other.glyph)
+            .collect::<HashSet<_>>();
         if used_glyphs.contains(mark.glyph) && used_glyphs.len() < glyphs().len() {
             mark = Self::claim(session_id, &taken);
             publish_stub(session_id, mark);
@@ -132,7 +136,10 @@ impl SessionMark {
     fn from_json(value: &serde_json::Value) -> Option<Self> {
         let glyph = value.get("glyph")?.as_str()?;
         Some(Self {
-            glyph: glyphs().iter().map(|item| item.as_str()).find(|item| *item == glyph)?,
+            glyph: glyphs()
+                .iter()
+                .map(|item| item.as_str())
+                .find(|item| *item == glyph)?,
             fg: rgb_array(value.get("fg")?)?,
             bg: rgb_array(value.get("bg")?)?,
         })
@@ -188,7 +195,8 @@ fn inspect_path(session_id: &str) -> std::path::PathBuf {
 }
 
 fn stored_mark(session_id: &str) -> Option<SessionMark> {
-    let data: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(inspect_path(session_id)).ok()?).ok()?;
+    let data: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(inspect_path(session_id)).ok()?).ok()?;
     SessionMark::from_json(data.get("session_mark")?)
 }
 
@@ -212,7 +220,10 @@ fn live_taken_marks(except_session_id: &str) -> Vec<SessionMark> {
         if session_id == except_session_id || !seen.insert(session_id.to_string()) {
             continue;
         }
-        let last_updated = data.get("last_updated").and_then(|value| value.as_f64()).unwrap_or(0.0);
+        let last_updated = data
+            .get("last_updated")
+            .and_then(|value| value.as_f64())
+            .unwrap_or(0.0);
         if now - last_updated > LIVE_SESSION_SECS {
             continue;
         }
@@ -324,7 +335,9 @@ mod tests {
         for index in 0..glyphs().len() {
             let mark = SessionMark::claim(&format!("session-{index}"), &taken);
             assert!(
-                taken.iter().all(|other: &SessionMark| other.glyph != mark.glyph),
+                taken
+                    .iter()
+                    .all(|other: &SessionMark| other.glyph != mark.glyph),
                 "{} collided at {index}",
                 mark.glyph
             );

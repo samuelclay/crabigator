@@ -19,6 +19,7 @@ use super::events::CloudEvent;
 use super::queue::OfflineQueue;
 use super::websocket::{CloudWebSocket, WebSocketHandle};
 use crate::pr_rank::{PrDisposition, ScopedOverrides};
+use crate::session_mark::SessionMark;
 
 /// How often to refresh the group's PR dispositions from the cloud.
 const PR_OVERRIDES_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
@@ -303,6 +304,10 @@ struct UpdateSessionRequest {
     state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<UpdateSessionStats>,
+    /// Glyph and colors this session drew. The dashboard reads this back
+    /// instead of assigning its own chip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_mark: Option<SessionMark>,
 }
 
 /// Cloud connection status for display in the UI
@@ -508,6 +513,7 @@ impl CloudClient {
         cwd: &str,
         platform: &str,
         pr_scope: Option<&str>,
+        session_mark: &SessionMark,
     ) -> Result<String> {
         // Ensure device is registered first
         self.register_device().await?;
@@ -522,6 +528,7 @@ impl CloudClient {
             /// so boards can build worktree-scoped disposition links for it.
             #[serde(skip_serializing_if = "Option::is_none")]
             pr_scope: Option<String>,
+            session_mark: SessionMark,
         }
 
         let request = CreateSessionRequest {
@@ -529,6 +536,7 @@ impl CloudClient {
             cwd: cwd.to_string(),
             platform: platform.to_string(),
             pr_scope: pr_scope.map(str::to_string),
+            session_mark: *session_mark,
         };
 
         let url = format!("{}/sessions", self.api_url);
@@ -570,6 +578,7 @@ impl CloudClient {
             ended_at: None,
             state: Some(state.to_string()),
             stats: None,
+            session_mark: None,
         });
     }
 
@@ -593,6 +602,17 @@ impl CloudClient {
                 model,
                 ..Default::default()
             }),
+            session_mark: None,
+        });
+    }
+
+    /// Store this session's identity chip. Safe to repeat: the value does not change.
+    pub fn spawn_update_session_mark(&self, session_mark: SessionMark) {
+        self.spawn_session_update(UpdateSessionRequest {
+            ended_at: None,
+            state: None,
+            stats: None,
+            session_mark: Some(session_mark),
         });
     }
 
@@ -944,6 +964,7 @@ impl CloudClient {
             ended_at: None,
             state: Some(state.to_string()),
             stats: None,
+            session_mark: None,
         })
         .await
     }
@@ -969,6 +990,7 @@ impl CloudClient {
                 model,
                 ..Default::default()
             }),
+            session_mark: None,
         })
         .await
     }
@@ -1010,6 +1032,7 @@ impl CloudClient {
                 event_history: (!event_history.is_empty()).then_some(event_history),
                 titles: (!title_history.is_empty()).then(|| title_history.to_vec()),
             }),
+            session_mark: None,
         })
         .await
     }

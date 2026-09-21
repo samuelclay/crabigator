@@ -508,10 +508,17 @@ impl App {
         cwd: String,
         platform: String,
         pr_scope: Option<String>,
+        session_mark: SessionMark,
     ) -> anyhow::Result<CloudClient> {
         let mut client = CloudClient::new()?;
         client
-            .register_session(&session_id, &cwd, &platform, pr_scope.as_deref())
+            .register_session(
+                &session_id,
+                &cwd,
+                &platform,
+                pr_scope.as_deref(),
+                &session_mark,
+            )
             .await?;
         Ok(client)
     }
@@ -524,9 +531,11 @@ impl App {
         let cwd = self.cwd.to_string_lossy().to_string();
         let platform = self.platform.kind().as_str().to_string();
         let pr_scope = self.pr_path_scope.clone();
+        let session_mark = self.session_mark;
         let (tx, rx) = oneshot::channel();
         tokio::spawn(async move {
-            let result = Self::init_cloud_client(session_id, cwd, platform, pr_scope).await;
+            let result =
+                Self::init_cloud_client(session_id, cwd, platform, pr_scope, session_mark).await;
             let _ = tx.send(result);
         });
         self.pending_cloud_init = Some(rx);
@@ -537,6 +546,9 @@ impl App {
     fn adopt_cloud_client(&mut self, client: CloudClient) {
         self.cloud_client = Some(client);
         self.link_cloud_session();
+        if let Some(ref cloud) = self.cloud_client {
+            cloud.spawn_update_session_mark(self.session_mark);
+        }
         self.cloud_init_retry_count = 0;
         // The state goes out with the connection sync in
         // maybe_send_initial_scrollback, the same path a reconnect uses.
