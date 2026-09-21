@@ -233,12 +233,61 @@ fn spawn_in_ghostty(
     platform: &str,
     window_id: Option<&str>,
 ) -> Result<()> {
+    // Ghostty 1.3.1 builds the Metal surface as soon as the window exists.
+    // With every display asleep, CoreVideo reports zero displays
+    // (`CVDisplayLinkCreateWithCGDisplays` error -6661) and the new window
+    // stays on the "terminal failed to initialize" screen. Wait until a
+    // display can draw, then create the window.
+    wait_for_drawable_display();
+
     let script = ghostty_spawn_script(cwd, binary, platform, window_id);
     let output = run_osascript(&script).context("Failed to spawn Ghostty tab via AppleScript")?;
     if output.trim().is_empty() {
         bail!("Ghostty did not create a tab");
     }
     Ok(())
+}
+
+/// True when macOS has no drawable display. That is the state Ghostty 1.3.1
+/// cannot open a terminal in.
+#[cfg(target_os = "macos")]
+fn display_is_asleep() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGGetActiveDisplayList(
+            max_displays: u32,
+            active_displays: *mut u32,
+            display_count: *mut u32,
+        ) -> i32;
+    }
+
+    let mut count = 0u32;
+    let err = unsafe { CGGetActiveDisplayList(0, std::ptr::null_mut(), &mut count) };
+    err != 0 || count == 0
+}
+
+/// Poll until `asleep` is false. `pause` runs between checks.
+#[cfg(any(test, target_os = "macos"))]
+fn wait_while_asleep(mut asleep: impl FnMut() -> bool, mut pause: impl FnMut()) {
+    if !asleep() {
+        return;
+    }
+    while asleep() {
+        pause();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_drawable_display() {
+    if !display_is_asleep() {
+        return;
+    }
+    eprintln!(
+        "The Mac display is asleep, so Ghostty cannot start a new terminal. Waiting until the display wakes."
+    );
+    wait_while_asleep(display_is_asleep, || {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -319,5 +368,26 @@ mod tests {
     fn detect_terminal_honors_config_override() {
         assert_eq!(detect_terminal(Some("ghostty")), TerminalApp::Ghostty);
         assert_eq!(detect_terminal(Some("terminal")), TerminalApp::Terminal);
+    }
+
+    #[test]
+    fn wait_while_asleep_returns_immediately_when_awake() {
+        let mut pauses = 0;
+        wait_while_asleep(|| false, || pauses += 1);
+        assert_eq!(pauses, 0);
+    }
+
+    #[test]
+    fn wait_while_asleep_pauses_until_the_display_wakes() {
+        let mut checks = 0;
+        let mut pauses = 0;
+        wait_while_asleep(
+            || {
+                checks += 1;
+                checks < 3
+            },
+            || pauses += 1,
+        );
+        assert_eq!(pauses, 1);
     }
 }
