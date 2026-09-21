@@ -635,6 +635,47 @@ export const styleJs = `
             });
         }
 
+        // The session opened from this page. Kept until its card appears so
+        // the list can scroll to it instead of staying put.
+        let pendingSpawnScroll = null;
+
+        function rememberSpawnScroll(cwd, platform) {
+            pendingSpawnScroll = {
+                cwd: cwd || '',
+                platform: platform || '',
+                requestedAt: Date.now(),
+            };
+        }
+
+        function takeSpawnedSession(session) {
+            const pending = pendingSpawnScroll;
+            if (!pending || !session || !session.id) return false;
+            if (Date.now() - pending.requestedAt > 3 * 60 * 1000) {
+                pendingSpawnScroll = null;
+                return false;
+            }
+            if ((session.cwd || '') !== pending.cwd) return false;
+            if (pending.platform && session.platform && session.platform !== pending.platform) return false;
+            pendingSpawnScroll = null;
+            return true;
+        }
+
+        function scrollToSpawnedSession(sessionId) {
+            // Adding the card restores the previous scroll position, including
+            // on the next two frames. Move to the new session after that.
+            const go = () => {
+                if (typeof scrollToSession === 'function') scrollToSession(sessionId);
+                const item = document.querySelector('.sidebar .session-item[data-session-id="' + sessionId + '"]');
+                if (item) item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            };
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(go);
+                });
+            });
+            setTimeout(go, 600);
+        }
+
         function spawnSessionFromMenu(btn, platform) {
             const cwd = btn.closest('.project-group')?.dataset.project;
             closeSpawnMenus();
@@ -642,6 +683,7 @@ export const styleJs = `
         }
 
         async function spawnSession(cwd, platform) {
+            rememberSpawnScroll(cwd, platform);
             const spawnUrl = 'crabigator://spawn?cwd=' + encodeURIComponent(cwd)
                 + (platform ? '&platform=' + encodeURIComponent(platform) : '');
             try {
@@ -655,7 +697,8 @@ export const styleJs = `
                     window.location.href = data.url;
                     return;
                 }
-                if (!resp.ok) {
+                if (!resp.ok && data.fallback !== 'url_scheme') {
+                    pendingSpawnScroll = null;
                     console.error('Spawn failed:', data.error || resp.statusText);
                 }
             } catch (err) {

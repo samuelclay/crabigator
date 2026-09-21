@@ -100,6 +100,7 @@ export const sessionJs = `
             const container = document.getElementById('sessions');
             if (!container) return;
 
+            let spawnedId = null;
             preservePageScroll(() => {
                 const renderableSessions = getRenderableSessions(allSessions);
                 const renderableIds = new Set(renderableSessions.map(session => session.id));
@@ -149,6 +150,9 @@ export const sessionJs = `
                         createSessionCard(session);
                         connectToSession(session.id);
                         needsRerender = true;
+                        if (typeof takeSpawnedSession === 'function' && takeSpawnedSession(session)) {
+                            spawnedId = session.id;
+                        }
                     } else {
                         const sessionData = sessions.get(session.id);
                         const previousCwd = sessionData?.cwd || null;
@@ -183,6 +187,9 @@ export const sessionJs = `
                     rerenderSessions();
                 }
             });
+            if (spawnedId && typeof scrollToSpawnedSession === 'function') {
+                scrollToSpawnedSession(spawnedId);
+            }
         }
 
         async function loadSessions() {
@@ -305,10 +312,14 @@ export const sessionJs = `
                 updateFitLayout();
 
                 // Add/update sessions
+                let spawnedId = null;
                 for (const session of filteredSessions) {
                     if (!sessions.has(session.id)) {
                         createSessionCard(session);
                         connectToSession(session.id);
+                        if (typeof takeSpawnedSession === 'function' && takeSpawnedSession(session)) {
+                            spawnedId = session.id;
+                        }
                     } else {
                         updateSessionHeader(session);
                         const ws = sessions.get(session.id)?.eventSocket;
@@ -323,7 +334,9 @@ export const sessionJs = `
                     rerenderSessions();
                 }
                 restorePagePosition();
-                if (restoreViewedSessionAfterLoad) {
+                if (spawnedId && typeof scrollToSpawnedSession === 'function') {
+                    scrollToSpawnedSession(spawnedId);
+                } else if (restoreViewedSessionAfterLoad) {
                     restoreLastViewedSession();
                 }
             } catch (err) {
