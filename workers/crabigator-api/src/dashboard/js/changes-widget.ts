@@ -613,30 +613,31 @@ export const changesWidgetJs = `
                 + '" target="_blank" rel="noopener">' + ident + '</a>';
         }
 
-        // Session title with the chip on top; purple #N: title under it,
-        // matching the PR board. The PR takes the top row when there is no
-        // session title of its own.
+        // Titles on the left. The identity chip sits by itself on the right
+        // edge so it stays easy to find. The PR takes the top row when there
+        // is no session title of its own.
         function renderChangesSessionTitles(sessionData) {
             const hierarchy = sessionTitleHierarchy(sessionData);
             const primaryPr = primaryPrForSession(sessionData);
             const sessionTitle = hierarchy.hasOfficial ? hierarchy.generated : hierarchy.main;
-            let chip = sessionData ? sessionMarkChipHtml(sessionData) : '';
+            const chip = sessionData ? sessionMarkChipHtml(sessionData) : '';
 
-            let rows = '';
+            let titles = '';
             if (sessionTitle) {
-                rows += '<div class="changes-generated-title">'
-                    + chip
-                    + '<span>' + escapeHtml(sessionTitle) + '</span>'
-                    + '</div>';
-                chip = '';
+                titles += '<div class="changes-generated-title"><span>'
+                    + escapeHtml(sessionTitle) + '</span></div>';
             }
             if (primaryPr) {
-                rows += '<div class="changes-pr-title">'
-                    + chip
+                titles += '<div class="changes-pr-title">'
                     + officialChangesTitleHtml(primaryPr)
                     + '</div>';
             }
-            return rows ? '<div class="changes-session-titles">' + rows + '</div>' : '';
+            if (!titles) return '';
+            const mark = chip
+                ? '<div class="changes-session-mark">' + chip + '</div>'
+                : '';
+            return '<div class="changes-session-titles"><div class="changes-title-stack">'
+                + titles + '</div>' + mark + '</div>';
         }
 
         function stripGeneratedTitleMarker(title) {

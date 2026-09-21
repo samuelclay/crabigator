@@ -188,10 +188,21 @@ export const widgetsCss = `
 
 .changes-session-titles {
     display: flex;
-    flex-direction: column;
-    gap: 3px;
+    flex-direction: row;
+    align-items: center;
+    gap: 16px;
     margin-bottom: 10px;
     min-width: 0;
+}
+.changes-title-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+.changes-session-mark {
+    flex: 0 0 auto;
 }
 .changes-pr-title,
 .changes-generated-title {
@@ -206,6 +217,7 @@ export const widgetsCss = `
 }
 .changes-pr-title > :last-child,
 .changes-generated-title > :last-child {
+    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
