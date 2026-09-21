@@ -6,7 +6,7 @@
 //!
 //! Banners render above the widget row and disappear when no longer needed.
 
-use std::io::{Stdout, Write};
+use std::io::Write;
 
 use anyhow::Result;
 
@@ -93,7 +93,7 @@ impl PairingState {
     }
 }
 
-fn draw_pairing_top_border(stdout: &mut Stdout, row: u16, width: u16) -> Result<()> {
+fn draw_pairing_top_border(stdout: &mut dyn Write, row: u16, width: u16) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(row, 1))?;
     write!(stdout, "{}{}", bg(color::BG_DARK), fg(color::DARK_GRAY))?;
     for _ in 0..width {
@@ -104,7 +104,7 @@ fn draw_pairing_top_border(stdout: &mut Stdout, row: u16, width: u16) -> Result<
 }
 
 fn draw_pairing_toast_row(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     row: u16,
     width: u16,
     device_name: &str,
@@ -127,7 +127,12 @@ fn draw_pairing_toast_row(
     Ok(())
 }
 
-fn draw_pairing_content_row(stdout: &mut Stdout, row: u16, width: u16, code: &str) -> Result<()> {
+fn draw_pairing_content_row(
+    stdout: &mut dyn Write,
+    row: u16,
+    width: u16,
+    code: &str,
+) -> Result<()> {
     let endpoints = crate::cloud::CloudEndpoints::load().unwrap_or_default();
     let url = endpoints.dashboard_setup_url(code);
     let dashboard_url = endpoints.dashboard_url();
@@ -179,7 +184,7 @@ fn draw_pairing_content_row(stdout: &mut Stdout, row: u16, width: u16, code: &st
 /// Draw the full-width pairing banner
 /// Returns the number of rows consumed (0, 1, or 2)
 pub fn draw_pairing_banner(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     row: u16,
     width: u16,
     state: &PairingState,
@@ -218,7 +223,7 @@ pub fn draw_pairing_banner(
 /// Draw the full-width update banner
 /// Returns the number of rows consumed (0 or 1)
 pub fn draw_update_banner(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     row: u16,
     width: u16,
     state: &UpdateState,

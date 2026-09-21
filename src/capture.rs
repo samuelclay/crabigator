@@ -106,6 +106,18 @@ pub fn screen_to_string(screen: &vt100::Screen) -> String {
     String::from_utf8_lossy(&content).to_string()
 }
 
+/// `row col` when the child is showing a cursor, or empty when it is hidden.
+///
+/// The attach view reads this beside `screen.txt`. Row and column are the
+/// vt100 screen's, starting at 0.
+pub fn cursor_record(screen: &vt100::Screen) -> String {
+    if screen.hide_cursor() {
+        return String::new();
+    }
+    let (row, col) = screen.cursor_position();
+    format!("{row} {col}\n")
+}
+
 impl CaptureManager {
     /// Create a new CaptureManager.
     ///
@@ -384,9 +396,21 @@ impl CaptureManager {
         let tmp_path = self.capture_dir.join("screen.txt.tmp");
         fs::write(&tmp_path, content)?;
         fs::rename(&tmp_path, &screen_path)?;
+        let cursor_path = self.capture_dir.join("cursor.txt");
+        let cursor_tmp = self.capture_dir.join("cursor.txt.tmp");
+        fs::write(&cursor_tmp, cursor_record(screen))?;
+        fs::rename(&cursor_tmp, &cursor_path)?;
 
         self.last_screen_update = Instant::now();
         Ok(contents)
+    }
+
+    /// Session directory when capture is on. The attach socket lives here.
+    pub fn mirror_dir(&self) -> Option<&std::path::Path> {
+        self.config
+            .enabled
+            .then_some(self.capture_dir.as_path())
+            .filter(|dir| !dir.as_os_str().is_empty())
     }
 
     /// Capture directory for debug dumps. Only called from debug builds.
@@ -406,5 +430,23 @@ impl CaptureManager {
         if self.config.enabled && self.capture_dir.exists() {
             let _ = fs::remove_dir_all(&self.capture_dir);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cursor_record;
+
+    #[test]
+    fn cursor_record_follows_the_visible_cell() {
+        let mut parser = vt100::Parser::new(5, 20, 0);
+        parser.process(b"hi");
+        assert_eq!(cursor_record(parser.screen()), "0 2\n");
+
+        parser.process(b"\x1b[?25l");
+        assert_eq!(cursor_record(parser.screen()), "");
+
+        parser.process(b"\x1b[?25h");
+        assert_eq!(cursor_record(parser.screen()), "0 2\n");
     }
 }

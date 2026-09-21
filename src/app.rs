@@ -306,6 +306,8 @@ pub struct App {
     pending_update_check: Option<oneshot::Receiver<UpdateCheckResult>>,
     /// Last time assistant directory evidence was checked
     last_cwd_detection: Instant,
+    /// Attach clients currently connected to this session's socket.
+    attach_clients: usize,
 }
 
 impl App {
@@ -460,6 +462,7 @@ impl App {
             pending_pairing_init: None,
             pending_update_check,
             last_cwd_detection: Instant::now() - CWD_DETECTION_INTERVAL,
+            attach_clients: 0,
         };
         // Cloud registration is three network round trips; run it in the
         // background so the assistant's first screen never waits on it.
@@ -781,6 +784,18 @@ impl App {
         let mut profiled_prompt_visible = profiled_first_pty_write;
         crate::cli::profile_mark("run: main loop started");
 
+        // Local attach socket. Held until run() returns so the file is removed
+        // even when the capture directory cleanup does not run.
+        let attach_serve = self
+            .capture_manager
+            .mirror_dir()
+            .and_then(crate::attach::serve);
+        let (mut attach_rx, _attach_socket) = match attach_serve {
+            Some((rx, guard)) => (Some(rx), Some(guard)),
+            None => (None, None),
+        };
+        let mut attach_live = attach_rx.is_some();
+
         // Event-driven main loop using tokio::select!
         // This replaces the polling loop - we only wake up when something actually happens
         loop {
@@ -857,15 +872,7 @@ impl App {
                             // crossterm strips the paste markers when parsing Event::Paste,
                             // so re-emit them before forwarding — Claude Code's image-drop
                             // detection only fires on bracketed paste content.
-                            use crate::terminal::escape::{BRACKETED_PASTE_END, BRACKETED_PASTE_START};
-                            let mut buf = Vec::with_capacity(
-                                text.len() + BRACKETED_PASTE_START.len() + BRACKETED_PASTE_END.len(),
-                            );
-                            buf.extend_from_slice(BRACKETED_PASTE_START);
-                            buf.extend_from_slice(text.as_bytes());
-                            buf.extend_from_slice(BRACKETED_PASTE_END);
-                            self.platform.note_user_input();
-                            self.platform_pty.write(&buf)?;
+                            self.inject_bracketed_paste(&text)?;
                         }
                         Ok(Event::Mouse(mouse)) => {
                             self.last_mouse_event = Some(mouse);
@@ -1127,6 +1134,36 @@ impl App {
                             self.send_cloud_screen_event(contents);
                             sent_initial_screen = true;
                         }
+                    }
+                }
+
+                // Keystrokes from a PR-board attach view. One wake can carry
+                // a short burst; drain it so a paste is not stuck behind the
+                // next timer.
+                event = async {
+                    match attach_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                }, if attach_live => {
+                    if let Some(first) = event {
+                        self.apply_attach_event(first).await?;
+                        if let Some(rx) = attach_rx.as_mut() {
+                            loop {
+                                match rx.try_recv() {
+                                    Ok(more) => self.apply_attach_event(more).await?,
+                                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                                    Err(
+                                        tokio::sync::mpsc::error::TryRecvError::Disconnected,
+                                    ) => {
+                                        attach_live = false;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        attach_live = false;
                     }
                 }
 
@@ -1404,6 +1441,7 @@ impl App {
             self.pty_rows.hash(&mut hasher);
             self.total_cols.hash(&mut hasher);
             self.status_rows.hash(&mut hasher);
+            self.attach_clients.hash(&mut hasher);
 
             // Session stats (key fields that affect display)
             // Use discriminant for enum since SessionState doesn't impl Hash
@@ -1541,6 +1579,7 @@ impl App {
             &self.cooldowns,
             now_ms,
             self.session_mark,
+            self.attach_clients > 0,
         )?;
 
         // The transcript path arrives with the first hook/session event, so keep
@@ -1978,6 +2017,38 @@ impl App {
             self.send_cloud_stats_update(); // DB update — keep this for session records
         }
 
+        Ok(())
+    }
+
+    /// Apply one frame from the attach socket on the local keyboard path.
+    async fn apply_attach_event(&mut self, event: crate::attach::AttachEvent) -> Result<()> {
+        use crate::attach::{key_event_from_frame, next_client_count, AttachEvent, AttachFrame};
+
+        if let Some(count) = next_client_count(self.attach_clients, &event) {
+            self.attach_clients = count;
+            self.draw_status_bar()?;
+        }
+        if let AttachEvent::Input(frame) = event {
+            if let Some(key) = key_event_from_frame(&frame) {
+                self.handle_key_event(key).await?;
+            } else if let AttachFrame::Paste { text } = frame {
+                self.inject_bracketed_paste(&text)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Forward a paste the way a local bracketed paste reaches the agent.
+    fn inject_bracketed_paste(&mut self, text: &str) -> Result<()> {
+        use crate::terminal::escape::{BRACKETED_PASTE_END, BRACKETED_PASTE_START};
+        let mut buf = Vec::with_capacity(
+            text.len() + BRACKETED_PASTE_START.len() + BRACKETED_PASTE_END.len(),
+        );
+        buf.extend_from_slice(BRACKETED_PASTE_START);
+        buf.extend_from_slice(text.as_bytes());
+        buf.extend_from_slice(BRACKETED_PASTE_END);
+        self.platform.note_user_input();
+        self.platform_pty.write(&buf)?;
         Ok(())
     }
 

@@ -2,7 +2,7 @@
 //!
 //! Coordinates the layout and rendering of all status bar widgets.
 
-use std::io::{Stdout, Write};
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::Result;
@@ -172,7 +172,7 @@ pub fn compute_dynamic_status_rows(
 /// our vt100 parser doesn't track those, so DSR responses would be wrong.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_status_bar(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     layout: &Layout,
     session_stats: &SessionStats,
     git_state: &GitState,
@@ -192,6 +192,7 @@ pub fn draw_status_bar(
     cooldowns: &Cooldowns,
     now_ms: u64,
     session_mark: SessionMark,
+    secondary_attached: bool,
 ) -> Result<()> {
     // Begin synchronized update - terminal batches all our drawing
     // so cursor movements don't interfere with Claude's incremental updates
@@ -340,6 +341,7 @@ pub fn draw_status_bar(
             is_paired,
             pairing_state.pairing_code.as_deref(),
             state_tint,
+            secondary_attached,
         )?;
 
         // Separator

@@ -2,7 +2,7 @@
 //!
 //! Shows session state, duration, messages, tool calls, compressions, and cloud status.
 
-use std::io::{Stdout, Write};
+use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -172,14 +172,16 @@ pub fn stats_render_rows(available_rows: u16, stats: &SessionStats) -> u16 {
 }
 
 /// Draw the stats widget at the given position
+#[allow(clippy::too_many_arguments)]
 pub fn draw_stats_widget(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     area: WidgetArea,
     stats: &SessionStats,
     cloud_status: Option<&CloudStatus>,
     is_paired: bool,
     pairing_code: Option<&str>,
     state_tint: Option<Tint>,
+    secondary_attached: bool,
 ) -> Result<()> {
     write!(
         stdout,
@@ -204,6 +206,7 @@ pub fn draw_stats_widget(
             is_paired,
             pairing_code,
             state_tint,
+            secondary_attached,
         )
     } else {
         draw_normal_row(
@@ -214,6 +217,7 @@ pub fn draw_stats_widget(
             is_paired,
             pairing_code,
             state_tint,
+            secondary_attached,
         )
     };
 
@@ -433,7 +437,71 @@ fn compact_columns(left: String, right: String, width: usize) -> String {
     )
 }
 
+/// Amber chip shown while another terminal is attached to this session.
+fn secondary_chip() -> String {
+    format!(
+        "{}{} secondary {}",
+        bg(color::YELLOW),
+        fg(color::BLACK),
+        RESET
+    )
+}
+
+/// One session cell, exactly `width` columns when the pieces fit.
+///
+/// The amber chip wins over the work timer: a narrow stats column keeps
+/// `Session` and `secondary` and drops `just now`.
+fn session_metric(secondary_attached: bool, value: &str, width: usize) -> String {
+    let full = format!("{}◉ Session{}", fg(color::GRAY), RESET);
+    let short = format!("{}◉ Sess{}", fg(color::GRAY), RESET);
+    let icon = format!("{}◉{}", fg(color::GRAY), RESET);
+    let bases = [full, short, icon];
+    let chip = secondary_chip();
+    let value_len = strip_ansi_len(value);
+
+    let place = |label: &str, with_value: bool| -> String {
+        let label_len = strip_ansi_len(label);
+        let used = if with_value { value_len } else { 0 };
+        let gap = width.saturating_sub(label_len + used);
+        if with_value {
+            format!("{label}{empty:gap$}{value}", empty = "")
+        } else {
+            format!("{label}{empty:gap$}", empty = "")
+        }
+    };
+    let fits = |label: &str, with_value: bool| -> bool {
+        let label_len = strip_ansi_len(label);
+        if with_value {
+            value.is_empty() || label_len + 1 + value_len <= width
+        } else {
+            label_len <= width
+        }
+    };
+
+    if secondary_attached {
+        // Keep the longest "Session" wording. The timer is dropped before
+        // the word is shortened, so a narrow column still reads as secondary.
+        for base in &bases {
+            let label = format!("{base}{chip}");
+            if fits(&label, true) {
+                return place(&label, true);
+            }
+            if fits(&label, false) {
+                return place(&label, false);
+            }
+        }
+    }
+    for base in &bases {
+        if fits(base, true) {
+            return place(base, true);
+        }
+    }
+    let label = bases.last().map(String::as_str).unwrap_or("");
+    place(label, true)
+}
+
 /// Draw a row in compact mode (two metrics per row, each with label and value)
+#[allow(clippy::too_many_arguments)]
 fn draw_compact_row(
     row: u16,
     width: u16,
@@ -442,6 +510,7 @@ fn draw_compact_row(
     is_paired: bool,
     pairing_code: Option<&str>,
     state_tint: Option<Tint>,
+    secondary_attached: bool,
 ) -> String {
     let content_width = (width as usize).saturating_sub(1);
     let left_width = content_width / 2;
@@ -463,13 +532,8 @@ fn draw_compact_row(
             format!("{}{:gap$}{}", header, "", state, gap = gap)
         }
         2 => {
-            let session_labels = [
-                format!("{}◉ Session{}", fg(color::GRAY), RESET),
-                format!("{}◉ Sess{}", fg(color::GRAY), RESET),
-                format!("{}◉{}", fg(color::GRAY), RESET),
-            ];
             let session_value = format!("{}{}{}", fg(color::BLUE), stats.format_work(), RESET);
-            let session = compact_metric_cell(&session_labels, &session_value, left_width);
+            let session = session_metric(secondary_attached, &session_value, left_width);
 
             let thinking_val = stats.format_thinking().unwrap_or_else(|| "—".to_string());
             let thinking_labels = [
@@ -532,6 +596,7 @@ fn draw_compact_row(
 }
 
 /// Draw a row in normal mode (full labels, single column)
+#[allow(clippy::too_many_arguments)]
 fn draw_normal_row(
     row: u16,
     width: u16,
@@ -540,6 +605,7 @@ fn draw_normal_row(
     is_paired: bool,
     pairing_code: Option<&str>,
     state_tint: Option<Tint>,
+    secondary_attached: bool,
 ) -> String {
     match row {
         1 => {
@@ -557,13 +623,11 @@ fn draw_normal_row(
             format!("{}{:gap$}{}", header, "", state, gap = gap)
         }
         2 => {
-            // Session/work time (right-aligned)
-            let label = format!("{}◉ Session{}", fg(color::GRAY), RESET);
+            // Session/work time. A connected attach view adds an amber
+            // "secondary" chip beside the label, dropping the timer if the
+            // column is too narrow for both.
             let value = format!("{}{}{}", fg(color::BLUE), stats.format_work(), RESET);
-            let label_len = strip_ansi_len(&label);
-            let value_len = strip_ansi_len(&value);
-            let gap = (width as usize).saturating_sub(label_len + value_len);
-            format!("{}{:gap$}{}", label, "", value, gap = gap)
+            session_metric(secondary_attached, &value, width as usize)
         }
         3 => {
             // Thinking time (always show, with dash when no thinking yet)
@@ -720,9 +784,9 @@ mod tests {
         let stats = SessionStats::default();
         let width = 70;
 
-        let first = draw_compact_row(2, width, &stats, None, false, None, None);
-        let second = draw_compact_row(3, width, &stats, None, false, None, None);
-        let third = draw_compact_row(4, width, &stats, None, false, None, None);
+        let first = draw_compact_row(2, width, &stats, None, false, None, None, false);
+        let second = draw_compact_row(3, width, &stats, None, false, None, None, false);
+        let third = draw_compact_row(4, width, &stats, None, false, None, None, false);
 
         assert!(first.contains("◉"));
         assert!(first.contains("Session"));
@@ -740,10 +804,37 @@ mod tests {
     #[test]
     fn session_row_keeps_the_session_word() {
         let stats = SessionStats::default();
-        let row = draw_normal_row(2, 32, &stats, None, false, None, None);
+        let row = draw_normal_row(2, 32, &stats, None, false, None, None, false);
         assert!(row.contains("◉"));
         assert!(row.contains("Session"));
+        assert!(!row.contains("secondary"));
         assert_eq!(visible(&row), 32);
+    }
+
+    #[test]
+    fn secondary_chip_sits_beside_the_session_label() {
+        let stats = SessionStats::default();
+
+        let background = bg(color::YELLOW);
+        let normal = draw_normal_row(2, 40, &stats, None, false, None, None, true);
+        assert!(normal.contains("Session"));
+        assert!(normal.contains("secondary"));
+        assert!(normal.contains(&background));
+        assert_eq!(visible(&normal), 40);
+
+        let compact = draw_compact_row(2, 70, &stats, None, false, None, None, true);
+        assert!(compact.contains("Session"));
+        assert!(compact.contains("secondary"));
+        assert!(compact.contains(&background));
+        assert_eq!(visible(&compact), 70);
+
+        // The stats column on a normal terminal is about this wide. The chip
+        // stays, and the work timer gives up its space.
+        let narrow = draw_normal_row(2, 24, &stats, None, false, None, None, true);
+        assert!(narrow.contains("Session"));
+        assert!(narrow.contains("secondary"));
+        assert!(!narrow.contains("just now"));
+        assert_eq!(visible(&narrow), 24);
     }
 
     #[test]

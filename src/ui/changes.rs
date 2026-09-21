@@ -3,7 +3,7 @@
 //! Shows parsed semantic changes (functions, classes, etc.) from git diffs,
 //! organized by programming language with per-change line stats.
 
-use std::io::{Stdout, Write};
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::Result;
@@ -166,7 +166,7 @@ fn slack_row_count(threads: &[SlackThread]) -> u16 {
 /// Draw the changes widget at the given position
 #[allow(clippy::too_many_arguments)]
 pub fn draw_changes_widget(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     area: WidgetArea,
     diff_summary: &DiffSummary,
     titles: SessionTitleHierarchy<'_>,
@@ -357,7 +357,7 @@ fn format_official_title_row(pr: &SessionPr, width: usize, mark: Option<SessionM
     format!("{}{}{}{}", prefix, fg(color::PURPLE), body, RESET)
 }
 
-fn write_padded_row(stdout: &mut Stdout, content: &str, width: usize) -> Result<()> {
+fn write_padded_row(stdout: &mut dyn Write, content: &str, width: usize) -> Result<()> {
     let pad = width.saturating_sub(strip_ansi_len(content));
     write!(stdout, "{}{:pad$} ", content, "", pad = pad)?;
     Ok(())

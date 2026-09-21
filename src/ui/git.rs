@@ -3,7 +3,7 @@
 //! Shows branch name and file status with change bars.
 //! Automatically uses multiple columns when there are more files than rows.
 
-use std::io::{Stdout, Write};
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::Result;
@@ -105,7 +105,7 @@ pub fn git_natural_rows(git_state: &GitState, available_width: u16) -> u16 {
 
 /// Draw the git widget at the given position
 pub fn draw_git_widget(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     area: WidgetArea,
     git_state: &GitState,
     ide: IdeKind,

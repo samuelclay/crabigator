@@ -3,7 +3,7 @@
 //! This area is reserved for setup prompts, update notices, and the latest
 //! automatic recap. It sits between the assistant PTY and the status widgets.
 
-use std::io::{Stdout, Write};
+use std::io::Write;
 
 use anyhow::Result;
 
@@ -47,7 +47,7 @@ pub fn pr_separator_rows(prs: &[SessionPr]) -> u16 {
 }
 
 /// Draw a subtle inset rule between recap content and the PR table.
-pub fn draw_pr_separator(stdout: &mut Stdout, row: u16, width: u16) -> Result<()> {
+pub fn draw_pr_separator(stdout: &mut dyn Write, row: u16, width: u16) -> Result<()> {
     fill_row(stdout, row, width)?;
     write!(
         stdout,
@@ -81,7 +81,7 @@ fn pr_separator_rule_width(width: u16) -> usize {
 /// one-space rhythm. The table leaves one cell at the right window edge.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_pr_handoff(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     row: u16,
     width: u16,
     prs: &[SessionPr],
@@ -112,7 +112,7 @@ pub fn draw_pr_handoff(
 }
 
 pub fn draw_recap_handoff(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     row: u16,
     width: u16,
     recap: &RecapState,
@@ -193,7 +193,7 @@ fn recap_toast_fits(width: u16) -> bool {
 /// - **Compact** (≥47 cols): just the two commands.
 ///
 /// Returns 1 row consumed when rendered, 0 if even the compact tier won't fit.
-fn draw_recap_hint(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
+fn draw_recap_hint(stdout: &mut dyn Write, row: u16, width: u16) -> Result<u16> {
     const VERBOSE_VISIBLE: usize = 74;
     const FULL_VISIBLE: usize = 62;
     let usable = width as usize;
@@ -237,7 +237,7 @@ fn draw_recap_hint(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
 
 /// One-line "✓ Per-turn AI recaps enabled" toast, painted on the dark recap
 /// background. Two width tiers; returns 0 if even the compact tier won't fit.
-fn draw_recap_toast(stdout: &mut Stdout, row: u16, width: u16) -> Result<u16> {
+fn draw_recap_toast(stdout: &mut dyn Write, row: u16, width: u16) -> Result<u16> {
     const FULL_VISIBLE: usize = 28;
     let usable = width as usize;
     let check = format!("{}✓{}", fg(color::GREEN), RESET_FG);
@@ -365,7 +365,7 @@ fn latest_recap_rows(width: u16, available_rows: u16, recap: &RecapState) -> u16
 }
 
 fn draw_latest_recap(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     row: u16,
     width: u16,
     available_rows: u16,
@@ -400,7 +400,7 @@ fn draw_latest_recap(
 /// the number of rows actually consumed (capped at `available_rows`).
 #[allow(clippy::too_many_arguments)]
 fn draw_wrapped(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     row: u16,
     width: u16,
     available_rows: u16,
@@ -479,7 +479,7 @@ fn wrapped_lines(
 }
 
 fn draw_recap_failure(
-    stdout: &mut Stdout,
+    stdout: &mut dyn Write,
     row: u16,
     width: u16,
     available_rows: u16,
@@ -539,7 +539,7 @@ fn extract_friendly_error(error: &str) -> String {
     cleaned
 }
 
-fn write_failure_line(stdout: &mut Stdout, width: u16, prefix: &str, body: &str) -> Result<()> {
+fn write_failure_line(stdout: &mut dyn Write, width: u16, prefix: &str, body: &str) -> Result<()> {
     let prefix_width = crate::ui::utils::strip_ansi_len(prefix);
     let body_width = (width as usize).saturating_sub(prefix_width).max(1);
     let body = truncate_to_width(body, body_width);
@@ -582,7 +582,7 @@ fn format_recap_meta(generated_at_ms: u64, delta: Option<String>) -> Option<Stri
     }
 }
 
-fn fill_row(stdout: &mut Stdout, row: u16, width: u16) -> Result<()> {
+fn fill_row(stdout: &mut dyn Write, row: u16, width: u16) -> Result<()> {
     write!(stdout, "{}", escape::cursor_to(row, 1))?;
     write!(stdout, "{}", bg(color::BG_DARK))?;
     for _ in 0..width {

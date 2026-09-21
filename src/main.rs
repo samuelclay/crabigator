@@ -1,4 +1,5 @@
 mod app;
+mod attach;
 mod banner;
 mod capture;
 mod cli;
