@@ -5350,6 +5350,7 @@ mod tests {
         assert!(styled.contains(&format!("{UNDERLINE}a{RESET_UNDERLINE}ll ages")));
         assert!(styled.contains(&format!("{UNDERLINE}↑↓{RESET_UNDERLINE} select")));
         assert!(styled.contains(&format!("{UNDERLINE}⏎{RESET_UNDERLINE} peek")));
+        assert!(styled.contains(&format!("{UNDERLINE}f{RESET_UNDERLINE}ullscreen")));
         assert!(styled.contains(&format!("{UNDERLINE}/{RESET_UNDERLINE} search")));
         assert!(styled.contains(&format!("{UNDERLINE}w{RESET_UNDERLINE}atch")));
         assert!(styled.contains(&format!("{UNDERLINE}q{RESET_UNDERLINE}uit")));
@@ -5358,7 +5359,7 @@ mod tests {
 
         let frame = crate::parsers::strip_ansi_for_debug(&styled);
         assert!(frame.contains("s live · prs · r compact · all ages"));
-        assert!(frame.contains("↑↓ select · ⏎ peek · / search · watch · quit"));
+        assert!(frame.contains("↑↓ select · ⏎ peek · fullscreen · / search · watch · quit"));
         assert!(!frame.contains("r recap · a age · s live/all"));
         assert!(!frame.contains("e/c recap/compact"));
         assert!(!frame.contains("[/] age"));
