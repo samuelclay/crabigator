@@ -61,35 +61,34 @@ pub fn compute_unique_display_names(paths: &[&str]) -> Vec<String> {
     // Track how many path components we've used for each (0 = just filename)
     let mut depths: Vec<usize> = vec![0; paths.len()];
 
-    // Keep expanding until all names are unique
+    // Stop once a parent cannot be added. Git lists some paths twice, and
+    // those names never diverge. A cap that waits until every file is deep
+    // never fires when any other name is already unique.
     loop {
-        // Find duplicates
         let mut name_counts: HashMap<&str, Vec<usize>> = HashMap::new();
         for (i, name) in display_names.iter().enumerate() {
             name_counts.entry(name.as_str()).or_default().push(i);
         }
 
-        // Find indices that need more components
-        let mut needs_expansion: Vec<usize> = Vec::new();
+        let mut updates: Vec<(usize, String)> = Vec::new();
         for indices in name_counts.values() {
-            if indices.len() > 1 {
-                needs_expansion.extend(indices);
+            if indices.len() < 2 {
+                continue;
+            }
+            for &i in indices {
+                let next = get_path_suffix(paths[i], depths[i] + 2);
+                if next != display_names[i] {
+                    updates.push((i, next));
+                }
             }
         }
 
-        if needs_expansion.is_empty() {
+        if updates.is_empty() {
             break;
         }
-
-        // Expand each duplicate by adding one more parent component
-        for &i in &needs_expansion {
+        for (i, next) in updates {
             depths[i] += 1;
-            display_names[i] = get_path_suffix(paths[i], depths[i] + 1);
-        }
-
-        // Safety: if we've used the entire path, stop
-        if depths.iter().all(|&d| d >= 10) {
-            break;
+            display_names[i] = next;
         }
     }
 
@@ -445,5 +444,43 @@ mod tests {
         let names = compute_unique_display_names(&paths);
         // a/b/mod.rs and x/b/mod.rs both have b/mod.rs, so need more context
         assert_eq!(names, vec!["a/b/mod.rs", "c/mod.rs", "x/b/mod.rs"]);
+    }
+
+    #[test]
+    fn duplicate_full_paths_finish_beside_unique_files() {
+        // `git status` emits both `D  file` and `?? file` after
+        // `git rm --cached`. One doubled path used to spin forever once any
+        // other file was already unique.
+        let mut owned = vec!["src/app.rs".to_string(), "src/app.rs".to_string()];
+        for i in 0..32 {
+            owned.push(format!("src/file{i}.rs"));
+        }
+        let paths: Vec<&str> = owned.iter().map(String::as_str).collect();
+        let names = compute_unique_display_names(&paths);
+        assert_eq!(names[0], "src/app.rs");
+        assert_eq!(names[1], "src/app.rs");
+        assert_eq!(names[2], "file0.rs");
+        assert_eq!(names.len(), paths.len());
+    }
+
+    #[test]
+    fn filename_only_duplicates_finish() {
+        let paths = vec!["README.md", "README.md"];
+        assert_eq!(
+            compute_unique_display_names(&paths),
+            vec!["README.md", "README.md"]
+        );
+    }
+
+    #[test]
+    fn deep_shared_suffix_still_reaches_the_differing_parent() {
+        let shared = "c/".repeat(10);
+        let left = format!("a/{shared}file.rs");
+        let right = format!("b/{shared}file.rs");
+        let paths = vec![left.as_str(), right.as_str()];
+        assert_eq!(
+            compute_unique_display_names(&paths),
+            vec![left.as_str(), right.as_str()]
+        );
     }
 }
