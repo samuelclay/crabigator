@@ -331,13 +331,12 @@ mod tests {
             Some("Add an option up to the keyboard on the …")
         );
         assert_eq!(
-            grok_stable_osc_title(Some("- Thinking - Codex-only Option+Up dashboard keyboard …")),
+            grok_stable_osc_title(Some(
+                "- Thinking - Codex-only Option+Up dashboard keyboard …"
+            )),
             Some("Codex-only Option+Up dashboard keyboard …")
         );
-        assert_eq!(
-            grok_stable_osc_title(Some("Waiting for response…")),
-            None
-        );
+        assert_eq!(grok_stable_osc_title(Some("Waiting for response…")), None);
         assert_eq!(grok_stable_osc_title(Some("Preparing grep (2)…")), None);
         assert_eq!(
             display_title(
