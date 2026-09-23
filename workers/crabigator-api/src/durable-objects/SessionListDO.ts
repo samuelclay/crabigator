@@ -1,8 +1,11 @@
 import type { Env } from '../types/env';
 import type { SessionInfo } from '../types/session';
+import { parseStoredSessionMark } from '../session-mark';
 
 interface ActiveSession {
     id: string;
+    client_session_id?: string;
+    session_mark?: SessionInfo['session_mark'];
     cwd: string;
     platform: string;
     state: string;
@@ -368,7 +371,8 @@ export class SessionListDO implements DurableObject {
      */
     private async fetchActiveSessionsFromD1(groupId: string): Promise<ActiveSession[]> {
         const results = await this.env.DB.prepare(`
-            SELECT sessions.id, sessions.cwd, sessions.platform, sessions.state, sessions.started_at,
+            SELECT sessions.id, sessions.client_session_id, sessions.session_mark,
+                   sessions.cwd, sessions.platform, sessions.state, sessions.started_at,
                    sessions.last_seen_at, sessions.device_id, devices.group_id, devices.name as device_name,
                    sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds,
                    sessions.prompts_changed_at, sessions.completions_changed_at
@@ -379,6 +383,8 @@ export class SessionListDO implements DurableObject {
             LIMIT 50
         `).bind(groupId).all<{
             id: string;
+            client_session_id: string;
+            session_mark: string | null;
             cwd: string;
             platform: string;
             state: string;
@@ -397,6 +403,8 @@ export class SessionListDO implements DurableObject {
 
         return (results.results || []).map(row => ({
             id: row.id,
+            client_session_id: row.client_session_id,
+            session_mark: parseStoredSessionMark(row.session_mark),
             cwd: row.cwd,
             platform: row.platform,
             state: row.state,
