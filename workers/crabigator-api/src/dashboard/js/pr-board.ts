@@ -1,6 +1,6 @@
 // Dashboard JavaScript - cross-session PR board
 // A web port of the CLI board (src/prs_board.rs + src/ui/pr_cells.rs): the
-// same recency sections, repository groups, row anatomy, colors, ordering,
+// same recency sections, repository groups (owner/repo · machine), row anatomy, colors, ordering,
 // view toggles, keyboard shortcuts, and quick look pane, rendered from the
 // durable D1 record instead of /tmp mirrors. Search greps each live session's
 // scrollback through the Worker, falling back to recaps for sessions that
@@ -550,6 +550,28 @@ export const prBoardJs = `
         // no prompt to follow (a watch, or sessions that never prompted) the
         // PR's own events place it — GitHub's updatedAt, the close, or its
         // last mention here.
+        // Paired computer, without a trailing .local. Empty when unknown.
+        function prbDeviceLabel(session) {
+            return String((session && session.device_name) || '').replace(/\\.local$/, '').trim();
+        }
+        // One list per computer, preserving session order. A PR with no
+        // sessions is a single unnamed group (a watch).
+        function prbSessionsByDevice(sessions) {
+            const groups = [];
+            const index = new Map();
+            for (const session of sessions || []) {
+                const machine = prbDeviceLabel(session);
+                let group = index.get(machine);
+                if (!group) {
+                    group = { machine: machine, sessions: [] };
+                    index.set(machine, group);
+                    groups.push(group);
+                }
+                group.sessions.push(session);
+            }
+            if (!groups.length) groups.push({ machine: '', sessions: [] });
+            return groups;
+        }
         function prbEntryRecency(e, sessions, now) {
             const prompted = prbActivityTime(sessions, now);
             if (prompted) return prompted;
@@ -1488,16 +1510,22 @@ export const prBoardJs = `
                     const ordered = sessions.slice().sort((a, b) =>
                         (a.active ? 0 : 1) - (b.active ? 0 : 1)
                         || prbSessionFreshness(b, now) - prbSessionFreshness(a, now));
-                    entries.push({
-                        kind: 'prview',
-                        entry: e,
-                        primary,
-                        sessions: ordered,
-                        // A watch with no sessions is being watched, not stale.
-                        stale: ordered.length ? !ordered.some(s => s.active) : !e.pr.watched,
-                        activity: prbEntryRecency(e, ordered, now),
-                        key: e.owner + '/' + e.repo + '#' + e.number,
-                    });
+                    // The same PR on two computers is two rows. Each row keeps
+                    // that computer's sessions, and its own activity clock.
+                    for (const group of prbSessionsByDevice(ordered)) {
+                        const groupSessions = group.sessions;
+                        entries.push({
+                            kind: 'prview',
+                            entry: e,
+                            primary,
+                            sessions: groupSessions,
+                            machine: group.machine,
+                            stale: groupSessions.length ? !groupSessions.some(s => s.active) : !e.pr.watched,
+                            activity: prbEntryRecency(e, groupSessions, now),
+                            key: e.owner + '/' + e.repo + '#' + e.number
+                                + (group.machine ? '@' + group.machine : ''),
+                        });
+                    }
                     continue;
                 }
                 for (const s of contributors) {
@@ -1620,23 +1648,28 @@ export const prBoardJs = `
                 return;
             }
 
-            // Recency sections → repositories → rows, all newest-first.
+            // Recency sections → repository/machine groups → rows, newest-first.
+            // Time stays the top separator. The same repository on two
+            // computers is two groups: owner/repo · machine.
             const buckets = new Map();
-            const addRow = (repoName, item) => {
+            const addRow = (repoName, machine, item) => {
                 const bucketIdx = prbBucketIndex(now - item.activity);
                 if (!buckets.has(bucketIdx)) buckets.set(bucketIdx, new Map());
                 const repos = buckets.get(bucketIdx);
-                const key = repoName.toLowerCase();
-                if (!repos.has(key)) repos.set(key, { name: repoName, rows: [] });
+                const key = repoName.toLowerCase() + String.fromCharCode(1) + String(machine || '').toLowerCase();
+                if (!repos.has(key)) repos.set(key, { name: repoName, machine: machine || '', rows: [] });
                 repos.get(key).rows.push(item);
             };
+            const itemMachine = (item) => item.kind === 'prview'
+                ? (item.machine || '')
+                : prbDeviceLabel(item.session);
             for (const item of visible) {
-                addRow(item.entry.owner + '/' + item.entry.repo, item);
+                addRow(item.entry.owner + '/' + item.entry.repo, itemMachine(item), item);
             }
             for (const item of visibleWs) {
                 const s = item.session;
                 const name = s.repo_name || s.dir_name || 'unknown';
-                addRow(s.repo_owner ? s.repo_owner + '/' + name : name, item);
+                addRow(s.repo_owner ? s.repo_owner + '/' + name : name, prbDeviceLabel(s), item);
             }
 
             prBoardRendered = [];
@@ -1658,7 +1691,12 @@ export const prBoardJs = `
                 }
                 repos.sort((a, b) => b.rows[0].activity - a.rows[0].activity);
                 for (const repo of repos) {
-                    html += '<div class="prb-repo">' + escapeHtml(repo.name) + '</div>';
+                    html += '<div class="prb-repo">' + escapeHtml(repo.name)
+                        + (repo.machine
+                            ? ' <span class="prb-dot">·</span> <span class="prb-machine">'
+                                + escapeHtml(repo.machine) + '</span>'
+                            : '')
+                        + '</div>';
                     for (const item of repo.rows) {
                         const idx = prBoardRendered.length;
                         prBoardRendered.push(item);

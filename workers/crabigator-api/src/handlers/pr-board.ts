@@ -27,6 +27,7 @@ interface BoardSessionRow {
     deletions: number | null;
     slack_threads: string | null;
     session_mark: string | null;
+    device_name: string | null;
 }
 
 interface SessionPrRow extends BoardSessionRow {
@@ -284,6 +285,8 @@ interface BoardEntry {
         additions: number;
         /** Lines removed across those uncommitted files. */
         deletions: number;
+        /** Paired computer this session runs on, without a trailing `.local`. */
+        device_name: string;
         /** The session's latest recap brief, when one was recorded. */
         recap: SessionRecapBrief | null;
     }[];
@@ -395,8 +398,14 @@ function boardSession(row: BoardSessionRow): BoardSession {
         uncommitted: row.uncommitted_files || 0,
         additions: row.additions || 0,
         deletions: row.deletions || 0,
+        device_name: deviceLabel(row.device_name),
         recap: sessionRecap(row.recap),
     };
+}
+
+/** macOS hostnames arrive as `claybook-m4.local`. The boards show the short name. */
+function deviceLabel(name: string | null | undefined): string {
+    return (name || '').trim().replace(/\.local$/, '');
 }
 
 function isSessionPr(value: unknown): value is SessionPr {
@@ -572,7 +581,8 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
                 s.titles, s.titles_changed_at, s.recap,
                 s.repo_owner, s.repo_name, s.branch,
                 s.uncommitted_files, s.additions, s.deletions, s.slack_threads,
-                s.session_mark
+                s.session_mark,
+                d.name as device_name
          FROM session_prs sp
          JOIN sessions s ON s.id = sp.session_id
          JOIN devices d ON d.id = s.device_id
@@ -745,7 +755,8 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
                 s.titles, s.titles_changed_at, s.recap,
                 s.repo_owner, s.repo_name, s.branch,
                 s.uncommitted_files, s.additions, s.deletions, s.slack_threads,
-                s.session_mark
+                s.session_mark,
+                d.name as device_name
          FROM sessions s
          JOIN devices d ON d.id = s.device_id
          WHERE d.group_id = ? AND s.is_active = 1

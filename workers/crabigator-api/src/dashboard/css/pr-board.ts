@@ -96,6 +96,8 @@ export const prBoardCss = `
 }
 .prb-bucket:first-child { margin-top: 0; }
 .prb-repo { grid-column: 1 / -1; color: #ffd700; font-weight: 700; margin: 6px 0 2px; }
+.prb-dot { color: #585858; font-weight: 400; }
+.prb-machine { color: #5f87ff; }
 .prb-empty { grid-column: 1 / -1; color: #8a8a8a; padding: 16px 0; }
 
 .prb-row {
