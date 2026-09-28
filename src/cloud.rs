@@ -11,6 +11,7 @@ mod device;
 mod endpoints;
 mod events;
 mod queue;
+mod viewer;
 mod websocket;
 
 pub use client::{
@@ -21,3 +22,4 @@ pub use client::{
 pub use device::DeviceIdentity;
 pub use endpoints::{print_cloud_status, reset_cloud, set_cloud, CloudEndpoints};
 pub use events::{KeyStep, SessionEventBuilder};
+pub use viewer::{trim_scrollback, SessionWatch, ViewerUpdate};

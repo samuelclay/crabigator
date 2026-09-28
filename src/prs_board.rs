@@ -13,11 +13,11 @@
 //! sessions' PRs at about a minute of lag. Time bands stay the top grouping.
 //! Under each band, one repository on two computers is two groups:
 //! `owner/repo · machine`.
-//! `f` fullscreens a live session on this computer and types into it.
-//! Ctrl-] leaves that view. `n` opens a new session in the highlighted
-//! session's folder: pick Claude, Codex, opencode, or Grok, and Ghostty
-//! opens a tab in a window already in that folder, or a new window.
-//! The agent keeps running.
+//! `f` fullscreens a live session and types into it, including one streaming
+//! from another computer on the account. Ctrl-] leaves that view. `n` opens
+//! a new session in the highlighted session's folder on this computer: pick
+//! Claude, Codex, opencode, or Grok, and Ghostty opens a tab in a window
+//! already in that folder, or a new window. The agent keeps running.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -3156,13 +3156,55 @@ struct PeekTarget {
     title: String,
     dir_name: String,
     /// The session's /tmp mirror, holding screen.txt and scrollback.log.
+    /// Empty when the screen is streamed from another computer.
     session_dir: PathBuf,
+    /// Set when this screen comes from the account rather than a local file.
+    cloud_session_id: Option<String>,
+    /// The other computer's name, when the account sent one.
+    remote_machine: Option<String>,
 }
 
-/// Fullscreen attach: the live screen, plus a socket into that session.
+impl PeekTarget {
+    fn local(title: String, dir_name: String, session_dir: PathBuf) -> Self {
+        Self {
+            title,
+            dir_name,
+            session_dir,
+            cloud_session_id: None,
+            remote_machine: None,
+        }
+    }
+
+    fn is_remote(&self) -> bool {
+        self.cloud_session_id.is_some()
+    }
+}
+
+/// How fullscreen reaches the session. A remote session has no socket here;
+/// keystrokes go through the account to the computer that owns it.
+enum AttachLink {
+    Local(crate::attach::AttachClient),
+    Remote,
+}
+
+impl AttachLink {
+    fn is_remote(&self) -> bool {
+        matches!(self, Self::Remote)
+    }
+}
+
+/// Fullscreen attach: the live screen, plus a way to type into that session.
 struct AttachedSession {
     target: PeekTarget,
-    client: crate::attach::AttachClient,
+    link: AttachLink,
+}
+
+/// The screen and transcript last received for the session being watched.
+struct RemoteView<'a> {
+    screen: Option<&'a str>,
+    scrollback: &'a str,
+    offline: bool,
+    error: Option<&'a str>,
 }
 
 /// The identity a session contributes to a row key: the session id, or the
@@ -3175,10 +3217,17 @@ fn session_key(session: &SessionRef) -> &str {
     }
 }
 
-/// Screens this machine can mirror, and the other computer's name when the
-/// row is live there instead. A named computer wins over an unnamed one.
+/// Screens this machine can mirror. When it has none, a live session on
+/// another computer is still previewable through the account. `elsewhere`
+/// remains only for a live row that has no screen and no cloud id.
 fn row_focus(sessions: &[SessionRef], local_machine: &str) -> (Vec<PeekTarget>, Option<String>) {
-    let peeks: Vec<PeekTarget> = sessions.iter().filter_map(peek_target).collect();
+    let mut peeks: Vec<PeekTarget> = sessions.iter().filter_map(peek_target).collect();
+    if peeks.is_empty() {
+        peeks = sessions
+            .iter()
+            .filter_map(|session| remote_peek_target(session, local_machine))
+            .collect();
+    }
     let elsewhere = if peeks.is_empty() {
         elsewhere_machine(sessions, local_machine)
     } else {
@@ -3187,7 +3236,7 @@ fn row_focus(sessions: &[SessionRef], local_machine: &str) -> (Vec<PeekTarget>, 
     (peeks, elsewhere)
 }
 
-/// A live session with no mirror on this computer. Selection can land on its
+/// A live session with no mirror and no cloud id. Selection can land on its
 /// row; quick look names the computer instead of showing a screen.
 fn elsewhere_machine(sessions: &[SessionRef], local_machine: &str) -> Option<String> {
     let local = machine_key(local_machine);
@@ -3222,12 +3271,45 @@ fn peek_target(session: &SessionRef) -> Option<PeekTarget> {
         } else {
             plain.to_string()
         };
-        PeekTarget {
-            title,
-            dir_name: session.dir_name.clone(),
-            session_dir: dir.clone(),
-        }
+        PeekTarget::local(title, session.dir_name.clone(), dir.clone())
     })
+}
+
+/// A live session on another computer. Its screen is in the account, not in
+/// a file on this machine. This computer's own unmirrored row is skipped.
+fn remote_peek_target(session: &SessionRef, local_machine: &str) -> Option<PeekTarget> {
+    if session.ended || session.session_dir.is_some() || session.session_id.is_empty() {
+        return None;
+    }
+    let name = machine_label(&session.device_name);
+    let key = machine_key(&name);
+    if !key.is_empty() && key == machine_key(local_machine) {
+        return None;
+    }
+    let plain = crate::title::strip_provider_title_marker(&session.title);
+    let title = if !plain.is_empty() {
+        plain.to_string()
+    } else if !session.dir_name.is_empty() {
+        session.dir_name.clone()
+    } else if !name.is_empty() {
+        name.clone()
+    } else {
+        "session".to_string()
+    };
+    Some(PeekTarget {
+        title,
+        dir_name: session.dir_name.clone(),
+        session_dir: PathBuf::new(),
+        cloud_session_id: Some(session.session_id.clone()),
+        remote_machine: (!name.is_empty()).then_some(name),
+    })
+}
+
+fn remote_session_notice(target: &PeekTarget) -> String {
+    match target.remote_machine.as_deref() {
+        Some(machine) if !machine.is_empty() => format!("that session is on {machine}"),
+        _ => "that session is on another computer".to_string(),
+    }
 }
 
 /// What every board row needs beyond its own entry: the frame's terminal
@@ -4460,17 +4542,28 @@ fn prepare_new_session(
     selected: &mut Option<String>,
     peek_index: usize,
 ) -> Result<NewSessionTarget, String> {
-    if let Some(notice) = elsewhere_selection_notice(spans, selected.as_deref()) {
-        return Err(notice);
+    if let Some(span) = selected_span(spans, selected.as_deref()) {
+        if let Some(target) = span.peeks.get(peek_index).or_else(|| span.peeks.first()) {
+            if target.is_remote() {
+                return Err(remote_session_notice(target));
+            }
+            let cwd = session_checkout(&target.dir_name, &target.session_dir)?;
+            return Ok(NewSessionTarget {
+                label: shorten_path(&cwd),
+                cwd,
+            });
+        }
+        if let Some(notice) = elsewhere_selection_notice(spans, selected.as_deref()) {
+            return Err(notice);
+        }
     }
-    let peekable = peekable_positions(spans);
-    if peekable.is_empty() {
+    let local = local_screen_positions(spans);
+    if local.is_empty() {
         return Err("no live session to open".to_string());
     }
-    let position = selected_position(spans, &peekable, selected.as_deref()).unwrap_or(0);
-    let span = &spans[peekable[position]];
+    let span = &spans[local[0]];
     *selected = Some(span.key.clone());
-    let Some(target) = selected_peek(spans, selected.as_deref(), peek_index) else {
+    let Some(target) = span.peeks.iter().find(|peek| !peek.is_remote()) else {
         return Err("no live session to open".to_string());
     };
     let cwd = session_checkout(&target.dir_name, &target.session_dir)?;
@@ -4633,8 +4726,9 @@ fn frame_hash(lines: &[String]) -> u64 {
     hasher.finish()
 }
 
-/// Positions in `spans` ↑↓ can land on: a screen on this computer, or a live
-/// session on another computer.
+/// Positions in `spans` ↑↓ can land on: a screen on this computer, a live
+/// session streamed from another computer, or a live row that only names
+/// that computer.
 fn selectable_positions(spans: &[RowSpan]) -> Vec<usize> {
     spans
         .iter()
@@ -4645,13 +4739,28 @@ fn selectable_positions(spans: &[RowSpan]) -> Vec<usize> {
         .collect()
 }
 
-/// Positions whose screen is on this computer. Quick look, fullscreen, and a
-/// new session need one of these.
+/// Positions whose screen can be shown. That is a local mirror, or a live
+/// session another computer is streaming to the account.
 fn peekable_positions(spans: &[RowSpan]) -> Vec<usize> {
     spans
         .iter()
         .enumerate()
         .filter_map(|(index, span)| (!span.peeks.is_empty()).then_some(index))
+        .collect()
+}
+
+/// Positions with a screen file on this computer. A new session and an
+/// unselected fullscreen stay on this machine.
+fn local_screen_positions(spans: &[RowSpan]) -> Vec<usize> {
+    spans
+        .iter()
+        .enumerate()
+        .filter_map(|(index, span)| {
+            span.peeks
+                .iter()
+                .any(|peek| !peek.is_remote())
+                .then_some(index)
+        })
         .collect()
 }
 
@@ -4826,6 +4935,7 @@ fn build_peek_pane(
     rows: usize,
     scroll: Option<usize>,
     transcripts: &mut TranscriptCache,
+    remote: Option<&RemoteView<'_>>,
 ) -> Vec<String> {
     if rows == 0 {
         return Vec::new();
@@ -4836,6 +4946,7 @@ fn build_peek_pane(
     let interior = rows.saturating_sub(2);
 
     let (mut content, lines_back) = match (target, scroll) {
+        (Some(target), _) if target.is_remote() => remote_peek_content(remote, scroll, interior),
         (Some(target), Some(top)) => {
             let transcript = transcripts.lines(&target.session_dir).unwrap_or(&[]);
             let back = transcript.len().saturating_sub(top + interior);
@@ -4855,7 +4966,12 @@ fn build_peek_pane(
                     let skip = content.lines().count().saturating_sub(interior);
                     (content.lines().skip(skip).map(String::from).collect(), None)
                 }
-                None => (vec![peek_placeholder(None)], None),
+                None => (
+                    vec![peek_note(
+                        "no live screen — the session ended or isn't captured",
+                    )],
+                    None,
+                ),
             }
         }
         (None, _) => (vec![peek_placeholder(elsewhere)], None),
@@ -4877,13 +4993,52 @@ fn build_peek_pane(
     lines
 }
 
+fn peek_note(text: &str) -> String {
+    format!("{} {text}{}", fg(color::GRAY), RESET_FG)
+}
+
 fn peek_placeholder(elsewhere: Option<&str>) -> String {
     let text = match elsewhere {
         Some(machine) if !machine.is_empty() => format!("this session is on {machine}"),
         Some(_) => "this session is on another computer".to_string(),
         None => "no live screen — the session ended or isn't captured".to_string(),
     };
-    format!("{} {text}{}", fg(color::GRAY), RESET_FG)
+    peek_note(&text)
+}
+
+/// What the quick look pane shows for a session on another computer.
+/// Scrolling still reads the cloud transcript. The live view waits until the
+/// first screen arrives, and says when that computer is offline.
+fn remote_peek_content(
+    remote: Option<&RemoteView<'_>>,
+    scroll: Option<usize>,
+    interior: usize,
+) -> (Vec<String>, Option<usize>) {
+    let Some(remote) = remote else {
+        return (vec![peek_note("waiting for the session's screen…")], None);
+    };
+    if let Some(top) = scroll {
+        let lines: Vec<String> = remote.scrollback.lines().map(str::to_string).collect();
+        let back = lines.len().saturating_sub(top + interior);
+        let window = lines.into_iter().skip(top).take(interior).collect();
+        return (window, Some(back));
+    }
+    if remote.offline {
+        return (vec![peek_note("that computer is offline")], None);
+    }
+    if let Some(screen) = remote.screen {
+        let mut lines: Vec<String> = screen.lines().map(str::to_string).collect();
+        let skip = lines.len().saturating_sub(interior);
+        lines = lines.into_iter().skip(skip).collect();
+        if let Some(error) = remote.error {
+            lines.insert(0, peek_note(error));
+        }
+        return (lines, None);
+    }
+    if let Some(error) = remote.error {
+        return (vec![peek_note(error)], None);
+    }
+    (vec![peek_note("waiting for the session's screen…")], None)
 }
 
 /// The box's top edge, carrying the pane title and its keys:
@@ -4950,23 +5105,65 @@ fn peek_interior_row(content: &str, width: u16) -> String {
 
 /// Fullscreen attach. The live screen sits above the session's own modules
 /// (recap, PRs, stats, git, changes). The last row is the amber Secondary bar.
-fn build_attach_view(target: &PeekTarget, width: u16, height: u16) -> Vec<String> {
+fn build_attach_view(
+    target: &PeekTarget,
+    width: u16,
+    height: u16,
+    remote: Option<&RemoteView<'_>>,
+) -> Vec<String> {
     let rows = height as usize;
     if rows == 0 {
         return Vec::new();
     }
-    let modules = crate::attach_modules::session_modules(&target.session_dir, width, height);
+    // A remote screen has no local inspect.json, so there is no module row
+    // to paint under it. The amber bar still says this is a secondary view.
+    let modules = if target.is_remote() {
+        Vec::new()
+    } else {
+        crate::attach_modules::session_modules(&target.session_dir, width, height)
+    };
     let body = rows.saturating_sub(modules.len() + 1).max(1);
-    let mut content = attach_screen_lines(&target.session_dir, body);
+    let mut content = if target.is_remote() {
+        remote_attach_lines(remote, body)
+    } else {
+        attach_screen_lines(&target.session_dir, body)
+    };
     content.truncate(body);
     content.resize(body, String::new());
     content.extend(modules);
-    content.push(attach_status_bar(&target.title, &target.dir_name, width));
+    content.push(attach_status_bar(
+        &target.title,
+        &attach_place(target),
+        width,
+    ));
     let overflow = content.len().saturating_sub(rows);
     if overflow > 0 {
         content.drain(..overflow.min(body));
     }
     content
+}
+
+fn remote_attach_lines(remote: Option<&RemoteView<'_>>, body: usize) -> Vec<String> {
+    let (mut lines, _) = remote_peek_content(remote, None, body);
+    if lines.is_empty() {
+        lines.push(peek_note("waiting for the session's screen…"));
+    }
+    lines
+}
+
+/// Folder and computer shown on the amber bar. A remote session names the
+/// computer so fullscreen says where the keystrokes are going.
+fn attach_place(target: &PeekTarget) -> String {
+    let dir = if target.dir_name.is_empty() || target.dir_name == target.title {
+        String::new()
+    } else {
+        target.dir_name.clone()
+    };
+    match target.remote_machine.as_deref() {
+        Some(machine) if !machine.is_empty() && dir.is_empty() => machine.to_string(),
+        Some(machine) if !machine.is_empty() => format!("{dir} · {machine}"),
+        _ => dir,
+    }
 }
 
 fn attach_screen_lines(session_dir: &Path, body: usize) -> Vec<String> {
@@ -5130,29 +5327,78 @@ fn attach_error_banner(message: &str, width: u16) -> String {
 
 /// Connect to the selected live session, or the first one on this computer
 /// when nothing is selected yet. `Err(None)` means there is no live screen
-/// to attach to. A highlighted row on another computer reports that instead
-/// of attaching a different session.
+/// to attach to. A highlighted session on another computer attaches through
+/// the account instead of a different session on this computer.
 fn open_attach(
     spans: &[RowSpan],
     selected: &mut Option<String>,
     peek_index: usize,
 ) -> std::result::Result<AttachedSession, Option<String>> {
+    if let Some(target) = selected_peek(spans, selected.as_deref(), peek_index).cloned() {
+        if target.is_remote() {
+            return Ok(AttachedSession {
+                target,
+                link: AttachLink::Remote,
+            });
+        }
+        return match crate::attach::AttachClient::connect(&target.session_dir) {
+            Ok(client) => Ok(AttachedSession {
+                target,
+                link: AttachLink::Local(client),
+            }),
+            Err(_) => Err(Some(crate::attach::NOT_RUNNING.to_string())),
+        };
+    }
     if let Some(notice) = elsewhere_selection_notice(spans, selected.as_deref()) {
         return Err(Some(notice));
     }
-    let peekable = peekable_positions(spans);
-    if peekable.is_empty() {
+    let local = local_screen_positions(spans);
+    if local.is_empty() {
         return Err(None);
     }
-    let position = selected_position(spans, &peekable, selected.as_deref()).unwrap_or(0);
-    let span = &spans[peekable[position]];
+    let span = &spans[local[0]];
     *selected = Some(span.key.clone());
-    let Some(target) = selected_peek(spans, selected.as_deref(), peek_index).cloned() else {
+    let Some(target) = span.peeks.iter().find(|peek| !peek.is_remote()).cloned() else {
         return Err(None);
     };
     match crate::attach::AttachClient::connect(&target.session_dir) {
-        Ok(client) => Ok(AttachedSession { target, client }),
+        Ok(client) => Ok(AttachedSession {
+            target,
+            link: AttachLink::Local(client),
+        }),
         Err(_) => Err(Some(crate::attach::NOT_RUNNING.to_string())),
+    }
+}
+
+/// Send one key or paste to the attached session. A remote session queues
+/// the bytes; the watch posts them in order. `true` means the link is gone.
+fn relay_attach_frame(
+    session: &mut AttachedSession,
+    watch: Option<&crate::cloud::SessionWatch>,
+    frame: &crate::attach::AttachFrame,
+) -> bool {
+    match &mut session.link {
+        AttachLink::Local(client) => client.send(frame).is_err(),
+        AttachLink::Remote => {
+            let Some(watch) = watch else {
+                return true;
+            };
+            let Some(id) = session.target.cloud_session_id.as_deref() else {
+                return true;
+            };
+            if watch.session_id() != id {
+                return true;
+            }
+            !watch.send_keys(crate::attach::frame_to_pty_bytes(frame))
+        }
+    }
+}
+
+fn lost_attach_message(session: &AttachedSession) -> String {
+    if session.link.is_remote() {
+        "couldn't reach that session".to_string()
+    } else {
+        crate::attach::NOT_RUNNING.to_string()
     }
 }
 
@@ -5274,6 +5520,102 @@ fn save_board_preferences(include_ended: bool, view: BoardView) -> Result<()> {
     config.save()
 }
 
+/// The cloud screen for whichever remote session the pane or fullscreen is on.
+struct RemoteMirror {
+    watch: Option<crate::cloud::SessionWatch>,
+    screen: Option<String>,
+    scrollback: String,
+    offline: bool,
+    error: Option<String>,
+}
+
+impl RemoteMirror {
+    fn new() -> Self {
+        Self {
+            watch: None,
+            screen: None,
+            scrollback: String::new(),
+            offline: false,
+            error: None,
+        }
+    }
+
+    /// The session to watch: fullscreen wins, otherwise the open quick look.
+    fn wanted(
+        spans: &[RowSpan],
+        selected: Option<&str>,
+        peek_index: usize,
+        peek_open: bool,
+        attach: Option<&AttachedSession>,
+    ) -> Option<String> {
+        if let Some(session) = attach {
+            return session.target.cloud_session_id.clone();
+        }
+        if !peek_open {
+            return None;
+        }
+        selected_peek(spans, selected, peek_index)
+            .and_then(|target| target.cloud_session_id.clone())
+    }
+
+    /// Switch sessions, or stop, when the open view changes. A switch drops
+    /// the previous screen so one computer's frame cannot flash on another.
+    fn sync(&mut self, wanted: Option<&str>) -> bool {
+        let same = match (&self.watch, wanted) {
+            (Some(watch), Some(id)) => watch.session_id() == id,
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return false;
+        }
+        self.screen = None;
+        self.scrollback.clear();
+        self.offline = false;
+        self.error = None;
+        self.watch = wanted.map(|id| crate::cloud::SessionWatch::start(id.to_string()));
+        true
+    }
+
+    fn poll(&mut self) -> bool {
+        let Some(watch) = self.watch.as_mut() else {
+            return false;
+        };
+        let mut changed = false;
+        while let Some(update) = watch.try_recv() {
+            changed = true;
+            match update {
+                crate::cloud::ViewerUpdate::Screen(content) => {
+                    self.screen = Some(content);
+                    self.offline = false;
+                    self.error = None;
+                }
+                crate::cloud::ViewerUpdate::ScrollbackReset(content) => {
+                    self.scrollback = content;
+                    crate::cloud::trim_scrollback(&mut self.scrollback);
+                }
+                crate::cloud::ViewerUpdate::ScrollbackDiff(diff) => {
+                    self.scrollback.push_str(&diff);
+                    crate::cloud::trim_scrollback(&mut self.scrollback);
+                }
+                crate::cloud::ViewerUpdate::DesktopOffline => self.offline = true,
+                crate::cloud::ViewerUpdate::DesktopOnline => self.offline = false,
+                crate::cloud::ViewerUpdate::Failed(message) => self.error = Some(message),
+            }
+        }
+        changed
+    }
+
+    fn view(&self) -> RemoteView<'_> {
+        RemoteView {
+            screen: self.screen.as_deref(),
+            scrollback: &self.scrollback,
+            offline: self.offline,
+            error: self.error.as_deref(),
+        }
+    }
+}
+
 async fn board_loop(
     out: &mut std::io::Stdout,
     overrides: &mut ScopedOverrides,
@@ -5309,6 +5651,9 @@ async fn board_loop(
     let mut attach: Option<AttachedSession> = None;
     let mut attach_error: Option<String> = None;
     let mut attach_frame: Vec<String> = Vec::new();
+    // Screen and keystrokes for a session running on another computer.
+    // Heartbeats stop when neither quick look nor fullscreen is on one.
+    let mut remote = RemoteMirror::new();
     // Transcript search state: cached scrollbacks plus the Tab-toggled
     // context view for the inline previews.
     let mut transcripts = TranscriptCache::default();
@@ -5673,38 +6018,60 @@ async fn board_loop(
             dirty = true;
         }
 
-        // Re-read the previewed screen every pass; the diff-drawing below
-        // only repaints when its content actually changed.
-        if peek_open {
-            let fresh_pane = build_peek_pane(
-                &spans,
-                selected.as_deref(),
-                peek_index,
-                width,
-                pane_rows,
-                peek_scroll,
-                &mut transcripts,
-            );
-            if fresh_pane != pane_lines {
-                pane_lines = fresh_pane;
-                dirty = true;
-            }
-        } else if !pane_lines.is_empty() {
-            pane_lines.clear();
+        // Pull the other computer's screen before painting, so this frame
+        // shows the update that just arrived.
+        let wanted = RemoteMirror::wanted(
+            &spans,
+            selected.as_deref(),
+            peek_index,
+            peek_open,
+            attach.as_ref(),
+        );
+        // Poll even on the frame the watch starts, so a screen that is already
+        // queued is not left until the next pass.
+        let switched = remote.sync(wanted.as_deref());
+        let arrived = remote.poll();
+        if switched || arrived {
             dirty = true;
         }
+        {
+            // Dropped before the next key, which needs to queue bytes on the watch.
+            let remote_view = remote.view();
 
-        // The fullscreen view follows screen.txt. Compare every pass so a
-        // quiet board still repaints when the attached session draws.
-        if let Some(session) = &attach {
-            let frame = build_attach_view(&session.target, width, height);
-            if frame != attach_frame {
-                attach_frame = frame;
+            // Re-read the previewed screen every pass; the diff-drawing below
+            // only repaints when its content actually changed.
+            if peek_open {
+                let fresh_pane = build_peek_pane(
+                    &spans,
+                    selected.as_deref(),
+                    peek_index,
+                    width,
+                    pane_rows,
+                    peek_scroll,
+                    &mut transcripts,
+                    Some(&remote_view),
+                );
+                if fresh_pane != pane_lines {
+                    pane_lines = fresh_pane;
+                    dirty = true;
+                }
+            } else if !pane_lines.is_empty() {
+                pane_lines.clear();
                 dirty = true;
             }
-        } else if !attach_frame.is_empty() {
-            attach_frame.clear();
-            dirty = true;
+
+            // The fullscreen view follows the live screen. Compare every pass so
+            // a quiet board still repaints when the attached session draws.
+            if let Some(session) = &attach {
+                let frame = build_attach_view(&session.target, width, height, Some(&remote_view));
+                if frame != attach_frame {
+                    attach_frame = frame;
+                    dirty = true;
+                }
+            } else if !attach_frame.is_empty() {
+                attach_frame.clear();
+                dirty = true;
+            }
         }
 
         if dirty {
@@ -5749,12 +6116,13 @@ async fn board_loop(
                     // shortcut in the pasted text.
                     if attach.is_some() {
                         let frame = crate::attach::AttachFrame::Paste { text };
-                        let failed = attach
-                            .as_mut()
-                            .is_some_and(|session| session.client.send(&frame).is_err());
+                        let failed = attach.as_mut().is_some_and(|session| {
+                            relay_attach_frame(session, remote.watch.as_ref(), &frame)
+                        });
                         if failed {
+                            let message = attach.as_ref().map(lost_attach_message);
                             detach_attach(&mut attach, &mut attach_frame);
-                            attach_error = Some(crate::attach::NOT_RUNNING.to_string());
+                            attach_error = message;
                             needs_render = true;
                             last_frame_hash = 0;
                             dirty = true;
@@ -5782,12 +6150,13 @@ async fn board_loop(
                                 dirty = true;
                             }
                             crate::attach::AttachKeyAction::Forward(frame) => {
-                                let failed = attach
-                                    .as_mut()
-                                    .is_some_and(|session| session.client.send(&frame).is_err());
+                                let failed = attach.as_mut().is_some_and(|session| {
+                                    relay_attach_frame(session, remote.watch.as_ref(), &frame)
+                                });
                                 if failed {
+                                    let message = attach.as_ref().map(lost_attach_message);
                                     detach_attach(&mut attach, &mut attach_frame);
-                                    attach_error = Some(crate::attach::NOT_RUNNING.to_string());
+                                    attach_error = message;
                                     needs_render = true;
                                     last_frame_hash = 0;
                                     dirty = true;
@@ -6065,9 +6434,16 @@ async fn board_loop(
                         };
                         if delta.is_some() || key.code == KeyCode::Home || key.code == KeyCode::End
                         {
-                            let total = selected_peek(&spans, selected.as_deref(), peek_index)
-                                .and_then(|target| transcripts.lines(&target.session_dir))
-                                .map_or(0, <[String]>::len);
+                            let total = match selected_peek(&spans, selected.as_deref(), peek_index)
+                            {
+                                Some(target) if target.is_remote() => {
+                                    remote.scrollback.lines().count()
+                                }
+                                Some(target) => transcripts
+                                    .lines(&target.session_dir)
+                                    .map_or(0, <[String]>::len),
+                                None => 0,
+                            };
                             let next = match (key.code, delta) {
                                 (KeyCode::Home, _) => (total > interior).then_some(0),
                                 (KeyCode::End, _) => None,
@@ -6087,10 +6463,10 @@ async fn board_loop(
                             _ => None,
                         };
                         if let Some(step) = switch {
-                            // ←→ walk sessions that have a screen here:
-                            // within a PR-view row's sub-rows first, then
-                            // into the neighbors. Rows on another computer
-                            // stay on ↑↓ only.
+                            // ←→ walk sessions that have a screen, including
+                            // one streaming from another computer: within a
+                            // PR-view row's sub-rows first, then into the
+                            // neighbors.
                             if let Some((span, next_index)) = step_peek_target(
                                 &spans,
                                 &peekable_positions(&spans),
@@ -6416,16 +6792,16 @@ mod tests {
             start: 0,
             end: 1,
             peeks: vec![
-                PeekTarget {
-                    title: "first".to_string(),
-                    dir_name: "portal".to_string(),
-                    session_dir: first_mirror.path().to_path_buf(),
-                },
-                PeekTarget {
-                    title: "second".to_string(),
-                    dir_name: "portal-wt".to_string(),
-                    session_dir: second_mirror.path().to_path_buf(),
-                },
+                PeekTarget::local(
+                    "first".to_string(),
+                    "portal".to_string(),
+                    first_mirror.path().to_path_buf(),
+                ),
+                PeekTarget::local(
+                    "second".to_string(),
+                    "portal-wt".to_string(),
+                    second_mirror.path().to_path_buf(),
+                ),
             ],
             elsewhere: None,
         }];
@@ -6448,11 +6824,11 @@ mod tests {
             key: "k".to_string(),
             start: 0,
             end: 1,
-            peeks: vec![PeekTarget {
-                title: "gone".to_string(),
-                dir_name: "portal".to_string(),
-                session_dir: missing.path().to_path_buf(),
-            }],
+            peeks: vec![PeekTarget::local(
+                "gone".to_string(),
+                "portal".to_string(),
+                missing.path().to_path_buf(),
+            )],
             elsewhere: None,
         }];
         let err = prepare_new_session(&spans, &mut None, 0).unwrap_err();
@@ -6952,11 +7328,8 @@ mod tests {
 
     #[test]
     fn peek_stepping_walks_a_rows_sessions_then_crosses_rows() {
-        let target = |name: &str| PeekTarget {
-            title: name.to_string(),
-            dir_name: name.to_string(),
-            session_dir: PathBuf::from(name),
-        };
+        let target =
+            |name: &str| PeekTarget::local(name.to_string(), name.to_string(), PathBuf::from(name));
         let spans = vec![
             RowSpan {
                 key: "a".to_string(),
@@ -7252,12 +7625,23 @@ mod tests {
             4,
             None,
             &mut TranscriptCache::default(),
+            None,
         );
         let plain = crate::parsers::strip_ansi_for_debug(&pane.join("\n"));
         assert!(
-            plain.contains("this session is on remote-test-host"),
+            plain.contains("waiting for the session's screen"),
             "{plain}"
         );
+        let remote = rendered
+            .spans
+            .iter()
+            .find(|span| span.key == "o/portal#8@remote-test-host")
+            .expect("remote row");
+        assert_eq!(
+            remote.peeks[0].cloud_session_id.as_deref(),
+            Some("remote-session")
+        );
+        assert!(remote.elsewhere.is_none());
 
         let mut selected = Some("o/portal#8@remote-test-host".to_string());
         let err = prepare_new_session(&rendered.spans, &mut selected, 0).unwrap_err();
@@ -7267,6 +7651,131 @@ mod tests {
             Some("o/portal#8@remote-test-host"),
             "n keeps the other computer highlighted"
         );
+
+        let mut unselected = None;
+        let err = prepare_new_session(&rendered.spans, &mut unselected, 0).unwrap_err();
+        assert_eq!(
+            unselected.as_deref(),
+            Some("o/portal#7"),
+            "with nothing highlighted, n stays on this computer"
+        );
+        assert!(
+            !err.contains("remote-test-host"),
+            "n does not report the other computer: {err}"
+        );
+    }
+
+    #[test]
+    fn remote_peek_paints_the_cloud_screen_and_fullscreen_skips_the_socket() {
+        let spans = vec![RowSpan {
+            key: "o/portal#8@remote-test-host".to_string(),
+            start: 0,
+            end: 1,
+            peeks: vec![PeekTarget {
+                title: "Ship it".to_string(),
+                dir_name: "portal".to_string(),
+                session_dir: PathBuf::new(),
+                cloud_session_id: Some("remote-session".to_string()),
+                remote_machine: Some("remote-test-host".to_string()),
+            }],
+            elsewhere: None,
+        }];
+        let screen = "one\ntwo\nthree\nfour\n";
+        let view = RemoteView {
+            screen: Some(screen),
+            scrollback: "older\n",
+            offline: false,
+            error: None,
+        };
+        let mut transcripts = TranscriptCache::default();
+        let pane = build_peek_pane(
+            &spans,
+            Some("o/portal#8@remote-test-host"),
+            0,
+            80,
+            4,
+            None,
+            &mut transcripts,
+            Some(&view),
+        );
+        assert!(pane[1].contains("three"), "{}", pane[1]);
+        assert!(pane[2].contains("four"), "{}", pane[2]);
+
+        let waiting = build_peek_pane(
+            &spans,
+            Some("o/portal#8@remote-test-host"),
+            0,
+            80,
+            4,
+            None,
+            &mut transcripts,
+            None,
+        );
+        let waiting_plain = crate::parsers::strip_ansi_for_debug(&waiting.join("\n"));
+        assert!(
+            waiting_plain.contains("waiting for the session's screen"),
+            "{waiting_plain}"
+        );
+
+        let failed = RemoteView {
+            screen: None,
+            scrollback: "",
+            offline: false,
+            error: Some("couldn't open that session (HTTP 401)"),
+        };
+        let failed_pane = build_peek_pane(
+            &spans,
+            Some("o/portal#8@remote-test-host"),
+            0,
+            80,
+            4,
+            None,
+            &mut transcripts,
+            Some(&failed),
+        );
+        let failed_plain = crate::parsers::strip_ansi_for_debug(&failed_pane.join("\n"));
+        assert!(failed_plain.contains("HTTP 401"), "{failed_plain}");
+
+        let offline = RemoteView {
+            screen: Some(screen),
+            scrollback: "",
+            offline: true,
+            error: None,
+        };
+        let offline_pane = build_peek_pane(
+            &spans,
+            Some("o/portal#8@remote-test-host"),
+            0,
+            80,
+            4,
+            None,
+            &mut transcripts,
+            Some(&offline),
+        );
+        let offline_plain = crate::parsers::strip_ansi_for_debug(&offline_pane.join("\n"));
+        assert!(
+            offline_plain.contains("that computer is offline"),
+            "{offline_plain}"
+        );
+
+        let mut selected = Some("o/portal#8@remote-test-host".to_string());
+        let session = open_attach(&spans, &mut selected, 0).expect("remote fullscreen");
+        assert!(session.link.is_remote());
+        assert_eq!(
+            session.target.cloud_session_id.as_deref(),
+            Some("remote-session")
+        );
+        let attach = build_attach_view(&session.target, 100, 5, Some(&view));
+        let attach_plain = crate::parsers::strip_ansi_for_debug(&attach.join("\n"));
+        assert!(attach_plain.contains("four"), "{attach_plain}");
+        assert!(attach_plain.contains("remote-test-host"), "{attach_plain}");
+        assert!(attach_plain.contains("Secondary"), "{attach_plain}");
+
+        let mut unselected = None;
+        assert!(
+            matches!(open_attach(&spans, &mut unselected, 0), Err(None)),
+            "f with nothing highlighted does not jump to the other computer"
+        );
     }
 
     fn peek_spans(capture: &tempfile::TempDir) -> Vec<RowSpan> {
@@ -7274,11 +7783,11 @@ mod tests {
             key: "k".to_string(),
             start: 0,
             end: 1,
-            peeks: vec![PeekTarget {
-                title: "Fix the flaky test".to_string(),
-                dir_name: "portal".to_string(),
-                session_dir: capture.path().to_path_buf(),
-            }],
+            peeks: vec![PeekTarget::local(
+                "Fix the flaky test".to_string(),
+                "portal".to_string(),
+                capture.path().to_path_buf(),
+            )],
             elsewhere: None,
         }]
     }
@@ -7290,7 +7799,7 @@ mod tests {
         let spans = peek_spans(&capture);
         let mut transcripts = TranscriptCache::default();
 
-        let pane = build_peek_pane(&spans, Some("k"), 0, 80, 4, None, &mut transcripts);
+        let pane = build_peek_pane(&spans, Some("k"), 0, 80, 4, None, &mut transcripts, None);
         assert_eq!(pane.len(), 4, "borders plus the screen rows that fit");
         assert!(pane[0].contains('┏') && pane[0].contains('┓'));
         assert_eq!(
@@ -7307,7 +7816,16 @@ mod tests {
         assert!(pane[2].contains("four"));
         assert!(pane[3].contains('┗') && pane[3].contains('┛'));
 
-        let missing = build_peek_pane(&spans, Some("unknown"), 0, 80, 4, None, &mut transcripts);
+        let missing = build_peek_pane(
+            &spans,
+            Some("unknown"),
+            0,
+            80,
+            4,
+            None,
+            &mut transcripts,
+            None,
+        );
         assert!(
             missing[1].contains("no live screen"),
             "a vanished session reads as such instead of a stale screen"
@@ -7324,7 +7842,7 @@ mod tests {
         let spans = peek_spans(&capture);
         let mut transcripts = TranscriptCache::default();
 
-        let pane = build_peek_pane(&spans, Some("k"), 0, 80, 4, Some(3), &mut transcripts);
+        let pane = build_peek_pane(&spans, Some("k"), 0, 80, 4, Some(3), &mut transcripts, None);
         assert!(pane[1].contains("line 4"), "window starts at the anchor");
         assert!(pane[2].contains("line 5"));
         assert!(

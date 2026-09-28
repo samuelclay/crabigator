@@ -124,6 +124,27 @@ pub fn frame_from_key(key: KeyEvent) -> Option<AttachFrame> {
     Some(AttachFrame::Key { code, ch, mods })
 }
 
+/// Bytes the owning terminal should write for this frame. Paste is wrapped
+/// the same way a local bracketed paste is. Keys use the legacy encoding,
+/// which is what an already-running desktop writes for a text key step.
+pub fn frame_to_pty_bytes(frame: &AttachFrame) -> Vec<u8> {
+    match frame {
+        AttachFrame::Paste { text } => {
+            use crate::terminal::escape::{BRACKETED_PASTE_END, BRACKETED_PASTE_START};
+            let mut bytes = Vec::with_capacity(
+                text.len() + BRACKETED_PASTE_START.len() + BRACKETED_PASTE_END.len(),
+            );
+            bytes.extend_from_slice(BRACKETED_PASTE_START);
+            bytes.extend_from_slice(text.as_bytes());
+            bytes.extend_from_slice(BRACKETED_PASTE_END);
+            bytes
+        }
+        AttachFrame::Key { .. } => key_event_from_frame(frame)
+            .map(|event| crate::terminal::input::encode_key(event, false))
+            .unwrap_or_default(),
+    }
+}
+
 pub fn key_event_from_frame(frame: &AttachFrame) -> Option<KeyEvent> {
     let AttachFrame::Key { code, ch, mods } = frame else {
         return None;
@@ -299,6 +320,22 @@ mod tests {
             }
             other => panic!("ctrl-c should be forwarded, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn remote_frame_bytes_match_a_local_terminal() {
+        let letter =
+            frame_from_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::empty())).expect("a");
+        assert_eq!(frame_to_pty_bytes(&letter), b"a");
+        let enter =
+            frame_from_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty())).expect("enter");
+        assert_eq!(frame_to_pty_bytes(&enter), b"\r");
+        let up = frame_from_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty())).expect("up");
+        assert_eq!(frame_to_pty_bytes(&up), b"\x1b[A");
+        let paste = AttachFrame::Paste {
+            text: "hi".to_string(),
+        };
+        assert_eq!(frame_to_pty_bytes(&paste), b"\x1b[200~hi\x1b[201~");
     }
 
     #[test]

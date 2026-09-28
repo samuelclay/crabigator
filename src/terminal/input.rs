@@ -34,8 +34,11 @@ pub fn forward_mouse_to_pty(mouse: MouseEvent, pty: &mut PlatformPty, pty_rows: 
     Ok(())
 }
 
-/// Encode a key event into bytes for the PTY
-fn encode_key(key: KeyEvent, kitty_keyboard: bool) -> Vec<u8> {
+/// Encode a key event into bytes for the PTY.
+///
+/// `kitty_keyboard` is false for a key relayed to another computer: that
+/// desktop's child has not asked this terminal for the kitty protocol.
+pub(crate) fn encode_key(key: KeyEvent, kitty_keyboard: bool) -> Vec<u8> {
     let has_shift = key.modifiers.contains(KeyModifiers::SHIFT);
     let has_alt = key.modifiers.contains(KeyModifiers::ALT);
     let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
