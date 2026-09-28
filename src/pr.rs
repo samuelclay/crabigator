@@ -629,23 +629,27 @@ struct ReviewThreads {
     slack_urls: Vec<String>,
 }
 
-/// GraphQL response shape for [`REVIEW_THREADS_QUERY`].
+/// GraphQL response shape for the review-thread query used by tests.
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct ThreadsResponse {
     data: ThreadsData,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct ThreadsData {
     repository: ThreadsRepository,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct ThreadsRepository {
     #[serde(rename = "pullRequest")]
     pull_request: ThreadsPullRequest,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct ThreadsPullRequest {
     #[serde(rename = "reviewThreads")]
@@ -2786,10 +2790,9 @@ fn gh_viewer_login() -> Option<&'static str> {
         .as_deref()
 }
 
-/// `gh pr view` has no review-thread field. The background PR read includes a
-/// short page of threads; this older query remains for the ignored live test.
-/// 20 threads is enough to badge a review; a longer conversation undercounts
-/// rather than paging through it.
+/// Standalone review-thread query for the ignored live test. The background
+/// read already includes a short page of threads.
+#[cfg(test)]
 const REVIEW_THREADS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
      repository(owner:$owner,name:$repo){\
        pullRequest(number:$number){\
@@ -2800,6 +2803,7 @@ const REVIEW_THREADS_QUERY: &str = "query($owner:String!,$repo:String!,$number:I
    }";
 
 /// Count a PR's unresolved review threads, and note where the first one lives.
+#[cfg(test)]
 fn fetch_review_threads(url: &str) -> Result<ReviewThreads, String> {
     let caps = pr_url_re()
         .captures(url)
@@ -3067,7 +3071,8 @@ fn review_threads_from(threads: &ThreadNodes, comments: &IssueComments) -> Revie
     tally
 }
 
-/// Tally the unresolved threads in a [`REVIEW_THREADS_QUERY`] response.
+/// Tally the unresolved threads in a review-thread query response.
+#[cfg(test)]
 fn parse_review_threads(json: &[u8]) -> Result<ReviewThreads, String> {
     let response: ThreadsResponse =
         serde_json::from_slice(json).map_err(|e| format!("gh json parse: {e}"))?;
