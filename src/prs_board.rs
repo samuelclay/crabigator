@@ -3144,6 +3144,10 @@ struct RowSpan {
     /// The live session mirrors this row can preview: one per live session on
     /// a PR block (freshest first), the block's own session otherwise.
     peeks: Vec<PeekTarget>,
+    /// Set when this row is a live session on another computer. This machine
+    /// has no screen to mirror, but ↑↓ can still land here. Empty means the
+    /// computer's name was not sent.
+    elsewhere: Option<String>,
 }
 
 /// A session whose live screen the quick look pane can show.
@@ -3169,6 +3173,42 @@ fn session_key(session: &SessionRef) -> &str {
     } else {
         &session.session_id
     }
+}
+
+/// Screens this machine can mirror, and the other computer's name when the
+/// row is live there instead. A named computer wins over an unnamed one.
+fn row_focus(sessions: &[SessionRef], local_machine: &str) -> (Vec<PeekTarget>, Option<String>) {
+    let peeks: Vec<PeekTarget> = sessions.iter().filter_map(peek_target).collect();
+    let elsewhere = if peeks.is_empty() {
+        elsewhere_machine(sessions, local_machine)
+    } else {
+        None
+    };
+    (peeks, elsewhere)
+}
+
+/// A live session with no mirror on this computer. Selection can land on its
+/// row; quick look names the computer instead of showing a screen.
+fn elsewhere_machine(sessions: &[SessionRef], local_machine: &str) -> Option<String> {
+    let local = machine_key(local_machine);
+    let mut unnamed = false;
+    for session in sessions {
+        if session.ended || session.session_dir.is_some() {
+            continue;
+        }
+        if session.session_id.is_empty() && session.dir_name.is_empty() {
+            continue;
+        }
+        let name = machine_label(&session.device_name);
+        let key = machine_key(&name);
+        if !key.is_empty() && key != local {
+            return Some(name);
+        }
+        if key.is_empty() {
+            unnamed = true;
+        }
+    }
+    unnamed.then(String::new)
 }
 
 /// A row is previewable when its session has a local mirror with a live
@@ -3985,6 +4025,7 @@ fn render_at(
         throbber_frame,
         cooldowns,
     };
+    let local_machine = local_machine_name();
     for (section_index, section) in sections.into_iter().enumerate() {
         if section_index > 0 {
             lines.push(String::new());
@@ -4006,7 +4047,7 @@ fn render_at(
 
             for (_, row) in repository.rows {
                 let start = lines.len();
-                let (key, peeks) = match row {
+                let (key, peeks, elsewhere) = match row {
                     SectionRow::Pr(index) => {
                         let slice = &pr_slices[index];
                         let board_row = BoardRow {
@@ -4015,36 +4056,36 @@ fn render_at(
                         };
                         lines.extend(render_pr_view_block(&board_row, context));
                         let machine = slice_machine(&slice.entry);
-                        (
-                            pr_row_key(&slice.entry.pr, &machine),
-                            // Sub-row order: sessions were sorted live
-                            // first, so ←→ walks them top to bottom.
-                            slice
-                                .entry
-                                .sessions
-                                .iter()
-                                .filter_map(peek_target)
-                                .collect(),
-                        )
+                        let key = pr_row_key(&slice.entry.pr, &machine);
+                        // Sub-row order: sessions were sorted live first, so
+                        // ←→ walks the ones with a screen top to bottom.
+                        let (peeks, elsewhere) = row_focus(&slice.entry.sessions, &local_machine);
+                        (key, peeks, elsewhere)
                     }
                     SectionRow::Session(index) => {
                         let session_row = &session_rows[index];
                         lines.extend(render_session_view_block(session_row, context));
+                        let (peeks, elsewhere) = row_focus(
+                            std::slice::from_ref(&session_row.entry.session),
+                            &local_machine,
+                        );
                         (
                             format!("sess:{}", session_key(&session_row.entry.session)),
-                            peek_target(&session_row.entry.session)
-                                .into_iter()
-                                .collect(),
+                            peeks,
+                            elsewhere,
                         )
                     }
                     SectionRow::Workspace(index) => {
                         let workspace_row = &workspace_rows[index];
                         lines.extend(render_workspace_board_row(workspace_row, context));
+                        let (peeks, elsewhere) = row_focus(
+                            std::slice::from_ref(&workspace_row.entry.session),
+                            &local_machine,
+                        );
                         (
                             format!("ws:{}", session_key(&workspace_row.entry.session)),
-                            peek_target(&workspace_row.entry.session)
-                                .into_iter()
-                                .collect(),
+                            peeks,
+                            elsewhere,
                         )
                     }
                 };
@@ -4053,6 +4094,7 @@ fn render_at(
                     start,
                     end: lines.len(),
                     peeks,
+                    elsewhere,
                 });
             }
         }
@@ -4409,19 +4451,24 @@ fn session_checkout(dir_name: &str, session_dir: &Path) -> Result<String, String
     Ok(cwd.to_string())
 }
 
-/// The highlighted live session, or the first one when nothing is highlighted.
-/// A row with several sessions uses the one quick look is on.
+/// The highlighted live session, or the first one on this computer when
+/// nothing is highlighted. A row with several sessions uses the one quick
+/// look is on. A highlighted row on another computer stays highlighted and
+/// reports that, instead of opening a different folder here.
 fn prepare_new_session(
     spans: &[RowSpan],
     selected: &mut Option<String>,
     peek_index: usize,
 ) -> Result<NewSessionTarget, String> {
-    let selectable = selectable_positions(spans);
-    if selectable.is_empty() {
+    if let Some(notice) = elsewhere_selection_notice(spans, selected.as_deref()) {
+        return Err(notice);
+    }
+    let peekable = peekable_positions(spans);
+    if peekable.is_empty() {
         return Err("no live session to open".to_string());
     }
-    let position = selected_position(spans, &selectable, selected.as_deref()).unwrap_or(0);
-    let span = &spans[selectable[position]];
+    let position = selected_position(spans, &peekable, selected.as_deref()).unwrap_or(0);
+    let span = &spans[peekable[position]];
     *selected = Some(span.key.clone());
     let Some(target) = selected_peek(spans, selected.as_deref(), peek_index) else {
         return Err("no live session to open".to_string());
@@ -4586,13 +4633,44 @@ fn frame_hash(lines: &[String]) -> u64 {
     hasher.finish()
 }
 
-/// Positions in `spans` the selection can land on: rows with a live screen.
+/// Positions in `spans` ↑↓ can land on: a screen on this computer, or a live
+/// session on another computer.
 fn selectable_positions(spans: &[RowSpan]) -> Vec<usize> {
+    spans
+        .iter()
+        .enumerate()
+        .filter_map(|(index, span)| {
+            (!span.peeks.is_empty() || span.elsewhere.is_some()).then_some(index)
+        })
+        .collect()
+}
+
+/// Positions whose screen is on this computer. Quick look, fullscreen, and a
+/// new session need one of these.
+fn peekable_positions(spans: &[RowSpan]) -> Vec<usize> {
     spans
         .iter()
         .enumerate()
         .filter_map(|(index, span)| (!span.peeks.is_empty()).then_some(index))
         .collect()
+}
+
+fn selected_span<'a>(spans: &'a [RowSpan], selected: Option<&str>) -> Option<&'a RowSpan> {
+    let key = selected?;
+    spans.iter().find(|span| span.key == key)
+}
+
+/// Why `n` or `f` cannot use the highlighted row, when that row is a live
+/// session on another computer.
+fn elsewhere_selection_notice(spans: &[RowSpan], selected: Option<&str>) -> Option<String> {
+    let span = selected_span(spans, selected)?;
+    if !span.peeks.is_empty() || span.elsewhere.is_none() {
+        return None;
+    }
+    Some(match span.elsewhere.as_deref() {
+        Some(machine) if !machine.is_empty() => format!("that session is on {machine}"),
+        _ => "that session is on another computer".to_string(),
+    })
 }
 
 /// Every peekable (row, session) pair in board order, so ←→ can walk through
@@ -4608,6 +4686,7 @@ fn peek_positions(spans: &[RowSpan], selectable: &[usize]) -> Vec<(usize, usize)
 
 /// The peekable session `step` away from the current one, walking within a
 /// row's sessions before crossing into the next row, clamped at the ends.
+/// `selectable` is the rows that have a screen on this computer.
 fn step_peek_target<'a>(
     spans: &'a [RowSpan],
     selectable: &[usize],
@@ -4751,6 +4830,8 @@ fn build_peek_pane(
     if rows == 0 {
         return Vec::new();
     }
+    let span = selected.and_then(|key| spans.iter().find(|span| span.key == key));
+    let elsewhere = span.and_then(|span| span.elsewhere.as_deref());
     let target = selected_peek(spans, selected, peek_index);
     let interior = rows.saturating_sub(2);
 
@@ -4774,13 +4855,13 @@ fn build_peek_pane(
                     let skip = content.lines().count().saturating_sub(interior);
                     (content.lines().skip(skip).map(String::from).collect(), None)
                 }
-                None => (vec![peek_placeholder()], None),
+                None => (vec![peek_placeholder(None)], None),
             }
         }
-        (None, _) => (vec![peek_placeholder()], None),
+        (None, _) => (vec![peek_placeholder(elsewhere)], None),
     };
 
-    let mut lines = vec![peek_top_border(target, width, lines_back)];
+    let mut lines = vec![peek_top_border(target, elsewhere, width, lines_back)];
     if rows == 1 {
         return lines;
     }
@@ -4796,26 +4877,36 @@ fn build_peek_pane(
     lines
 }
 
-fn peek_placeholder() -> String {
-    format!(
-        "{} no live screen — the session ended or isn't captured{}",
-        fg(color::GRAY),
-        RESET_FG
-    )
+fn peek_placeholder(elsewhere: Option<&str>) -> String {
+    let text = match elsewhere {
+        Some(machine) if !machine.is_empty() => format!("this session is on {machine}"),
+        Some(_) => "this session is on another computer".to_string(),
+        None => "no live screen — the session ended or isn't captured".to_string(),
+    };
+    format!("{} {text}{}", fg(color::GRAY), RESET_FG)
 }
 
 /// The box's top edge, carrying the pane title and its keys:
 /// `┏━ ▶ title · dir ━━…━━ ←→ switch · ↑↓ scroll · ⏎ close · f type ━┓`.
 /// While scrolled into the transcript, the glyph flips to `≡` and the keys
 /// give way to how far back the view is anchored.
-fn peek_top_border(target: Option<&PeekTarget>, width: u16, lines_back: Option<usize>) -> String {
+fn peek_top_border(
+    target: Option<&PeekTarget>,
+    elsewhere: Option<&str>,
+    width: u16,
+    lines_back: Option<usize>,
+) -> String {
     let width = width as usize;
     let (title, dir) = match target {
         Some(target) if target.dir_name.is_empty() || target.title == target.dir_name => {
             (target.title.as_str(), String::new())
         }
         Some(target) => (target.title.as_str(), format!(" · {}", target.dir_name)),
-        None => ("quick look", String::new()),
+        None => match elsewhere {
+            Some(machine) if !machine.is_empty() => (machine, String::new()),
+            Some(_) => ("another computer", String::new()),
+            None => ("quick look", String::new()),
+        },
     };
     let (glyph, hint_text) = match lines_back {
         Some(back) => ("≡", format!("{back} back · ↓ live · ⏎ close · f type")),
@@ -5037,19 +5128,24 @@ fn attach_error_banner(message: &str, width: u16) -> String {
     )
 }
 
-/// Connect to the selected live session, or the first one when nothing is
-/// selected yet. `Err(None)` means there is no live screen to attach to.
+/// Connect to the selected live session, or the first one on this computer
+/// when nothing is selected yet. `Err(None)` means there is no live screen
+/// to attach to. A highlighted row on another computer reports that instead
+/// of attaching a different session.
 fn open_attach(
     spans: &[RowSpan],
     selected: &mut Option<String>,
     peek_index: usize,
 ) -> std::result::Result<AttachedSession, Option<String>> {
-    let selectable = selectable_positions(spans);
-    if selectable.is_empty() {
+    if let Some(notice) = elsewhere_selection_notice(spans, selected.as_deref()) {
+        return Err(Some(notice));
+    }
+    let peekable = peekable_positions(spans);
+    if peekable.is_empty() {
         return Err(None);
     }
-    let position = selected_position(spans, &selectable, selected.as_deref()).unwrap_or(0);
-    let span = &spans[selectable[position]];
+    let position = selected_position(spans, &peekable, selected.as_deref()).unwrap_or(0);
+    let span = &spans[peekable[position]];
     *selected = Some(span.key.clone());
     let Some(target) = selected_peek(spans, selected.as_deref(), peek_index).cloned() else {
         return Err(None);
@@ -5991,11 +6087,13 @@ async fn board_loop(
                             _ => None,
                         };
                         if let Some(step) = switch {
-                            // ←→ walk peekable sessions: within a PR-view
-                            // row's sub-rows first, then into the neighbors.
+                            // ←→ walk sessions that have a screen here:
+                            // within a PR-view row's sub-rows first, then
+                            // into the neighbors. Rows on another computer
+                            // stay on ↑↓ only.
                             if let Some((span, next_index)) = step_peek_target(
                                 &spans,
-                                &selectable,
+                                &peekable_positions(&spans),
                                 selected.as_deref(),
                                 peek_index,
                                 step,
@@ -6013,8 +6111,9 @@ async fn board_loop(
                         }
                     } else {
                         // ↑↓ (plus j/k outside search) step the selection
-                        // through live sessions and the view follows; with
-                        // nothing selectable they fall back to line scrolling.
+                        // through rows on this computer and on the account's
+                        // other computers. With nothing selectable they fall
+                        // back to line scrolling.
                         let step: Option<isize> = match key.code {
                             KeyCode::Up => Some(-1),
                             KeyCode::Down => Some(1),
@@ -6154,8 +6253,8 @@ mod tests {
 
     #[test]
     fn peek_border_offers_typing() {
-        let live = peek_top_border(None, 100, None);
-        let scrolled = peek_top_border(None, 100, Some(12));
+        let live = peek_top_border(None, None, 100, None);
+        let scrolled = peek_top_border(None, None, 100, Some(12));
         assert!(live.contains("f type"));
         assert!(live.contains("⏎ close"));
         assert!(scrolled.contains("f type"));
@@ -6328,6 +6427,7 @@ mod tests {
                     session_dir: second_mirror.path().to_path_buf(),
                 },
             ],
+            elsewhere: None,
         }];
 
         let mut selected = Some("o/portal#5".to_string());
@@ -6353,6 +6453,7 @@ mod tests {
                 dir_name: "portal".to_string(),
                 session_dir: missing.path().to_path_buf(),
             }],
+            elsewhere: None,
         }];
         let err = prepare_new_session(&spans, &mut None, 0).unwrap_err();
         assert!(err.contains("no folder for portal"), "{err}");
@@ -6862,12 +6963,14 @@ mod tests {
                 start: 0,
                 end: 1,
                 peeks: vec![target("a1"), target("a2")],
+                elsewhere: None,
             },
             RowSpan {
                 key: "b".to_string(),
                 start: 1,
                 end: 2,
                 peeks: vec![target("b1")],
+                elsewhere: None,
             },
         ];
         let selectable = selectable_positions(&spans);
@@ -6980,6 +7083,7 @@ mod tests {
             start,
             end,
             peeks: Vec::new(),
+            elsewhere: None,
         };
         assert_eq!(scroll_to_reveal(10, 5, &span(3, 5)), 3, "scrolls up");
         assert_eq!(
@@ -7044,6 +7148,127 @@ mod tests {
         );
     }
 
+    #[test]
+    fn elsewhere_machine_names_another_computer_only() {
+        let mut remote = test_session_ref("a", 1, false);
+        remote.device_name = "claybook-m4".to_string();
+        assert_eq!(
+            elsewhere_machine(std::slice::from_ref(&remote), "claymac-studio").as_deref(),
+            Some("claybook-m4")
+        );
+        assert_eq!(
+            elsewhere_machine(std::slice::from_ref(&remote), "claybook-m4"),
+            None,
+            "this computer's own row is not elsewhere"
+        );
+        remote.ended = true;
+        assert_eq!(
+            elsewhere_machine(std::slice::from_ref(&remote), "claymac-studio"),
+            None,
+            "an ended session stays off the selection list"
+        );
+        let unnamed = test_session_ref("b", 1, false);
+        assert_eq!(
+            elsewhere_machine(std::slice::from_ref(&unnamed), "claymac-studio").as_deref(),
+            Some("")
+        );
+    }
+
+    /// Other computers have no screen.txt on this machine. Down still lands
+    /// on those rows, and skips an ended row that has no screen.
+    #[test]
+    fn other_machine_rows_stay_selectable_without_a_local_screen() {
+        let capture = tempfile::tempdir().unwrap();
+        std::fs::write(capture.path().join("screen.txt"), "hello\n").unwrap();
+
+        let now = now_secs() as u64;
+        let mut live_pr = board_pr(7, "portal");
+        make_primary(&mut live_pr);
+        let mut live = snapshot("live", vec![live_pr]);
+        live.repo_name = "portal".to_string();
+        live.session_dir = capture.path().to_path_buf();
+        live.prompted_at = now;
+        let mut entries = aggregate(&[live], &ScopedOverrides::default());
+
+        let mut remote_pr = board_pr(8, "portal");
+        make_primary(&mut remote_pr);
+        let mut remote_session = test_session_ref("remote-session", now - 60, false);
+        remote_session.device_name = "remote-test-host".to_string();
+        entries.push(BoardPr {
+            pr: remote_pr,
+            sessions: vec![remote_session],
+            touching: Vec::new(),
+            slack_threads: Vec::new(),
+            stale: false,
+        });
+
+        let mut ended_pr = board_pr(9, "portal");
+        make_primary(&mut ended_pr);
+        entries.push(BoardPr {
+            pr: ended_pr,
+            sessions: vec![test_session_ref("ended-session", now - 30, true)],
+            touching: Vec::new(),
+            slack_threads: Vec::new(),
+            stale: true,
+        });
+
+        let rendered = render_prs_frame(&entries, DEFAULT_DETAIL);
+        let keys: Vec<&str> = rendered
+            .spans
+            .iter()
+            .map(|span| span.key.as_str())
+            .collect();
+        assert!(keys.contains(&"o/portal#7"), "{keys:?}");
+        assert!(keys.contains(&"o/portal#8@remote-test-host"), "{keys:?}");
+        assert!(keys.contains(&"o/portal#9"), "{keys:?}");
+
+        let selectable = selectable_positions(&rendered.spans);
+        let selectable_keys: Vec<&str> = selectable
+            .iter()
+            .map(|&index| rendered.spans[index].key.as_str())
+            .collect();
+        assert!(
+            selectable_keys.contains(&"o/portal#7"),
+            "{selectable_keys:?}"
+        );
+        assert!(
+            selectable_keys.contains(&"o/portal#8@remote-test-host"),
+            "{selectable_keys:?}"
+        );
+        assert!(
+            !selectable_keys.iter().any(|key| *key == "o/portal#9"),
+            "an ended row with no screen stays unselectable: {selectable_keys:?}"
+        );
+
+        let next = step_selection(&rendered.spans, &selectable, Some("o/portal#7"), 1)
+            .map(|span| span.key.as_str());
+        assert_eq!(next, Some("o/portal#8@remote-test-host"));
+
+        let pane = build_peek_pane(
+            &rendered.spans,
+            Some("o/portal#8@remote-test-host"),
+            0,
+            80,
+            4,
+            None,
+            &mut TranscriptCache::default(),
+        );
+        let plain = crate::parsers::strip_ansi_for_debug(&pane.join("\n"));
+        assert!(
+            plain.contains("this session is on remote-test-host"),
+            "{plain}"
+        );
+
+        let mut selected = Some("o/portal#8@remote-test-host".to_string());
+        let err = prepare_new_session(&rendered.spans, &mut selected, 0).unwrap_err();
+        assert!(err.contains("remote-test-host"), "{err}");
+        assert_eq!(
+            selected.as_deref(),
+            Some("o/portal#8@remote-test-host"),
+            "n keeps the other computer highlighted"
+        );
+    }
+
     fn peek_spans(capture: &tempfile::TempDir) -> Vec<RowSpan> {
         vec![RowSpan {
             key: "k".to_string(),
@@ -7054,6 +7279,7 @@ mod tests {
                 dir_name: "portal".to_string(),
                 session_dir: capture.path().to_path_buf(),
             }],
+            elsewhere: None,
         }]
     }
 
