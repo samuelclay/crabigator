@@ -14,6 +14,7 @@ use super::{WidgetArea, COMPLETION_ICON, PROMPT_ICON};
 use crate::cloud::CloudStatus;
 use crate::hooks::SessionStats;
 use crate::platforms::SessionState;
+use crate::session_mark::SessionMark;
 use crate::terminal::escape::{self, bg, color, fg, RESET};
 use crate::ui::cooldown::{tint_text, Tint};
 
@@ -181,6 +182,7 @@ pub fn draw_stats_widget(
     is_paired: bool,
     pairing_code: Option<&str>,
     state_tint: Option<Tint>,
+    session_mark: SessionMark,
     secondary_attached: bool,
 ) -> Result<()> {
     write!(
@@ -206,6 +208,7 @@ pub fn draw_stats_widget(
             is_paired,
             pairing_code,
             state_tint,
+            session_mark,
             secondary_attached,
         )
     } else {
@@ -217,6 +220,7 @@ pub fn draw_stats_widget(
             is_paired,
             pairing_code,
             state_tint,
+            session_mark,
             secondary_attached,
         )
     };
@@ -447,14 +451,30 @@ fn secondary_chip() -> String {
     )
 }
 
+/// `◉`, then the identity chip, just left of the word.
+fn session_label(mark: SessionMark, word: &str) -> String {
+    let bullet = format!("{}◉{RESET}", fg(color::GRAY));
+    if word.is_empty() {
+        format!("{bullet} {}", mark.chip())
+    } else {
+        format!("{bullet} {} {}{word}{RESET}", mark.chip(), fg(color::GRAY))
+    }
+}
+
 /// One session cell, exactly `width` columns when the pieces fit.
 ///
-/// The amber chip wins over the work timer: a narrow stats column keeps
-/// `Session` and `secondary` and drops `just now`.
-fn session_metric(secondary_attached: bool, value: &str, width: usize) -> String {
-    let full = format!("{}◉ Session{}", fg(color::GRAY), RESET);
-    let short = format!("{}◉ Sess{}", fg(color::GRAY), RESET);
-    let icon = format!("{}◉{}", fg(color::GRAY), RESET);
+/// A narrow column drops the work timer before it shortens "Session", so
+/// the glyph stays left of the full word. The amber "secondary" chip stays
+/// with that word.
+fn session_metric(
+    mark: SessionMark,
+    secondary_attached: bool,
+    value: &str,
+    width: usize,
+) -> String {
+    let full = session_label(mark, "Session");
+    let short = session_label(mark, "Sess");
+    let icon = session_label(mark, "");
     let bases = [full, short, icon];
     let chip = secondary_chip();
     let value_len = strip_ansi_len(value);
@@ -478,26 +498,23 @@ fn session_metric(secondary_attached: bool, value: &str, width: usize) -> String
         }
     };
 
-    if secondary_attached {
-        // Keep the longest "Session" wording. The timer is dropped before
-        // the word is shortened, so a narrow column still reads as secondary.
-        for base in &bases {
-            let label = format!("{base}{chip}");
-            if fits(&label, true) {
-                return place(&label, true);
-            }
-            if fits(&label, false) {
-                return place(&label, false);
-            }
-        }
-    }
     for base in &bases {
-        if fits(base, true) {
-            return place(base, true);
+        let label = if secondary_attached {
+            format!("{base}{chip}")
+        } else {
+            base.clone()
+        };
+        if fits(&label, true) {
+            return place(&label, true);
+        }
+        // Drop the timer before shortening "Session", so the glyph stays
+        // next to the full word.
+        if fits(&label, false) {
+            return place(&label, false);
         }
     }
-    let label = bases.last().map(String::as_str).unwrap_or("");
-    place(label, true)
+    let fallback = bases.last().map(String::as_str).unwrap_or("");
+    place(fallback, true)
 }
 
 /// Draw a row in compact mode (two metrics per row, each with label and value)
@@ -510,6 +527,7 @@ fn draw_compact_row(
     is_paired: bool,
     pairing_code: Option<&str>,
     state_tint: Option<Tint>,
+    session_mark: SessionMark,
     secondary_attached: bool,
 ) -> String {
     let content_width = (width as usize).saturating_sub(1);
@@ -533,7 +551,8 @@ fn draw_compact_row(
         }
         2 => {
             let session_value = format!("{}{}{}", fg(color::BLUE), stats.format_work(), RESET);
-            let session = session_metric(secondary_attached, &session_value, left_width);
+            let session =
+                session_metric(session_mark, secondary_attached, &session_value, left_width);
 
             let thinking_val = stats.format_thinking().unwrap_or_else(|| "—".to_string());
             let thinking_labels = [
@@ -605,6 +624,7 @@ fn draw_normal_row(
     is_paired: bool,
     pairing_code: Option<&str>,
     state_tint: Option<Tint>,
+    session_mark: SessionMark,
     secondary_attached: bool,
 ) -> String {
     match row {
@@ -623,11 +643,11 @@ fn draw_normal_row(
             format!("{}{:gap$}{}", header, "", state, gap = gap)
         }
         2 => {
-            // Session/work time. A connected attach view adds an amber
-            // "secondary" chip beside the label, dropping the timer if the
-            // column is too narrow for both.
+            // Session/work time. The identity chip sits just left of the word.
+            // A connected attach view adds an amber "secondary" chip beside
+            // the label, dropping the timer if the column is too narrow.
             let value = format!("{}{}{}", fg(color::BLUE), stats.format_work(), RESET);
-            session_metric(secondary_attached, &value, width as usize)
+            session_metric(session_mark, secondary_attached, &value, width as usize)
         }
         3 => {
             // Thinking time (always show, with dash when no thinking yet)
@@ -739,6 +759,20 @@ mod tests {
         crate::ui::utils::strip_ansi_len(s)
     }
 
+    fn sample_mark() -> SessionMark {
+        SessionMark::from_seed("stats-session")
+    }
+
+    fn assert_glyph_left_of_session(row: &str, mark: SessionMark) {
+        let bullet_at = row.find('◉').expect("session row keeps its bullet");
+        let glyph_at = row.find(mark.glyph).expect("session row shows the glyph");
+        let word_at = row.find("Session").expect("session row keeps the word");
+        assert!(
+            bullet_at < glyph_at && glyph_at < word_at,
+            "glyph sits between the bullet and Session: {row}"
+        );
+    }
+
     fn osc_link_target(s: &str) -> Option<String> {
         // OSC 8 hyperlink format: \x1b]8;;<url>\x07<text>\x1b]8;;\x07
         let start = s.find("\x1b]8;;")? + "\x1b]8;;".len();
@@ -784,12 +818,12 @@ mod tests {
         let stats = SessionStats::default();
         let width = 70;
 
-        let first = draw_compact_row(2, width, &stats, None, false, None, None, false);
-        let second = draw_compact_row(3, width, &stats, None, false, None, None, false);
-        let third = draw_compact_row(4, width, &stats, None, false, None, None, false);
+        let mark = sample_mark();
+        let first = draw_compact_row(2, width, &stats, None, false, None, None, mark, false);
+        let second = draw_compact_row(3, width, &stats, None, false, None, None, mark, false);
+        let third = draw_compact_row(4, width, &stats, None, false, None, None, mark, false);
 
-        assert!(first.contains("◉"));
-        assert!(first.contains("Session"));
+        assert_glyph_left_of_session(&first, mark);
         assert!(first.contains("Thinking"));
         assert!(!first.contains("Prompts"));
         assert!(second.contains("Prompts"));
@@ -804,37 +838,52 @@ mod tests {
     #[test]
     fn session_row_keeps_the_session_word() {
         let stats = SessionStats::default();
-        let row = draw_normal_row(2, 32, &stats, None, false, None, None, false);
-        assert!(row.contains("◉"));
-        assert!(row.contains("Session"));
+        let mark = sample_mark();
+        let row = draw_normal_row(2, 32, &stats, None, false, None, None, mark, false);
+        assert_glyph_left_of_session(&row, mark);
+        assert!(row.contains("just now"));
         assert!(!row.contains("secondary"));
         assert_eq!(visible(&row), 32);
+    }
+
+    #[test]
+    fn narrow_session_row_keeps_the_word_and_drops_the_timer() {
+        let stats = SessionStats::default();
+        let mark = sample_mark();
+        let width = (1 + 1 + mark.width() + 1 + "Session".len()) as u16;
+        let row = draw_normal_row(2, width, &stats, None, false, None, None, mark, false);
+        assert_glyph_left_of_session(&row, mark);
+        assert!(!row.contains("just now"), "{row}");
+        assert_eq!(visible(&row), width as usize);
     }
 
     #[test]
     fn secondary_chip_sits_beside_the_session_label() {
         let stats = SessionStats::default();
 
+        let mark = sample_mark();
         let background = bg(color::YELLOW);
-        let normal = draw_normal_row(2, 40, &stats, None, false, None, None, true);
-        assert!(normal.contains("Session"));
+        let normal = draw_normal_row(2, 48, &stats, None, false, None, None, mark, true);
+        assert_glyph_left_of_session(&normal, mark);
         assert!(normal.contains("secondary"));
         assert!(normal.contains(&background));
-        assert_eq!(visible(&normal), 40);
+        assert_eq!(visible(&normal), 48);
 
-        let compact = draw_compact_row(2, 70, &stats, None, false, None, None, true);
-        assert!(compact.contains("Session"));
+        let compact = draw_compact_row(2, 80, &stats, None, false, None, None, mark, true);
+        assert_glyph_left_of_session(&compact, mark);
         assert!(compact.contains("secondary"));
         assert!(compact.contains(&background));
-        assert_eq!(visible(&compact), 70);
+        assert_eq!(visible(&compact), 80);
 
-        // The stats column on a normal terminal is about this wide. The chip
-        // stays, and the work timer gives up its space.
-        let narrow = draw_normal_row(2, 24, &stats, None, false, None, None, true);
-        assert!(narrow.contains("Session"));
+        // Wide enough for the glyph, the word, and the amber chip, and too
+        // narrow for the work timer as well.
+        let narrow_width =
+            (1 + 1 + mark.width() + 1 + "Session".len() + " secondary ".len()) as u16;
+        let narrow = draw_normal_row(2, narrow_width, &stats, None, false, None, None, mark, true);
+        assert_glyph_left_of_session(&narrow, mark);
         assert!(narrow.contains("secondary"));
         assert!(!narrow.contains("just now"));
-        assert_eq!(visible(&narrow), 24);
+        assert_eq!(visible(&narrow), narrow_width as usize);
     }
 
     #[test]

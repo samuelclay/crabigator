@@ -45,7 +45,9 @@ fn stats_widget_width(total_cols: u16, compact: bool) -> u16 {
     if compact {
         ((total_cols as f32) * 0.35).max(36.0) as u16
     } else {
-        ((total_cols as f32) * 0.22).max(24.0) as u16
+        // The identity chip sits left of "Session", so the column needs a
+        // few more cells than the old bullet-only label.
+        ((total_cols as f32) * 0.22).max(30.0) as u16
     }
 }
 
@@ -341,6 +343,7 @@ pub fn draw_status_bar(
             is_paired,
             pairing_state.pairing_code.as_deref(),
             state_tint,
+            session_mark,
             secondary_attached,
         )?;
 
