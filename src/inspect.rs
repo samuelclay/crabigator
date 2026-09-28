@@ -3,7 +3,7 @@
 //! Discovers and displays state from other running crabigator instances.
 
 use std::fs::{self, metadata};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
@@ -179,25 +179,49 @@ fn print_history(instances: &[(PathBuf, Value)]) -> Result<()> {
     Ok(())
 }
 
+/// Live session mirrors, newest first. Symlinked aliases (the assistant
+/// conversation id, the cloud id) point at the same `inspect.json`, so they
+/// are skipped instead of parsed again.
+pub(crate) fn mirror_paths() -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = glob::glob("/tmp/crabigator-*/inspect.json")
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|path| {
+            !path
+                .parent()
+                .and_then(|dir| dir.symlink_metadata().ok())
+                .is_some_and(|meta| meta.file_type().is_symlink())
+        })
+        .collect();
+    paths.sort_by_key(|path| {
+        std::cmp::Reverse(path.metadata().and_then(|meta| meta.modified()).ok())
+    });
+    paths
+}
+
+pub(crate) fn load_mirror(path: &Path) -> Option<Value> {
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
 pub(crate) fn discover_instances(dir_filter: &Option<String>) -> Result<Vec<(PathBuf, Value)>> {
-    let pattern = "/tmp/crabigator-*/inspect.json";
     let mut instances = vec![];
 
-    for entry in glob::glob(pattern)? {
-        let path = entry?;
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(data) = serde_json::from_str::<Value>(&content) {
-                // Apply directory filter
-                if let Some(filter) = dir_filter {
-                    if let Some(cwd) = data.get("cwd").and_then(|v| v.as_str()) {
-                        if !cwd.contains(filter) {
-                            continue;
-                        }
-                    }
+    for path in mirror_paths() {
+        let Some(data) = load_mirror(&path) else {
+            continue;
+        };
+        // Apply directory filter
+        if let Some(filter) = dir_filter {
+            if let Some(cwd) = data.get("cwd").and_then(|v| v.as_str()) {
+                if !cwd.contains(filter) {
+                    continue;
                 }
-                instances.push((path, data));
             }
         }
+        instances.push((path, data));
     }
 
     // A session is reachable under several directory aliases (its crabigator ID

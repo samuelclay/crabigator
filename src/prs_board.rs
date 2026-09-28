@@ -8,8 +8,11 @@
 //! The board never talks to `gh` itself — it renders what the sessions
 //! already know, with honest ages. Cloud dispositions are fetched once a
 //! minute so dashboard toggles apply here too. The default view reads live
-//! session mirrors under /tmp; `s` flips to the durable cloud record, which
-//! includes ended sessions' PRs (tagged for resurrection) at ~1min lag.
+//! session mirrors under /tmp and the account's other computers' active
+//! sessions. `s` flips to the durable cloud record, which includes ended
+//! sessions' PRs at about a minute of lag. Time bands stay the top grouping.
+//! Under each band, one repository on two computers is two groups:
+//! `owner/repo · machine`.
 //! `f` fullscreens a live session on this computer and types into it.
 //! Ctrl-] leaves that view. `n` opens a new session in the highlighted
 //! session's folder: pick Claude, Codex, opencode, or Grok, and Ghostty
@@ -34,6 +37,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, size as terminal_size, EnterAlternateScreen,
     LeaveAlternateScreen,
 };
+use serde::{Deserialize, Serialize};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::platforms::{PlatformKind, SessionState};
@@ -51,7 +55,9 @@ use crate::ui::{COMPLETION_ICON, PROMPT_ICON};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const OVERRIDES_REFRESH: Duration = Duration::from_secs(60);
-/// The all-sessions view refetches the cloud board at this cadence.
+/// How often the board refetches the account's cloud record. Live view uses
+/// it for other computers' active sessions; all-sessions view uses the whole
+/// record, ended sessions included.
 const CLOUD_BOARD_REFRESH: Duration = Duration::from_secs(15);
 /// A mirror this old is a session that stopped updating; its rows dim.
 const STALE_SESSION_SECS: f64 = 300.0;
@@ -64,7 +70,9 @@ const PREVIEW_MATCHES: usize = 3;
 /// Transcript lines shown either side of a match in the expanded preview.
 const PREVIEW_CONTEXT: usize = 2;
 /// Keep the first load visibly progressive without stretching it out.
-const INITIAL_LOAD_BATCH: usize = 4;
+const INITIAL_LOAD_BATCH: usize = 8;
+/// Most of a transcript the board will read while looking for Slack rows.
+const SLACK_SCAN_MAX: u64 = 256 * 1024;
 /// `r` toggles between one titled row and the complete recap detail.
 const MAX_DETAIL: u8 = 1;
 const DEFAULT_DETAIL: u8 = 0;
@@ -81,6 +89,9 @@ const RECENCY_24H: u8 = 25;
 const ACTIVITY_BRIGHT_TEAL: u8 = 51;
 /// The previous event in the prompt/completion pair.
 const ACTIVITY_DARK_TEAL: u8 = 30;
+/// Machine names on repository headings. Cornflower, so it stays apart from
+/// the cyan recency bars and from the light blue of session titles.
+const MACHINE_BLUE: u8 = 69;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum RecencyBucket {
@@ -309,7 +320,7 @@ fn header_control(key: char, state: &str, changed: bool) -> String {
 }
 
 /// The slice of a session's latest recap the detail view renders.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct RecapBrief {
     headline: String,
     bullets: Vec<String>,
@@ -333,6 +344,8 @@ struct SessionSnapshot {
     dir_name: String,
     repo_owner: String,
     repo_name: String,
+    /// Paired computer this session is running on, without a `.local` suffix.
+    device_name: String,
     /// The session's /tmp mirror directory, where scrollback.log lives.
     session_dir: PathBuf,
     last_updated: f64,
@@ -368,6 +381,205 @@ struct BoardPr {
     touching: Vec<SessionRef>,
     slack_threads: Vec<SlackThread>,
     stale: bool,
+}
+
+/// Last board, so the next open can paint before live mirrors are read.
+/// GitHub stats in here came from the sessions' own mirrors, not a fresh
+/// `gh` call.
+#[derive(Serialize, Deserialize)]
+struct BoardCache {
+    entries: Vec<CachedBoardPr>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedBoardPr {
+    pr: SessionPr,
+    #[serde(default)]
+    sessions: Vec<CachedSessionRef>,
+    #[serde(default)]
+    touching: Vec<CachedSessionRef>,
+    #[serde(default)]
+    slack_threads: Vec<SlackThread>,
+    #[serde(default)]
+    stale: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedSessionRef {
+    session_id: String,
+    #[serde(default)]
+    platform: PlatformKind,
+    #[serde(default)]
+    pr_scope: String,
+    #[serde(default)]
+    dir_name: String,
+    #[serde(default)]
+    session_dir: Option<PathBuf>,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    title_set_at: u64,
+    #[serde(default)]
+    branch: String,
+    #[serde(default)]
+    recap: Option<RecapBrief>,
+    #[serde(default)]
+    state: SessionState,
+    #[serde(default)]
+    prompted_at: u64,
+    #[serde(default)]
+    completed_at: u64,
+    #[serde(default)]
+    ended: bool,
+    /// Paired computer, without a `.local` suffix. Empty in caches written
+    /// before machine labels.
+    #[serde(default)]
+    device_name: String,
+}
+
+fn board_cache_path() -> Option<PathBuf> {
+    Some(
+        dirs::home_dir()?
+            .join(".crabigator")
+            .join("pr-board-cache.json"),
+    )
+}
+
+fn load_board_cache() -> Vec<BoardPr> {
+    let Some(path) = board_cache_path() else {
+        return Vec::new();
+    };
+    load_board_cache_from(&path)
+}
+
+fn load_board_cache_from(path: &Path) -> Vec<BoardPr> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    // A corrupt or huge cache must not stall the open.
+    if text.len() > 4 * 1024 * 1024 {
+        return Vec::new();
+    }
+    serde_json::from_str::<BoardCache>(&text)
+        .map(|cache| cache.entries.into_iter().map(BoardPr::from).collect())
+        .unwrap_or_default()
+}
+
+fn save_board_cache(entries: &[BoardPr]) {
+    let Some(path) = board_cache_path() else {
+        return;
+    };
+    save_board_cache_to(&path, entries);
+}
+
+fn save_board_cache_to(path: &Path, entries: &[BoardPr]) {
+    if entries.is_empty() {
+        return;
+    }
+    let cache = BoardCache {
+        entries: entries.iter().cloned().map(CachedBoardPr::from).collect(),
+    };
+    let Ok(body) = serde_json::to_vec(&cache) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, body).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+/// Live rows replace cached copies of the same PR. Cached rows the live load
+/// has not reached yet stay on screen, so the board fills in instead of
+/// going blank.
+fn overlay_live_on_cache(cache: &[BoardPr], mut live: Vec<BoardPr>) -> Vec<BoardPr> {
+    let mut seen: HashSet<String> = live.iter().map(board_pr_key).collect();
+    for cached in cache {
+        let key = board_pr_key(cached);
+        if seen.insert(key) {
+            live.push(cached.clone());
+        }
+    }
+    sort_entries(&mut live);
+    live
+}
+
+fn board_pr_key(entry: &BoardPr) -> String {
+    format!(
+        "{}/{}#{}",
+        entry.pr.owner.to_ascii_lowercase(),
+        entry.pr.repo.to_ascii_lowercase(),
+        entry.pr.number
+    )
+}
+
+impl From<CachedSessionRef> for SessionRef {
+    fn from(cached: CachedSessionRef) -> Self {
+        Self {
+            mark: SessionMark::from_seed(&cached.session_id),
+            session_id: cached.session_id,
+            platform: cached.platform,
+            pr_scope: cached.pr_scope,
+            dir_name: cached.dir_name,
+            session_dir: cached.session_dir,
+            title: cached.title,
+            title_set_at: cached.title_set_at,
+            branch: cached.branch,
+            recap: cached.recap,
+            state: cached.state,
+            prompted_at: cached.prompted_at,
+            completed_at: cached.completed_at,
+            ended: cached.ended,
+            device_name: cached.device_name,
+        }
+    }
+}
+
+impl From<&SessionRef> for CachedSessionRef {
+    fn from(session: &SessionRef) -> Self {
+        Self {
+            session_id: session.session_id.clone(),
+            platform: session.platform,
+            pr_scope: session.pr_scope.clone(),
+            dir_name: session.dir_name.clone(),
+            session_dir: session.session_dir.clone(),
+            title: session.title.clone(),
+            title_set_at: session.title_set_at,
+            branch: session.branch.clone(),
+            recap: session.recap.clone(),
+            state: session.state,
+            prompted_at: session.prompted_at,
+            completed_at: session.completed_at,
+            ended: session.ended,
+            device_name: session.device_name.clone(),
+        }
+    }
+}
+
+impl From<CachedBoardPr> for BoardPr {
+    fn from(cached: CachedBoardPr) -> Self {
+        Self {
+            pr: cached.pr,
+            sessions: cached.sessions.into_iter().map(SessionRef::from).collect(),
+            touching: cached.touching.into_iter().map(SessionRef::from).collect(),
+            slack_threads: cached.slack_threads,
+            stale: cached.stale,
+        }
+    }
+}
+
+impl From<BoardPr> for CachedBoardPr {
+    fn from(entry: BoardPr) -> Self {
+        Self {
+            pr: entry.pr,
+            sessions: entry.sessions.iter().map(CachedSessionRef::from).collect(),
+            touching: entry.touching.iter().map(CachedSessionRef::from).collect(),
+            slack_threads: entry.slack_threads,
+            stale: entry.stale,
+        }
+    }
 }
 
 impl BoardPr {
@@ -408,6 +620,9 @@ struct SessionRef {
     /// The session is over. Always false for live local mirrors; cloud
     /// records carry the durable answer.
     ended: bool,
+    /// Paired computer this session is running on, without a `.local` suffix.
+    /// Empty when the record predates machine labels.
+    device_name: String,
     mark: SessionMark,
 }
 
@@ -602,6 +817,7 @@ fn snapshot_from_instance(
         dir_name: cwd.rsplit('/').next().unwrap_or_default().to_string(),
         repo_owner,
         repo_name,
+        device_name: local_machine_name(),
         last_updated,
         branch: git
             .and_then(|g| g.get("branch"))
@@ -666,11 +882,18 @@ fn start_initial_local_load() -> mpsc::Receiver<InitialLoadUpdate> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut history = ActivityHistory::default();
-        let Ok(instances) = crate::inspect::discover_instances(&None) else {
-            let _ = tx.send(InitialLoadUpdate::Complete(Box::new(history)));
-            return;
-        };
-        for (path, data) in instances {
+        let mut seen = HashSet::new();
+        // Newest mirror first, one file at a time, so the board can paint
+        // before the last session is read.
+        for path in crate::inspect::mirror_paths() {
+            let Some(data) = crate::inspect::load_mirror(&path) else {
+                continue;
+            };
+            if let Some(id) = data.get("session_id").and_then(|value| value.as_str()) {
+                if !seen.insert(id.to_string()) {
+                    continue;
+                }
+            }
             if let Some(snapshot) = snapshot_from_instance(path, data, &mut history) {
                 if tx
                     .send(InitialLoadUpdate::Snapshot(Box::new(snapshot)))
@@ -778,19 +1001,17 @@ impl ActivityHistory {
         if file_len == scanned_len {
             return;
         }
-        let offset = if file_len < scanned_len {
-            0
-        } else {
-            scanned_len
-        };
+        // Never read a whole transcript here. One live session's log can be
+        // over a gigabyte, and the board only needs recent Slack tool rows.
+        let start = slack_scan_start(file_len, scanned_len);
         let Ok(mut file) = File::open(path) else {
             return;
         };
-        if file.seek(SeekFrom::Start(offset)).is_err() {
+        if file.seek(SeekFrom::Start(start)).is_err() {
             return;
         }
         let mut text = String::new();
-        if file.read_to_string(&mut text).is_err() {
+        if file.take(SLACK_SCAN_MAX).read_to_string(&mut text).is_err() {
             return;
         }
         self.slack_directory.message_metadata(&text);
@@ -864,6 +1085,23 @@ impl ActivityHistory {
 }
 
 const TRANSCRIPT_SCAN_CHUNK: u64 = 64 * 1024;
+
+/// Where to start reading a transcript for Slack rows.
+///
+/// The first look, a transcript that shrank, and any jump larger than
+/// [`SLACK_SCAN_MAX`] keep the newest bytes. Smaller growth is read from
+/// where the last look stopped.
+fn slack_scan_start(file_len: u64, scanned_len: u64) -> u64 {
+    if file_len < scanned_len || scanned_len == 0 {
+        return file_len.saturating_sub(SLACK_SCAN_MAX);
+    }
+    let grown = file_len - scanned_len;
+    if grown > SLACK_SCAN_MAX {
+        file_len - SLACK_SCAN_MAX
+    } else {
+        scanned_len
+    }
+}
 
 fn scan_transcript_backwards(path: &Path, seed: ActivityTimes) -> std::io::Result<ActivityTimes> {
     let mut file = File::open(path)?;
@@ -1441,6 +1679,7 @@ fn board_session_ref(session: &SessionSnapshot) -> SessionRef {
         prompted_at: session.prompted_at,
         completed_at: session.completed_at,
         ended: false,
+        device_name: machine_label(&session.device_name),
         mark: session.mark,
     }
 }
@@ -1528,6 +1767,33 @@ fn repository_matches(owner: &str, repo: &str, other_owner: &str, other_repo: &s
     !repo.is_empty()
         && owner.eq_ignore_ascii_case(other_owner)
         && repo.eq_ignore_ascii_case(other_repo)
+}
+
+/// Short computer name. macOS reports `claybook-m4.local`; the board shows
+/// `claybook-m4`, matching the dashboard's device headings.
+fn machine_label(name: &str) -> String {
+    let trimmed = name.trim();
+    trimmed
+        .strip_suffix(".local")
+        .unwrap_or(trimmed)
+        .trim()
+        .to_string()
+}
+
+fn machine_key(name: &str) -> String {
+    machine_label(name).to_ascii_lowercase()
+}
+
+fn local_machine_name() -> String {
+    hostname::get()
+        .ok()
+        .and_then(|name| name.into_string().ok())
+        .map(|name| machine_label(&name))
+        .unwrap_or_default()
+}
+
+fn repository_group_key(repo: &str, machine: &str) -> String {
+    format!("{}\u{0}{}", repo.to_ascii_lowercase(), machine_key(machine))
 }
 
 fn local_board(history: &mut ActivityHistory, overrides: &ScopedOverrides) -> Result<LocalBoard> {
@@ -1756,7 +2022,169 @@ fn cloud_session_ref(session: crate::cloud::CloudBoardSession) -> SessionRef {
         prompted_at: activity_timestamp_secs(session.prompts_changed_at),
         completed_at: activity_timestamp_secs(session.completions_changed_at),
         ended: !active,
+        device_name: machine_label(&session.device_name),
     }
+}
+
+fn session_ref_listed(sessions: &[SessionRef], session: &SessionRef) -> bool {
+    sessions.iter().any(|existing| {
+        if !session.session_id.is_empty() {
+            existing.session_id == session.session_id
+        } else {
+            existing.session_id.is_empty()
+                && existing.dir_name == session.dir_name
+                && machine_key(&existing.device_name) == machine_key(&session.device_name)
+        }
+    })
+}
+
+/// Whether a cloud session belongs on the live board beside this computer.
+/// This computer's own rows come from its live mirrors. Ended sessions stay
+/// on the all-sessions view.
+fn other_machine_session(
+    session: &SessionRef,
+    local_machine: &str,
+    local_ids: &HashSet<String>,
+) -> bool {
+    if session.ended {
+        return false;
+    }
+    if !session.session_id.is_empty() && local_ids.contains(&session.session_id) {
+        return false;
+    }
+    let local = machine_key(local_machine);
+    // An unnamed cloud row is kept: an older Worker does not say which
+    // computer it was, and this computer's own live sessions were already
+    // excluded by id.
+    local.is_empty() || machine_key(&session.device_name) != local
+}
+
+/// Add active sessions from the account's other computers. A repository stays
+/// one merged PR, so both computers share GitHub status, and rendering splits
+/// the sessions into one group per computer.
+fn merge_other_machines(
+    entries: &mut Vec<BoardPr>,
+    workspaces: &mut Vec<WorkspaceEntry>,
+    cloud_entries: &[BoardPr],
+    cloud_workspaces: &[WorkspaceEntry],
+    local_machine: &str,
+) {
+    let mut local_ids: HashSet<String> = entries
+        .iter()
+        .flat_map(|entry| entry.tracked_sessions())
+        .chain(workspaces.iter().map(|entry| &entry.session))
+        .filter(|session| !session.session_id.is_empty())
+        .map(|session| session.session_id.clone())
+        .collect();
+
+    for remote in cloud_entries {
+        let sessions: Vec<SessionRef> = remote
+            .sessions
+            .iter()
+            .filter(|session| other_machine_session(session, local_machine, &local_ids))
+            .cloned()
+            .collect();
+        let touching: Vec<SessionRef> = remote
+            .touching
+            .iter()
+            .filter(|session| other_machine_session(session, local_machine, &local_ids))
+            .cloned()
+            .collect();
+        if sessions.is_empty() && touching.is_empty() {
+            continue;
+        }
+        for session in sessions.iter().chain(touching.iter()) {
+            if !session.session_id.is_empty() {
+                local_ids.insert(session.session_id.clone());
+            }
+        }
+        if let Some(existing) = entries
+            .iter_mut()
+            .find(|entry| board_pr_key(entry) == board_pr_key(remote))
+        {
+            for session in sessions {
+                if !session_ref_listed(&existing.sessions, &session) {
+                    existing.stale = false;
+                    existing.sessions.push(session);
+                }
+            }
+            for session in touching {
+                if !session_ref_listed(&existing.sessions, &session)
+                    && !session_ref_listed(&existing.touching, &session)
+                {
+                    existing.touching.push(session);
+                }
+            }
+            continue;
+        }
+        let mut added = remote.clone();
+        added.sessions = sessions;
+        added.touching = touching;
+        added.stale = added.sessions.iter().all(|session| session.ended);
+        entries.push(added);
+    }
+
+    for remote in cloud_workspaces {
+        if !other_machine_session(&remote.session, local_machine, &local_ids) {
+            continue;
+        }
+        if entries_represent_session(
+            &remote.repo_owner,
+            &remote.repo_name,
+            &remote.session.session_id,
+            &remote.session.dir_name,
+            entries,
+        ) {
+            continue;
+        }
+        if workspaces
+            .iter()
+            .any(|entry| session_key(&entry.session) == session_key(&remote.session))
+        {
+            continue;
+        }
+        if !remote.session.session_id.is_empty() {
+            local_ids.insert(remote.session.session_id.clone());
+        }
+        workspaces.push(remote.clone());
+    }
+    sort_entries(entries);
+    sort_workspaces(workspaces, now_secs() as u64);
+}
+
+/// Live mirrors plus, when the cloud record is in, the rest of the account.
+/// All-sessions view starts from that record so ended sessions stay. Live
+/// view keeps this computer's mirrors and adds other computers' active work.
+fn compose_board(
+    local_entries: Vec<BoardPr>,
+    local_workspaces: Vec<WorkspaceEntry>,
+    mirrors: &HashMap<String, PathBuf>,
+    cloud_view: Option<&(Vec<BoardPr>, Vec<WorkspaceEntry>)>,
+    include_ended: bool,
+) -> (Vec<BoardPr>, Vec<WorkspaceEntry>) {
+    if include_ended {
+        let (mut entries, mut workspaces) =
+            if let Some((cloud_entries, cloud_workspaces)) = cloud_view {
+                (cloud_entries.clone(), cloud_workspaces.clone())
+            } else {
+                (local_entries, local_workspaces.clone())
+            };
+        merge_live_workspaces(&mut workspaces, local_workspaces, &entries);
+        attach_live_mirrors(&mut entries, &mut workspaces, mirrors);
+        return (entries, workspaces);
+    }
+    let mut entries = local_entries;
+    let mut workspaces = local_workspaces;
+    if let Some((cloud_entries, cloud_workspaces)) = cloud_view {
+        merge_other_machines(
+            &mut entries,
+            &mut workspaces,
+            cloud_entries,
+            cloud_workspaces,
+            &local_machine_name(),
+        );
+    }
+    (entries, workspaces)
 }
 
 fn cloud_session_platform(platform: Option<PlatformKind>, title: &str) -> PlatformKind {
@@ -2671,6 +3099,13 @@ struct BoardRow<'a> {
     preview_lines: Vec<String>,
 }
 
+/// One computer's sessions for a PR. The same pull request on two computers
+/// draws twice, each time with only that computer's sessions.
+struct PrSlice<'a> {
+    entry: BoardPr,
+    preview_lines: &'a [String],
+}
+
 struct WorkspaceRow<'a> {
     entry: &'a WorkspaceEntry,
     preview_lines: Vec<String>,
@@ -3069,6 +3504,83 @@ fn render_workspace_board_row(
     lines
 }
 
+/// A merged PR row split per computer. Sessions with no machine name stay
+/// together, which is how a watch with no session still draws once.
+fn machine_slices(entry: &BoardPr) -> Vec<BoardPr> {
+    if entry.sessions.is_empty() {
+        return vec![entry.clone()];
+    }
+    let mut machines: Vec<String> = Vec::new();
+    for session in &entry.sessions {
+        let machine = machine_label(&session.device_name);
+        if !machines
+            .iter()
+            .any(|seen| seen.eq_ignore_ascii_case(&machine))
+        {
+            machines.push(machine);
+        }
+    }
+    machines
+        .into_iter()
+        .map(|machine| {
+            let mut slice = entry.clone();
+            slice.sessions.retain(|session| {
+                machine_label(&session.device_name).eq_ignore_ascii_case(&machine)
+            });
+            slice.stale = slice_is_stale(entry.stale, &slice.sessions);
+            slice
+        })
+        .collect()
+}
+
+fn slice_is_stale(entry_stale: bool, sessions: &[SessionRef]) -> bool {
+    if sessions.is_empty() {
+        return entry_stale;
+    }
+    if sessions.iter().all(|session| session.ended) {
+        return true;
+    }
+    // A live session beside an ended one keeps the header bright. Ended
+    // sub-rows dim on their own.
+    if sessions.iter().any(|session| session.ended) {
+        return false;
+    }
+    entry_stale
+}
+
+fn slice_machine(entry: &BoardPr) -> String {
+    entry
+        .sessions
+        .first()
+        .map(|session| machine_label(&session.device_name))
+        .unwrap_or_default()
+}
+
+fn pr_row_key(pr: &SessionPr, machine: &str) -> String {
+    let base = format!("{}/{}#{}", pr.owner, pr.repo, pr.number);
+    if machine.is_empty() {
+        base
+    } else {
+        format!("{base}@{machine}")
+    }
+}
+
+/// `owner/repo` in yellow, then ` · machine` in blue when the computer is known.
+fn repository_heading(repo: &str, machine: &str) -> String {
+    if machine.is_empty() {
+        return format!("{}{repo}{}", fg(color::YELLOW), RESET_FG);
+    }
+    format!(
+        "{}{repo}{} {}·{} {}{machine}{}",
+        fg(color::YELLOW),
+        RESET_FG,
+        fg(color::DARK_GRAY),
+        RESET_FG,
+        fg(MACHINE_BLUE),
+        RESET_FG,
+    )
+}
+
 /// Build one full frame as displayable lines (no trailing newline handling).
 fn render(
     rows: &[BoardRow],
@@ -3131,12 +3643,17 @@ fn render_at(
     } = view;
     let now = now_ms / 1000;
     let throbber_frame = crate::ui::throbber_frame_index();
-    let visible_row_indices: Vec<usize> = rows
+    // Each computer's sessions bucket on their own clock, so a quiet machine
+    // can sit in an older band than the same PR's live machine.
+    let pr_slices: Vec<PrSlice<'_>> = rows
         .iter()
-        .enumerate()
-        .filter_map(|(index, row)| {
-            (entry_bucket(row.entry, now) <= oldest_visible_bucket).then_some(index)
+        .flat_map(|row| {
+            machine_slices(row.entry).into_iter().map(|entry| PrSlice {
+                entry,
+                preview_lines: row.preview_lines.as_slice(),
+            })
         })
+        .filter(|slice| entry_bucket(&slice.entry, now) <= oldest_visible_bucket)
         .collect();
     let visible_session_indices: Vec<usize> = session_rows
         .iter()
@@ -3159,9 +3676,9 @@ fn render_at(
             (activity_bucket(row.entry.sessions(), now) <= oldest_visible_bucket).then_some(index)
         })
         .collect();
-    let session_count = visible_row_indices
+    let session_count = pr_slices
         .iter()
-        .flat_map(|&index| rows[index].entry.sessions.iter())
+        .flat_map(|slice| slice.entry.sessions.iter())
         .chain(
             visible_session_indices
                 .iter()
@@ -3210,9 +3727,9 @@ fn render_at(
     };
 
     // A PR touched by several session blocks is still one PR in the count.
-    let pr_count = visible_row_indices
+    let pr_count = pr_slices
         .iter()
-        .map(|&index| &rows[index].entry.pr)
+        .map(|slice| &slice.entry.pr)
         .chain(
             visible_session_indices
                 .iter()
@@ -3241,16 +3758,20 @@ fn render_at(
     ];
     if loading {
         let spinner = crate::ui::session_state_icon(SessionState::Thinking, throbber_frame);
+        let verb = if session_count == 0 {
+            "Loading"
+        } else {
+            "Updating"
+        };
         lines.push(format!(
-            "{} {}Loading live sessions… {} found{}",
+            "{} {}{verb} live sessions… {session_count} found{}",
             spinner,
             fg(color::CYAN),
-            session_count,
             RESET_FG,
         ));
         lines.push(String::new());
     }
-    if visible_row_indices.is_empty()
+    if pr_slices.is_empty()
         && visible_session_indices.is_empty()
         && visible_workspace_indices.is_empty()
     {
@@ -3265,13 +3786,12 @@ fn render_at(
         return RenderedBoard { lines, spans };
     }
 
-    let activity_width = visible_row_indices
+    let activity_width = pr_slices
         .iter()
-        .map(|&index| {
+        .map(|slice| {
             // A PR no session touches shows only an age stamp, capped at
             // four cells; the sessions set the real column width.
-            pr_view_activity_cell(rows[index].entry, now * 1000, 4, throbber_frame, cooldowns)
-                .visible
+            pr_view_activity_cell(&slice.entry, now * 1000, 4, throbber_frame, cooldowns).visible
         })
         .chain(visible_session_indices.iter().map(|&index| {
             activity_cell(
@@ -3296,9 +3816,9 @@ fn render_at(
     let shared_width = (width as usize)
         .saturating_sub(activity_span(activity_width))
         .min(u16::MAX as usize) as u16;
-    let visible_entries: Vec<&BoardPr> = visible_row_indices
+    let visible_entries: Vec<&BoardPr> = pr_slices
         .iter()
-        .map(|&index| rows[index].entry)
+        .map(|slice| &slice.entry)
         .chain(
             visible_session_indices
                 .iter()
@@ -3344,7 +3864,8 @@ fn render_at(
 
     struct RepositorySection {
         key: String,
-        name: String,
+        repo: String,
+        machine: String,
         rows: Vec<(u64, SectionRow)>,
     }
 
@@ -3355,7 +3876,7 @@ fn render_at(
 
     let mut sections: Vec<RecencySection> = Vec::new();
     {
-        let mut add_row = |name: String, activity: u64, row: SectionRow| {
+        let mut add_row = |repo: String, machine: String, activity: u64, row: SectionRow| {
             let bucket = RecencyBucket::from_age(now.saturating_sub(activity));
             let section_index = sections
                 .iter()
@@ -3368,14 +3889,15 @@ fn render_at(
                     sections.len() - 1
                 });
             let repositories = &mut sections[section_index].repositories;
-            let key = name.to_ascii_lowercase();
+            let key = repository_group_key(&repo, &machine);
             let repository_index = repositories
                 .iter()
                 .position(|repository| repository.key == key)
                 .unwrap_or_else(|| {
                     repositories.push(RepositorySection {
                         key,
-                        name,
+                        repo,
+                        machine,
                         rows: Vec::new(),
                     });
                     repositories.len() - 1
@@ -3383,11 +3905,11 @@ fn render_at(
             let repository = &mut repositories[repository_index];
             repository.rows.push((activity, row));
         };
-        for &index in &visible_row_indices {
-            let row = &rows[index];
+        for (index, slice) in pr_slices.iter().enumerate() {
             add_row(
-                format!("{}/{}", row.entry.pr.owner, row.entry.pr.repo),
-                entry_recency_time(row.entry, now),
+                format!("{}/{}", slice.entry.pr.owner, slice.entry.pr.repo),
+                slice_machine(&slice.entry),
+                entry_recency_time(&slice.entry, now),
                 SectionRow::Pr(index),
             );
         }
@@ -3403,6 +3925,7 @@ fn render_at(
                 .unwrap_or_default();
             add_row(
                 repo,
+                machine_label(&row.entry.session.device_name),
                 session_entry_recency(row.entry, now),
                 SectionRow::Session(index),
             );
@@ -3416,6 +3939,7 @@ fn render_at(
             };
             add_row(
                 repo,
+                machine_label(&row.entry.session.device_name),
                 activity_sort_time(row.entry.sessions(), now),
                 SectionRow::Workspace(index),
             );
@@ -3464,25 +3988,24 @@ fn render_at(
             if repository_index > 0 {
                 lines.push(String::new());
             }
-            lines.push(format!(
-                "{}{}{}",
-                fg(color::YELLOW),
-                repository.name,
-                RESET_FG,
-            ));
+            lines.push(repository_heading(&repository.repo, &repository.machine));
 
             for (_, row) in repository.rows {
                 let start = lines.len();
                 let (key, peeks) = match row {
                     SectionRow::Pr(index) => {
-                        let board_row = &rows[index];
-                        lines.extend(render_pr_view_block(board_row, context));
-                        let pr = &board_row.entry.pr;
+                        let slice = &pr_slices[index];
+                        let board_row = BoardRow {
+                            entry: &slice.entry,
+                            preview_lines: slice.preview_lines.to_vec(),
+                        };
+                        lines.extend(render_pr_view_block(&board_row, context));
+                        let machine = slice_machine(&slice.entry);
                         (
-                            format!("{}/{}#{}", pr.owner, pr.repo, pr.number),
+                            pr_row_key(&slice.entry.pr, &machine),
                             // Sub-row order: sessions were sorted live
                             // first, so ←→ walks them top to bottom.
-                            board_row
+                            slice
                                 .entry
                                 .sessions
                                 .iter()
@@ -3622,6 +4145,27 @@ impl WatchedBoard {
         self.attempted_at.remove(&key);
     }
 
+    /// Whether this watched PR should spend a GitHub read. Stats already in
+    /// the cloud copy or from the last attempt count as fresh.
+    fn watch_refresh_due(&self, key: &str, pr: &SessionPr) -> bool {
+        if pr.refreshed_at != 0 && pr.state != "OPEN" {
+            return false;
+        }
+        if self
+            .attempted_at
+            .get(key)
+            .is_some_and(|at| at.elapsed() < WATCHED_REFRESH)
+        {
+            return false;
+        }
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        pr.refreshed_at == 0
+            || now_ms.saturating_sub(pr.refreshed_at) >= WATCHED_REFRESH.as_millis() as u64
+    }
+
     /// Start one `gh` read for the next watched PR that is due. Never-enriched
     /// rows go first. Finished PRs stop refreshing. One board starts at most
     /// one read per few minutes, and the shared budget can still say no.
@@ -3641,14 +4185,7 @@ impl WatchedBoard {
         let due = self
             .prs
             .iter()
-            .find(|(key, pr)| {
-                !self.pending.contains_key(*key)
-                    && (pr.refreshed_at == 0 || pr.state == "OPEN")
-                    && self
-                        .attempted_at
-                        .get(*key)
-                        .is_none_or(|at| at.elapsed() >= WATCHED_REFRESH)
-            })
+            .find(|(key, pr)| !self.pending.contains_key(*key) && self.watch_refresh_due(key, pr))
             .map(|(key, pr)| (key.clone(), pr.url.clone()));
         let Some((key, url)) = due else {
             return;
@@ -3770,6 +4307,16 @@ fn merge_watched_entries(
         });
     }
     sort_entries(entries);
+}
+
+fn start_cloud_board_fetch() -> mpsc::Receiver<crate::cloud::CloudBoard> {
+    let (tx, rx) = mpsc::channel();
+    tokio::spawn(async move {
+        if let Ok(board) = crate::cloud::fetch_pr_board_standalone().await {
+            let _ = tx.send(board);
+        }
+    });
+    rx
 }
 
 fn start_watched_fetch() -> mpsc::Receiver<Vec<crate::cloud::CloudWatchedPr>> {
@@ -3942,7 +4489,19 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             RecencyBucket::from_max_age_hours(preferences.oldest_visible_hours),
         )
         .with_mode(BoardMode::parse(&preferences.view));
-        let (mut entries, workspaces, _) = local_board(&mut activity_history, &overrides)?;
+        let (local_entries, local_workspaces, mirrors) =
+            local_board(&mut activity_history, &overrides)?;
+        let cloud_view = crate::cloud::fetch_pr_board_standalone()
+            .await
+            .ok()
+            .map(cloud_entries_to_board);
+        let (mut entries, workspaces) = compose_board(
+            local_entries,
+            local_workspaces,
+            &mirrors,
+            cloud_view.as_ref(),
+            false,
+        );
         // Watched PRs render from their cloud-relayed stats; the one-frame
         // print doesn't run its own `gh` enrichment.
         let watched: HashMap<String, SessionPr> = crate::cloud::fetch_watched_prs_standalone()
@@ -4612,10 +5171,14 @@ async fn board_loop(
 ) -> Result<()> {
     let mut drawn_lines: Vec<String> = Vec::new();
     let mut last_refresh = Instant::now();
-    let mut entries: Vec<BoardPr> = Vec::new();
+    // The previous open's rows, so this open is not blank while mirrors load.
+    // Live snapshots replace matching rows; the rest drop when the load finishes.
+    let mut opening_cache = load_board_cache();
+    let mut entries: Vec<BoardPr> = opening_cache.clone();
     let mut workspaces: Vec<WorkspaceEntry> = Vec::new();
-    let mut durable_workspaces: Vec<WorkspaceEntry> = Vec::new();
-    let mut durable_history_loaded = false;
+    // The account's cloud board, shared by the live view (other computers'
+    // active sessions) and the all-sessions view (ended sessions too).
+    let mut cloud_view: Option<(Vec<BoardPr>, Vec<WorkspaceEntry>)> = None;
     let mut matched = 0usize;
     let mut scroll: usize = 0;
     let mut search: Option<String> = None;
@@ -4664,10 +5227,10 @@ async fn board_loop(
     )
     .with_mode(BoardMode::parse(&preferences.view));
     let mut include_ended = preferences.include_ended;
-    // Cloud fetches are throttled well below the local tick; toggling the
-    // source forces one.
-    let mut cloud_fetch_due = false;
-    let mut cloud_fetched: Option<Instant> = None;
+    // The account record is fetched off the loop so a slow reply cannot stall
+    // a frame. The first request starts with the board.
+    let mut pending_cloud = Some(start_cloud_board_fetch());
+    let mut cloud_fetched = Some(Instant::now());
     let mut dirty = false;
     let mut needs_render = false;
     let mut last_throbber_frame = crate::ui::throbber_frame_index();
@@ -4676,9 +5239,26 @@ async fn board_loop(
     let mut cooldowns = Cooldowns::default();
 
     let (initial_width, _) = terminal_size().unwrap_or((120, 40));
+    let opening = entries_for_mode(entries.clone(), view.mode);
+    let opening_rows: Vec<BoardRow> = opening
+        .prs
+        .iter()
+        .map(|entry| BoardRow {
+            entry,
+            preview_lines: Vec::new(),
+        })
+        .collect();
+    let opening_sessions: Vec<SessionBlockRow> = opening
+        .sessions
+        .iter()
+        .map(|entry| SessionBlockRow {
+            entry,
+            preview_lines: Vec::new(),
+        })
+        .collect();
     let mut lines = render_at(
-        &[],
-        &[],
+        &opening_rows,
+        &opening_sessions,
         &[],
         initial_width,
         include_ended,
@@ -4736,7 +5316,11 @@ async fn board_loop(
             watched_fetched = Instant::now();
             pending_watched = Some(start_watched_fetch());
         }
-        watched_board.spawn_due_refreshes();
+        // GitHub refreshes wait until the cached rows are on screen. They
+        // then spend only the shared local allowance, one pull request at a time.
+        if !loading {
+            watched_board.spawn_due_refreshes();
+        }
         if watched_board.poll() {
             needs_render = true;
         }
@@ -4748,8 +5332,13 @@ async fn board_loop(
                 match rx.try_recv() {
                     Ok(InitialLoadUpdate::Snapshot(snapshot)) => {
                         initial_snapshots.push(*snapshot);
-                        entries = aggregate(&initial_snapshots, overrides);
-                        workspaces = local_workspaces(&initial_snapshots, &entries);
+                        let live = aggregate(&initial_snapshots, overrides);
+                        workspaces = local_workspaces(&initial_snapshots, &live);
+                        entries = if opening_cache.is_empty() {
+                            live
+                        } else {
+                            overlay_live_on_cache(&opening_cache, live)
+                        };
                         needs_render = true;
                     }
                     Ok(InitialLoadUpdate::Complete(history)) => {
@@ -4766,41 +5355,66 @@ async fn board_loop(
                 }
             }
         }
+        if let Some(rx) = pending_cloud.as_ref() {
+            match rx.try_recv() {
+                Ok(board) => {
+                    pending_cloud = None;
+                    cloud_view = Some(cloud_entries_to_board(board));
+                    last_refresh = Instant::now() - REFRESH_INTERVAL;
+                    needs_render = true;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => pending_cloud = None,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if pending_cloud.is_none()
+            && cloud_fetched.is_none_or(|at| at.elapsed() >= CLOUD_BOARD_REFRESH)
+        {
+            pending_cloud = Some(start_cloud_board_fetch());
+            cloud_fetched = Some(Instant::now());
+        }
+
         if initial_finished {
             initial_load = None;
             loading = false;
             last_refresh = Instant::now();
+            // Drop rows that were only in the previous open. This computer's
+            // live mirrors stay, and any cloud record already in hand adds
+            // the other computers (or the ended history, in all-sessions view).
+            let local_entries = aggregate(&initial_snapshots, overrides);
+            let local_workspaces = local_workspaces(&initial_snapshots, &local_entries);
+            let mirrors = initial_snapshots
+                .iter()
+                .map(|snapshot| (snapshot.session_id.clone(), snapshot.session_dir.clone()))
+                .collect();
+            (entries, workspaces) = compose_board(
+                local_entries,
+                local_workspaces,
+                &mirrors,
+                cloud_view.as_ref(),
+                include_ended,
+            );
+            opening_cache.clear();
+            save_board_cache(&entries);
             needs_render = true;
         }
 
         if !loading && last_refresh.elapsed() >= REFRESH_INTERVAL {
             last_refresh = Instant::now();
-            if include_ended {
-                let stale = cloud_fetched.is_none_or(|at| at.elapsed() >= CLOUD_BOARD_REFRESH);
-                if cloud_fetch_due || stale {
-                    cloud_fetch_due = false;
-                    cloud_fetched = Some(Instant::now());
-                    if let Ok(cloud) = crate::cloud::fetch_pr_board_standalone().await {
-                        (entries, durable_workspaces) = cloud_entries_to_board(cloud);
-                        durable_history_loaded = true;
-                    }
-                }
-                let (live_entries, live_workspaces, live_mirrors) =
-                    local_board(activity_history.as_mut().unwrap(), overrides)?;
-                if !durable_history_loaded {
-                    entries = live_entries;
-                }
-                workspaces = durable_workspaces.clone();
-                merge_live_workspaces(&mut workspaces, live_workspaces, &entries);
-                attach_live_mirrors(&mut entries, &mut workspaces, &live_mirrors);
-            } else {
-                (entries, workspaces, _) =
-                    local_board(activity_history.as_mut().unwrap(), overrides)?;
-            }
+            let (live_entries, live_workspaces, live_mirrors) =
+                local_board(activity_history.as_mut().unwrap(), overrides)?;
+            (entries, workspaces) = compose_board(
+                live_entries,
+                live_workspaces,
+                &live_mirrors,
+                cloud_view.as_ref(),
+                include_ended,
+            );
             activity_history
                 .as_mut()
                 .unwrap()
                 .enrich_slack_threads(&mut entries);
+            save_board_cache(&entries);
             needs_render = true;
         }
 
@@ -5238,12 +5852,12 @@ async fn board_loop(
                                 needs_render = true;
                                 dirty = true;
                             }
-                            // Flip between live mirrors and the durable cloud
-                            // record, which includes ended sessions.
+                            // Flip between live work and the durable cloud
+                            // record, which includes ended sessions. Both
+                            // views already share the account's other computers.
                             KeyCode::Char('s') => {
                                 include_ended = !include_ended;
                                 save_board_preferences(include_ended, view)?;
-                                cloud_fetch_due = true;
                                 scroll = 0;
                                 last_refresh = Instant::now() - REFRESH_INTERVAL;
                                 last_frame_hash = 0;
@@ -5747,6 +6361,7 @@ mod tests {
             dir_name: dir.to_string(),
             repo_owner: "o".to_string(),
             repo_name: dir.to_string(),
+            device_name: String::new(),
             session_dir: PathBuf::new(),
             last_updated: now_secs(),
             branch: String::new(),
@@ -5834,6 +6449,7 @@ mod tests {
             prompted_at,
             completed_at: 0,
             ended,
+            device_name: String::new(),
             mark: SessionMark::from_seed(name),
         }
     }
@@ -6564,6 +7180,67 @@ mod tests {
     }
 
     #[test]
+    fn slack_scan_keeps_the_tail_of_a_huge_transcript() {
+        assert_eq!(slack_scan_start(0, 0), 0);
+        assert_eq!(slack_scan_start(1000, 0), 0);
+        let huge = 1_200_000_000u64;
+        assert_eq!(slack_scan_start(huge, 0), huge - SLACK_SCAN_MAX);
+        assert_eq!(slack_scan_start(huge, huge - 100), huge - 100);
+        assert_eq!(
+            slack_scan_start(huge, huge - SLACK_SCAN_MAX - 1),
+            huge - SLACK_SCAN_MAX
+        );
+    }
+
+    #[test]
+    fn cached_rows_stay_until_the_live_load_reaches_them() {
+        let mut cached_old = BoardPr {
+            pr: board_pr(1, "portal"),
+            sessions: vec![test_session_ref("old", 10, false)],
+            touching: Vec::new(),
+            slack_threads: Vec::new(),
+            stale: false,
+        };
+        cached_old.pr.title = "cached".to_string();
+        let mut cached_kept = BoardPr {
+            pr: board_pr(2, "portal"),
+            sessions: Vec::new(),
+            touching: Vec::new(),
+            slack_threads: Vec::new(),
+            stale: false,
+        };
+        cached_kept.pr.title = "still cached".to_string();
+        let mut live = cached_old.clone();
+        live.pr.title = "live".to_string();
+
+        let shown = overlay_live_on_cache(&[cached_old, cached_kept], vec![live]);
+        let titles: Vec<_> = shown.iter().map(|entry| entry.pr.title.as_str()).collect();
+        assert!(titles.contains(&"live"));
+        assert!(titles.contains(&"still cached"));
+        assert!(!titles.contains(&"cached"));
+    }
+
+    #[test]
+    fn the_board_cache_round_trips_a_pr_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pr-board-cache.json");
+        let entry = BoardPr {
+            pr: board_pr(9, "portal"),
+            sessions: vec![test_session_ref("portal", 20, false)],
+            touching: Vec::new(),
+            slack_threads: Vec::new(),
+            stale: false,
+        };
+        save_board_cache_to(&path, &[entry.clone()]);
+        let loaded = load_board_cache_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].pr.number, 9);
+        assert_eq!(loaded[0].pr.repo, "portal");
+        assert_eq!(loaded[0].sessions[0].session_id, "portal");
+        assert_eq!(loaded[0].sessions[0].prompted_at, 20);
+    }
+
+    #[test]
     fn active_sessions_without_visible_prs_stay_on_the_board() {
         let mut first = snapshot("crabigator", Vec::new());
         first.session_id = "one".to_string();
@@ -6612,6 +7289,183 @@ mod tests {
         assert!(frame.contains(&format!("{}-2", fg(color::RED))));
         assert!(plain.contains("+10 -2"));
         assert!(!plain.contains('☰'));
+    }
+
+    #[test]
+    fn same_repo_on_two_machines_is_two_groups() {
+        let now = now_secs() as u64;
+        let mut pr = board_pr(7, "crabigator");
+        make_primary(&mut pr);
+        pr.owner = "samuelclay".to_string();
+        pr.title = "Shared status".to_string();
+
+        let mut studio = snapshot("crabigator", vec![pr.clone()]);
+        studio.session_id = "studio-session".to_string();
+        studio.repo_owner = "samuelclay".to_string();
+        studio.repo_name = "crabigator".to_string();
+        studio.device_name = "claymac-studio.local".to_string();
+        studio.title = "Studio session".to_string();
+        studio.prompted_at = now - 60;
+
+        let mut book = snapshot("crabigator", vec![pr]);
+        book.session_id = "book-session".to_string();
+        book.repo_owner = "samuelclay".to_string();
+        book.repo_name = "crabigator".to_string();
+        book.device_name = "claybook-m4".to_string();
+        book.title = "Book session".to_string();
+        book.prompted_at = now - 3 * 3600;
+
+        let merged = aggregate(&[studio, book], &ScopedOverrides::default());
+        let shaped = entries_for_mode(merged, BoardMode::Prs);
+        assert_eq!(shaped.prs.len(), 1, "one PR record, two computers");
+        assert_eq!(shaped.prs[0].sessions.len(), 2);
+
+        let frame = render_prs_frame(&shaped.prs, DEFAULT_DETAIL);
+        let text = frame.lines.join("\n");
+        let plain = crate::parsers::strip_ansi_for_debug(&text);
+        assert_eq!(
+            plain
+                .matches("samuelclay/crabigator · claymac-studio")
+                .count(),
+            1
+        );
+        assert_eq!(
+            plain.matches("samuelclay/crabigator · claybook-m4").count(),
+            1
+        );
+        assert!(!plain.contains(".local"));
+        assert!(text.contains(&format!("{}samuelclay/crabigator", fg(color::YELLOW))));
+        assert!(text.contains(&format!("{}claymac-studio", fg(MACHINE_BLUE))));
+        assert!(text.contains(&format!("{}claybook-m4", fg(MACHINE_BLUE))));
+
+        let studio_at = plain
+            .find("samuelclay/crabigator · claymac-studio")
+            .unwrap();
+        let book_at = plain.find("samuelclay/crabigator · claybook-m4").unwrap();
+        assert!(
+            studio_at < book_at,
+            "the newer computer stays in the earlier time band"
+        );
+        assert!(plain[studio_at..book_at].contains("Studio session"));
+        assert!(!plain[studio_at..book_at].contains("Book session"));
+        assert!(plain[book_at..].contains("Book session"));
+        assert!(!plain[book_at..].contains("Studio session"));
+    }
+
+    #[test]
+    fn workspace_rows_split_one_repo_by_machine() {
+        let mut studio = snapshot("crabigator", Vec::new());
+        studio.repo_owner = "samuelclay".to_string();
+        studio.repo_name = "crabigator".to_string();
+        studio.device_name = "claymac-studio".to_string();
+        studio.title = "Studio workspace".to_string();
+        let mut book = snapshot("crabigator", Vec::new());
+        book.session_id = "book".to_string();
+        book.repo_owner = "samuelclay".to_string();
+        book.repo_name = "crabigator".to_string();
+        book.device_name = "claybook-m4".to_string();
+        book.title = "Book workspace".to_string();
+
+        let workspaces = local_workspaces(&[studio, book], &[]);
+        let rows: Vec<WorkspaceRow<'_>> = workspaces
+            .iter()
+            .map(|entry| WorkspaceRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        let plain = crate::parsers::strip_ansi_for_debug(
+            &render(&[], &[], &rows, 160, false, BoardView::default())
+                .lines
+                .join("\n"),
+        );
+        assert!(plain.contains("samuelclay/crabigator · claymac-studio"));
+        assert!(plain.contains("samuelclay/crabigator · claybook-m4"));
+        assert!(plain.contains("Studio workspace"));
+        assert!(plain.contains("Book workspace"));
+    }
+
+    #[test]
+    fn live_board_adds_other_machines_and_skips_this_one() {
+        let mut local_pr = board_pr(4, "crabigator");
+        make_primary(&mut local_pr);
+        local_pr.owner = "samuelclay".to_string();
+        let mut local = snapshot("crabigator", vec![local_pr.clone()]);
+        local.session_id = "local-session".to_string();
+        local.repo_owner = "samuelclay".to_string();
+        local.repo_name = "crabigator".to_string();
+        local.device_name = "claymac-studio".to_string();
+
+        let mut merged = aggregate(std::slice::from_ref(&local), &ScopedOverrides::default());
+        let mut workspaces = Vec::new();
+
+        let mut remote_same = test_session_ref("local-session", 10, false);
+        remote_same.device_name = "claymac-studio".to_string();
+        let mut remote_other = test_session_ref("book-session", 20, false);
+        remote_other.device_name = "claybook-m4".to_string();
+        remote_other.title = "On the book".to_string();
+        let mut ended = test_session_ref("old-session", 5, true);
+        ended.device_name = "claymac-tavus".to_string();
+        let cloud_entry = BoardPr {
+            pr: local_pr,
+            sessions: vec![remote_same, remote_other, ended],
+            touching: Vec::new(),
+            slack_threads: Vec::new(),
+            stale: false,
+        };
+
+        let mut remote_only = board_pr(8, "developer-portal");
+        make_primary(&mut remote_only);
+        remote_only.owner = "samuelclay".to_string();
+        let mut portal_session = test_session_ref("portal-session", 30, false);
+        portal_session.device_name = "claymac-tavus".to_string();
+        let portal = BoardPr {
+            pr: remote_only,
+            sessions: vec![portal_session],
+            touching: Vec::new(),
+            slack_threads: Vec::new(),
+            stale: false,
+        };
+
+        merge_other_machines(
+            &mut merged,
+            &mut workspaces,
+            &[cloud_entry, portal],
+            &[],
+            "claymac-studio",
+        );
+
+        let crab = merged.iter().find(|entry| entry.pr.number == 4).unwrap();
+        let ids: Vec<_> = crab
+            .sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect();
+        assert!(ids.contains(&"local-session"));
+        assert!(ids.contains(&"book-session"));
+        assert_eq!(ids.iter().filter(|id| **id == "local-session").count(), 1);
+        assert!(
+            !ids.contains(&"old-session"),
+            "ended sessions stay on the all-sessions view"
+        );
+        let portal_row = merged.iter().find(|entry| entry.pr.number == 8).unwrap();
+        assert_eq!(portal_row.sessions[0].device_name, "claymac-tavus");
+    }
+
+    #[test]
+    fn cloud_session_strips_the_local_suffix_from_the_machine_name() {
+        let cloud: crate::cloud::CloudBoard = serde_json::from_value(serde_json::json!({
+            "sessions": [{
+                "session_id": "cloud-session",
+                "dir_name": "crabigator",
+                "repo_name": "crabigator",
+                "active": true,
+                "device_name": "claybook-m4.local"
+            }]
+        }))
+        .unwrap();
+        let (_, workspaces) = cloud_entries_to_board(cloud);
+        assert_eq!(workspaces[0].session.device_name, "claybook-m4");
     }
 
     #[test]
@@ -7907,6 +8761,7 @@ mod tests {
                 prompted_at: 0,
                 completed_at: 0,
                 ended: false,
+                device_name: String::new(),
                 mark: SessionMark::from_seed("portal"),
             }],
             touching: Vec::new(),
@@ -8163,6 +9018,7 @@ mod tests {
                 prompted_at: now - 4 * 60 * 60,
                 completed_at: now - 8 * 60 * 60,
                 ended: false,
+                device_name: String::new(),
                 mark: SessionMark::from_seed("older"),
             },
             SessionRef {
@@ -8179,6 +9035,7 @@ mod tests {
                 prompted_at: now - 30 * 60,
                 completed_at: now - 2 * 60 * 60,
                 ended: false,
+                device_name: String::new(),
                 mark: SessionMark::from_seed("newer"),
             },
         ];
@@ -8254,6 +9111,7 @@ mod tests {
                 prompted_at: 1,
                 completed_at: 1,
                 ended: false,
+                device_name: String::new(),
                 mark: SessionMark::from_seed("state"),
             };
             let activity = activity_cell(&[session], 1000, 0, &Cooldowns::default());
@@ -8288,6 +9146,7 @@ mod tests {
             prompted_at: 1,
             completed_at: 1,
             ended: false,
+            device_name: String::new(),
             mark: SessionMark::from_seed("thinking"),
         };
         let first = activity_cell(
@@ -8398,6 +9257,7 @@ mod tests {
             prompted_at: now - 8 * 60,
             completed_at: now - 13 * 60 * 60,
             ended: false,
+            device_name: String::new(),
             mark: SessionMark::from_seed("one"),
         };
         assert_eq!(

@@ -109,6 +109,10 @@ pub struct CloudBoardSession {
     /// Lines removed across those uncommitted files.
     #[serde(default)]
     pub deletions: i64,
+    /// The paired computer this session runs on. Empty from a Worker that
+    /// predates machine labels. A trailing `.local` is stripped for display.
+    #[serde(default)]
+    pub device_name: String,
     /// The session's latest recap brief, when one was recorded.
     #[serde(default)]
     pub recap: Option<CloudSessionRecap>,
