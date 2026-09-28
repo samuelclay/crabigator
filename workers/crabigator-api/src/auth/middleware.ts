@@ -256,16 +256,16 @@ export async function requireMobileAuth(
     return { auth: auth as MobileAuth & { group_id: string } };
 }
 
+/**
+ * A viewer of one session: the dashboard's mobile token, or another desktop
+ * in the same account. The terminal PR board has only its device signature,
+ * and it uses these routes to mirror a session running on a different computer.
+ */
 export async function requireSessionAccess(
     request: Request,
     env: Env,
     sessionId: string
 ): Promise<{ auth: MobileAuth & { group_id: string } } | { error: Response }> {
-    const authResult = await requireMobileAuth(request, env);
-    if ('error' in authResult) {
-        return authResult;
-    }
-
     const session = await env.DB.prepare(`
         SELECT devices.group_id as group_id
         FROM sessions
@@ -276,10 +276,39 @@ export async function requireSessionAccess(
     if (!session) {
         return { error: jsonError('Session not found', 'NOT_FOUND', 404) };
     }
-
-    if (!session.group_id || session.group_id !== authResult.auth.group_id) {
+    if (!session.group_id) {
         return { error: jsonError('Forbidden', 'FORBIDDEN', 403) };
     }
 
-    return authResult;
+    // A presented viewer token keeps the dashboard's existing errors.
+    // Device headers are the fallback for a desktop that has no viewer token.
+    if (extractToken(request)) {
+        const authResult = await requireMobileAuth(request, env);
+        if ('error' in authResult) {
+            return authResult;
+        }
+        if (authResult.auth.group_id !== session.group_id) {
+            return { error: jsonError('Forbidden', 'FORBIDDEN', 403) };
+        }
+        return authResult;
+    }
+
+    const device = await verifyDeviceSignature(request, env);
+    if (!device) {
+        return { error: jsonError('Unauthorized', 'UNAUTHORIZED', 401) };
+    }
+    const caller = await env.DB.prepare(
+        'SELECT group_id FROM devices WHERE id = ?'
+    ).bind(device.device_id).first<{ group_id: string | null }>();
+    if (!caller?.group_id || caller.group_id !== session.group_id) {
+        return { error: jsonError('Forbidden', 'FORBIDDEN', 403) };
+    }
+    return {
+        auth: {
+            type: 'mobile',
+            desktop_id: device.device_id,
+            mobile_id: device.device_id,
+            group_id: caller.group_id,
+        },
+    };
 }
