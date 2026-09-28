@@ -1036,11 +1036,18 @@ impl ActivityHistory {
 
         if cached.scanned_len == 0 || file_len < cached.scanned_len {
             cached.times = scan_transcript_backwards(path, cached.times).unwrap_or(cached.times);
+            // The backwards look only reads the tail. That is enough to see
+            // whether the session is still moving, and it must not walk a
+            // gigabyte log on every board redraw.
             cached.scanned_len = file_len;
         } else if file_len > cached.scanned_len {
-            cached.times = scan_transcript_forward(path, cached.scanned_len, cached.times)
-                .unwrap_or(cached.times);
-            cached.scanned_len = file_len;
+            match scan_transcript_forward(path, cached.scanned_len, cached.times) {
+                Ok((times, end)) => {
+                    cached.times = times;
+                    cached.scanned_len = end;
+                }
+                Err(_) => {}
+            }
         }
         cached.times
     }
@@ -1085,6 +1092,10 @@ impl ActivityHistory {
 }
 
 const TRANSCRIPT_SCAN_CHUNK: u64 = 64 * 1024;
+/// How much of a transcript the board will walk to learn if a session moved.
+const ACTIVITY_SCAN_MAX: u64 = 1024 * 1024;
+/// A single JSONL record bigger than this is tool output, not a timestamp.
+const ACTIVITY_LINE_MAX: usize = 256 * 1024;
 
 /// Where to start reading a transcript for Slack rows.
 ///
@@ -1108,10 +1119,12 @@ fn scan_transcript_backwards(path: &Path, seed: ActivityTimes) -> std::io::Resul
     let mut position = file.metadata()?.len();
     let mut suffix = Vec::new();
     let mut activity = seed;
+    let mut scanned = 0u64;
 
-    while position > 0 && !activity.complete() {
+    while position > 0 && !activity.complete() && scanned < ACTIVITY_SCAN_MAX {
         let chunk_len = position.min(TRANSCRIPT_SCAN_CHUNK);
         position -= chunk_len;
+        scanned += chunk_len;
         file.seek(SeekFrom::Start(position))?;
         let mut data = vec![0; chunk_len as usize];
         file.read_exact(&mut data)?;
@@ -1122,6 +1135,10 @@ fn scan_transcript_backwards(path: &Path, seed: ActivityTimes) -> std::io::Resul
         } else if let Some(newline) = data.iter().position(|byte| *byte == b'\n') {
             suffix = data[..newline].to_vec();
             newline + 1
+        } else if suffix.len().saturating_add(data.len()) > ACTIVITY_LINE_MAX {
+            // This record is a large tool result. Drop it and keep walking.
+            suffix.clear();
+            continue;
         } else {
             suffix = data;
             continue;
@@ -1141,16 +1158,13 @@ fn scan_transcript_forward(
     path: &Path,
     offset: u64,
     seed: ActivityTimes,
-) -> std::io::Result<ActivityTimes> {
-    let mut file = File::open(path)?;
-    file.seek(SeekFrom::Start(offset))?;
-    let mut data = Vec::new();
-    file.read_to_end(&mut data)?;
+) -> std::io::Result<(ActivityTimes, u64)> {
+    let window = crate::jsonl::read_jsonl_window(path, offset, ACTIVITY_SCAN_MAX, false)?;
     let mut activity = seed;
-    for line in data.split(|byte| *byte == b'\n') {
-        update_activity_from_jsonl(line, &mut activity);
+    for line in window.text.lines() {
+        update_activity_from_jsonl(line.as_bytes(), &mut activity);
     }
-    Ok(activity)
+    Ok((activity, window.end))
 }
 
 fn update_activity_from_jsonl(line: &[u8], activity: &mut ActivityTimes) {

@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
 
 use serde::Deserialize;
@@ -71,23 +70,10 @@ pub fn read_transcript(
     pending_tools: &mut HashMap<String, PendingToolUse>,
 ) -> std::io::Result<(String, u64)> {
     let file = File::open(path)?;
-    let file_len = file.metadata()?.len();
-
-    // If we've already read everything, return empty
-    if offset >= file_len {
-        return Ok((String::new(), offset));
-    }
-
-    let mut reader = BufReader::new(file);
-    reader.seek(SeekFrom::Start(offset))?;
-
+    let (lines, current_pos) = crate::jsonl::read_pass(file, offset)?;
     let mut output = String::new();
-    let mut current_pos = offset;
 
-    for line in reader.lines() {
-        let line = line?;
-        current_pos += line.len() as u64 + 1; // +1 for newline
-
+    for line in lines {
         if line.is_empty() {
             continue;
         }

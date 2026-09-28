@@ -653,16 +653,37 @@ pub(crate) struct TrackingUpdate {
     pub reset: bool,
 }
 
-/// Replay every turn when a transcript is first adopted or replaced. Later
-/// scans read only the current turn and any newer turns, preserving history
-/// without treating a resume as a fresh mention of every old PR.
+/// A redraw may re-read the current turn when it still fits in this many
+/// bytes. Longer turns continue from the bytes already parsed.
+const MAX_TURN_REREAD: u64 = 512 * 1024;
+/// A first look reads the whole log up to this size. Anything larger is a
+/// long session: start at the tail so the redraw does not parse it all.
+const MAX_FIRST_READ: u64 = 8 * 1024 * 1024;
+
+/// Where this scan should start reading.
+fn tracking_read_start(len: u64, previous: Option<&TranscriptCursor>) -> u64 {
+    let Some(previous) = previous else {
+        return len.saturating_sub(MAX_FIRST_READ);
+    };
+    if len < previous.len {
+        return 0;
+    }
+    let reread_from = previous.turn_start.min(previous.len);
+    if len.saturating_sub(reread_from) <= MAX_TURN_REREAD {
+        reread_from
+    } else {
+        previous.len
+    }
+}
+
+/// Replay every turn when a transcript is first adopted or replaced, unless
+/// the log is too large to read on a redraw. Later scans re-read the current
+/// turn when it is small, and only the new bytes when it is not.
 pub(crate) fn collect_tracking_turns_incremental(
     platform: PlatformKind,
     path: &Path,
     cursor: &mut Option<TranscriptCursor>,
 ) -> Result<Option<TrackingUpdate>> {
-    use std::io::{Read, Seek, SeekFrom};
-
     let meta = fs::metadata(path)
         .with_context(|| format!("Failed to stat transcript {}", path.display()))?;
     let len = meta.len();
@@ -676,35 +697,35 @@ pub(crate) fn collect_tracking_turns_incremental(
         return Ok(None);
     }
     // A changed file of the same size was rewritten, not appended to.
+    // Equal length with a new mtime is a rewrite, not an append.
     let previous = cursor.as_ref().filter(|c| same_file && len > c.len);
-    let start = previous.map_or(0, |c| c.turn_start.min(len));
+    let reset = previous.is_none();
+    let start = tracking_read_start(len, previous);
     let first_number = previous.map_or(0, |c| c.turn_number.saturating_sub(1));
     let previous_cwd = previous.and_then(|c| c.cwd.clone());
-    let reset = previous.is_none();
-    let mut file = fs::File::open(path)
-        .with_context(|| format!("Failed to read transcript {}", path.display()))?;
-    file.seek(SeekFrom::Start(start))?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
-    // A partially written JSONL record must remain unread until its newline
-    // lands; otherwise resume discovery can skip the first recorded prompt.
-    let complete_len = if content.ends_with('\n')
-        || content
-            .lines()
-            .last()
-            .is_some_and(|line| serde_json::from_str::<Value>(line).is_ok())
-    {
-        content.len()
+    let tail = reset && len > MAX_FIRST_READ;
+    let budget = if tail {
+        MAX_FIRST_READ
+    } else if reset {
+        len.max(1)
     } else {
-        content.rfind('\n').map_or(0, |end| end + 1)
+        MAX_TURN_REREAD
     };
-    let content = &content[..complete_len];
-    let turns = tracking_turns(platform, content, first_number, previous_cwd);
+    let window = crate::jsonl::read_jsonl_window(path, start, budget, tail)
+        .with_context(|| format!("Failed to read transcript {}", path.display()))?;
+    let continuing = previous.is_some_and(|cursor| start == cursor.len);
+    let turns = tracking_turns(
+        platform,
+        &window.text,
+        first_number,
+        previous_cwd,
+        continuing,
+    );
     let last = turns.last();
     *cursor = Some(TranscriptCursor {
         path: path.to_path_buf(),
-        len: start + complete_len as u64,
-        modified,
+        len: window.end,
+        modified: if window.reached_end { modified } else { None },
         turn_start: start + last.map_or(0, |turn| turn.transcript.turn_start as u64),
         turn_number: last.map_or(first_number, |turn| turn.number),
         cwd: last.and_then(|turn| turn.cwd.clone()),
@@ -717,6 +738,7 @@ fn tracking_turns(
     content: &str,
     first_number: u32,
     mut cwd: Option<PathBuf>,
+    continuing: bool,
 ) -> Vec<TrackingTurn> {
     let mut boundaries = Vec::new();
     for line in content.lines() {
@@ -779,6 +801,23 @@ fn tracking_turns(
         }
     }
     let mut turns: Vec<TrackingTurn> = Vec::new();
+    if continuing {
+        let prefix_end = boundaries
+            .first()
+            .map(|(start, _, _, _)| *start)
+            .unwrap_or(content.len());
+        if prefix_end > 0 {
+            let transcript = finish_latest_turn_in(platform, &content[..prefix_end], true);
+            if transcript.user_prompt.is_some() || !transcript.activity.trim().is_empty() {
+                turns.push(TrackingTurn {
+                    transcript,
+                    number: first_number.saturating_add(1),
+                    timestamp: 0,
+                    cwd: cwd.clone(),
+                });
+            }
+        }
+    }
     let mut unpaired_codex_prompt = None;
     for (i, (start, timestamp, cwd, event_prompt)) in boundaries.iter().enumerate() {
         let end = boundaries.get(i + 1).map_or(content.len(), |next| next.0);
@@ -835,9 +874,19 @@ pub(crate) fn collect_latest_turn_text(
         });
     };
 
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read transcript {}", path.display()))?;
-    let mut transcript = finish_latest_turn(platform, &content);
+    // The summary only keeps the end of the latest turn. A long session must
+    // not be read in full just to find that tail.
+    let len = fs::metadata(path)
+        .with_context(|| format!("Failed to stat transcript {}", path.display()))?
+        .len();
+    let window = crate::jsonl::read_jsonl_window(
+        path,
+        len.saturating_sub(MAX_TURN_REREAD),
+        MAX_TURN_REREAD,
+        len > MAX_TURN_REREAD,
+    )
+    .with_context(|| format!("Failed to read transcript {}", path.display()))?;
+    let mut transcript = finish_latest_turn(platform, &window.text);
     // Only model summaries need a size limit. Local PR tracking uses the full
     // turn, including commands and creation results from hours earlier.
     transcript.activity = truncate_start(
@@ -851,11 +900,16 @@ pub(crate) fn collect_latest_turn_text(
 }
 
 fn finish_latest_turn(platform: PlatformKind, content: &str) -> TurnTranscript {
+    finish_latest_turn_in(platform, content, false)
+}
+
+/// `in_turn` keeps activity that arrives after a prompt we already scanned.
+fn finish_latest_turn_in(platform: PlatformKind, content: &str, in_turn: bool) -> TurnTranscript {
     let mut transcript = match platform {
-        PlatformKind::Claude => collect_claude_latest_turn(content),
-        PlatformKind::Codex => collect_codex_latest_turn(content),
-        PlatformKind::Opencode => collect_opencode_latest_turn(content),
-        PlatformKind::Grok => collect_grok_latest_turn(content),
+        PlatformKind::Claude => collect_claude_latest_turn(content, in_turn),
+        PlatformKind::Codex => collect_codex_latest_turn(content, in_turn),
+        PlatformKind::Opencode => collect_opencode_latest_turn(content, in_turn),
+        PlatformKind::Grok => collect_grok_latest_turn(content, in_turn),
     };
     transcript.activity = redact_sensitive(&transcript.activity);
     transcript.user_prompt = transcript
@@ -869,10 +923,10 @@ fn line_offset(content: &str, line: &str) -> usize {
     line.as_ptr() as usize - content.as_ptr() as usize
 }
 
-fn collect_claude_latest_turn(content: &str) -> TurnTranscript {
+fn collect_claude_latest_turn(content: &str, in_turn: bool) -> TurnTranscript {
     let mut user_prompt = None;
     let mut activity = String::new();
-    let mut after_user_prompt = false;
+    let mut after_user_prompt = in_turn;
     let mut turn_start = 0;
 
     for line in content.lines() {
@@ -918,10 +972,10 @@ fn collect_claude_latest_turn(content: &str) -> TurnTranscript {
 }
 
 /// Grok's `updates.jsonl` is an ACP session-update stream.
-fn collect_grok_latest_turn(content: &str) -> TurnTranscript {
+fn collect_grok_latest_turn(content: &str, in_turn: bool) -> TurnTranscript {
     let mut user_prompt = None;
     let mut activity = String::new();
-    let mut after_user_prompt = false;
+    let mut after_user_prompt = in_turn;
     let mut turn_start = 0;
 
     for line in content.lines() {
@@ -1021,10 +1075,10 @@ fn is_claude_image_source_note(text: &str) -> bool {
         .all(|line| line.starts_with("[Image: source:"))
 }
 
-fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
+fn collect_codex_latest_turn(content: &str, in_turn: bool) -> TurnTranscript {
     let mut user_prompt = None;
     let mut activity = String::new();
-    let mut after_user_prompt = false;
+    let mut after_user_prompt = in_turn;
     let mut turn_start = 0;
 
     for line in content.lines() {
@@ -1153,10 +1207,10 @@ fn collect_codex_latest_turn(content: &str) -> TurnTranscript {
 /// The opencode transcript log is written by crabigator itself as normalized
 /// entries: {"kind":"user"|"assistant","text":..} and
 /// {"kind":"tool","name":..,"title":..,"output":..}.
-fn collect_opencode_latest_turn(content: &str) -> TurnTranscript {
+fn collect_opencode_latest_turn(content: &str, in_turn: bool) -> TurnTranscript {
     let mut user_prompt = None;
     let mut activity = String::new();
-    let mut after_user_prompt = false;
+    let mut after_user_prompt = in_turn;
     let mut turn_start = 0;
 
     for line in content.lines() {
@@ -1793,7 +1847,7 @@ mod tests {
             codex_user("<skill><name>commit-pr</name><path>/skills/commit-pr/SKILL.md</path>"),
             codex_assistant("On it.")
         );
-        let turn = collect_codex_latest_turn(&transcript);
+        let turn = collect_codex_latest_turn(&transcript, false);
         assert_eq!(
             turn.user_prompt.as_deref(),
             Some(
@@ -1813,7 +1867,7 @@ mod tests {
             codex_user("new prompt"),
             codex_assistant("new reply")
         );
-        let turn = collect_codex_latest_turn(&transcript);
+        let turn = collect_codex_latest_turn(&transcript, false);
         assert_eq!(turn.user_prompt.as_deref(), Some("new prompt"));
         let expected = first.len() + 1 + codex_assistant("old reply").len() + 1;
         assert_eq!(turn.turn_start, expected);
@@ -1878,6 +1932,50 @@ mod tests {
             .unwrap();
         assert_eq!(turn.user_prompt.as_deref(), Some("fresh prompt"));
         assert_eq!(cursor.as_ref().unwrap().turn_start, 0);
+    }
+
+    #[test]
+    fn a_long_turn_keeps_redraws_on_the_new_bytes() {
+        use std::io::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let blob = "h".repeat(600_000);
+        let huge = serde_json::json!({
+            "type": "event_msg",
+            "payload": {"type": "other", "blob": blob}
+        })
+        .to_string();
+        fs::write(&path, format!("{}\n{huge}\n", codex_user("keep going"))).unwrap();
+
+        let mut cursor = None;
+        let first = collect_tracking_turns_incremental(PlatformKind::Codex, &path, &mut cursor)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            first
+                .turns
+                .last()
+                .unwrap()
+                .transcript
+                .user_prompt
+                .as_deref(),
+            Some("keep going")
+        );
+        let after_first = cursor.as_ref().unwrap().len;
+
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(file, "{}", codex_assistant("still here")).unwrap();
+        let next = collect_tracking_turns_incremental(PlatformKind::Codex, &path, &mut cursor)
+            .unwrap()
+            .unwrap();
+        assert!(
+            next.turns
+                .iter()
+                .any(|turn| turn.transcript.activity.contains("still here")),
+            "new activity is visible without rereading the long turn"
+        );
+        assert!(cursor.as_ref().unwrap().len > after_first);
+        assert!(cursor.as_ref().unwrap().len > MAX_TURN_REREAD);
     }
 
     #[test]
@@ -2064,7 +2162,7 @@ mod tests {
 {"type":"user","message":{"content":"new prompt"}}
 {"type":"assistant","message":{"content":[{"type":"text","text":"new answer"},{"type":"tool_use","name":"Bash","input":{"command":"cargo test"}}]}}"#;
 
-        let turn = collect_claude_latest_turn(transcript);
+        let turn = collect_claude_latest_turn(transcript, false);
         assert_eq!(turn.user_prompt.as_deref(), Some("new prompt"));
         assert!(turn.activity.contains("new answer"));
         assert!(turn.activity.contains("cargo test"));
@@ -2080,7 +2178,7 @@ mod tests {
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"view.js contents"}]}}
 {"type":"assistant","message":{"content":[{"type":"text","text":"Fixed it."}]}}"#;
 
-        let turn = collect_claude_latest_turn(transcript);
+        let turn = collect_claude_latest_turn(transcript, false);
         assert_eq!(
             turn.user_prompt.as_deref(),
             Some("[Image #1] fix this layout")
@@ -2102,7 +2200,7 @@ mod tests {
 {"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"const r = await tools.exec_command({cmd:\"gh pr view 2469 --repo Tavus-Engineering/request-handler\"}); text(r.output);"}}
 {"type":"response_item","payload":{"type":"custom_tool_call_output","output":[{"type":"input_text","text":"https://github.com/Tavus-Engineering/request-handler/pull/2469"}]}}"#;
 
-        let turn = collect_codex_latest_turn(transcript);
+        let turn = collect_codex_latest_turn(transcript, false);
         assert_eq!(turn.user_prompt.as_deref(), Some("new prompt"));
         assert!(turn.activity.contains("new answer"));
         assert!(turn.activity.contains("cargo test"));

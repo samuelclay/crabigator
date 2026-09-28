@@ -6,7 +6,7 @@
 //! [`TranscriptEntry`](super::events::TranscriptEntry).
 
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
+use std::io::Write;
 use std::path::Path;
 
 use super::events::TranscriptEntry;
@@ -38,22 +38,11 @@ pub fn append_entries(path: &Path, entries: &[TranscriptEntry]) -> std::io::Resu
 /// Claude/Codex scrollback style.
 pub fn read_transcript(path: &Path, offset: u64) -> std::io::Result<(String, u64)> {
     let file = std::fs::File::open(path)?;
-    let file_len = file.metadata()?.len();
-    if offset >= file_len {
-        return Ok((String::new(), offset));
-    }
-
-    let mut reader = BufReader::new(file);
-    reader.seek(SeekFrom::Start(offset))?;
-
+    let (lines, current_pos) = crate::jsonl::read_pass(file, offset)?;
     let mut output = String::new();
-    let mut current_pos = offset;
-    let mut line = String::new();
 
-    while reader.read_line(&mut line)? > 0 {
-        current_pos = reader.stream_position()?;
-        let parsed = serde_json::from_str::<TranscriptEntry>(line.trim_end());
-        line.clear();
+    for line in lines {
+        let parsed = serde_json::from_str::<TranscriptEntry>(&line);
         let Ok(entry) = parsed else {
             continue;
         };

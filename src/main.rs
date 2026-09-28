@@ -11,6 +11,7 @@ mod herdr;
 mod hooks;
 mod ide;
 mod inspect;
+mod jsonl;
 mod launcher;
 mod mirror;
 mod mode;
