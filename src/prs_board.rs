@@ -11,7 +11,10 @@
 //! session mirrors under /tmp; `s` flips to the durable cloud record, which
 //! includes ended sessions' PRs (tagged for resurrection) at ~1min lag.
 //! `f` fullscreens a live session on this computer and types into it.
-//! Ctrl-] leaves that view. The agent keeps running.
+//! Ctrl-] leaves that view. `n` opens a new session in the highlighted
+//! session's folder: pick Claude, Codex, opencode, or Grok, and Ghostty
+//! opens a tab in a window already in that folder, or a new window.
+//! The agent keeps running.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -3191,6 +3194,7 @@ fn render_at(
         header_mnemonic("↑↓", "select"),
         header_mnemonic("⏎", "peek"),
         header_mnemonic("f", "fullscreen"),
+        header_mnemonic("n", "new"),
         header_mnemonic("/", "search"),
         header_mnemonic("w", "watch"),
         header_mnemonic("q", "quit"),
@@ -3745,6 +3749,139 @@ fn start_watched_fetch() -> mpsc::Receiver<Vec<crate::cloud::CloudWatchedPr>> {
         }
     });
     rx
+}
+
+/// The folder and harness picker behind `n`.
+#[derive(Debug)]
+struct NewSessionTarget {
+    cwd: String,
+    /// Path shown on the banner, with the home directory shortened.
+    label: String,
+}
+
+/// `c` is Claude, so Codex takes `x`. The numbers follow the dashboard menu.
+fn new_session_platform(key: char) -> Option<PlatformKind> {
+    match key {
+        'c' | 'C' | '1' => Some(PlatformKind::Claude),
+        'x' | 'X' | '2' => Some(PlatformKind::Codex),
+        'o' | 'O' | '3' => Some(PlatformKind::Opencode),
+        'g' | 'G' | '4' => Some(PlatformKind::Grok),
+        _ => None,
+    }
+}
+
+fn shorten_path(cwd: &str) -> String {
+    let home = dirs::home_dir();
+    shorten_path_with(cwd, home.as_deref().and_then(|path| path.to_str()))
+}
+
+fn shorten_path_with(cwd: &str, home: Option<&str>) -> String {
+    let Some(home) = home.filter(|home| !home.is_empty()) else {
+        return cwd.to_string();
+    };
+    if cwd == home {
+        return "~".to_string();
+    }
+    let prefix = if home.ends_with('/') {
+        home.to_string()
+    } else {
+        format!("{home}/")
+    };
+    cwd.strip_prefix(&prefix)
+        .map(|rest| format!("~/{rest}"))
+        .unwrap_or_else(|| cwd.to_string())
+}
+
+/// The checkout recorded in a live session's mirror.
+fn session_checkout(dir_name: &str, session_dir: &Path) -> Result<String, String> {
+    let name = if dir_name.is_empty() {
+        "this session"
+    } else {
+        dir_name
+    };
+    let text = std::fs::read_to_string(session_dir.join("inspect.json"))
+        .map_err(|_| format!("no folder for {name}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| format!("no folder for {name}"))?;
+    let cwd = value
+        .get("cwd")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    if cwd.is_empty() {
+        return Err(format!("no folder for {name}"));
+    }
+    if !Path::new(cwd).is_dir() {
+        return Err(format!("{cwd} is not a folder"));
+    }
+    Ok(cwd.to_string())
+}
+
+/// The highlighted live session, or the first one when nothing is highlighted.
+/// A row with several sessions uses the one quick look is on.
+fn prepare_new_session(
+    spans: &[RowSpan],
+    selected: &mut Option<String>,
+    peek_index: usize,
+) -> Result<NewSessionTarget, String> {
+    let selectable = selectable_positions(spans);
+    if selectable.is_empty() {
+        return Err("no live session to open".to_string());
+    }
+    let position = selected_position(spans, &selectable, selected.as_deref()).unwrap_or(0);
+    let span = &spans[selectable[position]];
+    *selected = Some(span.key.clone());
+    let Some(target) = selected_peek(spans, selected.as_deref(), peek_index) else {
+        return Err("no live session to open".to_string());
+    };
+    let cwd = session_checkout(&target.dir_name, &target.session_dir)?;
+    Ok(NewSessionTarget {
+        label: shorten_path(&cwd),
+        cwd,
+    })
+}
+
+fn start_checkout_spawn(
+    target: NewSessionTarget,
+    platform: PlatformKind,
+) -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let message = match crate::terminal_spawner::spawn_checkout(&target.cwd, platform.as_str())
+        {
+            Ok(()) => format!("Opened {} in {}", platform.display_name(), target.label),
+            Err(error) => {
+                let error = error.to_string().replace('\n', " ");
+                format!("Couldn't open the session: {error}")
+            }
+        };
+        let _ = tx.send(message);
+    });
+    rx
+}
+
+/// The harness picker. The folder stays visible so the choice is obvious
+/// before Ghostty opens. A narrow terminal keeps the keys and shortens the path.
+fn new_session_banner(label: &str, width: u16) -> String {
+    let width = width as usize;
+    let keys = " · c Claude · x Codex · o opencode · g Grok · Esc cancels ";
+    let prefix = " ◉ new session in ";
+    let room = width.saturating_sub(prefix.width() + keys.width());
+    let text = if room >= 4 {
+        let label = crate::ui::pr_cells::truncate_to_width(label, room);
+        format!("{prefix}{label}{keys}")
+    } else {
+        " ◉ c Claude · x Codex · o opencode · g Grok · Esc cancels ".to_string()
+    };
+    let text = crate::ui::pr_cells::truncate_to_width(&text, width);
+    let pad = width.saturating_sub(text.width());
+    format!(
+        "{}{}{text}{}{}",
+        escape::bg(color::YELLOW),
+        fg(16),
+        " ".repeat(pad),
+        RESET
+    )
 }
 
 /// The sticky add-a-watch banner behind the `w` key: paste a PR URL or
@@ -4357,7 +4494,9 @@ fn board_visible_lines(
     matched: usize,
     add_input: Option<&str>,
     add_error: Option<&str>,
+    new_session: Option<&str>,
     attach_error: Option<&str>,
+    spawn_notice: Option<&str>,
     peek_open: bool,
     banner_rows: usize,
     pane_lines: &[String],
@@ -4369,7 +4508,13 @@ fn board_visible_lines(
     if let Some(input) = add_input {
         visible_lines.push(watch_banner(input, add_error, width));
     }
+    if let Some(label) = new_session {
+        visible_lines.push(new_session_banner(label, width));
+    }
     if let Some(message) = attach_error {
+        visible_lines.push(attach_error_banner(message, width));
+    }
+    if let Some(message) = spawn_notice {
         visible_lines.push(attach_error_banner(message, width));
     }
     let band = selected.and_then(|key| spans.iter().find(|span| span.key == key));
@@ -4476,6 +4621,11 @@ async fn board_loop(
     let mut watched_fetched = Instant::now();
     let mut add_input: Option<String> = None;
     let mut add_error: Option<String> = None;
+    // `n` asks which harness to open in the highlighted session's folder.
+    // The spawn itself runs off the loop so AppleScript cannot stall a frame.
+    let mut new_session: Option<NewSessionTarget> = None;
+    let mut spawn_notice: Option<String> = None;
+    let mut spawn_rx: Option<mpsc::Receiver<String>> = None;
     let preferences = crate::config::Config::load().unwrap_or_default().pr_board;
     let mut view = BoardView::new(
         preferences.detail,
@@ -4737,11 +4887,26 @@ async fn board_loop(
             }
         }
 
+        let spawn_message = match spawn_rx.as_ref().map(|rx| rx.try_recv()) {
+            Some(Ok(message)) => Some(Some(message)),
+            Some(Err(mpsc::TryRecvError::Disconnected)) => Some(None),
+            _ => None,
+        };
+        if let Some(message) = spawn_message {
+            spawn_rx = None;
+            if let Some(message) = message {
+                spawn_notice = Some(message);
+                dirty = true;
+            }
+        }
+
         // The banner is pinned above the scrolled content while searching;
         // the quick look pane claims the bottom half of the terminal.
         let banner_rows = usize::from(search.is_some())
             + usize::from(add_input.is_some())
-            + usize::from(attach_error.is_some());
+            + usize::from(new_session.is_some())
+            + usize::from(attach_error.is_some())
+            + usize::from(spawn_notice.is_some());
         let pane_rows = if peek_open { peek_pane_rows(height) } else { 0 };
         let page = (height as usize)
             .saturating_sub(banner_rows)
@@ -4803,7 +4968,9 @@ async fn board_loop(
                     matched,
                     add_input.as_deref(),
                     add_error.as_deref(),
+                    new_session.as_ref().map(|target| target.label.as_str()),
                     attach_error.as_deref(),
+                    spawn_notice.as_deref(),
                     peek_open,
                     banner_rows,
                     &pane_lines,
@@ -4814,7 +4981,7 @@ async fn board_loop(
             }
         }
 
-        let poll_interval = if animating || peek_open || attach.is_some() {
+        let poll_interval = if animating || peek_open || attach.is_some() || spawn_rx.is_some() {
             Duration::from_millis(100)
         } else {
             Duration::from_millis(250)
@@ -4837,6 +5004,8 @@ async fn board_loop(
                             last_frame_hash = 0;
                             dirty = true;
                         }
+                    } else if new_session.is_some() {
+                        // A paste must not choose a harness.
                     } else if let Some(input) = &mut add_input {
                         input.push_str(text.trim());
                         add_error = None;
@@ -4873,7 +5042,9 @@ async fn board_loop(
                         }
                         break 'board_key;
                     }
-                    if attach_error.take().is_some() {
+                    let cleared_attach = attach_error.take().is_some();
+                    let cleared_spawn = spawn_notice.take().is_some();
+                    if cleared_attach || cleared_spawn {
                         dirty = true;
                     }
                     if key.code == KeyCode::Char('c')
@@ -4882,11 +5053,35 @@ async fn board_loop(
                         save_board_preferences(include_ended, view)?;
                         return Ok(());
                     }
-                    // While the add-a-watch input is open, printable keys edit
-                    // it; Enter parses and adds, Esc closes. The flag keeps
-                    // the submit's Enter from also toggling the peek pane.
-                    let add_input_consumed = add_input.is_some();
-                    if let Some(input) = &mut add_input {
+                    // While the add-a-watch input or the new-session picker is
+                    // open, those keys stay inside it. The flag keeps Enter
+                    // from also toggling the peek pane.
+                    let add_input_consumed = add_input.is_some() || new_session.is_some();
+                    if new_session.is_some() {
+                        match key.code {
+                            KeyCode::Esc => {
+                                new_session = None;
+                                dirty = true;
+                            }
+                            KeyCode::Char(c)
+                                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+                            {
+                                if let Some(platform) = new_session_platform(c) {
+                                    if let Some(target) = new_session.take() {
+                                        spawn_notice = Some(format!(
+                                            "Opening {} in {}",
+                                            platform.display_name(),
+                                            target.label
+                                        ));
+                                        spawn_rx = Some(start_checkout_spawn(target, platform));
+                                        dirty = true;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else if let Some(input) = &mut add_input {
                         match key.code {
                             KeyCode::Esc => {
                                 add_input = None;
@@ -5024,6 +5219,29 @@ async fn board_loop(
                             }
                             // Fullscreen the selected live session and type
                             // into it. Ctrl-] returns here.
+                            // Open a harness in the highlighted session's folder.
+                            KeyCode::Char('n')
+                                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+                            {
+                                match prepare_new_session(&spans, &mut selected, peek_index) {
+                                    Ok(target) => {
+                                        if let Some(span) = spans.iter().find(|span| {
+                                            selected.as_deref() == Some(span.key.as_str())
+                                        }) {
+                                            scroll = scroll_to_reveal(scroll, page, span)
+                                                .min(max_scroll);
+                                        }
+                                        new_session = Some(target);
+                                        spawn_notice = None;
+                                        dirty = true;
+                                    }
+                                    Err(message) => {
+                                        spawn_notice = Some(message);
+                                        dirty = true;
+                                    }
+                                }
+                            }
                             KeyCode::Char('f')
                                 if !key.modifiers.contains(KeyModifiers::CONTROL)
                                     && !key.modifiers.contains(KeyModifiers::ALT) =>
@@ -5351,6 +5569,7 @@ mod tests {
         assert!(styled.contains(&format!("{UNDERLINE}↑↓{RESET_UNDERLINE} select")));
         assert!(styled.contains(&format!("{UNDERLINE}⏎{RESET_UNDERLINE} peek")));
         assert!(styled.contains(&format!("{UNDERLINE}f{RESET_UNDERLINE}ullscreen")));
+        assert!(styled.contains(&format!("{UNDERLINE}n{RESET_UNDERLINE}ew")));
         assert!(styled.contains(&format!("{UNDERLINE}/{RESET_UNDERLINE} search")));
         assert!(styled.contains(&format!("{UNDERLINE}w{RESET_UNDERLINE}atch")));
         assert!(styled.contains(&format!("{UNDERLINE}q{RESET_UNDERLINE}uit")));
@@ -5359,7 +5578,7 @@ mod tests {
 
         let frame = crate::parsers::strip_ansi_for_debug(&styled);
         assert!(frame.contains("s live · prs · r compact · all ages"));
-        assert!(frame.contains("↑↓ select · ⏎ peek · fullscreen · / search · watch · quit"));
+        assert!(frame.contains("↑↓ select · ⏎ peek · fullscreen · new · / search · watch · quit"));
         assert!(!frame.contains("r recap · a age · s live/all"));
         assert!(!frame.contains("e/c recap/compact"));
         assert!(!frame.contains("[/] age"));
@@ -5372,6 +5591,115 @@ mod tests {
             .lines
             .join("\n");
         assert!(all_sessions.contains(&format!("all {UNDERLINE}s{RESET_UNDERLINE}essions")));
+    }
+
+    #[test]
+    fn new_session_keys_match_the_dashboard_menu() {
+        assert_eq!(new_session_platform('c'), Some(PlatformKind::Claude));
+        assert_eq!(new_session_platform('1'), Some(PlatformKind::Claude));
+        assert_eq!(new_session_platform('x'), Some(PlatformKind::Codex));
+        assert_eq!(new_session_platform('2'), Some(PlatformKind::Codex));
+        assert_eq!(new_session_platform('o'), Some(PlatformKind::Opencode));
+        assert_eq!(new_session_platform('3'), Some(PlatformKind::Opencode));
+        assert_eq!(new_session_platform('g'), Some(PlatformKind::Grok));
+        assert_eq!(new_session_platform('4'), Some(PlatformKind::Grok));
+        assert_eq!(new_session_platform('q'), None);
+    }
+
+    #[test]
+    fn shorten_path_replaces_the_home_prefix() {
+        assert_eq!(
+            shorten_path_with("/Users/sclay/projects/crabigator", Some("/Users/sclay")),
+            "~/projects/crabigator"
+        );
+        assert_eq!(shorten_path_with("/Users/sclay", Some("/Users/sclay")), "~");
+        assert_eq!(
+            shorten_path_with("/tmp/crabigator", Some("/Users/sclay")),
+            "/tmp/crabigator"
+        );
+    }
+
+    #[test]
+    fn new_session_banner_names_the_folder_and_the_harnesses() {
+        let wide = new_session_banner("~/projects/crabigator", 120);
+        let plain = crate::parsers::strip_ansi_for_debug(&wide);
+        assert!(plain.contains("~/projects/crabigator"));
+        assert!(plain.contains("c Claude"));
+        assert!(plain.contains("x Codex"));
+        assert!(plain.contains("o opencode"));
+        assert!(plain.contains("g Grok"));
+        assert_eq!(crate::ui::utils::strip_ansi_len(&wide), 120);
+
+        let narrow = new_session_banner("~/projects/crabigator", 40);
+        let narrow_plain = crate::parsers::strip_ansi_for_debug(&narrow);
+        assert!(narrow_plain.contains("c Claude"));
+        assert!(!narrow_plain.contains("~/projects/crabigator"));
+        assert_eq!(crate::ui::utils::strip_ansi_len(&narrow), 40);
+    }
+
+    #[test]
+    fn new_session_uses_the_peeked_sessions_folder() {
+        let first_checkout = tempfile::tempdir().unwrap();
+        let second_checkout = tempfile::tempdir().unwrap();
+        let first_mirror = tempfile::tempdir().unwrap();
+        let second_mirror = tempfile::tempdir().unwrap();
+        std::fs::write(
+            first_mirror.path().join("inspect.json"),
+            serde_json::json!({ "cwd": first_checkout.path() }).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            second_mirror.path().join("inspect.json"),
+            serde_json::json!({ "cwd": second_checkout.path() }).to_string(),
+        )
+        .unwrap();
+        let spans = vec![RowSpan {
+            key: "o/portal#5".to_string(),
+            start: 0,
+            end: 1,
+            peeks: vec![
+                PeekTarget {
+                    title: "first".to_string(),
+                    dir_name: "portal".to_string(),
+                    session_dir: first_mirror.path().to_path_buf(),
+                },
+                PeekTarget {
+                    title: "second".to_string(),
+                    dir_name: "portal-wt".to_string(),
+                    session_dir: second_mirror.path().to_path_buf(),
+                },
+            ],
+        }];
+
+        let mut selected = Some("o/portal#5".to_string());
+        let target = prepare_new_session(&spans, &mut selected, 1).unwrap();
+        assert_eq!(
+            target.cwd,
+            second_checkout.path().to_string_lossy().as_ref()
+        );
+        assert_eq!(selected.as_deref(), Some("o/portal#5"));
+
+        let mut selected = None;
+        let target = prepare_new_session(&spans, &mut selected, 0).unwrap();
+        assert_eq!(target.cwd, first_checkout.path().to_string_lossy().as_ref());
+        assert_eq!(selected.as_deref(), Some("o/portal#5"));
+
+        let missing = tempfile::tempdir().unwrap();
+        let spans = vec![RowSpan {
+            key: "k".to_string(),
+            start: 0,
+            end: 1,
+            peeks: vec![PeekTarget {
+                title: "gone".to_string(),
+                dir_name: "portal".to_string(),
+                session_dir: missing.path().to_path_buf(),
+            }],
+        }];
+        let err = prepare_new_session(&spans, &mut None, 0).unwrap_err();
+        assert!(err.contains("no folder for portal"), "{err}");
+
+        let err = prepare_new_session(&[], &mut None, 0).unwrap_err();
+        assert_eq!(err, "no live session to open");
     }
 
     fn now_ms() -> u64 {

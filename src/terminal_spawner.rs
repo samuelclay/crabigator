@@ -2,7 +2,9 @@
 //!
 //! On Ghostty this creates a tab in an existing window (matched by working
 //! directory, then by the calling session's window id). Terminal.app still
-//! opens a new window.
+//! opens a new window. `spawn_checkout` is the stricter open used by the PR
+//! board: a tab only when a window is already in that folder, otherwise a
+//! new window.
 
 use std::path::Path;
 
@@ -96,6 +98,17 @@ pub(crate) fn find_crabigator_binary() -> String {
         .unwrap_or_else(|| "crabigator".to_string())
 }
 
+/// Where Ghostty puts the new session.
+#[derive(Clone, Copy)]
+enum GhosttyPlacement {
+    /// Match this checkout, then a parent or child path, then `window_id`,
+    /// then the front window. Otherwise open a new window.
+    PreferExisting,
+    /// Match a window that already has this checkout open. Otherwise open a
+    /// new window, leaving unrelated windows alone.
+    ExactOrNew,
+}
+
 /// Spawn a new terminal with crabigator in the given directory.
 pub fn spawn_terminal(cwd: &str, platform: Option<&str>) -> Result<()> {
     spawn_terminal_in_window(cwd, platform, None)
@@ -107,6 +120,23 @@ pub fn spawn_terminal_in_window(
     cwd: &str,
     platform: Option<&str>,
     window_id: Option<&str>,
+) -> Result<()> {
+    spawn_placed(cwd, platform, window_id, GhosttyPlacement::PreferExisting)
+}
+
+/// Open a session in `cwd` on `platform` (claude, codex, opencode, or grok).
+///
+/// Ghostty adds a tab when a window is already in that folder, and opens a
+/// new window when none is. Terminal.app opens a new window either way.
+pub fn spawn_checkout(cwd: &str, platform: &str) -> Result<()> {
+    spawn_placed(cwd, Some(platform), None, GhosttyPlacement::ExactOrNew)
+}
+
+fn spawn_placed(
+    cwd: &str,
+    platform: Option<&str>,
+    window_id: Option<&str>,
+    placement: GhosttyPlacement,
 ) -> Result<()> {
     let cwd_path = Path::new(cwd);
     if !cwd_path.exists() {
@@ -126,10 +156,12 @@ pub fn spawn_terminal_in_window(
         #[cfg(target_os = "macos")]
         TerminalApp::Terminal => spawn_in_terminal_app(&cwd_str, &binary, &platform_arg),
         #[cfg(target_os = "macos")]
-        TerminalApp::Ghostty => spawn_in_ghostty(&cwd_str, &binary, &platform_arg, window_id),
+        TerminalApp::Ghostty => {
+            spawn_in_ghostty(&cwd_str, &binary, &platform_arg, window_id, placement)
+        }
         #[cfg(not(target_os = "macos"))]
         _ => {
-            let _ = (cwd_str, binary, platform_arg, window_id);
+            let _ = (cwd_str, binary, platform_arg, window_id, placement);
             bail!("Spawning a new session is only supported on macOS")
         }
     }
@@ -157,26 +189,22 @@ fn ghostty_spawn_script(
     binary: &str,
     platform: &str,
     window_id: Option<&str>,
+    placement: GhosttyPlacement,
 ) -> String {
     let cwd_literal = applescript_string(cwd);
     let binary_literal = applescript_string(binary);
     let platform_literal = applescript_string(platform);
     let window_literal = applescript_string(window_id.unwrap_or(""));
-
-    format!(
-        r#"set targetCwd to {cwd_literal}
-set preferredWindowId to {window_literal}
-set binaryPath to {binary_literal}
-set platformName to {platform_literal}
-set cfgCommand to "/bin/zsh -lic " & quoted form of ("exec " & quoted form of binaryPath & " " & quoted form of platformName)
-
-tell application "Ghostty"
-    set cfg to new surface configuration
-    set initial working directory of cfg to targetCwd
-    set command of cfg to cfgCommand
-    set wait after command of cfg to true
-
-    set win to missing value
+    let preferred = match placement {
+        GhosttyPlacement::PreferExisting => format!("set preferredWindowId to {window_literal}\n"),
+        GhosttyPlacement::ExactOrNew => String::new(),
+    };
+    // ExactOrNew stops after an exact checkout match. A parent or child path,
+    // a remembered window id, and the front window would put the session in
+    // some other folder's window.
+    let scan = match placement {
+        GhosttyPlacement::PreferExisting => {
+            r#"    set win to missing value
     set relatedWin to missing value
     set prefixNeedle to targetCwd & "/"
     repeat with w in windows
@@ -208,7 +236,39 @@ tell application "Ghostty"
             set win to front window
         end try
     end if
+"#
+        }
+        GhosttyPlacement::ExactOrNew => {
+            r#"    set win to missing value
+    repeat with w in windows
+        repeat with t in tabs of w
+            try
+                set termCwd to working directory of focused terminal of t
+                if termCwd is targetCwd then
+                    set win to w
+                    exit repeat
+                end if
+            end try
+        end repeat
+        if win is not missing value then exit repeat
+    end repeat
+"#
+        }
+    };
 
+    format!(
+        r#"set targetCwd to {cwd_literal}
+{preferred}set binaryPath to {binary_literal}
+set platformName to {platform_literal}
+set cfgCommand to "/bin/zsh -lic " & quoted form of ("exec " & quoted form of binaryPath & " " & quoted form of platformName)
+
+tell application "Ghostty"
+    set cfg to new surface configuration
+    set initial working directory of cfg to targetCwd
+    set command of cfg to cfgCommand
+    set wait after command of cfg to true
+
+{scan}
     if win is missing value then
         set created to new window with configuration cfg
         activate window created
@@ -232,6 +292,7 @@ fn spawn_in_ghostty(
     binary: &str,
     platform: &str,
     window_id: Option<&str>,
+    placement: GhosttyPlacement,
 ) -> Result<()> {
     // Ghostty 1.3.1 builds the Metal surface as soon as the window exists.
     // With every display asleep, CoreVideo reports zero displays
@@ -240,7 +301,7 @@ fn spawn_in_ghostty(
     // display can draw, then create the window.
     wait_for_drawable_display();
 
-    let script = ghostty_spawn_script(cwd, binary, platform, window_id);
+    let script = ghostty_spawn_script(cwd, binary, platform, window_id, placement);
     let output = run_osascript(&script).context("Failed to spawn Ghostty tab via AppleScript")?;
     if output.trim().is_empty() {
         bail!("Ghostty did not create a tab");
@@ -331,6 +392,7 @@ mod tests {
             "/usr/local/bin/crabigator",
             "grok",
             Some("tab-group-abc"),
+            GhosttyPlacement::PreferExisting,
         );
         assert!(script.contains("new tab in win"));
         assert!(script.contains("new window with configuration"));
@@ -346,6 +408,25 @@ mod tests {
         let exact = script.find("termCwd is targetCwd").unwrap();
         let related = script.find("starts with prefixNeedle").unwrap();
         assert!(exact < related);
+    }
+
+    #[test]
+    fn ghostty_checkout_script_skips_unrelated_windows() {
+        let script = ghostty_spawn_script(
+            "/Users/sclay/projects/crabigator",
+            "/usr/local/bin/crabigator",
+            "codex",
+            Some("tab-group-abc"),
+            GhosttyPlacement::ExactOrNew,
+        );
+        assert!(script.contains("termCwd is targetCwd"));
+        assert!(script.contains("new tab in win"));
+        assert!(script.contains("new window with configuration"));
+        assert!(script.contains("codex"));
+        assert!(!script.contains("front window"));
+        assert!(!script.contains("relatedWin"));
+        assert!(!script.contains("preferredWindowId"));
+        assert!(!script.contains("tab-group-abc"));
     }
 
     #[test]
