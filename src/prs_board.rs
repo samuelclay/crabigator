@@ -3537,7 +3537,12 @@ impl Drop for PrBoardTerminalGuard {
 }
 
 /// How often the open board re-runs `gh` for each open watched PR.
-const WATCHED_REFRESH: Duration = Duration::from_secs(60);
+/// Watched PRs share the machine-wide GitHub budget with session refreshes,
+/// so this stays well below a once-a-minute poll.
+const WATCHED_REFRESH: Duration = Duration::from_secs(15 * 60);
+/// Shortest gap between watched-PR reads on one board. Several boards can be
+/// open at once; without this they walk the whole watch list back to back.
+const WATCH_SPAWN_GAP: Duration = Duration::from_secs(3 * 60);
 /// Minimum spacing between relays of freshly fetched watched-PR stats.
 const WATCH_RELAY_THROTTLE: Duration = Duration::from_secs(30);
 /// A locally added watch survives cloud list refreshes at least this long,
@@ -3555,6 +3560,8 @@ struct WatchedBoard {
     attempted_at: HashMap<String, Instant>,
     /// In-flight enrichment jobs by key.
     pending: HashMap<String, mpsc::Receiver<Result<SessionPr, String>>>,
+    /// When this board last started a GitHub read.
+    last_spawn: Option<Instant>,
     /// Keys added on this board, kept through cloud refreshes while the add
     /// itself may still be in flight.
     added_locally: HashMap<String, Instant>,
@@ -3615,13 +3622,26 @@ impl WatchedBoard {
         self.attempted_at.remove(&key);
     }
 
-    /// Start `gh` enrichment for every watched PR that is due: never-enriched
-    /// ones immediately, open ones each minute. Finished PRs stop refreshing.
+    /// Start one `gh` read for the next watched PR that is due. Never-enriched
+    /// rows go first. Finished PRs stop refreshing. One board starts at most
+    /// one read per few minutes, and the shared budget can still say no.
     fn spawn_due_refreshes(&mut self) {
-        let due: Vec<(String, String)> = self
+        if !self.pending.is_empty() {
+            return;
+        }
+        if self
+            .last_spawn
+            .is_some_and(|at| at.elapsed() < WATCH_SPAWN_GAP)
+        {
+            return;
+        }
+        if !crate::pr::board_reads_allowed() {
+            return;
+        }
+        let due = self
             .prs
             .iter()
-            .filter(|(key, pr)| {
+            .find(|(key, pr)| {
                 !self.pending.contains_key(*key)
                     && (pr.refreshed_at == 0 || pr.state == "OPEN")
                     && self
@@ -3629,16 +3649,17 @@ impl WatchedBoard {
                         .get(*key)
                         .is_none_or(|at| at.elapsed() >= WATCHED_REFRESH)
             })
-            .map(|(key, pr)| (key.clone(), pr.url.clone()))
-            .collect();
-        for (key, url) in due {
-            self.attempted_at.insert(key.clone(), Instant::now());
-            let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = tx.send(crate::pr::fetch_watched_session_pr(&url));
-            });
-            self.pending.insert(key, rx);
-        }
+            .map(|(key, pr)| (key.clone(), pr.url.clone()));
+        let Some((key, url)) = due else {
+            return;
+        };
+        self.attempted_at.insert(key.clone(), Instant::now());
+        self.last_spawn = Some(Instant::now());
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::pr::fetch_watched_session_pr(&url));
+        });
+        self.pending.insert(key, rx);
     }
 
     /// Collect finished enrichment jobs. Returns true when stats changed.
@@ -3647,17 +3668,27 @@ impl WatchedBoard {
         let mut done = Vec::new();
         for (key, rx) in &self.pending {
             match rx.try_recv() {
-                Ok(Ok(pr)) => done.push((key.clone(), Some(pr))),
+                Ok(Ok(pr)) => done.push((key.clone(), Some(pr), false)),
+                // The budget turned this read away. Forget the attempt so the
+                // next gap can try again, instead of waiting out the full
+                // refresh interval on a call that never happened.
+                Ok(Err(error)) if crate::pr::github_read_deferred(&error) => {
+                    done.push((key.clone(), None, true))
+                }
                 // A failed fetch or a dropped worker just retries on the next
                 // cadence tick.
                 Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
-                    done.push((key.clone(), None))
+                    done.push((key.clone(), None, false))
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        for (key, result) in done {
+        for (key, result, retry_soon) in done {
             self.pending.remove(&key);
+            if retry_soon {
+                self.attempted_at.remove(&key);
+                self.last_spawn = None;
+            }
             let Some(pr) = result else {
                 continue;
             };

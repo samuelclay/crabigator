@@ -2,22 +2,28 @@
 //!
 //! Screen-scrapes the session's turn transcript for pull requests the agent
 //! mentions, creates, or updates, then enriches each PR with live details from
-//! the GitHub CLI (`gh pr view`) on a background thread. The resulting list is
-//! session-scoped and deduplicated by PR URL, so a single session working across
-//! several PRs (e.g. an RQH PR and a dev portal PR) shows all of them.
+//! the GitHub CLI on a background thread. The resulting list is session-scoped
+//! and deduplicated by PR URL, so a single session working across several PRs
+//! (e.g. an RQH PR and a dev portal PR) shows all of them.
 //!
 //! Detection is platform-agnostic: the caller feeds in latest-turn transcript
 //! text (via `collect_latest_turn_text`, which handles both Claude and Codex), so
-//! it works the same for both. `gh pr view <url>` is invoked with the full PR URL,
-//! which encodes owner/repo/number, so refreshes are independent of the current
-//! working directory (handy across worktrees).
+//! it works the same for both. Refreshes use the full PR URL, which encodes
+//! owner/repo/number, so they are independent of the current working directory
+//! (handy across worktrees).
+//!
+//! Background reads share one hourly budget across every session and PR board
+//! on this machine (`pr::budget`). A session that has mentioned dozens of open
+//! PRs keeps refreshing the handful it touched most recently, not every one.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+mod budget;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -25,17 +31,30 @@ use serde::{Deserialize, Serialize};
 use crate::pr_rank::PrDisposition;
 use crate::slack::{extract_threads, has_only_channel_id, SlackDirectory, SlackThread};
 
-/// Minimum time between `gh pr view` refreshes for a single PR.
+/// Minimum time between `gh pr view` refreshes for a single PR, and between
+/// repeated lookups of the current branch.
 const REFRESH_THROTTLE: Duration = Duration::from_secs(30);
-/// How often to poll GitHub from how recently the session or PR moved:
-/// every minute for 30 minutes, every 15 minutes for 6 hours, then hourly
-/// for 48 hours.
+/// How often to poll GitHub from how recently *this PR* moved: every 10
+/// minutes for 30 minutes, every 30 minutes for 6 hours, then every 3 hours
+/// for 48 hours. Session activity speeds up only the few PRs touched most
+/// recently — never the whole list.
 const PR_HOT_WINDOW: Duration = Duration::from_secs(30 * 60);
-const PR_HOT_THROTTLE: Duration = Duration::from_secs(60);
+const PR_HOT_THROTTLE: Duration = Duration::from_secs(10 * 60);
 const PR_WARM_WINDOW: Duration = Duration::from_secs(6 * 60 * 60);
-const PR_WARM_THROTTLE: Duration = Duration::from_secs(15 * 60);
+const PR_WARM_THROTTLE: Duration = Duration::from_secs(30 * 60);
 const PR_COOL_WINDOW: Duration = Duration::from_secs(48 * 60 * 60);
-const PR_COOL_THROTTLE: Duration = Duration::from_secs(60 * 60);
+const PR_COOL_THROTTLE: Duration = Duration::from_secs(3 * 60 * 60);
+/// Open PRs past this many, counting from the most recently mentioned, keep
+/// their last stats until the session mentions them again.
+const BACKGROUND_PR_LIMIT: usize = 8;
+/// How many of those inherit the session's own activity as a reason to poll
+/// on the fast cadence.
+const HOT_SESSION_PR_LIMIT: usize = 2;
+/// Reads one session will start in an hour, on top of the machine-wide budget.
+const SESSION_READS_PER_HOUR: u32 = 8;
+/// Bare `PR #N` lookups that couldn't start immediately (a read was already
+/// in flight, or the transcript was being replayed). Drained one at a time.
+const DEFERRED_LOOKUP_LIMIT: usize = 8;
 /// How many pasted-prompt URLs to keep for branch matching.
 const PROMPT_URLS_KEPT: usize = 32;
 /// How long a pasted Slack permalink keeps claiming new PRs as their origin.
@@ -502,6 +521,11 @@ struct GhPrJson {
     updated_at: Option<String>,
     #[serde(default, rename = "statusCheckRollup")]
     status_check_rollup: Vec<CheckEntry>,
+    /// Passed, failed, pending counts from the cheap background read.
+    /// `None` means this payload didn't ask about checks, so the previous
+    /// counts should stay.
+    #[serde(skip)]
+    check_counts: Option<(i64, i64, i64)>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -574,7 +598,7 @@ impl CheckEntry {
     }
 }
 
-/// Result of a background `gh pr view` job.
+/// Result of a background PR read.
 struct FetchResult {
     /// Location we asked about (for placeholder identity / created_here carry-over).
     requested_url: Option<String>,
@@ -583,17 +607,15 @@ struct FetchResult {
     /// the active status/review cadence for a short window.
     pr_active: bool,
     data: Result<GhPrJson, String>,
+    /// Review threads included in the same read. `None` when this was only a
+    /// branch or number lookup and the thread count should be left alone.
+    threads: Option<ReviewThreads>,
 }
 
 /// What a finished background job carries back.
 enum JobResult {
-    /// A `gh pr view` enrichment.
+    /// A PR enrichment.
     Pr(Box<FetchResult>),
-    /// A review-thread count for the PR at `url`.
-    Threads {
-        url: String,
-        data: Result<ReviewThreads, String>,
-    },
 }
 
 /// Unresolved review threads on one PR, plus any Slack permalinks its
@@ -687,18 +709,23 @@ pub struct PrTracker {
     /// User prompt that owns the per-turn command and mention deduplication.
     /// This is also a fallback turn boundary when the prompt counter arrives late.
     scan_prompt_owner: Option<String>,
-    /// Last `gh pr view` attempt per PR URL. Failed requests back off too, rather
-    /// than retrying on every two-second idle hook tick.
+    /// Last background read attempt per PR URL. Failed requests back off too,
+    /// rather than retrying on every two-second idle hook tick.
     refresh_attempted_at: HashMap<String, Instant>,
-    /// Consecutive `gh pr view` failures per PR URL, cleared on success.
+    /// Consecutive read failures per PR URL, cleared on success.
     /// Never-enriched PRs retry on this count's backoff schedule.
     fetch_failures: HashMap<String, u32>,
-    /// Last review-thread query attempt per PR URL. Failures back off like
-    /// successes, so a PR whose threads we can't read isn't re-queried each tick.
-    comments_attempted_at: HashMap<String, Instant>,
     /// Last observed mention, push, or creation per PR URL. Recent activity
-    /// uses a faster status/review cadence.
+    /// uses a faster status cadence.
     pr_active_at: HashMap<String, Instant>,
+    /// `PR #N` lookups waiting for a free GitHub slot.
+    deferred_lookups: Vec<(PathBuf, u64)>,
+    /// URLs a real mention asked to refresh while another read was running.
+    force_refresh: HashSet<String>,
+    /// When the per-session hourly read count started.
+    read_window_started: Option<Instant>,
+    /// Background reads this session has started in the current hour.
+    reads_this_window: u32,
     /// Latest prompt or completion time for this session (unix seconds).
     session_activity_at: Option<f64>,
     /// Update commands already handled in the current turn, counted by their
@@ -760,8 +787,11 @@ impl PrTracker {
             scan_prompt_owner: None,
             refresh_attempted_at: HashMap::new(),
             fetch_failures: HashMap::new(),
-            comments_attempted_at: HashMap::new(),
             pr_active_at: HashMap::new(),
+            deferred_lookups: Vec::new(),
+            force_refresh: HashSet::new(),
+            read_window_started: None,
+            reads_this_window: 0,
             session_activity_at: None,
             update_commands_seen: HashMap::new(),
             pending_pr_active: HashMap::new(),
@@ -881,17 +911,10 @@ impl PrTracker {
     }
 
     /// Enrich restored PRs once after the historical scan, without refreshing
-    /// on every old mention while the transcript is being replayed.
+    /// on every old mention while the transcript is being replayed. One read
+    /// starts here; the rest follow on later polls, under the same budget.
     pub fn refresh_restored_prs(&mut self) {
-        let urls: Vec<_> = self
-            .prs
-            .iter()
-            .filter(|pr| pr.refreshed_at == 0)
-            .map(|pr| pr.url.clone())
-            .collect();
-        for url in urls {
-            self.refresh_url(&url, false);
-        }
+        self.start_due_refresh();
     }
 
     /// Scan a user prompt for PR references without treating text such as
@@ -1090,7 +1113,7 @@ impl PrTracker {
     /// Record an explicit watch: track the PR in this session, flag it
     /// watched, and queue the cloud watch-list add.
     fn note_watch(&mut self, loc: PrLocation) {
-        self.observe_url(&loc);
+        self.observe_url(&loc, true);
         if let Some(pr) = self.prs.iter_mut().find(|p| p.url == loc.url) {
             pr.watched = true;
         }
@@ -1173,7 +1196,7 @@ impl PrTracker {
                     {
                         continue;
                     }
-                    changed |= self.observe_url(&loc);
+                    changed |= self.observe_url(&loc, true);
                     if let Some(pr) = self.prs.iter_mut().find(|pr| pr.url == loc.url) {
                         if !pr.created_here {
                             pr.created_here = true;
@@ -1196,7 +1219,9 @@ impl PrTracker {
                 ScanEvent::Updated(_) => {}
                 ScanEvent::Located { loc, bulk } => {
                     if self.is_new_mention(mention_scope, &loc.url, &mut mention_occurrences) {
-                        changed |= self.observe_url(&loc);
+                        // A line that lists many PRs tracks them, but it is not a
+                        // reason to ask GitHub about each one.
+                        changed |= self.observe_url(&loc, !bulk);
                         if !bulk {
                             changed |= self.record_mention_for_url(&loc.url, user_authored);
                         }
@@ -1270,12 +1295,17 @@ impl PrTracker {
     }
 
     /// Handle a PR URL seen in the scrollback.
-    fn observe_url(&mut self, loc: &PrLocation) -> bool {
-        // Every new mention refreshes immediately and restarts the active window.
-        // Transcript rescans are filtered by `is_new_mention`, so `force` still
-        // means once per actual mention rather than once per hook tick.
+    ///
+    /// `engage` is false for a bulk listing. Those PRs are remembered, but they
+    /// do not start a GitHub read or restart the fast refresh window.
+    fn observe_url(&mut self, loc: &PrLocation, engage: bool) -> bool {
+        // Every real mention refreshes immediately and restarts the active
+        // window. Transcript rescans are filtered by `is_new_mention`, so
+        // `force` still means once per actual mention rather than once per
+        // hook tick. A second mention while a read is already in flight waits
+        // for that read to finish instead of starting another.
         if self.prs.iter().any(|p| p.url == loc.url) {
-            if self.replaying_history {
+            if self.replaying_history || !engage {
                 return false;
             }
             self.note_pr_active(&loc.url);
@@ -1286,7 +1316,7 @@ impl PrTracker {
         let mut pr = SessionPr::placeholder(loc, false);
         pr.slack_origin_url = self.current_origin_slack();
         self.prs.push(pr);
-        if !self.replaying_history {
+        if !self.replaying_history && engage {
             self.note_pr_active(&loc.url);
             self.spawn_fetch(loc.url.clone(), false);
         }
@@ -1328,40 +1358,38 @@ impl PrTracker {
             }
             return;
         }
-        let cwd = cwd.to_path_buf();
-        let (tx, rx) = mpsc::channel();
+        let cwd_buf = cwd.to_path_buf();
         let pr_active = !self.replaying_history;
-        std::thread::spawn(move || {
-            let _ = tx.send(JobResult::Pr(Box::new(FetchResult {
-                requested_url: None,
-                created_here: false,
-                pr_active,
-                data: fetch_pr_number(&cwd, number),
-            })));
-        });
-        self.pending.insert(key, rx);
-    }
-
-    /// Refresh any tracked PRs whose stats are older than the throttle window.
-    /// Called on turn completion. Returns true if a fetch was started (no visible
-    /// change yet — results arrive via [`poll`]).
-    pub fn refresh_stale(&mut self) -> bool {
-        let now = now_unix_ms();
-        let stale_urls: Vec<String> = self
-            .prs
-            .iter()
-            .filter(|p| now.saturating_sub(p.refreshed_at) >= REFRESH_THROTTLE.as_millis() as u64)
-            .map(|p| p.url.clone())
-            .collect();
-        let mut started = false;
-        for url in stale_urls {
-            started |= self.refresh_url(&url, false);
+        if !self.spawn_pr_job(key, None, false, pr_active, move || {
+            fetch_pr_number(&cwd_buf, number, budget::Reader::Session)
+        }) {
+            self.defer_lookup(cwd, number);
         }
-        started
     }
 
-    /// Start a `gh pr view` for a tracked URL unless one is already in flight or
-    /// it was refreshed within the throttle window (bypassed when `force`).
+    /// Remember a bare-number lookup that could not start yet.
+    fn defer_lookup(&mut self, cwd: &Path, number: u64) {
+        let lookup = (cwd.to_path_buf(), number);
+        if self.deferred_lookups.contains(&lookup)
+            || self.deferred_lookups.len() >= DEFERRED_LOOKUP_LIMIT
+        {
+            return;
+        }
+        self.deferred_lookups.push(lookup);
+    }
+
+    /// Refresh the one open PR most in need of fresh stats.
+    ///
+    /// Called on turn completion. A turn that names dozens of PRs must not
+    /// start dozens of GitHub reads. Returns true if a fetch was started (no
+    /// visible change yet — results arrive via [`poll`]).
+    pub fn refresh_stale(&mut self) -> bool {
+        self.start_due_refresh()
+    }
+
+    /// Start a background read for a tracked URL unless one is already in
+    /// flight or it was refreshed within the throttle window (bypassed when
+    /// `force`). At most one read runs at a time.
     fn refresh_url(&mut self, url: &str, force: bool) -> bool {
         if self.pending.contains_key(url) {
             return false;
@@ -1384,8 +1412,18 @@ impl PrTracker {
                 }
             }
         }
-        self.spawn_fetch(url.to_string(), false);
-        false
+        let url_for_job = url.to_string();
+        let started = self.spawn_pr_job(
+            url.to_string(),
+            Some(url.to_string()),
+            false,
+            false,
+            move || fetch_pr(&url_for_job, budget::Reader::Session),
+        );
+        if force && !started {
+            self.force_refresh.insert(url.to_string());
+        }
+        started
     }
 
     /// Resolve the PR attached to the current branch in `cwd` (after a push/edit).
@@ -1408,88 +1446,221 @@ impl PrTracker {
         if self.pending.contains_key(&key) {
             return;
         }
-        self.last_branch_resolve = Some(Instant::now());
-        let cwd = cwd.to_path_buf();
+        let cwd_buf = cwd.to_path_buf();
+        if self.spawn_pr_job(key, None, false, pr_active, move || {
+            fetch_pr_for_branch(&cwd_buf, budget::Reader::Session)
+        }) && !pr_active
+        {
+            self.last_branch_resolve = Some(Instant::now());
+        }
+    }
+
+    /// Spawn a background read of one PR URL. Review threads come back in the
+    /// same response, so a refresh is a single GitHub call.
+    fn spawn_fetch(&mut self, url: String, created_here: bool) {
+        let url_for_job = url.clone();
+        self.spawn_pr_job(
+            url,
+            Some(url_for_job.clone()),
+            created_here,
+            created_here,
+            move || fetch_pr(&url_for_job, budget::Reader::Session),
+        );
+    }
+
+    /// Start one `gh` job. Returns false when a read is already running, this
+    /// session has used its hourly allowance, or the machine-wide budget says
+    /// to wait. Nothing is marked as attempted in that case, so a later poll
+    /// tries again.
+    fn spawn_pr_job<F>(
+        &mut self,
+        key: String,
+        requested_url: Option<String>,
+        created_here: bool,
+        pr_active: bool,
+        job: F,
+    ) -> bool
+    where
+        F: FnOnce() -> Result<(GhPrJson, Option<ReviewThreads>), String> + Send + 'static,
+    {
+        if self.pending.contains_key(&key) || !self.pending.is_empty() {
+            return false;
+        }
+        if !self.session_read_allowed() || !budget::can_start(budget::Reader::Session) {
+            return false;
+        }
+        self.note_session_read();
+        if let Some(url) = &requested_url {
+            self.refresh_attempted_at
+                .insert(url.clone(), Instant::now());
+        }
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
+            let (data, threads) = match job() {
+                Ok((pr, threads)) => (Ok(pr), threads),
+                Err(error) => (Err(error), None),
+            };
             let _ = tx.send(JobResult::Pr(Box::new(FetchResult {
-                requested_url: None,
-                created_here: false,
+                requested_url,
+                created_here,
                 pr_active,
-                data: fetch_pr_for_branch(&cwd),
+                data,
+                threads,
             })));
         });
         self.pending.insert(key, rx);
+        true
     }
 
-    /// Spawn a `gh pr view <url>` background job.
-    fn spawn_fetch(&mut self, url: String, created_here: bool) {
-        if self.pending.contains_key(&url) {
-            return;
+    /// One background read per poll: a queued number lookup, a PR that has
+    /// never loaded, or the most recently touched open PR whose cadence is due.
+    fn start_due_refresh(&mut self) -> bool {
+        if !self.pending.is_empty() {
+            return false;
         }
-        self.refresh_attempted_at
-            .insert(url.clone(), Instant::now());
-        let (tx, rx) = mpsc::channel();
-        let url_for_job = url.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(JobResult::Pr(Box::new(FetchResult {
-                requested_url: Some(url_for_job.clone()),
-                created_here,
-                pr_active: created_here,
-                data: fetch_pr(&url_for_job),
-            })));
-        });
-        self.pending.insert(url, rx);
+        if let Some(url) = self.force_refresh.iter().next().cloned() {
+            self.spawn_fetch(url, false);
+            return !self.pending.is_empty();
+        }
+        if let Some((cwd, number)) = self.deferred_lookups.first().cloned() {
+            self.deferred_lookups.remove(0);
+            let key = format!("mention:{}#{number}", cwd.display());
+            let cwd_for_job = cwd.clone();
+            if self.spawn_pr_job(key, None, false, false, move || {
+                fetch_pr_number(&cwd_for_job, number, budget::Reader::Session)
+            }) {
+                return true;
+            }
+            self.defer_lookup(&cwd, number);
+            return false;
+        }
+        if let Some(url) = self.next_budgeted_url() {
+            self.spawn_fetch(url, false);
+            return !self.pending.is_empty();
+        }
+        false
     }
 
-    /// Query unresolved review threads for open PRs whose count is due.
-    ///
-    /// Merged and closed PRs are skipped — their conversations are moot, and the
-    /// count they last had is cleared by [`apply_fetch`] — so this only costs a
-    /// GraphQL round trip for work still in flight. Cadence follows session
-    /// and PR recency: every minute, every 15 minutes, then hourly.
-    fn refresh_review_threads(&mut self) {
-        let now = now_unix_ms();
-        let session_activity_at = self.session_activity_at;
-        let due: Vec<String> = self
+    /// The one PR a free slot should read. Recent work wins. An older PR that
+    /// has never loaded waits until that recent work is quiet.
+    fn next_budgeted_url(&self) -> Option<String> {
+        if let Some(url) = self.force_refresh.iter().next() {
+            return Some(url.clone());
+        }
+        if let Some(url) = self.next_unenriched_url() {
+            if self.is_recent_pr(&url) || self.next_open_refresh_url().is_none() {
+                return Some(url);
+            }
+        }
+        self.next_open_refresh_url()
+    }
+
+    fn session_read_allowed(&mut self) -> bool {
+        let started = self.read_window_started.get_or_insert_with(Instant::now);
+        if started.elapsed() >= Duration::from_secs(60 * 60) {
+            self.read_window_started = Some(Instant::now());
+            self.reads_this_window = 0;
+        }
+        self.reads_this_window < SESSION_READS_PER_HOUR
+    }
+
+    fn note_session_read(&mut self) {
+        self.reads_this_window = self.reads_this_window.saturating_add(1);
+    }
+
+    /// Whether `url` is one of the few PRs this session touched most recently.
+    fn is_recent_pr(&self, url: &str) -> bool {
+        let mut engaged: Vec<&SessionPr> = self
             .prs
             .iter()
-            .filter(|pr| pr.state == "OPEN" && !pr.url.is_empty())
-            .filter(|pr| !self.pending.contains_key(&threads_key(&pr.url)))
+            .filter(|pr| !pr.dismissed && !pr.url.is_empty())
             .filter(|pr| {
-                review_threads_due(
-                    self.comments_attempted_at
-                        .get(&pr.url)
-                        .map(Instant::elapsed),
-                    activity_age(
-                        self.pr_active_at.get(&pr.url).map(Instant::elapsed),
-                        pr.last_mentioned_at,
-                        session_activity_at,
-                        now,
-                    ),
-                )
+                pr.last_mentioned_at > 0
+                    || pr.created_here
+                    || pr.branch_matched
+                    || self.pr_active_at.contains_key(&pr.url)
             })
-            .map(|pr| pr.url.clone())
             .collect();
-        for url in due {
-            self.spawn_threads_fetch(url);
-        }
+        engaged.sort_by(|a, b| {
+            b.last_mentioned_at
+                .cmp(&a.last_mentioned_at)
+                .then(a.url.cmp(&b.url))
+        });
+        engaged
+            .into_iter()
+            .take(BACKGROUND_PR_LIMIT)
+            .any(|pr| pr.url == url)
     }
 
-    /// Spawn a `gh api graphql` review-thread job for one PR.
-    fn spawn_threads_fetch(&mut self, url: String) {
-        self.comments_attempted_at
-            .insert(url.clone(), Instant::now());
-        let (tx, rx) = mpsc::channel();
-        let url_for_job = url.clone();
-        std::thread::spawn(move || {
-            let data = fetch_review_threads(&url_for_job);
-            let _ = tx.send(JobResult::Threads {
-                url: url_for_job,
-                data,
-            });
+    /// A tracked PR that has never loaded and that this session actually
+    /// engaged with (not a bulk listing).
+    fn next_unenriched_url(&self) -> Option<String> {
+        self.prs
+            .iter()
+            .filter(|pr| {
+                pr.refreshed_at == 0
+                    && !pr.url.is_empty()
+                    && !pr.dismissed
+                    && (pr.created_here
+                        || pr.last_mentioned_at > 0
+                        || pr.branch_matched
+                        || self.pr_active_at.contains_key(&pr.url))
+            })
+            .filter(|pr| {
+                let failures = self.fetch_failures.get(&pr.url).copied().unwrap_or(0);
+                self.refresh_attempted_at
+                    .get(&pr.url)
+                    .map(|t| t.elapsed() >= unenriched_retry_delay(failures))
+                    .unwrap_or(true)
+            })
+            .max_by_key(|pr| pr.last_mentioned_at)
+            .map(|pr| pr.url.clone())
+    }
+
+    /// The open PR that should get the one background read this poll is
+    /// allowed to start. Only the most recently mentioned few are eligible.
+    fn next_open_refresh_url(&self) -> Option<String> {
+        let now = now_unix_ms();
+        let mut open: Vec<&SessionPr> = self
+            .prs
+            .iter()
+            .filter(|pr| pr.state == "OPEN" && !pr.url.is_empty() && !pr.dismissed)
+            .collect();
+        open.sort_by(|a, b| {
+            let engaged = |pr: &SessionPr| pr.last_mentioned_at > 0 || pr.created_here;
+            engaged(b)
+                .cmp(&engaged(a))
+                .then(b.last_mentioned_at.cmp(&a.last_mentioned_at))
+                .then(b.updated_at.cmp(&a.updated_at))
+                .then(a.url.cmp(&b.url))
         });
-        self.pending.insert(threads_key(&url), rx);
+        open.into_iter()
+            .take(BACKGROUND_PR_LIMIT)
+            .enumerate()
+            .find(|(rank, pr)| {
+                let engaged = pr.last_mentioned_at > 0
+                    || pr.created_here
+                    || self.pr_active_at.contains_key(&pr.url);
+                let inherits_session =
+                    *rank < HOT_SESSION_PR_LIMIT && self.session_activity_at.is_some();
+                if !engaged && !inherits_session {
+                    return false;
+                }
+                let age = refresh_activity_age(
+                    self.pr_active_at.get(&pr.url).map(Instant::elapsed),
+                    pr.last_mentioned_at,
+                    self.session_activity_at,
+                    now,
+                    *rank,
+                );
+                pr_status_refresh_due(
+                    self.refresh_attempted_at.get(&pr.url).map(Instant::elapsed),
+                    (pr.refreshed_at != 0)
+                        .then(|| Duration::from_millis(now.saturating_sub(pr.refreshed_at))),
+                    age,
+                )
+            })
+            .map(|(_, pr)| pr.url.clone())
     }
 
     /// Collect any finished background jobs. Returns true if the visible list changed.
@@ -1521,6 +1692,10 @@ impl PrTracker {
                 Some(JobResult::Pr(result)) => match result.data {
                     Ok(json) => {
                         let resolved_url = json.url.clone();
+                        let threads = result.threads;
+                        if let Some(url) = &result.requested_url {
+                            self.force_refresh.remove(url);
+                        }
                         let pr_active = if (result.pr_active || pending_pr_active)
                             && json.state == "OPEN"
                             && !json.url.is_empty()
@@ -1531,6 +1706,15 @@ impl PrTracker {
                         };
                         changed |=
                             self.apply_fetch(json, result.requested_url, result.created_here);
+                        if let Some(threads) = threads {
+                            if self
+                                .prs
+                                .iter()
+                                .any(|pr| pr.url == resolved_url && pr.state == "OPEN")
+                            {
+                                changed |= self.apply_threads(&resolved_url, threads);
+                            }
+                        }
                         if let Some(pr) = self.prs.iter_mut().find(|pr| pr.url == resolved_url) {
                             for (user_authored, prompt_count, timestamp) in mentions {
                                 changed |=
@@ -1541,8 +1725,20 @@ impl PrTracker {
                             self.note_pr_active(&url);
                         }
                     }
+                    Err(error) if budget::is_deferral(&error) => {
+                        // The slot was gone by the time the read started. Give
+                        // the allowance back and try on a later poll.
+                        self.reads_this_window = self.reads_this_window.saturating_sub(1);
+                        if let Some(url) = &result.requested_url {
+                            self.refresh_attempted_at.remove(url);
+                            self.force_refresh.insert(url.clone());
+                        } else if let Some((cwd, number)) = mention_lookup_key(&key) {
+                            self.defer_lookup(&cwd, number);
+                        }
+                    }
                     Err(error) => {
                         if let Some(url) = &result.requested_url {
+                            self.force_refresh.remove(url);
                             if pr_does_not_exist(&error) {
                                 let before = self.prs.len();
                                 // Never drop a PR that once enriched — a repo
@@ -1565,89 +1761,26 @@ impl PrTracker {
                         }
                     }
                 },
-                Some(JobResult::Threads {
-                    url,
-                    data: Ok(threads),
-                }) => changed |= self.apply_threads(&url, threads),
-                Some(JobResult::Threads { .. }) | None => {}
+                None => {}
             }
         }
 
-        // A PR that just became known (or whose count aged out) queries here;
-        // its result lands on a later poll.
-        self.refresh_open_prs();
-        self.retry_unenriched();
-        self.refresh_review_threads();
+        // One due read per poll. Its result lands on a later poll.
+        self.start_due_refresh();
         changed |= self.sync_pr_slack_threads();
 
         changed
     }
 
-    /// Restart the active status/review window and make the next review-thread
-    /// query immediate.
+    /// Restart the fast refresh window for one PR the session just touched.
     fn note_pr_active(&mut self, url: &str) {
         self.pr_active_at.insert(url.to_string(), Instant::now());
-        self.comments_attempted_at.remove(url);
     }
 
-    /// The session's latest prompt or completion, so idle sessions still poll
-    /// GitHub on the recency cadence instead of waiting for another mention.
+    /// The session's latest prompt or completion. Only the few most recently
+    /// mentioned PRs use this as a reason to poll on the fast cadence.
     pub fn note_session_activity(&mut self, unix_secs: Option<f64>) {
         self.session_activity_at = unix_secs;
-    }
-
-    /// Refresh open PR status on a recency cadence: every minute for 30
-    /// minutes, every 15 minutes for 6 hours, then hourly for 48 hours.
-    /// Mentions bypass the cadence and refresh immediately.
-    fn refresh_open_prs(&mut self) {
-        let now = now_unix_ms();
-        let session_activity_at = self.session_activity_at;
-        let due: Vec<String> = self
-            .prs
-            .iter()
-            .filter(|pr| pr.state == "OPEN" && !pr.url.is_empty())
-            .filter(|pr| {
-                pr_status_refresh_due(
-                    self.refresh_attempted_at.get(&pr.url).map(Instant::elapsed),
-                    (pr.refreshed_at != 0)
-                        .then(|| Duration::from_millis(now.saturating_sub(pr.refreshed_at))),
-                    activity_age(
-                        self.pr_active_at.get(&pr.url).map(Instant::elapsed),
-                        pr.last_mentioned_at,
-                        session_activity_at,
-                        now,
-                    ),
-                )
-            })
-            .map(|pr| pr.url.clone())
-            .collect();
-        for url in due {
-            self.refresh_url(&url, false);
-        }
-    }
-
-    /// Keep trying PRs that have never enriched. Their row is a bare identity
-    /// until `gh pr view` succeeds, and `refresh_open_prs` skips them (their
-    /// state isn't OPEN yet), so without this a failed first fetch would wait
-    /// for the next turn boundary — potentially the whole of a long turn.
-    fn retry_unenriched(&mut self) {
-        let due: Vec<String> = self
-            .prs
-            .iter()
-            .filter(|pr| pr.refreshed_at == 0 && !pr.url.is_empty() && !pr.dismissed)
-            .map(|pr| pr.url.clone())
-            .filter(|url| !self.pending.contains_key(url))
-            .filter(|url| {
-                let failures = self.fetch_failures.get(url).copied().unwrap_or(0);
-                self.refresh_attempted_at
-                    .get(url)
-                    .map(|t| t.elapsed() >= unenriched_retry_delay(failures))
-                    .unwrap_or(true)
-            })
-            .collect();
-        for url in due {
-            self.spawn_fetch(url, false);
-        }
     }
 
     /// Merge a review-thread count into the PR it belongs to.
@@ -1694,6 +1827,8 @@ impl PrTracker {
             number: json.number,
             url: url.clone(),
         };
+        let has_checks = json.check_counts.is_some() || !json.status_check_rollup.is_empty();
+        let has_reviews = json.check_counts.is_some() || !json.latest_reviews.is_empty();
         let fetched = session_pr_from_fetch(&loc, json, created_here);
 
         if let Some(existing) = self.prs.iter_mut().find(|p| p.url == url) {
@@ -1709,7 +1844,11 @@ impl PrTracker {
             existing.mergeable = fetched.mergeable;
             existing.merge_state_status = fetched.merge_state_status;
             existing.review_decision = fetched.review_decision;
-            existing.review_dismissed = fetched.review_dismissed;
+            // A branch lookup doesn't ask about reviews. Don't clear a
+            // dismissed-review flag the last full read already found.
+            if has_reviews {
+                existing.review_dismissed = fetched.review_dismissed;
+            }
             existing.closed_at = fetched.closed_at;
             existing.updated_at = fetched.updated_at;
             if !fetched.author_login.is_empty() {
@@ -1718,11 +1857,15 @@ impl PrTracker {
             if fetched.authored_by_viewer.is_some() {
                 existing.authored_by_viewer = fetched.authored_by_viewer;
             }
-            existing.checks_passed = fetched.checks_passed;
-            existing.checks_failed = fetched.checks_failed;
-            existing.checks_pending = fetched.checks_pending;
-            existing.checks_total = fetched.checks_total;
-            existing.ci_url = fetched.ci_url;
+            // A lookup that didn't ask about checks must not wipe the counts
+            // already on the row.
+            if has_checks {
+                existing.checks_passed = fetched.checks_passed;
+                existing.checks_failed = fetched.checks_failed;
+                existing.checks_pending = fetched.checks_pending;
+                existing.checks_total = fetched.checks_total;
+                existing.ci_url = fetched.ci_url;
+            }
             // Unresolved threads are only tracked while a PR is open; once it
             // merges or closes the count would freeze at a stale value, so drop
             // it rather than leave a badge that no longer refreshes.
@@ -1736,7 +1879,7 @@ impl PrTracker {
             let changed = *existing != before;
             if existing.state != "OPEN" {
                 self.pr_active_at.remove(&url);
-                self.comments_attempted_at.remove(&url);
+                self.force_refresh.remove(&url);
             }
             return changed;
         }
@@ -1755,8 +1898,21 @@ impl PrTracker {
 /// default in one place. Shared by the tracker's insert path and the board's
 /// watched-PR enrichment.
 fn session_pr_from_fetch(loc: &PrLocation, json: GhPrJson, created_here: bool) -> SessionPr {
-    let (passed, failed, pending) = count_checks(&json.status_check_rollup);
-    let ci_url = ci_link(&json.status_check_rollup, &loc.url);
+    let (passed, failed, pending) = json
+        .check_counts
+        .unwrap_or_else(|| count_checks(&json.status_check_rollup));
+    let ci_url = if json.check_counts.is_some() {
+        // The background read asks for counts, not every job URL. A checks
+        // tab link stays cheap; asking for each job is what exhausted the
+        // hourly GraphQL budget.
+        if passed + failed + pending > 0 && !loc.url.is_empty() {
+            format!("{}/checks", loc.url)
+        } else {
+            String::new()
+        }
+    } else {
+        ci_link(&json.status_check_rollup, &loc.url)
+    };
     let closed_at = json.closed_at.as_deref().map_or(0, parse_iso_ms);
     let updated_at = json.updated_at.as_deref().map_or(0, parse_iso_ms);
     // Only meaningful while open: after a merge or close the dismissal
@@ -1800,8 +1956,18 @@ fn session_pr_from_fetch(loc: &PrLocation, json: GhPrJson, created_here: bool) -
 /// One-shot enrichment for a board-watched PR: `gh pr view` plus the
 /// review-thread count while it is open, combined into a standalone
 /// SessionPr flagged `watched`. Runs `gh`, so call from a background thread.
+/// Whether an open PR board may start a background GitHub read.
+pub(crate) fn board_reads_allowed() -> bool {
+    budget::can_start(budget::Reader::Board)
+}
+
+/// A read that did not call GitHub because the shared budget said to wait.
+pub(crate) fn github_read_deferred(error: &str) -> bool {
+    budget::is_deferral(error)
+}
+
 pub fn fetch_watched_session_pr(url: &str) -> Result<SessionPr, String> {
-    let json = fetch_pr(url)?;
+    let (json, threads) = fetch_pr(url, budget::Reader::Board)?;
     let (owner, repo) = split_owner_repo(url).unwrap_or_default();
     let loc = PrLocation {
         owner,
@@ -1812,7 +1978,7 @@ pub fn fetch_watched_session_pr(url: &str) -> Result<SessionPr, String> {
     let mut pr = session_pr_from_fetch(&loc, json, false);
     pr.watched = true;
     if pr.state == "OPEN" {
-        if let Ok(threads) = fetch_review_threads(url) {
+        if let Some(threads) = threads {
             pr.unresolved_comments = threads.unresolved;
             pr.comments_url = threads.first_url;
             pr.comments_refreshed_at = now_unix_ms();
@@ -2182,8 +2348,23 @@ fn activity_age(
     ages.into_iter().min()
 }
 
-/// How often to poll GitHub for one PR, from how recently it or the session
-/// moved. `None` means the activity is too old to keep polling.
+/// Activity age for a scheduled refresh. Only the first few open PRs inherit
+/// the session's own activity; the rest wait on their own mentions.
+fn refresh_activity_age(
+    pr_active_elapsed: Option<Duration>,
+    last_mentioned_at: u64,
+    session_activity_at: Option<f64>,
+    now_ms: u64,
+    rank: usize,
+) -> Option<Duration> {
+    let session = (rank < HOT_SESSION_PR_LIMIT)
+        .then_some(session_activity_at)
+        .flatten();
+    activity_age(pr_active_elapsed, last_mentioned_at, session, now_ms)
+}
+
+/// How often to poll GitHub for one PR, from how recently it moved. `None`
+/// means the activity is too old to keep polling.
 fn status_refresh_interval(activity_age: Option<Duration>) -> Option<Duration> {
     match activity_age {
         Some(age) if age < PR_HOT_WINDOW => Some(PR_HOT_THROTTLE),
@@ -2192,17 +2373,6 @@ fn status_refresh_interval(activity_age: Option<Duration>) -> Option<Duration> {
         Some(_) => None,
         None => Some(PR_COOL_THROTTLE),
     }
-}
-
-/// Whether a review-thread query is due at the recency cadence.
-fn review_threads_due(
-    last_attempt_age: Option<Duration>,
-    last_activity_age: Option<Duration>,
-) -> bool {
-    let Some(throttle) = status_refresh_interval(last_activity_age) else {
-        return false;
-    };
-    last_attempt_age.map(|age| age >= throttle).unwrap_or(true)
 }
 
 /// Whether an open PR is due for another status refresh.
@@ -2457,61 +2627,144 @@ fn is_number_list_gap(gap: &str) -> bool {
         })
 }
 
+/// Scalar fields only. `latestReviews` and `statusCheckRollup` make `gh pr view`
+/// request hundreds of GraphQL nodes; the background read asks for those
+/// counts itself, with a fixed small page size.
 const GH_JSON_FIELDS: &str =
     "number,title,headRefName,url,author,state,isDraft,additions,deletions,\
-    changedFiles,mergeable,mergeStateStatus,reviewDecision,latestReviews,closedAt,\
-    updatedAt,statusCheckRollup";
+    changedFiles,mergeable,mergeStateStatus,reviewDecision,closedAt,updatedAt";
 
-/// GitHub computes `mergeable` lazily, so the first read often returns UNKNOWN.
-/// Re-query up to this many times (with a short sleep) to get a resolved value.
-const MERGEABLE_RETRIES: usize = 3;
-const MERGEABLE_RETRY_DELAY: Duration = Duration::from_millis(1800);
+/// One background read: PR status, CI counts, a few reviews, unresolved
+/// threads, and the first issue comments (where Slack links are posted).
+/// Page sizes stay small on purpose. GitHub charges for nodes requested,
+/// and `first: 100` on checks was enough to empty the hourly budget.
+const PR_READ_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
+     rateLimit{remaining resetAt cost}\
+     repository(owner:$owner,name:$repo){\
+       pullRequest(number:$number){\
+         number title url headRefName state isDraft\
+         additions deletions changedFiles\
+         mergeable mergeStateStatus reviewDecision\
+         closedAt updatedAt\
+         author{login}\
+         latestReviews(first:6){nodes{state}}\
+         commits(last:1){nodes{commit{statusCheckRollup{contexts{\
+           checkRunCount checkRunCountsByState{state count}\
+           statusContextCount statusContextCountsByState{state count}\
+         }}}}}\
+         reviewThreads(first:8){nodes{isResolved comments(first:1){nodes{url}}}}\
+         comments(first:6){nodes{body}}\
+       }\
+     }\
+   }";
 
-/// `gh pr view <url> --json ...` — cwd-independent (URL carries owner/repo).
-fn fetch_pr(url: &str) -> Result<GhPrJson, String> {
-    run_gh_pr_view(&["pr", "view", url, "--json", GH_JSON_FIELDS], None)
+/// Full read of one PR URL: status, checks, and review threads in one call.
+fn fetch_pr(
+    url: &str,
+    reader: budget::Reader,
+) -> Result<(GhPrJson, Option<ReviewThreads>), String> {
+    let (pr, threads) = fetch_pr_graphql(url, reader)?;
+    Ok((pr, Some(threads)))
 }
 
-/// `gh pr view --json ...` run in `cwd` — resolves the current branch's PR.
-fn fetch_pr_for_branch(cwd: &Path) -> Result<GhPrJson, String> {
-    run_gh_pr_view(&["pr", "view", "--json", GH_JSON_FIELDS], Some(cwd))
+/// `gh pr view` in `cwd` — resolves the current branch's PR. Checks and
+/// threads are filled by a later URL read so this stays one cheap call.
+fn fetch_pr_for_branch(
+    cwd: &Path,
+    reader: budget::Reader,
+) -> Result<(GhPrJson, Option<ReviewThreads>), String> {
+    Ok((
+        fetch_pr_view(&["pr", "view", "--json", GH_JSON_FIELDS], Some(cwd), reader)?,
+        None,
+    ))
 }
 
 /// `gh pr view <number>` in `cwd` — validates a natural-language `#123`
 /// reference against the current repository.
-fn fetch_pr_number(cwd: &Path, number: u64) -> Result<GhPrJson, String> {
+fn fetch_pr_number(
+    cwd: &Path,
+    number: u64,
+    reader: budget::Reader,
+) -> Result<(GhPrJson, Option<ReviewThreads>), String> {
     let number = number.to_string();
-    run_gh_pr_view(
-        &["pr", "view", &number, "--json", GH_JSON_FIELDS],
-        Some(cwd),
-    )
+    Ok((
+        fetch_pr_view(
+            &["pr", "view", &number, "--json", GH_JSON_FIELDS],
+            Some(cwd),
+            reader,
+        )?,
+        None,
+    ))
 }
 
-/// Run `gh pr view`, retrying while `mergeable` is UNKNOWN (GitHub is still
-/// computing it). Runs on a background thread, so the sleeps don't block the UI.
-fn run_gh_pr_view(args: &[&str], cwd: Option<&Path>) -> Result<GhPrJson, String> {
-    let mut last: Option<GhPrJson> = None;
-    for attempt in 0..=MERGEABLE_RETRIES {
-        let mut cmd = Command::new("gh");
-        cmd.args(args);
-        if let Some(dir) = cwd {
-            cmd.current_dir(dir);
-        }
-        let output = cmd.output().map_err(|e| format!("gh not runnable: {e}"))?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
-        let mut json: GhPrJson =
-            serde_json::from_slice(&output.stdout).map_err(|e| format!("gh json parse: {e}"))?;
-        json.viewer_login = gh_viewer_login().unwrap_or_default().to_string();
-        let resolved = json.mergeable != "UNKNOWN";
-        last = Some(json);
-        if resolved || attempt == MERGEABLE_RETRIES {
-            break;
-        }
-        std::thread::sleep(MERGEABLE_RETRY_DELAY);
+/// One `gh pr view`. `mergeable` is left as GitHub reported it; repeating the
+/// call while it is UNKNOWN multiplies the cost of every read.
+fn fetch_pr_view(
+    args: &[&str],
+    cwd: Option<&Path>,
+    reader: budget::Reader,
+) -> Result<GhPrJson, String> {
+    let output = run_gh(reader, args, cwd)?;
+    let mut json: GhPrJson =
+        serde_json::from_slice(&output.stdout).map_err(|e| format!("gh json parse: {e}"))?;
+    json.viewer_login = gh_viewer_login().unwrap_or_default().to_string();
+    Ok(json)
+}
+
+fn fetch_pr_graphql(
+    url: &str,
+    reader: budget::Reader,
+) -> Result<(GhPrJson, ReviewThreads), String> {
+    let caps = pr_url_re()
+        .captures(url)
+        .ok_or_else(|| format!("not a PR url: {url}"))?;
+    let output = run_gh(
+        reader,
+        &[
+            "api",
+            "graphql",
+            "-f",
+            &format!("query={PR_READ_QUERY}"),
+            "-f",
+            &format!("owner={}", &caps[1]),
+            "-f",
+            &format!("repo={}", &caps[2]),
+            "-F",
+            &format!("number={}", &caps[3]),
+        ],
+        None,
+    )?;
+    let mut parsed = parse_pr_read(&output.stdout)?;
+    if let (Some(remaining), reset_ms) = (parsed.remaining, parsed.reset_ms) {
+        budget::note_remaining(remaining, reset_ms);
     }
-    last.ok_or_else(|| "gh returned no data".to_string())
+    parsed.pr.viewer_login = gh_viewer_login().unwrap_or_default().to_string();
+    Ok((parsed.pr, parsed.threads))
+}
+
+/// Run `gh` once, counting it against the shared background budget.
+fn run_gh(
+    reader: budget::Reader,
+    args: &[&str],
+    cwd: Option<&Path>,
+) -> Result<std::process::Output, String> {
+    let _permit = budget::acquire(reader).ok_or_else(budget::deferral_reason)?;
+    let mut cmd = Command::new("gh");
+    cmd.args(args);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    let output = cmd.output().map_err(|e| format!("gh not runnable: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let error = if stderr.is_empty() { stdout } else { stderr };
+        if budget::looks_limited(&error) {
+            budget::note_limited(&error);
+        }
+        return Err(error);
+    }
+    Ok(output)
 }
 
 /// Resolve the account authenticated in `gh` once per Crabigator process.
@@ -2533,21 +2786,15 @@ fn gh_viewer_login() -> Option<&'static str> {
         .as_deref()
 }
 
-/// Key under which a PR's review-thread job is tracked in `pending`.
-fn threads_key(url: &str) -> String {
-    format!("threads:{url}")
-}
-
-/// `gh pr view` has no review-thread field, so the unresolved count comes from
-/// GraphQL. 100 threads is well past what any reviewable PR carries; a longer
-/// conversation simply undercounts rather than paging. Issue comments ride
-/// along so Slack notification permalinks (posted as PR comments by bots)
-/// can be surfaced; bodies are scanned for permalinks and discarded.
+/// `gh pr view` has no review-thread field. The background PR read includes a
+/// short page of threads; this older query remains for the ignored live test.
+/// 20 threads is enough to badge a review; a longer conversation undercounts
+/// rather than paging through it.
 const REVIEW_THREADS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
      repository(owner:$owner,name:$repo){\
        pullRequest(number:$number){\
-         reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{url}}}}\
-         comments(first:100){nodes{body}}\
+         reviewThreads(first:20){nodes{isResolved comments(first:1){nodes{url}}}}\
+         comments(first:20){nodes{body}}\
        }\
      }\
    }";
@@ -2557,8 +2804,9 @@ fn fetch_review_threads(url: &str) -> Result<ReviewThreads, String> {
     let caps = pr_url_re()
         .captures(url)
         .ok_or_else(|| format!("not a PR url: {url}"))?;
-    let output = Command::new("gh")
-        .args([
+    let output = run_gh(
+        budget::Reader::Session,
+        &[
             "api",
             "graphql",
             "-f",
@@ -2570,48 +2818,271 @@ fn fetch_review_threads(url: &str) -> Result<ReviewThreads, String> {
             // `-F` types the value, so `number` arrives as the Int! the query wants.
             "-F",
             &format!("number={}", &caps[3]),
-        ])
-        .output()
-        .map_err(|e| format!("gh not runnable: {e}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
+        ],
+        None,
+    )?;
     parse_review_threads(&output.stdout)
+}
+
+struct ParsedPrRead {
+    pr: GhPrJson,
+    threads: ReviewThreads,
+    remaining: Option<u32>,
+    reset_ms: u64,
+}
+
+#[derive(Deserialize)]
+struct PrReadResponse {
+    #[serde(default)]
+    data: Option<PrReadData>,
+    #[serde(default)]
+    errors: Vec<GraphqlError>,
+}
+
+#[derive(Deserialize)]
+struct GraphqlError {
+    #[serde(default)]
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct PrReadData {
+    #[serde(default, rename = "rateLimit")]
+    rate_limit: Option<RateLimitInfo>,
+    #[serde(default)]
+    repository: Option<PrReadRepository>,
+}
+
+#[derive(Deserialize)]
+struct RateLimitInfo {
+    remaining: u32,
+    #[serde(default, rename = "resetAt")]
+    reset_at: String,
+}
+
+#[derive(Deserialize)]
+struct PrReadRepository {
+    #[serde(default, rename = "pullRequest")]
+    pull_request: Option<PrReadPull>,
+}
+
+#[derive(Deserialize)]
+struct PrReadPull {
+    number: u64,
+    #[serde(default)]
+    title: String,
+    #[serde(default, rename = "headRefName")]
+    head_ref_name: String,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    author: Option<GhAuthor>,
+    #[serde(default)]
+    state: String,
+    #[serde(default, rename = "isDraft")]
+    is_draft: bool,
+    #[serde(default)]
+    additions: i64,
+    #[serde(default)]
+    deletions: i64,
+    #[serde(default, rename = "changedFiles")]
+    changed_files: i64,
+    #[serde(default)]
+    mergeable: String,
+    #[serde(default, rename = "mergeStateStatus")]
+    merge_state_status: String,
+    #[serde(default, rename = "reviewDecision")]
+    review_decision: String,
+    #[serde(default, rename = "latestReviews")]
+    latest_reviews: ReviewNodes,
+    #[serde(default, rename = "closedAt")]
+    closed_at: Option<String>,
+    #[serde(default, rename = "updatedAt")]
+    updated_at: Option<String>,
+    #[serde(default)]
+    commits: CommitNodes,
+    #[serde(default, rename = "reviewThreads")]
+    review_threads: ThreadNodes,
+    #[serde(default)]
+    comments: IssueComments,
+}
+
+#[derive(Default, Deserialize)]
+struct ReviewNodes {
+    #[serde(default)]
+    nodes: Vec<GhReview>,
+}
+
+#[derive(Default, Deserialize)]
+struct CommitNodes {
+    #[serde(default)]
+    nodes: Vec<CommitNode>,
+}
+
+#[derive(Default, Deserialize)]
+struct CommitNode {
+    #[serde(default)]
+    commit: CommitBody,
+}
+
+#[derive(Default, Deserialize)]
+struct CommitBody {
+    #[serde(default, rename = "statusCheckRollup")]
+    status_check_rollup: Option<StatusRollup>,
+}
+
+#[derive(Default, Deserialize)]
+struct StatusRollup {
+    #[serde(default)]
+    contexts: StatusContexts,
+}
+
+#[derive(Default, Deserialize)]
+struct StatusContexts {
+    #[serde(default, rename = "checkRunCountsByState")]
+    check_runs: Vec<StateCount>,
+    #[serde(default, rename = "statusContextCountsByState")]
+    status_contexts: Vec<StateCount>,
+}
+
+#[derive(Default, Deserialize)]
+struct StateCount {
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    count: i64,
+}
+
+/// Turn one cheap PR read into the same stats `gh pr view` used to provide,
+/// plus the review-thread badge.
+fn parse_pr_read(json: &[u8]) -> Result<ParsedPrRead, String> {
+    let response: PrReadResponse =
+        serde_json::from_slice(json).map_err(|e| format!("gh json parse: {e}"))?;
+    if let Some(error) = response
+        .errors
+        .into_iter()
+        .find(|error| !error.message.is_empty())
+    {
+        if budget::looks_limited(&error.message) {
+            budget::note_limited(&error.message);
+        }
+        return Err(error.message);
+    }
+    let data = response
+        .data
+        .ok_or_else(|| "gh json parse: missing data".to_string())?;
+    let remaining = data.rate_limit.as_ref().map(|limit| limit.remaining);
+    let reset_ms = data
+        .rate_limit
+        .as_ref()
+        .map(|limit| parse_iso_ms(&limit.reset_at))
+        .unwrap_or(0);
+    let pull = data
+        .repository
+        .and_then(|repository| repository.pull_request)
+        .ok_or_else(|| "Could not resolve to a PullRequest".to_string())?;
+    let (passed, failed, pending) = tally_check_states(&pull.commits);
+    let threads = review_threads_from(&pull.review_threads, &pull.comments);
+    let pr = GhPrJson {
+        number: pull.number,
+        title: pull.title,
+        head_ref_name: pull.head_ref_name,
+        url: pull.url,
+        author: pull.author,
+        viewer_login: String::new(),
+        state: pull.state,
+        is_draft: pull.is_draft,
+        additions: pull.additions,
+        deletions: pull.deletions,
+        changed_files: pull.changed_files,
+        mergeable: pull.mergeable,
+        merge_state_status: pull.merge_state_status,
+        review_decision: pull.review_decision,
+        latest_reviews: pull.latest_reviews.nodes,
+        closed_at: pull.closed_at,
+        updated_at: pull.updated_at,
+        status_check_rollup: Vec::new(),
+        check_counts: Some((passed, failed, pending)),
+    };
+    Ok(ParsedPrRead {
+        pr,
+        threads,
+        remaining,
+        reset_ms,
+    })
+}
+
+fn tally_check_states(commits: &CommitNodes) -> (i64, i64, i64) {
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut pending = 0;
+    for node in &commits.nodes {
+        let Some(rollup) = &node.commit.status_check_rollup else {
+            continue;
+        };
+        for row in rollup
+            .contexts
+            .check_runs
+            .iter()
+            .chain(&rollup.contexts.status_contexts)
+        {
+            let count = row.count.max(0);
+            match classify_rollup_state(&row.state) {
+                CheckClass::Pass => passed += count,
+                CheckClass::Fail => failed += count,
+                CheckClass::Pending => pending += count,
+            }
+        }
+    }
+    (passed, failed, pending)
+}
+
+fn classify_rollup_state(state: &str) -> CheckClass {
+    match state {
+        "SUCCESS" | "NEUTRAL" | "SKIPPED" => CheckClass::Pass,
+        "FAILURE" | "ERROR" | "TIMED_OUT" | "CANCELLED" | "CANCELED" | "ACTION_REQUIRED"
+        | "STARTUP_FAILURE" | "STALE" => CheckClass::Fail,
+        _ => CheckClass::Pending,
+    }
+}
+
+fn review_threads_from(threads: &ThreadNodes, comments: &IssueComments) -> ReviewThreads {
+    let mut tally = ReviewThreads::default();
+    for thread in threads.nodes.iter().filter(|thread| !thread.is_resolved) {
+        tally.unresolved += 1;
+        if tally.first_url.is_empty() {
+            if let Some(comment) = thread.comments.nodes.first() {
+                tally.first_url = comment.url.clone();
+            }
+        }
+    }
+    for comment in &comments.nodes {
+        for thread in extract_threads(&comment.body) {
+            let url = thread.url;
+            if !tally.slack_urls.contains(&url) {
+                tally.slack_urls.push(url);
+            }
+        }
+    }
+    tally
 }
 
 /// Tally the unresolved threads in a [`REVIEW_THREADS_QUERY`] response.
 fn parse_review_threads(json: &[u8]) -> Result<ReviewThreads, String> {
     let response: ThreadsResponse =
         serde_json::from_slice(json).map_err(|e| format!("gh json parse: {e}"))?;
+    Ok(review_threads_from(
+        &response.data.repository.pull_request.review_threads,
+        &response.data.repository.pull_request.comments,
+    ))
+}
 
-    let mut threads = ReviewThreads::default();
-    for thread in response
-        .data
-        .repository
-        .pull_request
-        .review_threads
-        .nodes
-        .iter()
-        .filter(|thread| !thread.is_resolved)
-    {
-        threads.unresolved += 1;
-        if threads.first_url.is_empty() {
-            if let Some(comment) = thread.comments.nodes.first() {
-                threads.first_url = comment.url.clone();
-            }
-        }
-    }
-    // Slack permalinks from the PR conversation — notification bots post one
-    // per PR, and humans paste them when linking discussion back to Slack.
-    for comment in &response.data.repository.pull_request.comments.nodes {
-        for thread in extract_threads(&comment.body) {
-            let url = thread.url;
-            if !threads.slack_urls.contains(&url) {
-                threads.slack_urls.push(url);
-            }
-        }
-    }
-    Ok(threads)
+/// `mention:/path#123` back into the lookup that should be retried.
+fn mention_lookup_key(key: &str) -> Option<(PathBuf, u64)> {
+    let rest = key.strip_prefix("mention:")?;
+    let (cwd, number) = rest.rsplit_once('#')?;
+    let number = number.parse().ok()?;
+    Some((PathBuf::from(cwd), number))
 }
 
 fn split_owner_repo(url: &str) -> Option<(String, String)> {
@@ -2810,6 +3281,7 @@ mod tests {
             pr_active: false,
             // Closed avoids unrelated periodic status/review jobs in this test.
             data: Ok(serde_json::from_value(serde_json::json!({"number":1438,"url":"https://github.com/o/portal/pull/1438","state":"CLOSED"})).unwrap()),
+            threads: None,
         }))).unwrap();
         tracker.poll();
         let pr = &tracker.prs[0];
@@ -3905,93 +4377,51 @@ functions.wait {"cell_id":"17"}
     }
 
     #[test]
-    fn review_thread_refresh_adapts_to_recent_pr_activity() {
-        let just_under_a_minute = Duration::from_secs(59);
-        let just_over_a_minute = Duration::from_secs(61);
-        let recently_pushed = Duration::from_secs(5 * 60);
-        let warm = Duration::from_secs(2 * 60 * 60);
-        let cool = Duration::from_secs(12 * 60 * 60);
-
-        assert!(!review_threads_due(
-            Some(just_under_a_minute),
-            Some(recently_pushed)
-        ));
-        assert!(review_threads_due(
-            Some(just_over_a_minute),
-            Some(recently_pushed)
-        ));
-
-        assert!(!review_threads_due(
-            Some(Duration::from_secs(14 * 60)),
-            Some(warm)
-        ));
-        assert!(review_threads_due(
-            Some(Duration::from_secs(15 * 60)),
-            Some(warm)
-        ));
-
-        assert!(!review_threads_due(
-            Some(Duration::from_secs(59 * 60)),
-            Some(cool)
-        ));
-        assert!(review_threads_due(
-            Some(Duration::from_secs(60 * 60)),
-            Some(cool)
-        ));
-        assert!(review_threads_due(None, None));
-    }
-
-    #[test]
     fn pr_status_refresh_uses_hot_warm_and_cool_cadences() {
-        let just_under_a_minute = Duration::from_secs(59);
-        let just_over_a_minute = Duration::from_secs(61);
         let hot = Duration::from_secs(10 * 60);
         let warm = Duration::from_secs(2 * 60 * 60);
         let cool = Duration::from_secs(12 * 60 * 60);
+        let just_under = |throttle: Duration| throttle - Duration::from_secs(1);
 
         assert!(!pr_status_refresh_due(
-            Some(just_under_a_minute),
+            Some(just_under(PR_HOT_THROTTLE)),
             None,
             Some(hot)
         ));
         assert!(pr_status_refresh_due(
-            Some(just_over_a_minute),
+            Some(PR_HOT_THROTTLE),
             None,
             Some(hot)
         ));
         assert!(!pr_status_refresh_due(
-            Some(Duration::from_secs(14 * 60)),
+            Some(just_under(PR_WARM_THROTTLE)),
             None,
             Some(warm)
         ));
         assert!(pr_status_refresh_due(
-            Some(Duration::from_secs(15 * 60)),
+            Some(PR_WARM_THROTTLE),
             None,
             Some(warm)
         ));
         assert!(!pr_status_refresh_due(
-            Some(Duration::from_secs(59 * 60)),
+            Some(just_under(PR_COOL_THROTTLE)),
             None,
             Some(cool)
         ));
         assert!(pr_status_refresh_due(
-            Some(Duration::from_secs(60 * 60)),
+            Some(PR_COOL_THROTTLE),
             None,
             Some(cool)
         ));
         assert!(!pr_status_refresh_due(
             None,
-            Some(Duration::from_secs(59 * 60)),
+            Some(just_under(PR_COOL_THROTTLE)),
             None
         ));
-        assert!(pr_status_refresh_due(
-            None,
-            Some(Duration::from_secs(60 * 60)),
-            None
-        ));
+        assert!(pr_status_refresh_due(None, Some(PR_COOL_THROTTLE), None));
         assert!(pr_status_refresh_due(None, None, None));
         assert!(!pr_status_refresh_due(
-            Some(Duration::from_secs(60 * 60)),
+            Some(PR_COOL_THROTTLE),
             None,
             Some(Duration::from_secs(49 * 60 * 60))
         ));
@@ -4002,37 +4432,190 @@ functions.wait {"cell_id":"17"}
     }
 
     #[test]
-    fn session_activity_keeps_a_stale_mention_on_the_hot_cadence() {
+    fn session_activity_heats_only_the_most_recent_prs() {
         let now_ms = 10_000_000;
         let mentioned_two_hours_ago = now_ms - 2 * 60 * 60 * 1000;
         let session_prompt_ten_minutes_ago = (now_ms as f64 / 1000.0) - 10.0 * 60.0;
-        let age = activity_age(
+        let hot = refresh_activity_age(
             None,
             mentioned_two_hours_ago,
             Some(session_prompt_ten_minutes_ago),
             now_ms,
+            0,
         );
-        assert_eq!(age, Some(Duration::from_secs(10 * 60)));
-        assert_eq!(status_refresh_interval(age), Some(PR_HOT_THROTTLE));
-        assert!(pr_status_refresh_due(
-            Some(Duration::from_secs(15 * 60)),
+        assert_eq!(hot, Some(Duration::from_secs(10 * 60)));
+        assert_eq!(status_refresh_interval(hot), Some(PR_HOT_THROTTLE));
+
+        let tail = refresh_activity_age(
             None,
-            age
-        ));
+            mentioned_two_hours_ago,
+            Some(session_prompt_ten_minutes_ago),
+            now_ms,
+            HOT_SESSION_PR_LIMIT,
+        );
+        assert_eq!(tail, Some(Duration::from_secs(2 * 60 * 60)));
+        assert_eq!(status_refresh_interval(tail), Some(PR_WARM_THROTTLE));
     }
 
     #[test]
-    fn pr_activity_forces_the_next_review_thread_refresh() {
+    fn a_long_pr_list_refreshes_the_recent_ones_only() {
         let mut tracker = PrTracker::new();
-        let url = "https://github.com/o/r/pull/7";
-        tracker
-            .comments_attempted_at
-            .insert(url.into(), Instant::now());
+        let now = now_unix_ms();
+        for number in 1..=10 {
+            let loc = PrLocation::new("o", "r", number);
+            let mut pr = SessionPr::placeholder(&loc, false);
+            pr.state = "OPEN".into();
+            pr.refreshed_at = now - 4 * 60 * 60 * 1000;
+            pr.last_mentioned_at = now - (11 - number) as u64 * 60_000;
+            tracker.prs.push(pr);
+        }
 
-        tracker.note_pr_active(url);
+        let next = tracker.next_open_refresh_url().expect("a recent PR is due");
+        assert!(next.ends_with("/pull/10"), "the newest mention goes first");
 
-        assert!(!tracker.comments_attempted_at.contains_key(url));
-        assert!(tracker.pr_active_at.contains_key(url));
+        for pr in tracker.prs.iter_mut().filter(|pr| pr.number >= 3) {
+            pr.refreshed_at = now;
+            tracker
+                .refresh_attempted_at
+                .insert(pr.url.clone(), Instant::now());
+        }
+        assert!(
+            tracker.next_open_refresh_url().is_none(),
+            "PRs outside the recent handful are not refreshed"
+        );
+    }
+
+    #[test]
+    fn an_old_unloaded_pr_does_not_jump_ahead_of_recent_work() {
+        let mut tracker = PrTracker::new();
+        let now = now_unix_ms();
+        for number in 1..=8 {
+            let loc = PrLocation::new("o", "r", number);
+            let mut pr = SessionPr::placeholder(&loc, false);
+            pr.state = "OPEN".into();
+            pr.last_mentioned_at = now - number as u64 * 60_000;
+            pr.refreshed_at = now - 2 * 60 * 60 * 1000;
+            tracker.prs.push(pr);
+        }
+        let loc = PrLocation::new("o", "r", 99);
+        let mut old = SessionPr::placeholder(&loc, false);
+        old.state = "OPEN".into();
+        old.last_mentioned_at = now - 24 * 60 * 60 * 1000;
+        tracker.prs.push(old);
+
+        let next = tracker.next_budgeted_url().expect("a recent PR is due");
+        assert!(
+            next.ends_with("/pull/1"),
+            "recent work stays ahead of the backlog"
+        );
+        assert!(!tracker.is_recent_pr(&loc.url));
+    }
+
+    #[test]
+    fn a_bulk_listing_does_not_ask_github_about_each_pr() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_text(
+            "open: https://github.com/o/r/pull/501 https://github.com/o/r/pull/502 \
+             https://github.com/o/r/pull/503 https://github.com/o/r/pull/504",
+            Path::new("/tmp"),
+        );
+        assert_eq!(tracker.prs().len(), 4);
+        assert!(tracker.pending.is_empty());
+        assert!(tracker.next_unenriched_url().is_none());
+    }
+
+    #[test]
+    fn only_one_background_read_starts_at_a_time() {
+        let mut tracker = PrTracker::new();
+        let (_tx, rx) = mpsc::channel();
+        tracker.pending.insert("busy".into(), rx);
+        let now = now_unix_ms();
+        for number in 1..=3 {
+            let loc = PrLocation::new("o", "r", number);
+            let mut pr = SessionPr::placeholder(&loc, false);
+            pr.state = "OPEN".into();
+            pr.last_mentioned_at = now;
+            pr.refreshed_at = 1;
+            tracker.prs.push(pr);
+        }
+        assert!(!tracker.start_due_refresh());
+        assert_eq!(tracker.pending.len(), 1);
+    }
+
+    #[test]
+    fn a_mention_during_an_in_flight_read_is_retried_later() {
+        let mut tracker = PrTracker::new();
+        let loc = PrLocation::new("o", "r", 7);
+        let mut pr = SessionPr::placeholder(&loc, false);
+        pr.state = "OPEN".into();
+        pr.refreshed_at = now_unix_ms();
+        tracker.prs.push(pr);
+        let (_tx, rx) = mpsc::channel();
+        tracker.pending.insert("other".into(), rx);
+
+        tracker.scan_text("PR #7 needs another look", Path::new("/tmp"));
+
+        assert!(tracker.force_refresh.contains(&loc.url));
+        assert!(!tracker.pending.contains_key(&loc.url));
+    }
+
+    #[test]
+    fn a_cheap_pr_read_counts_checks_threads_and_slack_links() {
+        let body = br#"{"data":{
+            "rateLimit":{"remaining":4200,"resetAt":"2026-09-28T18:00:00Z","cost":40},
+            "repository":{"pullRequest":{
+                "number":7,"title":"T","url":"https://github.com/o/r/pull/7",
+                "headRefName":"feature","state":"OPEN","isDraft":false,
+                "additions":3,"deletions":1,"changedFiles":2,
+                "mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"APPROVED",
+                "author":{"login":"octocat"},
+                "latestReviews":{"nodes":[{"state":"DISMISSED"}]},
+                "commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{
+                    "checkRunCount":6,
+                    "checkRunCountsByState":[
+                        {"state":"SUCCESS","count":3},
+                        {"state":"FAILURE","count":1},
+                        {"state":"IN_PROGRESS","count":2}
+                    ],
+                    "statusContextCount":2,
+                    "statusContextCountsByState":[
+                        {"state":"SUCCESS","count":1},
+                        {"state":"PENDING","count":1}
+                    ]
+                }}}}]},
+                "reviewThreads":{"nodes":[
+                    {"isResolved":false,"comments":{"nodes":[{"url":"https://github.com/o/r/pull/7#discussion_r1"}]}},
+                    {"isResolved":true,"comments":{"nodes":[{"url":"https://github.com/o/r/pull/7#discussion_r2"}]}}
+                ]},
+                "comments":{"nodes":[{"body":"see https://tavus.slack.com/archives/C0123ABCD/p1786640707322729"}]}
+            }}
+        }}"#;
+        let parsed = parse_pr_read(body).expect("parses");
+        assert_eq!(parsed.pr.check_counts, Some((4, 1, 3)));
+        assert_eq!(parsed.pr.latest_reviews.len(), 1);
+        assert_eq!(parsed.threads.unresolved, 1);
+        assert_eq!(
+            parsed.threads.first_url,
+            "https://github.com/o/r/pull/7#discussion_r1"
+        );
+        assert_eq!(parsed.threads.slack_urls.len(), 1);
+        assert_eq!(parsed.remaining, Some(4200));
+
+        let loc = PrLocation::new("o", "r", 7);
+        let session = session_pr_from_fetch(&loc, parsed.pr, false);
+        assert_eq!(
+            session.ci_url, "https://github.com/o/r/pull/7/checks",
+            "check counts link to the checks tab instead of every job"
+        );
+        assert!(session.review_dismissed);
+        assert_eq!(
+            (
+                session.checks_passed,
+                session.checks_failed,
+                session.checks_pending
+            ),
+            (4, 1, 3)
+        );
     }
 
     #[test]
@@ -4219,6 +4802,7 @@ functions.wait {"cell_id":"17"}
             closed_at: None,
             updated_at: None,
             status_check_rollup: Vec::new(),
+            check_counts: None,
         }
     }
 
@@ -4291,6 +4875,7 @@ functions.wait {"cell_id":"17"}
                 check(CheckClass::Pass, Some("https://github.com/o/r/actions/1")),
                 check(CheckClass::Fail, Some("https://github.com/o/r/actions/2")),
             ],
+            check_counts: None,
         };
         let changed = tracker.apply_fetch(json, Some(loc.url.clone()), true);
         assert!(changed);
