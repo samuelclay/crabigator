@@ -308,6 +308,7 @@ export interface SessionPr {
     ai_note?: string;         // Latest recap's one-line read on this PR's progress
     ai_confidence?: string;   // 'high' | 'medium' | 'low' — confidence the PR is finished
     fetch_error?: string;     // Why the last gh fetch failed; '' after a success
+    fetch_limited?: boolean;  // Initial details are waiting for a read limit to reset
     refreshed_at: number;
 }
 

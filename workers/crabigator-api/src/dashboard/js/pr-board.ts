@@ -658,6 +658,7 @@ export const prBoardJs = `
             if (pr.is_draft) return { label: 'draft', color: PRB_C.gray };
             if (pr.state === 'OPEN') return { label: 'open', color: PRB_C.lightGreen };
             // No state = never enriched; the desktop retries automatically.
+            if (pr.fetch_limited) return { label: 'limit hit', color: PRB_C.yellow };
             if (pr.fetch_error) return { label: 'error', color: PRB_C.red, title: pr.fetch_error };
             if (!pr.refreshed_at) return { label: 'fetch…', color: PRB_C.gray };
             return null;

@@ -187,15 +187,18 @@ export async function relayWatchedPrStats(request: Request, env: Env): Promise<R
             && typeof candidate.refreshed_at === 'number';
     }).slice(0, 200);
 
+    let updated = 0;
     if (updates.length > 0) {
-        await env.DB.batch(
+        const results = await env.DB.batch(
             updates.map((pr) =>
                 env.DB.prepare(
                     `UPDATE watched_prs SET data = ?, refreshed_at = unixepoch()
-                     WHERE group_key = ? AND owner = ? AND repo = ? AND number = ?`
-                ).bind(JSON.stringify(pr), groupKey, pr.owner, pr.repo, pr.number)
+                     WHERE group_key = ? AND owner = ? AND repo = ? AND number = ?
+                       AND COALESCE(json_extract(data, '$.refreshed_at'), 0) <= ?`
+                ).bind(JSON.stringify(pr), groupKey, pr.owner, pr.repo, pr.number, pr.refreshed_at)
             )
         );
+        updated = results.reduce((count, result) => count + result.meta.changes, 0);
     }
-    return jsonResponse({ ok: true, updated: updates.length });
+    return jsonResponse({ ok: true, updated });
 }

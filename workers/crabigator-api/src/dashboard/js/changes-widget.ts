@@ -440,6 +440,7 @@ export const changesWidgetJs = `
             if (pr.state === 'OPEN') return { label: 'open', color: '#87d787' };
             // No state = never enriched. The desktop retries automatically;
             // say what's happening instead of leaving the row bare.
+            if (pr.fetch_limited) return { label: 'limit hit', color: '#ffd700' };
             if (pr.fetch_error) return { label: 'fetch failed', color: '#f85149', title: pr.fetch_error };
             return { label: 'fetching…', color: '#8b949e' };
         }
