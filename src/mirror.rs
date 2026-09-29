@@ -499,6 +499,7 @@ impl MirrorPublisher {
             pr.unresolved_comments.hash(&mut hasher);
             pr.comments_url.hash(&mut hasher);
             pr.created_here.hash(&mut hasher);
+            pr.updated_here.hash(&mut hasher);
             pr.review_decision.hash(&mut hasher);
             // Mention signals republish so external readers see recency live.
             pr.mentions.hash(&mut hasher);

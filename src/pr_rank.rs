@@ -261,7 +261,7 @@ fn auto_primary(
     if !is_recent(pr.last_mention_prompt, ctx.prompt_count) {
         return false;
     }
-    let ownership = pr.user_mentions > 0 || pr.created_here || pr.branch_matched;
+    let ownership = pr.user_mentions > 0 || pr.created_here || pr.branch_matched || pr.updated_here;
     // A strict majority of the session's discussion carries a PR nobody
     // "owns" — the sole-subject investigation session.
     let dominant = total_mentions > 0 && pr.mentions * 2 > total_mentions;
@@ -432,6 +432,43 @@ mod tests {
         }
         classify(&mut prs, &ctx(2));
         assert!(prs.iter().all(|p| !p.primary));
+    }
+
+    /// A session can merge the pull request it was asked about and then merge
+    /// the release pull request. Both are this session's work, even when the
+    /// release is mentioned more. A pull request that was only viewed stays
+    /// secondary.
+    #[test]
+    fn gh_updates_keep_the_acted_on_prs_primary() {
+        let mut prs = vec![
+            pr(49, "tavus-mcp"),
+            pr(50, "tavus-mcp"),
+            pr(48, "tavus-mcp"),
+        ];
+        prs[0].state = "MERGED".to_string();
+        prs[0].updated_here = true;
+        prs[0].mentions = 2;
+        prs[0].last_mention_prompt = 1;
+        prs[1].state = "MERGED".to_string();
+        prs[1].updated_here = true;
+        prs[1].mentions = 5;
+        prs[1].last_mention_prompt = 1;
+        prs[2].state = "MERGED".to_string();
+        prs[2].mentions = 1;
+        prs[2].last_mention_prompt = 1;
+        classify(&mut prs, &ctx(1));
+        assert!(
+            prs[0].primary,
+            "the merged pull request stays in the section"
+        );
+        assert!(
+            prs[1].primary,
+            "the release pull request the session merged stays too"
+        );
+        assert!(
+            !prs[2].primary,
+            "a pull request that was only viewed stays secondary"
+        );
     }
 
     /// Audit session 14 (#4546): created here, most-mentioned, and abandoned —

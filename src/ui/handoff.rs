@@ -718,6 +718,7 @@ mod tests {
             ),
             comments_refreshed_at: 0,
             created_here: false,
+            updated_here: false,
             mentions: 0,
             user_mentions: 0,
             first_mentioned_at: 0,

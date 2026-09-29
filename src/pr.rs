@@ -63,8 +63,8 @@ const SLACK_ORIGIN_CLAIM_WINDOW: Duration = Duration::from_secs(600);
 /// adopts a new PR: small numbers false-match Docker build steps
 /// (`#1 [internal] …`), docs anchors (`llm#1-model`), and numbered findings,
 /// and any repository old enough has a PR to collide with. Repo-qualified
-/// mentions (`owner/repo#12`), full URLs, and refreshes of already-tracked
-/// PRs are unaffected.
+/// mentions (`owner/repo#12`), full URLs, `gh pr` commands, and refreshes of
+/// already-tracked PRs are unaffected.
 const MIN_BARE_PR_NUMBER: u64 = 100;
 
 fn pr_url_re() -> &'static Regex {
@@ -172,23 +172,13 @@ const NON_REPO_ACRONYMS: &[&str] = &[
     "ETA", "EOD", "ID", "STEP", "ITEM", "Q", "CVE", "SLA", "P", "TASK", "ISSUE", "TICKET",
 ];
 
-fn gh_pr_url_target_re() -> &'static Regex {
+fn gh_pr_command_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"(?is)\bgh\s+pr\s+(?:view|checks|edit|ready|merge|reopen|close|comment|diff)\s+(?:--repo\s+\S+\s+)?https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)",
+            r#"(?is)(?:^|&&|\|\||[;\n|]|"(?:command|cmd|input)"\s*:\s*"|exec_command\s+)\s*gh\s+pr\s+(view|checks|edit|ready|merge|reopen|close|comment|diff)\b"#,
         )
-        .expect("valid gh pr url target regex")
-    })
-}
-
-fn repo_qualified_gh_pr_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(
-            r"(?is)\bgh\s+pr\s+(?:view|checks|edit|ready|merge|reopen|close)\s+#?(\d+)\b.{0,500}?(?:--repo|-R)\s+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)",
-        )
-        .expect("valid repo-qualified gh pr regex")
+        .expect("valid gh pr command regex")
     })
 }
 
@@ -243,6 +233,12 @@ pub struct SessionPr {
     /// True when we saw `gh pr create` produce it; false when it was updated
     /// (pushed to / edited) but created elsewhere or in a prior session.
     pub created_here: bool,
+    /// True when this session ran a `gh pr` command that changes the PR
+    /// (`merge`, `ready`, `edit`, `close`, `reopen`). Viewing or diffing
+    /// does not set this. It is ownership: the PR stays in the section even
+    /// when another PR is mentioned more often.
+    #[serde(default)]
+    pub updated_here: bool,
     /// Counted mentions of this PR this session. Bulk listings — one line
     /// naming several tracked PRs, like `gh pr list` output quoted into
     /// prose — are excluded so a dump doesn't read as engagement.
@@ -353,6 +349,7 @@ impl SessionPr {
             comments_url: String::new(),
             comments_refreshed_at: 0,
             created_here,
+            updated_here: false,
             mentions: 0,
             user_mentions: 0,
             first_mentioned_at: 0,
@@ -703,6 +700,9 @@ pub struct PrTracker {
     pending: HashMap<String, mpsc::Receiver<JobResult>>,
     /// Bare-number mentions awaiting a repository identity from GitHub.
     pending_mentions: HashMap<String, Vec<(bool, u32, u64)>>,
+    /// Number lookups whose `gh pr` verb changes the PR (`merge`, `ready`,
+    /// `edit`, `close`, `reopen`). Applied when that lookup returns.
+    pending_updates: HashSet<String>,
     /// Last time a `git push` / PR-edit triggered a current-branch PR lookup.
     /// Throttles branch resolution since the same turn text is re-scanned each tick.
     last_branch_resolve: Option<Instant>,
@@ -786,6 +786,7 @@ impl PrTracker {
             prs: Vec::new(),
             pending: HashMap::new(),
             pending_mentions: HashMap::new(),
+            pending_updates: HashSet::new(),
             last_branch_resolve: None,
             mention_events_seen: HashMap::new(),
             scan_prompt_owner: None,
@@ -871,9 +872,13 @@ impl PrTracker {
     /// What counts as an association, by channel:
     /// - **prose** (user prompt, assistant text): PR URLs, and `#123` that carries
     ///   a PR marker (see [`pr_marker_before`]).
-    /// - **tool commands**: the PR a `gh pr` subcommand targets — `gh pr view 2469
-    ///   --repo owner/repo` or `gh pr checks <url>`. URLs merely quoted inside a
-    ///   command (a `gh pr create --body` that cites related PRs) are not targets.
+    /// - **tool commands**: the PR a `gh pr` subcommand targets. `gh pr view 49`
+    ///   and `gh pr merge 49` use the session checkout, including numbers too
+    ///   small for a prose mention. `gh pr view 2469 --repo owner/repo` and
+    ///   `gh pr checks <url>` name the repository themselves. A `merge`,
+    ///   `ready`, `edit`, `close`, or `reopen` marks the PR as work this
+    ///   session did. URLs merely quoted inside a command (a `gh pr create
+    ///   --body` that cites related PRs) are not targets.
     /// - **tool output**: nothing, except the URL `gh pr create` prints for the PR
     ///   it just opened. Listings (`gh pr list`, `git log`, JSON dumps) name PRs
     ///   the session never touched.
@@ -1231,6 +1236,29 @@ impl PrTracker {
                         }
                     }
                 }
+                ScanEvent::CommandLocated { loc, updates } => {
+                    if self.is_new_mention(mention_scope, &loc.url, &mut mention_occurrences) {
+                        changed |= self.observe_url(&loc, true);
+                        changed |= self.record_mention_for_url(&loc.url, user_authored);
+                        if updates {
+                            changed |= self.mark_updated_here(&loc.url);
+                        }
+                    }
+                }
+                ScanEvent::CommandNumber { number, updates } => {
+                    let identity = format!("gh#{number}");
+                    if self.is_new_mention(mention_scope, &identity, &mut mention_occurrences) {
+                        changed |= self.resolve_command_number(number, cwd, updates);
+                        let recorded = self.record_mention_for_number(number, user_authored);
+                        changed |= recorded;
+                        if !recorded {
+                            self.remember_lookup_mention(
+                                &format!("mention:{}#{number}", cwd.display()),
+                                user_authored,
+                            );
+                        }
+                    }
+                }
                 // `gh pr view` rejects issue numbers and nonexistent PRs, so only
                 // numbers that are really PRs in this repo reach the visible list.
                 ScanEvent::Mentioned { number, bulk } => {
@@ -1259,6 +1287,24 @@ impl PrTracker {
         changed
     }
 
+    /// Queue a mention for a number lookup that has not resolved to a PR yet.
+    fn remember_lookup_mention(&mut self, key: &str, user_authored: bool) {
+        let waiting = self.pending.contains_key(key)
+            || mention_lookup_key(key)
+                .is_some_and(|lookup| self.deferred_lookups.contains(&lookup));
+        if !waiting {
+            return;
+        }
+        self.pending_mentions
+            .entry(key.to_string())
+            .or_default()
+            .push((
+                user_authored,
+                self.prompt_count,
+                self.mention_time.unwrap_or_else(now_unix_ms),
+            ));
+    }
+
     /// Count one real mention against the tracked PR at `url`.
     fn record_mention_for_url(&mut self, url: &str, user_authored: bool) -> bool {
         let prompt_count = self.prompt_count;
@@ -1277,6 +1323,18 @@ impl PrTracker {
             changed |= bump_mention(pr, user_authored, prompt_count, self.mention_time);
         }
         changed
+    }
+
+    /// The session ran `gh pr merge` (or ready, edit, close, reopen) on this PR.
+    fn mark_updated_here(&mut self, url: &str) -> bool {
+        let Some(pr) = self.prs.iter_mut().find(|pr| pr.url == url) else {
+            return false;
+        };
+        if pr.updated_here {
+            return false;
+        }
+        pr.updated_here = true;
+        true
     }
 
     fn is_new_mention(
@@ -1369,6 +1427,54 @@ impl PrTracker {
         }) {
             self.defer_lookup(cwd, number);
         }
+    }
+
+    /// `gh pr view 49` with no `--repo`: the number is this checkout's PR.
+    /// Unlike a prose `#49`, the command is unambiguous, so small numbers
+    /// are looked up too. A verb that changes the PR is remembered and
+    /// applied when the lookup returns.
+    fn resolve_command_number(&mut self, number: u64, cwd: &Path, updates: bool) -> bool {
+        if number == 0 {
+            return false;
+        }
+        let tracked_urls: Vec<String> = self
+            .prs
+            .iter()
+            .filter(|pr| pr.number == number)
+            .map(|pr| pr.url.clone())
+            .collect();
+        if !tracked_urls.is_empty() {
+            let mut changed = false;
+            for url in &tracked_urls {
+                if updates {
+                    changed |= self.mark_updated_here(url);
+                }
+                if self.replaying_history {
+                    continue;
+                }
+                self.note_pr_active(url);
+                self.refresh_url(url, true);
+            }
+            return changed;
+        }
+        let key = format!("mention:{}#{number}", cwd.display());
+        if updates {
+            self.pending_updates.insert(key.clone());
+        }
+        if self.pending.contains_key(&key) {
+            if !self.replaying_history {
+                self.pending_pr_active.insert(key, true);
+            }
+            return false;
+        }
+        let cwd_buf = cwd.to_path_buf();
+        let pr_active = !self.replaying_history;
+        if !self.spawn_pr_job(key, None, false, pr_active, move || {
+            fetch_pr_number(&cwd_buf, number, budget::Reader::Session)
+        }) {
+            self.defer_lookup(cwd, number);
+        }
+        false
     }
 
     /// Remember a bare-number lookup that could not start yet.
@@ -1686,6 +1792,7 @@ impl PrTracker {
             self.pending.remove(&key);
             let mentions = self.pending_mentions.remove(&key).unwrap_or_default();
             let pending_pr_active = self.pending_pr_active.remove(&key).unwrap_or(false);
+            let mark_updated = self.pending_updates.remove(&key);
             // Most errors are silent: a PR we can't view right now (auth,
             // network, private) simply doesn't gain live stats and keeps its
             // placeholder. But when GitHub says the PR flat-out doesn't exist,
@@ -1724,6 +1831,10 @@ impl PrTracker {
                                 changed |=
                                     bump_mention(pr, user_authored, prompt_count, Some(timestamp));
                             }
+                            if mark_updated && !pr.updated_here {
+                                pr.updated_here = true;
+                                changed = true;
+                            }
                         }
                         if let Some(url) = pr_active {
                             self.note_pr_active(&url);
@@ -1733,6 +1844,15 @@ impl PrTracker {
                         // The slot was gone by the time the read started. Give
                         // the allowance back and try on a later poll.
                         self.reads_this_window = self.reads_this_window.saturating_sub(1);
+                        if mark_updated {
+                            self.pending_updates.insert(key.clone());
+                        }
+                        if !mentions.is_empty() {
+                            self.pending_mentions.insert(key.clone(), mentions);
+                        }
+                        if pending_pr_active {
+                            self.pending_pr_active.insert(key.clone(), true);
+                        }
                         if let Some(url) = &result.requested_url {
                             self.refresh_attempted_at.remove(url);
                             self.force_refresh.insert(url.clone());
@@ -2099,6 +2219,12 @@ enum ScanEvent {
     Located { loc: PrLocation, bulk: bool },
     /// A marked `#123` with no repository — resolved against the session's repo.
     Mentioned { number: u64, bulk: bool },
+    /// `gh pr <verb> <number>` with no repository. Resolved against the checkout
+    /// even when `number` is too small for a prose mention. `updates` means the
+    /// verb changes the PR.
+    CommandNumber { number: u64, updates: bool },
+    /// The same command when `--repo` or a pull request URL names the repository.
+    CommandLocated { loc: PrLocation, updates: bool },
     /// The URL printed by a completed `gh pr create`, including a delayed result.
     Created(PrLocation),
     /// A push or PR edit ran, so the current branch's PR is worth resolving.
@@ -2143,7 +2269,7 @@ fn scan_events_with_known_prs(text: &str, known_pr_numbers: &HashSet<u64>) -> Ve
                     }
                     push_prose_line(&mut events, line, known_pr_numbers);
                 }
-                push_located(&mut events, repo_qualified_gh_pr_targets(&body));
+                events.extend(gh_pr_command_events(&body));
             }
             Channel::Tool => {
                 result_creates.clear();
@@ -2167,7 +2293,7 @@ fn scan_events_with_known_prs(text: &str, known_pr_numbers: &HashSet<u64>) -> Ve
                 for line in body.lines().filter(|line| is_pr_update_command(line)) {
                     events.push(ScanEvent::Updated(line.trim().to_string()));
                 }
-                push_located(&mut events, gh_pr_targets(&body));
+                events.extend(gh_pr_command_events(&body));
             }
             Channel::ToolResult => {
                 let matching_creates = match tool_call_id(&body) {
@@ -2455,22 +2581,167 @@ fn pr_urls(line: &str) -> Vec<PrLocation> {
 
 /// The PRs that `gh pr` subcommands in a section act on.
 ///
-/// A Codex tool call often carries the identity only as `gh pr view 2469 --repo
-/// owner/repo`, without printing a PR URL. URLs merely quoted elsewhere in the
-/// command — a `gh pr create --body` citing related PRs — are not targets.
-fn gh_pr_targets(section: &str) -> Vec<PrLocation> {
-    let numbered = repo_qualified_gh_pr_targets(section);
-    let by_url = gh_pr_url_target_re()
-        .captures_iter(section)
-        .map(|caps| PrLocation::new(&caps[1], &caps[2], caps[3].parse().unwrap_or(0)));
-    numbered.into_iter().chain(by_url).collect()
+/// A command is only a target when `gh pr <verb>` starts it (`gh pr view 49`,
+/// `gh pr merge 49 --repo owner/repo`, `gh pr checks <url>`). The same words
+/// quoted inside another command — a `gh pr create --body` that cites a
+/// related PR — are not targets. A number with no repository is resolved
+/// against the session checkout. `--repo` or a pull request URL names one.
+fn gh_pr_command_events(section: &str) -> Vec<ScanEvent> {
+    let mut events = Vec::new();
+    for caps in gh_pr_command_re().captures_iter(section) {
+        let Some(verb) = caps.get(1).map(|m| m.as_str()) else {
+            continue;
+        };
+        let tail_start = caps.get(0).map(|m| m.end()).unwrap_or(section.len());
+        let tail = command_tail(&section[tail_start..]);
+        if let Some(event) = gh_pr_command_event(verb, tail) {
+            events.push(event);
+        }
+    }
+    events
 }
 
-fn repo_qualified_gh_pr_targets(section: &str) -> Vec<PrLocation> {
-    repo_qualified_gh_pr_re()
-        .captures_iter(section)
-        .map(|caps| PrLocation::new(&caps[2], &caps[3], caps[1].parse().unwrap_or(0)))
-        .collect()
+/// Arguments of one `gh pr` invocation, stopping at the next command.
+///
+/// A raw quote ends the tail too. In a tool call the command is a JSON
+/// string, so the closing quote is the end of the command and shell quotes
+/// inside it are written as `\"`. Stopping there keeps the description that
+/// follows (`"description":"Review PR 49"`) from looking like another number.
+fn command_tail(text: &str) -> &str {
+    let mut escaped = false;
+    for (index, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if matches!(ch, '\n' | ';' | '|' | '&' | '"' | '\'') {
+            return &text[..index];
+        }
+    }
+    text
+}
+
+fn gh_pr_command_event(verb: &str, tail: &str) -> Option<ScanEvent> {
+    let updates = matches!(
+        verb.to_ascii_lowercase().as_str(),
+        "merge" | "edit" | "ready" | "close" | "reopen"
+    );
+    let mut repo: Option<(String, String)> = None;
+    let mut number: Option<u64> = None;
+    let mut url: Option<PrLocation> = None;
+    let mut tokens = tail.split_whitespace();
+    while let Some(raw) = tokens.next() {
+        let token = trim_shell_token(raw);
+        if token.is_empty() {
+            continue;
+        }
+        if let Some(value) = token
+            .strip_prefix("--repo=")
+            .or_else(|| token.strip_prefix("-R="))
+        {
+            repo = owner_repo_token(value);
+            continue;
+        }
+        if token == "--repo" || token == "-R" {
+            if let Some(value) = tokens.next() {
+                repo = owner_repo_token(trim_shell_token(value));
+            }
+            continue;
+        }
+        if token.starts_with('-') {
+            // `--json=fields` already carries its value. `--json fields` does not.
+            if !token.contains('=') && flag_takes_value(token) {
+                tokens.next();
+            }
+            continue;
+        }
+        if url.is_none() {
+            if let Some(loc) = location_from_url(token) {
+                url = Some(loc);
+                continue;
+            }
+        }
+        if number.is_none() {
+            if let Some(found) = pure_pr_number(token) {
+                number = Some(found);
+            }
+        }
+    }
+    if let Some(loc) = url {
+        return Some(ScanEvent::CommandLocated { loc, updates });
+    }
+    if let Some((owner, repo_name)) = repo {
+        let number = number?;
+        return Some(ScanEvent::CommandLocated {
+            loc: PrLocation::new(&owner, &repo_name, number),
+            updates,
+        });
+    }
+    Some(ScanEvent::CommandNumber {
+        number: number?,
+        updates,
+    })
+}
+
+fn trim_shell_token(token: &str) -> &str {
+    token.trim_matches(|c: char| matches!(c, '"' | '\'' | '\\' | ',' | ';' | '.'))
+}
+
+fn pure_pr_number(token: &str) -> Option<u64> {
+    let digits = token.trim_start_matches('#');
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let number = digits.parse().ok()?;
+    (number > 0).then_some(number)
+}
+
+fn owner_repo_token(value: &str) -> Option<(String, String)> {
+    let value = trim_shell_token(value);
+    let (owner, repo) = value.split_once('/')?;
+    let name = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    if !name(owner) || !name(repo) {
+        return None;
+    }
+    Some((owner.to_string(), repo.to_string()))
+}
+
+fn flag_takes_value(flag: &str) -> bool {
+    matches!(
+        flag,
+        "--json"
+            | "--jq"
+            | "--template"
+            | "--subject"
+            | "--body"
+            | "--body-file"
+            | "--title"
+            | "--milestone"
+            | "--label"
+            | "--assignee"
+            | "--reviewer"
+            | "--project"
+            | "--match"
+            | "--author"
+            | "--base"
+            | "--head"
+            | "--message"
+            | "--comment"
+            | "-b"
+            | "-F"
+            | "-t"
+            | "-m"
+            | "-f"
+    )
 }
 
 /// Split transcript text into `(channel, body)` chunks on the `[assistant]` /
@@ -2566,7 +2837,7 @@ fn pr_marker_before(before: &str) -> Option<PrMarker> {
         }
     }
 
-    let head = before.trim_end_matches(|c: char| c.is_whitespace() || c == ':');
+    let head = before.trim_end_matches(|c: char| c.is_whitespace() || c == ':' || c == '(');
     let word = trailing_word(head);
     if word.is_empty() {
         return None;
@@ -3454,6 +3725,124 @@ mod tests {
         assert_eq!(pr.number, 2469);
         assert_eq!(pr.repo, "request-handler");
         assert!(!pr.created_here);
+        assert!(!pr.updated_here);
+    }
+
+    /// tavus-mcp session 761bb011 merged PR 49 with `gh pr view 49` and
+    /// `gh pr merge 49`. Neither command names the repository, and 49 is below
+    /// the prose cutoff, so the pull request never reached the section.
+    #[test]
+    fn gh_commands_in_the_checkout_adopt_low_numbered_prs() {
+        let mut tracker = PrTracker::new();
+        let transcript = "\
+[tool]
+call_id: view
+Bash {\"command\":\"gh pr view 49 --json title,body && gh pr diff 49\",\"description\":\"Review PR 49\"}
+[tool]
+call_id: merge
+Bash {\"command\":\"gh repo view --json squashMergeAllowed && gh pr merge 49 --squash --subject \\\"fix (#49)\\\" && gh pr view 49 --json state\",\"description\":\"Squash-merge PR 49\"}
+[tool]
+call_id: release
+Bash {\"command\":\"gh pr view 50 --json files && gh pr merge 50 --squash\",\"description\":\"Merge the release PR\"}
+[tool]
+call_id: previous
+Bash {\"command\":\"gh pr view 48 --json statusCheckRollup; gh pr checks 50\",\"description\":\"Compare checks\"}
+[assistant]
+I merged Andy's PR #49. Merging #49 deployed staging. I then merged the release PR (#50, which only bumps version numbers).
+";
+        tracker.scan_text(transcript, Path::new("/tmp/tavus-mcp"));
+
+        let queued = |number: u64| {
+            let suffix = format!("#{number}");
+            tracker.pending.keys().any(|key| key.ends_with(&suffix))
+                || tracker
+                    .deferred_lookups
+                    .iter()
+                    .any(|(_, queued)| *queued == number)
+        };
+        assert!(queued(49), "gh pr view 49 is this checkout's pull request");
+        assert!(queued(50), "gh pr merge 50 is this checkout's pull request");
+        assert!(
+            queued(48),
+            "gh pr view 48 is recorded, but only as a lookup"
+        );
+        assert!(
+            tracker
+                .pending_updates
+                .iter()
+                .any(|key| key.ends_with("#49")),
+            "merging 49 marks it as work this session did"
+        );
+        assert!(
+            tracker
+                .pending_updates
+                .iter()
+                .any(|key| key.ends_with("#50")),
+            "merging 50 marks it as work this session did"
+        );
+        assert!(
+            !tracker
+                .pending_updates
+                .iter()
+                .any(|key| key.ends_with("#48")),
+            "viewing 48 does not mark it as work this session did"
+        );
+
+        let mut prose = PrTracker::new();
+        prose.scan_text("I merged Andy's PR #49.", Path::new("/tmp/tavus-mcp"));
+        assert!(prose.prs().is_empty());
+        assert!(
+            prose.pending.is_empty() && prose.deferred_lookups.is_empty(),
+            "prose PR #49 stays below the cutoff"
+        );
+    }
+
+    #[test]
+    fn gh_pr_cited_inside_another_command_is_not_a_target() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_text(
+            "[tool]\nBash {\"command\":\"gh pr create --body 'see gh pr view 49 and https://github.com/o/r/pull/49'\"}\n",
+            Path::new("/tmp"),
+        );
+        assert!(tracker.prs().is_empty());
+        assert!(!tracker.pending.keys().any(|key| key.contains("#49")));
+        assert!(!tracker
+            .deferred_lookups
+            .iter()
+            .any(|(_, number)| *number == 49));
+    }
+
+    #[test]
+    fn repo_qualified_merge_marks_updated_here_without_a_checkout_lookup() {
+        let mut tracker = PrTracker::new();
+        tracker.scan_text(
+            "[tool]\nBash {\"command\":\"gh pr merge 49 --repo Tavus-Engineering/tavus-mcp --squash\"}\n",
+            Path::new("/tmp/other"),
+        );
+        assert_eq!(tracker.prs().len(), 1);
+        assert_eq!(tracker.prs()[0].number, 49);
+        assert_eq!(tracker.prs()[0].repo, "tavus-mcp");
+        assert!(tracker.prs()[0].updated_here);
+        assert!(
+            !tracker.pending.keys().any(|key| key.contains("mention:")),
+            "a --repo command must not also guess the checkout"
+        );
+    }
+
+    #[test]
+    fn merge_command_marks_an_already_tracked_pr_updated_here() {
+        let mut tracker = PrTracker::new();
+        tracker
+            .prs
+            .push(SessionPr::test_stub(49, "Tavus-Engineering", "tavus-mcp"));
+        tracker.scan_text(
+            "[tool]\nBash {\"command\":\"gh pr merge 49 --squash\"}\n",
+            Path::new("/tmp/tavus-mcp"),
+        );
+        assert!(tracker.prs()[0].updated_here);
+        assert!(tracker.prs()[0].mentions >= 1);
+        tracker.reclassify("main", Path::new("/tmp/tavus-mcp"));
+        assert!(tracker.prs()[0].primary);
     }
 
     #[test]
@@ -3697,6 +4086,10 @@ mod tests {
         assert_eq!(prose_pr_numbers("PR: #972 needs a rebase"), vec![972]);
         assert_eq!(prose_pr_numbers("(see PR #972)"), vec![972]);
         assert_eq!(
+            prose_pr_numbers("the release PR (#50, which only bumps versions)"),
+            vec![50]
+        );
+        assert_eq!(
             prose_pr_numbers("developer-portal#972 conflicts"),
             vec![972]
         );
@@ -3901,7 +4294,9 @@ See https://github.com/o/r/pull/92 for context.
             json!({"type":"message","role":"assistant","content":[{"text":"Running the integration checks. ".repeat(2_000)}]}),
         );
         let file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(file.path(), lines.join("\n")).unwrap();
+        // JSONL records end with a newline. Without one, the last line is
+        // still being written and the reader leaves it for the next pass.
+        std::fs::write(file.path(), format!("{}\n", lines.join("\n"))).unwrap();
         let platform = crate::platforms::PlatformKind::Codex;
         let turn =
             crate::recap::collect_latest_turn_text_incremental(platform, file.path(), &mut None)
@@ -4073,6 +4468,20 @@ functions.wait {"cell_id":"17"}
                         eprintln!("turn {turn}: mentioned #{number} (resolved against cwd)");
                         mentioned.push(number);
                     }
+                    ScanEvent::CommandNumber { number, .. }
+                        if !mentioned.contains(&number)
+                            && !located.iter().any(|l| l.number == number) =>
+                    {
+                        eprintln!("turn {turn}: gh command #{number} (resolved against cwd)");
+                        mentioned.push(number);
+                    }
+                    ScanEvent::CommandLocated { loc, .. } if !located.contains(&loc) => {
+                        eprintln!(
+                            "turn {turn}: gh command {}/{} #{}",
+                            loc.owner, loc.repo, loc.number
+                        );
+                        located.push(loc);
+                    }
                     _ => {}
                 }
             }
@@ -4129,12 +4538,15 @@ functions.wait {"cell_id":"17"}
                 turn.transcript.activity
             );
             for event in scan_events(&text) {
-                if let ScanEvent::Mentioned { number, .. } = event {
-                    tracker.pending.insert(
-                        format!("mention:{}#{number}", cwd.display()),
-                        mpsc::channel().1,
-                    );
-                }
+                let number = match event {
+                    ScanEvent::Mentioned { number, .. }
+                    | ScanEvent::CommandNumber { number, .. } => number,
+                    _ => continue,
+                };
+                tracker.pending.insert(
+                    format!("mention:{}#{number}", cwd.display()),
+                    mpsc::channel().1,
+                );
             }
             tracker.scan_transcript_turn(turn, cwd, true);
         }
