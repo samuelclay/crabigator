@@ -16,6 +16,7 @@ export const prBoardJs = `
         let prBoardQuery = '';
         let prBoardExpanded = false;
         let prBoardRendered = [];
+        const PRB_MAX_SESSION_PRS = 8;
 
         // Scrollback search results, keyed by session, for the query that
         // produced them. The desktop board greps each session's local
@@ -1104,7 +1105,7 @@ export const prBoardJs = `
                 + '</span>' + prbActivityHtml(item, idx, now)
                 + '<span class="prb-status"></span></div>';
             html += prbSessionRecapTailHtml(s, now);
-            item.prs.forEach((sub, subIdx) => {
+            item.prs.slice(0, PRB_MAX_SESSION_PRS).forEach((sub, subIdx) => {
                 const pr = sub.entry.pr;
                 const star = prbStarHtml(idx, sub.primary, pr.watched, subIdx);
                 const ident = prbIdentHtml(pr, prbPrTitle(pr, []));
@@ -1118,6 +1119,11 @@ export const prBoardJs = `
                     + '</span></div>';
                 if (prBoardViewPrefs.detail === 1) html += prbPrViewDetailHtml(pr);
             });
+            const hidden = item.prs.length - PRB_MAX_SESSION_PRS;
+            if (hidden > 0) {
+                html += '<div class="prb-sub"><span class="prb-sub-left prb-dl-text">+'
+                    + hidden + ' more ' + (hidden === 1 ? 'PR' : 'PRs') + '</span></div>';
+            }
             html += item.previews.join('') + '</div>';
             return html;
         }
