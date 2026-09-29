@@ -78,6 +78,7 @@ const SLACK_SCAN_MAX: u64 = 256 * 1024;
 /// `r` toggles between one titled row and the complete recap detail.
 const MAX_DETAIL: u8 = 1;
 const DEFAULT_DETAIL: u8 = 0;
+const MAX_SESSION_PRS: usize = 8;
 
 /// Recency uses one cyan-blue hue at steadily lower intensities until old
 /// activity becomes neutral gray after a day.
@@ -3584,7 +3585,7 @@ fn render_session_view_block(
         }
     }
 
-    for sub in &entry.prs {
+    for sub in entry.prs.iter().take(MAX_SESSION_PRS) {
         let title = pr_row_title(sub);
         // Actions on a session's sub-rows apply in that session's scope, so a
         // dismissal here leaves the group's other sessions alone.
@@ -3606,6 +3607,18 @@ fn render_session_view_block(
             let slack = slack_detail_cells(sub, layout.link_span());
             lines.extend(detail_lines(&judgment, &slack, &layout));
         }
+    }
+    let hidden = entry.prs.len().saturating_sub(MAX_SESSION_PRS);
+    if hidden > 0 {
+        let label = format!(
+            "  +{hidden} more {}",
+            if hidden == 1 { "PR" } else { "PRs" }
+        );
+        lines.push(format!(
+            "{}{}{RESET}",
+            fg(color::DARK_GRAY),
+            crate::ui::pr_cells::truncate_to_width(&label, width as usize),
+        ));
     }
     lines.extend(session_row.preview_lines.iter().cloned());
     lines
@@ -3997,7 +4010,7 @@ fn render_at(
         .chain(
             visible_session_indices
                 .iter()
-                .flat_map(|&index| session_rows[index].entry.prs.iter()),
+                .flat_map(|&index| session_rows[index].entry.prs.iter().take(MAX_SESSION_PRS)),
         )
         .collect();
     let pr_refs: Vec<&SessionPr> = visible_entries.iter().map(|entry| &entry.pr).collect();
