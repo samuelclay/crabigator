@@ -489,6 +489,8 @@ impl MirrorPublisher {
             pr.deletions.hash(&mut hasher);
             pr.changed_files.hash(&mut hasher);
             pr.title.hash(&mut hasher);
+            pr.fetch_limited.hash(&mut hasher);
+            pr.fetch_error.hash(&mut hasher);
             pr.mergeable.hash(&mut hasher);
             pr.merge_state_status.hash(&mut hasher);
             pr.checks_passed.hash(&mut hasher);
@@ -742,4 +744,51 @@ fn render_changes_preview(diff: &DiffSummary) -> Vec<String> {
     }
 
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limit_changes_republish_the_pr_mirror_without_other_activity() {
+        let unique = tempfile::tempdir().unwrap();
+        let mut publisher = MirrorPublisher::new(
+            true,
+            format!(
+                "limit-test-{}",
+                unique.path().file_name().unwrap().to_string_lossy()
+            ),
+            PlatformKind::Claude,
+            String::new(),
+            false,
+        );
+        let stats = SessionStats::new();
+        let git = GitState::new();
+        let diff = DiffSummary::new();
+        let mut pr = SessionPr::test_stub(123, "o", "r");
+        for limited in [false, true, false] {
+            pr.fetch_limited = limited;
+            publisher.last_publish = Instant::now() - PUBLISH_INTERVAL;
+            assert!(publisher
+                .maybe_publish(
+                    &stats,
+                    &git,
+                    &diff,
+                    None,
+                    &[],
+                    None,
+                    &[],
+                    std::slice::from_ref(&pr),
+                    None,
+                    None,
+                )
+                .unwrap());
+            let saved: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(publisher.mirror_path()).unwrap())
+                    .unwrap();
+            assert_eq!(saved["prs"][0]["fetch_limited"], limited);
+        }
+        fs::remove_dir_all(publisher.session_dir()).unwrap();
+    }
 }

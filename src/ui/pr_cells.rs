@@ -26,7 +26,7 @@ const PR_FILES_MAX: usize = 11;
 /// One cell wider than the other caps: the branch label spends three of its
 /// cells on [`BRANCH_PREFIX`], so this keeps the name itself as long as it was.
 pub(crate) const PR_BRANCH_MAX: usize = 29;
-const PR_STATE_MAX: usize = 6;
+const PR_STATE_MAX: usize = 9;
 const PR_CI_MAX: usize = 10;
 /// `💬` is two cells wide, leaving room for a four-digit thread count.
 const PR_COMMENTS_MAX: usize = 6;
@@ -1227,6 +1227,8 @@ fn pr_state_label(pr: &SessionPr) -> (&'static str, u8) {
     } else if pr.state == "OPEN" {
         // Match the softer green used for the dir path in the git widget.
         ("open", color::LIGHT_GREEN)
+    } else if pr.fetch_limited {
+        ("limit hit", color::YELLOW)
     } else if !pr.fetch_error.is_empty() {
         ("error", color::RED)
     } else if pr.refreshed_at == 0 {

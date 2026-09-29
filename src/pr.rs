@@ -51,7 +51,7 @@ const BACKGROUND_PR_LIMIT: usize = 8;
 /// on the fast cadence.
 const HOT_SESSION_PR_LIMIT: usize = 2;
 /// Reads one session will start in an hour, on top of the machine-wide budget.
-const SESSION_READS_PER_HOUR: u32 = 8;
+const SESSION_READS_PER_HOUR: u32 = budget::SESSION_LIMIT;
 /// Bare `PR #N` lookups that couldn't start immediately (a read was already
 /// in flight, or the transcript was being replayed). Drained one at a time.
 const DEFERRED_LOOKUP_LIMIT: usize = 8;
@@ -318,6 +318,9 @@ pub struct SessionPr {
     /// error instead of looking silently bare; retries clear it on success.
     #[serde(default)]
     pub fetch_error: String,
+    /// Initial details are waiting for a background-read quota to reset.
+    #[serde(default)]
+    pub fetch_limited: bool,
     /// Unix ms of the last successful `gh` refresh (0 = never enriched yet).
     pub refreshed_at: u64,
 }
@@ -370,6 +373,7 @@ impl SessionPr {
             ai_note: String::new(),
             ai_confidence: String::new(),
             fetch_error: String::new(),
+            fetch_limited: false,
             refreshed_at: 0,
         }
     }
@@ -1596,7 +1600,14 @@ impl PrTracker {
         if self.pending.contains_key(&key) || !self.pending.is_empty() {
             return false;
         }
-        if !self.session_read_allowed() || !budget::can_start(budget::Reader::Session) {
+        let cost = if requested_url.is_some() {
+            budget::READ_POINTS
+        } else {
+            budget::UNREPORTED_READ_POINTS
+        };
+        if !self.session_read_allowed()
+            || !budget::can_start_with_estimate(budget::Reader::Session, cost)
+        {
             return false;
         }
         self.note_session_read();
@@ -1891,8 +1902,34 @@ impl PrTracker {
 
         // One due read per poll. Its result lands on a later poll.
         self.start_due_refresh();
+        changed |= self.sync_fetch_limits();
         changed |= self.sync_pr_slack_threads();
 
+        changed
+    }
+
+    fn sync_fetch_limits(&mut self) -> bool {
+        if !self.prs.iter().any(|pr| pr.refreshed_at == 0) {
+            return false;
+        }
+        let next_cost = if self.force_refresh.is_empty() && !self.deferred_lookups.is_empty() {
+            budget::UNREPORTED_READ_POINTS
+        } else {
+            budget::READ_POINTS
+        };
+        let limited = !self.session_read_allowed()
+            || budget::limit_hit_with_estimate(budget::Reader::Session, next_cost);
+        let mut changed = false;
+        for pr in &mut self.prs {
+            let waiting = limited
+                && pr.refreshed_at == 0
+                && !pr.dismissed
+                && !self.pending.contains_key(&pr.url);
+            if pr.fetch_limited != waiting {
+                pr.fetch_limited = waiting;
+                changed = true;
+            }
+        }
         changed
     }
 
@@ -1999,6 +2036,7 @@ impl PrTracker {
                 existing.comments_refreshed_at = 0;
             }
             existing.fetch_error.clear();
+            existing.fetch_limited = false;
             existing.refreshed_at = fetched.refreshed_at;
             let changed = *existing != before;
             if existing.state != "OPEN" {
@@ -2083,6 +2121,10 @@ fn session_pr_from_fetch(loc: &PrLocation, json: GhPrJson, created_here: bool) -
 /// Whether an open PR board may start a background GitHub read.
 pub(crate) fn board_reads_allowed() -> bool {
     budget::can_start(budget::Reader::Board)
+}
+
+pub(crate) fn board_read_limit_hit() -> bool {
+    budget::limit_hit(budget::Reader::Board)
 }
 
 /// A read that did not call GitHub because the shared budget said to wait.
@@ -2916,7 +2958,7 @@ const GH_JSON_FIELDS: &str =
 // A raw string on purpose. A `\` line continuation in a regular string
 // deletes the break and the indent, which glued `isDraft` to `additions`.
 const PR_READ_QUERY: &str = r#"query($owner:String!,$repo:String!,$number:Int!){
-     rateLimit{remaining resetAt cost}
+     rateLimit{limit remaining resetAt cost}
      repository(owner:$owner,name:$repo){
        pullRequest(number:$number){
          number title url headRefName state isDraft
@@ -3012,9 +3054,6 @@ fn fetch_pr_graphql(
         None,
     )?;
     let mut parsed = parse_pr_read(&output.stdout)?;
-    if let (Some(remaining), reset_ms) = (parsed.remaining, parsed.reset_ms) {
-        budget::note_remaining(remaining, reset_ms);
-    }
     parsed.pr.viewer_login = gh_viewer_login().unwrap_or_default().to_string();
     Ok((parsed.pr, parsed.threads))
 }
@@ -3025,13 +3064,27 @@ fn run_gh(
     args: &[&str],
     cwd: Option<&Path>,
 ) -> Result<std::process::Output, String> {
-    let _permit = budget::acquire(reader).ok_or_else(budget::deferral_reason)?;
+    let mut permit = if args.starts_with(&["pr", "view"]) {
+        budget::acquire_with_estimate(reader, budget::UNREPORTED_READ_POINTS)
+    } else {
+        budget::acquire(reader)
+    }
+    .ok_or_else(budget::deferral_reason)?;
     let mut cmd = Command::new("gh");
     cmd.args(args);
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
     let output = cmd.output().map_err(|e| format!("gh not runnable: {e}"))?;
+    // Record usage even if GitHub returned partial data with an error.
+    if let Some(rate) = parse_rate_limit(&output.stdout) {
+        permit.record_usage(
+            rate.cost,
+            rate.limit,
+            rate.remaining,
+            parse_iso_ms(&rate.reset_at),
+        );
+    }
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -3104,8 +3157,6 @@ fn fetch_review_threads(url: &str) -> Result<ReviewThreads, String> {
 struct ParsedPrRead {
     pr: GhPrJson,
     threads: ReviewThreads,
-    remaining: Option<u32>,
-    reset_ms: u64,
 }
 
 #[derive(Deserialize)]
@@ -3124,17 +3175,23 @@ struct GraphqlError {
 
 #[derive(Deserialize)]
 struct PrReadData {
-    #[serde(default, rename = "rateLimit")]
-    rate_limit: Option<RateLimitInfo>,
     #[serde(default)]
     repository: Option<PrReadRepository>,
 }
 
 #[derive(Deserialize)]
 struct RateLimitInfo {
+    #[serde(default)]
+    limit: u32,
+    cost: u32,
     remaining: u32,
     #[serde(default, rename = "resetAt")]
     reset_at: String,
+}
+
+fn parse_rate_limit(json: &[u8]) -> Option<RateLimitInfo> {
+    let response: serde_json::Value = serde_json::from_slice(json).ok()?;
+    serde_json::from_value(response.get("data")?.get("rateLimit")?.clone()).ok()
 }
 
 #[derive(Deserialize)]
@@ -3248,12 +3305,6 @@ fn parse_pr_read(json: &[u8]) -> Result<ParsedPrRead, String> {
     let data = response
         .data
         .ok_or_else(|| "gh json parse: missing data".to_string())?;
-    let remaining = data.rate_limit.as_ref().map(|limit| limit.remaining);
-    let reset_ms = data
-        .rate_limit
-        .as_ref()
-        .map(|limit| parse_iso_ms(&limit.reset_at))
-        .unwrap_or(0);
     let pull = data
         .repository
         .and_then(|repository| repository.pull_request)
@@ -3281,12 +3332,7 @@ fn parse_pr_read(json: &[u8]) -> Result<ParsedPrRead, String> {
         status_check_rollup: Vec::new(),
         check_counts: Some((passed, failed, pending)),
     };
-    Ok(ParsedPrRead {
-        pr,
-        threads,
-        remaining,
-        reset_ms,
-    })
+    Ok(ParsedPrRead { pr, threads })
 }
 
 fn tally_check_states(commits: &CommitNodes) -> (i64, i64, i64) {
@@ -4962,6 +5008,42 @@ functions.wait {"cell_id":"17"}
     }
 
     #[test]
+    fn unloaded_prs_show_limits_until_the_allowance_resets() {
+        let mut tracker = PrTracker::new();
+        for number in 1..=3 {
+            tracker.prs.push(SessionPr::test_stub(number, "o", "r"));
+        }
+        tracker.prs[1].state = "OPEN".into();
+        tracker.prs[1].refreshed_at = 1;
+        let (_tx, rx) = mpsc::channel();
+        tracker.pending.insert(tracker.prs[2].url.clone(), rx);
+        tracker.reads_this_window = SESSION_READS_PER_HOUR;
+        tracker.read_window_started = Some(Instant::now());
+
+        assert!(tracker.sync_fetch_limits());
+        assert!(tracker.prs[0].fetch_limited);
+        assert!(!tracker.prs[1].fetch_limited, "loaded PRs keep their state");
+        assert!(
+            !tracker.prs[2].fetch_limited,
+            "an active read is still fetching"
+        );
+        assert!(
+            !tracker.sync_fetch_limits(),
+            "unchanged limits do not emit events"
+        );
+        let encoded = serde_json::to_value(&tracker.prs[0]).unwrap();
+        assert_eq!(
+            encoded["fetch_limited"], true,
+            "mirrors and cloud carry the limit"
+        );
+
+        tracker.read_window_started = Some(Instant::now() - Duration::from_secs(3601));
+        assert!(tracker.sync_fetch_limits());
+        assert!(!tracker.prs[0].fetch_limited);
+        assert!(tracker.session_read_allowed());
+    }
+
+    #[test]
     fn a_mention_during_an_in_flight_read_is_retried_later() {
         let mut tracker = PrTracker::new();
         let loc = PrLocation::new("o", "r", 7);
@@ -5003,7 +5085,7 @@ functions.wait {"cell_id":"17"}
     #[test]
     fn a_cheap_pr_read_counts_checks_threads_and_slack_links() {
         let body = br#"{"data":{
-            "rateLimit":{"remaining":4200,"resetAt":"2026-09-28T18:00:00Z","cost":40},
+            "rateLimit":{"limit":5000,"remaining":4200,"resetAt":"2026-09-28T18:00:00Z","cost":40},
             "repository":{"pullRequest":{
                 "number":7,"title":"T","url":"https://github.com/o/r/pull/7",
                 "headRefName":"feature","state":"OPEN","isDraft":false,
@@ -5040,7 +5122,8 @@ functions.wait {"cell_id":"17"}
             "https://github.com/o/r/pull/7#discussion_r1"
         );
         assert_eq!(parsed.threads.slack_urls.len(), 1);
-        assert_eq!(parsed.remaining, Some(4200));
+        let rate = parse_rate_limit(body).expect("GitHub reports its query cost");
+        assert_eq!((rate.limit, rate.cost, rate.remaining), (5000, 40, 4200));
 
         let loc = PrLocation::new("o", "r", 7);
         let session = session_pr_from_fetch(&loc, parsed.pr, false);

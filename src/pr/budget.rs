@@ -6,9 +6,11 @@
 //! refreshes small enough that the user, and the assistant's own `gh`
 //! commands, still have quota left.
 //!
-//! The file lives in `~/.crabigator/gh-budget.json`. A lock is held only while
-//! the numbers are updated, never during the network call.
+//! The file lives in `~/.crabigator/gh-budget-v2.json`. Older processes use
+//! estimated costs in a separate file so they cannot erase the per-session
+//! counters. A lock is held only while updating numbers, never over the network.
 
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -16,26 +18,26 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-/// Points reserved for one background PR read. The query asks for a fixed
-/// handful of nodes; this is a cushion above that cost, not a measurement.
-pub const READ_POINTS: u32 = 80;
-/// Points all sessions together may spend in an hour.
-const SESSION_POINTS: u32 = 1200;
-/// Points all open PR boards together may spend in an hour.
-const BOARD_POINTS: u32 = 240;
-/// Stop background reads while GitHub still has this many points left, so a
-/// wrong cost estimate cannot empty the account.
-const LOW_REMAINING: u32 = 1500;
+/// The bounded PR query costs one point. Reconcile with GitHub's reported
+/// cost before releasing the read slot if the query ever costs more.
+pub const READ_POINTS: u32 = 1;
+/// `gh pr view` hides its internal query costs; keep a conservative charge.
+pub const UNREPORTED_READ_POINTS: u32 = 80;
+const DEFAULT_GITHUB_LIMIT: u32 = 5_000;
+const BUDGET_PERCENT: u32 = 80;
+/// A single session may spend only a small share of the account allowance.
+pub const SESSION_LIMIT: u32 = 500;
+/// Watches may use at most this much of the shared allowance.
+const BOARD_POINTS: u32 = 400;
 /// Shortest gap between background reads from different jobs.
-const MIN_GAP: Duration = Duration::from_secs(20);
+const MIN_GAP: Duration = Duration::from_millis(500);
 /// A read that never checked back in stops blocking the next one after this.
 const INFLIGHT_TIMEOUT: Duration = Duration::from_secs(90);
 /// Pause this long when GitHub says the limit is spent but not when it resets.
 const RATE_LIMIT_FALLBACK: Duration = Duration::from_secs(15 * 60);
 const HOUR: Duration = Duration::from_secs(60 * 60);
 
-/// Who is spending the points. Sessions and PR boards have separate allowances
-/// so a wall of watched PRs cannot crowd out the session you are working in.
+/// Both readers spend the shared allowance; watches also have a smaller cap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reader {
     Session,
@@ -51,12 +53,54 @@ struct BudgetState {
     last_start_ms: u64,
     inflight_pid: u32,
     inflight_since_ms: u64,
+    #[serde(default)]
+    github_limit: Option<u32>,
+    #[serde(default)]
+    session_points_by_pid: HashMap<u32, u32>,
 }
 
 /// Held until the `gh` process exits. Releasing it lets the next read start.
 pub struct Permit {
     pid: u32,
     armed: bool,
+    reader: Reader,
+    window_start_ms: u64,
+    reserved_points: u32,
+}
+
+impl Permit {
+    /// Account for the completed query and retain 20% of the account quota,
+    /// including when other programs or computers have spent points.
+    pub fn record_usage(&mut self, cost: u32, limit: u32, remaining: u32, reset_ms: u64) {
+        if !self.armed {
+            return;
+        }
+        let _ = with_budget(|state| {
+            if state.window_start_ms == self.window_start_ms {
+                replace_points(
+                    state,
+                    self.reader,
+                    self.pid,
+                    self.reserved_points,
+                    cost.max(1),
+                );
+            }
+            if limit > 0 {
+                state.github_limit = Some(limit);
+            }
+            let limit = state.github_limit.unwrap_or(DEFAULT_GITHUB_LIMIT);
+            let reserve = limit.saturating_sub(shared_allowance(state));
+            if remaining <= reserve {
+                let now = now_ms();
+                let until = if reset_ms > now {
+                    reset_ms
+                } else {
+                    now.saturating_add(RATE_LIMIT_FALLBACK.as_millis() as u64)
+                };
+                state.paused_until_ms = state.paused_until_ms.max(until);
+            }
+        });
+    }
 }
 
 impl Drop for Permit {
@@ -69,39 +113,73 @@ impl Drop for Permit {
 
 /// Whether a background read is allowed to start right now.
 pub fn can_start(reader: Reader) -> bool {
+    can_start_with_estimate(reader, READ_POINTS)
+}
+
+pub fn can_start_with_estimate(reader: Reader, points: u32) -> bool {
     if !limits_apply() {
         return true;
     }
     with_budget(|state| {
         let now = now_ms();
         roll_window(state, now);
-        allow(state, now, std::process::id(), reader, READ_POINTS)
+        allow(state, now, std::process::id(), reader, points)
+    })
+    .unwrap_or(false)
+}
+
+/// A quota or rate-limit pause, excluding the short gap and in-flight reads.
+pub fn limit_hit(reader: Reader) -> bool {
+    limit_hit_with_estimate(reader, READ_POINTS)
+}
+
+pub fn limit_hit_with_estimate(reader: Reader, points: u32) -> bool {
+    if !limits_apply() {
+        return false;
+    }
+    with_budget(|state| {
+        let now = now_ms();
+        roll_window(state, now);
+        quota_blocks(state, now, std::process::id(), reader, points)
     })
     .unwrap_or(false)
 }
 
 /// Reserve points and the single in-flight slot. `None` means skip the call.
 pub fn acquire(reader: Reader) -> Option<Permit> {
+    acquire_with_estimate(reader, READ_POINTS)
+}
+
+pub fn acquire_with_estimate(reader: Reader, points: u32) -> Option<Permit> {
     if !limits_apply() {
         return Some(Permit {
             pid: 0,
             armed: false,
+            reader,
+            window_start_ms: 0,
+            reserved_points: points,
         });
     }
     let pid = std::process::id();
     let reserved = with_budget(|state| {
         let now = now_ms();
         roll_window(state, now);
-        if !allow(state, now, pid, reader, READ_POINTS) {
-            return false;
+        if !allow(state, now, pid, reader, points) {
+            return None;
         }
-        add_points(state, reader, READ_POINTS);
+        add_points(state, reader, pid, points);
         state.last_start_ms = now;
         state.inflight_pid = pid;
         state.inflight_since_ms = now;
-        true
-    })?;
-    reserved.then_some(Permit { pid, armed: true })
+        Some(state.window_start_ms)
+    })??;
+    Some(Permit {
+        pid,
+        armed: true,
+        reader,
+        window_start_ms: reserved,
+        reserved_points: points,
+    })
 }
 
 /// GitHub refused the call because the hourly limit is already spent.
@@ -110,25 +188,6 @@ pub fn note_limited(message: &str) {
         return;
     }
     let until = now_ms().saturating_add(pause_after(message).as_millis() as u64);
-    let _ = with_budget(|state| {
-        if until > state.paused_until_ms {
-            state.paused_until_ms = until;
-        }
-    });
-}
-
-/// A successful read reported how many points are left. Leave the tail of the
-/// hour for the user.
-pub fn note_remaining(remaining: u32, reset_ms: u64) {
-    if !limits_apply() || remaining >= LOW_REMAINING {
-        return;
-    }
-    let now = now_ms();
-    let until = if reset_ms > now {
-        reset_ms
-    } else {
-        now.saturating_add(RATE_LIMIT_FALLBACK.as_millis() as u64)
-    };
     let _ = with_budget(|state| {
         if until > state.paused_until_ms {
             state.paused_until_ms = until;
@@ -201,7 +260,7 @@ fn parse_hms(text: &str) -> Option<Duration> {
 }
 
 fn allow(state: &BudgetState, now: u64, pid: u32, reader: Reader, points: u32) -> bool {
-    if now < state.paused_until_ms {
+    if quota_blocks(state, now, pid, reader, points) {
         return false;
     }
     let same_job = state.inflight_pid == pid && pid != 0;
@@ -213,7 +272,25 @@ fn allow(state: &BudgetState, now: u64, pid: u32, reader: Reader, points: u32) -
             return false;
         }
     }
-    points_used(state, reader).saturating_add(points) <= allowance(reader)
+    true
+}
+
+fn quota_blocks(state: &BudgetState, now: u64, pid: u32, reader: Reader, points: u32) -> bool {
+    now < state.paused_until_ms
+        || state
+            .session_points
+            .saturating_add(state.board_points)
+            .saturating_add(points)
+            > shared_allowance(state)
+        || (reader == Reader::Board && state.board_points.saturating_add(points) > BOARD_POINTS)
+        || (reader == Reader::Session
+            && state
+                .session_points_by_pid
+                .get(&pid)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(points)
+                > SESSION_LIMIT)
 }
 
 fn inflight_busy(state: &BudgetState, now: u64) -> bool {
@@ -249,24 +326,23 @@ fn process_alive(pid: u32) -> bool {
     }
 }
 
-fn allowance(reader: Reader) -> u32 {
-    match reader {
-        Reader::Session => SESSION_POINTS,
-        Reader::Board => BOARD_POINTS,
-    }
+fn shared_allowance(state: &BudgetState) -> u32 {
+    state.github_limit.unwrap_or(DEFAULT_GITHUB_LIMIT) / 100 * BUDGET_PERCENT
 }
 
-fn points_used(state: &BudgetState, reader: Reader) -> u32 {
-    match reader {
-        Reader::Session => state.session_points,
-        Reader::Board => state.board_points,
-    }
+fn add_points(state: &mut BudgetState, reader: Reader, pid: u32, points: u32) {
+    replace_points(state, reader, pid, 0, points);
 }
 
-fn add_points(state: &mut BudgetState, reader: Reader, points: u32) {
+fn replace_points(state: &mut BudgetState, reader: Reader, pid: u32, reserved: u32, actual: u32) {
+    let replace = |spent: u32| spent.saturating_sub(reserved).saturating_add(actual);
     match reader {
-        Reader::Session => state.session_points = state.session_points.saturating_add(points),
-        Reader::Board => state.board_points = state.board_points.saturating_add(points),
+        Reader::Session => {
+            state.session_points = replace(state.session_points);
+            let spent = state.session_points_by_pid.entry(pid).or_default();
+            *spent = replace(*spent);
+        }
+        Reader::Board => state.board_points = replace(state.board_points),
     }
 }
 
@@ -277,6 +353,7 @@ fn roll_window(state: &mut BudgetState, now: u64) {
         state.window_start_ms = now;
         state.session_points = 0;
         state.board_points = 0;
+        state.session_points_by_pid.clear();
     }
 }
 
@@ -340,7 +417,11 @@ fn budget_path() -> Option<PathBuf> {
     if !limits_apply() {
         return None;
     }
-    Some(dirs::home_dir()?.join(".crabigator").join("gh-budget.json"))
+    Some(
+        dirs::home_dir()?
+            .join(".crabigator")
+            .join("gh-budget-v2.json"),
+    )
 }
 
 /// Limits are off in unit tests unless a test points them at its own directory.
@@ -410,6 +491,10 @@ mod tests {
 
         assert!(acquire(Reader::Session).is_some());
         assert!(
+            !limit_hit(Reader::Session),
+            "a short gap is not a quota limit"
+        );
+        assert!(
             acquire(Reader::Session).is_none(),
             "the next read waits for the gap"
         );
@@ -419,7 +504,7 @@ mod tests {
         )
         .unwrap();
         stale.window_start_ms = now_ms().saturating_sub(HOUR.as_millis() as u64 + 1);
-        stale.session_points = SESSION_POINTS;
+        stale.session_points = shared_allowance(&stale);
         stale.last_start_ms = 0;
         stale.inflight_pid = 0;
         std::fs::write(
@@ -431,6 +516,7 @@ mod tests {
             acquire(Reader::Session).is_some(),
             "a new hour clears the spent allowance"
         );
+        assert!(!limit_hit(Reader::Session));
 
         set_test_dir(None);
     }
@@ -443,11 +529,22 @@ mod tests {
         note_limited("GraphQL: API rate limit already exceeded [rate reset in 5m]");
         assert!(!can_start(Reader::Session));
         assert!(!can_start(Reader::Board));
+        assert!(limit_hit(Reader::Session));
+        assert!(limit_hit(Reader::Board));
 
         // Clear the pause by rolling it into the past, then trip the headroom stop.
         with_budget(|state| state.paused_until_ms = 0);
-        note_remaining(LOW_REMAINING - 1, now_ms().saturating_add(60_000));
+        let mut permit = acquire(Reader::Session).unwrap();
+        permit.record_usage(1, 5000, 1000, now_ms().saturating_add(60_000));
+        drop(permit);
         assert!(!can_start(Reader::Session));
+        assert!(limit_hit(Reader::Session));
+
+        with_budget(|state| state.paused_until_ms = now_ms().saturating_sub(1));
+        assert!(
+            !limit_hit(Reader::Session),
+            "the label clears after the pause"
+        );
 
         set_test_dir(None);
     }
@@ -493,20 +590,131 @@ mod tests {
     }
 
     #[test]
-    fn session_reads_do_not_spend_the_board_allowance() {
+    fn a_spent_board_allowance_does_not_block_sessions() {
         let dir = tempfile::tempdir().unwrap();
         set_test_dir(Some(dir.path().join("gh-budget.json")));
         with_budget(|state| {
             state.window_start_ms = now_ms();
-            state.session_points = SESSION_POINTS;
+            state.board_points = BOARD_POINTS;
         });
         // Gap and inflight would also refuse; clear them by writing a quiet state.
         with_budget(|state| {
             state.last_start_ms = 0;
             state.inflight_pid = 0;
         });
-        assert!(!can_start(Reader::Session));
-        assert!(can_start(Reader::Board));
+        assert!(can_start(Reader::Session));
+        assert!(!can_start(Reader::Board));
+        assert!(!limit_hit(Reader::Session));
+        assert!(limit_hit(Reader::Board));
+        set_test_dir(None);
+    }
+
+    #[test]
+    fn one_session_spends_its_own_quota_without_blocking_a_neighbor() {
+        let now = now_ms();
+        let mut state = BudgetState::default();
+        for _ in 0..SESSION_LIMIT {
+            assert!(allow(&state, now, 11, Reader::Session, 1));
+            add_points(&mut state, Reader::Session, 11, 1);
+        }
+        assert!(!allow(&state, now, 11, Reader::Session, 1));
+        assert!(allow(&state, now, 12, Reader::Session, 1));
+        assert!(allow(&state, now, 13, Reader::Board, 1));
+
+        state.window_start_ms = now.saturating_sub(HOUR.as_millis() as u64);
+        roll_window(&mut state, now);
+        assert!(allow(&state, now, 11, Reader::Session, 1));
+    }
+
+    #[test]
+    fn sessions_and_boards_share_eighty_percent_of_the_reported_limit() {
+        let now = now_ms();
+        let mut state = BudgetState {
+            session_points: 3600,
+            board_points: 399,
+            ..BudgetState::default()
+        };
+        assert!(allow(&state, now, 1, Reader::Board, 1));
+        add_points(&mut state, Reader::Board, 1, 1);
+        assert!(!allow(&state, now, 2, Reader::Session, 1));
+        assert!(!allow(&state, now, 1, Reader::Board, 1));
+        state.github_limit = Some(10_000);
+        assert_eq!(shared_allowance(&state), 8000);
+        assert!(allow(&state, now, 2, Reader::Session, 1));
+    }
+
+    #[test]
+    fn reported_cost_is_charged_before_the_next_session_can_read() {
+        let dir = tempfile::tempdir().unwrap();
+        set_test_dir(Some(dir.path().join("gh-budget.json")));
+        let mut permit = acquire(Reader::Session).unwrap();
+        permit.record_usage(SESSION_LIMIT, 5000, 4500, now_ms() + 60_000);
+        drop(permit);
+        let state = with_budget(|state| state.clone()).unwrap();
+        assert_eq!(state.session_points, SESSION_LIMIT);
+        assert!(limit_hit(Reader::Session));
+        assert!(!quota_blocks(
+            &state,
+            now_ms(),
+            std::process::id().wrapping_add(1),
+            Reader::Session,
+            1
+        ));
+        assert_eq!(
+            state.paused_until_ms, 0,
+            "a session cap never pauses the account"
+        );
+        set_test_dir(None);
+    }
+
+    #[test]
+    fn an_unaffordable_number_lookup_stays_queued_and_shows_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        set_test_dir(Some(dir.path().join("gh-budget.json")));
+        with_budget(|state| {
+            state.window_start_ms = now_ms();
+            state
+                .session_points_by_pid
+                .insert(std::process::id(), SESSION_LIMIT - 20);
+        });
+        let mut tracker = crate::pr::PrTracker::new();
+        tracker
+            .prs
+            .push(crate::pr::SessionPr::test_stub(123, "o", "r"));
+        tracker.deferred_lookups.push((PathBuf::from("/tmp"), 123));
+        for _ in 0..3 {
+            tracker.poll();
+            assert!(tracker.pending.is_empty(), "do not spawn a doomed worker");
+            assert_eq!(tracker.deferred_lookups.len(), 1);
+            assert!(tracker.prs[0].fetch_limited);
+            assert_eq!(tracker.reads_this_window, 0);
+        }
+        set_test_dir(None);
+    }
+
+    #[test]
+    fn unreported_reads_reserve_their_cost_and_reported_cost_replaces_it() {
+        let dir = tempfile::tempdir().unwrap();
+        set_test_dir(Some(dir.path().join("gh-budget.json")));
+        let mut permit = acquire_with_estimate(Reader::Session, UNREPORTED_READ_POINTS).unwrap();
+        assert_eq!(with_budget(|state| state.session_points), Some(80));
+        permit.record_usage(1, 5000, 4999, now_ms() + 60_000);
+        drop(permit);
+        assert_eq!(with_budget(|state| state.session_points), Some(1));
+
+        with_budget(|state| {
+            state
+                .session_points_by_pid
+                .insert(std::process::id(), SESSION_LIMIT - 20);
+        });
+        assert!(limit_hit_with_estimate(
+            Reader::Session,
+            UNREPORTED_READ_POINTS
+        ));
+        assert!(
+            !limit_hit(Reader::Session),
+            "a cheap URL read can still run"
+        );
         set_test_dir(None);
     }
 }

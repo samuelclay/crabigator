@@ -4255,7 +4255,7 @@ impl Drop for PrBoardTerminalGuard {
 const WATCHED_REFRESH: Duration = Duration::from_secs(15 * 60);
 /// Shortest gap between watched-PR reads on one board. Several boards can be
 /// open at once; without this they walk the whole watch list back to back.
-const WATCH_SPAWN_GAP: Duration = Duration::from_secs(3 * 60);
+const WATCH_SPAWN_GAP: Duration = Duration::from_secs(5);
 /// Minimum spacing between relays of freshly fetched watched-PR stats.
 const WATCH_RELAY_THROTTLE: Duration = Duration::from_secs(30);
 /// A locally added watch survives cloud list refreshes at least this long,
@@ -4358,7 +4358,7 @@ impl WatchedBoard {
 
     /// Start one `gh` read for the next watched PR that is due. Never-enriched
     /// rows go first. Finished PRs stop refreshing. One board starts at most
-    /// one read per few minutes, and the shared budget can still say no.
+    /// one read every few seconds, and the shared budget can still say no.
     fn spawn_due_refreshes(&mut self) {
         if !self.pending.is_empty() {
             return;
@@ -4428,10 +4428,21 @@ impl WatchedBoard {
                 }
             }
         }
+        if self.prs.values().any(|pr| pr.refreshed_at == 0) {
+            let limited = crate::pr::board_read_limit_hit();
+            for (key, pr) in &mut self.prs {
+                let waiting = limited && pr.refreshed_at == 0 && !self.pending.contains_key(key);
+                if pr.fetch_limited != waiting {
+                    pr.fetch_limited = waiting;
+                    changed = true;
+                    self.relay_due = true;
+                }
+            }
+        }
         changed
     }
 
-    /// Push freshly fetched stats to the cloud so other boards see them.
+    /// Push fetched stats and limit changes to the cloud so other boards see them.
     fn maybe_relay(&mut self) {
         if !self.relay_due
             || self
@@ -4442,12 +4453,7 @@ impl WatchedBoard {
         }
         self.relay_due = false;
         self.last_relay = Some(Instant::now());
-        let prs: Vec<SessionPr> = self
-            .prs
-            .values()
-            .filter(|pr| pr.refreshed_at > 0)
-            .cloned()
-            .collect();
+        let prs: Vec<SessionPr> = self.prs.values().cloned().collect();
         if prs.is_empty() {
             return;
         }
@@ -4478,7 +4484,7 @@ fn merge_watched_entries(
             entry.pr.watched = true;
             // Watch-only cloud rows carry relayed stats; this board's own
             // enrichment is usually fresher.
-            if entry.sessions.is_empty() && pr.refreshed_at > entry.pr.refreshed_at {
+            if entry.sessions.is_empty() && pr.refreshed_at >= entry.pr.refreshed_at {
                 entry.pr = pr.clone();
             }
             continue;

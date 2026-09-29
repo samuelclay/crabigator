@@ -739,6 +739,7 @@ mod tests {
             ai_note: String::new(),
             ai_confidence: String::new(),
             fetch_error: String::new(),
+            fetch_limited: false,
             refreshed_at: 0,
         }
     }
@@ -806,7 +807,17 @@ mod tests {
         let row = pr_row_text(160, &pr, &widths);
         assert!(row.contains("fetch…"), "never-enriched PR shows progress");
 
-        pr.fetch_error = "HTTP 403: rate limited".to_string();
+        pr.fetch_limited = true;
+        let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
+        let row = pr_row_text(160, &pr, &widths);
+        assert!(
+            row.contains("limit hit"),
+            "the limit label must fit in full"
+        );
+        assert!(!row.contains("fetch…"));
+
+        pr.fetch_limited = false;
+        pr.fetch_error = "HTTP 403: forbidden".to_string();
         let widths = PrColumnWidths::from_prs(std::slice::from_ref(&pr), 160);
         let row = pr_row_text(160, &pr, &widths);
         assert!(row.contains("error"), "failed fetch says so, not silence");

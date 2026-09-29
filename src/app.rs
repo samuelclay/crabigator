@@ -1524,6 +1524,8 @@ impl App {
                 pr.dismissed.hash(&mut hasher);
                 pr.last_mentioned_at.hash(&mut hasher);
                 pr.refreshed_at.hash(&mut hasher);
+                pr.fetch_limited.hash(&mut hasher);
+                pr.fetch_error.hash(&mut hasher);
             }
 
             // Include throbber frame when animating to trigger redraws on frame change
