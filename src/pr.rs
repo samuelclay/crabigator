@@ -2913,25 +2913,27 @@ const GH_JSON_FIELDS: &str =
 /// threads, and the first issue comments (where Slack links are posted).
 /// Page sizes stay small on purpose. GitHub charges for nodes requested,
 /// and `first: 100` on checks was enough to empty the hourly budget.
-const PR_READ_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
-     rateLimit{remaining resetAt cost}\
-     repository(owner:$owner,name:$repo){\
-       pullRequest(number:$number){\
-         number title url headRefName state isDraft\
-         additions deletions changedFiles\
-         mergeable mergeStateStatus reviewDecision\
-         closedAt updatedAt\
-         author{login}\
-         latestReviews(first:6){nodes{state}}\
-         commits(last:1){nodes{commit{statusCheckRollup{contexts{\
-           checkRunCount checkRunCountsByState{state count}\
-           statusContextCount statusContextCountsByState{state count}\
-         }}}}}\
-         reviewThreads(first:8){nodes{isResolved comments(first:1){nodes{url}}}}\
-         comments(first:6){nodes{body}}\
-       }\
-     }\
-   }";
+// A raw string on purpose. A `\` line continuation in a regular string
+// deletes the break and the indent, which glued `isDraft` to `additions`.
+const PR_READ_QUERY: &str = r#"query($owner:String!,$repo:String!,$number:Int!){
+     rateLimit{remaining resetAt cost}
+     repository(owner:$owner,name:$repo){
+       pullRequest(number:$number){
+         number title url headRefName state isDraft
+         additions deletions changedFiles
+         mergeable mergeStateStatus reviewDecision
+         closedAt updatedAt
+         author{login}
+         latestReviews(first:6){nodes{state}}
+         commits(last:1){nodes{commit{statusCheckRollup{contexts{
+           checkRunCount checkRunCountsByState{state count}
+           statusContextCount statusContextCountsByState{state count}
+         }}}}}
+         reviewThreads(first:8){nodes{isResolved comments(first:1){nodes{url}}}}
+         comments(first:6){nodes{body}}
+       }
+     }
+   }"#;
 
 /// Full read of one PR URL: status, checks, and review threads in one call.
 fn fetch_pr(
@@ -3064,14 +3066,14 @@ fn gh_viewer_login() -> Option<&'static str> {
 /// Standalone review-thread query for the ignored live test. The background
 /// read already includes a short page of threads.
 #[cfg(test)]
-const REVIEW_THREADS_QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){\
-     repository(owner:$owner,name:$repo){\
-       pullRequest(number:$number){\
-         reviewThreads(first:20){nodes{isResolved comments(first:1){nodes{url}}}}\
-         comments(first:20){nodes{body}}\
-       }\
-     }\
-   }";
+const REVIEW_THREADS_QUERY: &str = r#"query($owner:String!,$repo:String!,$number:Int!){
+     repository(owner:$owner,name:$repo){
+       pullRequest(number:$number){
+         reviewThreads(first:20){nodes{isResolved comments(first:1){nodes{url}}}}
+         comments(first:20){nodes{body}}
+       }
+     }
+   }"#;
 
 /// Count a PR's unresolved review threads, and note where the first one lives.
 #[cfg(test)]
@@ -4974,6 +4976,28 @@ functions.wait {"cell_id":"17"}
 
         assert!(tracker.force_refresh.contains(&loc.url));
         assert!(!tracker.pending.contains_key(&loc.url));
+    }
+
+    #[test]
+    fn pr_read_query_keeps_graphql_fields_apart() {
+        for glued in [
+            "isDraftadditions",
+            "changedFilesmergeable",
+            "reviewDecisionclosedAt",
+            "updatedAtauthor",
+            "}commits",
+            "}statusContextCount",
+            "}reviewThreads",
+            "}comments",
+        ] {
+            assert!(
+                !PR_READ_QUERY.contains(glued),
+                "query glues fields together: {glued}"
+            );
+        }
+        assert!(PR_READ_QUERY.contains("isDraft"));
+        assert!(PR_READ_QUERY.contains("additions"));
+        assert!(PR_READ_QUERY.contains("reviewThreads"));
     }
 
     #[test]
