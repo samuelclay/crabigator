@@ -7,14 +7,16 @@
 //!
 //! The board never talks to `gh` itself — it renders what the sessions
 //! already know, with honest ages. Cloud dispositions are fetched once a
-//! minute so dashboard toggles apply here too. The default view reads live
-//! session mirrors under /tmp and the account's other computers' active
-//! sessions. `s` flips to the durable cloud record, which includes ended
-//! sessions' PRs at about a minute of lag. Time bands stay the top grouping.
-//! Under each band, one repository on two computers is two groups:
+//! minute so dashboard toggles apply here too. The board opens on this
+//! computer and the account's other computers, one block per session, for
+//! the last 24 hours. `l` flips to the durable cloud record, which includes
+//! ended sessions' PRs at about a minute of lag. `o` hides the other
+//! computers. `s` flips to one block per primary PR. Time bands stay the top
+//! grouping. Under each band, one repository on two computers is two groups:
 //! `owner/repo · machine`.
-//! `f` fullscreens a live session and types into it, including one streaming
-//! from another computer on the account. Ctrl-] leaves that view. `n` opens
+//! `f` fullscreens the selected session and types into it, including one
+//! streaming from another computer on the account. The header offers `f`
+//! only while a session is selected. Ctrl-] leaves that view. `n` opens
 //! a new session in the highlighted session's folder on this computer: pick
 //! Claude, Codex, opencode, or Grok, and Ghostty opens a tab in a window
 //! already in that folder, or a new window. The agent keeps running.
@@ -104,7 +106,7 @@ enum RecencyBucket {
     Older,
 }
 
-const DEFAULT_OLDEST_VISIBLE_BUCKET: RecencyBucket = RecencyBucket::Older;
+const DEFAULT_OLDEST_VISIBLE_BUCKET: RecencyBucket = RecencyBucket::LastDay;
 
 impl RecencyBucket {
     fn from_age(age_secs: u64) -> Self {
@@ -176,15 +178,20 @@ impl RecencyBucket {
         }
     }
 
+    /// `None` is an unset preference and opens at 24 hours. `Some(0)` is the
+    /// explicit "every age" choice, so saving that choice does not look unset
+    /// the next time the board opens.
     fn from_max_age_hours(hours: Option<u64>) -> Self {
         match hours {
-            Some(0..=1) => Self::LastHour,
+            None => Self::LastDay,
+            Some(0) => Self::Older,
+            Some(1) => Self::LastHour,
             Some(2..=3) => Self::LastThreeHours,
             Some(4..=6) => Self::LastSixHours,
             Some(7..=9) => Self::LastNineHours,
             Some(10..=12) => Self::LastTwelveHours,
             Some(13..=24) => Self::LastDay,
-            Some(_) | None => Self::Older,
+            Some(_) => Self::Older,
         }
     }
 
@@ -196,27 +203,27 @@ impl RecencyBucket {
             Self::LastNineHours => Some(9),
             Self::LastTwelveHours => Some(12),
             Self::LastDay => Some(24),
-            Self::Older => None,
+            Self::Older => Some(0),
         }
     }
 }
 
-/// What one board block stands for: a primary PR with every touching session
-/// beneath it (the default view), or a session with every PR it touches
-/// beneath it.
+/// What one board block stands for. The board opens on sessions: one block
+/// per session, with every PR it touches beneath it. `s` flips to one block
+/// per primary PR.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum BoardMode {
-    Sessions,
     #[default]
+    Sessions,
     Prs,
 }
 
 impl BoardMode {
     fn parse(value: &str) -> Self {
-        if value.eq_ignore_ascii_case("sessions") {
-            Self::Sessions
-        } else {
+        if value.eq_ignore_ascii_case("prs") {
             Self::Prs
+        } else {
+            Self::Sessions
         }
     }
 
@@ -244,7 +251,7 @@ impl BoardView {
                 detail
             },
             oldest_visible_bucket,
-            mode: BoardMode::Prs,
+            mode: BoardMode::Sessions,
         }
     }
 
@@ -2166,17 +2173,55 @@ fn merge_other_machines(
     sort_workspaces(workspaces, now_secs() as u64);
 }
 
-/// Live mirrors plus, when the cloud record is in, the rest of the account.
-/// All-sessions view starts from that record so ended sessions stay. Live
-/// view keeps this computer's mirrors and adds other computers' active work.
+/// A session that belongs on the local-only board: a live mirror on this
+/// computer, or a cloud row whose computer name matches. An empty name is
+/// not this computer.
+fn session_on_this_machine(session: &SessionRef, local_machine: &str) -> bool {
+    if session
+        .session_dir
+        .as_ref()
+        .is_some_and(|path| !path.as_os_str().is_empty())
+    {
+        return true;
+    }
+    let local = machine_key(local_machine);
+    !local.is_empty() && machine_key(&session.device_name) == local
+}
+
+/// Drop sessions that are running on another computer. A PR or workspace
+/// with nothing left on this computer goes with them. Watched PRs are added
+/// after this, so a watch with no local session still appears.
+fn retain_this_machine(
+    entries: &mut Vec<BoardPr>,
+    workspaces: &mut Vec<WorkspaceEntry>,
+    local_machine: &str,
+) {
+    for entry in entries.iter_mut() {
+        entry
+            .sessions
+            .retain(|session| session_on_this_machine(session, local_machine));
+        entry
+            .touching
+            .retain(|session| session_on_this_machine(session, local_machine));
+    }
+    entries.retain(|entry| !entry.sessions.is_empty() || !entry.touching.is_empty());
+    workspaces.retain(|entry| session_on_this_machine(&entry.session, local_machine));
+}
+
+/// Live mirrors plus, when asked, the account's other computers.
+/// All-sessions view starts from the cloud record so ended sessions stay.
+/// Live view keeps this computer's mirrors and, unless `include_remote` is
+/// false, adds other computers' active work.
 fn compose_board(
     local_entries: Vec<BoardPr>,
     local_workspaces: Vec<WorkspaceEntry>,
     mirrors: &HashMap<String, PathBuf>,
     cloud_view: Option<&(Vec<BoardPr>, Vec<WorkspaceEntry>)>,
     include_ended: bool,
+    include_remote: bool,
 ) -> (Vec<BoardPr>, Vec<WorkspaceEntry>) {
-    if include_ended {
+    let local_machine = local_machine_name();
+    let (mut entries, mut workspaces) = if include_ended {
         let (mut entries, mut workspaces) =
             if let Some((cloud_entries, cloud_workspaces)) = cloud_view {
                 (cloud_entries.clone(), cloud_workspaces.clone())
@@ -2185,18 +2230,25 @@ fn compose_board(
             };
         merge_live_workspaces(&mut workspaces, local_workspaces, &entries);
         attach_live_mirrors(&mut entries, &mut workspaces, mirrors);
-        return (entries, workspaces);
-    }
-    let mut entries = local_entries;
-    let mut workspaces = local_workspaces;
-    if let Some((cloud_entries, cloud_workspaces)) = cloud_view {
-        merge_other_machines(
-            &mut entries,
-            &mut workspaces,
-            cloud_entries,
-            cloud_workspaces,
-            &local_machine_name(),
-        );
+        (entries, workspaces)
+    } else {
+        let mut entries = local_entries;
+        let mut workspaces = local_workspaces;
+        if include_remote {
+            if let Some((cloud_entries, cloud_workspaces)) = cloud_view {
+                merge_other_machines(
+                    &mut entries,
+                    &mut workspaces,
+                    cloud_entries,
+                    cloud_workspaces,
+                    &local_machine,
+                );
+            }
+        }
+        (entries, workspaces)
+    };
+    if !include_remote {
+        retain_this_machine(&mut entries, &mut workspaces, &local_machine);
     }
     (entries, workspaces)
 }
@@ -3738,6 +3790,8 @@ fn render(
             now_ms: (now_secs() * 1000.0) as u64,
             loading: false,
             cooldowns: &cooldowns,
+            include_remote: true,
+            offer_fullscreen: false,
         },
     )
 }
@@ -3748,6 +3802,10 @@ struct RenderState<'a> {
     loading: bool,
     /// Which badges and status cells changed recently, for their tints.
     cooldowns: &'a Cooldowns,
+    /// False hides sessions that are running on another computer.
+    include_remote: bool,
+    /// The header offers fullscreen only while a session is selected.
+    offer_fullscreen: bool,
 }
 
 /// One rendered frame: the styled lines plus where each board row landed,
@@ -3771,6 +3829,8 @@ fn render_at(
         now_ms,
         loading,
         cooldowns,
+        include_remote,
+        offer_fullscreen,
     } = state;
     let BoardView {
         detail,
@@ -3812,30 +3872,8 @@ fn render_at(
             (activity_bucket(row.entry.sessions(), now) <= oldest_visible_bucket).then_some(index)
         })
         .collect();
-    let session_count = pr_slices
-        .iter()
-        .flat_map(|slice| slice.entry.sessions.iter())
-        .chain(
-            visible_session_indices
-                .iter()
-                .map(|&index| &session_rows[index].entry.session),
-        )
-        .chain(
-            visible_workspace_indices
-                .iter()
-                .map(|&index| &workspace_rows[index].entry.session),
-        )
-        .map(|session| {
-            if session.session_id.is_empty() {
-                session.dir_name.as_str()
-            } else {
-                session.session_id.as_str()
-            }
-        })
-        .collect::<HashSet<_>>()
-        .len();
     let source = header_control(
-        's',
+        'l',
         if include_ended {
             "all sessions"
         } else {
@@ -3843,48 +3881,53 @@ fn render_at(
         },
         include_ended,
     );
-    let keys = [
+    let mut key_labels = vec![
         header_mnemonic("↑↓", "select"),
         header_mnemonic("⏎", "peek"),
-        header_mnemonic("f", "fullscreen"),
+    ];
+    if offer_fullscreen {
+        key_labels.push(header_mnemonic("f", "fullscreen"));
+    }
+    key_labels.extend([
         header_mnemonic("n", "new"),
         header_mnemonic("/", "search"),
         header_mnemonic("w", "watch"),
         header_mnemonic("q", "quit"),
-    ]
-    .join(" · ");
-    let mode_label = header_control('p', mode.label(), mode != BoardMode::default());
+    ]);
+    let keys = key_labels.join(" · ");
+    let mode_label = header_control('s', mode.label(), mode != BoardMode::default());
+    let computers_label = header_control(
+        'o',
+        if include_remote {
+            "local+remote"
+        } else {
+            "local"
+        },
+        !include_remote,
+    );
     let detail_label = header_control('r', detail_name(detail), detail != DEFAULT_DETAIL);
-    let age_label = if oldest_visible_bucket == DEFAULT_OLDEST_VISIBLE_BUCKET {
-        header_control('a', "all ages", false)
-    } else {
-        let label = format!("age ≤ {}", oldest_visible_bucket.max_age_label());
-        header_control('a', &label, true)
+    let age_text = match oldest_visible_bucket {
+        RecencyBucket::Older => "all ages".to_string(),
+        bucket => format!("age ≤ {}", bucket.max_age_label()),
     };
-
-    // A PR touched by several session blocks is still one PR in the count.
-    let pr_count = pr_slices
-        .iter()
-        .map(|slice| &slice.entry.pr)
-        .chain(
-            visible_session_indices
-                .iter()
-                .flat_map(|&index| session_rows[index].entry.prs.iter().map(|entry| &entry.pr)),
-        )
-        .map(|pr| (pr.owner.as_str(), pr.repo.as_str(), pr.number))
-        .collect::<HashSet<_>>()
-        .len();
+    let age_label = header_control(
+        'a',
+        &age_text,
+        oldest_visible_bucket != DEFAULT_OLDEST_VISIBLE_BUCKET,
+    );
+    let any_rows = !pr_slices.is_empty()
+        || !visible_session_indices.is_empty()
+        || !visible_workspace_indices.is_empty();
     let mut spans: Vec<RowSpan> = Vec::new();
     let mut lines = vec![
         format!(
-            "{}⑆ Crabigator PR board{}  {}{} PRs · {} sessions{}{}{}{} · {}{}",
+            "{}⑆ Crabigator PR board{}{}{}{}{}{}{} · {}{}",
             fg(color::PURPLE),
             RESET_FG,
             fg(color::DARK_GRAY),
-            pr_count,
-            session_count,
             source,
             mode_label,
+            computers_label,
             detail_label,
             age_label,
             keys,
@@ -3894,13 +3937,9 @@ fn render_at(
     ];
     if loading {
         let spinner = crate::ui::session_state_icon(SessionState::Thinking, throbber_frame);
-        let verb = if session_count == 0 {
-            "Loading"
-        } else {
-            "Updating"
-        };
+        let verb = if any_rows { "Updating" } else { "Loading" };
         lines.push(format!(
-            "{} {}{verb} live sessions… {session_count} found{}",
+            "{} {}{verb} live sessions…{}",
             spinner,
             fg(color::CYAN),
             RESET_FG,
@@ -4655,6 +4694,7 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             &mirrors,
             cloud_view.as_ref(),
             false,
+            preferences.include_remote,
         );
         // Watched PRs render from their cloud-relayed stats; the one-frame
         // print doesn't run its own `gh` enrichment.
@@ -4767,6 +4807,12 @@ fn local_screen_positions(spans: &[RowSpan]) -> Vec<usize> {
 fn selected_span<'a>(spans: &'a [RowSpan], selected: Option<&str>) -> Option<&'a RowSpan> {
     let key = selected?;
     spans.iter().find(|span| span.key == key)
+}
+
+/// Fullscreen applies to the highlighted session. A row with no live screen
+/// has nothing to open, so the header leaves the shortcut off.
+fn selection_offers_fullscreen(spans: &[RowSpan], selected: Option<&str>) -> bool {
+    selected_span(spans, selected).is_some_and(|span| !span.peeks.is_empty())
 }
 
 /// Why `n` or `f` cannot use the highlighted row, when that row is a live
@@ -5511,9 +5557,14 @@ fn draw_changed_lines<W: Write>(
     Ok(true)
 }
 
-fn save_board_preferences(include_ended: bool, view: BoardView) -> Result<()> {
+fn save_board_preferences(
+    include_ended: bool,
+    include_remote: bool,
+    view: BoardView,
+) -> Result<()> {
     let mut config = crate::config::Config::load()?;
     config.pr_board.include_ended = include_ended;
+    config.pr_board.include_remote = include_remote;
     config.pr_board.detail = view.detail;
     config.pr_board.oldest_visible_hours = view.oldest_visible_bucket.max_age_hours();
     config.pr_board.view = view.mode.label().to_string();
@@ -5682,6 +5733,7 @@ async fn board_loop(
     )
     .with_mode(BoardMode::parse(&preferences.view));
     let mut include_ended = preferences.include_ended;
+    let mut include_remote = preferences.include_remote;
     // The account record is fetched off the loop so a slow reply cannot stall
     // a frame. The first request starts with the board.
     let mut pending_cloud = Some(start_cloud_board_fetch());
@@ -5722,6 +5774,8 @@ async fn board_loop(
             now_ms: (now_secs() * 1000.0) as u64,
             loading: true,
             cooldowns: &cooldowns,
+            include_remote,
+            offer_fullscreen: false,
         },
     )
     .lines;
@@ -5848,6 +5902,7 @@ async fn board_loop(
                 &mirrors,
                 cloud_view.as_ref(),
                 include_ended,
+                include_remote,
             );
             opening_cache.clear();
             save_board_cache(&entries);
@@ -5864,6 +5919,7 @@ async fn board_loop(
                 &live_mirrors,
                 cloud_view.as_ref(),
                 include_ended,
+                include_remote,
             );
             activity_history
                 .as_mut()
@@ -5974,6 +6030,8 @@ async fn board_loop(
                     now_ms,
                     loading,
                     cooldowns: &cooldowns,
+                    include_remote,
+                    offer_fullscreen: selection_offers_fullscreen(&spans, selected.as_deref()),
                 },
             );
             // Spans track the fresh frame even when the lines are unchanged:
@@ -6140,423 +6198,453 @@ async fn board_loop(
                         dirty = true;
                     }
                 }
-                Event::Key(key) => 'board_key: {
-                    if attach.is_some() {
-                        match crate::attach::attach_key_action(key) {
-                            crate::attach::AttachKeyAction::Detach => {
-                                detach_attach(&mut attach, &mut attach_frame);
-                                needs_render = true;
-                                last_frame_hash = 0;
-                                dirty = true;
-                            }
-                            crate::attach::AttachKeyAction::Forward(frame) => {
-                                let failed = attach.as_mut().is_some_and(|session| {
-                                    relay_attach_frame(session, remote.watch.as_ref(), &frame)
-                                });
-                                if failed {
-                                    let message = attach.as_ref().map(lost_attach_message);
+                Event::Key(key) => {
+                    let fullscreen_before =
+                        selection_offers_fullscreen(&spans, selected.as_deref());
+                    'board_key: {
+                        if attach.is_some() {
+                            match crate::attach::attach_key_action(key) {
+                                crate::attach::AttachKeyAction::Detach => {
                                     detach_attach(&mut attach, &mut attach_frame);
-                                    attach_error = message;
                                     needs_render = true;
                                     last_frame_hash = 0;
                                     dirty = true;
                                 }
-                            }
-                            crate::attach::AttachKeyAction::Ignore => {}
-                        }
-                        break 'board_key;
-                    }
-                    let cleared_attach = attach_error.take().is_some();
-                    let cleared_spawn = spawn_notice.take().is_some();
-                    if cleared_attach || cleared_spawn {
-                        dirty = true;
-                    }
-                    if key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                    {
-                        save_board_preferences(include_ended, view)?;
-                        return Ok(());
-                    }
-                    // While the add-a-watch input or the new-session picker is
-                    // open, those keys stay inside it. The flag keeps Enter
-                    // from also toggling the peek pane.
-                    let add_input_consumed = add_input.is_some() || new_session.is_some();
-                    if new_session.is_some() {
-                        match key.code {
-                            KeyCode::Esc => {
-                                new_session = None;
-                                dirty = true;
-                            }
-                            KeyCode::Char(c)
-                                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-                            {
-                                if let Some(platform) = new_session_platform(c) {
-                                    if let Some(target) = new_session.take() {
-                                        spawn_notice = Some(format!(
-                                            "Opening {} in {}",
-                                            platform.display_name(),
-                                            target.label
-                                        ));
-                                        spawn_rx = Some(start_checkout_spawn(target, platform));
+                                crate::attach::AttachKeyAction::Forward(frame) => {
+                                    let failed = attach.as_mut().is_some_and(|session| {
+                                        relay_attach_frame(session, remote.watch.as_ref(), &frame)
+                                    });
+                                    if failed {
+                                        let message = attach.as_ref().map(lost_attach_message);
+                                        detach_attach(&mut attach, &mut attach_frame);
+                                        attach_error = message;
+                                        needs_render = true;
+                                        last_frame_hash = 0;
                                         dirty = true;
                                     }
                                 }
+                                crate::attach::AttachKeyAction::Ignore => {}
                             }
-                            _ => {}
+                            break 'board_key;
                         }
-                    } else if let Some(input) = &mut add_input {
-                        match key.code {
-                            KeyCode::Esc => {
-                                add_input = None;
-                                add_error = None;
-                                dirty = true;
+                        let cleared_attach = attach_error.take().is_some();
+                        let cleared_spawn = spawn_notice.take().is_some();
+                        if cleared_attach || cleared_spawn {
+                            dirty = true;
+                        }
+                        if key.code == KeyCode::Char('c')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
+                            save_board_preferences(include_ended, include_remote, view)?;
+                            return Ok(());
+                        }
+                        // While the add-a-watch input or the new-session picker is
+                        // open, those keys stay inside it. The flag keeps Enter
+                        // from also toggling the peek pane.
+                        let add_input_consumed = add_input.is_some() || new_session.is_some();
+                        if new_session.is_some() {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    new_session = None;
+                                    dirty = true;
+                                }
+                                KeyCode::Char(c)
+                                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                                {
+                                    if let Some(platform) = new_session_platform(c) {
+                                        if let Some(target) = new_session.take() {
+                                            spawn_notice = Some(format!(
+                                                "Opening {} in {}",
+                                                platform.display_name(),
+                                                target.label
+                                            ));
+                                            spawn_rx = Some(start_checkout_spawn(target, platform));
+                                            dirty = true;
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
-                            KeyCode::Enter => match crate::pr::parse_watch_target(input) {
-                                Some(add) => {
-                                    watched_board.add(&add);
-                                    tokio::spawn(async move {
-                                        let _ = crate::cloud::add_watched_pr_standalone(&add).await;
-                                    });
+                        } else if let Some(input) = &mut add_input {
+                            match key.code {
+                                KeyCode::Esc => {
                                     add_input = None;
                                     add_error = None;
+                                    dirty = true;
+                                }
+                                KeyCode::Enter => match crate::pr::parse_watch_target(input) {
+                                    Some(add) => {
+                                        watched_board.add(&add);
+                                        tokio::spawn(async move {
+                                            let _ =
+                                                crate::cloud::add_watched_pr_standalone(&add).await;
+                                        });
+                                        add_input = None;
+                                        add_error = None;
+                                        needs_render = true;
+                                        dirty = true;
+                                    }
+                                    None => {
+                                        add_error =
+                                            Some("not a PR URL or owner/repo#123".to_string());
+                                        dirty = true;
+                                    }
+                                },
+                                KeyCode::Backspace => {
+                                    input.pop();
+                                    add_error = None;
+                                    dirty = true;
+                                }
+                                KeyCode::Char(c)
+                                    if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    input.push(c);
+                                    add_error = None;
+                                    dirty = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                        // While a filter is active, printable keys edit the query
+                        // and Esc clears it; outside one, they're the shortcuts.
+                        else if let Some(query) = &mut search {
+                            match key.code {
+                                // Esc peels back one layer: the pane first, then
+                                // the filter.
+                                KeyCode::Esc if peek_open => {
+                                    peek_open = false;
+                                    peek_scroll = None;
+                                    dirty = true;
+                                }
+                                KeyCode::Esc => {
+                                    search = None;
+                                    expanded = false;
+                                    scroll = 0;
                                     needs_render = true;
                                     dirty = true;
                                 }
-                                None => {
-                                    add_error = Some("not a PR URL or owner/repo#123".to_string());
+                                // Tab flips the transcript previews between one
+                                // snippet and the surrounding context.
+                                KeyCode::Tab => {
+                                    expanded = !expanded;
+                                    needs_render = true;
                                     dirty = true;
                                 }
-                            },
-                            KeyCode::Backspace => {
-                                input.pop();
-                                add_error = None;
-                                dirty = true;
-                            }
-                            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                input.push(c);
-                                add_error = None;
-                                dirty = true;
-                            }
-                            _ => {}
-                        }
-                    }
-                    // While a filter is active, printable keys edit the query
-                    // and Esc clears it; outside one, they're the shortcuts.
-                    else if let Some(query) = &mut search {
-                        match key.code {
-                            // Esc peels back one layer: the pane first, then
-                            // the filter.
-                            KeyCode::Esc if peek_open => {
-                                peek_open = false;
-                                peek_scroll = None;
-                                dirty = true;
-                            }
-                            KeyCode::Esc => {
-                                search = None;
-                                expanded = false;
-                                scroll = 0;
-                                needs_render = true;
-                                dirty = true;
-                            }
-                            // Tab flips the transcript previews between one
-                            // snippet and the surrounding context.
-                            KeyCode::Tab => {
-                                expanded = !expanded;
-                                needs_render = true;
-                                dirty = true;
-                            }
-                            KeyCode::Backspace => {
-                                query.pop();
-                                scroll = 0;
-                                needs_render = true;
-                                dirty = true;
-                            }
-                            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                query.push(c);
-                                scroll = 0;
-                                needs_render = true;
-                                dirty = true;
-                            }
-                            _ => {}
-                        }
-                    } else {
-                        match key.code {
-                            KeyCode::Esc if peek_open => {
-                                peek_open = false;
-                                peek_scroll = None;
-                                dirty = true;
-                            }
-                            KeyCode::Char('q') | KeyCode::Esc => {
-                                save_board_preferences(include_ended, view)?;
-                                return Ok(());
-                            }
-                            KeyCode::Char('/') => {
-                                search = Some(String::new());
-                                scroll = 0;
-                                needs_render = true;
-                                dirty = true;
-                            }
-                            // Watch a PR that no session is working on.
-                            KeyCode::Char('w') => {
-                                add_input = Some(String::new());
-                                add_error = None;
-                                dirty = true;
-                            }
-                            // Flip between one block per primary PR and one
-                            // block per session. Selection keys differ
-                            // between the views, so it starts fresh.
-                            KeyCode::Char('p') => {
-                                view.toggle_mode();
-                                save_board_preferences(include_ended, view)?;
-                                selected = None;
-                                peek_open = false;
-                                peek_scroll = None;
-                                peek_index = 0;
-                                scroll = 0;
-                                needs_render = true;
-                                dirty = true;
-                            }
-                            // Recap visibility and age filtering are independent.
-                            KeyCode::Char('r') => {
-                                view.toggle_recap();
-                                save_board_preferences(include_ended, view)?;
-                                needs_render = true;
-                                dirty = true;
-                            }
-                            KeyCode::Char('a') => {
-                                view.cycle_age();
-                                save_board_preferences(include_ended, view)?;
-                                scroll = 0;
-                                needs_render = true;
-                                dirty = true;
-                            }
-                            // Flip between live work and the durable cloud
-                            // record, which includes ended sessions. Both
-                            // views already share the account's other computers.
-                            KeyCode::Char('s') => {
-                                include_ended = !include_ended;
-                                save_board_preferences(include_ended, view)?;
-                                scroll = 0;
-                                last_refresh = Instant::now() - REFRESH_INTERVAL;
-                                last_frame_hash = 0;
-                            }
-                            // Fullscreen the selected live session and type
-                            // into it. Ctrl-] returns here.
-                            // Open a harness in the highlighted session's folder.
-                            KeyCode::Char('n')
-                                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-                            {
-                                match prepare_new_session(&spans, &mut selected, peek_index) {
-                                    Ok(target) => {
-                                        if let Some(span) = spans.iter().find(|span| {
-                                            selected.as_deref() == Some(span.key.as_str())
-                                        }) {
-                                            scroll = scroll_to_reveal(scroll, page, span)
-                                                .min(max_scroll);
-                                        }
-                                        new_session = Some(target);
-                                        spawn_notice = None;
-                                        dirty = true;
-                                    }
-                                    Err(message) => {
-                                        spawn_notice = Some(message);
-                                        dirty = true;
-                                    }
+                                KeyCode::Backspace => {
+                                    query.pop();
+                                    scroll = 0;
+                                    needs_render = true;
+                                    dirty = true;
                                 }
-                            }
-                            KeyCode::Char('f')
-                                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-                            {
-                                match open_attach(&spans, &mut selected, peek_index) {
-                                    Ok(session) => {
-                                        attach = Some(session);
-                                        attach_error = None;
-                                        dirty = true;
-                                    }
-                                    Err(Some(message)) => {
-                                        attach_error = Some(message);
-                                        dirty = true;
-                                    }
-                                    Err(None) => {}
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    // Enter toggles the quick look pane on the selected
-                    // session (selecting the first live one if none is yet) —
-                    // unless the add-a-watch input just consumed it.
-                    let selectable = selectable_positions(&spans);
-                    if !add_input_consumed && key.code == KeyCode::Enter {
-                        if peek_open {
-                            peek_open = false;
-                            peek_scroll = None;
-                            dirty = true;
-                        } else if !selectable.is_empty() {
-                            // A selection that has gone away falls back to the
-                            // first live row.
-                            let position =
-                                selected_position(&spans, &selectable, selected.as_deref())
-                                    .unwrap_or(0);
-                            let span = &spans[selectable[position]];
-                            selected = Some(span.key.clone());
-                            peek_open = true;
-                            peek_scroll = None;
-                            peek_index = 0;
-                            // The pane shrinks the page; keep the selection
-                            // in view within the new top half.
-                            let page = (height as usize)
-                                .saturating_sub(banner_rows)
-                                .saturating_sub(peek_pane_rows(height))
-                                .max(1);
-                            scroll = scroll_to_reveal(scroll, page, span);
-                            dirty = true;
-                        }
-                    }
-
-                    if peek_open {
-                        // While the pane is open, ↑↓ scroll the peeked
-                        // session's transcript and ←→ switch which session
-                        // the pane mirrors.
-                        let interior = peek_pane_rows(height).saturating_sub(2);
-                        let page_step = interior.saturating_sub(1).max(1) as isize;
-                        let delta: Option<isize> = match key.code {
-                            KeyCode::Up => Some(-1),
-                            KeyCode::Down => Some(1),
-                            KeyCode::PageUp => Some(-page_step),
-                            KeyCode::PageDown => Some(page_step),
-                            KeyCode::Char('k') if search.is_none() => Some(-1),
-                            KeyCode::Char('j') if search.is_none() => Some(1),
-                            _ => None,
-                        };
-                        if delta.is_some() || key.code == KeyCode::Home || key.code == KeyCode::End
-                        {
-                            let total = match selected_peek(&spans, selected.as_deref(), peek_index)
-                            {
-                                Some(target) if target.is_remote() => {
-                                    remote.scrollback.lines().count()
-                                }
-                                Some(target) => transcripts
-                                    .lines(&target.session_dir)
-                                    .map_or(0, <[String]>::len),
-                                None => 0,
-                            };
-                            let next = match (key.code, delta) {
-                                (KeyCode::Home, _) => (total > interior).then_some(0),
-                                (KeyCode::End, _) => None,
-                                (_, Some(delta)) => {
-                                    step_peek_scroll(peek_scroll, delta, total, interior)
-                                }
-                                _ => peek_scroll,
-                            };
-                            if next != peek_scroll {
-                                peek_scroll = next;
-                                dirty = true;
-                            }
-                        }
-                        let switch: Option<isize> = match key.code {
-                            KeyCode::Left => Some(-1),
-                            KeyCode::Right => Some(1),
-                            _ => None,
-                        };
-                        if let Some(step) = switch {
-                            // ←→ walk sessions that have a screen, including
-                            // one streaming from another computer: within a
-                            // PR-view row's sub-rows first, then into the
-                            // neighbors.
-                            if let Some((span, next_index)) = step_peek_target(
-                                &spans,
-                                &peekable_positions(&spans),
-                                selected.as_deref(),
-                                peek_index,
-                                step,
-                            ) {
-                                if selected.as_deref() != Some(span.key.as_str())
-                                    || next_index != peek_index
+                                KeyCode::Char(c)
+                                    if !key.modifiers.contains(KeyModifiers::CONTROL) =>
                                 {
-                                    selected = Some(span.key.clone());
-                                    peek_index = next_index;
+                                    query.push(c);
+                                    scroll = 0;
+                                    needs_render = true;
+                                    dirty = true;
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            match key.code {
+                                KeyCode::Esc if peek_open => {
+                                    peek_open = false;
                                     peek_scroll = None;
-                                    scroll = scroll_to_reveal(scroll, page, span).min(max_scroll);
                                     dirty = true;
                                 }
+                                KeyCode::Char('q') | KeyCode::Esc => {
+                                    save_board_preferences(include_ended, include_remote, view)?;
+                                    return Ok(());
+                                }
+                                KeyCode::Char('/') => {
+                                    search = Some(String::new());
+                                    scroll = 0;
+                                    needs_render = true;
+                                    dirty = true;
+                                }
+                                // Watch a PR that no session is working on.
+                                KeyCode::Char('w') => {
+                                    add_input = Some(String::new());
+                                    add_error = None;
+                                    dirty = true;
+                                }
+                                // Flip between one block per session and one block
+                                // per primary PR. Selection keys differ between
+                                // the views, so it starts fresh.
+                                KeyCode::Char('s') => {
+                                    view.toggle_mode();
+                                    save_board_preferences(include_ended, include_remote, view)?;
+                                    selected = None;
+                                    peek_open = false;
+                                    peek_scroll = None;
+                                    peek_index = 0;
+                                    scroll = 0;
+                                    needs_render = true;
+                                    dirty = true;
+                                }
+                                // Recap visibility and age filtering are independent.
+                                KeyCode::Char('r') => {
+                                    view.toggle_recap();
+                                    save_board_preferences(include_ended, include_remote, view)?;
+                                    needs_render = true;
+                                    dirty = true;
+                                }
+                                KeyCode::Char('a') => {
+                                    view.cycle_age();
+                                    save_board_preferences(include_ended, include_remote, view)?;
+                                    scroll = 0;
+                                    needs_render = true;
+                                    dirty = true;
+                                }
+                                // Flip between live work and the durable cloud
+                                // record, which includes ended sessions.
+                                KeyCode::Char('l') => {
+                                    include_ended = !include_ended;
+                                    save_board_preferences(include_ended, include_remote, view)?;
+                                    scroll = 0;
+                                    last_refresh = Instant::now() - REFRESH_INTERVAL;
+                                    last_frame_hash = 0;
+                                }
+                                // This computer, or this computer plus the
+                                // account's other computers.
+                                KeyCode::Char('o') => {
+                                    include_remote = !include_remote;
+                                    save_board_preferences(include_ended, include_remote, view)?;
+                                    scroll = 0;
+                                    last_refresh = Instant::now() - REFRESH_INTERVAL;
+                                    last_frame_hash = 0;
+                                }
+                                // Fullscreen the selected live session and type
+                                // into it. Ctrl-] returns here.
+                                // Open a harness in the highlighted session's folder.
+                                KeyCode::Char('n')
+                                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                                {
+                                    match prepare_new_session(&spans, &mut selected, peek_index) {
+                                        Ok(target) => {
+                                            if let Some(span) = spans.iter().find(|span| {
+                                                selected.as_deref() == Some(span.key.as_str())
+                                            }) {
+                                                scroll = scroll_to_reveal(scroll, page, span)
+                                                    .min(max_scroll);
+                                            }
+                                            new_session = Some(target);
+                                            spawn_notice = None;
+                                            dirty = true;
+                                        }
+                                        Err(message) => {
+                                            spawn_notice = Some(message);
+                                            dirty = true;
+                                        }
+                                    }
+                                }
+                                KeyCode::Char('f')
+                                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                                {
+                                    match open_attach(&spans, &mut selected, peek_index) {
+                                        Ok(session) => {
+                                            attach = Some(session);
+                                            attach_error = None;
+                                            dirty = true;
+                                        }
+                                        Err(Some(message)) => {
+                                            attach_error = Some(message);
+                                            dirty = true;
+                                        }
+                                        Err(None) => {}
+                                    }
+                                }
+                                _ => {}
                             }
                         }
-                    } else {
-                        // ↑↓ (plus j/k outside search) step the selection
-                        // through rows on this computer and on the account's
-                        // other computers. With nothing selectable they fall
-                        // back to line scrolling.
-                        let step: Option<isize> = match key.code {
-                            KeyCode::Up => Some(-1),
-                            KeyCode::Down => Some(1),
-                            KeyCode::Char('k') if search.is_none() => Some(-1),
-                            KeyCode::Char('j') if search.is_none() => Some(1),
-                            _ => None,
-                        };
-                        if let Some(step) = step {
-                            let position =
-                                selected_position(&spans, &selectable, selected.as_deref());
-                            if step < 0 && position == Some(0) {
-                                // Up from the top row clears the highlight
-                                // instead of pinning it there; Down starts a
-                                // fresh selection.
-                                selected = None;
-                                peek_index = 0;
+                        // Enter toggles the quick look pane on the selected
+                        // session (selecting the first live one if none is yet) —
+                        // unless the add-a-watch input just consumed it.
+                        let selectable = selectable_positions(&spans);
+                        if !add_input_consumed && key.code == KeyCode::Enter {
+                            if peek_open {
+                                peek_open = false;
+                                peek_scroll = None;
                                 dirty = true;
-                            } else if step < 0 && position.is_none() {
-                                // Up with nothing selected scrolls the board;
-                                // only Down enters the selection.
-                                let target = scroll.saturating_sub(1);
-                                if target != scroll {
-                                    scroll = target;
-                                    dirty = true;
-                                }
-                            } else {
-                                match step_selection(&spans, &selectable, selected.as_deref(), step)
-                                {
-                                    Some(span) => {
-                                        let moved = selected.as_deref() != Some(span.key.as_str());
-                                        let target =
-                                            scroll_to_reveal(scroll, page, span).min(max_scroll);
-                                        if moved || target != scroll {
-                                            selected = Some(span.key.clone());
-                                            peek_index = 0;
-                                            scroll = target;
-                                            dirty = true;
-                                        }
-                                    }
-                                    None => {
-                                        // Nothing selectable: Down falls back
-                                        // to line scrolling (Up scrolled
-                                        // above).
-                                        let target = (scroll + 1).min(max_scroll);
-                                        if target != scroll {
-                                            scroll = target;
-                                            dirty = true;
-                                        }
-                                    }
-                                }
+                            } else if !selectable.is_empty() {
+                                // A selection that has gone away falls back to the
+                                // first live row.
+                                let position =
+                                    selected_position(&spans, &selectable, selected.as_deref())
+                                        .unwrap_or(0);
+                                let span = &spans[selectable[position]];
+                                selected = Some(span.key.clone());
+                                peek_open = true;
+                                peek_scroll = None;
+                                peek_index = 0;
+                                // The pane shrinks the page; keep the selection
+                                // in view within the new top half.
+                                let page = (height as usize)
+                                    .saturating_sub(banner_rows)
+                                    .saturating_sub(peek_pane_rows(height))
+                                    .max(1);
+                                scroll = scroll_to_reveal(scroll, page, span);
+                                dirty = true;
                             }
                         }
 
-                        let target = match key.code {
-                            KeyCode::PageUp => scroll.saturating_sub(page.saturating_sub(2)),
-                            KeyCode::PageDown => scroll + page.saturating_sub(2),
-                            KeyCode::Home if search.is_none() => 0,
-                            KeyCode::End if search.is_none() => max_scroll,
-                            KeyCode::Char('g') if search.is_none() => 0,
-                            KeyCode::Char('G') if search.is_none() => max_scroll,
-                            _ => scroll,
-                        };
-                        let target = target.min(max_scroll);
-                        if target != scroll {
-                            scroll = target;
-                            dirty = true;
+                        if peek_open {
+                            // While the pane is open, ↑↓ scroll the peeked
+                            // session's transcript and ←→ switch which session
+                            // the pane mirrors.
+                            let interior = peek_pane_rows(height).saturating_sub(2);
+                            let page_step = interior.saturating_sub(1).max(1) as isize;
+                            let delta: Option<isize> = match key.code {
+                                KeyCode::Up => Some(-1),
+                                KeyCode::Down => Some(1),
+                                KeyCode::PageUp => Some(-page_step),
+                                KeyCode::PageDown => Some(page_step),
+                                KeyCode::Char('k') if search.is_none() => Some(-1),
+                                KeyCode::Char('j') if search.is_none() => Some(1),
+                                _ => None,
+                            };
+                            if delta.is_some()
+                                || key.code == KeyCode::Home
+                                || key.code == KeyCode::End
+                            {
+                                let total =
+                                    match selected_peek(&spans, selected.as_deref(), peek_index) {
+                                        Some(target) if target.is_remote() => {
+                                            remote.scrollback.lines().count()
+                                        }
+                                        Some(target) => transcripts
+                                            .lines(&target.session_dir)
+                                            .map_or(0, <[String]>::len),
+                                        None => 0,
+                                    };
+                                let next = match (key.code, delta) {
+                                    (KeyCode::Home, _) => (total > interior).then_some(0),
+                                    (KeyCode::End, _) => None,
+                                    (_, Some(delta)) => {
+                                        step_peek_scroll(peek_scroll, delta, total, interior)
+                                    }
+                                    _ => peek_scroll,
+                                };
+                                if next != peek_scroll {
+                                    peek_scroll = next;
+                                    dirty = true;
+                                }
+                            }
+                            let switch: Option<isize> = match key.code {
+                                KeyCode::Left => Some(-1),
+                                KeyCode::Right => Some(1),
+                                _ => None,
+                            };
+                            if let Some(step) = switch {
+                                // ←→ walk sessions that have a screen, including
+                                // one streaming from another computer: within a
+                                // PR-view row's sub-rows first, then into the
+                                // neighbors.
+                                if let Some((span, next_index)) = step_peek_target(
+                                    &spans,
+                                    &peekable_positions(&spans),
+                                    selected.as_deref(),
+                                    peek_index,
+                                    step,
+                                ) {
+                                    if selected.as_deref() != Some(span.key.as_str())
+                                        || next_index != peek_index
+                                    {
+                                        selected = Some(span.key.clone());
+                                        peek_index = next_index;
+                                        peek_scroll = None;
+                                        scroll =
+                                            scroll_to_reveal(scroll, page, span).min(max_scroll);
+                                        dirty = true;
+                                    }
+                                }
+                            }
+                        } else {
+                            // ↑↓ (plus j/k outside search) step the selection
+                            // through rows on this computer and on the account's
+                            // other computers. With nothing selectable they fall
+                            // back to line scrolling.
+                            let step: Option<isize> = match key.code {
+                                KeyCode::Up => Some(-1),
+                                KeyCode::Down => Some(1),
+                                KeyCode::Char('k') if search.is_none() => Some(-1),
+                                KeyCode::Char('j') if search.is_none() => Some(1),
+                                _ => None,
+                            };
+                            if let Some(step) = step {
+                                let position =
+                                    selected_position(&spans, &selectable, selected.as_deref());
+                                if step < 0 && position == Some(0) {
+                                    // Up from the top row clears the highlight
+                                    // instead of pinning it there; Down starts a
+                                    // fresh selection.
+                                    selected = None;
+                                    peek_index = 0;
+                                    dirty = true;
+                                } else if step < 0 && position.is_none() {
+                                    // Up with nothing selected scrolls the board;
+                                    // only Down enters the selection.
+                                    let target = scroll.saturating_sub(1);
+                                    if target != scroll {
+                                        scroll = target;
+                                        dirty = true;
+                                    }
+                                } else {
+                                    match step_selection(
+                                        &spans,
+                                        &selectable,
+                                        selected.as_deref(),
+                                        step,
+                                    ) {
+                                        Some(span) => {
+                                            let moved =
+                                                selected.as_deref() != Some(span.key.as_str());
+                                            let target = scroll_to_reveal(scroll, page, span)
+                                                .min(max_scroll);
+                                            if moved || target != scroll {
+                                                selected = Some(span.key.clone());
+                                                peek_index = 0;
+                                                scroll = target;
+                                                dirty = true;
+                                            }
+                                        }
+                                        None => {
+                                            // Nothing selectable: Down falls back
+                                            // to line scrolling (Up scrolled
+                                            // above).
+                                            let target = (scroll + 1).min(max_scroll);
+                                            if target != scroll {
+                                                scroll = target;
+                                                dirty = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            let target = match key.code {
+                                KeyCode::PageUp => scroll.saturating_sub(page.saturating_sub(2)),
+                                KeyCode::PageDown => scroll + page.saturating_sub(2),
+                                KeyCode::Home if search.is_none() => 0,
+                                KeyCode::End if search.is_none() => max_scroll,
+                                KeyCode::Char('g') if search.is_none() => 0,
+                                KeyCode::Char('G') if search.is_none() => max_scroll,
+                                _ => scroll,
+                            };
+                            let target = target.min(max_scroll);
+                            if target != scroll {
+                                scroll = target;
+                                dirty = true;
+                            }
                         }
+                    }
+                    if selection_offers_fullscreen(&spans, selected.as_deref()) != fullscreen_before
+                    {
+                        needs_render = true;
                     }
                 }
                 Event::Resize(..) => {
@@ -6590,7 +6678,8 @@ mod tests {
     }
 
     fn render_frame_at(entries: &[BoardPr], detail: u8) -> String {
-        render_frame_with_oldest(entries, detail, DEFAULT_OLDEST_VISIBLE_BUCKET)
+        // Content tests show every age. The interactive board opens at 24 hours.
+        render_frame_with_oldest(entries, detail, RecencyBucket::Older)
     }
 
     fn render_frame_with_oldest(
@@ -6622,9 +6711,32 @@ mod tests {
     }
 
     #[test]
-    fn header_offers_fullscreen() {
-        let frame = render_frame(&[]);
-        assert!(frame.contains(&format!("{UNDERLINE}f{RESET_UNDERLINE}ullscreen")));
+    fn header_offers_fullscreen_only_while_a_session_is_selected() {
+        let plain = crate::parsers::strip_ansi_for_debug(&render_frame(&[]));
+        assert!(
+            !plain.contains("fullscreen"),
+            "nothing is selected, so fullscreen is not offered: {plain}"
+        );
+
+        let cooldowns = Cooldowns::default();
+        let offered = render_at(
+            &[],
+            &[],
+            &[],
+            160,
+            false,
+            BoardView::default(),
+            RenderState {
+                now_ms: now_ms(),
+                loading: false,
+                cooldowns: &cooldowns,
+                include_remote: true,
+                offer_fullscreen: true,
+            },
+        )
+        .lines
+        .join("\n");
+        assert!(offered.contains(&format!("{UNDERLINE}f{RESET_UNDERLINE}ullscreen")));
     }
 
     #[test]
@@ -6676,16 +6788,24 @@ mod tests {
     #[test]
     fn header_mnemonic_underlines_the_key_inside_the_label() {
         assert_eq!(
-            header_mnemonic("p", "prs"),
-            format!("{UNDERLINE}p{RESET_UNDERLINE}rs")
+            header_mnemonic("s", "sessions"),
+            format!("{UNDERLINE}s{RESET_UNDERLINE}essions")
         );
         assert_eq!(
-            header_mnemonic("s", "live"),
-            format!("{UNDERLINE}s{RESET_UNDERLINE} live")
+            header_mnemonic("l", "live"),
+            format!("{UNDERLINE}l{RESET_UNDERLINE}ive")
         );
         assert_eq!(
-            header_mnemonic("s", "all sessions"),
-            format!("all {UNDERLINE}s{RESET_UNDERLINE}essions")
+            header_mnemonic("o", "local+remote"),
+            format!("l{UNDERLINE}o{RESET_UNDERLINE}cal+remote")
+        );
+        assert_eq!(
+            header_mnemonic("s", "prs"),
+            format!("pr{UNDERLINE}s{RESET_UNDERLINE}")
+        );
+        assert_eq!(
+            header_mnemonic("l", "all sessions"),
+            format!("a{UNDERLINE}l{RESET_UNDERLINE}l sessions")
         );
         assert_eq!(
             header_mnemonic("↑↓", "select"),
@@ -6695,24 +6815,29 @@ mod tests {
 
     #[test]
     fn header_shows_the_saved_view_controls() {
-        let styled = render_frame(&[]);
-        assert!(styled.contains(&format!("{UNDERLINE}s{RESET_UNDERLINE} live")));
-        assert!(styled.contains(&format!("{UNDERLINE}p{RESET_UNDERLINE}rs")));
+        let styled = render(&[], &[], &[], 160, false, BoardView::default())
+            .lines
+            .join("\n");
+        assert!(styled.contains(&format!("{UNDERLINE}l{RESET_UNDERLINE}ive")));
+        assert!(styled.contains(&format!("{UNDERLINE}s{RESET_UNDERLINE}essions")));
+        assert!(styled.contains(&format!("l{UNDERLINE}o{RESET_UNDERLINE}cal+remote")));
         assert!(styled.contains(&format!("{UNDERLINE}r{RESET_UNDERLINE} compact")));
-        assert!(styled.contains(&format!("{UNDERLINE}a{RESET_UNDERLINE}ll ages")));
+        assert!(styled.contains(&format!("{UNDERLINE}a{RESET_UNDERLINE}ge ≤ 24h")));
         assert!(styled.contains(&format!("{UNDERLINE}↑↓{RESET_UNDERLINE} select")));
         assert!(styled.contains(&format!("{UNDERLINE}⏎{RESET_UNDERLINE} peek")));
-        assert!(styled.contains(&format!("{UNDERLINE}f{RESET_UNDERLINE}ullscreen")));
+        assert!(!styled.contains("fullscreen"));
         assert!(styled.contains(&format!("{UNDERLINE}n{RESET_UNDERLINE}ew")));
         assert!(styled.contains(&format!("{UNDERLINE}/{RESET_UNDERLINE} search")));
         assert!(styled.contains(&format!("{UNDERLINE}w{RESET_UNDERLINE}atch")));
         assert!(styled.contains(&format!("{UNDERLINE}q{RESET_UNDERLINE}uit")));
         assert!(!styled.contains("linger"));
+        assert!(!styled.contains("PRs ·"));
         assert!(!styled.contains("+/-"));
 
         let frame = crate::parsers::strip_ansi_for_debug(&styled);
-        assert!(frame.contains("s live · prs · r compact · all ages"));
-        assert!(frame.contains("↑↓ select · ⏎ peek · fullscreen · new · / search · watch · quit"));
+        assert!(frame.contains("live · sessions · local+remote · r compact · age ≤ 24h"));
+        assert!(frame.contains("↑↓ select · ⏎ peek · new · / search · watch · quit"));
+        assert!(!frame.contains("fullscreen"));
         assert!(!frame.contains("r recap · a age · s live/all"));
         assert!(!frame.contains("e/c recap/compact"));
         assert!(!frame.contains("[/] age"));
@@ -6724,7 +6849,39 @@ mod tests {
         let all_sessions = render(&[], &[], &[], 160, true, BoardView::default())
             .lines
             .join("\n");
-        assert!(all_sessions.contains(&format!("all {UNDERLINE}s{RESET_UNDERLINE}essions")));
+        assert!(all_sessions.contains(&format!("a{UNDERLINE}l{RESET_UNDERLINE}l sessions")));
+
+        let prs = render(
+            &[],
+            &[],
+            &[],
+            160,
+            false,
+            BoardView::default().with_mode(BoardMode::Prs),
+        )
+        .lines
+        .join("\n");
+        assert!(prs.contains(&format!("pr{UNDERLINE}s{RESET_UNDERLINE}")));
+
+        let local = render_at(
+            &[],
+            &[],
+            &[],
+            160,
+            false,
+            BoardView::default(),
+            RenderState {
+                now_ms: now_ms(),
+                loading: false,
+                cooldowns: &Cooldowns::default(),
+                include_remote: false,
+                offer_fullscreen: false,
+            },
+        )
+        .lines
+        .join("\n");
+        assert!(local.contains(&format!("l{UNDERLINE}o{RESET_UNDERLINE}cal")));
+        assert!(!crate::parsers::strip_ansi_for_debug(&local).contains("local+remote"));
     }
 
     #[test]
@@ -6883,7 +7040,7 @@ mod tests {
             &[],
             160,
             false,
-            BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET).with_mode(BoardMode::Prs),
+            BoardView::new(detail, RecencyBucket::Older).with_mode(BoardMode::Prs),
         )
     }
 
@@ -6921,7 +7078,7 @@ mod tests {
             &workspace_rows,
             160,
             false,
-            BoardView::new(detail, DEFAULT_OLDEST_VISIBLE_BUCKET).with_mode(BoardMode::Sessions),
+            BoardView::new(detail, RecencyBucket::Older).with_mode(BoardMode::Sessions),
         )
     }
 
@@ -7097,11 +7254,13 @@ mod tests {
                 &[],
                 160,
                 false,
-                BoardView::new(DEFAULT_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET),
+                BoardView::new(DEFAULT_DETAIL, RecencyBucket::Older),
                 RenderState {
                     now_ms: at,
                     loading: false,
                     cooldowns,
+                    include_remote: true,
+                    offer_fullscreen: false,
                 },
             )
             .lines
@@ -7501,7 +7660,14 @@ mod tests {
                 preview_lines: Vec::new(),
             })
             .collect();
-        let rendered = render(&rows, &[], &[], 160, false, BoardView::default());
+        let rendered = render(
+            &rows,
+            &[],
+            &[],
+            160,
+            false,
+            BoardView::new(DEFAULT_DETAIL, RecencyBucket::Older),
+        );
         assert_eq!(rendered.spans.len(), 2, "every row gets a span");
 
         let selectable = selectable_positions(&rendered.spans);
@@ -7928,12 +8094,14 @@ mod tests {
                 now_ms: now_ms(),
                 loading: true,
                 cooldowns: &Cooldowns::default(),
+                include_remote: true,
+                offer_fullscreen: false,
             },
         )
         .lines
         .join("\n");
         let plain = crate::parsers::strip_ansi_for_debug(&loading);
-        assert!(plain.contains("Loading live sessions… 0 found"));
+        assert!(plain.contains("Loading live sessions…"));
         assert!(!plain.contains("No live sessions"));
     }
 
@@ -8027,14 +8195,20 @@ mod tests {
                 preview_lines: Vec::new(),
             })
             .collect();
-        let frame = render(&[], &[], &rows, 160, false, BoardView::default())
-            .lines
-            .join("\n");
+        let frame = render(
+            &[],
+            &[],
+            &rows,
+            160,
+            false,
+            BoardView::new(DEFAULT_DETAIL, RecencyBucket::Older),
+        )
+        .lines
+        .join("\n");
         let plain = crate::parsers::strip_ansi_for_debug(&frame);
         assert!(plain.lines().any(|line| line == "samuelclay/crabigator"));
         assert!(frame.contains(&format!("{}samuelclay/crabigator", fg(color::YELLOW))));
         assert!(frame.contains("sam/pr-board-session-rows"));
-        assert!(frame.contains("2 sessions"));
         assert!(!frame.contains("no tracked PR"));
         assert!(frame.contains("First active session"));
         assert!(frame.contains("Second active session"));
@@ -8133,9 +8307,16 @@ mod tests {
             })
             .collect();
         let plain = crate::parsers::strip_ansi_for_debug(
-            &render(&[], &[], &rows, 160, false, BoardView::default())
-                .lines
-                .join("\n"),
+            &render(
+                &[],
+                &[],
+                &rows,
+                160,
+                false,
+                BoardView::new(DEFAULT_DETAIL, RecencyBucket::Older),
+            )
+            .lines
+            .join("\n"),
         );
         assert!(plain.contains("samuelclay/crabigator · claymac-studio"));
         assert!(plain.contains("samuelclay/crabigator · claybook-m4"));
@@ -8208,6 +8389,98 @@ mod tests {
         );
         let portal_row = merged.iter().find(|entry| entry.pr.number == 8).unwrap();
         assert_eq!(portal_row.sessions[0].device_name, "claymac-tavus");
+    }
+
+    #[test]
+    fn local_view_hides_other_computers() {
+        let mut local_pr = board_pr(4, "crabigator");
+        make_primary(&mut local_pr);
+        local_pr.owner = "samuelclay".to_string();
+        let mut local = snapshot("crabigator", vec![local_pr.clone()]);
+        local.session_id = "local-session".to_string();
+        local.device_name = local_machine_name();
+        let local_entries = aggregate(std::slice::from_ref(&local), &ScopedOverrides::default());
+
+        let mut remote_other = test_session_ref("book-session", 20, false);
+        remote_other.device_name = "claybook-m4".to_string();
+        remote_other.title = "On the book".to_string();
+        let shared = BoardPr {
+            pr: local_pr,
+            sessions: vec![remote_other.clone()],
+            touching: Vec::new(),
+            slack_threads: Vec::new(),
+            stale: false,
+        };
+        let mut remote_only = board_pr(8, "developer-portal");
+        make_primary(&mut remote_only);
+        let mut portal_session = test_session_ref("portal-session", 30, false);
+        portal_session.device_name = "claybook-m4".to_string();
+        let portal = BoardPr {
+            pr: remote_only,
+            sessions: vec![portal_session],
+            touching: Vec::new(),
+            slack_threads: Vec::new(),
+            stale: false,
+        };
+        let cloud = (vec![shared, portal], Vec::new());
+
+        let (with_remote, _) = compose_board(
+            local_entries.clone(),
+            Vec::new(),
+            &HashMap::new(),
+            Some(&cloud),
+            false,
+            true,
+        );
+        let ids = |entries: &[BoardPr]| {
+            entries
+                .iter()
+                .flat_map(|entry| {
+                    entry
+                        .sessions
+                        .iter()
+                        .map(|session| session.session_id.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+        let remote_ids = ids(&with_remote);
+        assert!(remote_ids.iter().any(|id| id == "book-session"));
+        assert!(with_remote.iter().any(|entry| entry.pr.number == 8));
+
+        let (local_only, _) = compose_board(
+            local_entries,
+            Vec::new(),
+            &HashMap::new(),
+            Some(&cloud),
+            false,
+            false,
+        );
+        let local_ids = ids(&local_only);
+        assert!(local_ids.iter().any(|id| id == "local-session"));
+        assert!(!local_ids.iter().any(|id| id == "book-session"));
+        assert!(local_only.iter().all(|entry| entry.pr.number != 8));
+
+        let mut here = test_session_ref("here", 1, true);
+        here.device_name = "claymac-studio".to_string();
+        let mut there = test_session_ref("there", 1, true);
+        there.device_name = "claybook-m4".to_string();
+        let mut ended_pr = board_pr(3, "crabigator");
+        make_primary(&mut ended_pr);
+        let mut entries = vec![BoardPr {
+            pr: ended_pr,
+            sessions: vec![here, there],
+            touching: Vec::new(),
+            slack_threads: Vec::new(),
+            stale: true,
+        }];
+        let mut workspaces = Vec::new();
+        retain_this_machine(&mut entries, &mut workspaces, "claymac-studio");
+        let kept: Vec<_> = entries[0]
+            .sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect();
+        assert_eq!(kept, ["here"]);
     }
 
     #[test]
@@ -8548,17 +8821,22 @@ mod tests {
     #[test]
     fn recency_preferences_round_trip_every_cutoff() {
         for (hours, bucket) in [
+            (Some(0), RecencyBucket::Older),
             (Some(1), RecencyBucket::LastHour),
             (Some(3), RecencyBucket::LastThreeHours),
             (Some(6), RecencyBucket::LastSixHours),
             (Some(9), RecencyBucket::LastNineHours),
             (Some(12), RecencyBucket::LastTwelveHours),
             (Some(24), RecencyBucket::LastDay),
-            (None, RecencyBucket::Older),
         ] {
             assert_eq!(RecencyBucket::from_max_age_hours(hours), bucket);
             assert_eq!(bucket.max_age_hours(), hours);
         }
+        assert_eq!(
+            RecencyBucket::from_max_age_hours(None),
+            RecencyBucket::LastDay,
+            "an unset preference opens at 24 hours"
+        );
         assert_eq!(
             RecencyBucket::from_max_age_hours(Some(25)),
             RecencyBucket::Older,
@@ -8600,11 +8878,7 @@ mod tests {
             DEFAULT_DETAIL,
             RecencyBucket::LastSixHours,
         ));
-        assert!(six_hours
-            .lines()
-            .next()
-            .unwrap()
-            .contains("3 PRs · 3 sessions"));
+        assert!(!six_hours.contains("PRs ·"));
         assert!(six_hours.contains("age ≤ 6h"));
         assert!(six_hours.contains("● Last hour"));
         assert!(six_hours.contains("● 1–3 hours"));
@@ -8617,11 +8891,7 @@ mod tests {
             DEFAULT_DETAIL,
             RecencyBucket::LastHour,
         ));
-        assert!(last_hour
-            .lines()
-            .next()
-            .unwrap()
-            .contains("1 PRs · 1 sessions"));
+        assert!(!last_hour.contains("PRs ·"));
         assert!(last_hour.contains("age ≤ 1h"));
         assert!(last_hour
             .lines()
@@ -8677,7 +8947,6 @@ mod tests {
                     .lines
                     .join("\n"),
             );
-            assert!(frame.contains("2 sessions"));
             let header_row = frame
                 .lines()
                 .find(|line| line.contains("ᛝ  PR owner session"))
@@ -9965,7 +10234,7 @@ mod tests {
             &rows,
             160,
             false,
-            BoardView::new(MAX_DETAIL, DEFAULT_OLDEST_VISIBLE_BUCKET),
+            BoardView::new(MAX_DETAIL, RecencyBucket::Older),
         )
         .lines
         .join("\n");
@@ -9991,9 +10260,16 @@ mod tests {
             entry: &workspaces[0],
             preview_lines: Vec::new(),
         }];
-        let styled = render(&[], &[], &rows, 160, false, BoardView::default())
-            .lines
-            .join("\n");
+        let styled = render(
+            &[],
+            &[],
+            &rows,
+            160,
+            false,
+            BoardView::new(DEFAULT_DETAIL, RecencyBucket::Older),
+        )
+        .lines
+        .join("\n");
         assert!(styled.contains(&format!("{}◇ ", fg(color::PURPLE))));
         assert!(styled.contains(&format!("{}ᛝ  crabigator", fg(color::LIGHT_BLUE))));
     }

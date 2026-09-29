@@ -88,15 +88,16 @@ After each turn, Crabigator generates a short recap of what the assistant did �
   <img src="assets/pr-board-screenshot.png" alt="The crabigator prs board showing tracked PRs across sessions" width="800">
 </p>
 
-Board keys:
+Board keys. A letter that appears in the default label is underlined there.
 
-- `p` — Flip between session view (one row per session) and PR view (one block per primary PR, with every touching session beneath it)
+- `s` — Flip between session view and PR view. Session view is the default: one block per session, with the pull requests it touches underneath. PR view is one block per primary PR.
+- `l` — Toggle between live sessions and the durable cloud record, which includes ended sessions
+- `o` — This computer only, or this computer plus the account's other computers. The board opens on both.
+- `r` — Show or hide complete recaps
+- `a` — Cycle the activity age. The board opens at the last 24 hours.
 - `w` — Watch any PR by URL or `owner/repo#123`, session or not; "track PR <url>" typed in a session does the same
 - `/` — Search, including a grep of each live session's transcript with matched excerpts inline (Tab toggles surrounding context)
-- `r` — Show or hide complete recaps
-- `a` — Cycle through activity age filters
-- `s` — Toggle between live sessions and the durable cloud record
-- `+` / `-` — Widen or narrow the window of finished PRs kept on the board
+- `f` — Fullscreen the selected session and type into it. The header shows this only while a session is selected.
 
 The board saves these view choices between sessions. The full history also lives on the [dashboard's PR board](https://drinkcrabigator.com/dashboard).
 
@@ -211,10 +212,11 @@ recap_model = "claude-haiku-4-5"  # optional model override for recaps
 # url = "https://crabigator.example.com" # omit to use the official service
 
 [pr_board]                    # crabigator prs view preferences (saved automatically)
-include_ended = false         # open with durable ended sessions included
-detail = 1                    # 0 compact, 1 complete recaps
-linger_days = 1               # how long finished PRs stay on the board
-oldest_visible_hours = 9      # activity age filter; omit to show every age
+include_ended = false         # live sessions; true also shows ended ones
+include_remote = true         # include sessions on the account's other computers
+detail = 0                    # 0 compact, 1 complete recaps
+oldest_visible_hours = 24     # activity age filter; 0 shows every age
+view = "sessions"             # "sessions" or "prs"
 ```
 
 `crabigator cloud set` accepts HTTPS origins. It also accepts HTTP for loopback

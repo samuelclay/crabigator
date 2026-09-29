@@ -59,10 +59,14 @@ pub struct PrBoardPreferences {
     /// Whether the board opens with durable ended sessions included.
     #[serde(default)]
     pub include_ended: bool,
+    /// Whether sessions on the account's other computers are included.
+    /// Missing means they are.
+    #[serde(default = "default_true")]
+    pub include_remote: bool,
     /// Recap visibility: 0 = hidden, 1 = shown.
     #[serde(default)]
     pub detail: u8,
-    /// Oldest activity shown by default, in hours. None means all activity.
+    /// Oldest activity shown, in hours. None opens at 24 hours. 0 shows every age.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_visible_hours: Option<u64>,
     /// Which grouping the board opens in: "sessions" (one row per session)
@@ -80,13 +84,14 @@ fn default_platform() -> String {
 }
 
 fn default_pr_board_view() -> String {
-    "prs".to_string()
+    "sessions".to_string()
 }
 
 impl Default for PrBoardPreferences {
     fn default() -> Self {
         Self {
             include_ended: false,
+            include_remote: true,
             detail: 0,
             oldest_visible_hours: None,
             view: default_pr_board_view(),
@@ -226,9 +231,10 @@ mod tests {
     fn missing_pr_board_preferences_keep_the_existing_defaults() {
         let config: Config = toml::from_str("default_platform = \"codex\"").unwrap();
         assert!(!config.pr_board.include_ended);
+        assert!(config.pr_board.include_remote);
         assert_eq!(config.pr_board.detail, 0);
         assert_eq!(config.pr_board.oldest_visible_hours, None);
-        assert_eq!(config.pr_board.view, "prs");
+        assert_eq!(config.pr_board.view, "sessions");
         assert!(config.cloud.url.is_none());
     }
 
@@ -252,17 +258,19 @@ mod tests {
     fn pr_board_preferences_round_trip() {
         let mut config = Config::default();
         config.pr_board.include_ended = true;
+        config.pr_board.include_remote = false;
         config.pr_board.detail = 1;
         config.pr_board.oldest_visible_hours = Some(9);
-        config.pr_board.view = "sessions".to_string();
+        config.pr_board.view = "prs".to_string();
 
         let encoded = toml::to_string(&config).unwrap();
         let decoded: Config = toml::from_str(&encoded).unwrap();
         assert!(decoded.pr_board.include_ended);
+        assert!(!decoded.pr_board.include_remote);
         assert_eq!(decoded.pr_board.detail, 1);
         assert!(!encoded.contains("linger_days"));
         assert_eq!(decoded.pr_board.oldest_visible_hours, Some(9));
-        assert_eq!(decoded.pr_board.view, "sessions");
+        assert_eq!(decoded.pr_board.view, "prs");
     }
 
     #[test]
@@ -273,6 +281,7 @@ mod tests {
                 .unwrap();
 
         assert!(config.pr_board.include_ended);
+        assert!(config.pr_board.include_remote);
         assert_eq!(config.pr_board.detail, 3);
         assert_eq!(config.pr_board.oldest_visible_hours, None);
     }
