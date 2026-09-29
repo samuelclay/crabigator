@@ -48,7 +48,6 @@ export const prBoardCss = `
     margin-bottom: 14px;
 }
 .prb-hdr { color: #af87ff; font-weight: 700; font-size: 13px; white-space: nowrap; }
-.prb-counts { color: #585858; white-space: nowrap; }
 .prb-ctl { color: #585858; cursor: pointer; user-select: none; white-space: nowrap; }
 .prb-ctl:hover { color: #8a8a8a; }
 .prb-ctl.active { color: #ffd700; }

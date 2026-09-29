@@ -508,16 +508,16 @@ export const landingHtml = `<!DOCTYPE html>
                 <h2 class="section-title">PR Dashboard</h2>
                 <p class="section-subtitle">
                     Run <code>crabigator pr</code> to see every live session in one place.
-                    Pull requests sit on top. Each session has its own glyph.
+                    Each session sits on top, with the pull requests it touches underneath.
                 </p>
                 <ul class="interactive-features">
                     <li>
                         <span class="feature-icon">${iconPullRequest}</span>
-                        <span class="feature-text"><strong>One block per PR</strong>, with its sessions listed underneath</span>
+                        <span class="feature-text"><strong>One block per session</strong>, with its pull requests listed underneath</span>
                     </li>
                     <li>
                         <span class="feature-icon">${iconCheck}</span>
-                        <span class="feature-text"><strong>Press p</strong> to flip to session view</span>
+                        <span class="feature-text"><strong>Press s</strong> to flip to pull-request view</span>
                     </li>
                     <li>
                         <span class="feature-icon">${iconSearch}</span>
@@ -544,7 +544,6 @@ export const landingHtml = `<!DOCTYPE html>
                     <div class="prb-mock">
                         <div class="prb-mock-head">
                             <span class="prb-mock-hdr">PR board</span>
-                            <span class="prb-mock-counts">3 PRs · 5 sessions</span>
                             <span class="prb-mock-ctl on">live</span>
                             <span class="prb-mock-ctl">recaps</span>
                             <span class="prb-mock-ctl">24h</span>

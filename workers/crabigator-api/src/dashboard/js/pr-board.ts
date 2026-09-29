@@ -40,7 +40,7 @@ export const prBoardJs = `
         let prBoardPeekLines = [];
 
         // View preferences, mirroring the CLI's [pr_board] config keys.
-        const PRB_VIEW_DEFAULTS = { detail: 0, maxAgeHours: null, liveOnly: false, view: 'prs' };
+        const PRB_VIEW_DEFAULTS = { detail: 0, maxAgeHours: 24, liveOnly: false, view: 'sessions' };
         let prBoardViewPrefs = (() => {
             try {
                 const stored = JSON.parse(localStorage.getItem('crabigatorPrBoardView') || '{}');
@@ -135,9 +135,8 @@ export const prBoardJs = `
             ].join(' · ');
             return '<div class="prb-head">'
                 + '<span class="prb-hdr">⑆ Crabigator PR board</span>'
-                + '<span class="prb-counts" id="prb-counts"></span>'
-                + '<span class="prb-ctl" id="prb-ctl-live" onclick="prBoardToggleLive()" title="Only sessions running right now, or the full durable history (s)"></span>'
-                + '<span class="prb-ctl" id="prb-ctl-view" onclick="prBoardToggleView()" title="One row per session, or one block per primary PR with its sessions beneath (p)"></span>'
+                + '<span class="prb-ctl" id="prb-ctl-live" onclick="prBoardToggleLive()" title="Only sessions running right now, or the full durable history (l)"></span>'
+                + '<span class="prb-ctl" id="prb-ctl-view" onclick="prBoardToggleView()" title="One row per session, or one block per primary PR with its sessions beneath (s)"></span>'
                 + '<span class="prb-ctl" id="prb-ctl-recap" onclick="prBoardToggleRecap()" title="Show per-session recaps (r)"></span>'
                 + '<span class="prb-ctl" id="prb-ctl-age" onclick="prBoardCycleAge()" title="Hide rows idle longer than this (a)"></span>'
                 + '<span class="prb-keys">' + keys + '</span>'
@@ -277,9 +276,9 @@ export const prBoardJs = `
                 const el = document.getElementById('prb-add');
                 if (el) el.focus();
             } else if (e.key === 'r') prBoardToggleRecap();
-            else if (e.key === 'p') prBoardToggleView();
+            else if (e.key === 's') prBoardToggleView();
             else if (e.key === 'a') prBoardCycleAge();
-            else if (e.key === 's') prBoardToggleLive();
+            else if (e.key === 'l') prBoardToggleLive();
             else if (e.key === 'Escape' && prBoardQuery) prbClearSearch();
             else if (e.key === 'q' || e.key === 'Escape') togglePrBoard();
         });
@@ -344,14 +343,15 @@ export const prBoardJs = `
                 el.innerHTML = html;
             };
             set('prb-ctl-live', prBoardViewPrefs.liveOnly,
-                prbMnemonic('s', prBoardViewPrefs.liveOnly ? 'live' : 'all sessions'));
-            set('prb-ctl-view', prBoardViewPrefs.view !== 'prs',
-                prbMnemonic('p', prBoardViewPrefs.view === 'prs' ? 'prs' : 'sessions'));
+                prbMnemonic('l', prBoardViewPrefs.liveOnly ? 'live' : 'all sessions'));
+            set('prb-ctl-view', prBoardViewPrefs.view === 'prs',
+                prbMnemonic('s', prBoardViewPrefs.view === 'prs' ? 'prs' : 'sessions'));
             set('prb-ctl-recap', prBoardViewPrefs.detail === 1,
                 prbMnemonic('r', prBoardViewPrefs.detail === 1 ? 'recap' : 'compact'));
             const bucket = prBoardViewPrefs.maxAgeHours === null
                 ? null : PRB_BUCKETS.find(b => b.hours === prBoardViewPrefs.maxAgeHours);
-            set('prb-ctl-age', !!bucket, prbMnemonic('a', bucket ? 'age ≤ ' + bucket.ageLabel : 'all ages'));
+            set('prb-ctl-age', prBoardViewPrefs.maxAgeHours !== 24,
+                prbMnemonic('a', bucket ? 'age ≤ ' + bucket.ageLabel : 'all ages'));
         }
 
         function renderPrBoard() {
@@ -1616,20 +1616,6 @@ export const prBoardJs = `
                 visibleWs.push(item);
             }
 
-            const sessionKeys = new Set();
-            for (const item of visible) {
-                for (const s of item.sessions) sessionKeys.add(s.session_id || s.dir_name);
-            }
-            for (const item of visibleWs) {
-                sessionKeys.add(item.session.session_id || item.session.dir_name);
-            }
-            const prKeys = new Set();
-            for (const item of visible) {
-                const prsOf = item.kind === 'sessview' ? item.prs.map(sub => sub.entry) : [item.entry];
-                for (const e of prsOf) prKeys.add(e.owner + '/' + e.repo + '#' + e.number);
-            }
-            const counts = document.getElementById('prb-counts');
-            if (counts) counts.textContent = prKeys.size + ' PRs · ' + sessionKeys.size + ' sessions';
             const matched = visible.length + visibleWs.length;
             const matches = document.getElementById('prb-matches');
             if (matches) {

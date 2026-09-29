@@ -1888,7 +1888,6 @@ code, .mono {
     font-weight: 700;
     font-size: 13px;
 }
-.prb-mock-counts { color: #585858; }
 .prb-mock-ctl { color: #585858; }
 .prb-mock-ctl.on { color: #ffd700; }
 .prb-mock-search {
