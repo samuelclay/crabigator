@@ -2695,17 +2695,13 @@ impl App {
 
             // Handle incoming spawn requests
             while let Some(spawn_req) = client.try_recv_spawn() {
-                let window_id = ghostty_window_id.map(str::to_string);
-                // Spawn in a background thread so AppleScript cannot stall the event loop.
-                std::thread::spawn(move || {
-                    if let Err(e) = crate::terminal_spawner::spawn_terminal_in_window(
-                        &spawn_req.cwd,
-                        spawn_req.platform.as_deref(),
-                        window_id.as_deref(),
-                    ) {
-                        eprintln!("Failed to spawn terminal: {}", e);
-                    }
-                });
+                if let Err(error) = crate::terminal_spawner::spawn_terminal_detached(
+                    &spawn_req.cwd,
+                    spawn_req.platform.as_deref(),
+                    ghostty_window_id,
+                ) {
+                    eprintln!("Failed to spawn terminal: {error}");
+                }
             }
 
             // Handle incoming key sequences (for Tab instructions)

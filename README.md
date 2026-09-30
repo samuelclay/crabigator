@@ -109,6 +109,8 @@ The board saves these view choices between sessions. The full history also lives
 - <img src="assets/check-circle.svg" width="14" height="14"> All keyboard shortcuts work (Option+Arrow word navigation, etc.)
 - <img src="assets/check-circle.svg" width="14" height="14"> Clickable file links that open in your IDE (`ide` setting in config)
 
+When the Mac display is asleep, new Ghostty sessions start in the background so you can use them from the dashboard immediately. Ghostty attaches to the same session when the display wakes. This requires [tmux](https://github.com/tmux/tmux/wiki) (`brew install tmux`). The Mac must remain awake and connected to the network.
+
 ### <img src="assets/screens.svg" width="20" height="20"> Multi-Platform
 
 Supports [Claude Code](https://claude.ai/code) (Anthropic), [Codex CLI](https://github.com/openai/codex) (OpenAI), [opencode](https://opencode.ai), and [Grok](https://grok.com).

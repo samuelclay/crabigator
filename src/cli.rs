@@ -44,6 +44,7 @@ pub enum Command {
     Spawn {
         cwd: Option<String>,
         platform: Option<PlatformKind>,
+        window_id: Option<String>,
     },
 }
 
@@ -239,6 +240,7 @@ fn parse_spawn_command(args: Vec<String>) -> Command {
     let mut iter = args.into_iter();
     let mut cwd = None;
     let mut platform = None;
+    let mut window_id = None;
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -247,6 +249,9 @@ fn parse_spawn_command(args: Vec<String>) -> Command {
                     spawn_usage_error();
                 };
                 cwd = Some(dir);
+            }
+            "--window-id" => {
+                window_id = Some(iter.next().unwrap_or_else(|| spawn_usage_error()));
             }
             "--platform" | "-p" => {
                 let Some(value) = iter.next() else {
@@ -269,7 +274,11 @@ fn parse_spawn_command(args: Vec<String>) -> Command {
         }
     }
 
-    Command::Spawn { cwd, platform }
+    Command::Spawn {
+        cwd,
+        platform,
+        window_id,
+    }
 }
 
 fn parse_cloud_command(args: Vec<String>) -> CloudCommand {

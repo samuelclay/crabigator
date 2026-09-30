@@ -221,13 +221,21 @@ async fn main() -> Result<()> {
                 CloudCommand::Reset => cloud::reset_cloud(),
             };
         }
-        Command::Spawn { cwd, platform } => {
+        Command::Spawn {
+            cwd,
+            platform,
+            window_id,
+        } => {
             let cwd = cwd.unwrap_or_else(|| {
                 env::current_dir()
                     .map(|path| path.to_string_lossy().into_owned())
                     .unwrap_or_else(|_| ".".to_string())
             });
-            terminal_spawner::spawn_terminal(&cwd, platform.map(|kind| kind.as_str()))?;
+            terminal_spawner::spawn_terminal_in_window(
+                &cwd,
+                platform.map(|kind| kind.as_str()),
+                window_id.as_deref(),
+            )?;
             println!("Opened a new session in {cwd}");
             return Ok(());
         }
