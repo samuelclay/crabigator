@@ -65,20 +65,8 @@ const CWD_DETECTION_INTERVAL: Duration = Duration::from_millis(100);
 /// The server uses a much larger missed-heartbeat window before culling, so a
 /// single missed send does not hide a valid session.
 const CLOUD_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
-/// Gap between remote text injection and submit for most CLIs.
-const DEFAULT_REMOTE_ANSWER_SUBMIT_DELAY: Duration = Duration::from_millis(10);
-/// Codex treats a fast text+Enter burst as pasted multiline content, so keep
-/// the submit key outside its paste-burst window.
-const CODEX_REMOTE_ANSWER_SUBMIT_DELAY: Duration = Duration::from_millis(75);
-
-fn remote_answer_submit_delay(platform: PlatformKind) -> Duration {
-    match platform {
-        PlatformKind::Codex => CODEX_REMOTE_ANSWER_SUBMIT_DELAY,
-        PlatformKind::Claude | PlatformKind::Opencode | PlatformKind::Grok => {
-            DEFAULT_REMOTE_ANSWER_SUBMIT_DELAY
-        }
-    }
-}
+/// Give CLIs a moment to consume remote text before submitting it.
+const REMOTE_ANSWER_SUBMIT_DELAY: Duration = Duration::from_millis(10);
 
 /// Bytes to inject into the PTY for a named dashboard/MCP key.
 ///
@@ -105,8 +93,8 @@ fn cloud_key_bytes(key: &str) -> Option<&'static [u8]> {
 /// Encode a dashboard/MCP answer for the child prompt.
 ///
 /// Newlines must not be typed as Enter (`\r`), which submits.
-/// Claude, Codex, and opencode use Ctrl+J (`\n`). Grok uses Alt+Enter
-/// (`\x1b\r`) because Ctrl+J is a scroll binding there.
+/// Codex receives an explicit paste; Claude and opencode use Ctrl+J (`\n`).
+/// Grok uses Alt+Enter (`\x1b\r`) because Ctrl+J is a scroll binding there.
 fn encode_remote_answer(text: &str, platform: PlatformKind) -> Vec<u8> {
     let text = text.trim_end().replace("\r\n", "\n").replace('\r', "\n");
     if text.is_empty() {
@@ -114,7 +102,15 @@ fn encode_remote_answer(text: &str, platform: PlatformKind) -> Vec<u8> {
     }
     match platform {
         PlatformKind::Grok => text.replace('\n', "\x1b\r").into_bytes(),
-        PlatformKind::Claude | PlatformKind::Codex | PlatformKind::Opencode => text.into_bytes(),
+        // Explicit paste boundaries bypass Codex's timing-based paste detection,
+        // which otherwise turns the following Enter into another newline.
+        PlatformKind::Codex => [
+            escape::BRACKETED_PASTE_START,
+            text.as_bytes(),
+            escape::BRACKETED_PASTE_END,
+        ]
+        .concat(),
+        PlatformKind::Claude | PlatformKind::Opencode => text.into_bytes(),
     }
 }
 
@@ -2685,7 +2681,7 @@ impl App {
                 }
                 self.platform.note_user_input();
                 self.platform_pty.write(&bytes)?;
-                std::thread::sleep(remote_answer_submit_delay(platform_kind));
+                std::thread::sleep(REMOTE_ANSWER_SUBMIT_DELAY);
                 self.platform_pty.write(&[escape::key::CR])?;
             }
 
@@ -2933,7 +2929,7 @@ mod tests {
     fn remote_answer_normalizes_line_endings_and_trims_the_tail() {
         assert_eq!(
             encode_remote_answer("hello\r\nworld\n", PlatformKind::Codex),
-            b"hello\nworld"
+            b"\x1b[200~hello\nworld\x1b[201~"
         );
         assert!(encode_remote_answer("  \n", PlatformKind::Opencode).is_empty());
     }
