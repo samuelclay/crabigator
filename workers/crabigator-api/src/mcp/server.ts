@@ -12,6 +12,8 @@ import {
     McpToolError,
     type McpAuth,
 } from './session';
+import { listEvents, McpEventError } from './events';
+import { subscribeToEvent, unsubscribeFromEvent } from './subscriptions';
 import { formatScreen } from './text';
 import { handleMcpOAuth, isMcpOAuthPath, mcpAccessAllowed } from './oauth';
 import {
@@ -25,12 +27,19 @@ import {
 } from './log';
 
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
-const SUPPORTED_PROTOCOL_VERSIONS = new Set([
-    '2024-11-05',
-    '2025-03-26',
-    DEFAULT_PROTOCOL_VERSION,
+const PROTOCOL_VERSIONS = [
+    '2026-07-28',
     '2025-11-25',
-]);
+    DEFAULT_PROTOCOL_VERSION,
+    '2025-03-26',
+    '2024-11-05',
+];
+const SUPPORTED_PROTOCOL_VERSIONS = new Set(PROTOCOL_VERSIONS);
+const SERVER_INSTRUCTIONS =
+    'Crabigator MCP. List sessions, inspect screens, answer prompts, and drive the PR board. '
+    + 'You can subscribe to session events (session.state_changed, session.prompt, session.recap, '
+    + 'session.title_changed, session.prs_changed, session.commit, session.connected, session.ended) '
+    + 'and receive a webhook when one happens. If no desktops are linked, tell the user to run crabigator pair.';
 
 interface JsonRpcRequest {
     jsonrpc?: string;
@@ -183,19 +192,48 @@ async function handleRpc(
                 : DEFAULT_PROTOCOL_VERSION;
             return jsonRpcResult(id, {
                 protocolVersion,
-                capabilities: {
-                    tools: { listChanged: false },
-                    resources: { subscribe: false, listChanged: false },
-                },
+                capabilities: serverCapabilities(),
                 serverInfo: { name: 'crabigator', version: '0.1.0' },
-                instructions:
-                    'Crabigator MCP. List sessions, inspect screens, answer prompts, and drive the PR board. If no desktops are linked, tell the user to run crabigator pair.',
+                instructions: SERVER_INSTRUCTIONS,
             });
         }
+        case 'server/discover':
+            return jsonRpcResult(id, {
+                resultType: 'complete',
+                supportedVersions: PROTOCOL_VERSIONS,
+                capabilities: serverCapabilities(),
+                _meta: {
+                    'io.modelcontextprotocol/serverInfo': { name: 'crabigator', version: '0.1.0' },
+                },
+                instructions: SERVER_INSTRUCTIONS,
+                ttlMs: 3_600_000,
+                cacheScope: 'public',
+            });
         case 'ping':
             return jsonRpcResult(id, {});
         case 'tools/list':
             return jsonRpcResult(id, { tools: listToolDescriptors() });
+        case 'events/list':
+            return jsonRpcResult(id, listEvents(params));
+        case 'events/subscribe': {
+            const gated = requireLinked(auth, id);
+            if (gated) return gated;
+            try {
+                return jsonRpcResult(id, await subscribeToEvent(auth!, env, params));
+            } catch (error) {
+                return eventRpcError(id, error);
+            }
+        }
+        case 'events/unsubscribe': {
+            const gated = requireLinked(auth, id);
+            if (gated) return gated;
+            try {
+                await unsubscribeFromEvent(auth!, env, params);
+                return jsonRpcResult(id, {});
+            } catch (error) {
+                return eventRpcError(id, error);
+            }
+        }
         case 'tools/call': {
             const gated = requireLinked(auth, id);
             if (gated) return gated;
@@ -407,8 +445,33 @@ function jsonRpcResult(id: string | number | null, result: unknown) {
     return { jsonrpc: '2.0', id, result };
 }
 
-function jsonRpcError(id: string | number | null, code: number, message: string) {
-    return { jsonrpc: '2.0', id, error: { code, message } };
+function serverCapabilities() {
+    return {
+        tools: { listChanged: false },
+        resources: { subscribe: false, listChanged: false },
+        events: { listChanged: false },
+    };
+}
+
+function eventRpcError(id: string | number | null, error: unknown) {
+    if (error instanceof McpEventError) {
+        return jsonRpcError(id, error.code, error.message, error.data);
+    }
+    console.error('MCP event method failed', error);
+    return jsonRpcError(id, -32603, 'Internal error');
+}
+
+function jsonRpcError(
+    id: string | number | null,
+    code: number,
+    message: string,
+    data?: Record<string, unknown>,
+) {
+    return {
+        jsonrpc: '2.0',
+        id,
+        error: data ? { code, message, data } : { code, message },
+    };
 }
 
 function json(data: unknown, status = 200): Response {
@@ -457,6 +520,9 @@ function rpcLogFields(message: JsonRpcRequest): Partial<McpCallLog> {
     if (message.method === 'tools/call') {
         const args = summarizeArgs(params.arguments);
         return { tool: String(params.name || ''), ...args };
+    }
+    if (message.method === 'events/list' || message.method === 'events/subscribe' || message.method === 'events/unsubscribe') {
+        return { value: String(params.name || '') };
     }
     if (message.method === 'resources/read') {
         const uri = String(params.uri || '');

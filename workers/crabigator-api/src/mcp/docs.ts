@@ -11,6 +11,7 @@ import {
     iconPlug,
 } from '../landing/icons';
 import { SAMPLE_SESSION_ID, toolExamples, toolGroups, type ToolExample } from './examples';
+import { eventDefinitions, type McpEventDefinition } from './events';
 import { listToolDescriptors } from './tools';
 
 export const MCP_TOOLS_PATH = '/mcp-tools';
@@ -52,7 +53,8 @@ export function mcpLandingSectionHtml(): string {
                 <p class="section-subtitle">
                     Point Claude, Cursor, Grok, or any MCP client at your live Crabigator sessions.
                     Sign in with GitHub or Google. The agent can list sessions, read screens,
-                    answer prompts, and manage PRs. Same as the dashboard.
+                    answer prompts, and manage PRs. Clients that support MCP events can subscribe
+                    to session activity, such as a state change.
                 </p>
                 ${mcpConnectHtml()}
                 <a href="${MCP_TOOLS_PATH}" class="btn-primary" data-track="mcp_tools" data-label="landing">
@@ -203,7 +205,8 @@ export function renderMcpToolsHtml(runtime: RuntimeConfig, metaPixelId = ''): st
         <h1>MCP tools</h1>
         <p>
             Point an MCP client at the URL below. After GitHub or Google sign-in, it can call these ${tools.length} tools.
-            Each response is JSON returned as MCP text. The samples below are representative, not live data.
+            Clients that support MCP events can also subscribe to session activity, such as a state change, and receive a signed webhook.
+            Each tool response is JSON returned as MCP text. The samples below are representative, not live data.
         </p>
         ${mcpConnectHtml()}
     </header>
@@ -211,11 +214,15 @@ export function renderMcpToolsHtml(runtime: RuntimeConfig, metaPixelId = ''): st
     <div class="mcp-docs-layout">
         <aside class="mcp-toc">
             <div class="mcp-toc-label">Tools</div>
-            <input type="search" class="mcp-filter" id="mcp-filter" placeholder="Filter tools" aria-label="Filter tools">
+            <input type="search" class="mcp-filter" id="mcp-filter" placeholder="Filter tools and events" aria-label="Filter tools and events">
             <div class="mcp-toc-links">
                 <div class="mcp-toc-group">
                     <div class="mcp-toc-group-title">Diagnose</div>
                     <a href="#logs" data-tool="logs">Read the logs</a>
+                </div>
+                <div class="mcp-toc-group">
+                    <div class="mcp-toc-group-title">Events</div>
+                    ${eventDefinitions.map((event) => `<a href="#${escapeHtml(event.name)}" data-tool="${escapeHtml(event.name)}">${escapeHtml(event.name)}</a>`).join('')}
                 </div>
                 ${toolGroups.map((group) => `
                 <div class="mcp-toc-group">
@@ -226,6 +233,7 @@ export function renderMcpToolsHtml(runtime: RuntimeConfig, metaPixelId = ''): st
         </aside>
         <main>
             ${mcpLogsGuideHtml()}
+            ${eventDefinitions.map(eventCardHtml).join('')}
             ${tools.map(toolCardHtml).join('')}
         </main>
     </div>
@@ -256,6 +264,21 @@ export function renderMcpToolsHtml(runtime: RuntimeConfig, metaPixelId = ''): st
 </body>
 </html>`;
     return usePublicOrigin(html, runtime.origin);
+}
+
+function eventCardHtml(event: McpEventDefinition): string {
+    const filters = argumentRows(event.inputSchema as JsonSchema);
+    const fields = argumentRows(event.payloadSchema as JsonSchema);
+    return `
+            <article class="mcp-tool" id="${escapeHtml(event.name)}" data-search="${escapeHtml(`${event.name} ${event.description}`.toLowerCase())}">
+                <h2 class="mcp-tool-name">${escapeHtml(event.name)}</h2>
+                <p class="mcp-tool-desc">${escapeHtml(event.description)}</p>
+                <p class="mcp-tool-notes">Delivered as a signed webhook. Subscribe with <code>events/subscribe</code>. Filters narrow which sessions you hear about.</p>
+                <h3 class="mcp-subhead">Filters</h3>
+                ${filters || '<p class="mcp-empty">No filters. The subscription hears every session on the account.</p>'}
+                <h3 class="mcp-subhead">Event data</h3>
+                ${fields || '<p class="mcp-empty">No fields.</p>'}
+            </article>`;
 }
 
 function toolCardHtml(tool: { name: string; description: string; inputSchema: JsonSchema }): string {

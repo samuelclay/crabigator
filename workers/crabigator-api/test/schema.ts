@@ -96,5 +96,30 @@ export async function ensureAccountSchema(env: Env): Promise<void> {
                 PRIMARY KEY (session_id, owner, repo, number)
             )
         `),
+        env.DB.prepare(`
+            CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
+                id TEXT PRIMARY KEY,
+                principal TEXT NOT NULL,
+                account_id TEXT,
+                group_id TEXT NOT NULL,
+                event_name TEXT NOT NULL,
+                arguments_json TEXT NOT NULL,
+                callback_url TEXT NOT NULL,
+                secret TEXT NOT NULL,
+                previous_secret TEXT,
+                previous_secret_until INTEGER,
+                expires_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+        `),
+        env.DB.prepare(`
+            CREATE TABLE IF NOT EXISTS mcp_callback_verifications (
+                principal TEXT NOT NULL,
+                callback_url TEXT NOT NULL,
+                verified_until INTEGER NOT NULL,
+                PRIMARY KEY (principal, callback_url)
+            )
+        `),
     ]);
 }
