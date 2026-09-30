@@ -11,6 +11,15 @@ import type {
     StatsEvent,
 } from '../types/session';
 import type { Env } from '../types/env';
+import {
+    McpEventName,
+    commitEventData,
+    compactSessionPrs,
+    promptEventData,
+    recapEventData,
+    sessionDashboardUrl,
+} from '../mcp/events';
+import { deliverMcpEvent, type McpEventOccurrence } from '../mcp/subscriptions';
 
 // Named keys older desktops do not recognize. Send the PTY bytes as a
 // text step so a dashboard Option+Up still reaches Codex.
@@ -383,6 +392,10 @@ export class SessionDO implements DurableObject {
             if (this.hasActiveViewers()) {
                 this.notifyDesktopViewerStatus(true);
             }
+            this.publishMcp(McpEventName.connected, {
+                state: this.persistentState.state,
+                ...(deviceName ? { device_name: deviceName } : {}),
+            });
         }
 
         const pair = new WebSocketPair();
@@ -419,8 +432,36 @@ export class SessionDO implements DurableObject {
     }
 
     /**
-     * Notify SessionListDO about state changes
+     * Push one occurrence to MCP event subscriptions for this session's account.
+     * Screen and scrollback updates stay off this path; they are too frequent
+     * to deliver as webhooks. Delivery runs after the desktop event is stored.
      */
+    private publishMcp(name: string, data: Record<string, unknown>): void {
+        const groupId = this.sessionInfo?.group_id;
+        const sessionId = this.persistentState.sessionId || this.sessionInfo?.id;
+        if (!groupId || !sessionId) return;
+        const url = sessionDashboardUrl(this.env, sessionId);
+        const occurrence: McpEventOccurrence = {
+            eventId: `evt_${crypto.randomUUID().replace(/-/g, '')}`,
+            name,
+            timestamp: new Date().toISOString(),
+            data: {
+                session_id: sessionId,
+                platform: this.sessionInfo?.platform || '',
+                cwd: this.sessionInfo?.cwd || '',
+                title: this.persistentState.lastTitle || '',
+                ...(url ? { url } : {}),
+                ...data,
+            },
+            cursor: null,
+        };
+        this.state.waitUntil(
+            deliverMcpEvent(this.env, groupId, occurrence).catch((error) => {
+                console.error('MCP event delivery', error);
+            }),
+        );
+    }
+
     private notifySessionStateUpdate(sessionId: string, state: string): void {
         // Fire and forget - don't await to avoid blocking event handling
         const doId = this.env.SESSION_LIST.idFromName('global');
@@ -647,11 +688,12 @@ export class SessionDO implements DurableObject {
     private updateCommitHistoryFromGit(event: GitEvent): {
         persistentChanged: boolean;
         historyEvent: SessionEvent | null;
+        added: GitCommitInfo[];
     } {
         const recentCommits = event.recent_commits || [];
         const currentHead = recentCommits[0]?.hash;
         if (!currentHead) {
-            return { persistentChanged: false, historyEvent: null };
+            return { persistentChanged: false, historyEvent: null, added: [] as GitCommitInfo[] };
         }
 
         let persistentChanged = false;
@@ -674,8 +716,10 @@ export class SessionDO implements DurableObject {
                 : recentCommits.slice(0, previousIndex);
         }
 
+        let added: GitCommitInfo[] = [];
         if (newCommits.length > 0) {
-            historyChanged = this.appendCommitHistory(newCommits.slice().reverse());
+            added = this.appendCommitHistory(newCommits.slice().reverse());
+            historyChanged = added.length > 0;
             persistentChanged = persistentChanged || historyChanged;
         }
 
@@ -685,7 +729,7 @@ export class SessionDO implements DurableObject {
         }
 
         if (!historyChanged) {
-            return { persistentChanged, historyEvent: null };
+            return { persistentChanged, historyEvent: null, added: [] as GitCommitInfo[] };
         }
 
         return {
@@ -694,6 +738,7 @@ export class SessionDO implements DurableObject {
                 type: 'commit_history',
                 history: this.persistentState.lastCommitHistory || [],
             },
+            added,
         };
     }
 
@@ -704,23 +749,25 @@ export class SessionDO implements DurableObject {
         return recentCommits.filter(commit => commit.timestamp >= sessionStartedAt);
     }
 
-    private appendCommitHistory(commits: GitCommitInfo[]): boolean {
-        if (commits.length === 0) return false;
+    private appendCommitHistory(commits: GitCommitInfo[]): GitCommitInfo[] {
+        if (commits.length === 0) return [];
 
         const existing = this.persistentState.lastCommitHistory || [];
         const seenHashes = new Set(existing.map(commit => commit.hash));
         const merged = [...existing];
+        const added: GitCommitInfo[] = [];
 
         for (const commit of commits) {
             if (!commit.hash || seenHashes.has(commit.hash)) continue;
             merged.push(commit);
             seenHashes.add(commit.hash);
+            added.push(commit);
         }
 
-        if (merged.length === existing.length) return false;
+        if (!added.length) return [];
 
         this.persistentState.lastCommitHistory = merged.slice(-100);
-        return true;
+        return added;
     }
 
     /**
@@ -743,6 +790,7 @@ export class SessionDO implements DurableObject {
         switch (event.type) {
             case 'state':
                 if (this.persistentState.state !== event.state) {
+                    const previousState = this.persistentState.state;
                     this.persistentState.state = event.state;
                     persistentChanged = true;
                     // Clear prompt when leaving interactive states (permission/question)
@@ -754,6 +802,10 @@ export class SessionDO implements DurableObject {
                     if (this.sessionInfo) {
                         this.notifySessionStateUpdate(this.sessionInfo.id, event.state);
                     }
+                    this.publishMcp(McpEventName.stateChanged, {
+                        previous_state: previousState,
+                        state: event.state,
+                    });
                 }
                 break;
             case 'scrollback':
@@ -782,8 +834,13 @@ export class SessionDO implements DurableObject {
                 break;
             case 'title':
                 if (this.persistentState.lastTitle !== event.title) {
+                    const previousTitle = this.persistentState.lastTitle || '';
                     this.persistentState.lastTitle = event.title;
                     persistentChanged = true;
+                    this.publishMcp(McpEventName.titleChanged, {
+                        title: event.title,
+                        previous_title: previousTitle,
+                    });
                 }
                 break;
             case 'title_history': {
@@ -791,6 +848,15 @@ export class SessionDO implements DurableObject {
                 const changed = history !== JSON.stringify(this.persistentState.lastTitleHistory);
                 this.persistentState.lastTitleHistory = event.history;
                 persistentChanged = true;
+                const newest = event.history?.[event.history.length - 1] || '';
+                if (changed && newest && newest !== (this.persistentState.lastTitle || '')) {
+                    const previousTitle = this.persistentState.lastTitle || '';
+                    this.persistentState.lastTitle = newest;
+                    this.publishMcp(McpEventName.titleChanged, {
+                        title: newest,
+                        previous_title: previousTitle,
+                    });
+                }
                 // Persist to D1 for analytics. The change time rides along so
                 // the PR board can pick the newest title among a PR's sessions
                 // the way the desktop board does — which means only a real
@@ -822,6 +888,8 @@ export class SessionDO implements DurableObject {
                             .bind(brief, this.persistentState.sessionId)
                             .run()
                             .catch(() => {});
+                        const recap = recapEventData(event);
+                        if (recap) this.publishMcp(McpEventName.recap, recap);
                     }
                 }
                 break;
@@ -844,15 +912,27 @@ export class SessionDO implements DurableObject {
                 break;
             }
             case 'prs': {
-                this.persistentState.lastPrs = (event as any).prs || [];
+                const nextPrs = event.prs || [];
+                const previousPrs = JSON.stringify(compactSessionPrs(this.persistentState.lastPrs));
+                const compact = compactSessionPrs(nextPrs);
+                this.persistentState.lastPrs = nextPrs;
                 persistentChanged = true;
                 this.persistPrsToD1(this.persistentState.lastPrs || []);
+                if (JSON.stringify(compact) !== previousPrs) {
+                    this.publishMcp(McpEventName.prsChanged, { prs: compact });
+                }
                 break;
             }
             case 'git':
                 {
                     const gitEvent = event as GitEvent;
+                    const hadCommitHistory = (this.persistentState.lastCommitHistory?.length || 0) > 0;
                     const commitUpdate = this.updateCommitHistoryFromGit(gitEvent);
+                    if (hadCommitHistory) {
+                        for (const commit of commitUpdate.added) {
+                            this.publishMcp(McpEventName.commit, commitEventData(commit));
+                        }
+                    }
                     persistentChanged = persistentChanged || commitUpdate.persistentChanged;
                     if (commitUpdate.historyEvent) {
                         postBroadcastEvents.push(commitUpdate.historyEvent);
@@ -918,6 +998,9 @@ export class SessionDO implements DurableObject {
                 if (currentPromptJson !== newPromptJson) {
                     this.persistentState.currentPrompt = event.prompt;
                     persistentChanged = true;
+                    if (event.prompt) {
+                        this.publishMcp(McpEventName.prompt, promptEventData(event.prompt));
+                    }
                 }
                 break;
         }
@@ -1610,6 +1693,11 @@ export class SessionDO implements DurableObject {
                 SET is_active = 0, ended_at = ?
                 WHERE id = ? AND is_active = 1
             `).bind(endedAt, sessionId).run();
+            this.publishMcp(McpEventName.ended, {
+                state: this.persistentState.state,
+                ended_at: new Date(endedAt * 1000).toISOString(),
+                ...(this.sessionInfo.device_name ? { device_name: this.sessionInfo.device_name } : {}),
+            });
         } catch (error) {
             console.error('Error updating session in D1:', error);
         }
