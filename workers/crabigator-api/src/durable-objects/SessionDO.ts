@@ -1085,12 +1085,16 @@ export class SessionDO implements DurableObject {
 
         // Send screen snapshot (for immediate visual)
         // Note: This is ephemeral state - may be empty after DO hibernation
-        if (this.ephemeralState.lastScreen) {
+        if (this.ephemeralState.lastScreen !== null) {
             const screenEvent: SessionEvent = {
                 type: 'screen',
                 content: this.ephemeralState.lastScreen,
             };
             this.sendViewerEvent(viewer, screenEvent);
+        } else {
+            // An idle desktop will not send an unchanged screen on its own.
+            // Recover immediately on connect; viewer heartbeats retry if needed.
+            this.notifyDesktopViewerStatus(true);
         }
 
         // Send current state (persistent)
@@ -1574,9 +1578,10 @@ export class SessionDO implements DurableObject {
         if (!active && this.desktopNotifiedViewerActive === active) return;
         this.desktopNotifiedViewerActive = active;
 
-        const message = {
+        const message: CloudToDesktopMessage = {
             type: 'viewer_status',
             active,
+            refresh_screen: active && this.ephemeralState.lastScreen === null,
         };
 
         try {

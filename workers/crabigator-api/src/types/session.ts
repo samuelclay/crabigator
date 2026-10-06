@@ -484,6 +484,7 @@ export interface KeySequenceMessage {
 export interface ViewerStatusMessage {
     type: 'viewer_status';
     active: boolean;        // True if viewers are actively watching
+    refresh_screen?: boolean; // Resend the current screen after the cache is lost
 }
 
 /**
