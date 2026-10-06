@@ -1067,10 +1067,12 @@ impl App {
                     // Poll viewer status
                     if let Some(ref mut client) = self.cloud_client {
                         let was_active = self.cloud_viewers_active;
-                        self.cloud_viewers_active = client.poll_viewer_status();
+                        let viewer_status = client.poll_viewer_status();
+                        self.cloud_viewers_active = viewer_status.active;
 
-                        if !was_active && self.cloud_viewers_active {
-                            // Viewer just connected — flush all latest state
+                        if self.cloud_viewers_active && (!was_active || viewer_status.refresh_screen) {
+                            // A viewer arrived, or the cloud lost its screen while
+                            // hibernating. Resend even when the terminal is idle.
                             if let Ok(contents) = self.capture_manager.update_screen(self.platform_pty.screen()) {
                                 self.send_cloud_screen_event(contents);
                             }

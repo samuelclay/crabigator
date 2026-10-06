@@ -12,7 +12,7 @@ use tokio_tungstenite::{
     tungstenite::{http::Request, Message},
 };
 
-use super::events::{CloudEvent, CloudToDesktopMessage, KeyStep};
+use super::events::{CloudEvent, CloudToDesktopMessage, KeyStep, ViewerStatus};
 
 /// Spawn request received from cloud
 pub struct SpawnRequest {
@@ -31,7 +31,7 @@ pub struct CloudWebSocket {
     /// Receiver for incoming key sequences (multi-step)
     key_sequence_rx: mpsc::Receiver<Vec<KeyStep>>,
     /// Receiver for viewer status changes
-    viewer_status_rx: mpsc::Receiver<bool>,
+    viewer_status_rx: mpsc::Receiver<ViewerStatus>,
     /// Receiver for spawn requests
     spawn_rx: mpsc::Receiver<SpawnRequest>,
     /// Receiver for "PR dispositions changed" nudges
@@ -91,7 +91,7 @@ impl CloudWebSocket {
         let (key_sequence_tx, key_sequence_rx) = mpsc::channel::<Vec<KeyStep>>(16);
 
         // Channel for viewer status changes (cloud -> desktop)
-        let (viewer_status_tx, viewer_status_rx) = mpsc::channel::<bool>(4);
+        let (viewer_status_tx, viewer_status_rx) = mpsc::channel::<ViewerStatus>(4);
 
         // Channel for spawn requests (cloud -> desktop)
         let (spawn_tx, spawn_rx) = mpsc::channel::<SpawnRequest>(4);
@@ -135,8 +135,8 @@ impl CloudWebSocket {
                         Ok(CloudToDesktopMessage::KeySequence { steps }) => {
                             let _ = key_sequence_tx.send(steps).await;
                         }
-                        Ok(CloudToDesktopMessage::ViewerStatus { active }) => {
-                            let _ = viewer_status_tx.send(active).await;
+                        Ok(CloudToDesktopMessage::ViewerStatus(status)) => {
+                            let _ = viewer_status_tx.send(status).await;
                         }
                         Ok(CloudToDesktopMessage::Spawn { cwd, platform }) => {
                             let _ = spawn_tx.send(SpawnRequest { cwd, platform }).await;
@@ -172,7 +172,7 @@ pub struct WebSocketHandle {
     answer_rx: mpsc::Receiver<String>,
     key_rx: mpsc::Receiver<String>,
     key_sequence_rx: mpsc::Receiver<Vec<KeyStep>>,
-    viewer_status_rx: mpsc::Receiver<bool>,
+    viewer_status_rx: mpsc::Receiver<ViewerStatus>,
     spawn_rx: mpsc::Receiver<SpawnRequest>,
     pr_overrides_changed_rx: mpsc::Receiver<()>,
 }
@@ -225,7 +225,7 @@ impl WebSocketHandle {
     }
 
     /// Try to receive a viewer status change (non-blocking)
-    pub fn try_recv_viewer_status(&mut self) -> Option<bool> {
+    pub fn try_recv_viewer_status(&mut self) -> Option<ViewerStatus> {
         self.viewer_status_rx.try_recv().ok()
     }
 
@@ -237,5 +237,51 @@ impl WebSocketHandle {
     /// Check if the connection is still alive
     pub fn is_alive(&self) -> bool {
         !self.event_tx.is_closed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn viewer_heartbeats_deliver_refresh_requests_without_a_new_connection() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}/connect", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            for message in [
+                r#"{"type":"viewer_status","active":true}"#,
+                r#"{"type":"viewer_status","active":true,"refresh_screen":true}"#,
+                r#"{"type":"viewer_status","active":true,"refresh_screen":false}"#,
+            ] {
+                socket
+                    .send(Message::Text(message.to_string()))
+                    .await
+                    .unwrap();
+            }
+            socket.close(None).await.unwrap();
+        });
+
+        let mut socket = CloudWebSocket::connect(&url, "test-device", "test-signature", "0")
+            .await
+            .unwrap();
+        for refresh_screen in [false, true, false] {
+            let status =
+                tokio::time::timeout(Duration::from_secs(2), socket.viewer_status_rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                status,
+                ViewerStatus {
+                    active: true,
+                    refresh_screen
+                }
+            );
+        }
+        server.await.unwrap();
     }
 }

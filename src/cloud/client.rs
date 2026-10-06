@@ -814,13 +814,15 @@ impl CloudClient {
     }
 
     /// Poll for viewer status changes and update internal state
-    /// Returns true if there are active viewers watching
-    pub fn poll_viewer_status(&mut self) -> bool {
+    /// Keep refresh requests even if a later heartbeat needs no refresh.
+    pub fn poll_viewer_status(&mut self) -> super::events::ViewerStatus {
+        let mut refresh_screen = false;
         // Check for any status updates from the cloud
         if let Some(handle) = self.ws_handle.as_mut() {
-            while let Some(active) = handle.try_recv_viewer_status() {
-                self.viewer_active = active;
-                if active {
+            while let Some(status) = handle.try_recv_viewer_status() {
+                self.viewer_active = status.active;
+                refresh_screen |= status.refresh_screen;
+                if status.active {
                     self.last_viewer_active_at = Some(std::time::Instant::now());
                 }
             }
@@ -839,7 +841,10 @@ impl CloudClient {
             }
         }
 
-        self.viewer_active
+        super::events::ViewerStatus {
+            active: self.viewer_active,
+            refresh_screen,
+        }
     }
 
     /// Drain queued events after reconnection

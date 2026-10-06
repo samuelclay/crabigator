@@ -627,6 +627,14 @@ pub enum KeyStep {
     Delay { ms: u32 },
 }
 
+/// Viewer activity and a request to replace a missing cloud screen.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewerStatus {
+    pub active: bool,
+    #[serde(default)]
+    pub refresh_screen: bool,
+}
+
 /// Message from cloud to desktop (via WebSocket)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -644,7 +652,7 @@ pub enum CloudToDesktopMessage {
     /// Notify desktop that viewer activity status changed
     /// Desktop can use this to adjust streaming frequency
     #[serde(rename = "viewer_status")]
-    ViewerStatus { active: bool },
+    ViewerStatus(ViewerStatus),
     /// The group's PR dispositions changed (a ★/☆, ↑/↓, or ✕ click on the
     /// dashboard or an action link); the desktop should refetch them now
     /// instead of waiting for its next poll.
