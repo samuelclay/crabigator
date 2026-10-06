@@ -3472,7 +3472,10 @@ fn pr_view_session_row(
             left_styled,
             left_visible,
             (String::new(), 0, activity_width),
-            (String::new(), 0, widths.right_width()),
+            crate::ui::pr_cells::with_session_mark(
+                (String::new(), 0, widths.right_width()),
+                session.mark,
+            ),
         )
     )
 }
@@ -3566,7 +3569,10 @@ fn render_session_view_block(
         left_styled,
         left_visible,
         (activity.styled, activity.visible, activity_width),
-        (String::new(), 0, widths.right_width()),
+        crate::ui::pr_cells::with_session_mark(
+            (String::new(), 0, widths.right_width()),
+            session.mark,
+        ),
     );
     if entry.stale {
         row = format!("{}{row}", fg(color::DARK_GRAY));
@@ -4019,6 +4025,17 @@ fn render_at(
         let title = pr_row_title(entry);
         widths.include_board_identity(&entry.pr, &title, shared_width as usize);
     }
+    let mark_width = visible_entries
+        .iter()
+        .flat_map(|entry| entry.sessions.iter().map(|session| session.mark.width()))
+        .chain(
+            visible_session_indices
+                .iter()
+                .map(|&index| session_rows[index].entry.session.mark.width()),
+        )
+        .max()
+        .unwrap_or(0);
+    widths.include_board_detail_right(mark_width, shared_width as usize);
     for &index in &visible_workspace_indices {
         let entry = workspace_rows[index].entry;
         let (title, _) = workspace_title(entry);
@@ -4026,6 +4043,11 @@ fn render_at(
             &format!("◇  {}  {title}", entry.session.mark.glyph),
             &workspace_diff_text(entry),
             &workspace_branch_text(entry),
+            shared_width as usize,
+        );
+        let diff_width = workspace_diff_text(entry).width().min(widths.natural_diff);
+        widths.include_board_detail_right(
+            entry.session.mark.width() + if diff_width > 0 { diff_width + 2 } else { 0 },
             shared_width as usize,
         );
     }
@@ -9215,8 +9237,8 @@ mod tests {
         let mark = SessionMark::from_seed("developer-portal");
         assert_eq!(
             frame.matches(mark.glyph).count(),
-            2,
-            "each session row carries the identity chip: {frame}"
+            4,
+            "each session row repeats its identity chip at the right edge: {frame}"
         );
         for number in [1099, 2573] {
             let row = frame

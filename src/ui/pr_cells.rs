@@ -473,7 +473,10 @@ pub(crate) fn session_row_text_with_activity(
     let mut row = " ".repeat(PR_LEFT_PADDING);
     row.push_str(&cells_text(&left_cells));
 
-    let right_cells = [(styled_activity, activity_visible, activity_width), status];
+    let right_cells = [
+        (styled_activity, activity_visible, activity_width),
+        with_session_mark(status, mark),
+    ];
     let right_width = right_cells_width(&right_cells);
     if right_width > 0 {
         let gap = (width as usize)
@@ -485,6 +488,20 @@ pub(crate) fn session_row_text_with_activity(
         row.push_str(&right_cells_text(&right_cells));
     }
     row
+}
+
+/// Repeat the session chip at the right edge without crowding existing stats.
+pub(crate) fn with_session_mark(cell: PrCell, mark: SessionMark) -> PrCell {
+    let (text, visible, width) = cell;
+    let gap = width.saturating_sub(visible + mark.width());
+    if width < visible + mark.width() || (visible > 0 && gap == 0) {
+        return (text, visible, width);
+    }
+    (
+        format!("{text}{}{}", " ".repeat(gap), mark.chip()),
+        width,
+        width,
+    )
 }
 
 /// Render a PR-board detail row against the same left, activity, and GitHub
