@@ -34,6 +34,8 @@ use crate::slack::{extract_threads, has_only_channel_id, SlackDirectory, SlackTh
 /// Minimum time between `gh pr view` refreshes for a single PR, and between
 /// repeated lookups of the current branch.
 const REFRESH_THROTTLE: Duration = Duration::from_secs(30);
+/// Keep the two most recently used open PRs current while the session is busy.
+const PR_ACTIVE_WINDOW: Duration = Duration::from_secs(5 * 60);
 /// How often to poll GitHub from how recently *this PR* moved: every 10
 /// minutes for 30 minutes, every 30 minutes for 6 hours, then every 3 hours
 /// for 48 hours. Session activity speeds up only the few PRs touched most
@@ -675,6 +677,14 @@ struct IssueComment {
 struct ThreadNodes {
     #[serde(default)]
     nodes: Vec<ReviewThreadNode>,
+    #[serde(default, rename = "pageInfo")]
+    page_info: Option<ThreadPageInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadPageInfo {
+    #[serde(rename = "hasNextPage")]
+    has_next_page: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1570,7 +1580,7 @@ impl PrTracker {
     }
 
     /// Spawn a background read of one PR URL. Review threads come back in the
-    /// same response, so a refresh is a single GitHub call.
+    /// same response, following additional pages only for review threads.
     fn spawn_fetch(&mut self, url: String, created_here: bool) {
         let url_for_job = url.clone();
         self.spawn_pr_job(
@@ -2532,13 +2542,20 @@ fn refresh_activity_age(
     let session = (rank < HOT_SESSION_PR_LIMIT)
         .then_some(session_activity_at)
         .flatten();
-    activity_age(pr_active_elapsed, last_mentioned_at, session, now_ms)
+    activity_age(pr_active_elapsed, last_mentioned_at, session, now_ms).map(|age| {
+        if rank < HOT_SESSION_PR_LIMIT {
+            age
+        } else {
+            age.max(PR_ACTIVE_WINDOW)
+        }
+    })
 }
 
 /// How often to poll GitHub for one PR, from how recently it moved. `None`
 /// means the activity is too old to keep polling.
 fn status_refresh_interval(activity_age: Option<Duration>) -> Option<Duration> {
     match activity_age {
+        Some(age) if age < PR_ACTIVE_WINDOW => Some(REFRESH_THROTTLE),
         Some(age) if age < PR_HOT_WINDOW => Some(PR_HOT_THROTTLE),
         Some(age) if age < PR_WARM_WINDOW => Some(PR_WARM_THROTTLE),
         Some(age) if age < PR_COOL_WINDOW => Some(PR_COOL_THROTTLE),
@@ -2951,13 +2968,11 @@ const GH_JSON_FIELDS: &str =
     "number,title,headRefName,url,author,state,isDraft,additions,deletions,\
     changedFiles,mergeable,mergeStateStatus,reviewDecision,closedAt,updatedAt";
 
-/// One background read: PR status, CI counts, a few reviews, unresolved
-/// threads, and the first issue comments (where Slack links are posted).
-/// Page sizes stay small on purpose. GitHub charges for nodes requested,
-/// and `first: 100` on checks was enough to empty the hourly budget.
+/// PR status, aggregate CI counts, and every review thread. Only threads are
+/// paginated; check counts avoid enumerating expensive check-run connections.
 // A raw string on purpose. A `\` line continuation in a regular string
 // deletes the break and the indent, which glued `isDraft` to `additions`.
-const PR_READ_QUERY: &str = r#"query($owner:String!,$repo:String!,$number:Int!){
+const PR_READ_QUERY: &str = r#"query($owner:String!,$repo:String!,$number:Int!,$endCursor:String){
      rateLimit{limit remaining resetAt cost}
      repository(owner:$owner,name:$repo){
        pullRequest(number:$number){
@@ -2971,13 +2986,16 @@ const PR_READ_QUERY: &str = r#"query($owner:String!,$repo:String!,$number:Int!){
            checkRunCount checkRunCountsByState{state count}
            statusContextCount statusContextCountsByState{state count}
          }}}}}
-         reviewThreads(first:8){nodes{isResolved comments(first:1){nodes{url}}}}
+         reviewThreads(first:100,after:$endCursor){
+           nodes{isResolved comments(first:1){nodes{url}}}
+           pageInfo{hasNextPage endCursor}
+         }
          comments(first:6){nodes{body}}
        }
      }
    }"#;
 
-/// Full read of one PR URL: status, checks, and review threads in one call.
+/// Full read of one PR URL, following every page of review threads.
 fn fetch_pr(
     url: &str,
     reader: budget::Reader,
@@ -3042,6 +3060,8 @@ fn fetch_pr_graphql(
         &[
             "api",
             "graphql",
+            "--paginate",
+            "--slurp",
             "-f",
             &format!("query={PR_READ_QUERY}"),
             "-f",
@@ -3116,44 +3136,6 @@ fn gh_viewer_login() -> Option<&'static str> {
         .as_deref()
 }
 
-/// Standalone review-thread query for the ignored live test. The background
-/// read already includes a short page of threads.
-#[cfg(test)]
-const REVIEW_THREADS_QUERY: &str = r#"query($owner:String!,$repo:String!,$number:Int!){
-     repository(owner:$owner,name:$repo){
-       pullRequest(number:$number){
-         reviewThreads(first:20){nodes{isResolved comments(first:1){nodes{url}}}}
-         comments(first:20){nodes{body}}
-       }
-     }
-   }"#;
-
-/// Count a PR's unresolved review threads, and note where the first one lives.
-#[cfg(test)]
-fn fetch_review_threads(url: &str) -> Result<ReviewThreads, String> {
-    let caps = pr_url_re()
-        .captures(url)
-        .ok_or_else(|| format!("not a PR url: {url}"))?;
-    let output = run_gh(
-        budget::Reader::Session,
-        &[
-            "api",
-            "graphql",
-            "-f",
-            &format!("query={REVIEW_THREADS_QUERY}"),
-            "-f",
-            &format!("owner={}", &caps[1]),
-            "-f",
-            &format!("repo={}", &caps[2]),
-            // `-F` types the value, so `number` arrives as the Int! the query wants.
-            "-F",
-            &format!("number={}", &caps[3]),
-        ],
-        None,
-    )?;
-    parse_review_threads(&output.stdout)
-}
-
 struct ParsedPrRead {
     pr: GhPrJson,
     threads: ReviewThreads,
@@ -3165,6 +3147,13 @@ struct PrReadResponse {
     data: Option<PrReadData>,
     #[serde(default)]
     errors: Vec<GraphqlError>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PrReadOutput {
+    Pages(Vec<PrReadResponse>),
+    Single(Box<PrReadResponse>),
 }
 
 #[derive(Deserialize)]
@@ -3191,7 +3180,22 @@ struct RateLimitInfo {
 
 fn parse_rate_limit(json: &[u8]) -> Option<RateLimitInfo> {
     let response: serde_json::Value = serde_json::from_slice(json).ok()?;
-    serde_json::from_value(response.get("data")?.get("rateLimit")?.clone()).ok()
+    let pages = match &response {
+        serde_json::Value::Array(pages) => pages.as_slice(),
+        page => std::slice::from_ref(page),
+    };
+    let mut total_cost: u32 = 0;
+    let mut latest = None;
+    for page in pages {
+        if let Some(rate) = page.get("data").and_then(|data| data.get("rateLimit")) {
+            if let Ok(mut rate) = serde_json::from_value::<RateLimitInfo>(rate.clone()) {
+                total_cost = total_cost.saturating_add(rate.cost);
+                rate.cost = total_cost;
+                latest = Some(rate);
+            }
+        }
+    }
+    latest
 }
 
 #[derive(Deserialize)]
@@ -3290,8 +3294,33 @@ struct StateCount {
 /// Turn one cheap PR read into the same stats `gh pr view` used to provide,
 /// plus the review-thread badge.
 fn parse_pr_read(json: &[u8]) -> Result<ParsedPrRead, String> {
-    let response: PrReadResponse =
+    let output: PrReadOutput =
         serde_json::from_slice(json).map_err(|e| format!("gh json parse: {e}"))?;
+    let pages = match output {
+        PrReadOutput::Single(page) => vec![*page],
+        PrReadOutput::Pages(pages) => pages,
+    };
+    let mut pulls = pages.into_iter().map(pr_read_pull);
+    let mut pull = pulls
+        .next()
+        .ok_or_else(|| "gh json parse: missing PR pages".to_string())??;
+    for next in pulls {
+        let next = next?;
+        pull.review_threads.nodes.extend(next.review_threads.nodes);
+        pull.review_threads.page_info = next.review_threads.page_info;
+    }
+    if pull
+        .review_threads
+        .page_info
+        .as_ref()
+        .is_some_and(|page| page.has_next_page)
+    {
+        return Err("gh json parse: incomplete review threads".to_string());
+    }
+    Ok(pr_read_from_pull(pull))
+}
+
+fn pr_read_pull(response: PrReadResponse) -> Result<PrReadPull, String> {
     if let Some(error) = response
         .errors
         .into_iter()
@@ -3305,10 +3334,12 @@ fn parse_pr_read(json: &[u8]) -> Result<ParsedPrRead, String> {
     let data = response
         .data
         .ok_or_else(|| "gh json parse: missing data".to_string())?;
-    let pull = data
-        .repository
+    data.repository
         .and_then(|repository| repository.pull_request)
-        .ok_or_else(|| "Could not resolve to a PullRequest".to_string())?;
+        .ok_or_else(|| "Could not resolve to a PullRequest".to_string())
+}
+
+fn pr_read_from_pull(pull: PrReadPull) -> ParsedPrRead {
     let (passed, failed, pending) = tally_check_states(&pull.commits);
     let threads = review_threads_from(&pull.review_threads, &pull.comments);
     let pr = GhPrJson {
@@ -3332,7 +3363,7 @@ fn parse_pr_read(json: &[u8]) -> Result<ParsedPrRead, String> {
         status_check_rollup: Vec::new(),
         check_counts: Some((passed, failed, pending)),
     };
-    Ok(ParsedPrRead { pr, threads })
+    ParsedPrRead { pr, threads }
 }
 
 fn tally_check_states(commits: &CommitNodes) -> (i64, i64, i64) {
@@ -4632,7 +4663,9 @@ functions.wait {"cell_id":"17"}
     fn end_to_end_counts_review_threads() {
         let url = std::env::var("CRABIGATOR_PR_URL")
             .unwrap_or_else(|_| "https://github.com/rust-lang/rust/pull/135000".to_string());
-        let threads = fetch_review_threads(&url).expect("gh graphql query runs");
+        let (pr, threads) = fetch_pr_graphql(&url, budget::Reader::Session)
+            .expect("production paginated PR query runs");
+        eprintln!("CI counts (passed, failed, pending): {:?}", pr.check_counts);
         eprintln!(
             "{url}\n  unresolved={} first={}",
             threads.unresolved,
@@ -4951,6 +4984,45 @@ functions.wait {"cell_id":"17"}
     }
 
     #[test]
+    fn a_recent_prompt_or_completion_refreshes_ci_without_another_pr_mention() {
+        let mut tracker = PrTracker::new();
+        let now = now_unix_ms();
+        for number in 1..=3 {
+            let loc = PrLocation::new("o", "r", number);
+            let mut pr = SessionPr::placeholder(&loc, false);
+            pr.state = "OPEN".into();
+            pr.last_mentioned_at = now - number * 60_000;
+            pr.refreshed_at = now - 31_000;
+            tracker.prs.push(pr);
+        }
+        tracker.note_session_activity(Some(now as f64 / 1000.0));
+        for number in 1..=2 {
+            let url = tracker.next_open_refresh_url().expect("active PR is due");
+            assert!(url.ends_with(&format!("/pull/{number}")));
+            tracker.refresh_attempted_at.insert(url, Instant::now());
+        }
+        assert!(
+            tracker.next_open_refresh_url().is_none(),
+            "only two PRs poll quickly"
+        );
+
+        tracker.refresh_attempted_at.clear();
+        for pr in &mut tracker.prs {
+            pr.last_mentioned_at = now - 60 * 60_000;
+        }
+        tracker.note_session_activity(Some((now - 60 * 60_000) as f64 / 1000.0));
+        assert!(
+            tracker.next_open_refresh_url().is_none(),
+            "idle sessions slow down"
+        );
+        tracker.note_session_activity(Some(now as f64 / 1000.0));
+        assert!(
+            tracker.next_open_refresh_url().is_some(),
+            "a new completion wakes refreshes"
+        );
+    }
+
+    #[test]
     fn an_old_unloaded_pr_does_not_jump_ahead_of_recent_work() {
         let mut tracker = PrTracker::new();
         let now = now_unix_ms();
@@ -5140,6 +5212,56 @@ functions.wait {"cell_id":"17"}
             ),
             (4, 1, 3)
         );
+    }
+
+    #[test]
+    fn paginated_pr_reads_find_late_threads_and_charge_every_page() {
+        let page = |nodes: Vec<serde_json::Value>, more, remaining| {
+            serde_json::json!({
+                "data": {
+                    "rateLimit": {"limit":5000,"remaining":remaining,"cost":2,"resetAt":"2026-10-06T22:00:00Z"},
+                    "repository": {"pullRequest": {
+                        "number":1774,
+                        "reviewThreads": {"nodes":nodes,"pageInfo":{"hasNextPage":more}},
+                    }},
+                },
+            })
+        };
+        let first = page(
+            vec![serde_json::json!({"isResolved":true}); 100],
+            true,
+            4000,
+        );
+        let second = page(
+            vec![serde_json::json!({
+                "isResolved":false,"comments":{"nodes":[{"url":"https://github.com/o/r/pull/1774#discussion_r101"}]}
+            })],
+            false,
+            3998,
+        );
+        let bytes = serde_json::to_vec(&vec![&first, &second]).unwrap();
+        let single_page = serde_json::to_vec(&vec![&second]).unwrap();
+        assert_eq!(parse_pr_read(&single_page).unwrap().threads.unresolved, 1);
+        let parsed = parse_pr_read(&bytes).unwrap();
+        assert_eq!(parsed.threads.unresolved, 1);
+        assert!(parsed.threads.first_url.ends_with("#discussion_r101"));
+        let rate = parse_rate_limit(&bytes).unwrap();
+        assert_eq!(rate.cost, 4);
+        assert_eq!(rate.remaining, 3998);
+
+        let incomplete = serde_json::to_vec(&vec![&first]).unwrap();
+        assert!(
+            parse_pr_read(&incomplete).is_err(),
+            "partial threads must not look clean"
+        );
+        let failed = serde_json::to_vec(&vec![
+            first,
+            serde_json::json!({
+                "errors":[{"message":"Could not load the remaining review threads"}]
+            }),
+        ])
+        .unwrap();
+        assert!(parse_pr_read(&failed).is_err());
     }
 
     #[test]
