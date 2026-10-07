@@ -6,5 +6,6 @@ pub mod bubbles;
 pub mod engine;
 pub mod fire;
 pub mod rocket;
+pub mod ski;
 pub mod surf;
 pub mod warp;
