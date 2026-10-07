@@ -357,6 +357,86 @@ pub fn strip_ansi_len(s: &str) -> usize {
     len
 }
 
+/// Fit a row of text with colour codes to exactly `width` terminal cells.
+///
+/// Keeps SGR colour sequences (`ESC [ … m`) and drops every other escape
+/// sequence and control character, so a row can never move the cursor,
+/// clear the screen or wrap. Clips at `width` (a wide character that would
+/// cross the edge becomes a space), resets colours, and pads with spaces.
+/// Used for rows another program draws (the flow column), which land at the
+/// terminal's right edge, where one extra cell would wrap the bottom line.
+pub fn fit_ansi_to_width(s: &str, width: usize) -> String {
+    let mut out = String::with_capacity(s.len() + width + RESET.len());
+    let mut used = 0;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    let mut params = String::new();
+                    let mut end = None;
+                    for nc in chars.by_ref() {
+                        if ('\x40'..='\x7e').contains(&nc) {
+                            end = Some(nc);
+                            break;
+                        }
+                        params.push(nc);
+                    }
+                    let is_sgr = end == Some('m')
+                        && params
+                            .chars()
+                            .all(|p| p.is_ascii_digit() || p == ';' || p == ':');
+                    if is_sgr {
+                        out.push_str("\x1b[");
+                        out.push_str(&params);
+                        out.push('m');
+                    }
+                }
+                Some(']') => {
+                    // OSC: skip to BEL or ST.
+                    chars.next();
+                    while let Some(nc) = chars.next() {
+                        if nc == '\x07' {
+                            break;
+                        }
+                        if nc == '\x1b' {
+                            if chars.peek() == Some(&'\\') {
+                                chars.next();
+                            }
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    // A lone escape or a two-byte sequence: drop both.
+                    chars.next();
+                }
+            }
+            continue;
+        }
+        if c.is_control() {
+            continue;
+        }
+        let w = c.width().unwrap_or(0);
+        if w == 0 {
+            continue;
+        }
+        if used + w > width {
+            if used < width {
+                out.push(' ');
+                used += 1;
+            }
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    out.push_str(RESET);
+    out.extend(std::iter::repeat_n(' ', width.saturating_sub(used)));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,5 +562,32 @@ mod tests {
             compute_unique_display_names(&paths),
             vec![left.as_str(), right.as_str()]
         );
+    }
+
+    #[test]
+    fn fit_ansi_to_width_pads_short_rows() {
+        let out = fit_ansi_to_width("\x1b[38;2;255;0;0mab", 5);
+        assert_eq!(strip_ansi_len(&out), 5);
+        assert!(out.starts_with("\x1b[38;2;255;0;0mab"));
+        assert!(out.ends_with(&format!("{RESET}   ")));
+    }
+
+    #[test]
+    fn fit_ansi_to_width_clips_long_rows_and_keeps_colours() {
+        let out = fit_ansi_to_width("\x1b[38;2;1;2;3m░▒▓█░▒▓█\x1b[0m", 4);
+        assert_eq!(out, format!("\x1b[38;2;1;2;3m░▒▓█{RESET}"));
+    }
+
+    #[test]
+    fn fit_ansi_to_width_strips_cursor_moves_osc_and_controls() {
+        let out = fit_ansi_to_width("a\x1b[2Jb\x1b[5;5Hc\x1b]0;title\x07d\n\re\x1b7f", 6);
+        assert_eq!(out, format!("abcdef{RESET}"));
+    }
+
+    #[test]
+    fn fit_ansi_to_width_turns_a_wide_char_at_the_edge_into_a_space() {
+        let out = fit_ansi_to_width("ab漢", 3);
+        assert_eq!(out, format!("ab {RESET}"));
+        assert_eq!(strip_ansi_len(&out), 3);
     }
 }
