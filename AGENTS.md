@@ -142,7 +142,7 @@ This keeps module declarations visible at the top level rather than buried in su
 
 ### Input Handling
 
-- All keyboard input forwards directly to the PTY
+- All keyboard input forwards directly to the PTY, except ctrl+] while the flow column shows: it rotates the column's scene (the byte, 0x1d, reads as ctrl+5 without the kitty protocol)
 - Option/Alt key combinations are properly encoded for word navigation (Option+Left/Right) and word deletion (Option+Backspace/Delete)
 - When the assistant CLI exits, Crabigator exits automatically
 

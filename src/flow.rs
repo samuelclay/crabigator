@@ -77,6 +77,10 @@ pub struct FlowColumn {
     last_tick: Instant,
     /// The session's state as last seen (`None` before the first).
     state: Option<SessionState>,
+    /// The session's seed, for a new scene's randomness.
+    seed: f64,
+    /// The hue the session's mark asks for (`None`: natural colours).
+    target: Option<f64>,
 }
 
 impl FlowColumn {
@@ -88,9 +92,10 @@ impl FlowColumn {
         let target = claim::mark_accent(mark).and_then(|[r, g, b]| {
             palette::hue_of(&[(u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)])
         });
+        let seed = f64::from(claim::scene_seed(session_id));
         Self {
             def,
-            scene: (def.make)(f64::from(claim::scene_seed(session_id))),
+            scene: (def.make)(seed),
             palette: Palette::toward(def.hue, target),
             turned: Cells::new(0, 0),
             activity: Activity::default(),
@@ -100,12 +105,30 @@ impl FlowColumn {
             frame: None,
             last_tick: Instant::now(),
             state: None,
+            seed,
+            target,
         }
     }
 
     /// The scene this session shows.
     pub fn scene(&self) -> &'static str {
         self.def.name
+    }
+
+    /// Rotate to the next scene (ctrl+]), in the session's colour, and step
+    /// it once so it shows at once. Answers its name.
+    pub fn next_scene(&mut self) -> &'static str {
+        let all = scene::scenes();
+        let at = all
+            .iter()
+            .position(|def| def.name == self.def.name)
+            .unwrap_or(0);
+        let def = &all[(at + 1) % all.len()];
+        self.def = def;
+        self.scene = (def.make)(self.seed);
+        self.palette = Palette::toward(def.hue, self.target);
+        self.tick();
+        def.name
     }
 
     /// How long until the next frame: calm scenes step slower.
@@ -249,6 +272,8 @@ mod tests {
             frame: None,
             last_tick: Instant::now(),
             state: None,
+            seed: 7.0,
+            target: None,
         }
     }
 
@@ -289,6 +314,20 @@ mod tests {
         assert!(flow.activity.strength_faded(IDLE_GLOW) < 10.0);
         flow.sync_state(SessionState::Complete);
         assert_eq!(flow.activity.strength_faded(IDLE_GLOW), 10.0);
+    }
+
+    #[test]
+    fn the_next_scene_comes_round_to_the_first_again() {
+        let mut flow = column("fire");
+        flow.set_geometry(Some(rect(18, 6)));
+        let mut seen = vec![flow.scene()];
+        for _ in 1..scene::scenes().len() {
+            seen.push(flow.next_scene());
+            assert!(flow.has_frame());
+        }
+        let names: Vec<&str> = scene::scenes().iter().map(|def| def.name).collect();
+        assert_eq!(seen, names);
+        assert_eq!(flow.next_scene(), "fire");
     }
 
     #[test]

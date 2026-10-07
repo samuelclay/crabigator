@@ -70,6 +70,12 @@ flow keeps evolving. This log records which upstream commit the port matches, so
 - **Tools**: `scripts/` (preview, check, sync-manifest, new-scene, make-sounds). `scripts/flow-reference.ts` here plays the part `check` plays there.
 - **`hooks/pixel-scene.ts`**: no scene uses it yet. Port it with the first scene that does.
 
+## crabigator's own additions
+
+Not in flow, so keep them when porting upstream changes:
+- **ctrl+]** rotates the column's scene (`FlowColumn::next_scene`), and the separator above the column names the scene and the key.
+- Scenes are claimed per session (`claim.rs`), and the colour comes from the session mark.
+
 ## How the port stays exact
 
 flow's scenes are deterministic from a seed, so the port draws the same cells. The rules, kept in `src/flow/js.rs`:

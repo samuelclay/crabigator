@@ -15,6 +15,52 @@ use crate::terminal::escape;
 use super::utils::fit_ansi_to_width;
 use super::WidgetArea;
 
+/// What the status bar shows of the flow column: the frame's rows, and the
+/// label on the separator above it (the scene, and the key that rotates it).
+#[derive(Clone, Copy, Debug)]
+pub struct FlowView<'a> {
+    pub rows: &'a [String],
+    pub scene: &'a str,
+}
+
+/// The key that rotates the scene, as the label shows it.
+pub const NEXT_SCENE_KEY: &str = "⌃]";
+
+/// The label over the column: ` surf ⌃] `, or just the key when the name won't fit.
+pub fn flow_label(scene: &str, width: u16) -> String {
+    let full = format!(" {scene} {NEXT_SCENE_KEY} ");
+    if full.chars().count() + 2 <= usize::from(width) {
+        full
+    } else {
+        format!(" {NEXT_SCENE_KEY} ")
+    }
+}
+
+/// Write the label into the separator row above the column, right-aligned.
+pub fn draw_flow_label(
+    stdout: &mut dyn Write,
+    separator_row: u16,
+    total_cols: u16,
+    width: u16,
+    scene: &str,
+) -> Result<()> {
+    let label = flow_label(scene, width);
+    let len = label.chars().count() as u16;
+    if len + 1 > width {
+        return Ok(());
+    }
+    write!(
+        stdout,
+        "{}{}{}{}{}",
+        escape::cursor_to(separator_row, total_cols - len),
+        escape::bg(escape::color::BG_DARK),
+        escape::fg(escape::color::GRAY),
+        label,
+        escape::RESET
+    )?;
+    Ok(())
+}
+
 /// Where the flow column sits on screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FlowRect {
@@ -114,6 +160,12 @@ mod tests {
         )));
         // The cursor goes back where the assistant left it.
         assert!(text.contains(&format!("{}\x1b[1m", escape::cursor_to(5, 8))));
+    }
+
+    #[test]
+    fn the_label_names_the_scene_and_the_key_or_just_the_key() {
+        assert_eq!(flow_label("surf", 18), " surf ⌃] ");
+        assert_eq!(flow_label("starship", 12), " ⌃] ");
     }
 
     #[test]

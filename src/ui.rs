@@ -17,7 +17,7 @@ mod time;
 pub mod utils;
 
 pub use changes::{changes_natural_rows, draw_changes_widget};
-pub use flow::{draw_flow_column, FlowRect};
+pub use flow::{draw_flow_column, FlowRect, FlowView};
 pub use git::{draw_git_widget, git_natural_rows};
 pub use handoff::{
     draw_pr_handoff, draw_pr_separator, draw_recap_handoff, pr_handoff_rows, pr_separator_rows,

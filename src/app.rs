@@ -36,7 +36,7 @@ use crate::terminal::{
 use crate::ui::cooldown::{self, Cooldowns};
 use crate::ui::{
     compute_dynamic_status_rows, draw_flow_column, draw_status_bar, flow_column_rect, handoff_rows,
-    split_terminal_rows, throbber_frame_index, Layout, PairingState,
+    split_terminal_rows, throbber_frame_index, FlowView, Layout, PairingState,
 };
 use crate::update::{UpdateCheckResult, UpdateState};
 
@@ -1548,11 +1548,12 @@ impl App {
             self.total_cols.hash(&mut hasher);
             self.status_rows.hash(&mut hasher);
             self.attach_clients.hash(&mut hasher);
-            // Whether the flow column shows (its frames paint on their own).
-            self.flow
-                .as_ref()
-                .is_some_and(FlowColumn::has_frame)
-                .hash(&mut hasher);
+            // Whether the flow column shows, and its scene (named over it;
+            // its frames paint on their own).
+            if let Some(flow) = self.flow.as_ref() {
+                flow.has_frame().hash(&mut hasher);
+                flow.scene().hash(&mut hasher);
+            }
 
             // Session stats (key fields that affect display)
             // Use discriminant for enum since SessionState doesn't impl Hash
@@ -1693,7 +1694,12 @@ impl App {
             now_ms,
             self.session_mark,
             self.attach_clients > 0,
-            self.flow.as_ref().and_then(FlowColumn::frame_rows),
+            self.flow.as_ref().and_then(|flow| {
+                Some(FlowView {
+                    rows: flow.frame_rows()?,
+                    scene: flow.scene(),
+                })
+            }),
         )?;
         // Our colour resets end the assistant's text style: put it back.
         let _ = stdout.write_all(&self.platform_pty.screen().attributes_formatted());
@@ -2217,6 +2223,25 @@ impl App {
 
         if key.kind != crossterm::event::KeyEventKind::Press {
             return Ok(());
+        }
+
+        // ctrl+] rotates the flow column's scene while the column shows (it
+        // never reaches the assistant then). The byte it sends, 0x1d, reads
+        // as ctrl+5 without the kitty keyboard protocol.
+        let is_next_scene = key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5'));
+        if is_next_scene {
+            if let Some(flow) = self
+                .flow
+                .as_mut()
+                .filter(|flow| flow.drawn_rect().is_some())
+            {
+                let scene = flow.next_scene();
+                self.mirror_publisher.set_flow_scene(Some(scene));
+                self.last_status_bar_hash = None;
+                self.draw_status_bar()?;
+                return Ok(());
+            }
         }
 
         self.platform.note_user_input();

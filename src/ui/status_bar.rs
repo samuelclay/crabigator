@@ -21,7 +21,7 @@ use crate::title::session_title_hierarchy;
 use crate::update::UpdateState;
 
 use super::cooldown::{self, Cooldowns};
-use super::flow::{draw_flow_row, FlowRect};
+use super::flow::{draw_flow_label, draw_flow_row, FlowRect, FlowView};
 use super::{
     changes_natural_rows, draw_changes_widget, draw_git_widget, draw_pairing_banner,
     draw_pr_handoff, draw_pr_separator, draw_recap_handoff, draw_stats_widget, draw_update_banner,
@@ -273,7 +273,7 @@ pub fn draw_status_bar(
     now_ms: u64,
     session_mark: SessionMark,
     secondary_attached: bool,
-    flow_rows: Option<&[String]>,
+    flow: Option<FlowView>,
 ) -> Result<()> {
     // Begin synchronized update - terminal batches all our drawing
     // so cursor movements don't interfere with Claude's incremental updates
@@ -370,6 +370,10 @@ pub fn draw_status_bar(
         write!(stdout, "━")?;
     }
     write!(stdout, "{}", RESET)?;
+    // Over the flow column: its scene, and the key that rotates it.
+    if let (Some(view), Some(width)) = (flow, flow_column_width(layout.total_cols)) {
+        draw_flow_label(stdout, separator_row, layout.total_cols, width, view.scene)?;
+    }
     let is_paired = pairing_state.has_linked_devices;
     // No bottom footer any more — the entire status_rows budget goes to the
     // widget separator and widget content.
@@ -390,7 +394,7 @@ pub fn draw_status_bar(
         layout.total_cols,
         compact,
         git_needs_multi_column,
-        flow_rows.is_some(),
+        flow.is_some(),
     );
     let (stats_width, git_width, changes_width) = (widths.stats, widths.git, widths.changes);
     let titles = session_title_hierarchy(prs, terminal_title);
@@ -462,7 +466,7 @@ pub fn draw_status_bar(
         )?;
 
         // Flow column (rightmost, when it shows)
-        if let (Some(flow_width), Some(rows)) = (widths.flow, flow_rows) {
+        if let (Some(flow_width), Some(view)) = (widths.flow, flow) {
             write!(stdout, "{}│{}", escape::fg(color::DARK_GRAY), RESET)?;
             current_col += changes_width + 1;
             draw_flow_row(
@@ -474,7 +478,7 @@ pub fn draw_status_bar(
                     width: flow_width,
                     height: widget_status_rows,
                 },
-                rows.get(widget_row as usize - 1).map(String::as_str),
+                view.rows.get(widget_row as usize - 1).map(String::as_str),
             )?;
         }
     }
@@ -876,7 +880,10 @@ mod tests {
             0,
             SessionMark::from_seed("flow-draw"),
             false,
-            Some(&rows),
+            Some(FlowView {
+                rows: &rows,
+                scene: "surf",
+            }),
         )
         .unwrap();
         let mut parser = vt100::Parser::new(total_rows, total_cols, 0);
@@ -886,6 +893,11 @@ mod tests {
         // Nothing scrolled: the first row is still there.
         assert!(screen.contents().starts_with("top row"));
         let flow = flow_column_rect(&layout).unwrap();
+        // The separator over the column names the scene and the key.
+        let separator: String = (flow.col..total_cols)
+            .map(|c| screen.cell(31, c).unwrap().contents())
+            .collect();
+        assert!(separator.contains("surf ⌃]"), "{separator}");
         for r in 32..40u16 {
             assert_eq!(
                 screen.cell(r, flow.col - 1).unwrap().contents(),
