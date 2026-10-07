@@ -75,6 +75,7 @@ Real-time widgets below the assistant's interface show:
 - <img src="assets/folder.svg" width="14" height="14"> **Git status** — Modified, added, and deleted files
 - <img src="assets/dna.svg" width="14" height="14"> **Semantic diff** — Changes organized by the functions and classes they touch (Rust, TypeScript, Python, Swift, Objective-C)
 - <img src="assets/git-pull-request.svg" width="14" height="14"> **Session titles** — The primary PR title is official; Claude's or Codex's automatic title stays visible below it
+- <img src="assets/lightning.svg" width="14" height="14"> **Flow** — An ambient scene on the right that moves with the session: a fire, a starfield, a colony ship, a balloon, a steam engine, two rockets, surf, a ski run or bubbles. Each live session gets a different scene, in the colour of its identity chip. Every change of state (working, done, waiting for you) relights the scene, and it fades back over two minutes, so you can tell at a glance which sessions just changed and which have sat a while. The scenes are a Rust port of Rob Macrae's [flow](https://github.com/robdmac/flow). The column shows from 100 terminal columns; `[flow] enabled = false` turns it off.
 
 ### <img src="assets/scroll.svg" width="20" height="20"> Turn Recaps
 
@@ -146,7 +147,7 @@ To see whether a client call reached the server, call `get_mcp_logs` or follow [
 │                                     │
 ├─────────────────────────────────────┤
 │ Recap · Tracked PRs                 │  ← Handoff strip
-│ Stats │ Git Status │ File Changes   │  ← Status widgets
+│ Stats │ Git │ Changes │ Flow        │  ← Status widgets
 └─────────────────────────────────────┘
                 │
                 ▼
@@ -212,6 +213,9 @@ recap_model = "claude-haiku-4-5"  # optional model override for recaps
 
 [cloud]
 # url = "https://crabigator.example.com" # omit to use the official service
+
+[flow]
+enabled = true                # the ambient scene at the right of the widgets
 
 [pr_board]                    # crabigator prs view preferences (saved automatically)
 include_ended = false         # live sessions; true also shows ended ones
@@ -360,7 +364,8 @@ The desktop app is Rust; the cloud backend is a Cloudflare Workers project. The 
 |------|-------|------|
 | App loop | [`src/app.rs`](src/app.rs) | Scroll region layout, event polling, PTY passthrough |
 | Terminal | [`src/terminal/`](src/terminal.rs) | PTY management, input encoding, ANSI escape sequences |
-| Widgets | [`src/ui/`](src/ui.rs) | Status bar, git, changes, stats, handoff strip, pairing banners |
+| Widgets | [`src/ui/`](src/ui.rs) | Status bar, git, changes, stats, flow column, handoff strip, pairing banners |
+| Flow scenes | [`src/flow/`](src/flow.rs) | The ambient scenes, ported from [flow](https://github.com/robdmac/flow) ([fork log](src/flow/FORK.md)) |
 | Diff parsing | [`src/parsers/`](src/parsers.rs) | Semantic diffs per language, scope attribution |
 | Platforms | [`src/platforms/`](src/platforms.rs) | Claude Code hooks and transcript parsing; Codex session logs; opencode event stream; Grok session logs |
 | Recaps & PRs | [`src/recap.rs`](src/recap.rs), [`src/pr.rs`](src/pr.rs), [`src/prs_board.rs`](src/prs_board.rs) | Turn recaps, PR tracking and classification, the `prs` board |
@@ -393,7 +398,7 @@ npm run dev              # Local dev server
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License - see [LICENSE](LICENSE) for details. The flow scenes in `src/flow/` are ported from Rob Macrae's [flow](https://github.com/robdmac/flow), also MIT (see [src/flow/LICENSE](src/flow/LICENSE)).
 
 ---
 

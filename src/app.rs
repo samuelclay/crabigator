@@ -18,6 +18,7 @@ use tokio::time::interval;
 use crate::capture::{screen_to_string, CaptureConfig, CaptureManager, ScrollbackUpdate};
 use crate::cloud::{CloudClient, PairingSnapshot, PairingStatusResponse, SessionEventBuilder};
 use crate::config::Config;
+use crate::flow::FlowColumn;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::ide::{self, IdeKind};
@@ -34,8 +35,8 @@ use crate::terminal::{
 };
 use crate::ui::cooldown::{self, Cooldowns};
 use crate::ui::{
-    compute_dynamic_status_rows, draw_status_bar, handoff_rows, split_terminal_rows,
-    throbber_frame_index, Layout, PairingState,
+    compute_dynamic_status_rows, draw_flow_column, draw_status_bar, flow_column_rect, handoff_rows,
+    split_terminal_rows, throbber_frame_index, Layout, PairingState,
 };
 use crate::update::{UpdateCheckResult, UpdateState};
 
@@ -288,6 +289,8 @@ pub struct App {
     session_id: String,
     /// Colored identity chip shown in stats and on the PR board.
     session_mark: SessionMark,
+    /// The flow column's scene (`None` when `[flow] enabled = false`).
+    flow: Option<FlowColumn>,
     /// Number of cloud init retry attempts
     cloud_init_retry_count: u32,
     /// Last cloud init attempt time
@@ -336,10 +339,22 @@ impl App {
         // four widget data rows and one assistant PTY row when possible.
         let (pty_rows, status_rows) = split_terminal_rows(rows, initial_handoff_rows);
 
-        // Give the assistant CLI only the top portion
+        let config = Config::load().unwrap_or_default();
+        let flow_enabled = config.flow.enabled;
+
+        // Give the assistant CLI only the top portion. With the flow column
+        // on, CRABIGATOR_FLOW tells flow's Claude Code plugin (if installed)
+        // that crabigator draws the scene, so it doesn't show twice.
         let platform_args = platform.spawn_args(platform_args);
-        let platform_pty =
-            PlatformPty::new(pty_tx, cols, pty_rows, platform.command(), platform_args).await?;
+        let platform_pty = PlatformPty::new(
+            pty_tx,
+            cols,
+            pty_rows,
+            platform.command(),
+            platform_args,
+            &[("CRABIGATOR_FLOW", flow_enabled.then_some("1"))],
+        )
+        .await?;
         crate::cli::profile_mark("App::new: assistant CLI spawned in PTY");
         let git_state = GitState::new();
         let diff_summary = DiffSummary::new();
@@ -350,10 +365,10 @@ impl App {
         let cwd_str = cwd.to_string_lossy().to_string();
 
         // Detect IDE from config or environment
-        let ide = Config::load()
-            .ok()
-            .and_then(|c| c.ide)
-            .and_then(|s| IdeKind::from_config(&s))
+        let ide = config
+            .ide
+            .as_deref()
+            .and_then(IdeKind::from_config)
             .unwrap_or_else(ide::detect_ide);
 
         // Create mirror publisher (always enabled for inspection by other instances)
@@ -367,6 +382,10 @@ impl App {
             capture_enabled,
         );
         mirror_publisher.set_session_mark(session_mark);
+        // The flow column's scene is claimed now, beside the mark, so
+        // sessions starting together see each other's claims.
+        let flow = flow_enabled.then(|| FlowColumn::new(&session_id, session_mark));
+        mirror_publisher.set_flow_scene(flow.as_ref().map(FlowColumn::scene));
 
         // Worktree sessions scope their PR dispositions to the directory, so a
         // dismissal sticks for future sessions there without touching the
@@ -451,6 +470,7 @@ impl App {
             last_status_bar_hash: None,
             cooldowns: Cooldowns::default(),
             session_mark,
+            flow,
             session_id,
             cloud_init_retry_count: 0,
             last_cloud_init_attempt: None,
@@ -803,6 +823,10 @@ impl App {
             None => (None, None),
         };
         let mut attach_live = attach_rx.is_some();
+
+        // The flow column's frames, at the scene's own pace.
+        let flow_sleep = tokio::time::sleep(Duration::from_millis(70));
+        tokio::pin!(flow_sleep);
 
         // Event-driven main loop using tokio::select!
         // This replaces the polling loop - we only wake up when something actually happens
@@ -1177,12 +1201,41 @@ impl App {
                     }
                 }
 
+                // The flow column: step the scene and paint just the column,
+                // or the whole bar when the column first appears.
+                () = &mut flow_sleep, if self.flow.is_some() => {
+                    let (change, pace) = match self.flow.as_mut() {
+                        Some(flow) => (flow.tick(), flow.pace()),
+                        None => Default::default(),
+                    };
+                    flow_sleep
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + pace);
+                    if change.column_toggled {
+                        self.last_status_bar_hash = None;
+                    }
+                    if last_pty_output.elapsed() >= PTY_SETTLE_TIME {
+                        if self.last_status_bar_hash.is_none() {
+                            self.draw_status_bar()?;
+                            last_status_draw = Instant::now();
+                        } else if change.new_frame {
+                            self.draw_flow_column();
+                        }
+                    }
+                }
+
                 // Termination signals — break out of the loop so the cleanup
                 // path below (and main.rs::restore_terminal) restores the
                 // terminal before the process exits.
                 _ = term_signals.recv() => {
                     self.running = false;
                 }
+            }
+
+            // Each change of the session's state relights the flow scene,
+            // whichever path noticed it (hooks, the screen, a key).
+            if let Some(flow) = self.flow.as_mut() {
+                flow.sync_state(self.session_stats.effective_state());
             }
 
             // Check if the platform CLI has exited
@@ -1372,7 +1425,7 @@ impl App {
             self.pr_tracker.prs(),
             self.pr_tracker.slack_threads(),
             handoff,
-            false,
+            self.flow.as_ref().is_some_and(FlowColumn::has_frame),
         );
 
         // The handoff grows with the PR list, so pty_rows can change even when
@@ -1443,6 +1496,19 @@ impl App {
             self.cooldowns.observe_pr(pr, now_ms);
         }
 
+        // Where the flow column goes for this layout: its size for the next
+        // frame, and where the screen shows it once it has one.
+        if let Some(flow) = self.flow.as_mut() {
+            let rect = flow_column_rect(&Layout {
+                pty_rows: self.pty_rows,
+                total_cols: self.total_cols,
+                status_rows: self.status_rows,
+                handoff_rows,
+            });
+            flow.set_geometry(rect);
+            flow.set_drawn(if flow.has_frame() { rect } else { None });
+        }
+
         // Compute hash of status bar inputs to detect changes
         let current_hash = {
             use std::hash::{Hash, Hasher};
@@ -1453,6 +1519,11 @@ impl App {
             self.total_cols.hash(&mut hasher);
             self.status_rows.hash(&mut hasher);
             self.attach_clients.hash(&mut hasher);
+            // Whether the flow column shows (its frames paint on their own).
+            self.flow
+                .as_ref()
+                .is_some_and(FlowColumn::has_frame)
+                .hash(&mut hasher);
 
             // Session stats (key fields that affect display)
             // Use discriminant for enum since SessionState doesn't impl Hash
@@ -1593,8 +1664,11 @@ impl App {
             now_ms,
             self.session_mark,
             self.attach_clients > 0,
-            None,
+            self.flow.as_ref().and_then(FlowColumn::frame_rows),
         )?;
+        // Our colour resets end the assistant's text style: put it back.
+        let _ = stdout.write_all(&self.platform_pty.screen().attributes_formatted());
+        let _ = stdout.flush();
 
         // The transcript path arrives with the first hook/session event, so keep
         // the mirror's copy current for anyone tracing this session back to its log.
@@ -1624,6 +1698,25 @@ impl App {
         );
 
         Ok(())
+    }
+
+    /// Repaint just the flow column with its latest frame, between full
+    /// status-bar draws. Errors are ignored: the scene is decoration.
+    fn draw_flow_column(&mut self) {
+        let Some(flow) = self.flow.as_ref() else {
+            return;
+        };
+        let (Some(rect), Some(rows)) = (flow.drawn_rect(), flow.frame_rows()) else {
+            return;
+        };
+        let screen = self.platform_pty.screen();
+        let _ = draw_flow_column(
+            &mut stdout(),
+            rect,
+            rows,
+            Some(screen.cursor_position()),
+            &screen.attributes_formatted(),
+        );
     }
 
     /// Handle PTY output capture and cloud streaming
@@ -1872,6 +1965,9 @@ impl App {
         self.session_stats
             .refresh_platform_stats(self.platform.as_ref(), &self.stats_cwd.to_string_lossy());
         self.herdr.sync(&self.session_stats, self.platform.kind());
+        if let Some(flow) = self.flow.as_mut() {
+            flow.observe_stats(&self.session_stats.platform_stats);
+        }
         let new_effective_state = self.session_stats.effective_state();
         let new_last_updated = self.session_stats.platform_stats.last_updated;
         self.maybe_update_cwd(true);
@@ -2136,7 +2232,7 @@ impl App {
             self.pr_tracker.prs(),
             self.pr_tracker.slack_threads(),
             new_handoff_rows,
-            false,
+            self.flow.as_ref().is_some_and(FlowColumn::has_frame),
         );
         self.status_rows = new_status_rows;
         self.pty_rows = self

@@ -24,6 +24,7 @@ impl PlatformPty {
         rows: u16,
         command: &str,
         extra_args: Vec<String>,
+        env_overrides: &[(&str, Option<&str>)],
     ) -> Result<Self> {
         let pty_system = native_pty_system();
 
@@ -71,6 +72,14 @@ impl PlatformPty {
 
         // Override TERM for proper terminal support
         cmd.env("TERM", "xterm-256color");
+
+        // Variables crabigator sets (Some) or clears (None) for the assistant.
+        for (key, value) in env_overrides {
+            match value {
+                Some(value) => cmd.env(key, value),
+                None => cmd.env_remove(key),
+            }
+        }
 
         let child = pair.slave.spawn_command(cmd)?;
         let child = Arc::new(Mutex::new(child));
