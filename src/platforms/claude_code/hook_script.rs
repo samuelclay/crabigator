@@ -8,13 +8,10 @@ pub const HOOK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Python hook script content (loaded from stats_hook.py at compile time)
 ///
-/// Handles these Claude Code events:
-/// - PermissionRequest: Permission dialog shown
-/// - PostToolUse: Tool execution completed
-/// - Stop: Claude finished responding
-/// - SubagentStop: Subagent task completed
-/// - PreCompact: Context compression triggered
-/// - UserPromptSubmit: User submitted input
+/// Registered for every hook event in `HOOK_EVENTS` (claude_code.rs). Each
+/// event appends a line to the session's `activity.jsonl` for the flow
+/// column; the events that move the session's state or counters also update
+/// the stats file.
 pub const HOOK_SCRIPT: &str = include_str!("stats_hook.py");
 
 /// Get the hook script content with version embedded

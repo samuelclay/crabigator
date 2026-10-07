@@ -160,6 +160,7 @@ Each crabigator session creates `/tmp/crabigator-{session_id}/` containing:
 - **screen.txt**: Current screen snapshot from the vt100 parser (updated ~100ms)
 - **inspect.json**: Widget state for external inspection (updated ~1s when changed)
 - **hooks.log**: Debug log of hook invocations (Claude Code)
+- **activity.jsonl**: One line per Claude Code hook event, read each frame by the flow column (Claude Code)
 
 The session directory path is shown in the startup banner in debug builds (`cargo build`), but hidden in release builds.
 
@@ -245,12 +246,14 @@ crabigator inspect --history ~/projects  # View event history and hooks.log
 cat /tmp/crabigator-{session}/hooks.log  # Raw hook invocation log
 ```
 
-**Hook events handled:**
+**Hook events handled:** the hook is registered for every event Claude Code offers (`HOOK_EVENTS` in `src/platforms/claude_code.rs`) except `WorktreeCreate` and `WorktreeRemove`, which would replace git's own worktree handling, and `FileChanged`, which only watches files a hook names. `MessageDisplay` runs async, so streamed text never waits on it. Every event appends a line to the session's `activity.jsonl` for the flow column. Only these change the stats file:
 - `UserPromptSubmit` → state = thinking
 - `PermissionRequest` → state = permission (or question if AskUserQuestion, plan if ExitPlanMode)
-- `PostToolUse` → state = thinking (tracks tool counts)
-- `Stop` → state = complete (or question if AskUserQuestion was used)
-- `SubagentStop`, `PreCompact` → increment counters
+- `PostToolUse`, `PostToolUseFailure` → state = thinking (tracks tool counts). A failure cut short by Esc writes nothing: any stats write clears the screen's "interrupted" state.
+- `Stop` → state = complete (or question if AskUserQuestion was used); `StopFailure` (an API error) → complete
+- `SubagentStop`, `PreCompact` → increment counters; `PostModelSwitch` → model
+
+A subagent's events carry `agent_id`. They never change the main turn's state, except to clear a permission prompt the subagent raised itself.
 
 ## Cloud Infrastructure
 

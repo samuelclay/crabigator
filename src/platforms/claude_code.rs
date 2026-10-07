@@ -30,6 +30,75 @@ struct HooksMeta {
     script_path: String,
 }
 
+/// A hook event crabigator listens to, and how its hook is registered.
+struct HookSpec {
+    event: &'static str,
+    /// Tool events register under matcher "*" to hear every tool.
+    tool_matcher: bool,
+    /// Run without Claude Code waiting on it.
+    run_async: bool,
+}
+
+const fn hook(event: &'static str) -> HookSpec {
+    HookSpec {
+        event,
+        tool_matcher: false,
+        run_async: false,
+    }
+}
+
+const fn tool_hook(event: &'static str) -> HookSpec {
+    HookSpec {
+        event,
+        tool_matcher: true,
+        run_async: false,
+    }
+}
+
+/// Every hook event Claude Code offers, except three:
+/// - WorktreeCreate and WorktreeRemove: a hook there replaces git's own
+///   worktree handling, so one that only listens would break worktrees.
+/// - FileChanged: it watches only files a hook names, so it never fires.
+///
+/// MessageDisplay sits on the path that shows streamed text, so it runs
+/// async: the text never waits on it.
+const HOOK_EVENTS: &[HookSpec] = &[
+    hook("SessionStart"),
+    hook("SessionEnd"),
+    hook("Setup"),
+    hook("UserPromptSubmit"),
+    hook("UserPromptExpansion"),
+    tool_hook("PreToolUse"),
+    tool_hook("PermissionRequest"),
+    tool_hook("PermissionDenied"),
+    tool_hook("PostToolUse"),
+    tool_hook("PostToolUseFailure"),
+    hook("PostToolBatch"),
+    HookSpec {
+        event: "MessageDisplay",
+        tool_matcher: false,
+        run_async: true,
+    },
+    hook("Notification"),
+    hook("SubagentStart"),
+    hook("SubagentStop"),
+    hook("TaskCreated"),
+    hook("TaskCompleted"),
+    hook("TeammateIdle"),
+    hook("Stop"),
+    hook("StopFailure"),
+    hook("PreCompact"),
+    hook("PostCompact"),
+    hook("PreModelSwitch"),
+    hook("PostModelSwitch"),
+    hook("Elicitation"),
+    hook("ElicitationResult"),
+    hook("InstructionsLoaded"),
+    hook("ConfigChange"),
+    hook("CwdChanged"),
+    hook("DirectoryAdded"),
+];
+
 /// Claude Code platform implementation
 pub struct ClaudeCodePlatform {
     /// Path to ~/.claude directory
@@ -114,38 +183,45 @@ impl ClaudeCodePlatform {
         }
     }
 
-    fn settings_has_our_hook(settings: &Value, event: &str, script_path_str: &str) -> bool {
+    /// Our hook entry for an event: the script, async where it must not hold Claude up.
+    fn our_hook(spec: &HookSpec, script_path_str: &str) -> Value {
+        let mut hook = json!({
+            "type": "command",
+            "command": script_path_str
+        });
+        if spec.run_async {
+            hook["async"] = json!(true);
+        }
+        hook
+    }
+
+    fn settings_has_our_hook(settings: &Value, spec: &HookSpec, script_path_str: &str) -> bool {
         let Some(hooks) = settings.get("hooks").and_then(|h| h.as_object()) else {
             return false;
         };
-        let Some(event_arr) = hooks.get(event).and_then(|v| v.as_array()) else {
+        let Some(event_arr) = hooks.get(spec.event).and_then(|v| v.as_array()) else {
             return false;
         };
 
-        let hooks_contains_cmd = |hooks_value: &Value| {
-            hooks_value.as_array().is_some_and(|hooks_arr| {
-                hooks_arr.iter().any(|hook| {
-                    hook.get("command")
-                        .and_then(|c| c.as_str())
-                        .is_some_and(|cmd| cmd == script_path_str)
-                })
-            })
+        let ours = Self::our_hook(spec, script_path_str);
+        let hooks_contains_ours = |hooks_value: &Value| {
+            hooks_value
+                .as_array()
+                .is_some_and(|hooks_arr| hooks_arr.contains(&ours))
         };
 
-        // Events that require matcher="*" to catch all tool types
-        let events_with_matcher = ["PermissionRequest", "PostToolUse"];
-        if events_with_matcher.contains(&event) {
+        if spec.tool_matcher {
             event_arr.iter().any(|entry| {
                 entry
                     .get("matcher")
                     .and_then(|m| m.as_str())
                     .is_some_and(|m| m == "*")
-                    && entry.get("hooks").is_some_and(hooks_contains_cmd)
+                    && entry.get("hooks").is_some_and(hooks_contains_ours)
             })
         } else {
             event_arr
                 .iter()
-                .any(|entry| entry.get("hooks").is_some_and(hooks_contains_cmd))
+                .any(|entry| entry.get("hooks").is_some_and(hooks_contains_ours))
         }
     }
 
@@ -165,19 +241,9 @@ impl ClaudeCodePlatform {
         })?;
 
         let script_path_str = self.script_path().to_string_lossy().to_string();
-        let hook_events = [
-            "SessionStart",
-            "PermissionRequest",
-            "PostToolUse",
-            "Stop",
-            "SubagentStop",
-            "PreCompact",
-            "UserPromptSubmit",
-        ];
-
-        Ok(hook_events
+        Ok(HOOK_EVENTS
             .iter()
-            .all(|event| Self::settings_has_our_hook(&settings, event, &script_path_str)))
+            .all(|spec| Self::settings_has_our_hook(&settings, spec, &script_path_str)))
     }
 
     /// Install or update hooks
@@ -251,28 +317,11 @@ impl ClaudeCodePlatform {
             anyhow::bail!("settings.json hooks field must be a JSON object; refusing to overwrite");
         }
 
-        // Hook events we need to register
-        let hook_events = [
-            "SessionStart",
-            "PermissionRequest",
-            "PostToolUse",
-            "Stop",
-            "SubagentStop",
-            "PreCompact",
-            "UserPromptSubmit",
-        ];
-        // Events that require matcher="*" to catch all tool types
-        let events_with_matcher = ["PermissionRequest", "PostToolUse"];
-
-        // Our hook configuration
-        let our_hook = json!({
-            "type": "command",
-            "command": script_path_str
-        });
-
         // For each event type, ensure our hook is registered.
         // We identify our hook by its `command` path and never remove other hooks.
-        for event in hook_events {
+        for spec in HOOK_EVENTS {
+            let event = spec.event;
+            let our_hook = Self::our_hook(spec, &script_path_str);
             if !settings["hooks"].as_object().unwrap().contains_key(event) {
                 settings["hooks"][event] = json!([]);
                 changed = true;
@@ -289,7 +338,7 @@ impl ClaudeCodePlatform {
             };
 
             // Determine preferred placement and ensure our hook exists there.
-            if events_with_matcher.contains(&event) {
+            if spec.tool_matcher {
                 // For tool-related events, we need matcher="*" to catch all tool types.
                 let mut star_idx = arr.iter().position(|entry| {
                     entry
@@ -402,6 +451,18 @@ impl ClaudeCodePlatform {
                 }
             }
 
+            // Bring the hook we kept up to date (an older install lacks `async`).
+            for hook in arr
+                .iter_mut()
+                .filter_map(|entry| entry.get_mut("hooks").and_then(|h| h.as_array_mut()))
+                .flatten()
+            {
+                if is_our_hook(hook) && *hook != our_hook {
+                    *hook = our_hook.clone();
+                    changed = true;
+                }
+            }
+
             // Drop any entries whose hooks array became empty (these were our-only entries).
             let before_len = arr.len();
             arr.retain(|entry| {
@@ -499,6 +560,7 @@ impl Platform for ClaudeCodePlatform {
 
     fn cleanup_stats(&self, cwd: &str) {
         let stats_path = Self::stats_file_path(cwd);
+        let _ = fs::remove_file(stats_path.with_extension("lock"));
         let _ = fs::remove_file(stats_path);
     }
 }
@@ -522,49 +584,171 @@ mod tests {
         assert!(path.to_string_lossy().ends_with(".json"));
     }
 
-    #[test]
-    fn resume_hook_restores_transcript_and_directory_before_the_first_prompt() {
+    /// Run Python `body` against the hook script, in a temp dir as `root`:
+    /// `run(event)` feeds it one hook input, and `stats()` and `activity()`
+    /// read the stats file and activity log it wrote there.
+    fn run_hook_script(body: &str) {
         let tmp = tempfile::tempdir().unwrap();
-        let script = tmp.path().join("stats_hook.py");
-        fs::write(&script, script_with_version()).unwrap();
-        let output = std::process::Command::new("python3")
-            .args(["-c", r#"
+        fs::write(tmp.path().join("stats_hook.py"), script_with_version()).unwrap();
+        let prelude = r#"
 import io, json, pathlib, runpy, sys
 root = pathlib.Path(sys.argv[1])
 hook = runpy.run_path(str(root / 'stats_hook.py'))
 main = hook['main']
 main.__globals__['get_stats_file'] = lambda cwd: root / 'stats.json'
+main.__globals__['activity_log_path'] = lambda session_id: root / 'activity.jsonl'
 main.__globals__['debug_log'] = lambda *args: None
 main.__globals__['create_claude_session_symlink'] = lambda *args: None
-work = root / 'worktree'
-work.mkdir()
-transcript = root / 'session.jsonl'
-transcript.write_text(json.dumps({'cwd': str(root)}) + '\n' + json.dumps({'cwd': str(work)}) + '\n' + json.dumps({'cwd': str(root), 'isSidechain': True}) + '\n')
-event = {'hook_event_name': 'SessionStart', 'source': 'resume', 'cwd': str(root), 'transcript_path': str(transcript), 'session_id': 'resumed-conversation'}
-sys.stdin = io.StringIO(json.dumps(event))
-main()
-stats = json.loads((root / 'stats.json').read_text())
-assert stats['transcript_path'] == str(transcript)
-assert stats['working_directory'] == str(work)
-assert stats['claude_session_id'] == 'resumed-conversation'
-assert stats['state'] == 'ready'
-assert stats['prompts'] == 0
-stats.update(state='thinking', active_prompt='Keep working')
-(root / 'stats.json').write_text(json.dumps(stats))
-event['source'] = 'compact'
-sys.stdin = io.StringIO(json.dumps(event))
-main()
-stats = json.loads((root / 'stats.json').read_text())
-assert stats['state'] == 'thinking'
-assert stats['active_prompt'] == 'Keep working'
-"#])
+def run(event):
+    sys.stdin = io.StringIO(json.dumps({'cwd': str(root), 'session_id': 'conversation', **event}))
+    main()
+def stats():
+    return json.loads((root / 'stats.json').read_text())
+def activity():
+    return [json.loads(line) for line in (root / 'activity.jsonl').read_text().splitlines()]
+"#;
+        let output = std::process::Command::new("python3")
+            .args(["-c", &format!("{prelude}{body}")])
             .arg(tmp.path())
+            .env("CRABIGATOR_SESSION_ID", "hook-test")
             .output()
             .expect("Python 3 runs the Claude hook");
         assert!(
             output.status.success(),
             "{}",
             String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn resume_hook_restores_transcript_and_directory_before_the_first_prompt() {
+        run_hook_script(
+            r#"
+work = root / 'worktree'
+work.mkdir()
+transcript = root / 'session.jsonl'
+transcript.write_text(json.dumps({'cwd': str(root)}) + '\n' + json.dumps({'cwd': str(work)}) + '\n' + json.dumps({'cwd': str(root), 'isSidechain': True}) + '\n')
+event = {'hook_event_name': 'SessionStart', 'source': 'resume', 'transcript_path': str(transcript), 'session_id': 'resumed-conversation'}
+run(event)
+resumed = stats()
+assert resumed['transcript_path'] == str(transcript)
+assert resumed['working_directory'] == str(work)
+assert resumed['claude_session_id'] == 'resumed-conversation'
+assert resumed['state'] == 'ready'
+assert resumed['prompts'] == 0
+resumed.update(state='thinking', active_prompt='Keep working')
+(root / 'stats.json').write_text(json.dumps(resumed))
+run({**event, 'source': 'compact'})
+assert stats()['state'] == 'thinking'
+assert stats()['active_prompt'] == 'Keep working'
+"#,
+        );
+    }
+
+    #[test]
+    fn every_event_reaches_the_activity_log_and_only_state_changes_write_stats() {
+        run_hook_script(
+            r#"
+effort = {'level': 'xhigh'}
+run({'hook_event_name': 'PreToolUse', 'tool_name': 'Edit', 'tool_use_id': 't1', 'effort': effort,
+     'tool_input': {'old_string': 'a', 'new_string': 'one\ntwo\nthree'}})
+run({'hook_event_name': 'MessageDisplay', 'delta': 'Hello, world\n', 'effort': effort})
+run({'hook_event_name': 'PostToolBatch', 'tool_calls': [{}, {}]})
+run({'hook_event_name': 'Notification', 'notification_type': 'idle_prompt'})
+run({'hook_event_name': 'SubagentStart', 'agent_id': 'a1', 'agent_type': 'Explore'})
+run({'hook_event_name': 'PostToolUseFailure', 'tool_name': 'Bash', 'tool_use_id': 't2', 'is_interrupt': True})
+assert not (root / 'stats.json').exists(), 'none of those change state'
+lines = activity()
+assert lines[0]['ev'] == 'PreToolUse' and lines[0]['lines'] == 3 and lines[0]['effort'] == 'xhigh', lines[0]
+assert lines[0]['tool'] == 'Edit' and lines[0]['id'] == 't1'
+assert lines[1]['chars'] == 13 and lines[2]['calls'] == 2
+assert lines[3]['notification_type'] == 'idle_prompt'
+assert lines[4]['agent'] == 'a1' and lines[4]['agent_type'] == 'Explore'
+assert lines[5]['interrupt'] is True
+run({'hook_event_name': 'PostToolUseFailure', 'tool_name': 'Bash', 'tool_use_id': 't3', 'error': 'exit 1'})
+assert stats()['tools'] == {'Bash': 1} and stats()['state'] == 'thinking'
+"#,
+        );
+    }
+
+    #[test]
+    fn a_background_agent_never_restarts_a_finished_turn() {
+        run_hook_script(
+            r#"
+run({'hook_event_name': 'UserPromptSubmit', 'prompt': 'go'})
+run({'hook_event_name': 'Stop'})
+assert stats()['state'] == 'complete'
+run({'hook_event_name': 'PostToolUse', 'tool_name': 'Read', 'tool_use_id': 't1', 'agent_id': 'bg'})
+assert stats()['state'] == 'complete', 'a subagent tool call leaves the turn finished'
+assert stats()['tools'] == {'Read': 1}
+# A background agent asks, the person answers: back to complete, not thinking.
+run({'hook_event_name': 'PermissionRequest', 'tool_name': 'Bash', 'tool_input': {}, 'agent_id': 'bg'})
+assert stats()['state'] == 'permission'
+run({'hook_event_name': 'PostToolUse', 'tool_name': 'Read', 'tool_use_id': 't2', 'agent_id': 'other'})
+assert stats()['state'] == 'permission', "another agent's call doesn't answer it"
+run({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash', 'tool_use_id': 't3', 'agent_id': 'bg'})
+assert stats()['state'] == 'complete' and stats()['active_prompt'] is None
+assert 'permission' not in stats()
+# During a turn, a subagent's answered permission goes back to thinking.
+run({'hook_event_name': 'UserPromptSubmit', 'prompt': 'again'})
+run({'hook_event_name': 'PermissionRequest', 'tool_name': 'Bash', 'tool_input': {}, 'agent_id': 'fg'})
+run({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash', 'tool_use_id': 't4', 'agent_id': 'fg'})
+assert stats()['state'] == 'thinking'
+"#,
+        );
+    }
+
+    #[test]
+    fn an_api_error_ends_the_turn_and_a_model_switch_is_recorded() {
+        run_hook_script(
+            r#"
+run({'hook_event_name': 'SessionStart', 'source': 'startup', 'model': 'claude-opus-5-5[1m]'})
+assert stats()['model'] == 'claude-opus-5-5'
+run({'hook_event_name': 'UserPromptSubmit', 'prompt': 'go'})
+run({'hook_event_name': 'StopFailure', 'error': 'overloaded'})
+assert stats()['state'] == 'complete' and stats()['idle_since'] is not None
+assert stats()['completions'] == 0
+run({'hook_event_name': 'PostModelSwitch', 'to_model': 'claude-sonnet-5-5'})
+assert stats()['model'] == 'claude-sonnet-5-5'
+"#,
+        );
+    }
+
+    #[test]
+    fn registers_every_event_and_upgrades_an_older_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = ClaudeCodePlatform {
+            claude_dir: tmp.path().to_path_buf(),
+            crabigator_dir: tmp.path().join("crabigator"),
+        };
+        let script = platform.script_path().to_string_lossy().to_string();
+        // An older install: two events, MessageDisplay not async, beside the user's own hook.
+        let older = json!({"hooks": {
+            "Stop": [{"hooks": [{"type": "command", "command": script}]}],
+            "MessageDisplay": [{"hooks": [{"type": "command", "command": script}]}],
+            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "mine.sh"}]}],
+        }});
+        fs::write(platform.settings_path(), older.to_string()).unwrap();
+        assert!(!platform.hooks_registered().unwrap());
+        platform.merge_settings().unwrap();
+        assert!(platform.hooks_registered().unwrap());
+        let settings: Value =
+            serde_json::from_str(&fs::read_to_string(platform.settings_path()).unwrap()).unwrap();
+        let hooks = settings["hooks"].as_object().unwrap();
+        assert_eq!(hooks.len(), HOOK_EVENTS.len());
+        for never in ["WorktreeCreate", "WorktreeRemove", "FileChanged"] {
+            assert!(!hooks.contains_key(never), "{never} must not be registered");
+        }
+        assert_eq!(
+            hooks["MessageDisplay"],
+            json!([{"hooks": [{"type": "command", "command": script, "async": true}]}])
+        );
+        assert_eq!(
+            hooks["PreToolUse"],
+            json!([
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "mine.sh"}]},
+                {"matcher": "*", "hooks": [{"type": "command", "command": script}]}
+            ])
         );
     }
 
