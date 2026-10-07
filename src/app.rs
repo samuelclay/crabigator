@@ -1408,6 +1408,9 @@ impl App {
 
                     self.platform_pty.process_output(&terminal_output);
                     self.output_boundary.scan(&terminal_output);
+                    if let Some(flow) = self.flow.as_mut() {
+                        flow.hear_output(terminal_output.len());
+                    }
                     // Track autocomplete suggestions from raw PTY bytes
                     self.suggestion_tracker.process(&passthrough);
                     stdout.write_all(&terminal_output)?;
@@ -1840,6 +1843,10 @@ impl App {
                         .any(|l| l.contains("Esc to cancel"))
                 };
                 self.session_stats.set_screen_input_wait(shows_input_wait);
+                // The flow scene reads the effort and the running agents there too.
+                if let Some(flow) = self.flow.as_mut() {
+                    flow.read_screen(&stripped);
+                }
             }
 
             // Codex's plan approval menu is terminal-only: no function call is

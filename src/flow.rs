@@ -51,6 +51,9 @@ const NIGHT_FROM: u32 = 19;
 const DAY_FROM: u32 = 7;
 /// crabigator says a tool finished, not how much it wrote: a typical edit's worth.
 const EDIT_LINES: f64 = 12.0;
+/// The assistant's output bytes per streamed character (escape codes and
+/// repaints are most of the bytes), while a turn runs.
+const OUTPUT_PER_CHAR: f64 = 4.0;
 
 /// What a tick changed, for the event loop.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -205,6 +208,24 @@ impl FlowColumn {
         self.drawn
     }
 
+    /// The assistant wrote `bytes` to the terminal: while a turn runs, that is
+    /// the closest crabigator comes to hearing it stream.
+    pub fn hear_output(&mut self, bytes: usize) {
+        if self.activity.is_turn_active {
+            self.activity.streamed(bytes as f64 / OUTPUT_PER_CHAR);
+        }
+    }
+
+    /// What the assistant's screen says (escape codes stripped): Claude Code's
+    /// effort in its banner ("with xhigh effort"), which sets a turn's floor,
+    /// and its running agents in its footer ("← 2 agents"), which add company.
+    pub fn read_screen(&mut self, text: &str) {
+        if let Some(effort) = effort_on_screen(text) {
+            self.activity.floor = effort_floor(effort);
+        }
+        self.activity.running_agents = agents_on_screen(text);
+    }
+
     /// What changed in a stats refresh: tool calls finished, compactions.
     pub fn observe_stats(&mut self, stats: &PlatformStats) {
         for heard in self.feed.observe(stats) {
@@ -245,6 +266,49 @@ fn palette_for(def: &SceneDef, target: Option<f64>) -> Palette {
     } else {
         Palette::toward(def.hue, target)
     }
+}
+
+/// The effort Claude Code's banner names ("… with xhigh effort"), if it shows.
+fn effort_on_screen(text: &str) -> Option<&str> {
+    let at = text.rfind(" effort")?;
+    let before = text[..at].trim_end();
+    let word = before.rsplit(' ').next()?;
+    let with = before[..before.len() - word.len()].trim_end();
+    with.ends_with("with")
+        .then_some(word)
+        .filter(|w| matches!(*w, "low" | "medium" | "high" | "xhigh" | "max"))
+}
+
+/// The effort floor for an effort level (flow's `effortFloor`).
+fn effort_floor(effort: &str) -> f64 {
+    match effort {
+        "low" => 2.0,
+        "high" => 4.0,
+        "xhigh" => 5.0,
+        "max" => 6.0,
+        _ => 3.0,
+    }
+}
+
+/// The running agents Claude Code's footer counts ("← 1 agent", "3 agents"),
+/// read only from its last few lines.
+fn agents_on_screen(text: &str) -> u32 {
+    text.lines()
+        .rev()
+        .filter(|line| !line.trim().is_empty())
+        .take(3)
+        .find_map(|line| {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            words.windows(2).find_map(|pair| {
+                matches!(
+                    pair[1].trim_end_matches(['.', ',', ')']),
+                    "agent" | "agents"
+                )
+                .then(|| pair[0].parse::<u32>().ok())
+                .flatten()
+            })
+        })
+        .unwrap_or(0)
 }
 
 /// A finished tool call, by what it does, as each agent names it.
@@ -392,6 +456,26 @@ mod tests {
                 println!("{row}");
             }
         }
+    }
+
+    #[test]
+    fn the_screen_tells_the_effort_and_the_running_agents() {
+        let banner =
+            "Claude Code v2.1.293\nOpus 5.5 (1M context) with xhigh effort · Claude Team\n";
+        assert_eq!(effort_on_screen(banner), Some("xhigh"));
+        assert_eq!(effort_on_screen("no effort here"), None);
+        assert_eq!(effort_on_screen("with great effort"), None);
+        let footer = "transcript…\n\n❯ \n  ▸▸ auto mode on (shift+tab to cycle) · ← 1 agent\n";
+        assert_eq!(agents_on_screen(footer), 1);
+        assert_eq!(agents_on_screen("a\nb\n  3 agents running\n"), 3);
+        assert_eq!(
+            agents_on_screen("2 agents up in the transcript\n\nx\ny\nz\n"),
+            0
+        );
+        let mut flow = column("fire");
+        flow.read_screen(&format!("{banner}{footer}"));
+        assert_eq!(flow.activity.floor, 5.0);
+        assert_eq!(flow.activity.running_agents, 1);
     }
 
     #[test]

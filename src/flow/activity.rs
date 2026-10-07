@@ -1,9 +1,10 @@
 //! How the session's work moves the scene (flow's `hooks/activity.ts`, less
-//! what crabigator can't hear: streamed text, effort, failed commands):
-//! events add heat that cools every frame, and with fade (always on in
-//! crabigator) each change of state relights the scene to full and lets it
-//! ease back down over two minutes. A bright scene has just changed; embers
-//! have sat a while.
+//! failed commands, which crabigator can't hear): events add heat that cools
+//! every frame, a turn climbs a level every 30 s it keeps going, and with fade
+//! (always on in crabigator) each change of state relights the scene to full
+//! and lets it ease back down over two minutes. While a turn runs the scene
+//! is never lower than plain auto would show it; once it ends, a bright scene
+//! has just changed and embers have sat a while.
 
 use super::scene::Tint;
 
@@ -12,6 +13,11 @@ const DECAY: f64 = 0.98;
 const MAX_HEAT: f64 = 5.0;
 /// Activity from a subagent's loop counts at this weight.
 const SUBAGENT_WEIGHT: f64 = 0.5;
+/// Streaming heat per character, and its cap per frame (a rate, not a chunk).
+const STREAM_PER_CHAR: f64 = 0.002;
+const STREAM_CAP: f64 = 0.025;
+/// A turn's running time adds a level every TURN_STEP_MS.
+const TURN_STEP_MS: f64 = 30_000.0;
 /// The frame the activity model counts in, ms.
 pub const FRAME_MS: f64 = 70.0;
 /// Frames of gray tips after a compaction.
@@ -32,6 +38,10 @@ pub struct Activity {
     pub context_percent: f64,
     /// Time since the state last changed, for fade.
     pub since_change_ms: f64,
+    /// Frames this turn has been running (none between turns).
+    pub turn_frames: f64,
+    /// Streamed characters since the last tick.
+    pending_chars: f64,
 }
 
 impl Default for Activity {
@@ -45,6 +55,8 @@ impl Default for Activity {
             smoke_frames: 0.0,
             context_percent: 0.0,
             since_change_ms: FADE_MS,
+            turn_frames: 0.0,
+            pending_chars: 0.0,
         }
     }
 }
@@ -55,11 +67,20 @@ impl Activity {
     }
 
     pub fn turn_started(&mut self) {
+        if !self.is_turn_active {
+            self.turn_frames = 0.0;
+        }
         self.is_turn_active = true;
     }
 
     pub fn turn_ended(&mut self) {
         self.is_turn_active = false;
+        self.turn_frames = 0.0;
+    }
+
+    /// Streamed output, applied per frame at a capped rate.
+    pub fn streamed(&mut self, chars: f64) {
+        self.pending_chars += chars;
     }
 
     /// The state changed: fade relights from full.
@@ -113,9 +134,25 @@ impl Activity {
         }
     }
 
+    /// Levels from how long this turn has been going: one for every 30 s.
+    pub fn turn_boost(&self) -> f64 {
+        if self.is_turn_active {
+            (self.turn_frames * FRAME_MS / TURN_STEP_MS).floor()
+        } else {
+            0.0
+        }
+    }
+
     /// Advance `frames` frames (a slow tick covers several) of cooling.
     pub fn tick(&mut self, frames: f64) {
+        if self.is_turn_active {
+            self.turn_frames += frames;
+        }
         self.since_change_ms = (self.since_change_ms + frames * FRAME_MS).min(FADE_MS);
+        if self.pending_chars > 0.0 {
+            self.add((STREAM_CAP * frames).min(self.pending_chars * STREAM_PER_CHAR));
+            self.pending_chars = 0.0;
+        }
         self.heat *= DECAY.powf(frames);
         if self.heat < 0.01 {
             self.heat = 0.0;
@@ -126,10 +163,32 @@ impl Activity {
         self.smoke_frames = (self.smoke_frames - frames).max(0.0);
     }
 
+    /// The plain auto dial (flow's `strength`): idle, the idle floor plus
+    /// what's still cooling; in a turn, its effort floor, heat, subagents and
+    /// a level for every 30 s it has run.
+    pub fn strength(&self, idle_floor: f64) -> f64 {
+        if !self.is_working() {
+            return super::js::round(idle_floor + self.heat).clamp(0.0, 10.0);
+        }
+        let base = if self.is_turn_active { self.floor } else { 1.0 };
+        (super::js::round(base + self.heat + self.agent_boost()) + self.turn_boost())
+            .clamp(1.0, 10.0)
+    }
+
     /// Fade's dial: the base (the effort floor while a turn runs, the idle
     /// floor otherwise), lifted toward 10 by how recently the state changed,
-    /// plus the work's own flares and the subagents.
+    /// plus the work's own flares and the subagents. While a turn runs, never
+    /// below the plain auto dial: a long turn climbs; a stale wait sits low.
     pub fn strength_faded(&self, idle_floor: f64) -> f64 {
+        let faded = self.faded(idle_floor);
+        if self.is_turn_active {
+            faded.max(self.strength(idle_floor))
+        } else {
+            faded
+        }
+    }
+
+    fn faded(&self, idle_floor: f64) -> f64 {
         let base = if self.is_turn_active {
             self.floor
         } else if self.is_working() {
@@ -186,15 +245,37 @@ mod tests {
     }
 
     #[test]
-    fn a_turn_sits_at_its_floor_once_faded_and_work_flares_it() {
+    fn a_long_turn_climbs_as_plain_auto_does_and_work_flares_it() {
         let mut a = Activity::default();
         a.turn_started();
         a.changed();
-        run(&mut a, FADE_MS + 1000.0);
-        assert_eq!(a.strength_faded(1.0), DEFAULT_FLOOR);
+        run(&mut a, 20_000.0);
+        assert_eq!(a.strength_faded(1.0), 10.0); // just started: relit
+        run(&mut a, FADE_MS);
+        // Two and a half minutes in: the floor and a level per 30 s, like auto.
+        assert_eq!(a.strength_faded(1.0), a.strength(1.0));
+        assert_eq!(a.strength_faded(1.0), DEFAULT_FLOOR + 4.0);
         a.edited(12.0, false);
-        assert!(a.strength_faded(1.0) > DEFAULT_FLOOR);
+        assert!(a.strength_faded(1.0) > DEFAULT_FLOOR + 4.0);
         a.compacted();
         assert_eq!(a.tint(), Tint::Smoke);
+        // The turn ends: relit, then down to embers.
+        a.turn_ended();
+        a.changed();
+        assert_eq!(a.strength_faded(1.0), 10.0);
+        run(&mut a, FADE_MS + 1000.0);
+        assert_eq!(a.strength_faded(1.0), 1.0);
+    }
+
+    #[test]
+    fn streamed_output_keeps_a_turn_burning_at_a_capped_rate() {
+        let mut a = Activity::default();
+        a.turn_started();
+        for _ in 0..200 {
+            a.streamed(10_000.0);
+            a.tick(1.0);
+        }
+        // The cap: 0.025 a frame against 2% cooling settles near 1.25.
+        assert!((1.0..1.3).contains(&a.heat), "{}", a.heat);
     }
 }

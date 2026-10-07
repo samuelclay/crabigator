@@ -57,7 +57,7 @@ flow keeps evolving. This log records which upstream commit the port matches, so
 - **The Claude Code plugin**: `hooks/register.tsx`, `hooks/svg.ts`, `types/`, `.claude-plugin/`. crabigator draws the column itself.
 - **pi**: `pi/` (only `ansi.ts` is ported).
 - **Sound**: `hooks/sound.ts`, `hooks/sound-files.ts`, `sounds/`, and each scene's `sounds`, `ambience()` and `hear(...)` calls. Also the state that only served sound: avalon's `heard` (and its `leadFrames` check), the twin rocket's `boomed`. Where a scene drew random numbers or moved state while building a sound event, the port keeps that (surf's next-wave draw), so the frames stay the same. If upstream ever times something *drawn* by `leadFrames`, port `leadFrames` with it.
-- **What crabigator can't hear**: streamed text, effort levels and failed commands (`Activity.streamed`, `modelStep`, `failed`). The fade and tool flares do the work instead.
+- **What crabigator hears differently**: it has no model events, so it stands in for them. The assistant's output while a turn runs counts as streaming (`FlowColumn::hear_output`, about four bytes a character). The effort comes from Claude Code's banner ("with xhigh effort"), and running agents from its footer ("← 1 agent") (`FlowColumn::read_screen`). Tool calls are heard when they finish (from the stats), not when they start. Failed commands aren't heard at all (`failed` isn't ported).
 - **Resuming at an altitude**: `SkyWorld.seed` and the rockets' `seed(altitude)` override. A Claude Code reload needed them; the column never reloads. Also `SkyWorld.rowOf`, which nothing calls.
 - **Settings and `/flow`**: `hooks/settings.ts`, `hooks/pick.ts`. In crabigator the choices are fixed:
   - fade is always on;
@@ -93,3 +93,4 @@ flow's scenes are deterministic from a seed, so the port draws the same cells. T
 |---|---|---|
 | `7d6d6cf`…`e70a702` | Everything up to and including PR #5: the ten scenes, the activity model, sky and clouds | Ported: all ten scenes match the reference frames (six runs each: the column's sizes, the 5-row band, a 22×60 spine; day and night; smoke, blue, subagents) |
 | `crabigator-column` (flow branch) | Fade; random scenes and colours; per-scene palettes (`SceneDef.hue`); embers at level 1 and a blue low fire under the context-full tint; `isTall` for boxes up to 12 rows; `CRABIGATOR_FLOW` hides the plugin's band | Ported, except random scenes and colours (crabigator claims scenes per session instead) |
+| `1a10bb9` (flow branch) | Fade: a long turn still climbs (never below plain auto while a turn runs) | Ported |

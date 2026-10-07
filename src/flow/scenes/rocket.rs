@@ -1817,8 +1817,6 @@ impl Scene for LaunchSite {
 
 #[cfg(test)]
 mod tests {
-    use crate::flow::scene::Scene;
-
     #[test]
     fn the_rocket_wears_the_session_hue() {
         for make in [super::FALCON.make, super::STARSHIP.make] {
