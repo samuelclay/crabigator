@@ -104,7 +104,7 @@ impl SessionMark {
             return mark;
         }
         let mut mark = Self::claim(session_id, &live_taken_marks(session_id));
-        publish_stub(session_id, mark);
+        publish_stub(session_id, mark, None);
         let taken = live_taken_marks(session_id);
         let used_glyphs = taken
             .iter()
@@ -112,7 +112,7 @@ impl SessionMark {
             .collect::<HashSet<_>>();
         if used_glyphs.contains(mark.glyph) && used_glyphs.len() < glyphs().len() {
             mark = Self::claim(session_id, &taken);
-            publish_stub(session_id, mark);
+            publish_stub(session_id, mark, None);
         }
         mark
     }
@@ -174,7 +174,7 @@ fn rgb_array(value: &serde_json::Value) -> Option<(u8, u8, u8)> {
     ))
 }
 
-fn fnv1a64(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in bytes {
         hash ^= u64::from(*byte);
@@ -190,7 +190,7 @@ fn now_secs() -> f64 {
         .as_secs_f64()
 }
 
-fn inspect_path(session_id: &str) -> std::path::PathBuf {
+pub(crate) fn inspect_path(session_id: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(format!("/tmp/crabigator-{session_id}/inspect.json"))
 }
 
@@ -201,12 +201,28 @@ fn stored_mark(session_id: &str) -> Option<SessionMark> {
 }
 
 fn live_taken_marks(except_session_id: &str) -> Vec<SessionMark> {
-    let Ok(entries) = glob::glob("/tmp/crabigator-*/inspect.json") else {
+    live_session_mirrors(except_session_id)
+        .iter()
+        .filter_map(|data| data.get("session_mark").and_then(SessionMark::from_json))
+        .collect()
+}
+
+/// Every other live session's `inspect.json` (updated in the last five
+/// minutes), once each: what they have claimed (a mark, a flow scene).
+pub(crate) fn live_session_mirrors(except_session_id: &str) -> Vec<serde_json::Value> {
+    live_mirrors_in(
+        "/tmp/crabigator-*/inspect.json",
+        except_session_id,
+        now_secs(),
+    )
+}
+
+fn live_mirrors_in(pattern: &str, except_session_id: &str, now: f64) -> Vec<serde_json::Value> {
+    let Ok(entries) = glob::glob(pattern) else {
         return Vec::new();
     };
-    let now = now_secs();
     let mut seen = HashSet::new();
-    let mut taken = Vec::new();
+    let mut live = Vec::new();
     for path in entries.flatten() {
         let Ok(content) = std::fs::read_to_string(&path) else {
             continue;
@@ -227,23 +243,27 @@ fn live_taken_marks(except_session_id: &str) -> Vec<SessionMark> {
         if now - last_updated > LIVE_SESSION_SECS {
             continue;
         }
-        if let Some(mark) = data.get("session_mark").and_then(SessionMark::from_json) {
-            taken.push(mark);
-        }
+        live.push(data);
     }
-    taken
+    live
 }
 
-fn publish_stub(session_id: &str, mark: SessionMark) {
+/// Claim what this session shows before the full mirror exists: a small
+/// `inspect.json` with its mark (and its flow scene, once claimed) that other
+/// starting sessions read. The mirror replaces it with the full state.
+pub(crate) fn publish_stub(session_id: &str, mark: SessionMark, flow_scene: Option<&str>) {
     let path = inspect_path(session_id);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "session_id": session_id,
         "session_mark": mark,
         "last_updated": now_secs(),
     });
+    if let Some(scene) = flow_scene {
+        body["flow_scene"] = serde_json::json!(scene);
+    }
     if let Ok(json) = serde_json::to_string_pretty(&body) {
         let _ = std::fs::write(path, json);
     }
@@ -353,5 +373,39 @@ mod tests {
                 .all(|mark| (mark.bg, mark.fg) != (extra.bg, extra.fg)),
             "a repeated drawing still changes color"
         );
+    }
+
+    #[test]
+    fn live_mirrors_skip_stale_sessions_this_session_and_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, body: serde_json::Value| {
+            let session = dir.path().join(name);
+            std::fs::create_dir_all(&session).unwrap();
+            std::fs::write(session.join("inspect.json"), body.to_string()).unwrap();
+        };
+        let now = 10_000.0;
+        write(
+            "a",
+            serde_json::json!({"session_id": "a", "last_updated": now - 10.0, "flow_scene": "surf"}),
+        );
+        write(
+            "b",
+            serde_json::json!({"session_id": "b", "last_updated": now - 1000.0, "flow_scene": "ski"}),
+        );
+        write(
+            "me",
+            serde_json::json!({"session_id": "me", "last_updated": now, "flow_scene": "fire"}),
+        );
+        write(
+            "a-alias",
+            serde_json::json!({"session_id": "a", "last_updated": now, "flow_scene": "surf"}),
+        );
+        let pattern = format!("{}/*/inspect.json", dir.path().display());
+        let live = live_mirrors_in(&pattern, "me", now);
+        let scenes: Vec<&str> = live
+            .iter()
+            .filter_map(|data| data.get("flow_scene")?.as_str())
+            .collect();
+        assert_eq!(scenes, vec!["surf"]);
     }
 }

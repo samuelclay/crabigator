@@ -39,6 +39,10 @@ pub struct MirrorState {
     pub platform: PlatformKind,
     /// Identity chip hashed from `session_id`.
     pub session_mark: SessionMark,
+    /// The flow scene this session claimed for its column, so other sessions
+    /// claim different ones (absent when the column is off).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flow_scene: Option<String>,
     /// Cloud session id used for streaming — the status bar shows its first 8
     /// characters as "Streaming <id>", and `/tmp/crabigator-<cloud id>` links here.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -204,6 +208,7 @@ pub struct MirrorPublisher {
     last_hash: u64,
     app_start: Instant,
     session_mark: SessionMark,
+    flow_scene: Option<String>,
 }
 
 impl MirrorPublisher {
@@ -242,12 +247,21 @@ impl MirrorPublisher {
             last_publish: Instant::now() - Duration::from_secs(10),
             last_hash: 0,
             app_start: Instant::now(),
+            flow_scene: None,
         }
     }
 
     pub fn set_session_mark(&mut self, session_mark: SessionMark) {
         if self.session_mark != session_mark {
             self.session_mark = session_mark;
+            self.last_hash = 0;
+        }
+    }
+
+    /// The flow scene this session claimed (None: no flow column).
+    pub fn set_flow_scene(&mut self, flow_scene: Option<&str>) {
+        if self.flow_scene.as_deref() != flow_scene {
+            self.flow_scene = flow_scene.map(str::to_string);
             self.last_hash = 0;
         }
     }
@@ -544,6 +558,7 @@ impl MirrorPublisher {
             session_id: self.session_id.clone(),
             platform: self.platform,
             session_mark,
+            flow_scene: self.flow_scene.clone(),
             cloud_session_id: self.cloud_session_id.clone(),
             transcript_path: self.transcript_path.clone(),
             pr_scope: self.pr_scope.clone(),
@@ -789,6 +804,33 @@ mod tests {
                     .unwrap();
             assert_eq!(saved["prs"][0]["fetch_limited"], limited);
         }
+        fs::remove_dir_all(publisher.session_dir()).unwrap();
+    }
+
+    #[test]
+    fn the_flow_scene_is_published_when_claimed_and_absent_otherwise() {
+        let unique = tempfile::tempdir().unwrap();
+        let mut publisher = MirrorPublisher::new(
+            true,
+            format!(
+                "flow-scene-test-{}",
+                unique.path().file_name().unwrap().to_string_lossy()
+            ),
+            PlatformKind::Claude,
+            String::new(),
+            false,
+        );
+        let (stats, git, diff) = (SessionStats::new(), GitState::new(), DiffSummary::new());
+        let saved = |publisher: &mut MirrorPublisher| -> serde_json::Value {
+            publisher.last_publish = Instant::now() - PUBLISH_INTERVAL;
+            publisher
+                .maybe_publish(&stats, &git, &diff, None, &[], None, &[], &[], None, None)
+                .unwrap();
+            serde_json::from_str(&fs::read_to_string(publisher.mirror_path()).unwrap()).unwrap()
+        };
+        assert!(saved(&mut publisher).get("flow_scene").is_none());
+        publisher.set_flow_scene(Some("surf"));
+        assert_eq!(saved(&mut publisher)["flow_scene"], "surf");
         fs::remove_dir_all(publisher.session_dir()).unwrap();
     }
 }
