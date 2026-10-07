@@ -302,6 +302,8 @@ fn render_snapshot(snapshot: &Snapshot, width: u16, terminal_rows: u16) -> Vec<S
         &snapshot.prs,
         &snapshot.slack,
         handoff,
+        // The flow column belongs to the live session; the quick look leaves it out.
+        false,
     );
     let layout = Layout {
         pty_rows: 0,
@@ -332,6 +334,7 @@ fn render_snapshot(snapshot: &Snapshot, width: u16, terminal_rows: u16) -> Vec<S
         0,
         snapshot.mark,
         true,
+        None,
     );
     screen.lines()
 }
@@ -701,5 +704,10 @@ mod tests {
         assert!(text.contains("session_modules"), "{text}");
         assert!(text.contains("Session"), "{text}");
         assert!(text.contains("secondary"), "{text}");
+        // The flow column belongs to the live session: three columns here, so two separators a row.
+        assert!(
+            lines.iter().all(|line| line.matches('│').count() <= 2),
+            "{text}"
+        );
     }
 }

@@ -21,6 +21,7 @@ use crate::title::session_title_hierarchy;
 use crate::update::UpdateState;
 
 use super::cooldown::{self, Cooldowns};
+use super::flow::{draw_flow_row, FlowRect};
 use super::{
     changes_natural_rows, draw_changes_widget, draw_git_widget, draw_pairing_banner,
     draw_pr_handoff, draw_pr_separator, draw_recap_handoff, draw_stats_widget, draw_update_banner,
@@ -49,6 +50,86 @@ fn stats_widget_width(total_cols: u16, compact: bool) -> u16 {
         // few more cells than the old bullet-only label.
         ((total_cols as f32) * 0.22).max(30.0) as u16
     }
+}
+
+/// The flow column takes this share of the terminal's width (percent)...
+const FLOW_SHARE_PERCENT: u32 = 15;
+/// ...from this many terminal columns. Narrower, git would get too few cells.
+pub const FLOW_MIN_TOTAL_COLS: u16 = 100;
+
+/// The flow column's width, or `None` when the terminal is too narrow for it.
+pub fn flow_column_width(total_cols: u16) -> Option<u16> {
+    (total_cols >= FLOW_MIN_TOTAL_COLS)
+        .then(|| (u32::from(total_cols) * FLOW_SHARE_PERCENT / 100) as u16)
+}
+
+/// Stats' width beside a flow column: its usual share, shrunk in proportion
+/// to the room flow takes (22% × 0.85, or 35% × 0.85 compact), but never
+/// below its usual minimum, since stats matters most.
+fn stats_widget_width_with_flow(total_cols: u16, compact: bool) -> u16 {
+    let t = u32::from(total_cols);
+    if compact {
+        (t * 2975 / 10_000).max(36) as u16
+    } else {
+        (t * 1870 / 10_000).max(30) as u16
+    }
+}
+
+/// How wide each widget column is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColumnWidths {
+    pub stats: u16,
+    pub git: u16,
+    pub changes: u16,
+    /// The flow column, when it shows.
+    pub flow: Option<u16>,
+}
+
+/// Split the terminal's width between the widgets: Stats │ Git │ Changes,
+/// and │ Flow when `flow` is on and the terminal is wide enough. Without
+/// flow the widths are exactly the three-column ones. Git and changes split
+/// what stats (and flow) leave 3:5, or 4:4 when git needs several columns.
+pub fn column_widths(
+    total_cols: u16,
+    compact_stats: bool,
+    git_multi_column: bool,
+    flow: bool,
+) -> ColumnWidths {
+    let flow_width = if flow {
+        flow_column_width(total_cols)
+    } else {
+        None
+    };
+    let (stats, separators) = match flow_width {
+        Some(_) => (stats_widget_width_with_flow(total_cols, compact_stats), 3),
+        None => (stats_widget_width(total_cols, compact_stats), 2),
+    };
+    let remaining = total_cols.saturating_sub(stats + separators + flow_width.unwrap_or(0));
+    let git = if git_multi_column {
+        remaining / 2
+    } else {
+        (remaining * 3) / 8
+    };
+    ColumnWidths {
+        stats,
+        git,
+        changes: remaining - git,
+        flow: flow_width,
+    }
+}
+
+/// Where the flow column sits for this layout, or `None` when it has no room.
+/// Its left edge is always `total_cols - width`: the other columns and the
+/// separators fill exactly what flow leaves.
+pub fn flow_column_rect(layout: &Layout) -> Option<FlowRect> {
+    let rows = layout.status_rows.max(1).saturating_sub(1);
+    let width = flow_column_width(layout.total_cols)?;
+    (rows > 0).then_some(FlowRect {
+        widget_pty_rows: layout.pty_rows + layout.handoff_rows,
+        col: layout.total_cols - width,
+        width,
+        rows,
+    })
 }
 
 /// Split terminal height into assistant PTY rows and status widget rows.
@@ -122,13 +203,9 @@ pub fn handoff_rows(
 /// `(git_width, changes_width)`. The estimate ignores the multi-column flex
 /// path because that decision depends on how many rows we ultimately give git
 /// — a rough split is enough for the natural-row heuristics.
-fn estimate_column_widths(total_cols: u16, compact_stats: bool) -> (u16, u16) {
-    let stats_width = stats_widget_width(total_cols, compact_stats);
-    let separators: u16 = 2;
-    let remaining = total_cols.saturating_sub(stats_width + separators);
-    let git_w = (remaining * 3) / 8;
-    let changes_w = remaining.saturating_sub(git_w);
-    (git_w, changes_w)
+fn estimate_column_widths(total_cols: u16, compact_stats: bool, flow: bool) -> (u16, u16) {
+    let widths = column_widths(total_cols, compact_stats, false, flow);
+    (widths.git, widths.changes)
 }
 
 /// Compute the status row count needed to show every widget's natural content
@@ -147,11 +224,12 @@ pub fn compute_dynamic_status_rows(
     prs: &[SessionPr],
     slack_threads: &[SlackThread],
     handoff_rows: u16,
+    flow: bool,
 ) -> u16 {
     let preferred_max = preferred_status_rows_max(total_rows, handoff_rows);
     let available_rows = preferred_max.saturating_sub(1);
     let compact_stats = stats_use_compact_layout(available_rows);
-    let (git_w, changes_w) = estimate_column_widths(total_cols, compact_stats);
+    let (git_w, changes_w) = estimate_column_widths(total_cols, compact_stats, flow);
     let titles = session_title_hierarchy(prs, terminal_title);
     let natural = stats_render_rows(available_rows, session_stats)
         .max(git_natural_rows(git_state, git_w))
@@ -195,6 +273,7 @@ pub fn draw_status_bar(
     now_ms: u64,
     session_mark: SessionMark,
     secondary_attached: bool,
+    flow_rows: Option<&[String]>,
 ) -> Result<()> {
     // Begin synchronized update - terminal batches all our drawing
     // so cursor movements don't interfere with Claude's incremental updates
@@ -300,28 +379,20 @@ pub fn draw_status_bar(
     // Widen stats as soon as its normal list would be clipped. The compact
     // renderer uses the extra width to fit two complete metrics on each row.
     let compact = stats_use_compact_layout(widget_data_rows);
-    let stats_width = stats_widget_width(layout.total_cols, compact);
-
-    // Account for separators: 2 separators between 3 columns
-    let num_separators = 2;
-    let remaining = layout
-        .total_cols
-        .saturating_sub(stats_width + num_separators as u16);
 
     // Check if git needs multiple columns (files > available rows)
     let git_available_rows = widget_status_rows.saturating_sub(2) as usize; // -2 for separator + header
     let git_needs_multi_column = git_state.files.len() > git_available_rows;
 
-    // Flex ratio: git gets 4/8 if multi-column, 3/8 if single-column
-    let (git_width, changes_width) = if git_needs_multi_column {
-        // 4:4 split (50/50)
-        let git_w = remaining / 2;
-        (git_w, remaining - git_w)
-    } else {
-        // 3:5 split - git gets less, changes gets more
-        let git_w = (remaining * 3) / 8;
-        (git_w, remaining - git_w)
-    };
+    // Stats keeps its share; git and changes split the rest 3:5 (4:4 when git
+    // needs several columns); flow, when it has a frame, takes 15% on the right.
+    let widths = column_widths(
+        layout.total_cols,
+        compact,
+        git_needs_multi_column,
+        flow_rows.is_some(),
+    );
+    let (stats_width, git_width, changes_width) = (widths.stats, widths.git, widths.changes);
     let titles = session_title_hierarchy(prs, terminal_title);
     let state_tint = cooldowns.tint(cooldown::SESSION_STATE_KEY, now_ms);
 
@@ -389,6 +460,23 @@ pub fn draw_status_bar(
             cwd,
             session_mark,
         )?;
+
+        // Flow column (rightmost, when it shows)
+        if let (Some(flow_width), Some(rows)) = (widths.flow, flow_rows) {
+            write!(stdout, "{}│{}", escape::fg(color::DARK_GRAY), RESET)?;
+            current_col += changes_width + 1;
+            draw_flow_row(
+                stdout,
+                WidgetArea {
+                    pty_rows: widget_pty_rows,
+                    col: current_col,
+                    row: widget_row,
+                    width: flow_width,
+                    height: widget_status_rows,
+                },
+                rows.get(widget_row as usize - 1).map(String::as_str),
+            )?;
+        }
     }
 
     // The Pair code lives in the stats header and the recap toast/hint live
@@ -440,7 +528,8 @@ mod tests {
         let git = GitState::default();
         let diff = DiffSummary::default();
 
-        let rows = compute_dynamic_status_rows(35, 180, &stats, &git, &diff, None, &[], &[], 0);
+        let rows =
+            compute_dynamic_status_rows(35, 180, &stats, &git, &diff, None, &[], &[], 0, false);
 
         assert_eq!(rows, MIN_STATUS_ROWS);
     }
@@ -453,7 +542,8 @@ mod tests {
         let stats = SessionStats::default();
         let git = GitState::default();
         let diff = DiffSummary::default();
-        let rows = compute_dynamic_status_rows(60, 200, &stats, &git, &diff, None, &[], &[], 0);
+        let rows =
+            compute_dynamic_status_rows(60, 200, &stats, &git, &diff, None, &[], &[], 0, false);
         assert_eq!(rows, 8);
     }
 
@@ -471,6 +561,7 @@ mod tests {
             &[],
             &[],
             3,
+            false,
         );
         assert_eq!(rows, preferred_status_rows_max(8, 3));
         assert!(rows < MIN_STATUS_ROWS);
@@ -503,6 +594,7 @@ mod tests {
             &[],
             &[],
             MAX_RECAP_ROWS,
+            false,
         );
         assert_eq!(rows, preferred_status_rows_max(60, MAX_RECAP_ROWS));
     }
@@ -524,8 +616,18 @@ mod tests {
             false,
             &[],
         );
-        let rows =
-            compute_dynamic_status_rows(80, 200, &stats, &git, &diff, None, &[], &[], handoff);
+        let rows = compute_dynamic_status_rows(
+            80,
+            200,
+            &stats,
+            &git,
+            &diff,
+            None,
+            &[],
+            &[],
+            handoff,
+            false,
+        );
         assert_eq!(rows, 8);
     }
 
@@ -546,6 +648,7 @@ mod tests {
             &[],
             &[],
             MAX_RECAP_ROWS,
+            false,
         );
         assert!(rows >= MIN_STATUS_ROWS);
         assert!(rows <= preferred_status_rows_max(15, MAX_RECAP_ROWS));
@@ -586,7 +689,8 @@ mod tests {
         // packed layout for stats(7) and changes(~7) plus separator should
         // come in well under that — typical of the user's bottom-screenshot
         // resize complaint.
-        let rows = compute_dynamic_status_rows(100, 250, &stats, &git, &diff, None, &[], &[], 0);
+        let rows =
+            compute_dynamic_status_rows(100, 250, &stats, &git, &diff, None, &[], &[], 0, false);
         assert!(
             rows < 12,
             "expected packed layout to keep status_rows under 12, got {}",
@@ -639,5 +743,162 @@ mod tests {
             handoff_rows(200, &pairing_state(), &update, &recap, false, &[]),
             2
         );
+    }
+
+    /// The three-column split before the flow column existed.
+    fn legacy_widths(total: u16, compact: bool, multi: bool) -> (u16, u16, u16) {
+        let stats = stats_widget_width(total, compact);
+        let remaining = total.saturating_sub(stats + 2);
+        let git = if multi {
+            remaining / 2
+        } else {
+            (remaining * 3) / 8
+        };
+        (stats, git, remaining - git)
+    }
+
+    #[test]
+    fn column_widths_without_flow_are_the_three_column_ones() {
+        for total in 40..=400 {
+            for compact in [false, true] {
+                for multi in [false, true] {
+                    let w = column_widths(total, compact, multi, false);
+                    assert_eq!(
+                        (w.stats, w.git, w.changes),
+                        legacy_widths(total, compact, multi)
+                    );
+                    assert_eq!(w.flow, None);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn flow_takes_fifteen_percent_and_the_others_shrink_in_proportion() {
+        let cases = [
+            (120, false, false, (30, 25, 44, 18)),
+            (120, true, false, (36, 23, 40, 18)),
+            (200, false, false, (37, 48, 82, 30)),
+            (200, true, false, (59, 40, 68, 30)),
+            (200, false, true, (37, 65, 65, 30)),
+        ];
+        for (total, compact, multi, (stats, git, changes, flow)) in cases {
+            let w = column_widths(total, compact, multi, true);
+            assert_eq!(
+                (w.stats, w.git, w.changes, w.flow),
+                (stats, git, changes, Some(flow)),
+                "{total} cols, compact {compact}, multi {multi}"
+            );
+        }
+    }
+
+    #[test]
+    fn flow_columns_fill_the_width_exactly_and_stats_keeps_its_minimum() {
+        for total in FLOW_MIN_TOTAL_COLS..=400 {
+            for compact in [false, true] {
+                let w = column_widths(total, compact, false, true);
+                let flow = w.flow.expect("flow shows from 100 columns");
+                assert_eq!(w.stats + w.git + w.changes + flow + 3, total);
+                assert!(w.stats >= if compact { 36 } else { 30 });
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_terminals_have_no_flow_column() {
+        assert_eq!(flow_column_width(FLOW_MIN_TOTAL_COLS - 1), None);
+        assert_eq!(column_widths(99, false, false, true).flow, None);
+        assert_eq!(
+            column_widths(99, false, false, true),
+            column_widths(99, false, false, false)
+        );
+    }
+
+    #[test]
+    fn flow_column_rect_sits_at_the_right_edge_below_the_separator() {
+        let layout = Layout {
+            pty_rows: 30,
+            total_cols: 120,
+            status_rows: 8,
+            handoff_rows: 2,
+        };
+        assert_eq!(
+            flow_column_rect(&layout),
+            Some(FlowRect {
+                widget_pty_rows: 32,
+                col: 102,
+                width: 18,
+                rows: 7
+            })
+        );
+        let narrow = Layout {
+            total_cols: 90,
+            ..layout
+        };
+        assert_eq!(flow_column_rect(&narrow), None);
+        let no_rows = Layout {
+            status_rows: 1,
+            ..layout
+        };
+        assert_eq!(flow_column_rect(&no_rows), None);
+    }
+
+    #[test]
+    fn a_full_draw_puts_flow_after_a_third_separator_at_the_right_edge() {
+        let (total_cols, total_rows) = (120u16, 40u16);
+        let layout = Layout {
+            pty_rows: 31,
+            total_cols,
+            status_rows: 9,
+            handoff_rows: 0,
+        };
+        let rows: Vec<String> = (0..8).map(|_| "\x1b[38;2;200;80;10m▓".repeat(30)).collect();
+        let mut out = Vec::new();
+        draw_status_bar(
+            &mut out,
+            &layout,
+            &SessionStats::default(),
+            &GitState::default(),
+            &DiffSummary::default(),
+            None,
+            &[],
+            IdeKind::default(),
+            Path::new("/tmp"),
+            None,
+            &PairingState::default(),
+            &UpdateState::default(),
+            &RecapState::default(),
+            false,
+            &[],
+            "",
+            Some((0, 0)),
+            &Cooldowns::default(),
+            0,
+            SessionMark::from_seed("flow-draw"),
+            false,
+            Some(&rows),
+        )
+        .unwrap();
+        let mut parser = vt100::Parser::new(total_rows, total_cols, 0);
+        parser.process(b"top row\r\n");
+        parser.process(&out);
+        let screen = parser.screen();
+        // Nothing scrolled: the first row is still there.
+        assert!(screen.contents().starts_with("top row"));
+        let flow = flow_column_rect(&layout).unwrap();
+        for r in 32..40u16 {
+            assert_eq!(
+                screen.cell(r, flow.col - 1).unwrap().contents(),
+                "│",
+                "row {r}"
+            );
+            for c in flow.col..total_cols {
+                assert_eq!(
+                    screen.cell(r, c).unwrap().contents(),
+                    "▓",
+                    "row {r} col {c}"
+                );
+            }
+        }
     }
 }

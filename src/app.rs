@@ -1372,6 +1372,7 @@ impl App {
             self.pr_tracker.prs(),
             self.pr_tracker.slack_threads(),
             handoff,
+            false,
         );
 
         // The handoff grows with the PR list, so pty_rows can change even when
@@ -1592,6 +1593,7 @@ impl App {
             now_ms,
             self.session_mark,
             self.attach_clients > 0,
+            None,
         )?;
 
         // The transcript path arrives with the first hook/session event, so keep
@@ -2134,6 +2136,7 @@ impl App {
             self.pr_tracker.prs(),
             self.pr_tracker.slack_threads(),
             new_handoff_rows,
+            false,
         );
         self.status_rows = new_status_rows;
         self.pty_rows = self

@@ -5,6 +5,7 @@
 
 mod changes;
 pub(crate) mod cooldown;
+mod flow;
 mod git;
 pub(crate) mod handoff;
 mod pairing;
@@ -16,6 +17,7 @@ mod time;
 pub mod utils;
 
 pub use changes::{changes_natural_rows, draw_changes_widget};
+pub use flow::{draw_flow_column, FlowRect};
 pub use git::{draw_git_widget, git_natural_rows};
 pub use handoff::{
     draw_pr_handoff, draw_pr_separator, draw_recap_handoff, pr_handoff_rows, pr_separator_rows,
@@ -27,7 +29,8 @@ pub use stats::{
 };
 pub(crate) use stats::{session_state_badge, session_state_icon, STATE_BADGE_WIDTH};
 pub use status_bar::{
-    compute_dynamic_status_rows, draw_status_bar, handoff_rows, split_terminal_rows, Layout,
+    compute_dynamic_status_rows, draw_status_bar, flow_column_rect, handoff_rows,
+    split_terminal_rows, Layout,
 };
 
 pub(crate) const PROMPT_ICON: &str = "⟩";
