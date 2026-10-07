@@ -31,7 +31,7 @@ use crate::session_mark::SessionMark;
 use crate::slack::SlackThread;
 use crate::terminal::{
     escape, forward_key_to_pty, forward_mouse_to_pty, DsrChunk, DsrHandler, KittyKeyboardTracker,
-    OscScanner, PlatformPty, QueryResponder, ScrollRegionFilter,
+    OscScanner, OutputBoundary, PlatformPty, QueryResponder, ScrollRegionFilter,
 };
 use crate::ui::cooldown::{self, Cooldowns};
 use crate::ui::{
@@ -42,6 +42,11 @@ use crate::update::{UpdateCheckResult, UpdateState};
 
 /// Time PTY must be quiet before drawing status bar (prevents mid-burst draws)
 const PTY_SETTLE_TIME: Duration = Duration::from_millis(30);
+/// After this long without output, the status bar draws whatever the stream's
+/// state (a synchronized update the assistant never ended, a broken sequence).
+const PTY_STALE_TIME: Duration = Duration::from_millis(250);
+/// How soon a flow frame that couldn't paint (mid-write) tries again.
+const FLOW_RETRY: Duration = Duration::from_millis(10);
 
 /// Git refresh interval when session is active (thinking, permission, etc.)
 const GIT_INTERVAL_ACTIVE: Duration = Duration::from_secs(1);
@@ -291,6 +296,9 @@ pub struct App {
     session_mark: SessionMark,
     /// The flow column's scene (`None` when `[flow] enabled = false`).
     flow: Option<FlowColumn>,
+    /// Where the assistant's output stands, so the status bar can draw
+    /// between its writes rather than only after it falls silent.
+    output_boundary: OutputBoundary,
     /// Number of cloud init retry attempts
     cloud_init_retry_count: u32,
     /// Last cloud init attempt time
@@ -471,6 +479,7 @@ impl App {
             cooldowns: Cooldowns::default(),
             session_mark,
             flow,
+            output_boundary: OutputBoundary::default(),
             session_id,
             cloud_init_retry_count: 0,
             last_cloud_init_attempt: None,
@@ -824,9 +833,12 @@ impl App {
         };
         let mut attach_live = attach_rx.is_some();
 
-        // The flow column's frames, at the scene's own pace.
+        // The flow column's frames, at the scene's own pace: when the next is
+        // due, and a frame still waiting for the PTY to allow a paint.
         let flow_sleep = tokio::time::sleep(Duration::from_millis(70));
         tokio::pin!(flow_sleep);
+        let mut flow_next = tokio::time::Instant::now();
+        let mut flow_unpainted: Option<crate::flow::FlowChange> = None;
 
         // Event-driven main loop using tokio::select!
         // This replaces the polling loop - we only wake up when something actually happens
@@ -846,7 +858,7 @@ impl App {
             tokio::select! {
                 // Adopt background startup results as soon as they land.
                 _ = startup_poll.tick(), if self.has_pending_startup_tasks() => {
-                    if self.poll_startup_tasks() && last_pty_output.elapsed() >= PTY_SETTLE_TIME {
+                    if self.poll_startup_tasks() && self.can_draw_status(last_pty_output) {
                         self.draw_status_bar()?;
                         last_status_draw = Instant::now();
                     }
@@ -949,8 +961,8 @@ impl App {
                         self.initial_diff_time_ms = Some(result.diff_time_ms);
                     }
 
-                    // Redraw with new data (if PTY quiet, otherwise status_draw_interval will handle)
-                    if last_pty_output.elapsed() >= PTY_SETTLE_TIME {
+                    // Redraw with new data (if the PTY allows, otherwise status_draw_interval will handle)
+                    if self.can_draw_status(last_pty_output) {
                         self.draw_status_bar()?;
                         last_status_draw = Instant::now();
                     }
@@ -993,9 +1005,11 @@ impl App {
 
                 // Throbber animation timer - only active when in Thinking/Permission state
                 _ = throbber_interval_timer.tick(), if needs_throbber => {
-                    // Only animate if PTY has been quiet (don't animate mid-burst)
-                    if last_pty_output.elapsed() >= PTY_SETTLE_TIME
-                        && last_throbber_draw.elapsed() >= Duration::from_millis(100)
+                    // Animate between the assistant's writes, never mid-sequence.
+                    // (The timer ticks every 100ms; allow for it firing a little
+                    // early, or every other frame would be skipped.)
+                    if self.can_draw_status(last_pty_output)
+                        && last_throbber_draw.elapsed() >= Duration::from_millis(90)
                     {
                         self.draw_status_bar()?;
                         last_throbber_draw = Instant::now();
@@ -1009,8 +1023,8 @@ impl App {
                     let since_draw = last_status_draw.elapsed();
                     let draw_throttle = if is_idle { STATUS_DRAW_INTERVAL_IDLE } else { status_debounce };
 
-                    // Draw if quiet long enough AND debounce passed
-                    if quiet_for >= PTY_SETTLE_TIME && since_draw >= draw_throttle {
+                    // Draw if the PTY allows AND debounce passed
+                    if self.can_draw_status(last_pty_output) && since_draw >= draw_throttle {
                         // The last PTY chunk can land inside the 100ms capture
                         // throttle. Force one final screen scan after the burst
                         // settles so terminal-only prompts are not missed.
@@ -1201,27 +1215,41 @@ impl App {
                     }
                 }
 
-                // The flow column: step the scene and paint just the column,
-                // or the whole bar when the column first appears.
+                // The flow column: step the scene at its pace and paint just
+                // the column (the whole bar when the column first appears). A
+                // frame that can't paint yet, mid-write, is retried shortly
+                // rather than dropped, so the scene moves evenly.
                 () = &mut flow_sleep, if self.flow.is_some() => {
-                    let (change, pace) = match self.flow.as_mut() {
-                        Some(flow) => (flow.tick(), flow.pace()),
-                        None => Default::default(),
-                    };
-                    flow_sleep
-                        .as_mut()
-                        .reset(tokio::time::Instant::now() + pace);
-                    if change.column_toggled {
-                        self.last_status_bar_hash = None;
+                    let now = tokio::time::Instant::now();
+                    if flow_unpainted.is_none() {
+                        let (change, pace) = match self.flow.as_mut() {
+                            Some(flow) => (flow.tick(), flow.pace()),
+                            None => Default::default(),
+                        };
+                        flow_next = now + pace;
+                        if change.column_toggled {
+                            self.last_status_bar_hash = None;
+                        }
+                        if change.new_frame || change.column_toggled {
+                            flow_unpainted = Some(change);
+                        }
                     }
-                    if last_pty_output.elapsed() >= PTY_SETTLE_TIME {
+                    if flow_unpainted.is_some() && self.can_draw_status(last_pty_output) {
+                        flow_unpainted = None;
                         if self.last_status_bar_hash.is_none() {
                             self.draw_status_bar()?;
                             last_status_draw = Instant::now();
-                        } else if change.new_frame {
+                        } else {
                             self.draw_flow_column();
                         }
                     }
+                    // Waiting to paint: try again shortly (the scene holds still
+                    // meanwhile); otherwise step again when the next frame is due.
+                    flow_sleep.as_mut().reset(if flow_unpainted.is_some() {
+                        now + FLOW_RETRY
+                    } else {
+                        flow_next.max(now)
+                    });
                 }
 
                 // Termination signals — break out of the loop so the cleanup
@@ -1379,6 +1407,7 @@ impl App {
                     wrote_output = true;
 
                     self.platform_pty.process_output(&terminal_output);
+                    self.output_boundary.scan(&terminal_output);
                     // Track autocomplete suggestions from raw PTY bytes
                     self.suggestion_tracker.process(&passthrough);
                     stdout.write_all(&terminal_output)?;
@@ -1698,6 +1727,27 @@ impl App {
         );
 
         Ok(())
+    }
+
+    /// Whether the status bar may draw now without breaking the assistant's
+    /// output: between its writes (no escape sequence or character half
+    /// written, no synchronized update open, the cursor not waiting to wrap at
+    /// the right edge), or once it has been quiet a moment.
+    fn can_draw_status(&self, last_pty_output: Instant) -> bool {
+        let quiet = last_pty_output.elapsed();
+        if quiet >= PTY_STALE_TIME {
+            return true;
+        }
+        if self.output_boundary.in_synchronized_update() {
+            return false;
+        }
+        if quiet >= PTY_SETTLE_TIME {
+            return true;
+        }
+        // Writing at the last column leaves a wrap pending that moving the
+        // cursor back would cancel: wait for the next write instead.
+        let (_, col) = self.platform_pty.screen().cursor_position();
+        self.output_boundary.at_rest() && col + 1 < self.total_cols
     }
 
     /// Repaint just the flow column with its latest frame, between full
@@ -2056,7 +2106,7 @@ impl App {
             ) {
                 self.suggestion_tracker.clear();
             }
-            if last_pty_output.elapsed() >= PTY_SETTLE_TIME {
+            if self.can_draw_status(last_pty_output) {
                 self.draw_status_bar()?;
                 *last_status_draw = Instant::now();
             }
