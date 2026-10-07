@@ -99,6 +99,12 @@ const HOOK_EVENTS: &[HookSpec] = &[
     hook("DirectoryAdded"),
 ];
 
+/// Where the hook appends a line for every hook event of a crabigator
+/// session (`activity_log_path` in stats_hook.py), for the flow column.
+pub fn activity_log_path(session_id: &str) -> PathBuf {
+    PathBuf::from(format!("/tmp/crabigator-{session_id}/activity.jsonl"))
+}
+
 /// Claude Code platform implementation
 pub struct ClaudeCodePlatform {
     /// Path to ~/.claude directory

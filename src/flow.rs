@@ -9,7 +9,9 @@
 //! differ, and the scene takes the colour of the session's mark. The scene
 //! fades: every change of state relights it, and it eases back down over two
 //! minutes, so a bright scene has just changed and embers have sat a while.
-//! Work (tool calls, compactions) flares it on top.
+//! Work (tool calls, compactions) flares it on top. Claude Code's hooks tell
+//! the work as it happens (`hooks`); other assistants' stats tell it a
+//! refresh later (`feed`).
 
 mod activity;
 mod ansi;
@@ -17,6 +19,7 @@ mod cells;
 mod claim;
 mod clouds;
 mod feed;
+mod hooks;
 mod js;
 mod night;
 mod palette;
@@ -27,6 +30,7 @@ mod scene;
 mod scenes;
 mod sky;
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use chrono::Timelike;
@@ -38,6 +42,7 @@ use crate::ui::FlowRect;
 use activity::{Activity, FRAME_MS};
 use cells::Cells;
 use feed::{ActivityFeed, Heard};
+use hooks::HookFeed;
 use palette::Palette;
 use scene::{Scene, SceneDef, Tint};
 
@@ -54,6 +59,9 @@ const EDIT_LINES: f64 = 12.0;
 /// The assistant's output bytes per streamed character (escape codes and
 /// repaints are most of the bytes), while a turn runs.
 const OUTPUT_PER_CHAR: f64 = 4.0;
+/// While Claude Code's hooks report streamed text this recently, its output
+/// bytes aren't counted again (they stand in for thinking, which no hook shows).
+const STREAM_HEARD: Duration = Duration::from_millis(1500);
 
 /// What a tick changed, for the event loop.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -72,6 +80,8 @@ pub struct FlowColumn {
     turned: Cells,
     activity: Activity,
     feed: ActivityFeed,
+    /// Claude Code's activity log (`None`: other assistants).
+    hooks: Option<HookFeed>,
     /// Where the column would draw for the current layout (its size).
     geometry: Option<FlowRect>,
     /// Where the screen shows the column now.
@@ -88,8 +98,9 @@ pub struct FlowColumn {
 
 impl FlowColumn {
     /// Claim this session's scene (published at once with its mark), seeded
-    /// by the session, in the colour of its mark.
-    pub fn new(session_id: &str, mark: SessionMark) -> Self {
+    /// by the session, in the colour of its mark. `hook_log` is the activity
+    /// log Claude Code's hooks write, for a session that has one.
+    pub fn new(session_id: &str, mark: SessionMark, hook_log: Option<PathBuf>) -> Self {
         let name = claim::assign_scene(session_id, mark);
         let def = scene::scene_def(&name).unwrap_or(&scene::scenes()[0]);
         let target = claim::mark_accent(mark).and_then(|[r, g, b]| {
@@ -103,6 +114,7 @@ impl FlowColumn {
             turned: Cells::new(0, 0),
             activity: Activity::default(),
             feed: ActivityFeed::default(),
+            hooks: hook_log.map(HookFeed::open),
             geometry: None,
             drawn: None,
             frame: None,
@@ -144,10 +156,13 @@ impl FlowColumn {
         }
     }
 
-    /// Advance the activity by the time since the last tick, and step and
-    /// draw the scene when the column has room.
+    /// Hear what the hooks said since the last tick, advance the activity by
+    /// the time since then, and step and draw the scene when the column has room.
     pub fn tick(&mut self) -> FlowChange {
         let now = Instant::now();
+        if let Some(hooks) = self.hooks.as_mut() {
+            hooks.poll(&mut self.activity, now);
+        }
         let elapsed = now.duration_since(self.last_tick).as_secs_f64() * 1000.0;
         self.last_tick = now;
         self.activity.tick(elapsed / FRAME_MS);
@@ -208,26 +223,41 @@ impl FlowColumn {
         self.drawn
     }
 
-    /// The assistant wrote `bytes` to the terminal: while a turn runs, that is
-    /// the closest crabigator comes to hearing it stream.
+    /// The assistant wrote `bytes` to the terminal: while a turn runs, that
+    /// stands in for its stream, unless the hooks just told the real text.
     pub fn hear_output(&mut self, bytes: usize) {
-        if self.activity.is_turn_active {
-            self.activity.streamed(bytes as f64 / OUTPUT_PER_CHAR);
+        let text_heard = self
+            .hooks
+            .as_ref()
+            .and_then(|hooks| hooks.streamed_at)
+            .is_some_and(|at| at.elapsed() < STREAM_HEARD);
+        if self.activity.is_turn_active && !text_heard {
+            self.activity
+                .streamed(bytes as f64 / OUTPUT_PER_CHAR, false);
         }
     }
 
     /// What the assistant's screen says (escape codes stripped): Claude Code's
-    /// effort in its banner ("with xhigh effort"), which sets a turn's floor.
+    /// effort in its banner ("with xhigh effort"), which sets a turn's floor
+    /// until the hooks tell it (the banner never changes; `/effort` does).
     /// (Not its footer's "← 1 agent": that counts agents to switch to, idle
     /// ones too, and would keep the scene from ever dying down.)
     pub fn read_screen(&mut self, text: &str) {
+        if self.hooks.as_ref().is_some_and(|hooks| hooks.knows_effort) {
+            return;
+        }
         if let Some(effort) = effort_on_screen(text) {
             self.activity.floor = effort_floor(effort);
         }
     }
 
     /// What changed in a stats refresh: tool calls finished, compactions.
+    /// Once Claude Code's hooks speak, they tell these sooner, and the stats
+    /// go unheard.
     pub fn observe_stats(&mut self, stats: &PlatformStats) {
+        if self.hooks.as_ref().is_some_and(|hooks| hooks.live) {
+            return;
+        }
         for heard in self.feed.observe(stats) {
             match heard {
                 Heard::Tool(name) => hear_tool(&mut self.activity, &name),
@@ -251,6 +281,9 @@ impl FlowColumn {
             self.activity.turn_started();
         } else {
             self.activity.turn_ended();
+            if let Some(hooks) = self.hooks.as_mut() {
+                hooks.turn_ended();
+            }
         }
         if previous.is_some() {
             self.activity.changed();
@@ -321,6 +354,7 @@ mod tests {
             turned: Cells::new(0, 0),
             activity: Activity::default(),
             feed: ActivityFeed::default(),
+            hooks: None,
             geometry: None,
             drawn: None,
             frame: None,

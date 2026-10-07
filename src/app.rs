@@ -392,7 +392,9 @@ impl App {
         mirror_publisher.set_session_mark(session_mark);
         // The flow column's scene is claimed now, beside the mark, so
         // sessions starting together see each other's claims.
-        let flow = flow_enabled.then(|| FlowColumn::new(&session_id, session_mark));
+        let hook_log = (platform.kind() == PlatformKind::Claude)
+            .then(|| crate::platforms::claude_code::activity_log_path(&session_id));
+        let flow = flow_enabled.then(|| FlowColumn::new(&session_id, session_mark, hook_log));
         mirror_publisher.set_flow_scene(flow.as_ref().map(FlowColumn::scene));
 
         // Worktree sessions scope their PR dispositions to the directory, so a

@@ -54,10 +54,16 @@ flow keeps evolving. This log records which upstream commit the port matches, so
 
 ## What isn't ported, and why
 
-- **The Claude Code plugin**: `hooks/register.tsx`, `hooks/svg.ts`, `types/`, `.claude-plugin/`. crabigator draws the column itself.
+- **The Claude Code plugin**: `hooks/register.tsx` (except its event handlers, which `src/flow/hooks.rs` follows), `hooks/svg.ts`, `types/`, `.claude-plugin/`. crabigator draws the column itself.
 - **pi**: `pi/` (only `ansi.ts` is ported).
 - **Sound**: `hooks/sound.ts`, `hooks/sound-files.ts`, `sounds/`, and each scene's `sounds`, `ambience()` and `hear(...)` calls. Also the state that only served sound: avalon's `heard` (and its `leadFrames` check), the twin rocket's `boomed`. Where a scene drew random numbers or moved state while building a sound event, the port keeps that (surf's next-wave draw), so the frames stay the same. If upstream ever times something *drawn* by `leadFrames`, port `leadFrames` with it.
-- **What crabigator hears differently**: it has no model events, so it stands in for them. The assistant's output while a turn runs counts as streaming (`FlowColumn::hear_output`, about four bytes a character). The effort comes from Claude Code's banner ("with xhigh effort") (`FlowColumn::read_screen`). Running subagents aren't heard: Claude Code's footer ("← 1 agent") counts idle agents too, so it can't stand in. Tool calls are heard when they finish (from the stats), not when they start. Failed commands aren't heard at all (`failed` isn't ported).
+- **What crabigator hears differently**: crabigator isn't a Claude Code plugin, so it hears Claude Code through its hooks instead. The hook appends a line for every hook event to the session's `activity.jsonl`, and `src/flow/hooks.rs` reads it each frame, doing what `register.tsx` does for each event:
+  - `PreToolUse` is `tool.call`: the flare by tool (an edit by the lines it writes), and the call in flight until `PostToolUse` or `PostToolUseFailure`. A failed Bash command (not one cut short by Esc) is `failed`.
+  - `PermissionRequest` and `Elicitation` are a `tool.check` that asked; the call finishing is the answer. A permission request names no call, so it marks the main loop's newest call of that tool.
+  - `UserPromptSubmit` and `PostToolBatch` stand in for `turn.step` (a model request), and every main-loop event carries the effort. `MessageDisplay` gives the streamed text. It arrives a batch of lines at a time, so `Activity` spreads streamed characters over the following second instead of dropping what a frame can't take. No hook shows thinking, so outside streamed text the assistant's output still stands in (`FlowColumn::hear_output`, about four bytes a character).
+  - `SubagentStart` and `SubagentStop` count running subagents in place of `$.agent.list()`. One silent for ten minutes is dropped, in case its stop was missed. `StopFailure` (an API error) ends the turn with smoke. `PostCompact` is `session.compact`.
+
+  Other assistants have no such log: their stats stand in. Tool calls are heard when they finish, and the effort comes from Claude Code's banner ("with xhigh effort"). Claude Code's footer ("← 1 agent") can't stand in for running subagents: it counts idle agents too. Context fill (`session.measure`) isn't heard by either path, so the blue tint never shows.
 - **Resuming at an altitude**: `SkyWorld.seed` and the rockets' `seed(altitude)` override. A Claude Code reload needed them; the column never reloads. Also `SkyWorld.rowOf`, which nothing calls.
 - **Settings and `/flow`**: `hooks/settings.ts`, `hooks/pick.ts`. In crabigator the choices are fixed:
   - fade is always on;

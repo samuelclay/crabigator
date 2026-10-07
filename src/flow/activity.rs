@@ -1,10 +1,9 @@
-//! How the session's work moves the scene (flow's `hooks/activity.ts`, less
-//! failed commands, which crabigator can't hear): events add heat that cools
-//! every frame, a turn climbs a level every 30 s it keeps going, and with fade
-//! (always on in crabigator) each change of state relights the scene to full
-//! and lets it ease back down over two minutes. While a turn runs the scene
-//! is never lower than plain auto would show it; once it ends, a bright scene
-//! has just changed and embers have sat a while.
+//! How the session's work moves the scene (flow's `hooks/activity.ts`): events
+//! add heat that cools every frame, a turn climbs a level every 30 s it keeps
+//! going, and with fade (always on in crabigator) each change of state relights
+//! the scene to full and lets it ease back down over two minutes. While a turn
+//! runs the scene is never lower than plain auto would show it; once it ends, a
+//! bright scene has just changed and embers have sat a while.
 
 use super::scene::Tint;
 
@@ -12,15 +11,20 @@ use super::scene::Tint;
 const DECAY: f64 = 0.98;
 const MAX_HEAT: f64 = 5.0;
 /// Activity from a subagent's loop counts at this weight.
-const SUBAGENT_WEIGHT: f64 = 0.5;
+pub const SUBAGENT_WEIGHT: f64 = 0.5;
 /// Streaming heat per character, and its cap per frame (a rate, not a chunk).
 const STREAM_PER_CHAR: f64 = 0.002;
 const STREAM_CAP: f64 = 0.025;
+/// Streamed characters held over to later frames: a second at the cap. Claude
+/// Code shows text a batch of lines at a time, not a token at a time as flow
+/// hears it, so a batch is spread over the frames until the next one.
+const STREAM_BACKLOG: f64 = STREAM_CAP / STREAM_PER_CHAR * 1000.0 / FRAME_MS;
 /// A turn's running time adds a level every TURN_STEP_MS.
 const TURN_STEP_MS: f64 = 30_000.0;
 /// The frame the activity model counts in, ms.
 pub const FRAME_MS: f64 = 70.0;
-/// Frames of gray tips after a compaction.
+/// Frames of gray tips after a failed command / a compaction.
+const FAIL_SMOKE: f64 = 30.0;
 const COMPACT_SMOKE: f64 = 40.0;
 /// Fade: how long a change of state takes to ease back to the base.
 pub const FADE_MS: f64 = 120_000.0;
@@ -40,7 +44,7 @@ pub struct Activity {
     pub since_change_ms: f64,
     /// Frames this turn has been running (none between turns).
     pub turn_frames: f64,
-    /// Streamed characters since the last tick.
+    /// Streamed characters not yet turned into heat (a frame's cap at a time).
     pending_chars: f64,
 }
 
@@ -78,9 +82,14 @@ impl Activity {
         self.turn_frames = 0.0;
     }
 
+    /// One model request: a small spark (the effort floor is set apart).
+    pub fn model_step(&mut self, is_subagent: bool) {
+        self.add(if is_subagent { 0.2 } else { 0.4 });
+    }
+
     /// Streamed output, applied per frame at a capped rate.
-    pub fn streamed(&mut self, chars: f64) {
-        self.pending_chars += chars;
+    pub fn streamed(&mut self, chars: f64, is_subagent: bool) {
+        self.pending_chars += chars * if is_subagent { SUBAGENT_WEIGHT } else { 1.0 };
     }
 
     /// The state changed: fade relights from full.
@@ -104,6 +113,12 @@ impl Activity {
     /// The Agent tool: a small spark; the running count does the rest.
     pub fn spawned_agent(&mut self) {
         self.add(0.5);
+    }
+
+    /// A command failed: the scene dips and shows smoke for ~2 s.
+    pub fn failed(&mut self) {
+        self.smoke_frames = FAIL_SMOKE;
+        self.heat = (self.heat - 2.0).max(0.0);
     }
 
     /// A compaction: the scene drops to nothing, shows smoke, then picks up again.
@@ -150,8 +165,9 @@ impl Activity {
         }
         self.since_change_ms = (self.since_change_ms + frames * FRAME_MS).min(FADE_MS);
         if self.pending_chars > 0.0 {
-            self.add((STREAM_CAP * frames).min(self.pending_chars * STREAM_PER_CHAR));
-            self.pending_chars = 0.0;
+            let used = (STREAM_CAP * frames / STREAM_PER_CHAR).min(self.pending_chars);
+            self.add(used * STREAM_PER_CHAR);
+            self.pending_chars = (self.pending_chars - used).min(STREAM_BACKLOG);
         }
         self.heat *= DECAY.powf(frames);
         if self.heat < 0.01 {
@@ -268,11 +284,42 @@ mod tests {
     }
 
     #[test]
+    fn a_batch_of_lines_streams_over_the_frames_after_it() {
+        let mut a = Activity::default();
+        a.turn_started();
+        a.streamed(100.0, false);
+        a.tick(1.0);
+        // One frame's worth at the cap (cooled by that frame), not the whole batch.
+        assert!((a.heat - STREAM_CAP * DECAY).abs() < 1e-9, "{}", a.heat);
+        for _ in 0..10 {
+            a.tick(1.0);
+        }
+        // 100 characters are 0.2 of heat, spread at the cap; cooling takes a little.
+        assert!((0.17..0.2).contains(&a.heat), "{}", a.heat);
+        // A flood is held to a second's worth.
+        let mut b = Activity::default();
+        b.streamed(1e6, false);
+        b.tick(1.0);
+        assert!(b.pending_chars <= STREAM_BACKLOG);
+    }
+
+    #[test]
+    fn a_failed_command_dips_and_smokes() {
+        let mut a = Activity::default();
+        a.edited(30.0, false);
+        a.failed();
+        assert_eq!(a.heat, 1.0);
+        assert_eq!(a.tint(), Tint::Smoke);
+        run(&mut a, FAIL_SMOKE * FRAME_MS);
+        assert_eq!(a.tint(), Tint::Normal);
+    }
+
+    #[test]
     fn streamed_output_keeps_a_turn_burning_at_a_capped_rate() {
         let mut a = Activity::default();
         a.turn_started();
         for _ in 0..200 {
-            a.streamed(10_000.0);
+            a.streamed(10_000.0, false);
             a.tick(1.0);
         }
         // The cap: 0.025 a frame against 2% cooling settles near 1.25.
