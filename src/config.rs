@@ -44,6 +44,23 @@ pub struct Config {
     /// Cloud service used for streaming, pairing, and dashboard links.
     #[serde(default)]
     pub cloud: CloudPreferences,
+
+    /// The flow column: an ambient scene at the right of the status widgets.
+    #[serde(default)]
+    pub flow: FlowPreferences,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FlowPreferences {
+    /// Whether the flow column shows. Missing means it does.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for FlowPreferences {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -110,6 +127,7 @@ impl Default for Config {
             recap_model: None,
             pr_board: PrBoardPreferences::default(),
             cloud: CloudPreferences::default(),
+            flow: FlowPreferences::default(),
         }
     }
 }
@@ -236,6 +254,17 @@ mod tests {
         assert_eq!(config.pr_board.oldest_visible_hours, None);
         assert_eq!(config.pr_board.view, "sessions");
         assert!(config.cloud.url.is_none());
+        assert!(config.flow.enabled);
+    }
+
+    #[test]
+    fn flow_preferences_round_trip() {
+        let config: Config =
+            toml::from_str("default_platform = \"claude\"\n[flow]\nenabled = false\n").unwrap();
+        assert!(!config.flow.enabled);
+        let saved = toml::to_string(&config).unwrap();
+        let back: Config = toml::from_str(&saved).unwrap();
+        assert!(!back.flow.enabled);
     }
 
     #[test]
