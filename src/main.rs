@@ -6,6 +6,7 @@ mod capture;
 mod cli;
 mod cloud;
 mod config;
+mod flow;
 mod git;
 mod herdr;
 mod hooks;

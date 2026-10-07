@@ -1,4 +1,4 @@
-.PHONY: run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo opencode grok grok-yolo pr prs reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux portability-check
+.PHONY: run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo opencode grok grok-yolo pr prs reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux portability-check flow-reference
 
 PROVIDER_FILE := .crabigator-provider
 DEFAULT_PROVIDER := claude
@@ -144,3 +144,8 @@ sync-usage:
 			-H 'Cookie: crabigator_staff=$(STAFF_COOKIE)' \
 			-d "{\"group_id\":\"$(GROUP)\"}" && echo ""; \
 	fi
+
+# The flow scenes' reference frames, from a flow checkout (src/flow/FORK.md).
+FLOW_DIR ?= ../flow
+flow-reference:
+	cd $(FLOW_DIR) && FLOW_DIR=$(abspath $(FLOW_DIR)) OUT=$(CURDIR)/src/flow/testdata SCENES=$(SCENES) npx tsx $(CURDIR)/scripts/flow-reference.ts
