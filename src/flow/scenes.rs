@@ -2,5 +2,6 @@
 
 pub mod avalon;
 pub mod balloon;
+pub mod engine;
 pub mod fire;
 pub mod warp;

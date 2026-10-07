@@ -60,11 +60,12 @@ pub fn scenes() -> &'static [SceneDef] {
     &SCENES
 }
 
-static SCENES: [SceneDef; 4] = [
+static SCENES: [SceneDef; 5] = [
     super::scenes::fire::DEF,
     super::scenes::warp::DEF,
     super::scenes::avalon::DEF,
     super::scenes::balloon::DEF,
+    super::scenes::engine::DEF,
 ];
 
 /// A scene by name.
