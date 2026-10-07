@@ -72,6 +72,7 @@ pub const FALCON: SceneDef = SceneDef {
         range: 45.0,
         spread: Some(60.0),
     },
+    figure: true,
     make: |seed| Box::new(LaunchSite::new(Rocket::Falcon, seed)),
 };
 
@@ -82,6 +83,7 @@ pub const STARSHIP: SceneDef = SceneDef {
         range: 45.0,
         spread: Some(60.0),
     },
+    figure: true,
     make: |seed| Box::new(LaunchSite::new(Rocket::Starship, seed)),
 };
 
@@ -1394,6 +1396,7 @@ impl LaunchSite {
         t.booster_only = true;
         t.world.dials.night = self.world.dials.night;
         t.world.dials.tint = self.world.dials.tint;
+        t.world.dials.accent = self.world.dials.accent;
         t.world.dials.strength = 1.0;
         Scene::ensure(t.as_mut(), w, h);
         t.geo();
@@ -1426,6 +1429,7 @@ impl LaunchSite {
         };
         t.world.dials.night = self.world.dials.night;
         t.world.dials.tint = self.world.dials.tint;
+        t.world.dials.accent = self.world.dials.accent;
         t.world.dials.strength = 1.0;
         Scene::step(t.as_mut());
         // Down: on the mount in the arms, or on its legs at the landing zone.
@@ -1813,6 +1817,30 @@ impl Scene for LaunchSite {
 
 #[cfg(test)]
 mod tests {
+    use crate::flow::scene::Scene;
+
+    #[test]
+    fn the_rocket_wears_the_session_hue() {
+        for make in [super::FALCON.make, super::STARSHIP.make] {
+            let colours = |accent| {
+                let mut r = make(7.0);
+                r.dials().accent = accent;
+                r.dials().strength = 1.0;
+                r.ensure(24, 8);
+                for _ in 0..20 {
+                    r.step();
+                }
+                let grid = r.grid();
+                (0..grid.len())
+                    .flat_map(|i| [grid.foreground(i), grid.background(i)])
+                    .collect::<std::collections::HashSet<u32>>()
+            };
+            let natural = colours(None);
+            let tinted = colours(Some(305.0));
+            assert_ne!(natural, tinted, "the body takes the hue");
+        }
+    }
+
     #[test]
     fn falcon_frames_match_flow() {
         crate::flow::reference::check(include_str!("../testdata/falcon.json"), 0.0);

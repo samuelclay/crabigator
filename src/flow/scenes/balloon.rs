@@ -7,7 +7,7 @@
 
 use crate::flow::cells::Cells;
 use crate::flow::js::{i32_of, round};
-use crate::flow::palette::SceneHue;
+use crate::flow::palette::{tint_to, SceneHue};
 use crate::flow::pixels::{g, hash, mix};
 use crate::flow::scene::{Dials, Scene, SceneDef, Tint};
 use crate::flow::sky::{SkyScene, SkyWorld};
@@ -19,6 +19,7 @@ pub const DEF: SceneDef = SceneDef {
         range: 45.0,
         spread: Some(60.0),
     },
+    figure: true,
     make: |seed| Box::new(Balloon::new(seed)),
 };
 
@@ -111,6 +112,11 @@ impl Balloon {
         let blue = tint == Tint::Blue;
         let burning =
             self.world.target() > self.world.alt + 0.3 || self.world.dials.strength >= 6.0;
+        // The stripes in the session's hue, light and dark (crabigator's).
+        let (stripe_a, stripe_b) = match self.world.dials.accent {
+            Some(hue) => (tint_to(STRIPE_A, hue, 0.0), tint_to(STRIPE_B, hue, 0.0)),
+            None => (STRIPE_A, STRIPE_B),
+        };
         for (sr, row) in SPRITE.iter().enumerate() {
             let r = top + sr as f64;
             if r < 0.0 {
@@ -136,15 +142,15 @@ impl Balloon {
                     } else if blue {
                         BLUE_A
                     } else {
-                        STRIPE_A
+                        stripe_a
                     }
                 } else {
                     let even = sc % 2 == 0;
                     match (blue, even) {
                         (true, true) => BLUE_A,
                         (true, false) => BLUE_B,
-                        (false, true) => STRIPE_A,
-                        (false, false) => STRIPE_B,
+                        (false, true) => stripe_a,
+                        (false, false) => stripe_b,
                     }
                 };
                 let i = (r * w + x) as usize;
@@ -198,6 +204,23 @@ impl Scene for Balloon {
 
 #[cfg(test)]
 mod tests {
+    use crate::flow::palette::tint_to;
+    use crate::flow::scene::Scene;
+
+    #[test]
+    fn the_stripes_wear_the_session_hue() {
+        let mut b = super::Balloon::new(7.0);
+        b.dials().accent = Some(305.0);
+        b.ensure(24, 8);
+        for _ in 0..30 {
+            b.step();
+        }
+        let want = tint_to(super::STRIPE_A, 305.0, 0.0);
+        let grid = b.grid();
+        assert!((0..grid.len()).any(|i| grid.foreground(i) == want));
+        assert!((0..grid.len()).all(|i| grid.foreground(i) != super::STRIPE_A));
+    }
+
     #[test]
     fn frames_match_flow() {
         crate::flow::reference::check(include_str!("../testdata/balloon.json"), 0.0);

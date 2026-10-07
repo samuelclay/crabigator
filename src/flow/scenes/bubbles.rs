@@ -33,6 +33,7 @@ pub const DEF: SceneDef = SceneDef {
         range: 90.0,
         spread: Some(60.0),
     },
+    figure: false,
     make: |seed| Box::new(Bubbles::new(seed)),
 };
 

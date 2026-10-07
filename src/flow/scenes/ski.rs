@@ -37,7 +37,7 @@ use std::f64::consts::PI;
 use crate::flow::cells::{is_tall, Cells, Rng, DEFAULT_COLOR};
 use crate::flow::js::{hypot, i32_of, max, min, round};
 use crate::flow::night::{moon_cover, moon_radius, MOON, NIGHT_HORIZON, NIGHT_ZENITH, STAR};
-use crate::flow::palette::SceneHue;
+use crate::flow::palette::{tint_to, SceneHue};
 use crate::flow::pixels::{
     clamp, fit_quad, hash_murmur as hash, mix, QuadFit, BRAILLE, NEAR, QUAD,
 };
@@ -50,6 +50,7 @@ pub const DEF: SceneDef = SceneDef {
         range: 45.0,
         spread: Some(60.0),
     },
+    figure: true,
     make: |seed| Box::new(Ski::new(seed)),
 };
 
@@ -304,6 +305,20 @@ struct Kit {
     jacket: u32,
     pants: u32,
     skis: u32,
+}
+
+/// The hero's kit: the first, its hat and jacket in the session's hue when
+/// there is one.
+fn hero_kit(accent: Option<f64>) -> Kit {
+    let kit = KITS[0];
+    match accent {
+        Some(hue) => Kit {
+            hat: tint_to(kit.hat, hue, 0.0),
+            jacket: tint_to(kit.jacket, hue, 0.0),
+            ..kit
+        },
+        None => kit,
+    }
 }
 
 /// Each skier's kit. The first is the hero.
@@ -1274,6 +1289,8 @@ impl Scene for Ski {
     }
 
     fn grid(&mut self) -> &Cells {
+        // The hero (the session's skier) in the session's hue (crabigator's).
+        self.skiers[0].kit = hero_kit(self.dials.accent);
         let n = self.columns * self.rows;
         if self.level() == 0 || n == 0 {
             for i in 0..n {
@@ -1300,6 +1317,15 @@ impl Scene for Ski {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_hero_wears_the_session_hue() {
+        let kit = super::hero_kit(Some(305.0));
+        assert_ne!(kit.jacket, super::KITS[0].jacket);
+        assert_ne!(kit.hat, super::KITS[0].hat);
+        assert_eq!(kit.pants, super::KITS[0].pants);
+        assert_eq!(super::hero_kit(None).jacket, super::KITS[0].jacket);
+    }
+
     #[test]
     fn frames_match_flow() {
         crate::flow::reference::check(include_str!("../testdata/ski.json"), 0.0);

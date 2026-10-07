@@ -98,6 +98,19 @@ pub fn from_oklch(lightness: f64, chroma: f64, hue: f64) -> u32 {
     (to_byte(rgb[0]) << 16) | (to_byte(rgb[1]) << 8) | to_byte(rgb[2])
 }
 
+/// A colour turned to a hue (OKLCH degrees): its lightness kept, its chroma
+/// at least `min_chroma`, so a grey or a white takes the hue too. A scene's
+/// figure (a balloon's stripes, a skier's jacket) wears the session's hue so.
+pub fn tint_to(color: u32, hue: f64, min_chroma: f64) -> u32 {
+    let [lightness, a, b] = oklab(color);
+    from_oklch(lightness, a.hypot(b).max(min_chroma), hue)
+}
+
+/// A colour's OKLCH lightness, 0 (black) to 1 (white).
+pub fn lightness(color: u32) -> f64 {
+    oklab(color)[0]
+}
+
 /// A colour's OKLCH chroma and hue (degrees).
 pub fn chroma_hue(color: u32) -> (f64, f64) {
     let [_, a, b] = oklab(color);
@@ -251,6 +264,22 @@ mod tests {
         assert!(p.shift.abs() <= 45.0);
         assert_ne!(p.color(0x6db8ec), 0x6db8ec); // day blue turns
         assert_eq!(p.color(0xe8402a), 0xe8402a); // a red stripe doesn't
+    }
+
+    #[test]
+    fn a_tint_keeps_lightness_and_takes_the_hue() {
+        let violet = 305.0;
+        for c in [0xe8302c, 0xffd23f, 0xf4f5f7] {
+            let t = tint_to(c, violet, 0.04);
+            assert!(
+                (lightness(t) - lightness(c)).abs() < 0.02,
+                "{c:06x} → {t:06x}"
+            );
+            assert!(
+                wrap(chroma_hue(t).1 - violet).abs() < 6.0,
+                "{c:06x} → {t:06x}"
+            );
+        }
     }
 
     #[test]

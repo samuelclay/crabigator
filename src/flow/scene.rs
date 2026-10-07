@@ -24,6 +24,10 @@ pub struct Dials {
     pub tint: Tint,
     /// Night, for the scenes that have one.
     pub night: bool,
+    /// The session's hue (OKLCH degrees) for a scene's figure to wear (its
+    /// balloon, skier, surfer, rocket): crabigator's, not flow's. `None`: the
+    /// figure's own colours, as flow draws them.
+    pub accent: Option<f64>,
 }
 
 impl Default for Dials {
@@ -33,6 +37,7 @@ impl Default for Dials {
             coverage_boost: 0.0,
             tint: Tint::Normal,
             night: false,
+            accent: None,
         }
     }
 }
@@ -51,7 +56,11 @@ pub trait Scene {
 /// ones without a night ignore it.)
 pub struct SceneDef {
     pub name: &'static str,
+    /// How the whole frame turns toward the session's hue (palettes).
     pub hue: SceneHue,
+    /// The scene has a figure that wears the session's hue instead (`accent`):
+    /// its frame keeps its own colours, a sky its blue.
+    pub figure: bool,
     pub make: fn(f64) -> Box<dyn Scene>,
 }
 

@@ -43,6 +43,7 @@ pub const DEF: SceneDef = SceneDef {
         range: 180.0,
         spread: None,
     },
+    figure: false,
     make: |seed| Box::new(Colony::new(seed)),
 };
 

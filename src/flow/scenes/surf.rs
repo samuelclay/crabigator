@@ -27,7 +27,7 @@ use std::f64::consts::PI;
 use crate::flow::cells::{is_tall, Cells, Rng};
 use crate::flow::js::{hypot, i32_of, round};
 use crate::flow::night::{moon_pixel, moon_radius, MOON, NIGHT_HORIZON, NIGHT_ZENITH, STAR};
-use crate::flow::palette::SceneHue;
+use crate::flow::palette::{tint_to, SceneHue};
 use crate::flow::pixels::{
     clamp, clamp01, fit_quad, g, hash1 as hash, mix, QuadFit, BRAILLE, NEAR, QUAD,
 };
@@ -40,6 +40,7 @@ pub const DEF: SceneDef = SceneDef {
         range: 45.0,
         spread: Some(60.0),
     },
+    figure: true,
     make: |seed| Box::new(Surf::new(seed)),
 };
 
@@ -979,7 +980,9 @@ impl Surf {
     }
 
     /// A board: a line centered at (x, y) along the slope, nose (facing) highlighted.
-    fn board(&mut self, x: f64, y: f64, slope: f64, half: f64, facing: f64, color: u32) {
+    /// A board (its nose in `nose`), centred at (x, y), along `slope`.
+    #[allow(clippy::too_many_arguments)]
+    fn board(&mut self, x: f64, y: f64, slope: f64, half: f64, facing: f64, color: u32, nose: u32) {
         // Work in screen units where a pixel is 1 wide and 2 tall.
         let sx = 1.0;
         let sy = slope * 2.0;
@@ -990,11 +993,11 @@ impl Surf {
         let mut i = -steps;
         while i <= steps {
             let k = (i / steps) * half;
-            let nose = k * facing > half * 0.55;
+            let at_nose = k * facing > half * 0.55;
             self.put(
                 x + k * c,
                 y + (k * sn) / 2.0,
-                if nose { STRIPE } else { color },
+                if at_nose { nose } else { color },
             );
             i += 1.0;
         }
@@ -1024,6 +1027,11 @@ impl Surf {
     }
 
     fn paint_surfer(&mut self) {
+        // The hero's board, and its nose, in the session's hue (crabigator's).
+        let (board, stripe) = match self.dials.accent {
+            Some(hue) => (tint_to(BOARD, hue, 0.0), tint_to(STRIPE, hue, 0.0)),
+            None => (BOARD, STRIPE),
+        };
         let large = self.vertical && self.ph >= 32;
         let half = if large { 5.0 } else { 2.6 };
         if self.wipe > 0.0 {
@@ -1033,7 +1041,8 @@ impl Surf {
                 self.board_spin.tan(),
                 half,
                 1.0,
-                BOARD,
+                board,
+                stripe,
             );
             return;
         }
@@ -1064,7 +1073,8 @@ impl Surf {
             if flat { slope * 0.5 } else { slope },
             half,
             facing,
-            BOARD,
+            board,
+            stripe,
         );
         let lean = if !flat && large { -slope * 0.8 } else { 0.0 };
         self.sprite(pose, large, x + lean, by, facing, SUIT);
@@ -1123,7 +1133,7 @@ impl Surf {
             } else {
                 slope * 0.5
             };
-            self.board(x, by, tilt, 2.4, 1.0, EXTRA_BOARDS[i]);
+            self.board(x, by, tilt, 2.4, 1.0, EXTRA_BOARDS[i], STRIPE);
             self.sprite(pose, false, x, by, 1.0, EXTRA_SUITS[i]);
             i += 1;
         }
@@ -1583,6 +1593,27 @@ impl Scene for Surf {
 
 #[cfg(test)]
 mod tests {
+    use crate::flow::palette::tint_to;
+    use crate::flow::scene::Scene;
+
+    #[test]
+    fn the_hero_board_wears_the_session_hue() {
+        let mut s = super::Surf::new(7.0);
+        s.dials().accent = Some(305.0);
+        s.dials().strength = 3.0;
+        s.ensure(30, 9);
+        for _ in 0..60 {
+            s.step();
+        }
+        let want = tint_to(super::BOARD, 305.0, 0.0);
+        let grid = s.grid();
+        let colours: Vec<u32> = (0..grid.len())
+            .flat_map(|i| [grid.foreground(i), grid.background(i)])
+            .collect();
+        assert!(colours.contains(&want));
+        assert!(!colours.contains(&super::BOARD));
+    }
+
     #[test]
     fn frames_match_flow() {
         crate::flow::reference::check(include_str!("../testdata/surf.json"), 0.0);

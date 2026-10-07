@@ -8,6 +8,7 @@ use std::f64::consts::PI;
 
 use crate::flow::cells::{Cells, DEFAULT_COLOR};
 use crate::flow::js::{i32_of, round};
+use crate::flow::palette::{lightness, tint_to};
 use crate::flow::pixels::{fit_quad, hash, lower_block, mix, QUAD};
 use crate::flow::scene::Tint;
 use crate::flow::sky::SkyScene;
@@ -396,11 +397,16 @@ impl LaunchSite {
                     i += 1.0;
                 }
             }
-            // The canopy: a dome, its gores in white and orange.
+            // The canopy: a dome, its gores in white and orange (in the
+            // session's hue, when there is one).
+            let gore = match self.world.dials.accent {
+                Some(hue) => tint_to(0xe8642a, hue, 0.0),
+                None => 0xe8642a,
+            };
             let mut dx = -half;
             while dx <= half {
                 let c = if mains && (x + dx) % 2.0 != 0.0 {
-                    0xe8642a
+                    gore
                 } else {
                     0xf2f3f5
                 };
@@ -528,6 +534,11 @@ impl LaunchSite {
                     continue;
                 }
                 let mut c = c0 as u32;
+                // The session's hue (crabigator's): a wash over the white and
+                // stainless body, the trunk's cells in it outright.
+                if let Some(hue) = self.world.dials.accent {
+                    c = livery(c, hue);
+                }
                 // Burning up coming down: glowing hotter from the bottom, its leading end.
                 if heat > 0.0 {
                     c = mix(
@@ -800,4 +811,35 @@ impl LaunchSite {
         }
         self.n_touched = 0;
     }
+}
+
+/// The trunk's solar cells, which take the session's hue outright.
+const TRUNK: u32 = 0x23315a;
+
+/// A body colour in the session's hue: the trunk's cells outright, the white
+/// and stainless body (anything light) washed with it, the dark parts as they are.
+fn livery(c: u32, hue: f64) -> u32 {
+    thread_local! {
+        static MEMO: std::cell::RefCell<std::collections::HashMap<(u32, u64), u32>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    MEMO.with(|memo| {
+        let key = (c, hue.to_bits());
+        if let Some(&hit) = memo.borrow().get(&key) {
+            return hit;
+        }
+        let out = if c == TRUNK {
+            tint_to(c, hue, 0.0)
+        } else if lightness(c) >= 0.6 {
+            tint_to(c, hue, 0.045)
+        } else {
+            c
+        };
+        let mut memo = memo.borrow_mut();
+        if memo.len() > 256 {
+            memo.clear();
+        }
+        memo.insert(key, out);
+        out
+    })
 }

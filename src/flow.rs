@@ -96,7 +96,7 @@ impl FlowColumn {
         Self {
             def,
             scene: (def.make)(seed),
-            palette: Palette::toward(def.hue, target),
+            palette: palette_for(def, target),
             turned: Cells::new(0, 0),
             activity: Activity::default(),
             feed: ActivityFeed::default(),
@@ -126,7 +126,7 @@ impl FlowColumn {
         let def = &all[(at + 1) % all.len()];
         self.def = def;
         self.scene = (def.make)(self.seed);
-        self.palette = Palette::toward(def.hue, self.target);
+        self.palette = palette_for(def, self.target);
         self.tick();
         def.name
     }
@@ -157,6 +157,7 @@ impl FlowColumn {
         dials.coverage_boost = self.activity.coverage_boost();
         dials.tint = self.activity.tint();
         dials.night = night;
+        dials.accent = if self.def.figure { self.target } else { None };
         let tint = dials.tint;
         self.scene
             .ensure(usize::from(rect.width), usize::from(rect.rows));
@@ -233,6 +234,16 @@ impl FlowColumn {
         if previous.is_some() {
             self.activity.changed();
         }
+    }
+}
+
+/// How a scene takes the session's hue: a figure scene's figure wears it (the
+/// frame keeps its own colours); any other scene's whole frame turns toward it.
+fn palette_for(def: &SceneDef, target: Option<f64>) -> Palette {
+    if def.figure {
+        Palette::natural()
+    } else {
+        Palette::toward(def.hue, target)
     }
 }
 
@@ -328,6 +339,59 @@ mod tests {
         let names: Vec<&str> = scene::scenes().iter().map(|def| def.name).collect();
         assert_eq!(seen, names);
         assert_eq!(flow.next_scene(), "fire");
+    }
+
+    #[test]
+    fn a_figure_scene_wears_the_session_hue_and_keeps_its_sky() {
+        let mut flow = column("balloon");
+        flow.target = Some(305.0);
+        flow.palette = palette_for(flow.def, flow.target);
+        flow.set_geometry(Some(rect(24, 8)));
+        flow.tick();
+        assert!(flow.palette.is_natural());
+        assert_eq!(flow.scene.dials().accent, Some(305.0));
+        let mut fire = column("fire");
+        fire.target = Some(305.0);
+        assert!(!palette_for(fire.def, fire.target).is_natural());
+        fire.set_geometry(Some(rect(24, 8)));
+        fire.tick();
+        assert_eq!(fire.scene.dials().accent, None);
+    }
+
+    /// Every scene in a hue, printed here to look at:
+    /// `FLOW_HUE=305 cargo test flow::tests::preview -- --ignored --nocapture`
+    /// (FLOW_LEVEL, FLOW_SIZE=30x9 too).
+    #[test]
+    #[ignore]
+    fn preview() {
+        let env = |k: &str| std::env::var(k).ok();
+        let hue = env("FLOW_HUE")
+            .and_then(|h| h.parse().ok())
+            .unwrap_or(305.0);
+        let level: f64 = env("FLOW_LEVEL")
+            .and_then(|l| l.parse().ok())
+            .unwrap_or(4.0);
+        let (w, h) = env("FLOW_SIZE")
+            .and_then(|s| {
+                let (w, h) = s.split_once('x')?;
+                Some((w.parse().ok()?, h.parse().ok()?))
+            })
+            .unwrap_or((30u16, 9u16));
+        for def in scene::scenes() {
+            let mut flow = column(def.name);
+            flow.target = Some(hue);
+            flow.palette = palette_for(def, flow.target);
+            flow.activity.floor = level;
+            flow.activity.turn_started();
+            flow.set_geometry(Some(rect(w, h)));
+            for _ in 0..60 {
+                flow.tick();
+            }
+            println!("{} (hue {hue})", def.name);
+            for row in flow.frame_rows().unwrap() {
+                println!("{row}");
+            }
+        }
     }
 
     #[test]
