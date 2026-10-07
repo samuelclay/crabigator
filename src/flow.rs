@@ -217,13 +217,13 @@ impl FlowColumn {
     }
 
     /// What the assistant's screen says (escape codes stripped): Claude Code's
-    /// effort in its banner ("with xhigh effort"), which sets a turn's floor,
-    /// and its running agents in its footer ("← 2 agents"), which add company.
+    /// effort in its banner ("with xhigh effort"), which sets a turn's floor.
+    /// (Not its footer's "← 1 agent": that counts agents to switch to, idle
+    /// ones too, and would keep the scene from ever dying down.)
     pub fn read_screen(&mut self, text: &str) {
         if let Some(effort) = effort_on_screen(text) {
             self.activity.floor = effort_floor(effort);
         }
-        self.activity.running_agents = agents_on_screen(text);
     }
 
     /// What changed in a stats refresh: tool calls finished, compactions.
@@ -288,27 +288,6 @@ fn effort_floor(effort: &str) -> f64 {
         "max" => 6.0,
         _ => 3.0,
     }
-}
-
-/// The running agents Claude Code's footer counts ("← 1 agent", "3 agents"),
-/// read only from its last few lines.
-fn agents_on_screen(text: &str) -> u32 {
-    text.lines()
-        .rev()
-        .filter(|line| !line.trim().is_empty())
-        .take(3)
-        .find_map(|line| {
-            let words: Vec<&str> = line.split_whitespace().collect();
-            words.windows(2).find_map(|pair| {
-                matches!(
-                    pair[1].trim_end_matches(['.', ',', ')']),
-                    "agent" | "agents"
-                )
-                .then(|| pair[0].parse::<u32>().ok())
-                .flatten()
-            })
-        })
-        .unwrap_or(0)
 }
 
 /// A finished tool call, by what it does, as each agent names it.
@@ -459,23 +438,21 @@ mod tests {
     }
 
     #[test]
-    fn the_screen_tells_the_effort_and_the_running_agents() {
+    fn the_screen_tells_the_effort_but_its_agents_dont_keep_the_scene_up() {
         let banner =
             "Claude Code v2.1.293\nOpus 5.5 (1M context) with xhigh effort · Claude Team\n";
         assert_eq!(effort_on_screen(banner), Some("xhigh"));
         assert_eq!(effort_on_screen("no effort here"), None);
         assert_eq!(effort_on_screen("with great effort"), None);
         let footer = "transcript…\n\n❯ \n  ▸▸ auto mode on (shift+tab to cycle) · ← 1 agent\n";
-        assert_eq!(agents_on_screen(footer), 1);
-        assert_eq!(agents_on_screen("a\nb\n  3 agents running\n"), 3);
-        assert_eq!(
-            agents_on_screen("2 agents up in the transcript\n\nx\ny\nz\n"),
-            0
-        );
         let mut flow = column("fire");
         flow.read_screen(&format!("{banner}{footer}"));
         assert_eq!(flow.activity.floor, 5.0);
-        assert_eq!(flow.activity.running_agents, 1);
+        // A turn that ended two minutes ago, with an agent in the footer: embers.
+        flow.sync_state(SessionState::Thinking);
+        flow.sync_state(SessionState::Complete);
+        flow.activity.tick(activity::FADE_MS / FRAME_MS + 1.0);
+        assert_eq!(flow.activity.strength_faded(IDLE_GLOW), IDLE_GLOW);
     }
 
     #[test]
