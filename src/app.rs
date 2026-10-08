@@ -394,7 +394,8 @@ impl App {
         // sessions starting together see each other's claims.
         let hook_log = (platform.kind() == PlatformKind::Claude)
             .then(|| crate::platforms::claude_code::activity_log_path(&session_id));
-        let flow = flow_enabled.then(|| FlowColumn::new(&session_id, session_mark, hook_log));
+        let flow = flow_enabled
+            .then(|| FlowColumn::new(&session_id, session_mark, hook_log, config.flow.fade));
         mirror_publisher.set_flow_scene(flow.as_ref().map(FlowColumn::scene));
 
         // Worktree sessions scope their PR dispositions to the directory, so a

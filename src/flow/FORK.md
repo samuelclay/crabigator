@@ -66,13 +66,13 @@ flow keeps evolving. This log records which upstream commit the port matches, so
   Other assistants have no such log: their stats stand in. Tool calls are heard when they finish, and the effort comes from Claude Code's banner ("with xhigh effort"). Claude Code's footer ("← 1 agent") can't stand in for running subagents: it counts idle agents too. Context fill (`session.measure`) isn't heard by either path, so the blue tint never shows.
 - **Resuming at an altitude**: `SkyWorld.seed` and the rockets' `seed(altitude)` override. A Claude Code reload needed them; the column never reloads. Also `SkyWorld.rowOf`, which nothing calls.
 - **Settings and `/flow`**: `hooks/settings.ts`, `hooks/pick.ts`. In crabigator the choices are fixed:
-  - fade is always on;
+  - fade is off unless `[flow] fade = true`, as in flow, where it is off by default;
   - idle is a glow, never dark;
   - the scene is claimed per session (`src/flow/claim.rs`) instead of drawn from a shuffle bag;
   - the colour comes from the session mark, not a setting;
   - day and night follow the clock.
 
-  The only setting is `[flow] enabled` in `~/.crabigator/config.toml`.
+  The only settings are `[flow] enabled` and `[flow] fade` in `~/.crabigator/config.toml`.
 - **Tools**: `scripts/` (preview, check, sync-manifest, new-scene, make-sounds). `scripts/flow-reference.ts` here plays the part `check` plays there.
 - **`hooks/pixel-scene.ts`**: no scene uses it yet. Port it with the first scene that does.
 

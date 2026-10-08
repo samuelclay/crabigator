@@ -7,9 +7,11 @@
 //!
 //! Each session claims its own scene (`claim`), so sessions side by side
 //! differ, and the scene takes the colour of the session's mark. The scene
-//! fades: every change of state relights it, and it eases back down over two
-//! minutes, so a bright scene has just changed and embers have sat a while.
-//! Work (tool calls, compactions) flares it on top. Claude Code's hooks tell
+//! follows the work as flow's plugin does: work (tool calls, compactions)
+//! flares it, a turn climbs with its effort and length, and subagents add to
+//! it. With `[flow] fade = true`, every change of state also relights it, and
+//! it eases back down over two minutes, so a bright scene has just changed
+//! and embers have sat a while. Claude Code's hooks tell
 //! the work as it happens (`hooks`); other assistants' stats tell it a
 //! refresh later (`feed`).
 
@@ -79,6 +81,8 @@ pub struct FlowColumn {
     palette: Palette,
     turned: Cells,
     activity: Activity,
+    /// Each change of state relights the scene (`[flow] fade`).
+    fade: bool,
     feed: ActivityFeed,
     /// Claude Code's activity log (`None`: other assistants).
     hooks: Option<HookFeed>,
@@ -100,7 +104,12 @@ impl FlowColumn {
     /// Claim this session's scene (published at once with its mark), seeded
     /// by the session, in the colour of its mark. `hook_log` is the activity
     /// log Claude Code's hooks write, for a session that has one.
-    pub fn new(session_id: &str, mark: SessionMark, hook_log: Option<PathBuf>) -> Self {
+    pub fn new(
+        session_id: &str,
+        mark: SessionMark,
+        hook_log: Option<PathBuf>,
+        fade: bool,
+    ) -> Self {
         let name = claim::assign_scene(session_id, mark);
         let def = scene::scene_def(&name).unwrap_or(&scene::scenes()[0]);
         let target = claim::mark_accent(mark).and_then(|[r, g, b]| {
@@ -113,6 +122,7 @@ impl FlowColumn {
             palette: palette_for(def, target),
             turned: Cells::new(0, 0),
             activity: Activity::default(),
+            fade,
             feed: ActivityFeed::default(),
             hooks: hook_log.map(HookFeed::open),
             geometry: None,
@@ -170,8 +180,9 @@ impl FlowColumn {
             return FlowChange::default();
         };
         let night = is_night(chrono::Local::now().hour());
+        let level = self.level();
         let dials = self.scene.dials();
-        dials.strength = self.activity.strength_faded(IDLE_GLOW);
+        dials.strength = level;
         dials.coverage_boost = self.activity.coverage_boost();
         dials.tint = self.activity.tint();
         dials.night = night;
@@ -196,6 +207,16 @@ impl FlowColumn {
         FlowChange {
             new_frame: true,
             column_toggled,
+        }
+    }
+
+    /// The scene's level: what the work calls for (flow's `strength`), or
+    /// with fade, also lit by how recently the state changed.
+    fn level(&self) -> f64 {
+        if self.fade {
+            self.activity.strength_faded(IDLE_GLOW)
+        } else {
+            self.activity.strength(IDLE_GLOW)
         }
     }
 
@@ -353,6 +374,7 @@ mod tests {
             palette: Palette::natural(),
             turned: Cells::new(0, 0),
             activity: Activity::default(),
+            fade: true,
             feed: ActivityFeed::default(),
             hooks: None,
             geometry: None,
@@ -402,6 +424,26 @@ mod tests {
         assert!(flow.activity.strength_faded(IDLE_GLOW) < 10.0);
         flow.sync_state(SessionState::Complete);
         assert_eq!(flow.activity.strength_faded(IDLE_GLOW), 10.0);
+    }
+
+    #[test]
+    fn without_fade_the_scene_follows_the_work_as_flow_does() {
+        let mut flow = column("fire");
+        flow.fade = false;
+        flow.sync_state(SessionState::Ready);
+        flow.sync_state(SessionState::Thinking);
+        // A turn starting sits at its effort floor, not relit to 10.
+        assert_eq!(flow.level(), 3.0);
+        flow.sync_state(SessionState::Complete);
+        assert_eq!(flow.level(), IDLE_GLOW);
+        // After the turn, a background subagent running a command: the plain
+        // level, as flow's plugin shows it beside the column.
+        flow.activity.running_agents = 1;
+        flow.activity.tools_in_flight = 1;
+        flow.activity.tick(1.0);
+        assert_eq!(flow.level(), 3.0);
+        flow.fade = true;
+        assert_eq!(flow.level(), 10.0);
     }
 
     #[test]

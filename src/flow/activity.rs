@@ -1,9 +1,10 @@
 //! How the session's work moves the scene (flow's `hooks/activity.ts`): events
 //! add heat that cools every frame, a turn climbs a level every 30 s it keeps
-//! going, and with fade (always on in crabigator) each change of state relights
-//! the scene to full and lets it ease back down over two minutes. While a turn
-//! runs the scene is never lower than plain auto would show it; once it ends, a
-//! bright scene has just changed and embers have sat a while.
+//! going, and with fade (`[flow] fade` in crabigator, off by default) each
+//! change of state relights the scene to full and lets it ease back down over
+//! two minutes. While a turn runs the scene is never lower than plain auto would
+//! show it; once it ends, a bright scene has just changed and embers have sat a
+//! while.
 
 use super::scene::Tint;
 

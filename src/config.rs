@@ -55,11 +55,19 @@ pub struct FlowPreferences {
     /// Whether the flow column shows. Missing means it does.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Whether each change of state (a turn starting or ending, a permission
+    /// asked) relights the scene, easing back over two minutes. Off, the
+    /// scene follows the work as flow's plugin does by default.
+    #[serde(default)]
+    pub fade: bool,
 }
 
 impl Default for FlowPreferences {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            fade: false,
+        }
     }
 }
 
@@ -255,16 +263,18 @@ mod tests {
         assert_eq!(config.pr_board.view, "sessions");
         assert!(config.cloud.url.is_none());
         assert!(config.flow.enabled);
+        assert!(!config.flow.fade);
     }
 
     #[test]
     fn flow_preferences_round_trip() {
         let config: Config =
-            toml::from_str("default_platform = \"claude\"\n[flow]\nenabled = false\n").unwrap();
-        assert!(!config.flow.enabled);
+            toml::from_str("default_platform = \"claude\"\n[flow]\nenabled = false\nfade = true\n")
+                .unwrap();
+        assert!(!config.flow.enabled && config.flow.fade);
         let saved = toml::to_string(&config).unwrap();
         let back: Config = toml::from_str(&saved).unwrap();
-        assert!(!back.flow.enabled);
+        assert!(!back.flow.enabled && back.flow.fade);
     }
 
     #[test]
