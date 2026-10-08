@@ -45,6 +45,7 @@ Steps:
      - A short `## Highlights` section summarizing the user-visible changes from the commit list.
      - A `## Complete Changes` section containing every commit from `PREV_TAG..HEAD`, preserving commit subjects and short hashes.
      - A `## Full Changelog` section linking `https://github.com/samuelclay/crabigator/compare/PREV_TAG...vX.Y.Z`.
+   - Write the release's **one-liner**: one plain-language line that says what's new, leading with the most important user-visible change (e.g. `Turn the flow animations off with ctrl+]`). Keep it to 60 characters or fewer, with no trailing period. It becomes the release title, `vX.Y.Z · ONE-LINER`, and crabigator shows it in its update prompt (`What's new: …`) and its update banner, so write it for someone deciding whether to upgrade.
    - Do not invent changes. If the commit list is empty, stop and ask whether to cut an empty release.
 
 4. **Bump version in both files** (CI enforces sync):
@@ -79,13 +80,14 @@ Steps:
    ```
    Run the watch in the foreground. If the workflow fails, follow `CLAUDE.md` "If the Release Fails": delete the tag locally and remotely, fix the issue, push a new commit, re-tag, and push the tag again.
 
-8. **Replace the GitHub release description with the drafted notes.**
+8. **Title the release with its one-liner and replace the description with the drafted notes.**
    - After the workflow creates the release, run:
      ```
-     gh release edit vX.Y.Z --notes-file /tmp/crabigator-release-vX.Y.Z.md
+     gh release edit vX.Y.Z --title "vX.Y.Z · ONE-LINER" --notes-file /tmp/crabigator-release-vX.Y.Z.md
      ```
-   - Verify the body contains the Highlights, Complete Changes, and Full Changelog sections:
+   - Verify the title and that the body contains the Highlights, Complete Changes, and Full Changelog sections:
      ```
+     gh release view vX.Y.Z --json name --jq .name
      gh release view vX.Y.Z
      ```
 
@@ -106,7 +108,7 @@ Steps:
    This publishes any Worker/dashboard code that landed in the release. Capture the deployed Worker version ID from the output when available.
 
 11. **Report back.**
-    - New version, tag URL, release URL, npm version, Worker version ID.
+    - New version, its one-liner, tag URL, release URL, npm version, Worker version ID.
     - Include the previous release tag used for the notes and the release workflow run URL.
     - If anything is still running or could not be verified, say so explicitly.
 
