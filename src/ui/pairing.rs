@@ -10,8 +10,15 @@ use std::io::Write;
 
 use anyhow::Result;
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::terminal::escape::{self, bg, color, fg, hyperlink, RESET, RESET_FG};
 use crate::update::UpdateState;
+
+use super::pr_cells::truncate_to_width;
+
+/// Below this many cells, the update banner leaves out what's new.
+const MIN_SUMMARY_WIDTH: usize = 12;
 
 /// Pairing state for the banner
 #[derive(Clone, Debug, Default)]
@@ -237,6 +244,18 @@ pub fn draw_update_banner(
     let current_version = crate::update::CURRENT_VERSION;
     let update_cmd = state.install_method.banner_command();
 
+    // What's new, in the room the rest leaves (the emoji is two cells, and the
+    // last cell stays free so the row never wraps). Too little room drops it.
+    let fixed = 3
+        + format!(" Update available v{current_version} → v{new_version} ").width()
+        + " ▸  ".width()
+        + update_cmd.width()
+        + 1;
+    let summary = state.summary.as_deref().and_then(|summary| {
+        let room = usize::from(width).saturating_sub(fixed + "· ".width() + 1);
+        (room >= MIN_SUMMARY_WIDTH).then(|| truncate_to_width(summary, room))
+    });
+
     // Draw single row banner with dark background
     write!(stdout, "{}", escape::cursor_to(row, 1))?;
     write!(stdout, "{}", bg(color::BG_DARK))?;
@@ -266,6 +285,18 @@ pub fn draw_update_banner(
         new_version,
         RESET_FG
     )?;
+
+    // What's new: "· Turn the flow animations off with ctrl+]"
+    if let Some(summary) = summary {
+        write!(
+            stdout,
+            "{}·{} {} {}",
+            fg(color::DARK_GRAY),
+            fg(231),
+            summary,
+            RESET_FG
+        )?;
+    }
 
     // Arrow separator in gray
     write!(stdout, " {}▸  {}", fg(color::DARK_GRAY), RESET_FG)?;
@@ -340,5 +371,45 @@ mod tests {
 
         assert!(state.should_show_banner());
         assert_eq!(state.banner_rows(), 1);
+    }
+
+    /// The update banner at `width` columns, as a terminal shows it: the
+    /// banner row and the row under it.
+    fn banner_at(width: u16) -> (String, String) {
+        let state = UpdateState {
+            update_available: true,
+            new_version: Some("99.0.0".to_string()),
+            summary: Some("Turn the flow animations off with ctrl+]".to_string()),
+            prompt_dismissed: true,
+            install_method: crate::update::InstallMethod::Npm,
+        };
+        let mut out = Vec::new();
+        draw_update_banner(&mut out, 1, width, &state).unwrap();
+        let mut parser = vt100::Parser::new(3, width, 0);
+        parser.process(&out);
+        let row = |r| parser.screen().rows(0, width).nth(r).unwrap();
+        (row(0), row(1))
+    }
+
+    #[test]
+    fn the_update_banner_says_whats_new_in_the_room_it_has() {
+        let (wide, below) = banner_at(140);
+        assert!(
+            wide.contains("→ v99.0.0 · Turn the flow animations off with ctrl+]  ▸  npm install"),
+            "{wide}"
+        );
+        assert_eq!(below.trim(), "");
+        // Narrower: cut short, and the command still shows in full.
+        let (narrow, below) = banner_at(100);
+        assert!(narrow.contains("· Turn the"), "{narrow}");
+        assert!(
+            narrow.contains("…  ▸  npm install -g crabigator@latest"),
+            "{narrow}"
+        );
+        assert_eq!(below.trim(), "");
+        // Too narrow for any of it: left out.
+        let (tight, _) = banner_at(84);
+        assert!(!tight.contains('·'), "{tight}");
+        assert!(tight.contains("→ v99.0.0  ▸  npm"), "{tight}");
     }
 }

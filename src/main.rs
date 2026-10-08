@@ -480,6 +480,15 @@ fn prompt_for_update(check_result: &UpdateCheckResult) -> UpdateState {
         version,
         terminal::escape::RESET
     );
+    if let Some(summary) = check_result.summary.as_deref() {
+        println!(
+            "{}  What's new: {}{}{}",
+            terminal::escape::fg(terminal::escape::color::GRAY),
+            terminal::escape::fg(231),
+            summary,
+            terminal::escape::RESET
+        );
+    }
     println!(
         "{}  Run: {}{}{}",
         terminal::escape::fg(terminal::escape::color::GRAY),

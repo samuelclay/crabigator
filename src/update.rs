@@ -38,6 +38,9 @@ pub struct VersionCache {
     /// URL to the release page
     #[serde(default)]
     pub release_url: Option<String>,
+    /// What's new in the latest version, in one line (from its release title)
+    #[serde(default)]
+    pub summary: Option<String>,
 }
 
 impl VersionCache {
@@ -81,13 +84,27 @@ impl VersionCache {
     }
 
     /// Update the cache with new version info
-    pub fn update(&mut self, latest: String, release_url: Option<String>) {
+    pub fn update(&mut self, latest: &LatestRelease) {
         self.last_checked = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        self.latest_version = Some(latest);
-        self.release_url = release_url;
+        self.latest_version = Some(latest.version.clone());
+        self.release_url = Some(latest.html_url.clone());
+        self.summary = latest.summary.clone();
+    }
+
+    /// The cached version as a check result.
+    fn check_result(&self) -> Option<UpdateCheckResult> {
+        let latest = self.latest_version.clone()?;
+        Some(UpdateCheckResult {
+            update_available: is_newer_version(&latest, CURRENT_VERSION),
+            was_dismissed: self.dismissed_version.as_deref() == Some(latest.as_str()),
+            new_version: Some(latest),
+            current_version: CURRENT_VERSION.to_string(),
+            release_url: self.release_url.clone(),
+            summary: self.summary.clone(),
+        })
     }
 }
 
@@ -106,6 +123,8 @@ pub struct UpdateCheckResult {
     /// URL to the release page (for Unknown install method)
     #[allow(dead_code)]
     pub release_url: Option<String>,
+    /// What's new in the new version, in one line
+    pub summary: Option<String>,
 }
 
 /// How Crabigator was installed
@@ -170,11 +189,52 @@ pub fn detect_install_method() -> InstallMethod {
     InstallMethod::Unknown
 }
 
-/// GitHub release response (simplified)
+/// The latest release, as the GitHub API or the cloud's proxy of it gives it
+/// (simplified). Its title is the tag and a one-line summary of what's new.
 #[derive(Debug, Deserialize)]
-struct GitHubRelease {
+struct ReleaseResponse {
     tag_name: String,
     html_url: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+/// The latest published version.
+#[derive(Clone, Debug)]
+pub struct LatestRelease {
+    /// e.g. "0.4.0"
+    pub version: String,
+    pub html_url: String,
+    /// What's new, in one line
+    pub summary: Option<String>,
+}
+
+impl From<ReleaseResponse> for LatestRelease {
+    fn from(release: ReleaseResponse) -> Self {
+        let summary = release
+            .name
+            .as_deref()
+            .and_then(|name| release_summary(name, &release.tag_name));
+        Self {
+            version: release.tag_name.trim_start_matches('v').to_string(),
+            html_url: release.html_url,
+            summary,
+        }
+    }
+}
+
+/// The one-liner in a release title like "v0.16.1 · Show what's new": the
+/// title without its tag. `None` when the title is only the tag.
+fn release_summary(name: &str, tag: &str) -> Option<String> {
+    let version = tag.trim_start_matches('v');
+    let rest = name.trim();
+    let rest = rest
+        .strip_prefix(tag)
+        .or_else(|| rest.strip_prefix(version))
+        .unwrap_or(rest);
+    let summary = rest.trim_start_matches(|c: char| c.is_whitespace() || "·:—–-|".contains(c));
+    let summary = summary.trim();
+    (!summary.is_empty()).then(|| summary.to_string())
 }
 
 /// Telemetry data sent with update checks
@@ -187,13 +247,6 @@ struct TelemetryRequest {
     timezone_offset: i32,
     app_version: &'static str,
     cli_version: Option<String>,
-}
-
-/// Response from cloud update check endpoint
-#[derive(Debug, Deserialize)]
-struct CloudUpdateResponse {
-    tag_name: String,
-    html_url: String,
 }
 
 /// Get current OS name for telemetry
@@ -319,7 +372,7 @@ pub fn get_cli_version(command: &str) -> Option<String> {
 async fn check_via_cloud(
     client: &reqwest::Client,
     cli_version: Option<String>,
-) -> Result<(String, String)> {
+) -> Result<LatestRelease> {
     let endpoints = CloudEndpoints::load()?;
     // Load device identity (creates one if doesn't exist)
     let identity = DeviceIdentity::load_or_create()?;
@@ -348,16 +401,16 @@ async fn check_via_cloud(
         anyhow::bail!("Cloud API returned status {}", response.status());
     }
 
-    let cloud_response: CloudUpdateResponse = response
+    let release: ReleaseResponse = response
         .json()
         .await
         .context("Failed to parse cloud response")?;
 
-    Ok((cloud_response.tag_name, cloud_response.html_url))
+    Ok(release.into())
 }
 
 /// Check for updates via direct GitHub API (fallback, no telemetry)
-async fn check_via_github(client: &reqwest::Client) -> Result<(String, String)> {
+async fn check_via_github(client: &reqwest::Client) -> Result<LatestRelease> {
     let url = format!(
         "https://api.github.com/repos/{}/releases/latest",
         GITHUB_REPO
@@ -373,12 +426,12 @@ async fn check_via_github(client: &reqwest::Client) -> Result<(String, String)> 
         anyhow::bail!("GitHub API returned status {}", response.status());
     }
 
-    let release: GitHubRelease = response
+    let release: ReleaseResponse = response
         .json()
         .await
         .context("Failed to parse release response")?;
 
-    Ok((release.tag_name, release.html_url))
+    Ok(release.into())
 }
 
 /// Check for updates by querying cloud API (with telemetry) or falling back to GitHub
@@ -397,22 +450,13 @@ pub async fn check_for_update(cli_version: Option<String>) -> Result<UpdateCheck
     // If cache is fresh and cloud check failed, use cached version info
     // (but we still attempted to send telemetry above)
     if !cache.is_stale() && cloud_result.is_err() {
-        if let Some(latest) = cache.latest_version.as_ref() {
-            let update_available = is_newer_version(latest, CURRENT_VERSION);
-            let was_dismissed = cache.dismissed_version.as_ref() == Some(latest);
-
-            return Ok(UpdateCheckResult {
-                update_available,
-                new_version: Some(latest.clone()),
-                current_version: CURRENT_VERSION.to_string(),
-                was_dismissed,
-                release_url: cache.release_url.clone(),
-            });
+        if let Some(result) = cache.check_result() {
+            return Ok(result);
         }
     }
 
     // Use cloud result or fallback to GitHub
-    let (tag_name, html_url) = match cloud_result {
+    let latest = match cloud_result {
         Ok(result) => result,
         Err(_) => {
             // Fallback to direct GitHub API if cloud fails
@@ -420,24 +464,14 @@ pub async fn check_for_update(cli_version: Option<String>) -> Result<UpdateCheck
         }
     };
 
-    // Strip 'v' prefix if present (e.g., "v0.4.0" -> "0.4.0")
-    let latest_version = tag_name.trim_start_matches('v').to_string();
-
     // Update cache
     let mut cache = cache;
-    cache.update(latest_version.clone(), Some(html_url.clone()));
+    cache.update(&latest);
     let _ = cache.save(); // Best-effort save
 
-    let update_available = is_newer_version(&latest_version, CURRENT_VERSION);
-    let was_dismissed = cache.dismissed_version.as_ref() == Some(&latest_version);
-
-    Ok(UpdateCheckResult {
-        update_available,
-        new_version: Some(latest_version),
-        current_version: CURRENT_VERSION.to_string(),
-        was_dismissed,
-        release_url: Some(html_url),
-    })
+    Ok(cache
+        .check_result()
+        .expect("the cache was just given a version"))
 }
 
 /// Dismiss a version so user won't be prompted again
@@ -453,15 +487,7 @@ pub fn dismiss_version(version: &str) -> Result<()> {
 /// network; the live check runs in the background and refreshes the cache for
 /// the next launch. Returns `None` when no version has been cached yet.
 pub fn cached_update_check() -> Option<UpdateCheckResult> {
-    let cache = VersionCache::load();
-    let latest = cache.latest_version.clone()?;
-    Some(UpdateCheckResult {
-        update_available: is_newer_version(&latest, CURRENT_VERSION),
-        was_dismissed: cache.dismissed_version.as_deref() == Some(latest.as_str()),
-        new_version: Some(latest),
-        current_version: CURRENT_VERSION.to_string(),
-        release_url: cache.release_url,
-    })
+    VersionCache::load().check_result()
 }
 
 /// Compare two semver versions, returns true if `new` is newer than `current`
@@ -487,6 +513,8 @@ pub struct UpdateState {
     pub update_available: bool,
     /// New version string
     pub new_version: Option<String>,
+    /// What's new in the new version, in one line
+    pub summary: Option<String>,
     /// Whether user dismissed the modal prompt (show banner instead)
     pub prompt_dismissed: bool,
     /// Detected installation method
@@ -499,6 +527,7 @@ impl UpdateState {
         Self {
             update_available: result.update_available,
             new_version: result.new_version.clone(),
+            summary: result.summary.clone(),
             prompt_dismissed: dismissed_modal,
             install_method: detect_install_method(),
         }
@@ -543,6 +572,53 @@ mod tests {
             .unwrap()
             .as_secs();
         assert!(!cache.is_stale()); // Just updated, not stale
+    }
+
+    #[test]
+    fn a_release_title_gives_its_one_liner_without_the_tag() {
+        let summary = |name| release_summary(name, "v0.16.1");
+        assert_eq!(
+            summary("v0.16.1 · Turn the flow animations off with ctrl+]").as_deref(),
+            Some("Turn the flow animations off with ctrl+]")
+        );
+        assert_eq!(
+            summary("v0.16.1: Faster startup").as_deref(),
+            Some("Faster startup")
+        );
+        assert_eq!(
+            summary("0.16.1 — Faster startup").as_deref(),
+            Some("Faster startup")
+        );
+        // A title that is only the tag has no one-liner.
+        assert_eq!(summary("v0.16.1"), None);
+        assert_eq!(summary(" v0.16.1 "), None);
+        // A title without the tag is all one-liner.
+        assert_eq!(summary("Faster startup").as_deref(), Some("Faster startup"));
+    }
+
+    #[test]
+    fn the_one_liner_comes_through_the_cloud_or_github_and_is_cached() {
+        let release: ReleaseResponse = serde_json::from_str(
+            r#"{"tag_name":"v99.0.0","html_url":"https://x","name":"v99.0.0 · Faster startup"}"#,
+        )
+        .unwrap();
+        let latest = LatestRelease::from(release);
+        assert_eq!(latest.version, "99.0.0");
+        assert_eq!(latest.summary.as_deref(), Some("Faster startup"));
+        // An older cloud proxy sends no title.
+        let release: ReleaseResponse =
+            serde_json::from_str(r#"{"tag_name":"v99.0.0","html_url":"https://x"}"#).unwrap();
+        assert_eq!(LatestRelease::from(release).summary, None);
+
+        let mut cache = VersionCache::default();
+        cache.update(&latest);
+        let result = cache.check_result().unwrap();
+        assert!(result.update_available);
+        assert_eq!(result.summary.as_deref(), Some("Faster startup"));
+        // A cache from before summaries reads without one.
+        let old: VersionCache =
+            serde_json::from_str(r#"{"last_checked":1,"latest_version":"99.0.0"}"#).unwrap();
+        assert_eq!(old.check_result().unwrap().summary, None);
     }
 
     #[test]

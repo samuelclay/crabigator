@@ -652,8 +652,13 @@ impl App {
                 Ok(result) => {
                     self.pending_update_check = None;
                     // The modal is only possible before raw mode, so a newly
-                    // found update shows as the banner for this session.
-                    if result.update_available && !self.update_state.update_available {
+                    // found update shows as the banner for this session, as
+                    // does a newer version or one-liner than the cache had.
+                    if result.update_available
+                        && (!self.update_state.update_available
+                            || self.update_state.new_version != result.new_version
+                            || self.update_state.summary != result.summary)
+                    {
                         self.update_state = UpdateState::from_check(&result, true);
                         changed = true;
                     }
