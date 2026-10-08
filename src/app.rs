@@ -299,6 +299,9 @@ pub struct App {
     /// Where the assistant's output stands, so the status bar can draw
     /// between its writes rather than only after it falls silent.
     output_boundary: OutputBoundary,
+    /// The height of Claude's agent panel under its prompt: when it grows,
+    /// the assistant is repainted.
+    agent_panel: crate::parsers::AgentPanelWatch,
     /// Number of cloud init retry attempts
     cloud_init_retry_count: u32,
     /// Last cloud init attempt time
@@ -483,6 +486,7 @@ impl App {
             session_mark,
             flow,
             output_boundary: OutputBoundary::default(),
+            agent_panel: Default::default(),
             session_id,
             cloud_init_retry_count: 0,
             last_cloud_init_attempt: None,
@@ -705,21 +709,23 @@ impl App {
         Ok(())
     }
 
-    /// One-time resize round-trip shortly after startup.
+    /// A resize round-trip (one row shorter, then back), which makes the
+    /// assistant repaint from scratch.
     ///
-    /// Works around a Claude Code v2.1.117+ rendering regression where, under
-    /// a constrained scroll region, the welcome screen stays pinned at the top
-    /// and subsequent content overwrites itself once the PTY fills. Running
-    /// the full resize dance — clear the status area, re-emit the scroll
-    /// region, PTY ioctl — kicks Claude out of the bad state; a bare PTY
-    /// resize alone is not enough. The user sees a one-frame flicker at
-    /// startup, but the session renders correctly from that point on.
+    /// Sent once shortly after startup, to work around a Claude Code v2.1.117+
+    /// rendering regression where, under a constrained scroll region, the
+    /// welcome screen stays pinned at the top and subsequent content
+    /// overwrites itself once the PTY fills. Also sent when Claude's agent
+    /// panel grows, which can leave stale rows in Ghostty. Running the full
+    /// resize dance — clear the status area, re-emit the scroll region, PTY
+    /// ioctl — kicks Claude out of the bad state; a bare PTY resize alone is
+    /// not enough. The user sees a one-frame flicker.
     /// How the assistant CLI exited, if the main loop saw it exit.
     pub fn assistant_exit_status(&self) -> Option<portable_pty::ExitStatus> {
         self.platform_pty.exit_status()
     }
 
-    fn startup_resize_nudge(&mut self) -> Result<()> {
+    fn resize_nudge(&mut self) -> Result<()> {
         let orig_rows = self.total_rows;
         if orig_rows >= 2 && self.pty_rows >= 2 {
             self.handle_resize(self.total_cols, orig_rows - 1)?;
@@ -813,7 +819,7 @@ impl App {
         let mut initial_screen_interval = interval(Duration::from_millis(500));
 
         // One-shot timer that fires the startup resize nudge (see
-        // `startup_resize_nudge`). Enough delay that Claude has completed its
+        // `resize_nudge`). Enough delay that Claude has completed its
         // initial render; the SIGWINCH we trigger then forces a clean repaint.
         let startup_nudge = tokio::time::sleep(Duration::from_millis(600));
         tokio::pin!(startup_nudge);
@@ -868,9 +874,9 @@ impl App {
                 }
 
                 // One-shot startup resize nudge (works around Claude Code
-                // rendering regression; see startup_resize_nudge).
+                // rendering regression; see resize_nudge).
                 () = &mut startup_nudge, if !startup_nudged => {
-                    self.startup_resize_nudge()?;
+                    self.resize_nudge()?;
                     startup_nudged = true;
                     crate::cli::profile_mark("run: startup resize nudge sent");
                 }
@@ -1022,12 +1028,24 @@ impl App {
                 // Status bar draw timer - draws when PTY output has settled
                 // When idle, skip most ticks (1s vs 50ms) since nothing is animating
                 _ = status_draw_interval.tick() => {
+                    // Claude's agent panel grew (subagents started): Ghostty
+                    // can keep stale rows until a resize, so repaint as one.
+                    let repainted = self.can_draw_status(last_pty_output)
+                        && self.agent_panel.grew(Instant::now());
+                    if repainted {
+                        crate::cli::profile_mark("agent panel grew: repaint");
+                        self.resize_nudge()?;
+                        last_status_draw = Instant::now();
+                    }
                     let quiet_for = last_pty_output.elapsed();
                     let since_draw = last_status_draw.elapsed();
                     let draw_throttle = if is_idle { STATUS_DRAW_INTERVAL_IDLE } else { status_debounce };
 
                     // Draw if the PTY allows AND debounce passed
-                    if self.can_draw_status(last_pty_output) && since_draw >= draw_throttle {
+                    if !repainted
+                        && self.can_draw_status(last_pty_output)
+                        && since_draw >= draw_throttle
+                    {
                         // The last PTY chunk can land inside the 100ms capture
                         // throttle. Force one final screen scan after the burst
                         // settles so terminal-only prompts are not missed.
@@ -1849,6 +1867,13 @@ impl App {
                 // The flow scene reads the effort and the running agents there too.
                 if let Some(flow) = self.flow.as_mut() {
                     flow.read_screen(&stripped);
+                }
+                // Read mid-frame, the panel may be half drawn.
+                if self.platform.kind() == crate::platforms::PlatformKind::Claude
+                    && !self.output_boundary.in_synchronized_update()
+                {
+                    let rows = crate::parsers::agent_panel_rows(&stripped);
+                    self.agent_panel.see(rows, Instant::now());
                 }
             }
 

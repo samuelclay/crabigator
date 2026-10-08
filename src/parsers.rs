@@ -2,6 +2,7 @@
 //!
 //! Parses git diffs to extract semantic information about code changes.
 
+mod agent_panel;
 mod cwd;
 mod generic;
 mod objc;
@@ -16,6 +17,7 @@ mod swift;
 mod types;
 mod typescript;
 
+pub use agent_panel::{agent_panel_rows, AgentPanelWatch};
 pub use cwd::detect_status_line_cwd;
 pub use generic::GenericParser;
 pub use objc::ObjCParser;
