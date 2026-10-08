@@ -98,17 +98,7 @@ impl Permit {
             if limit > 0 {
                 state.github_limit = Some(limit);
             }
-            let limit = state.github_limit.unwrap_or(DEFAULT_GITHUB_LIMIT);
-            let reserve = limit.saturating_sub(shared_allowance(state));
-            if remaining <= reserve {
-                let now = now_ms();
-                let until = if reset_ms > now {
-                    reset_ms
-                } else {
-                    now.saturating_add(RATE_LIMIT_FALLBACK.as_millis() as u64)
-                };
-                state.paused_until_ms = state.paused_until_ms.max(until);
-            }
+            pause_at_reserve(state, remaining, reset_ms, now_ms());
         });
     }
 }
@@ -375,15 +365,22 @@ fn reconcile(state: &mut BudgetState, rate: &GithubRate, now: u64) {
             *points = scale(*points);
         }
     }
+    pause_at_reserve(state, rate.remaining, reset_ms, now);
+}
+
+/// With only the reserved fifth of GitHub's allowance left, pause every read
+/// until GitHub's hour resets (or a while, when it didn't say when).
+fn pause_at_reserve(state: &mut BudgetState, remaining: u32, reset_ms: u64, now: u64) {
     let limit = state.github_limit.unwrap_or(DEFAULT_GITHUB_LIMIT);
-    if rate.remaining <= limit.saturating_sub(shared_allowance(state)) {
-        let until = if reset_ms > now {
-            reset_ms
-        } else {
-            now.saturating_add(RATE_LIMIT_FALLBACK.as_millis() as u64)
-        };
-        state.paused_until_ms = state.paused_until_ms.max(until);
+    if remaining > limit.saturating_sub(shared_allowance(state)) {
+        return;
     }
+    let until = if reset_ms > now {
+        reset_ms
+    } else {
+        now.saturating_add(RATE_LIMIT_FALLBACK.as_millis() as u64)
+    };
+    state.paused_until_ms = state.paused_until_ms.max(until);
 }
 
 fn quota_blocks(state: &BudgetState, now: u64, pid: u32, reader: Reader, points: u32) -> bool {

@@ -227,13 +227,12 @@ impl From<ReleaseResponse> for LatestRelease {
 /// title without its tag. `None` when the title is only the tag.
 fn release_summary(name: &str, tag: &str) -> Option<String> {
     let version = tag.trim_start_matches('v');
-    let rest = name.trim();
-    let rest = rest
+    let name = name.trim();
+    let rest = name
         .strip_prefix(tag)
-        .or_else(|| rest.strip_prefix(version))
-        .unwrap_or(rest);
+        .or_else(|| name.strip_prefix(version))
+        .unwrap_or(name);
     let summary = rest.trim_start_matches(|c: char| c.is_whitespace() || "·:—–-|".contains(c));
-    let summary = summary.trim();
     (!summary.is_empty()).then(|| summary.to_string())
 }
 

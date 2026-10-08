@@ -870,7 +870,8 @@ impl PrTracker {
     /// Forget everything learned from the conversation so far. Only state
     /// that belongs to the pane rather than the conversation survives: cloud
     /// dispositions, watch requests still waiting to post, and the Slack
-    /// directory. Called when the pane moves to a different conversation
+    /// directory. What GitHub last said about each PR is kept too, for a PR
+    /// that comes back. Called when the pane moves to a different conversation
     /// (Codex `/new` or `/resume`, Claude Code `/clear`) so the previous
     /// conversation's PRs and Slack threads stop showing under the new one.
     pub fn reset_conversation(&mut self) {
@@ -3735,9 +3736,6 @@ mod tests {
         assert!(tracker.pending_mentions.is_empty());
     }
 
-    /// Switching the pane to another conversation drops that conversation's
-    /// PRs and Slack threads, while cloud dispositions and queued watch adds
-    /// stay with the pane. The next prompt is then scanned fresh.
     #[test]
     fn a_pr_that_returns_after_a_reset_keeps_what_github_last_said() {
         let mut tracker = PrTracker::new();
@@ -3772,6 +3770,9 @@ mod tests {
         assert!(!tracker.prs()[0].fetch_limited);
     }
 
+    /// Switching the pane to another conversation drops that conversation's
+    /// PRs and Slack threads, while cloud dispositions and queued watch adds
+    /// stay with the pane. The next prompt is then scanned fresh.
     #[test]
     fn reset_conversation_forgets_the_conversation_but_keeps_pane_state() {
         let mut tracker = PrTracker::new();
