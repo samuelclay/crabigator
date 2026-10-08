@@ -9,6 +9,10 @@
 //! The file lives in `~/.crabigator/gh-budget-v2.json`. Older processes use
 //! estimated costs in a separate file so they cannot erase the per-session
 //! counters. A lock is held only while updating numbers, never over the network.
+//!
+//! The counts are partly estimates. When only they stand in the way of a
+//! read, GitHub is asked what the hour has really cost, and the counts are
+//! corrected, so a read is refused only when GitHub is actually running low.
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -21,8 +25,9 @@ use serde::{Deserialize, Serialize};
 /// The bounded PR query costs one point. Reconcile with GitHub's reported
 /// cost before releasing the read slot if the query ever costs more.
 pub const READ_POINTS: u32 = 1;
-/// `gh pr view` hides its internal query costs; keep a conservative charge.
-pub const UNREPORTED_READ_POINTS: u32 = 80;
+/// `gh pr view` doesn't report its cost. It makes one small GraphQL query
+/// (about a point, measured); charge two to stay on the safe side.
+pub const UNREPORTED_READ_POINTS: u32 = 2;
 const DEFAULT_GITHUB_LIMIT: u32 = 5_000;
 const BUDGET_PERCENT: u32 = 80;
 /// A single session may spend only a small share of the account allowance.
@@ -35,6 +40,8 @@ const MIN_GAP: Duration = Duration::from_millis(500);
 const INFLIGHT_TIMEOUT: Duration = Duration::from_secs(90);
 /// Pause this long when GitHub says the limit is spent but not when it resets.
 const RATE_LIMIT_FALLBACK: Duration = Duration::from_secs(15 * 60);
+/// How often any process on this machine may ask GitHub what the hour cost.
+const RECONCILE_GAP: Duration = Duration::from_secs(60);
 const HOUR: Duration = Duration::from_secs(60 * 60);
 
 /// Both readers spend the shared allowance; watches also have a smaller cap.
@@ -57,6 +64,9 @@ struct BudgetState {
     github_limit: Option<u32>,
     #[serde(default)]
     session_points_by_pid: HashMap<u32, u32>,
+    /// When a process last asked GitHub what the hour cost.
+    #[serde(default)]
+    reconciled_at_ms: u64,
 }
 
 /// Held until the `gh` process exits. Releasing it lets the next read start.
@@ -120,10 +130,8 @@ pub fn can_start_with_estimate(reader: Reader, points: u32) -> bool {
     if !limits_apply() {
         return true;
     }
-    with_budget(|state| {
-        let now = now_ms();
-        roll_window(state, now);
-        allow(state, now, std::process::id(), reader, points)
+    decide(reader, points, |state, now, pid| {
+        allow(state, now, pid, reader, points)
     })
     .unwrap_or(false)
 }
@@ -137,10 +145,8 @@ pub fn limit_hit_with_estimate(reader: Reader, points: u32) -> bool {
     if !limits_apply() {
         return false;
     }
-    with_budget(|state| {
-        let now = now_ms();
-        roll_window(state, now);
-        quota_blocks(state, now, std::process::id(), reader, points)
+    decide(reader, points, |state, now, pid| {
+        quota_blocks(state, now, pid, reader, points)
     })
     .unwrap_or(false)
 }
@@ -161,9 +167,7 @@ pub fn acquire_with_estimate(reader: Reader, points: u32) -> Option<Permit> {
         });
     }
     let pid = std::process::id();
-    let reserved = with_budget(|state| {
-        let now = now_ms();
-        roll_window(state, now);
+    let reserved = decide(reader, points, |state, now, pid| {
         if !allow(state, now, pid, reader, points) {
             return None;
         }
@@ -275,13 +279,124 @@ fn allow(state: &BudgetState, now: u64, pid: u32, reader: Reader, points: u32) -
     true
 }
 
+/// Look at the budget for one read of `points`. When only the counted points
+/// stand in the way (no pause), ask GitHub what the hour really cost, on a
+/// thread of its own: callers sit on the UI path.
+fn decide<T>(
+    reader: Reader,
+    points: u32,
+    look: impl FnOnce(&mut BudgetState, u64, u32) -> T,
+) -> Option<T> {
+    let pid = std::process::id();
+    let (result, reconcile) = with_budget(|state| {
+        let now = now_ms();
+        roll_window(state, now);
+        let reconcile = claim_reconcile(state, now, pid, reader, points);
+        (look(state, now, pid), reconcile)
+    })?;
+    if reconcile {
+        spawn_reconcile();
+    }
+    Some(result)
+}
+
+/// Whether this caller should ask GitHub what the hour cost: the counted
+/// points refuse the read, nothing is paused, and no process on the machine
+/// asked in the last minute. Claims the turn when it answers yes.
+fn claim_reconcile(
+    state: &mut BudgetState,
+    now: u64,
+    pid: u32,
+    reader: Reader,
+    points: u32,
+) -> bool {
+    let due = now >= state.paused_until_ms
+        && points_block(state, pid, reader, points)
+        && now.saturating_sub(state.reconciled_at_ms) >= RECONCILE_GAP.as_millis() as u64;
+    if due {
+        state.reconciled_at_ms = now;
+    }
+    due
+}
+
+/// GitHub's GraphQL allowance for the hour, as `/rate_limit` reports it.
+#[derive(Debug, Deserialize)]
+struct GithubRate {
+    limit: u32,
+    used: u32,
+    remaining: u32,
+    /// Unix seconds when the hour resets.
+    reset: u64,
+}
+
+fn spawn_reconcile() {
+    if cfg!(test) {
+        return;
+    }
+    std::thread::spawn(|| {
+        if let Some(rate) = github_rate() {
+            let _ = with_budget(|state| reconcile(state, &rate, now_ms()));
+        }
+    });
+}
+
+/// `gh api rate_limit` costs nothing against the allowance it reports.
+fn github_rate() -> Option<GithubRate> {
+    let output = std::process::Command::new("gh")
+        .args(["api", "rate_limit", "--jq", ".resources.graphql"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+/// Bring the counts in line with GitHub. GitHub's figure includes every
+/// program on the account, so counts above it can only be overestimates:
+/// scale each down to it. Follow GitHub's hour from now on, and pause until
+/// it resets when only the spare fifth is left.
+fn reconcile(state: &mut BudgetState, rate: &GithubRate, now: u64) {
+    if rate.limit > 0 {
+        state.github_limit = Some(rate.limit);
+    }
+    let reset_ms = rate.reset.saturating_mul(1000);
+    if reset_ms > now {
+        state.window_start_ms = reset_ms.saturating_sub(HOUR.as_millis() as u64);
+    }
+    let spent = state.session_points.saturating_add(state.board_points);
+    if spent > rate.used {
+        let scale =
+            |points: u32| (u64::from(points) * u64::from(rate.used) / u64::from(spent)) as u32;
+        state.session_points = scale(state.session_points);
+        state.board_points = scale(state.board_points);
+        for points in state.session_points_by_pid.values_mut() {
+            *points = scale(*points);
+        }
+    }
+    let limit = state.github_limit.unwrap_or(DEFAULT_GITHUB_LIMIT);
+    if rate.remaining <= limit.saturating_sub(shared_allowance(state)) {
+        let until = if reset_ms > now {
+            reset_ms
+        } else {
+            now.saturating_add(RATE_LIMIT_FALLBACK.as_millis() as u64)
+        };
+        state.paused_until_ms = state.paused_until_ms.max(until);
+    }
+}
+
 fn quota_blocks(state: &BudgetState, now: u64, pid: u32, reader: Reader, points: u32) -> bool {
-    now < state.paused_until_ms
-        || state
-            .session_points
-            .saturating_add(state.board_points)
-            .saturating_add(points)
-            > shared_allowance(state)
+    now < state.paused_until_ms || points_block(state, pid, reader, points)
+}
+
+/// The counted points leave no room for `points` more.
+fn points_block(state: &BudgetState, pid: u32, reader: Reader, points: u32) -> bool {
+    state
+        .session_points
+        .saturating_add(state.board_points)
+        .saturating_add(points)
+        > shared_allowance(state)
         || (reader == Reader::Board && state.board_points.saturating_add(points) > BOARD_POINTS)
         || (reader == Reader::Session
             && state
@@ -550,6 +665,82 @@ mod tests {
     }
 
     #[test]
+    fn github_corrects_overcounted_points_and_its_hour_takes_over() {
+        let now = now_ms();
+        let mut state = BudgetState {
+            window_start_ms: now - 60_000,
+            session_points: 1300,
+            session_points_by_pid: HashMap::from([(1, 480), (2, 480), (3, 340)]),
+            ..BudgetState::default()
+        };
+        assert!(points_block(&state, 1, Reader::Session, 80));
+        let reset = now / 1000 + 9 * 60;
+        let rate = GithubRate {
+            limit: 5000,
+            used: 130,
+            remaining: 4870,
+            reset,
+        };
+        reconcile(&mut state, &rate, now);
+        // Scaled down to what GitHub counted, in the same proportions.
+        assert_eq!(state.session_points, 130);
+        assert_eq!(state.session_points_by_pid[&1], 48);
+        assert_eq!(state.session_points_by_pid[&3], 34);
+        assert!(!points_block(&state, 1, Reader::Session, 80));
+        // The hour now ends when GitHub's does.
+        assert_eq!(
+            state.window_start_ms,
+            reset * 1000 - HOUR.as_millis() as u64
+        );
+        assert_eq!(state.paused_until_ms, 0);
+
+        // Counts under GitHub's figure stand: other programs spent the rest.
+        let mut quiet = BudgetState {
+            session_points: 40,
+            ..BudgetState::default()
+        };
+        reconcile(&mut quiet, &rate, now);
+        assert_eq!(quiet.session_points, 40);
+
+        // Only the spare fifth left: pause until GitHub's hour resets.
+        let low = GithubRate {
+            remaining: 900,
+            used: 4100,
+            ..rate
+        };
+        reconcile(&mut quiet, &low, now);
+        assert_eq!(quiet.paused_until_ms, reset * 1000);
+    }
+
+    #[test]
+    fn only_counted_points_ask_github_and_at_most_once_a_minute() {
+        let now = now_ms();
+        let mut state = BudgetState::default();
+        assert!(
+            !claim_reconcile(&mut state, now, 1, Reader::Session, 1),
+            "nothing blocks: no need to ask"
+        );
+        state.session_points_by_pid.insert(1, SESSION_LIMIT);
+        assert!(claim_reconcile(&mut state, now, 1, Reader::Session, 1));
+        assert!(
+            !claim_reconcile(&mut state, now + 1_000, 1, Reader::Session, 1),
+            "another asked a moment ago"
+        );
+        assert!(claim_reconcile(
+            &mut state,
+            now + RECONCILE_GAP.as_millis() as u64,
+            1,
+            Reader::Session,
+            1
+        ));
+        state.paused_until_ms = now + 10 * 60_000;
+        assert!(
+            !claim_reconcile(&mut state, now + 3 * 60_000, 1, Reader::Session, 1),
+            "a pause GitHub asked for stands"
+        );
+    }
+
+    #[test]
     fn a_live_holder_blocks_other_processes_until_it_goes_stale() {
         let now = now_ms();
         let state = BudgetState {
@@ -675,7 +866,7 @@ mod tests {
             state.window_start_ms = now_ms();
             state
                 .session_points_by_pid
-                .insert(std::process::id(), SESSION_LIMIT - 20);
+                .insert(std::process::id(), SESSION_LIMIT - 1);
         });
         let mut tracker = crate::pr::PrTracker::new();
         tracker
@@ -697,7 +888,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         set_test_dir(Some(dir.path().join("gh-budget.json")));
         let mut permit = acquire_with_estimate(Reader::Session, UNREPORTED_READ_POINTS).unwrap();
-        assert_eq!(with_budget(|state| state.session_points), Some(80));
+        assert_eq!(
+            with_budget(|state| state.session_points),
+            Some(UNREPORTED_READ_POINTS)
+        );
         permit.record_usage(1, 5000, 4999, now_ms() + 60_000);
         drop(permit);
         assert_eq!(with_budget(|state| state.session_points), Some(1));
@@ -705,7 +899,7 @@ mod tests {
         with_budget(|state| {
             state
                 .session_points_by_pid
-                .insert(std::process::id(), SESSION_LIMIT - 20);
+                .insert(std::process::id(), SESSION_LIMIT - 1);
         });
         assert!(limit_hit_with_estimate(
             Reader::Session,
