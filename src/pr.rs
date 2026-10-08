@@ -39,7 +39,9 @@ const PR_ACTIVE_WINDOW: Duration = Duration::from_secs(5 * 60);
 /// How often to poll GitHub from how recently *this PR* moved: every 10
 /// minutes for 30 minutes, every 30 minutes for 6 hours, then every 3 hours
 /// for 48 hours. Session activity speeds up only the few PRs touched most
-/// recently — never the whole list.
+/// recently — never the whole list. The PR's own state shifts the pace (see
+/// [`Pace`]): running CI polls fastest, a clean PR one step slower, and a
+/// merged or closed one not at all.
 const PR_HOT_WINDOW: Duration = Duration::from_secs(30 * 60);
 const PR_HOT_THROTTLE: Duration = Duration::from_secs(10 * 60);
 const PR_WARM_WINDOW: Duration = Duration::from_secs(6 * 60 * 60);
@@ -1789,6 +1791,7 @@ impl PrTracker {
                     (pr.refreshed_at != 0)
                         .then(|| Duration::from_millis(now.saturating_sub(pr.refreshed_at))),
                     age,
+                    Pace::of(pr),
                 )
             })
             .map(|(_, pr)| pr.url.clone())
@@ -2551,17 +2554,54 @@ fn refresh_activity_age(
     })
 }
 
-/// How often to poll GitHub for one PR, from how recently it moved. `None`
-/// means the activity is too old to keep polling.
-fn status_refresh_interval(activity_age: Option<Duration>) -> Option<Duration> {
-    match activity_age {
-        Some(age) if age < PR_ACTIVE_WINDOW => Some(REFRESH_THROTTLE),
-        Some(age) if age < PR_HOT_WINDOW => Some(PR_HOT_THROTTLE),
-        Some(age) if age < PR_WARM_WINDOW => Some(PR_WARM_THROTTLE),
-        Some(age) if age < PR_COOL_WINDOW => Some(PR_COOL_THROTTLE),
-        Some(_) => None,
-        None => Some(PR_COOL_THROTTLE),
+/// How an open PR's own state sets its polling pace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pace {
+    /// CI is running: its result is minutes away, so poll fastest.
+    CiRunning,
+    /// Mergeable with every check passed: little is left to change.
+    Clean,
+    Normal,
+}
+
+impl Pace {
+    fn of(pr: &SessionPr) -> Self {
+        if pr.checks_pending > 0 {
+            Pace::CiRunning
+        } else if pr.merge_state_status == "CLEAN" {
+            Pace::Clean
+        } else {
+            Pace::Normal
+        }
     }
+}
+
+/// Activity windows and how often a PR polls within each, fastest first.
+const CADENCE: [(Duration, Duration); 4] = [
+    (PR_ACTIVE_WINDOW, REFRESH_THROTTLE),
+    (PR_HOT_WINDOW, PR_HOT_THROTTLE),
+    (PR_WARM_WINDOW, PR_WARM_THROTTLE),
+    (PR_COOL_WINDOW, PR_COOL_THROTTLE),
+];
+
+/// How often to poll GitHub for one PR, from how recently it moved and its
+/// pace. Running CI polls at the fastest rate for as long as the PR moved in
+/// the last six hours; a clean PR polls one step slower. `None` means the
+/// activity is too old to keep polling.
+fn status_refresh_interval(activity_age: Option<Duration>, pace: Pace) -> Option<Duration> {
+    let Some(age) = activity_age else {
+        return Some(PR_COOL_THROTTLE);
+    };
+    if pace == Pace::CiRunning && age < PR_WARM_WINDOW {
+        return Some(REFRESH_THROTTLE);
+    }
+    let step = CADENCE.iter().position(|(window, _)| age < *window)?;
+    let step = if pace == Pace::Clean {
+        (step + 1).min(CADENCE.len() - 1)
+    } else {
+        step
+    };
+    Some(CADENCE[step].1)
 }
 
 /// Whether an open PR is due for another status refresh.
@@ -2569,8 +2609,9 @@ fn pr_status_refresh_due(
     last_attempt_age: Option<Duration>,
     last_refresh_age: Option<Duration>,
     last_activity_age: Option<Duration>,
+    pace: Pace,
 ) -> bool {
-    let Some(throttle) = status_refresh_interval(last_activity_age) else {
+    let Some(throttle) = status_refresh_interval(last_activity_age, pace) else {
         return false;
     };
     let freshest_age = match (last_attempt_age, last_refresh_age) {
@@ -4884,49 +4925,104 @@ functions.wait {"cell_id":"17"}
         assert!(!pr_status_refresh_due(
             Some(just_under(PR_HOT_THROTTLE)),
             None,
-            Some(hot)
+            Some(hot),
+            Pace::Normal
         ));
         assert!(pr_status_refresh_due(
             Some(PR_HOT_THROTTLE),
             None,
-            Some(hot)
+            Some(hot),
+            Pace::Normal
         ));
         assert!(!pr_status_refresh_due(
             Some(just_under(PR_WARM_THROTTLE)),
             None,
-            Some(warm)
+            Some(warm),
+            Pace::Normal
         ));
         assert!(pr_status_refresh_due(
             Some(PR_WARM_THROTTLE),
             None,
-            Some(warm)
+            Some(warm),
+            Pace::Normal
         ));
         assert!(!pr_status_refresh_due(
             Some(just_under(PR_COOL_THROTTLE)),
             None,
-            Some(cool)
+            Some(cool),
+            Pace::Normal
         ));
         assert!(pr_status_refresh_due(
             Some(PR_COOL_THROTTLE),
             None,
-            Some(cool)
+            Some(cool),
+            Pace::Normal
         ));
         assert!(!pr_status_refresh_due(
             None,
             Some(just_under(PR_COOL_THROTTLE)),
-            None
+            None,
+            Pace::Normal
         ));
-        assert!(pr_status_refresh_due(None, Some(PR_COOL_THROTTLE), None));
-        assert!(pr_status_refresh_due(None, None, None));
+        assert!(pr_status_refresh_due(
+            None,
+            Some(PR_COOL_THROTTLE),
+            None,
+            Pace::Normal
+        ));
+        assert!(pr_status_refresh_due(None, None, None, Pace::Normal));
         assert!(!pr_status_refresh_due(
             Some(PR_COOL_THROTTLE),
             None,
-            Some(Duration::from_secs(49 * 60 * 60))
+            Some(Duration::from_secs(49 * 60 * 60)),
+            Pace::Normal
         ));
         assert_eq!(
-            status_refresh_interval(Some(Duration::from_secs(49 * 60 * 60))),
+            status_refresh_interval(Some(Duration::from_secs(49 * 60 * 60)), Pace::Normal),
             None
         );
+    }
+
+    #[test]
+    fn running_ci_polls_fastest_and_a_clean_pr_one_step_slower() {
+        let minutes = |m: u64| Some(Duration::from_secs(m * 60));
+        // Running CI: every 30 s while the PR moved in the last six hours.
+        assert_eq!(
+            status_refresh_interval(minutes(2), Pace::CiRunning),
+            Some(REFRESH_THROTTLE)
+        );
+        assert_eq!(
+            status_refresh_interval(minutes(5 * 60), Pace::CiRunning),
+            Some(REFRESH_THROTTLE)
+        );
+        // Past that, a stuck check polls like any other PR.
+        assert_eq!(
+            status_refresh_interval(minutes(7 * 60), Pace::CiRunning),
+            Some(PR_COOL_THROTTLE)
+        );
+        // Clean: one step slower, and no slower than the slowest step.
+        assert_eq!(
+            status_refresh_interval(minutes(2), Pace::Clean),
+            Some(PR_HOT_THROTTLE)
+        );
+        assert_eq!(
+            status_refresh_interval(minutes(20), Pace::Clean),
+            Some(PR_WARM_THROTTLE)
+        );
+        assert_eq!(
+            status_refresh_interval(minutes(24 * 60), Pace::Clean),
+            Some(PR_COOL_THROTTLE)
+        );
+        assert_eq!(status_refresh_interval(minutes(49 * 60), Pace::Clean), None);
+
+        let mut pr = SessionPr::test_stub(1, "o", "r");
+        pr.merge_state_status = "CLEAN".to_string();
+        assert_eq!(Pace::of(&pr), Pace::Clean);
+        pr.checks_pending = 2;
+        assert_eq!(Pace::of(&pr), Pace::CiRunning);
+        pr.checks_pending = 0;
+        pr.merge_state_status = "BLOCKED".to_string();
+        assert_eq!(Pace::of(&pr), Pace::Normal);
     }
 
     #[test]
@@ -4942,7 +5038,10 @@ functions.wait {"cell_id":"17"}
             0,
         );
         assert_eq!(hot, Some(Duration::from_secs(10 * 60)));
-        assert_eq!(status_refresh_interval(hot), Some(PR_HOT_THROTTLE));
+        assert_eq!(
+            status_refresh_interval(hot, Pace::Normal),
+            Some(PR_HOT_THROTTLE)
+        );
 
         let tail = refresh_activity_age(
             None,
@@ -4952,7 +5051,10 @@ functions.wait {"cell_id":"17"}
             HOT_SESSION_PR_LIMIT,
         );
         assert_eq!(tail, Some(Duration::from_secs(2 * 60 * 60)));
-        assert_eq!(status_refresh_interval(tail), Some(PR_WARM_THROTTLE));
+        assert_eq!(
+            status_refresh_interval(tail, Pace::Normal),
+            Some(PR_WARM_THROTTLE)
+        );
     }
 
     #[test]
