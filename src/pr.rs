@@ -382,6 +382,36 @@ impl SessionPr {
         }
     }
 
+    /// Take what GitHub reported about the PR from an earlier copy of its row.
+    /// What the session did with it (mentions, primacy, dismissal) stays.
+    fn adopt_github_fields(&mut self, known: &SessionPr) {
+        self.author_login = known.author_login.clone();
+        self.authored_by_viewer = known.authored_by_viewer;
+        self.branch = known.branch.clone();
+        self.title = known.title.clone();
+        self.state = known.state.clone();
+        self.is_draft = known.is_draft;
+        self.additions = known.additions;
+        self.deletions = known.deletions;
+        self.changed_files = known.changed_files;
+        self.mergeable = known.mergeable.clone();
+        self.merge_state_status = known.merge_state_status.clone();
+        self.checks_passed = known.checks_passed;
+        self.checks_failed = known.checks_failed;
+        self.checks_pending = known.checks_pending;
+        self.checks_total = known.checks_total;
+        self.ci_url = known.ci_url.clone();
+        self.unresolved_comments = known.unresolved_comments;
+        self.comments_url = known.comments_url.clone();
+        self.comments_refreshed_at = known.comments_refreshed_at;
+        self.review_decision = known.review_decision.clone();
+        self.review_dismissed = known.review_dismissed;
+        self.closed_at = known.closed_at;
+        self.updated_at = known.updated_at;
+        self.slack_comment_urls = known.slack_comment_urls.clone();
+        self.refreshed_at = known.refreshed_at;
+    }
+
     /// Bare tracked PR for classifier tests.
     #[cfg(test)]
     pub fn test_stub(number: u64, owner: &str, repo: &str) -> Self {
@@ -784,6 +814,10 @@ pub struct PrTracker {
     pr_slack_threads: Vec<SlackThread>,
     /// Readable Slack channel and user names from the local Slack MCP cache.
     slack_directory: SlackDirectory,
+    /// What GitHub last said about PRs dropped when the conversation reset,
+    /// by URL, so a PR that comes back shows those values at once rather than
+    /// a blank row waiting on a read.
+    last_known: HashMap<String, SessionPr>,
 }
 
 impl Default for PrTracker {
@@ -829,6 +863,7 @@ impl PrTracker {
             slack_threads: Vec::new(),
             pr_slack_threads: Vec::new(),
             slack_directory,
+            last_known: HashMap::new(),
         }
     }
 
@@ -840,6 +875,13 @@ impl PrTracker {
     /// conversation's PRs and Slack threads stop showing under the new one.
     pub fn reset_conversation(&mut self) {
         let mut fresh = Self::with_slack_directory(std::mem::take(&mut self.slack_directory));
+        fresh.last_known = std::mem::take(&mut self.last_known);
+        fresh.last_known.extend(
+            self.prs
+                .drain(..)
+                .filter(|pr| pr.refreshed_at != 0)
+                .map(|pr| (pr.url.clone(), pr)),
+        );
         fresh.overrides = std::mem::take(&mut self.overrides);
         fresh.pending_watch_adds = std::mem::take(&mut self.pending_watch_adds);
         fresh.command_workdir = self.command_workdir;
@@ -1393,6 +1435,9 @@ impl PrTracker {
 
         let mut pr = SessionPr::placeholder(loc, false);
         pr.slack_origin_url = self.current_origin_slack();
+        if let Some(known) = self.last_known.get(&loc.url) {
+            pr.adopt_github_fields(known);
+        }
         self.prs.push(pr);
         if !self.replaying_history && engage {
             self.note_pr_active(&loc.url);
@@ -3693,6 +3738,40 @@ mod tests {
     /// Switching the pane to another conversation drops that conversation's
     /// PRs and Slack threads, while cloud dispositions and queued watch adds
     /// stay with the pane. The next prompt is then scanned fresh.
+    #[test]
+    fn a_pr_that_returns_after_a_reset_keeps_what_github_last_said() {
+        let mut tracker = PrTracker::new();
+        let loc = PrLocation {
+            owner: "o".to_string(),
+            repo: "r".to_string(),
+            number: 3223,
+            url: "https://github.com/o/r/pull/3223".to_string(),
+        };
+        let mut fetched = SessionPr::placeholder(&loc, false);
+        fetched.state = "OPEN".to_string();
+        fetched.merge_state_status = "CLEAN".to_string();
+        fetched.checks_passed = 31;
+        fetched.checks_total = 31;
+        fetched.mentions = 9;
+        fetched.refreshed_at = 1_000;
+        tracker.prs.push(fetched);
+
+        tracker.reset_conversation();
+        assert!(tracker.prs().is_empty());
+        // Mentioned again (a replayed listing, so no read starts): last values.
+        tracker.observe_url(&loc, false);
+        let back = &tracker.prs()[0];
+        assert_eq!(back.state, "OPEN");
+        assert_eq!((back.checks_passed, back.checks_total), (31, 31));
+        assert_eq!(back.refreshed_at, 1_000);
+        assert_eq!(
+            back.mentions, 0,
+            "the new conversation counts its own mentions"
+        );
+        tracker.sync_fetch_limits();
+        assert!(!tracker.prs()[0].fetch_limited);
+    }
+
     #[test]
     fn reset_conversation_forgets_the_conversation_but_keeps_pane_state() {
         let mut tracker = PrTracker::new();
