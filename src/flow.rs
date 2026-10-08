@@ -104,12 +104,7 @@ impl FlowColumn {
     /// Claim this session's scene (published at once with its mark), seeded
     /// by the session, in the colour of its mark. `hook_log` is the activity
     /// log Claude Code's hooks write, for a session that has one.
-    pub fn new(
-        session_id: &str,
-        mark: SessionMark,
-        hook_log: Option<PathBuf>,
-        fade: bool,
-    ) -> Self {
+    pub fn new(session_id: &str, mark: SessionMark, hook_log: Option<PathBuf>, fade: bool) -> Self {
         let name = claim::assign_scene(session_id, mark);
         let def = scene::scene_def(&name).unwrap_or(&scene::scenes()[0]);
         let target = claim::mark_accent(mark).and_then(|[r, g, b]| {
