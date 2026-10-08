@@ -64,15 +64,14 @@ impl AgentPanelWatch {
 pub fn agent_panel_rows(screen: &str) -> usize {
     let lines: Vec<&str> = screen.lines().collect();
     // The panel sits below the prompt box: look only past its last `❯` line.
-    let prompt = lines
+    let below_prompt = lines
         .iter()
         .rposition(|line| line.trim_start().starts_with('❯'))
-        .map_or(0, |at| at + 1);
-    let Some(heading) = lines[prompt..].iter().position(|line| is_heading(line)) else {
+        .map_or(&lines[..], |at| &lines[at + 1..]);
+    let Some(heading) = below_prompt.iter().position(|line| is_heading(line)) else {
         return 0;
     };
-    let heading = prompt + heading;
-    1 + lines[heading + 1..]
+    1 + below_prompt[heading + 1..]
         .iter()
         .take_while(|line| !line.trim().is_empty())
         .count()
@@ -81,8 +80,9 @@ pub fn agent_panel_rows(screen: &str) -> usize {
 /// The panel's heading: one marker glyph, then "main".
 fn is_heading(line: &str) -> bool {
     let mut words = line.split_whitespace();
-    let marker = words.next();
-    marker.is_some_and(|m| m.chars().count() == 1 && !m.is_ascii())
+    words
+        .next()
+        .is_some_and(|marker| marker.chars().count() == 1 && !marker.is_ascii())
         && words.next() == Some("main")
         && words.next().is_none()
 }
@@ -106,7 +106,7 @@ mod tests {
             "{FOOTER}\n  ⏺ main\n  ◯ general-purpose  Sleep 45 then reply done\n  ◯ Explore  Listing files\n  ↓ 1 more\n\n\n"
         );
         assert_eq!(agent_panel_rows(&screen), 4);
-        // Other platforms draw the glyphs differently.
+        // Outside macOS, Claude draws different glyphs.
         let screen = format!("{FOOTER}\n  ● main\n  ○ general-purpose  Reading a file\n");
         assert_eq!(agent_panel_rows(&screen), 2);
     }
@@ -116,7 +116,6 @@ mod tests {
         let start = Instant::now();
         let at = |ms: u64| start + Duration::from_millis(ms);
         let mut watch = AgentPanelWatch::default();
-        watch.see(0, start);
         watch.see(4, at(0));
         assert!(!watch.grew(at(400)), "not held long enough yet");
         assert!(watch.grew(at(500)));

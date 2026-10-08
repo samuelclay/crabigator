@@ -709,6 +709,11 @@ impl App {
         Ok(())
     }
 
+    /// How the assistant CLI exited, if the main loop saw it exit.
+    pub fn assistant_exit_status(&self) -> Option<portable_pty::ExitStatus> {
+        self.platform_pty.exit_status()
+    }
+
     /// A resize round-trip (one row shorter, then back), which makes the
     /// assistant repaint from scratch.
     ///
@@ -720,11 +725,6 @@ impl App {
     /// resize dance — clear the status area, re-emit the scroll region, PTY
     /// ioctl — kicks Claude out of the bad state; a bare PTY resize alone is
     /// not enough. The user sees a one-frame flicker.
-    /// How the assistant CLI exited, if the main loop saw it exit.
-    pub fn assistant_exit_status(&self) -> Option<portable_pty::ExitStatus> {
-        self.platform_pty.exit_status()
-    }
-
     fn resize_nudge(&mut self) -> Result<()> {
         let orig_rows = self.total_rows;
         if orig_rows >= 2 && self.pty_rows >= 2 {
@@ -1028,10 +1028,11 @@ impl App {
                 // Status bar draw timer - draws when PTY output has settled
                 // When idle, skip most ticks (1s vs 50ms) since nothing is animating
                 _ = status_draw_interval.tick() => {
+                    let can_draw = self.can_draw_status(last_pty_output);
                     // Claude's agent panel grew (subagents started): Ghostty
-                    // can keep stale rows until a resize, so repaint as one.
-                    let repainted = self.can_draw_status(last_pty_output)
-                        && self.agent_panel.grew(Instant::now());
+                    // can keep stale rows until a resize, so send one. It
+                    // redraws the status bar too, so this tick draws no more.
+                    let repainted = can_draw && self.agent_panel.grew(Instant::now());
                     if repainted {
                         crate::cli::profile_mark("agent panel grew: repaint");
                         self.resize_nudge()?;
@@ -1042,10 +1043,7 @@ impl App {
                     let draw_throttle = if is_idle { STATUS_DRAW_INTERVAL_IDLE } else { status_debounce };
 
                     // Draw if the PTY allows AND debounce passed
-                    if !repainted
-                        && self.can_draw_status(last_pty_output)
-                        && since_draw >= draw_throttle
-                    {
+                    if can_draw && !repainted && since_draw >= draw_throttle {
                         // The last PTY chunk can land inside the 100ms capture
                         // throttle. Force one final screen scan after the burst
                         // settles so terminal-only prompts are not missed.
@@ -1868,8 +1866,9 @@ impl App {
                 if let Some(flow) = self.flow.as_mut() {
                     flow.read_screen(&stripped);
                 }
-                // Read mid-frame, the panel may be half drawn.
-                if self.platform.kind() == crate::platforms::PlatformKind::Claude
+                // Claude's agent panel, skipped mid-frame where it may be
+                // half drawn.
+                if self.platform.kind() == PlatformKind::Claude
                     && !self.output_boundary.in_synchronized_update()
                 {
                     let rows = crate::parsers::agent_panel_rows(&stripped);
