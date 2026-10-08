@@ -23,6 +23,8 @@ interface TelemetryRequest {
 interface GitHubRelease {
     tag_name: string;
     html_url: string;
+    /** The release title: the tag and a one-liner of what's new. */
+    name: string | null;
 }
 
 /**
@@ -98,7 +100,8 @@ export async function handleUpdateCheck(
 
         return jsonResponse({
             tag_name: release.tag_name,
-            html_url: release.html_url
+            html_url: release.html_url,
+            name: release.name
         });
     } catch (error) {
         return new Response(
