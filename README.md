@@ -75,7 +75,7 @@ Real-time widgets below the assistant's interface show:
 - <img src="assets/folder.svg" width="14" height="14"> **Git status** — Modified, added, and deleted files
 - <img src="assets/dna.svg" width="14" height="14"> **Semantic diff** — Changes organized by the functions and classes they touch (Rust, TypeScript, Python, Swift, Objective-C)
 - <img src="assets/git-pull-request.svg" width="14" height="14"> **Session titles** — The primary PR title is official; Claude's or Codex's automatic title stays visible below it
-- <img src="assets/lightning.svg" width="14" height="14"> **Flow** — An ambient scene on the right that moves with the session: a fire, a starfield, a colony ship, a balloon, a steam engine, two rockets, surf, a ski run or bubbles. Each live session gets a different scene, in the colour of its identity chip: the whole fire, starfield, engine or water turns to it, and in the sky scenes the balloon's stripes, the skier's jacket, the surfer's board and the rockets take it while the sky stays blue. Every change of state (working, done, waiting for you) relights the scene, and it fades back over two minutes, so you can tell at a glance which sessions just changed and which have sat a while. Press **ctrl+]** for the next scene; the line above the column names the scene and the key (`surf ⌃]`). The scenes are a Rust port of Rob Macrae's [flow](https://github.com/robdmac/flow). The column shows from 100 terminal columns; `[flow] enabled = false` turns it off.
+- <img src="assets/lightning.svg" width="14" height="14"> **Flow** — An ambient scene on the right that moves with the session: a fire, a starfield, a colony ship, a balloon, a steam engine, two rockets, surf, a ski run or bubbles. Each live session gets a different scene, in the colour of its identity chip: the whole fire, starfield, engine or water turns to it, and in the sky scenes the balloon's stripes, the skier's jacket, the surfer's board and the rockets take it while the sky stays blue. Every change of state (working, done, waiting for you) relights the scene, and it fades back over two minutes, so you can tell at a glance which sessions just changed and which have sat a while. Press **ctrl+]** for the next scene; the line above the column names the scene and the key (`surf ⌃]`). After the last scene, ctrl+] turns the column off, and new sessions start with it off too; the line then reads `flow off ⌃]`, and ctrl+] turns it back on. The scenes are a Rust port of Rob Macrae's [flow](https://github.com/robdmac/flow). The column shows from 100 terminal columns; `[flow] enabled = false` starts it off.
 
 ### <img src="assets/scroll.svg" width="20" height="20"> Turn Recaps
 
@@ -215,7 +215,7 @@ recap_model = "claude-haiku-4-5"  # optional model override for recaps
 # url = "https://crabigator.example.com" # omit to use the official service
 
 [flow]
-enabled = true                # the ambient scene at the right of the widgets
+enabled = true                # the ambient scene at the right of the widgets (ctrl+] saves it)
 
 [pr_board]                    # crabigator prs view preferences (saved automatically)
 include_ended = false         # live sessions; true also shows ended ones

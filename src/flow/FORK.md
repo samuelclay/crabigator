@@ -79,7 +79,7 @@ flow keeps evolving. This log records which upstream commit the port matches, so
 ## crabigator's own additions
 
 Not in flow, so keep them when porting upstream changes:
-- **ctrl+]** rotates the column's scene (`FlowColumn::next_scene`), and the separator above the column names the scene and the key.
+- **ctrl+]** rotates the column's scene (`FlowColumn::next_scene`), and the separator above the column names the scene and the key. After the last scene it turns the column off (saved as `[flow] enabled = false`), and the separator reads `flow off ⌃]`.
 - Scenes are claimed per session (`claim.rs`), and the colour comes from the session mark.
 - **Figures wear the session's hue** (`Dials.accent`, `SceneDef.figure`): the balloon's stripes, the hero skier's hat and jacket, the hero surfer's board, the rockets' white and stainless bodies (a wash), Dragon's trunk and parachute gores. Those scenes keep their frame's own colours (no palette turn), so their skies stay blue. With no accent, every scene draws exactly flow's frames. When porting an upstream change to balloon, ski, surf or rocket, keep the `accent` lines.
 

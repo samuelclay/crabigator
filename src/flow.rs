@@ -14,6 +14,10 @@
 //! and embers have sat a while. Claude Code's hooks tell
 //! the work as it happens (`hooks`); other assistants' stats tell it a
 //! refresh later (`feed`).
+//!
+//! ctrl+] steps through every scene from the session's own, then off. Off is
+//! saved as `[flow] enabled = false`, so new sessions start off too; the
+//! separator keeps a label naming the key that turns it back on.
 
 mod activity;
 mod ansi;
@@ -37,9 +41,10 @@ use std::time::{Duration, Instant};
 
 use chrono::Timelike;
 
+use crate::config::FlowPreferences;
 use crate::platforms::{PlatformStats, SessionState};
 use crate::session_mark::SessionMark;
-use crate::ui::FlowRect;
+use crate::ui::{FlowRect, FlowView};
 
 use activity::{Activity, FRAME_MS};
 use cells::Cells;
@@ -77,6 +82,11 @@ pub struct FlowChange {
 /// The session's scene, stepped in place, and where it is drawn.
 pub struct FlowColumn {
     def: &'static SceneDef,
+    /// The scene this session claimed: where it starts, and where ctrl+]
+    /// comes back to after off.
+    home: &'static SceneDef,
+    /// Turned off (ctrl+], or `[flow] enabled = false`): no column, no frames.
+    off: bool,
     scene: Box<dyn Scene>,
     palette: Palette,
     turned: Cells,
@@ -104,7 +114,12 @@ impl FlowColumn {
     /// Claim this session's scene (published at once with its mark), seeded
     /// by the session, in the colour of its mark. `hook_log` is the activity
     /// log Claude Code's hooks write, for a session that has one.
-    pub fn new(session_id: &str, mark: SessionMark, hook_log: Option<PathBuf>, fade: bool) -> Self {
+    pub fn new(
+        session_id: &str,
+        mark: SessionMark,
+        hook_log: Option<PathBuf>,
+        preferences: &FlowPreferences,
+    ) -> Self {
         let name = claim::assign_scene(session_id, mark);
         let def = scene::scene_def(&name).unwrap_or(&scene::scenes()[0]);
         let target = claim::mark_accent(mark).and_then(|[r, g, b]| {
@@ -113,11 +128,13 @@ impl FlowColumn {
         let seed = f64::from(claim::scene_seed(session_id));
         Self {
             def,
+            home: def,
+            off: !preferences.enabled,
             scene: (def.make)(seed),
             palette: palette_for(def, target),
             turned: Cells::new(0, 0),
             activity: Activity::default(),
-            fade,
+            fade: preferences.fade,
             feed: ActivityFeed::default(),
             hooks: hook_log.map(HookFeed::open),
             geometry: None,
@@ -130,25 +147,51 @@ impl FlowColumn {
         }
     }
 
-    /// The scene this session shows.
-    pub fn scene(&self) -> &'static str {
-        self.def.name
+    /// The scene this session shows (`None`: off).
+    pub fn scene(&self) -> Option<&'static str> {
+        self.is_on().then_some(self.def.name)
     }
 
-    /// Rotate to the next scene (ctrl+]), in the session's colour, and step
-    /// it once so it shows at once. Answers its name.
-    pub fn next_scene(&mut self) -> &'static str {
+    /// Whether the column is on: only then is it stepped.
+    pub fn is_on(&self) -> bool {
+        !self.off
+    }
+
+    /// Rotate to the next scene (ctrl+]): each scene once from the session's
+    /// own, then off, then the session's own again. Answers the scene now
+    /// showing (`None`: off).
+    pub fn next_scene(&mut self) -> Option<&'static str> {
+        if self.off {
+            self.off = false;
+            // What the hooks said while off is old news.
+            if let Some(hooks) = self.hooks.as_mut() {
+                hooks.skip_ahead();
+            }
+            self.show(self.home);
+            return self.scene();
+        }
         let all = scene::scenes();
         let at = all
             .iter()
             .position(|def| def.name == self.def.name)
             .unwrap_or(0);
-        let def = &all[(at + 1) % all.len()];
+        let next = &all[(at + 1) % all.len()];
+        if next.name == self.home.name {
+            self.off = true;
+            self.frame = None;
+            self.drawn = None;
+        } else {
+            self.show(next);
+        }
+        self.scene()
+    }
+
+    /// Show `def` in the session's colour, stepped once so it shows at once.
+    fn show(&mut self, def: &'static SceneDef) {
         self.def = def;
         self.scene = (def.make)(self.seed);
         self.palette = palette_for(def, self.target);
         self.tick();
-        def.name
     }
 
     /// How long until the next frame: calm scenes step slower.
@@ -171,7 +214,7 @@ impl FlowColumn {
         let elapsed = now.duration_since(self.last_tick).as_secs_f64() * 1000.0;
         self.last_tick = now;
         self.activity.tick(elapsed / FRAME_MS);
-        let Some(rect) = self.geometry else {
+        let Some(rect) = self.geometry.filter(|_| !self.off) else {
             return FlowChange::default();
         };
         let night = is_night(chrono::Local::now().hour());
@@ -223,6 +266,27 @@ impl FlowColumn {
     /// The latest frame's rows.
     pub fn frame_rows(&self) -> Option<&[String]> {
         self.frame.as_deref()
+    }
+
+    /// What the status bar shows: the frame and its scene; off, the label
+    /// that tells how to turn it on, where the column would have room.
+    pub fn view(&self) -> Option<FlowView<'_>> {
+        if self.off {
+            return self.geometry.map(|_| FlowView::Off);
+        }
+        Some(FlowView::Scene {
+            rows: self.frame.as_deref()?,
+            scene: self.def.name,
+        })
+    }
+
+    /// Whether ctrl+] is the column's: while the column or its off label shows.
+    pub fn takes_key(&self) -> bool {
+        if self.off {
+            self.geometry.is_some()
+        } else {
+            self.drawn.is_some()
+        }
     }
 
     /// Where the column would draw for the current layout (`None`: no room).
@@ -365,6 +429,8 @@ mod tests {
         let def = scene::scene_def(scene).unwrap();
         FlowColumn {
             def,
+            home: def,
+            off: false,
             scene: (def.make)(7.0),
             palette: Palette::natural(),
             turned: Cells::new(0, 0),
@@ -442,17 +508,38 @@ mod tests {
     }
 
     #[test]
-    fn the_next_scene_comes_round_to_the_first_again() {
-        let mut flow = column("fire");
+    fn the_next_scene_goes_round_every_scene_then_off_then_home() {
+        let names: Vec<&str> = scene::scenes().iter().map(|def| def.name).collect();
+        let home = names[2];
+        let mut flow = column(home);
         flow.set_geometry(Some(rect(18, 6)));
-        let mut seen = vec![flow.scene()];
-        for _ in 1..scene::scenes().len() {
-            seen.push(flow.next_scene());
+        let mut seen = vec![flow.scene().unwrap()];
+        for _ in 1..names.len() {
+            seen.push(flow.next_scene().unwrap());
             assert!(flow.has_frame());
         }
-        let names: Vec<&str> = scene::scenes().iter().map(|def| def.name).collect();
-        assert_eq!(seen, names);
-        assert_eq!(flow.next_scene(), "fire");
+        assert_eq!(seen, [&names[2..], &names[..2]].concat());
+        // Then off: no frame, only the label, and the key is still the column's.
+        flow.set_drawn(Some(rect(18, 6)));
+        assert_eq!(flow.next_scene(), None);
+        assert!(!flow.has_frame() && flow.drawn_rect().is_none());
+        assert!(matches!(flow.view(), Some(FlowView::Off)));
+        assert!(flow.takes_key());
+        assert_eq!(flow.tick(), FlowChange::default());
+        // And back to the session's own scene.
+        assert_eq!(flow.next_scene(), Some(home));
+        assert!(flow.has_frame());
+    }
+
+    #[test]
+    fn off_shows_its_label_only_where_the_column_would_have_room() {
+        let mut flow = column("fire");
+        flow.off = true;
+        assert!(flow.view().is_none() && !flow.takes_key());
+        flow.set_geometry(Some(rect(18, 6)));
+        assert!(matches!(flow.view(), Some(FlowView::Off)));
+        assert!(flow.takes_key());
+        assert_eq!(flow.scene(), None);
     }
 
     #[test]

@@ -52,7 +52,8 @@ pub struct Config {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FlowPreferences {
-    /// Whether the flow column shows. Missing means it does.
+    /// Whether the flow column shows. Missing means it does. ctrl+] saves
+    /// it: off after the last scene, and on again.
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// Whether each change of state (a turn starting or ending, a permission

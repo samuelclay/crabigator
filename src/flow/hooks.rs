@@ -106,6 +106,15 @@ impl HookFeed {
         activity.tools_in_flight = self.calls.len() as u32;
     }
 
+    /// Pass over what the log says until now, and forget the calls and
+    /// subagents heard so far: the column was off, and that is old news.
+    pub fn skip_ahead(&mut self) {
+        self.offset = std::fs::metadata(&self.path).map_or(0, |m| m.len());
+        self.partial.clear();
+        self.calls.clear();
+        self.agents.clear();
+    }
+
     /// The main turn is over (however crabigator heard it): its calls are done.
     pub fn turn_ended(&mut self) {
         self.calls.retain(|_, call| call.agent.is_some());
@@ -314,6 +323,33 @@ mod tests {
         assert!(feed.live && feed.knows_effort);
         assert!(activity.is_turn_active);
         assert_eq!(activity.floor, 6.0);
+    }
+
+    #[test]
+    fn skipping_ahead_passes_over_what_was_said_and_forgets_calls_in_flight() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("activity.jsonl");
+        let mut feed = HookFeed::open(path.clone());
+        let mut activity = Activity::default();
+        std::fs::write(
+            &path,
+            "{\"ev\":\"PreToolUse\",\"tool\":\"Bash\",\"id\":\"t1\"}\n",
+        )
+        .unwrap();
+        feed.poll(&mut activity, Instant::now());
+        assert_eq!(activity.tools_in_flight, 1);
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "{{\"ev\":\"UserPromptSubmit\"}}").unwrap();
+        feed.skip_ahead();
+        feed.poll(&mut activity, Instant::now());
+        assert_eq!(activity.tools_in_flight, 0);
+        assert!(!activity.is_turn_active);
+        writeln!(file, "{{\"ev\":\"UserPromptSubmit\"}}").unwrap();
+        feed.poll(&mut activity, Instant::now());
+        assert!(activity.is_turn_active);
     }
 
     #[test]

@@ -370,9 +370,10 @@ pub fn draw_status_bar(
         write!(stdout, "━")?;
     }
     write!(stdout, "{}", RESET)?;
-    // Over the flow column: its scene, and the key that rotates it.
+    // Over the flow column: its scene and the key that rotates it, or with
+    // the column off, the key that turns it on.
     if let (Some(view), Some(width)) = (flow, flow_column_width(layout.total_cols)) {
-        draw_flow_label(stdout, separator_row, layout.total_cols, width, view.scene)?;
+        draw_flow_label(stdout, separator_row, layout.total_cols, width, view)?;
     }
     let is_paired = pairing_state.has_linked_devices;
     // No bottom footer any more — the entire status_rows budget goes to the
@@ -394,7 +395,7 @@ pub fn draw_status_bar(
         layout.total_cols,
         compact,
         git_needs_multi_column,
-        flow.is_some(),
+        matches!(flow, Some(FlowView::Scene { .. })),
     );
     let (stats_width, git_width, changes_width) = (widths.stats, widths.git, widths.changes);
     let titles = session_title_hierarchy(prs, terminal_title);
@@ -466,7 +467,7 @@ pub fn draw_status_bar(
         )?;
 
         // Flow column (rightmost, when it shows)
-        if let (Some(flow_width), Some(view)) = (widths.flow, flow) {
+        if let (Some(flow_width), Some(FlowView::Scene { rows, .. })) = (widths.flow, flow) {
             write!(stdout, "{}│{}", escape::fg(color::DARK_GRAY), RESET)?;
             current_col += changes_width + 1;
             draw_flow_row(
@@ -478,7 +479,7 @@ pub fn draw_status_bar(
                     width: flow_width,
                     height: widget_status_rows,
                 },
-                view.rows.get(widget_row as usize - 1).map(String::as_str),
+                rows.get(widget_row as usize - 1).map(String::as_str),
             )?;
         }
     }
@@ -847,8 +848,9 @@ mod tests {
         assert_eq!(flow_column_rect(&no_rows), None);
     }
 
-    #[test]
-    fn a_full_draw_puts_flow_after_a_third_separator_at_the_right_edge() {
+    /// A full draw of an empty session at 120×40 with nine widget rows,
+    /// replayed on a terminal.
+    fn draw_with_flow(flow: FlowView) -> (vt100::Parser, Layout) {
         let (total_cols, total_rows) = (120u16, 40u16);
         let layout = Layout {
             pty_rows: 31,
@@ -856,7 +858,6 @@ mod tests {
             status_rows: 9,
             handoff_rows: 0,
         };
-        let rows: Vec<String> = (0..8).map(|_| "\x1b[38;2;200;80;10m▓".repeat(30)).collect();
         let mut out = Vec::new();
         draw_status_bar(
             &mut out,
@@ -880,15 +881,23 @@ mod tests {
             0,
             SessionMark::from_seed("flow-draw"),
             false,
-            Some(FlowView {
-                rows: &rows,
-                scene: "surf",
-            }),
+            Some(flow),
         )
         .unwrap();
         let mut parser = vt100::Parser::new(total_rows, total_cols, 0);
         parser.process(b"top row\r\n");
         parser.process(&out);
+        (parser, layout)
+    }
+
+    #[test]
+    fn a_full_draw_puts_flow_after_a_third_separator_at_the_right_edge() {
+        let rows: Vec<String> = (0..8).map(|_| "\x1b[38;2;200;80;10m▓".repeat(30)).collect();
+        let (parser, layout) = draw_with_flow(FlowView::Scene {
+            rows: &rows,
+            scene: "surf",
+        });
+        let total_cols = layout.total_cols;
         let screen = parser.screen();
         // Nothing scrolled: the first row is still there.
         assert!(screen.contents().starts_with("top row"));
@@ -911,6 +920,21 @@ mod tests {
                     "row {r} col {c}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn with_flow_off_the_column_goes_and_the_separator_names_the_key() {
+        let (parser, layout) = draw_with_flow(FlowView::Off);
+        let screen = parser.screen();
+        let separator: String = (0..layout.total_cols)
+            .map(|c| screen.cell(31, c).unwrap().contents())
+            .collect();
+        assert!(separator.ends_with("━ flow off ⌃] ━"), "{separator}");
+        // No third separator: the widgets take the whole width again.
+        let flow = flow_column_rect(&layout).unwrap();
+        for r in 32..40u16 {
+            assert_ne!(screen.cell(r, flow.col - 1).unwrap().contents(), "│");
         }
     }
 }

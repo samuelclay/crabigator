@@ -15,19 +15,26 @@ use crate::terminal::escape;
 use super::utils::fit_ansi_to_width;
 use super::WidgetArea;
 
-/// What the status bar shows of the flow column: the frame's rows, and the
-/// label on the separator above it (the scene, and the key that rotates it).
+/// What the status bar shows of the flow column, and the label on the
+/// separator above it.
 #[derive(Clone, Copy, Debug)]
-pub struct FlowView<'a> {
-    pub rows: &'a [String],
-    pub scene: &'a str,
+pub enum FlowView<'a> {
+    /// The frame's rows, under the scene's name and the key that rotates it.
+    Scene { rows: &'a [String], scene: &'a str },
+    /// Off: no column, only the label naming the key that turns it on.
+    Off,
 }
 
 /// The key that rotates the scene, as the label shows it.
 pub const NEXT_SCENE_KEY: &str = "⌃]";
 
-/// The label over the column: ` surf ⌃] `, or just the key when the name won't fit.
-pub fn flow_label(scene: &str, width: u16) -> String {
+/// The label over the column: ` surf ⌃] `, or just the key when the name
+/// won't fit; ` flow off ⌃] ` when it's off.
+pub fn flow_label(view: FlowView, width: u16) -> String {
+    let scene = match view {
+        FlowView::Scene { scene, .. } => scene,
+        FlowView::Off => "flow off",
+    };
     let full = format!(" {scene} {NEXT_SCENE_KEY} ");
     if full.chars().count() + 2 <= usize::from(width) {
         full
@@ -42,9 +49,9 @@ pub fn draw_flow_label(
     separator_row: u16,
     total_cols: u16,
     width: u16,
-    scene: &str,
+    view: FlowView,
 ) -> Result<()> {
-    let label = flow_label(scene, width);
+    let label = flow_label(view, width);
     let len = label.chars().count() as u16;
     if len + 1 > width {
         return Ok(());
@@ -164,8 +171,10 @@ mod tests {
 
     #[test]
     fn the_label_names_the_scene_and_the_key_or_just_the_key() {
-        assert_eq!(flow_label("surf", 18), " surf ⌃] ");
-        assert_eq!(flow_label("starship", 12), " ⌃] ");
+        let scene = |scene| FlowView::Scene { rows: &[], scene };
+        assert_eq!(flow_label(scene("surf"), 18), " surf ⌃] ");
+        assert_eq!(flow_label(scene("starship"), 12), " ⌃] ");
+        assert_eq!(flow_label(FlowView::Off, 15), " flow off ⌃] ");
     }
 
     #[test]

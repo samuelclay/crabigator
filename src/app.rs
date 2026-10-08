@@ -36,7 +36,7 @@ use crate::terminal::{
 use crate::ui::cooldown::{self, Cooldowns};
 use crate::ui::{
     compute_dynamic_status_rows, draw_flow_column, draw_status_bar, flow_column_rect, handoff_rows,
-    split_terminal_rows, throbber_frame_index, FlowView, Layout, PairingState,
+    split_terminal_rows, throbber_frame_index, Layout, PairingState,
 };
 use crate::update::{UpdateCheckResult, UpdateState};
 
@@ -294,8 +294,8 @@ pub struct App {
     session_id: String,
     /// Colored identity chip shown in stats and on the PR board.
     session_mark: SessionMark,
-    /// The flow column's scene (`None` when `[flow] enabled = false`).
-    flow: Option<FlowColumn>,
+    /// The flow column's scene (off with `[flow] enabled = false`).
+    flow: FlowColumn,
     /// Where the assistant's output stands, so the status bar can draw
     /// between its writes rather than only after it falls silent.
     output_boundary: OutputBoundary,
@@ -351,11 +351,10 @@ impl App {
         let (pty_rows, status_rows) = split_terminal_rows(rows, initial_handoff_rows);
 
         let config = Config::load().unwrap_or_default();
-        let flow_enabled = config.flow.enabled;
 
-        // Give the assistant CLI only the top portion. With the flow column
-        // on, CRABIGATOR_FLOW tells flow's Claude Code plugin (if installed)
-        // that crabigator draws the scene, so it doesn't show twice.
+        // Give the assistant CLI only the top portion. CRABIGATOR_FLOW tells
+        // flow's Claude Code plugin (if installed) that crabigator draws the
+        // scene (or, off, keeps it off), so it doesn't show twice.
         let platform_args = platform.spawn_args(platform_args);
         let platform_pty = PlatformPty::new(
             pty_tx,
@@ -363,7 +362,7 @@ impl App {
             pty_rows,
             platform.command(),
             platform_args,
-            &[("CRABIGATOR_FLOW", flow_enabled.then_some("1"))],
+            &[("CRABIGATOR_FLOW", Some("1"))],
         )
         .await?;
         crate::cli::profile_mark("App::new: assistant CLI spawned in PTY");
@@ -397,9 +396,8 @@ impl App {
         // sessions starting together see each other's claims.
         let hook_log = (platform.kind() == PlatformKind::Claude)
             .then(|| crate::platforms::claude_code::activity_log_path(&session_id));
-        let flow = flow_enabled
-            .then(|| FlowColumn::new(&session_id, session_mark, hook_log, config.flow.fade));
-        mirror_publisher.set_flow_scene(flow.as_ref().map(FlowColumn::scene));
+        let flow = FlowColumn::new(&session_id, session_mark, hook_log, &config.flow);
+        mirror_publisher.set_flow_scene(flow.scene());
 
         // Worktree sessions scope their PR dispositions to the directory, so a
         // dismissal sticks for future sessions there without touching the
@@ -1238,14 +1236,11 @@ impl App {
                 // the column (the whole bar when the column first appears). A
                 // frame that can't paint yet, mid-write, is retried shortly
                 // rather than dropped, so the scene moves evenly.
-                () = &mut flow_sleep, if self.flow.is_some() => {
+                () = &mut flow_sleep, if self.flow.is_on() => {
                     let now = tokio::time::Instant::now();
                     if flow_unpainted.is_none() {
-                        let (change, pace) = match self.flow.as_mut() {
-                            Some(flow) => (flow.tick(), flow.pace()),
-                            None => Default::default(),
-                        };
-                        flow_next = now + pace;
+                        let change = self.flow.tick();
+                        flow_next = now + self.flow.pace();
                         if change.column_toggled {
                             self.last_status_bar_hash = None;
                         }
@@ -1281,9 +1276,7 @@ impl App {
 
             // Each change of the session's state relights the flow scene,
             // whichever path noticed it (hooks, the screen, a key).
-            if let Some(flow) = self.flow.as_mut() {
-                flow.sync_state(self.session_stats.effective_state());
-            }
+            self.flow.sync_state(self.session_stats.effective_state());
 
             // Check if the platform CLI has exited
             if !self.running || !self.platform_pty.is_running() {
@@ -1427,9 +1420,7 @@ impl App {
 
                     self.platform_pty.process_output(&terminal_output);
                     self.output_boundary.scan(&terminal_output);
-                    if let Some(flow) = self.flow.as_mut() {
-                        flow.hear_output(terminal_output.len());
-                    }
+                    self.flow.hear_output(terminal_output.len());
                     // Track autocomplete suggestions from raw PTY bytes
                     self.suggestion_tracker.process(&passthrough);
                     stdout.write_all(&terminal_output)?;
@@ -1476,7 +1467,7 @@ impl App {
             self.pr_tracker.prs(),
             self.pr_tracker.slack_threads(),
             handoff,
-            self.flow.as_ref().is_some_and(FlowColumn::has_frame),
+            self.flow.has_frame(),
         );
 
         // The handoff grows with the PR list, so pty_rows can change even when
@@ -1549,16 +1540,14 @@ impl App {
 
         // Where the flow column goes for this layout: its size for the next
         // frame, and where the screen shows it once it has one.
-        if let Some(flow) = self.flow.as_mut() {
-            let rect = flow_column_rect(&Layout {
-                pty_rows: self.pty_rows,
-                total_cols: self.total_cols,
-                status_rows: self.status_rows,
-                handoff_rows,
-            });
-            flow.set_geometry(rect);
-            flow.set_drawn(if flow.has_frame() { rect } else { None });
-        }
+        let rect = flow_column_rect(&Layout {
+            pty_rows: self.pty_rows,
+            total_cols: self.total_cols,
+            status_rows: self.status_rows,
+            handoff_rows,
+        });
+        self.flow.set_geometry(rect);
+        self.flow.set_drawn(rect.filter(|_| self.flow.has_frame()));
 
         // Compute hash of status bar inputs to detect changes
         let current_hash = {
@@ -1571,11 +1560,9 @@ impl App {
             self.status_rows.hash(&mut hasher);
             self.attach_clients.hash(&mut hasher);
             // Whether the flow column shows, and its scene (named over it;
-            // its frames paint on their own).
-            if let Some(flow) = self.flow.as_ref() {
-                flow.has_frame().hash(&mut hasher);
-                flow.scene().hash(&mut hasher);
-            }
+            // its frames paint on their own), or that it's off.
+            self.flow.has_frame().hash(&mut hasher);
+            self.flow.scene().hash(&mut hasher);
 
             // Session stats (key fields that affect display)
             // Use discriminant for enum since SessionState doesn't impl Hash
@@ -1716,12 +1703,7 @@ impl App {
             now_ms,
             self.session_mark,
             self.attach_clients > 0,
-            self.flow.as_ref().and_then(|flow| {
-                Some(FlowView {
-                    rows: flow.frame_rows()?,
-                    scene: flow.scene(),
-                })
-            }),
+            self.flow.view(),
         )?;
         // Our colour resets end the assistant's text style: put it back.
         let _ = stdout.write_all(&self.platform_pty.screen().attributes_formatted());
@@ -1781,10 +1763,7 @@ impl App {
     /// Repaint just the flow column with its latest frame, between full
     /// status-bar draws. Errors are ignored: the scene is decoration.
     fn draw_flow_column(&mut self) {
-        let Some(flow) = self.flow.as_ref() else {
-            return;
-        };
-        let (Some(rect), Some(rows)) = (flow.drawn_rect(), flow.frame_rows()) else {
+        let (Some(rect), Some(rows)) = (self.flow.drawn_rect(), self.flow.frame_rows()) else {
             return;
         };
         let screen = self.platform_pty.screen();
@@ -1863,9 +1842,7 @@ impl App {
                 };
                 self.session_stats.set_screen_input_wait(shows_input_wait);
                 // The flow scene reads the effort and the running agents there too.
-                if let Some(flow) = self.flow.as_mut() {
-                    flow.read_screen(&stripped);
-                }
+                self.flow.read_screen(&stripped);
                 // Claude's agent panel, skipped mid-frame where it may be
                 // half drawn.
                 if self.platform.kind() == PlatformKind::Claude
@@ -2055,9 +2032,7 @@ impl App {
         self.session_stats
             .refresh_platform_stats(self.platform.as_ref(), &self.stats_cwd.to_string_lossy());
         self.herdr.sync(&self.session_stats, self.platform.kind());
-        if let Some(flow) = self.flow.as_mut() {
-            flow.observe_stats(&self.session_stats.platform_stats);
-        }
+        self.flow.observe_stats(&self.session_stats.platform_stats);
         let new_effective_state = self.session_stats.effective_state();
         let new_last_updated = self.session_stats.platform_stats.last_updated;
         self.maybe_update_cwd(true);
@@ -2259,23 +2234,23 @@ impl App {
             return Ok(());
         }
 
-        // ctrl+] rotates the flow column's scene while the column shows (it
-        // never reaches the assistant then). The byte it sends, 0x1d, reads
-        // as ctrl+5 without the kitty keyboard protocol.
+        // ctrl+] rotates the flow column's scene, and after the last scene
+        // turns it off, while the column or its off label shows (it never reaches the
+        // assistant then). Off and back on are saved for new sessions. The
+        // byte it sends, 0x1d, reads as ctrl+5 without the kitty keyboard
+        // protocol.
         let is_next_scene = key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5'));
-        if is_next_scene {
-            if let Some(flow) = self
-                .flow
-                .as_mut()
-                .filter(|flow| flow.drawn_rect().is_some())
-            {
-                let scene = flow.next_scene();
-                self.mirror_publisher.set_flow_scene(Some(scene));
-                self.last_status_bar_hash = None;
-                self.draw_status_bar()?;
-                return Ok(());
+        if is_next_scene && self.flow.takes_key() {
+            let was_on = self.flow.is_on();
+            let scene = self.flow.next_scene();
+            if self.flow.is_on() != was_on {
+                let _ = save_flow_enabled(self.flow.is_on());
             }
+            self.mirror_publisher.set_flow_scene(scene);
+            self.last_status_bar_hash = None;
+            self.draw_status_bar()?;
+            return Ok(());
         }
 
         self.platform.note_user_input();
@@ -2341,7 +2316,7 @@ impl App {
             self.pr_tracker.prs(),
             self.pr_tracker.slack_threads(),
             new_handoff_rows,
-            self.flow.as_ref().is_some_and(FlowColumn::has_frame),
+            self.flow.has_frame(),
         );
         self.status_rows = new_status_rows;
         self.pty_rows = self
@@ -3082,6 +3057,14 @@ impl TermSignals {
             std::future::pending::<()>().await;
         }
     }
+}
+
+/// Save whether the flow column is on, so new sessions start the same way.
+/// A config that doesn't parse is left alone.
+fn save_flow_enabled(enabled: bool) -> Result<()> {
+    let mut config = Config::load()?;
+    config.flow.enabled = enabled;
+    config.save()
 }
 
 /// Alias a session path under one of the session's other identifiers, so a
