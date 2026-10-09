@@ -4271,10 +4271,6 @@ impl Drop for PrBoardTerminalGuard {
     }
 }
 
-/// How often the open board re-runs `gh` for each open watched PR.
-/// Watched PRs share the machine-wide GitHub budget with session refreshes,
-/// so this stays well below a once-a-minute poll.
-const WATCHED_REFRESH: Duration = Duration::from_secs(15 * 60);
 /// Shortest gap between watched-PR reads on one board. Several boards can be
 /// open at once; without this they walk the whole watch list back to back.
 const WATCH_SPAWN_GAP: Duration = Duration::from_secs(5);
@@ -4293,6 +4289,10 @@ struct WatchedBoard {
     prs: HashMap<String, SessionPr>,
     /// Last local `gh` attempt per key, successful or not.
     attempted_at: HashMap<String, Instant>,
+    /// When a read here or a relay from another board last showed the PR
+    /// changing. Watched PRs back off like session PRs (see
+    /// [`crate::pr::refresh_due`]), and a change starts the backoff over.
+    changed_at: HashMap<String, Instant>,
     /// In-flight enrichment jobs by key.
     pending: HashMap<String, mpsc::Receiver<Result<SessionPr, String>>>,
     /// When this board last started a GitHub read.
@@ -4332,7 +4332,10 @@ impl WatchedBoard {
             listed.insert(key.clone());
             match self.prs.get(&key) {
                 Some(existing) if existing.refreshed_at >= incoming.refreshed_at => {}
-                _ => {
+                known => {
+                    if known.is_some_and(|known| crate::pr::status_changed(known, &incoming)) {
+                        self.changed_at.insert(key.clone(), Instant::now());
+                    }
                     self.prs.insert(key, incoming);
                     changed = true;
                 }
@@ -4360,27 +4363,30 @@ impl WatchedBoard {
     /// Whether this watched PR should spend a GitHub read. Stats already in
     /// the cloud copy or from the last attempt count as fresh.
     fn watch_refresh_due(&self, key: &str, pr: &SessionPr) -> bool {
-        if pr.refreshed_at != 0 && pr.state != "OPEN" {
-            return false;
-        }
-        if self
-            .attempted_at
-            .get(key)
-            .is_some_and(|at| at.elapsed() < WATCHED_REFRESH)
-        {
-            return false;
-        }
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        pr.refreshed_at == 0
-            || now_ms.saturating_sub(pr.refreshed_at) >= WATCHED_REFRESH.as_millis() as u64
+        let since =
+            |at_ms: u64| (at_ms > 0).then(|| Duration::from_millis(now_ms.saturating_sub(at_ms)));
+        let activity_age = [
+            self.changed_at.get(key).map(Instant::elapsed),
+            since(pr.updated_at),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        crate::pr::refresh_due(
+            pr,
+            self.attempted_at.get(key).map(Instant::elapsed),
+            since(pr.refreshed_at),
+            activity_age,
+        )
     }
 
-    /// Start one `gh` read for the next watched PR that is due. Never-enriched
-    /// rows go first. Finished PRs stop refreshing. One board starts at most
-    /// one read every few seconds, and the shared budget can still say no.
+    /// Start one `gh` read for the next watched PR that is due. Merged and
+    /// closed PRs are read hourly. One board starts at most one read every few
+    /// seconds, and the shared budget can still say no.
     fn spawn_due_refreshes(&mut self) {
         if !self.pending.is_empty() {
             return;
@@ -4443,6 +4449,9 @@ impl WatchedBoard {
             };
             // The watch may have been removed while the fetch ran.
             if let Some(existing) = self.prs.get_mut(&key) {
+                if crate::pr::status_changed(existing, &pr) {
+                    self.changed_at.insert(key.clone(), Instant::now());
+                }
                 if *existing != pr {
                     *existing = pr;
                     changed = true;
