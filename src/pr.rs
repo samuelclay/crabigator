@@ -39,8 +39,13 @@ const REFRESH_THROTTLE: Duration = Duration::from_secs(30);
 /// back off 30 s → 1 m → 2 m → 4 m → 8 m and settle at this cap. A change on
 /// GitHub, a mention, or a push starts the backoff over (see [`refresh_due`]).
 const OPEN_REFRESH_CAP: Duration = Duration::from_secs(10 * 60);
-/// While checks run, their results are minutes away: wait no longer than this.
-const CI_REFRESH_CAP: Duration = Duration::from_secs(60);
+/// While checks run, their results are minutes away. A PR that moved within
+/// `CI_FRESH_WINDOW` is read every `CI_FRESH_REFRESH`, and one that moved
+/// within `CI_WINDOW` every 30 seconds. Past that, a check that never reports
+/// would poll forever, so the PR falls back to the open backoff.
+const CI_FRESH_WINDOW: Duration = Duration::from_secs(5 * 60);
+const CI_FRESH_REFRESH: Duration = Duration::from_secs(15);
+const CI_WINDOW: Duration = Duration::from_secs(60 * 60);
 /// A merged PR can't change and a closed one rarely reopens.
 const FINISHED_REFRESH: Duration = Duration::from_secs(60 * 60);
 /// Never-loaded PRs past this many, counting from the most recently
@@ -2565,18 +2570,20 @@ fn pr_does_not_exist(error: &str) -> bool {
 
 /// How long to wait between reads of one PR, given how long it had been
 /// quiet at its last read. An open PR waits that long, between 30 seconds and
-/// ten minutes (one minute while checks run), so a quiet PR backs off by
-/// doubling. A merged or closed PR is read hourly.
+/// ten minutes, so a quiet PR backs off by doubling. Running CI on a PR that
+/// moved recently is read every 15 or 30 seconds. A merged or closed PR is
+/// read hourly.
 fn refresh_interval(pr: &SessionPr, quiet: Option<Duration>) -> Duration {
     if matches!(pr.state.as_str(), "MERGED" | "CLOSED") {
         return FINISHED_REFRESH;
     }
-    let cap = if pr.checks_pending > 0 {
-        CI_REFRESH_CAP
-    } else {
-        OPEN_REFRESH_CAP
-    };
-    quiet.unwrap_or(cap).clamp(REFRESH_THROTTLE, cap)
+    match quiet {
+        Some(quiet) if pr.checks_pending > 0 && quiet < CI_FRESH_WINDOW => CI_FRESH_REFRESH,
+        Some(quiet) if pr.checks_pending > 0 && quiet < CI_WINDOW => REFRESH_THROTTLE,
+        quiet => quiet
+            .unwrap_or(OPEN_REFRESH_CAP)
+            .clamp(REFRESH_THROTTLE, OPEN_REFRESH_CAP),
+    }
 }
 
 /// Whether a PR is due for another read. `attempt_ago` and `read_ago` are
@@ -4958,8 +4965,14 @@ functions.wait {"cell_id":"17"}
             reads
         };
         assert_eq!(reads(&pr, 2200), [30, 60, 120, 240, 480, 960, 1560, 2160]);
+        // Running CI: every 15 s for five quiet minutes, every 30 s for the
+        // rest of the hour, then the open backoff for a check that never ends.
         pr.checks_pending = 3;
-        assert_eq!(reads(&pr, 300), [30, 60, 120, 180, 240, 300]);
+        let fresh = (1..=20).map(|n| n * 15);
+        let warm = (11..=120).map(|n| n * 30);
+        let stuck = [4200, 4800];
+        let expected: Vec<u64> = fresh.chain(warm).chain(stuck).collect();
+        assert_eq!(reads(&pr, 4800), expected);
     }
 
     #[test]
