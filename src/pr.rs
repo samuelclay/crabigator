@@ -32,27 +32,22 @@ use crate::pr_rank::PrDisposition;
 use crate::slack::{extract_threads, has_only_channel_id, SlackDirectory, SlackThread};
 
 /// Minimum time between `gh pr view` refreshes for a single PR, and between
-/// repeated lookups of the current branch.
+/// repeated lookups of the current branch. Also the first step of an open
+/// PR's backoff.
 const REFRESH_THROTTLE: Duration = Duration::from_secs(30);
-/// Keep the two most recently used open PRs current while the session is busy.
-const PR_ACTIVE_WINDOW: Duration = Duration::from_secs(5 * 60);
-/// How often to poll GitHub from how recently *this PR* moved: every 10
-/// minutes for 30 minutes, every 30 minutes for 6 hours, then every 3 hours
-/// for 48 hours. Session activity speeds up only the few PRs touched most
-/// recently — never the whole list. The PR's own state shifts the pace (see
-/// [`Pace`]): running CI polls fastest, a clean PR one step slower, and a
-/// merged or closed one not at all.
-const PR_HOT_WINDOW: Duration = Duration::from_secs(30 * 60);
-const PR_HOT_THROTTLE: Duration = Duration::from_secs(10 * 60);
-const PR_WARM_WINDOW: Duration = Duration::from_secs(6 * 60 * 60);
-const PR_WARM_THROTTLE: Duration = Duration::from_secs(30 * 60);
-const PR_COOL_WINDOW: Duration = Duration::from_secs(48 * 60 * 60);
-const PR_COOL_THROTTLE: Duration = Duration::from_secs(3 * 60 * 60);
-/// Open PRs past this many, counting from the most recently mentioned, keep
-/// their last stats until the session mentions them again.
+/// An open PR waits as long as it had been quiet at its last read, so reads
+/// back off 30 s → 1 m → 2 m → 4 m → 8 m and settle at this cap. A change on
+/// GitHub, a mention, or a push starts the backoff over (see [`refresh_due`]).
+const OPEN_REFRESH_CAP: Duration = Duration::from_secs(10 * 60);
+/// While checks run, their results are minutes away: wait no longer than this.
+const CI_REFRESH_CAP: Duration = Duration::from_secs(60);
+/// A merged PR can't change and a closed one rarely reopens.
+const FINISHED_REFRESH: Duration = Duration::from_secs(60 * 60);
+/// Never-loaded PRs past this many, counting from the most recently
+/// mentioned, wait for recent work to go quiet before their first read.
 const BACKGROUND_PR_LIMIT: usize = 8;
-/// How many of those inherit the session's own activity as a reason to poll
-/// on the fast cadence.
+/// How many of the most recent open PRs count the session's own prompts and
+/// completions as activity.
 const HOT_SESSION_PR_LIMIT: usize = 2;
 /// Reads one session will start in an hour, on top of the machine-wide budget.
 const SESSION_READS_PER_HOUR: u32 = budget::SESSION_LIMIT;
@@ -766,8 +761,11 @@ pub struct PrTracker {
     /// Never-enriched PRs retry on this count's backoff schedule.
     fetch_failures: HashMap<String, u32>,
     /// Last observed mention, push, or creation per PR URL. Recent activity
-    /// uses a faster status cadence.
+    /// restarts the PR's refresh backoff.
     pr_active_at: HashMap<String, Instant>,
+    /// When a read last found the PR different on GitHub. A PR that just
+    /// moved is likely to move again, so this restarts the backoff too.
+    status_changed_at: HashMap<String, Instant>,
     /// `PR #N` lookups waiting for a free GitHub slot.
     deferred_lookups: Vec<(PathBuf, u64)>,
     /// URLs a real mention asked to refresh while another read was running.
@@ -843,6 +841,7 @@ impl PrTracker {
             refresh_attempted_at: HashMap::new(),
             fetch_failures: HashMap::new(),
             pr_active_at: HashMap::new(),
+            status_changed_at: HashMap::new(),
             deferred_lookups: Vec::new(),
             force_refresh: HashSet::new(),
             read_window_started: None,
@@ -1550,7 +1549,7 @@ impl PrTracker {
         self.deferred_lookups.push(lookup);
     }
 
-    /// Refresh the one open PR most in need of fresh stats.
+    /// Refresh the one tracked PR most in need of fresh stats.
     ///
     /// Called on turn completion. A turn that names dozens of PRs must not
     /// start dozens of GitHub reads. Returns true if a fetch was started (no
@@ -1727,11 +1726,11 @@ impl PrTracker {
             return Some(url.clone());
         }
         if let Some(url) = self.next_unenriched_url() {
-            if self.is_recent_pr(&url) || self.next_open_refresh_url().is_none() {
+            if self.is_recent_pr(&url) || self.next_refresh_url().is_none() {
                 return Some(url);
             }
         }
-        self.next_open_refresh_url()
+        self.next_refresh_url()
     }
 
     fn session_read_allowed(&mut self) -> bool {
@@ -1747,18 +1746,20 @@ impl PrTracker {
         self.reads_this_window = self.reads_this_window.saturating_add(1);
     }
 
+    /// Whether the session worked with this PR rather than only listing it.
+    fn engaged(&self, pr: &SessionPr) -> bool {
+        pr.last_mentioned_at > 0
+            || pr.created_here
+            || pr.branch_matched
+            || self.pr_active_at.contains_key(&pr.url)
+    }
+
     /// Whether `url` is one of the few PRs this session touched most recently.
     fn is_recent_pr(&self, url: &str) -> bool {
         let mut engaged: Vec<&SessionPr> = self
             .prs
             .iter()
-            .filter(|pr| !pr.dismissed && !pr.url.is_empty())
-            .filter(|pr| {
-                pr.last_mentioned_at > 0
-                    || pr.created_here
-                    || pr.branch_matched
-                    || self.pr_active_at.contains_key(&pr.url)
-            })
+            .filter(|pr| !pr.dismissed && !pr.url.is_empty() && self.engaged(pr))
             .collect();
         engaged.sort_by(|a, b| {
             b.last_mentioned_at
@@ -1777,13 +1778,7 @@ impl PrTracker {
         self.prs
             .iter()
             .filter(|pr| {
-                pr.refreshed_at == 0
-                    && !pr.url.is_empty()
-                    && !pr.dismissed
-                    && (pr.created_here
-                        || pr.last_mentioned_at > 0
-                        || pr.branch_matched
-                        || self.pr_active_at.contains_key(&pr.url))
+                pr.refreshed_at == 0 && !pr.url.is_empty() && !pr.dismissed && self.engaged(pr)
             })
             .filter(|pr| {
                 let failures = self.fetch_failures.get(&pr.url).copied().unwrap_or(0);
@@ -1796,51 +1791,59 @@ impl PrTracker {
             .map(|pr| pr.url.clone())
     }
 
-    /// The open PR that should get the one background read this poll is
-    /// allowed to start. Only the most recently mentioned few are eligible.
-    fn next_open_refresh_url(&self) -> Option<String> {
+    /// The loaded PR that should get the one background read this poll is
+    /// allowed to start. Every PR the session engaged with is eligible, open
+    /// ones first; each waits out its own backoff.
+    fn next_refresh_url(&self) -> Option<String> {
         let now = now_unix_ms();
-        let mut open: Vec<&SessionPr> = self
+        let mut tracked: Vec<&SessionPr> = self
             .prs
             .iter()
-            .filter(|pr| pr.state == "OPEN" && !pr.url.is_empty() && !pr.dismissed)
+            .filter(|pr| {
+                pr.refreshed_at != 0 && !pr.url.is_empty() && !pr.dismissed && self.engaged(pr)
+            })
             .collect();
-        open.sort_by(|a, b| {
-            let engaged = |pr: &SessionPr| pr.last_mentioned_at > 0 || pr.created_here;
-            engaged(b)
-                .cmp(&engaged(a))
+        tracked.sort_by(|a, b| {
+            (b.state == "OPEN")
+                .cmp(&(a.state == "OPEN"))
                 .then(b.last_mentioned_at.cmp(&a.last_mentioned_at))
                 .then(b.updated_at.cmp(&a.updated_at))
                 .then(a.url.cmp(&b.url))
         });
-        open.into_iter()
-            .take(BACKGROUND_PR_LIMIT)
+        tracked
+            .into_iter()
             .enumerate()
             .find(|(rank, pr)| {
-                let engaged = pr.last_mentioned_at > 0
-                    || pr.created_here
-                    || self.pr_active_at.contains_key(&pr.url);
-                let inherits_session =
-                    *rank < HOT_SESSION_PR_LIMIT && self.session_activity_at.is_some();
-                if !engaged && !inherits_session {
-                    return false;
-                }
-                let age = refresh_activity_age(
-                    self.pr_active_at.get(&pr.url).map(Instant::elapsed),
-                    pr.last_mentioned_at,
-                    self.session_activity_at,
-                    now,
-                    *rank,
-                );
-                pr_status_refresh_due(
+                refresh_due(
+                    pr,
                     self.refresh_attempted_at.get(&pr.url).map(Instant::elapsed),
-                    (pr.refreshed_at != 0)
-                        .then(|| Duration::from_millis(now.saturating_sub(pr.refreshed_at))),
-                    age,
-                    Pace::of(pr),
+                    Some(Duration::from_millis(now.saturating_sub(pr.refreshed_at))),
+                    self.activity_age(pr, *rank < HOT_SESSION_PR_LIMIT, now),
                 )
             })
             .map(|(_, pr)| pr.url.clone())
+    }
+
+    /// How long ago the PR last moved: GitHub last showed it changing, the
+    /// session last mentioned or pushed to it, or, for the newest few PRs, the
+    /// session's last prompt or completion.
+    fn activity_age(&self, pr: &SessionPr, near_session: bool, now_ms: u64) -> Option<Duration> {
+        let since =
+            |at_ms: u64| (at_ms > 0).then(|| Duration::from_millis(now_ms.saturating_sub(at_ms)));
+        let session_ms = self
+            .session_activity_at
+            .filter(|_| near_session)
+            .map(|secs| (secs * 1000.0) as u64);
+        [
+            self.pr_active_at.get(&pr.url).map(Instant::elapsed),
+            self.status_changed_at.get(&pr.url).map(Instant::elapsed),
+            since(pr.last_mentioned_at),
+            since(pr.updated_at),
+            session_ms.and_then(since),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// Collect any finished background jobs. Returns true if the visible list changed.
@@ -1885,6 +1888,7 @@ impl PrTracker {
                         } else {
                             None
                         };
+                        let before = self.prs.iter().find(|pr| pr.url == resolved_url).cloned();
                         changed |=
                             self.apply_fetch(json, result.requested_url, result.created_here);
                         if let Some(threads) = threads {
@@ -1897,6 +1901,10 @@ impl PrTracker {
                             }
                         }
                         if let Some(pr) = self.prs.iter_mut().find(|pr| pr.url == resolved_url) {
+                            if before.is_some_and(|before| status_changed(&before, pr)) {
+                                self.status_changed_at
+                                    .insert(resolved_url.clone(), Instant::now());
+                            }
                             for (user_authored, prompt_count, timestamp) in mentions {
                                 changed |=
                                     bump_mention(pr, user_authored, prompt_count, Some(timestamp));
@@ -1998,7 +2006,7 @@ impl PrTracker {
     }
 
     /// The session's latest prompt or completion. Only the few most recently
-    /// mentioned PRs use this as a reason to poll on the fast cadence.
+    /// mentioned open PRs count it as activity that restarts their backoff.
     pub fn note_session_activity(&mut self, unix_secs: Option<f64>) {
         self.session_activity_at = unix_secs;
     }
@@ -2555,116 +2563,50 @@ fn pr_does_not_exist(error: &str) -> bool {
         || error.contains("no pull requests found")
 }
 
-/// How recently a PR or its session last moved.
-fn activity_age(
-    pr_active_elapsed: Option<Duration>,
-    last_mentioned_at: u64,
-    session_activity_at: Option<f64>,
-    now_ms: u64,
-) -> Option<Duration> {
-    let mut ages = Vec::new();
-    if let Some(age) = pr_active_elapsed {
-        ages.push(age);
+/// How long to wait between reads of one PR, given how long it had been
+/// quiet at its last read. An open PR waits that long, between 30 seconds and
+/// ten minutes (one minute while checks run), so a quiet PR backs off by
+/// doubling. A merged or closed PR is read hourly.
+fn refresh_interval(pr: &SessionPr, quiet: Option<Duration>) -> Duration {
+    if matches!(pr.state.as_str(), "MERGED" | "CLOSED") {
+        return FINISHED_REFRESH;
     }
-    if last_mentioned_at > 0 {
-        ages.push(Duration::from_millis(
-            now_ms.saturating_sub(last_mentioned_at),
-        ));
-    }
-    if let Some(secs) = session_activity_at {
-        ages.push(Duration::from_millis(
-            now_ms.saturating_sub((secs * 1000.0) as u64),
-        ));
-    }
-    ages.into_iter().min()
-}
-
-/// Activity age for a scheduled refresh. Only the first few open PRs inherit
-/// the session's own activity; the rest wait on their own mentions.
-fn refresh_activity_age(
-    pr_active_elapsed: Option<Duration>,
-    last_mentioned_at: u64,
-    session_activity_at: Option<f64>,
-    now_ms: u64,
-    rank: usize,
-) -> Option<Duration> {
-    let session = (rank < HOT_SESSION_PR_LIMIT)
-        .then_some(session_activity_at)
-        .flatten();
-    activity_age(pr_active_elapsed, last_mentioned_at, session, now_ms).map(|age| {
-        if rank < HOT_SESSION_PR_LIMIT {
-            age
-        } else {
-            age.max(PR_ACTIVE_WINDOW)
-        }
-    })
-}
-
-/// How an open PR's own state sets its polling pace.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Pace {
-    /// CI is running: its result is minutes away, so poll fastest.
-    CiRunning,
-    /// Mergeable with every check passed: little is left to change.
-    Clean,
-    Normal,
-}
-
-impl Pace {
-    fn of(pr: &SessionPr) -> Self {
-        if pr.checks_pending > 0 {
-            Pace::CiRunning
-        } else if pr.merge_state_status == "CLEAN" {
-            Pace::Clean
-        } else {
-            Pace::Normal
-        }
-    }
-}
-
-/// Activity windows and how often a PR polls within each, fastest first.
-const CADENCE: [(Duration, Duration); 4] = [
-    (PR_ACTIVE_WINDOW, REFRESH_THROTTLE),
-    (PR_HOT_WINDOW, PR_HOT_THROTTLE),
-    (PR_WARM_WINDOW, PR_WARM_THROTTLE),
-    (PR_COOL_WINDOW, PR_COOL_THROTTLE),
-];
-
-/// How often to poll GitHub for one PR, from how recently it moved and its
-/// pace. Running CI polls at the fastest rate for as long as the PR moved in
-/// the last six hours; a clean PR polls one step slower. `None` means the
-/// activity is too old to keep polling.
-fn status_refresh_interval(activity_age: Option<Duration>, pace: Pace) -> Option<Duration> {
-    let Some(age) = activity_age else {
-        return Some(PR_COOL_THROTTLE);
-    };
-    if pace == Pace::CiRunning && age < PR_WARM_WINDOW {
-        return Some(REFRESH_THROTTLE);
-    }
-    let step = CADENCE.iter().position(|(window, _)| age < *window)?;
-    let step = if pace == Pace::Clean {
-        (step + 1).min(CADENCE.len() - 1)
+    let cap = if pr.checks_pending > 0 {
+        CI_REFRESH_CAP
     } else {
-        step
+        OPEN_REFRESH_CAP
     };
-    Some(CADENCE[step].1)
+    quiet.unwrap_or(cap).clamp(REFRESH_THROTTLE, cap)
 }
 
-/// Whether an open PR is due for another status refresh.
-fn pr_status_refresh_due(
-    last_attempt_age: Option<Duration>,
-    last_refresh_age: Option<Duration>,
-    last_activity_age: Option<Duration>,
-    pace: Pace,
+/// Whether a PR is due for another read. `attempt_ago` and `read_ago` are
+/// the last try and the last success; `activity_age` is how long ago the PR
+/// last moved ([`PrTracker::activity_age`]). Activity after the last read
+/// makes the PR due again after 30 seconds.
+pub fn refresh_due(
+    pr: &SessionPr,
+    attempt_ago: Option<Duration>,
+    read_ago: Option<Duration>,
+    activity_age: Option<Duration>,
 ) -> bool {
-    let Some(throttle) = status_refresh_interval(last_activity_age, pace) else {
+    let Some(last) = attempt_ago.into_iter().chain(read_ago).min() else {
+        return true;
+    };
+    let quiet_then = activity_age.map(|age| age.saturating_sub(last));
+    last >= refresh_interval(pr, quiet_then)
+}
+
+/// Whether two copies of a PR differ in what GitHub reported, apart from
+/// when each was read. A first read isn't a change.
+pub fn status_changed(before: &SessionPr, after: &SessionPr) -> bool {
+    if before.refreshed_at == 0 {
         return false;
-    };
-    let freshest_age = match (last_attempt_age, last_refresh_age) {
-        (Some(attempt), Some(refresh)) => Some(attempt.min(refresh)),
-        (attempt, refresh) => attempt.or(refresh),
-    };
-    freshest_age.map(|age| age >= throttle).unwrap_or(true)
+    }
+    let mut was = after.clone();
+    was.adopt_github_fields(before);
+    was.refreshed_at = after.refreshed_at;
+    was.comments_refreshed_at = after.comments_refreshed_at;
+    was != *after
 }
 
 /// Command-targeted references — never part of a listing line.
@@ -4996,173 +4938,102 @@ functions.wait {"cell_id":"17"}
     }
 
     #[test]
-    fn pr_status_refresh_uses_hot_warm_and_cool_cadences() {
-        let hot = Duration::from_secs(10 * 60);
-        let warm = Duration::from_secs(2 * 60 * 60);
-        let cool = Duration::from_secs(12 * 60 * 60);
-        let just_under = |throttle: Duration| throttle - Duration::from_secs(1);
-
-        assert!(!pr_status_refresh_due(
-            Some(just_under(PR_HOT_THROTTLE)),
-            None,
-            Some(hot),
-            Pace::Normal
-        ));
-        assert!(pr_status_refresh_due(
-            Some(PR_HOT_THROTTLE),
-            None,
-            Some(hot),
-            Pace::Normal
-        ));
-        assert!(!pr_status_refresh_due(
-            Some(just_under(PR_WARM_THROTTLE)),
-            None,
-            Some(warm),
-            Pace::Normal
-        ));
-        assert!(pr_status_refresh_due(
-            Some(PR_WARM_THROTTLE),
-            None,
-            Some(warm),
-            Pace::Normal
-        ));
-        assert!(!pr_status_refresh_due(
-            Some(just_under(PR_COOL_THROTTLE)),
-            None,
-            Some(cool),
-            Pace::Normal
-        ));
-        assert!(pr_status_refresh_due(
-            Some(PR_COOL_THROTTLE),
-            None,
-            Some(cool),
-            Pace::Normal
-        ));
-        assert!(!pr_status_refresh_due(
-            None,
-            Some(just_under(PR_COOL_THROTTLE)),
-            None,
-            Pace::Normal
-        ));
-        assert!(pr_status_refresh_due(
-            None,
-            Some(PR_COOL_THROTTLE),
-            None,
-            Pace::Normal
-        ));
-        assert!(pr_status_refresh_due(None, None, None, Pace::Normal));
-        assert!(!pr_status_refresh_due(
-            Some(PR_COOL_THROTTLE),
-            None,
-            Some(Duration::from_secs(49 * 60 * 60)),
-            Pace::Normal
-        ));
-        assert_eq!(
-            status_refresh_interval(Some(Duration::from_secs(49 * 60 * 60)), Pace::Normal),
-            None
-        );
-    }
-
-    #[test]
-    fn running_ci_polls_fastest_and_a_clean_pr_one_step_slower() {
-        let minutes = |m: u64| Some(Duration::from_secs(m * 60));
-        // Running CI: every 30 s while the PR moved in the last six hours.
-        assert_eq!(
-            status_refresh_interval(minutes(2), Pace::CiRunning),
-            Some(REFRESH_THROTTLE)
-        );
-        assert_eq!(
-            status_refresh_interval(minutes(5 * 60), Pace::CiRunning),
-            Some(REFRESH_THROTTLE)
-        );
-        // Past that, a stuck check polls like any other PR.
-        assert_eq!(
-            status_refresh_interval(minutes(7 * 60), Pace::CiRunning),
-            Some(PR_COOL_THROTTLE)
-        );
-        // Clean: one step slower, and no slower than the slowest step.
-        assert_eq!(
-            status_refresh_interval(minutes(2), Pace::Clean),
-            Some(PR_HOT_THROTTLE)
-        );
-        assert_eq!(
-            status_refresh_interval(minutes(20), Pace::Clean),
-            Some(PR_WARM_THROTTLE)
-        );
-        assert_eq!(
-            status_refresh_interval(minutes(24 * 60), Pace::Clean),
-            Some(PR_COOL_THROTTLE)
-        );
-        assert_eq!(status_refresh_interval(minutes(49 * 60), Pace::Clean), None);
-
+    fn a_quiet_open_pr_backs_off_by_doubling_to_ten_minutes() {
         let mut pr = SessionPr::test_stub(1, "o", "r");
-        pr.merge_state_status = "CLEAN".to_string();
-        assert_eq!(Pace::of(&pr), Pace::Clean);
-        pr.checks_pending = 2;
-        assert_eq!(Pace::of(&pr), Pace::CiRunning);
-        pr.checks_pending = 0;
-        pr.merge_state_status = "BLOCKED".to_string();
-        assert_eq!(Pace::of(&pr), Pace::Normal);
+        pr.state = "OPEN".into();
+        // Clean means the merge button is green: the merge itself is next.
+        pr.merge_state_status = "CLEAN".into();
+        // The PR last moved at t=0, when it was also read. Step through the
+        // seconds after that and note each read the schedule asks for.
+        let reads = |pr: &SessionPr, until: u64| {
+            let mut reads = Vec::new();
+            let mut last_read = 0;
+            for t in 1..=until {
+                let ago = |at: u64| Some(Duration::from_secs(t - at));
+                if refresh_due(pr, None, ago(last_read), ago(0)) {
+                    reads.push(t);
+                    last_read = t;
+                }
+            }
+            reads
+        };
+        assert_eq!(reads(&pr, 2200), [30, 60, 120, 240, 480, 960, 1560, 2160]);
+        pr.checks_pending = 3;
+        assert_eq!(reads(&pr, 300), [30, 60, 120, 180, 240, 300]);
     }
 
     #[test]
-    fn session_activity_heats_only_the_most_recent_prs() {
-        let now_ms = 10_000_000;
-        let mentioned_two_hours_ago = now_ms - 2 * 60 * 60 * 1000;
-        let session_prompt_ten_minutes_ago = (now_ms as f64 / 1000.0) - 10.0 * 60.0;
-        let hot = refresh_activity_age(
-            None,
-            mentioned_two_hours_ago,
-            Some(session_prompt_ten_minutes_ago),
-            now_ms,
-            0,
-        );
-        assert_eq!(hot, Some(Duration::from_secs(10 * 60)));
-        assert_eq!(
-            status_refresh_interval(hot, Pace::Normal),
-            Some(PR_HOT_THROTTLE)
-        );
-
-        let tail = refresh_activity_age(
-            None,
-            mentioned_two_hours_ago,
-            Some(session_prompt_ten_minutes_ago),
-            now_ms,
-            HOT_SESSION_PR_LIMIT,
-        );
-        assert_eq!(tail, Some(Duration::from_secs(2 * 60 * 60)));
-        assert_eq!(
-            status_refresh_interval(tail, Pace::Normal),
-            Some(PR_WARM_THROTTLE)
-        );
+    fn merged_and_closed_prs_are_read_hourly() {
+        let mut pr = SessionPr::test_stub(1, "o", "r");
+        let hour = Duration::from_secs(60 * 60);
+        let just_moved = Some(Duration::ZERO);
+        for state in ["MERGED", "CLOSED"] {
+            pr.state = state.into();
+            assert!(!refresh_due(
+                &pr,
+                None,
+                Some(hour - Duration::from_secs(1)),
+                just_moved
+            ));
+            assert!(refresh_due(&pr, None, Some(hour), None));
+        }
     }
 
     #[test]
-    fn a_long_pr_list_refreshes_the_recent_ones_only() {
+    fn only_a_real_change_on_github_restarts_the_backoff() {
+        let mut tracker = PrTracker::new();
+        let url = "https://github.com/o/r/pull/7";
+        let deliver = |tracker: &mut PrTracker, json: GhPrJson| {
+            let (sender, receiver) = mpsc::channel();
+            tracker.pending.insert(url.to_string(), receiver);
+            sender
+                .send(JobResult::Pr(Box::new(FetchResult {
+                    requested_url: Some(url.to_string()),
+                    created_here: false,
+                    pr_active: false,
+                    data: Ok(json),
+                    threads: None,
+                })))
+                .unwrap();
+            tracker.poll();
+        };
+        deliver(&mut tracker, gh_json(url, "OPEN"));
+        assert!(tracker.status_changed_at.is_empty(), "a first read");
+        deliver(&mut tracker, gh_json(url, "OPEN"));
+        assert!(
+            tracker.status_changed_at.is_empty(),
+            "the same status again"
+        );
+        let mut moved = gh_json(url, "OPEN");
+        moved.additions = 5;
+        deliver(&mut tracker, moved);
+        assert!(tracker.status_changed_at.contains_key(url));
+    }
+
+    #[test]
+    fn every_engaged_pr_keeps_polling() {
         let mut tracker = PrTracker::new();
         let now = now_unix_ms();
         for number in 1..=10 {
             let loc = PrLocation::new("o", "r", number);
             let mut pr = SessionPr::placeholder(&loc, false);
             pr.state = "OPEN".into();
-            pr.refreshed_at = now - 4 * 60 * 60 * 1000;
-            pr.last_mentioned_at = now - (11 - number) as u64 * 60_000;
+            pr.refreshed_at = now - 11 * 60 * 1000;
+            // Mentioned days ago, except PR 10, seen only in a bulk listing.
+            if number < 10 {
+                pr.last_mentioned_at = now - 3 * 24 * 60 * 60 * 1000;
+            }
             tracker.prs.push(pr);
         }
-
-        let next = tracker.next_open_refresh_url().expect("a recent PR is due");
-        assert!(next.ends_with("/pull/10"), "the newest mention goes first");
-
-        for pr in tracker.prs.iter_mut().filter(|pr| pr.number >= 3) {
-            pr.refreshed_at = now;
+        let mut read = Vec::new();
+        while let Some(url) = tracker.next_refresh_url() {
             tracker
                 .refresh_attempted_at
-                .insert(pr.url.clone(), Instant::now());
+                .insert(url.clone(), Instant::now());
+            read.push(url);
         }
-        assert!(
-            tracker.next_open_refresh_url().is_none(),
-            "PRs outside the recent handful are not refreshed"
-        );
+        assert_eq!(read.len(), 9);
+        assert!(!read.iter().any(|url| url.ends_with("/pull/10")));
     }
 
     #[test]
@@ -5179,12 +5050,12 @@ functions.wait {"cell_id":"17"}
         }
         tracker.note_session_activity(Some(now as f64 / 1000.0));
         for number in 1..=2 {
-            let url = tracker.next_open_refresh_url().expect("active PR is due");
+            let url = tracker.next_refresh_url().expect("active PR is due");
             assert!(url.ends_with(&format!("/pull/{number}")));
             tracker.refresh_attempted_at.insert(url, Instant::now());
         }
         assert!(
-            tracker.next_open_refresh_url().is_none(),
+            tracker.next_refresh_url().is_none(),
             "only two PRs poll quickly"
         );
 
@@ -5194,12 +5065,12 @@ functions.wait {"cell_id":"17"}
         }
         tracker.note_session_activity(Some((now - 60 * 60_000) as f64 / 1000.0));
         assert!(
-            tracker.next_open_refresh_url().is_none(),
+            tracker.next_refresh_url().is_none(),
             "idle sessions slow down"
         );
         tracker.note_session_activity(Some(now as f64 / 1000.0));
         assert!(
-            tracker.next_open_refresh_url().is_some(),
+            tracker.next_refresh_url().is_some(),
             "a new completion wakes refreshes"
         );
     }
