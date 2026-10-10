@@ -1,6 +1,6 @@
 # Crabigator for Android
 
-Native Kotlin and Jetpack Compose client. The PR board opens first. The icon toolbar switches between the board and session list, filters live or ended work, searches, and opens settings. Selecting a session opens its live terminal. The Reply control opens the composer and terminal keys. At 720 dp and wider, the board stays beside the session.
+Native Kotlin and Jetpack Compose client. The session list opens first. The icon toolbar switches between the board and session list, filters live or ended work, searches, and opens an animated Settings popover. Selecting a session opens its live terminal. The Reply control opens the composer and terminal keys. At 720 dp and wider, the board stays beside the session.
 
 ## Build and install
 
@@ -35,7 +35,11 @@ Android and FCM may delay background work under battery restrictions or while of
 
 ## Terminal
 
-The server supplies complete row-formatted ANSI snapshots. `TerminalText` converts foreground/background colors, bold, underline, inverse, and horizontal spacing into native text spans. Native selection and two-axis scrolling preserve the desktop's columns. Transcript view uses the normalized conversation log and wraps to the device width. Viewing a session sends a five-second foreground heartbeat so the desktop keeps its screen current; no foreground service or background screen polling is required.
+The server supplies complete row-formatted ANSI snapshots. `TerminalText` converts foreground/background colors, bold, underline, inverse, and horizontal spacing into native text spans. Native text wraps to the detail pane by default; Style can switch to horizontal scrolling to preserve the desktop columns. The pin control follows new output; scrolling up releases it. Transcript view uses the normalized conversation log, cached for late joiners by the Worker. Empty output has an explicit empty state. Viewing a session sends a five-second foreground heartbeat so the desktop keeps its screen current; no foreground service or background screen polling is required.
+
+## Appearance
+
+The detail pane’s top-right Style menu contains text size, line spacing, wrapping, terminal/transcript content, terminal height, widget visibility, list columns, project grouping, and project order. Settings contains list position/density, visible statistics, notifications, account identities, pairing another device, MCP, and unpairing. Choices are saved on this device. Menus are anchored to their toolbar icons, fade and scale into view, and scroll within the available phone or tablet space.
 
 ## Verification
 

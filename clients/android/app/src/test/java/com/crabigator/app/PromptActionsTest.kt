@@ -6,6 +6,13 @@ import org.junit.Test
 
 class PromptActionsTest {
     private fun prompt(extra: String = "") = JSONObject("""{"prompt_type":"question","cursor_row":3,"questions":[{"question":"Which one?","options":[{"label":"One","value":"1"},{"label":"Two","value":"2"}],"allows_other":true}]$extra}""")
+    @Test fun wrappingRemovesDesktopPaddingAndPreservesTextStyles() {
+        val parsed = TerminalText.parse("\u001b[31m  red text    \n\u001b[0mnext  ")
+        val wrapped = TerminalText.trimLineEnds(parsed)
+        assertEquals("  red text\nnext", wrapped.text)
+        assertEquals(parsed.spanStyles.first().item.color, wrapped.spanStyles.first().item.color)
+        assertEquals("  red text    \nnext  ", parsed.text)
+    }
     @Test fun choosingFromTextRowLeavesItWithoutSendingAnExtraEnter() {
         val steps = PromptActions.action(prompt(), option = 1).body.getJSONArray("steps")
         assertEquals(2, steps.length())

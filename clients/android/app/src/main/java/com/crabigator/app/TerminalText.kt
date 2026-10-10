@@ -8,6 +8,20 @@ import androidx.compose.ui.text.style.TextDecoration
 
 /** Screen frames are complete, row-formatted snapshots, not an incremental VT stream. */
 object TerminalText {
+    /** Screen rows contain padding to the desktop width; wrapping must not wrap that padding. */
+    fun trimLineEnds(input: AnnotatedString): AnnotatedString {
+        val result = AnnotatedString.Builder()
+        var start = 0
+        while (start < input.length) {
+            val newline = input.text.indexOf('\n', start).let { if (it < 0) input.length else it }
+            var end = newline
+            while (end > start && input[end - 1] == ' ') end--
+            result.append(input.subSequence(start, end))
+            if (newline < input.length) result.append('\n')
+            start = newline + 1
+        }
+        return result.toAnnotatedString()
+    }
     private val base = intArrayOf(0x20242A, 0xEC7777, 0x98C379, 0xE5C07B, 0x82AAFF, 0xC792EA, 0x89DDFF, 0xDEE4EC, 0x697584, 0xFF8B8B, 0xB2E394, 0xFFE09B, 0xA5C6FF, 0xE1B2FF, 0xB4F0FF, 0xFFFFFF)
     fun palette(n: Int): Color {
         val i = n.coerceIn(0, 255)

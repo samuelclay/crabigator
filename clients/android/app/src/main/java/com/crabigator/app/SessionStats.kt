@@ -12,6 +12,8 @@ data class SessionStats(
     val completions: Long? = null,
     val promptAt: Long = 0,
     val completionAt: Long = 0,
+    val tools: Long? = null,
+    val compactions: Long? = null,
 ) {
     fun duration(active: Boolean, now: Long): Long? {
         if (!active && workSeconds != null) return workSeconds.coerceAtLeast(0)
@@ -32,6 +34,7 @@ data class SessionStats(
                 stats?.number("work_seconds"), stats?.number("thinking_seconds"),
                 stats?.number("prompts"), stats?.number("completions"),
                 session.optLong("prompts_changed_at"), session.optLong("completions_changed_at"),
+                stats?.number("tools"), stats?.number("compressions"),
             )
         }
         private fun JSONObject.number(key: String): Long? = if (isNull(key)) null else optLong(key).coerceAtLeast(0)

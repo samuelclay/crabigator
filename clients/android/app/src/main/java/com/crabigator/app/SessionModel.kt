@@ -9,8 +9,11 @@ import kotlinx.coroutines.flow.update
 import okhttp3.*
 import org.json.JSONObject
 
-data class AppState(val paired: Boolean = false, val sessions: List<Session> = emptyList(), val prs: List<PullRequest> = emptyList(), val loading: Boolean = false, val error: String? = null, val selected: Session? = null, val screen: String = "", val history: String = "", val prompt: JSONObject? = null, val revision: Long? = null, val connected: Boolean = false, val sending: Boolean = false)
+data class AppState(val paired: Boolean = false, val sessions: List<Session> = emptyList(), val prs: List<PullRequest> = emptyList(), val loading: Boolean = false, val error: String? = null, val selected: Session? = null, val screen: String = "", val history: String = "", val historyLoaded: Boolean = false, val screenLoaded: Boolean = false, val details: Map<String, JSONObject> = emptyMap(), val prompt: JSONObject? = null, val revision: Long? = null, val connected: Boolean = false, val sending: Boolean = false)
 class SessionModel(app: Application) : AndroidViewModel(app) {
+    private val preferenceStore = PreferenceStore(app)
+    val preferences = MutableStateFlow(preferenceStore.load())
+    fun style(update: (UiPreferences) -> UiPreferences) { preferences.update(update); preferenceStore.save(preferences.value) }
     val credentials = Credentials(app)
     val api = Api(credentials)
     val state = MutableStateFlow(AppState(paired = credentials.token.isNotEmpty()))
@@ -54,7 +57,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
     }
     fun select(session: Session) {
         selectionEpoch++
-        state.update { it.copy(selected = session, screen = "", history = "", prompt = null, revision = null, connected = false, sending = false, error = null) }
+        state.update { it.copy(selected = session, screen = "", history = "", historyLoaded = false, screenLoaded = false, details = emptyMap(), prompt = null, revision = null, connected = false, sending = false, error = null) }
         connect(session.id)
     }
     fun open(id: String) = viewModelScope.launch {
@@ -84,12 +87,13 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
                 if (socket !== webSocket || connectionEpoch != epoch || state.value.selected?.id != id) return@launch
                 runCatching { JSONObject(text) }.onSuccess { event ->
                     state.update { s -> when (event.text("type")) {
-                        "screen" -> s.copy(screen = event.text("content"))
-                        "scrollback_history" -> s.copy(history = event.text("content").takeLast(250000))
-                        "scrollback" -> s.copy(history = (s.history + event.text("diff")).takeLast(250000))
+                        "screen" -> s.copy(screen = event.text("content"), screenLoaded = true)
+                        "scrollback_history" -> s.copy(history = event.text("content").takeLast(250000), historyLoaded = true)
+                        "scrollback" -> s.copy(history = (s.history + event.text("diff")).takeLast(250000), historyLoaded = true)
                         "desktop_status" -> s.copy(connected = event.optBoolean("connected"))
                         "prompt" -> s.copy(prompt = event.optJSONObject("prompt"), revision = null)
                         "state" -> s.copy(selected = s.selected?.copy(state = event.text("state")), revision = null, prompt = if (event.text("state") in listOf("question", "permission")) s.prompt else null)
+                        "git", "changes", "recap", "prs", "commit_history", "stats" -> s.copy(details = s.details + (event.text("type") to event))
                         else -> s
                     } }
                     if (event.text("type") in listOf("prompt", "state")) { refreshPrompt(id); Notifications.reconcile(getApplication(), id) }
@@ -139,6 +143,14 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
         } finally {
             if (selectionEpoch == epoch) state.update { it.copy(sending = false) }
         }
+    }
+    fun unpair() = viewModelScope.launch {
+        try {
+            api.call("/api/account/logout", JSONObject())
+            stop(); credentials.clear()
+            androidx.core.app.NotificationManagerCompat.from(getApplication()).cancelAll()
+            state.value = AppState()
+        } catch (e: Exception) { failure(e) }
     }
     fun dismissError() { state.update { it.copy(error = null) } }
     private fun failure(e: Exception) { if (e is CancellationException) throw e; state.update { it.copy(loading = false, error = e.message ?: "Could not connect. Try again.") } }

@@ -34,6 +34,7 @@ object Notifications {
     fun status(context: Context): String = when {
         FirebaseApp.getApps(context).isEmpty() -> "Push not configured"
         !NotificationManagerCompat.from(context).areNotificationsEnabled() -> "Notifications off"
+        context.getSystemService(NotificationManager::class.java).getNotificationChannel(CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE -> "Notifications off"
         else -> "Notifications on"
     }
 

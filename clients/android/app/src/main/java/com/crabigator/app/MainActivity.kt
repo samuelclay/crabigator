@@ -15,6 +15,10 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
@@ -25,6 +29,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -39,11 +46,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flow
 import org.json.JSONObject
 
-private val Ink = Color(0xFF101419)
-private val Panel = Color(0xFF1B2129)
-private val Muted = Color(0xFF9CA9B8)
-private val Peach = Color(0xFFFFAD7F)
-private val Mint = Color(0xFF98D9B1)
+internal val Ink = Color(0xFF101419)
+internal val Panel = Color(0xFF1B2129)
+internal val Muted = Color(0xFF9CA9B8)
+internal val Peach = Color(0xFFFFAD7F)
+internal val Mint = Color(0xFF98D9B1)
 private val CrabTheme = darkColorScheme(primary = Peach, onPrimary = Ink, background = Ink, surface = Ink, surfaceContainer = Panel, onSurface = Color(0xFFE9EEF4), secondary = Mint, secondaryContainer = Color(0xFF3D3028), onSecondaryContainer = Peach, outline = Color(0xFF37414E))
 
 class MainActivity : ComponentActivity() {
@@ -51,7 +58,10 @@ class MainActivity : ComponentActivity() {
     private val permission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { Notifications.register(this, model.api); Notifications.reconcile(this) }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
-        setContent { MaterialTheme(colorScheme = CrabTheme) { Surface(Modifier.fillMaxSize()) { App(model) { if (android.os.Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS) } } } }
+        setContent { MaterialTheme(colorScheme = CrabTheme) { Surface(Modifier.fillMaxSize()) { App(model) {
+            if (android.os.Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            else startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName))
+        } } } }
         handleIntent(intent)
     }
     override fun onStart() { super.onStart(); model.start() }
@@ -63,22 +73,28 @@ class MainActivity : ComponentActivity() {
 @Composable private fun App(model: SessionModel, notifications: () -> Unit) {
     val s by model.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var settings by remember { mutableStateOf(false) }
+    var menu by remember { mutableStateOf<String?>(null) }
+    var menuAnchor by remember { mutableStateOf(Rect.Zero) }
+    val preferences by model.preferences.collectAsStateWithLifecycle()
     if (!s.paired) { Pairing(s, model); return }
     BackHandler(s.selected != null) { model.close() }
-    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+    Box(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().safeDrawingPadding().then(if (menu != null) Modifier.clearAndSetSemantics {} else Modifier)) {
         if (s.error != null) Surface(color = Color(0xFF4D2C2C)) { Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) { Text(s.error!!, Modifier.weight(1f), fontSize = 13.sp); TextButton(onClick = model::dismissError) { Text("Dismiss") } } }
         BoxWithConstraints(Modifier.weight(1f)) {
-            val wide = maxWidth >= 720.dp
+            val wide = maxWidth >= 720.dp && s.selected != null
             Row(Modifier.fillMaxSize()) {
-                if (wide || s.selected == null) Box(if (wide) Modifier.width(360.dp).fillMaxHeight() else Modifier.fillMaxSize()) { Board(s, model, { settings = true }) }
-                if (wide) VerticalDivider(color = Color(0xFF303944))
-                if (s.selected != null) Box(Modifier.weight(1f).fillMaxHeight()) { SessionDetail(s, model, wide) }
-                else if (wide) Box(Modifier.weight(1f).fillMaxHeight())
+                if (!preferences.sidebarRight && (wide || s.selected == null)) Box(if (wide) Modifier.width(360.dp).fillMaxHeight() else Modifier.fillMaxSize()) { Board(s, model, { menuAnchor = it; menu = "Settings" }) }
+                if (wide && !preferences.sidebarRight) VerticalDivider(color = Color(0xFF303944))
+                if (s.selected != null) Box(Modifier.weight(1f).fillMaxHeight()) { SessionDetail(s, model, wide) { menuAnchor = it; menu = "Style" } }
+                if (wide && preferences.sidebarRight) VerticalDivider(color = Color(0xFF303944))
+                if (preferences.sidebarRight && (wide || s.selected == null)) Box(if (wide) Modifier.width(360.dp).fillMaxHeight() else Modifier.fillMaxSize()) { Board(s, model, { menuAnchor = it; menu = "Settings" }) }
             }
         }
     }
-    if (settings) AlertDialog(onDismissRequest = { settings = false }, title = { Text("Crabigator") }, text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { Text("Connected to ${model.credentials.origin}", color = Muted); Text(Notifications.status(context)); Text("Version ${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 12.sp, lineHeight = 16.sp) } }, confirmButton = { TextButton(onClick = { settings = false; notifications() }) { Text("Enable notifications") } }, dismissButton = { TextButton(onClick = { settings = false }) { Text("Done") } })
+    MenuPanel(menu, menuAnchor, model, notifications, { menu = it }, { menu = null })
+    }
+
 }
 
 @Composable private fun Pairing(s: AppState, model: SessionModel) {
@@ -97,11 +113,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun Board(s: AppState, model: SessionModel, settings: () -> Unit) {
-    var list by rememberSaveable { mutableStateOf(false) }; var query by rememberSaveable { mutableStateOf("") }; var all by rememberSaveable { mutableStateOf(false) }; var searching by rememberSaveable { mutableStateOf(false) }
+@Composable private fun Board(s: AppState, model: SessionModel, settings: (Rect) -> Unit) {
+    var list by rememberSaveable { mutableStateOf(true) }; var query by rememberSaveable { mutableStateOf("") }; var all by rememberSaveable { mutableStateOf(false) }; var searching by rememberSaveable { mutableStateOf(false) }
     val now by remember { flow { while (true) { emit(System.currentTimeMillis() / 1000); delay(1000) } } }
         .collectAsStateWithLifecycle(initialValue = System.currentTimeMillis() / 1000)
-    val sessions = s.sessions.filter { (all || it.active) && "${it.title} ${it.repo} ${it.machine}".contains(query, true) }.sortedByDescending { it.attention }
+    var settingsAnchor by remember { mutableStateOf(Rect.Zero) }
+    val prefs by model.preferences.collectAsStateWithLifecycle()
+    val sessions = s.sessions.filter { (all || it.active) && "${it.title} ${it.repo} ${it.machine}".contains(query, true) }.sortedWith(compareByDescending<Session> { it.attention }.thenByDescending { maxOf(it.stats.promptAt, it.stats.completionAt, it.stats.startedAt) }.thenBy { it.id })
     val prs = s.prs.map { it.copy(sessions = it.sessions.filter { session -> all || session.active }) }.filter { (all || it.watched || it.sessions.isNotEmpty()) && "${it.title} ${it.repo} ${it.number}".contains(query, true) }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -111,13 +129,24 @@ class MainActivity : ComponentActivity() {
             Control(R.drawable.ic_list, "Session list", selected = list) { list = true }
             Control(if (all) R.drawable.ic_history else R.drawable.ic_live, if (all) "All sessions" else "Live sessions", selected = !all) { all = !all }
             Control(R.drawable.ic_search, "Search", selected = searching) { searching = !searching; if (!searching) query = "" }
-            Control(R.drawable.ic_settings, "Settings", onClick = settings)
+            Control(R.drawable.ic_settings, "Settings", modifier = Modifier.onGloballyPositioned { settingsAnchor = it.boundsInRoot() }) { settings(settingsAnchor) }
         }
         if (searching) OutlinedTextField(query, { query = it }, placeholder = { Text("Search") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
         if (s.sessions.isEmpty() && s.prs.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { if (s.loading) CircularProgressIndicator(Modifier.size(24.dp)) else Text("No sessions", color = Muted) }
+        else if (list) BoxWithConstraints(Modifier.weight(1f)) {
+            val count = if (prefs.columns == 0) (maxWidth.value / 320).toInt().coerceAtLeast(1) else prefs.columns.coerceAtMost((maxWidth.value / 280).toInt().coerceAtLeast(1))
+            val groups = if (prefs.grouping == "project") sessions.groupBy { it.repo.ifBlank { "Sessions" } }.entries.let { entries ->
+                if (prefs.order == "alpha") entries.sortedBy { it.key.lowercase() } else entries.sortedByDescending { entry -> entry.value.maxOfOrNull { maxOf(it.stats.promptAt, it.stats.completionAt, it.stats.startedAt) } ?: 0 }
+            }.map { it.key to it.value } else listOf("" to sessions)
+            LazyVerticalGrid(columns = GridCells.Fixed(count), contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                groups.forEach { (group, rows) ->
+                    if (group.isNotEmpty()) item(key = "group-$group", span = { GridItemSpan(maxLineSpan) }) { Text(group, color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 10.dp)) }
+                    gridItems(rows, key = { it.id }) { SessionCard(it, it.id == s.selected?.id, now, prefs) { model.select(it) } }
+                }
+            }
+        }
         else LazyColumn(contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (list) items(sessions, key = { it.id }) { SessionCard(it, it.id == s.selected?.id, now) { model.select(it) } }
-            else {
+            run {
                 val attention = sessions.filter { it.attention }
                 if (attention.isNotEmpty()) { items(attention, key = { "attention-${it.id}" }) { SessionCard(it, it.id == s.selected?.id) { model.select(it) } }; item { Spacer(Modifier.height(8.dp)) } }
                 items(prs, key = { it.key }) { pr -> PrCard(pr, s.selected?.id, model::select) }
@@ -128,8 +157,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-@Composable private fun Control(icon: Int, label: String, selected: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(44.dp).background(if (selected) Peach.copy(alpha = .12f) else Color.Transparent, RoundedCornerShape(12.dp))) {
+@Composable internal fun Control(icon: Int, label: String, selected: Boolean = false, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = modifier.size(44.dp).background(if (selected) Peach.copy(alpha = .12f) else Color.Transparent, RoundedCornerShape(12.dp))) {
         Icon(painterResource(icon), contentDescription = label, tint = if (selected) Peach else Muted, modifier = Modifier.size(22.dp))
     }
 }
@@ -148,22 +177,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-@Composable private fun SessionCard(session: Session, selected: Boolean, now: Long? = null, open: () -> Unit) {
-    Surface(color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected) Peach else Color(0xFF303A46))) {
-        Column(Modifier.padding(10.dp)) {
-            SessionRow(session, selected, open)
-            if (now != null) SessionStatsFooter(session, now)
+@Composable private fun SessionCard(session: Session, selected: Boolean, now: Long? = null, prefs: UiPreferences = UiPreferences(), open: () -> Unit) {
+    Surface(onClick = open, color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected) Peach else Color(0xFF303A46))) {
+        Column(Modifier.padding(if (prefs.density == "compact") 6.dp else 10.dp)) {
+            SessionRow(session, selected, clickable = false, open = open)
+            if (now != null) SessionStatsFooter(session, now, prefs)
         }
     }
 }
-@Composable private fun SessionStatsFooter(session: Session, now: Long) {
+@Composable private fun SessionStatsFooter(session: Session, now: Long, prefs: UiPreferences) {
     val stats = session.stats
     FlowRow(Modifier.fillMaxWidth().padding(top = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Stat("◉", sessionDuration(stats.duration(session.active, now)), "Session time", Color(0xFF79B8FF))
-        Stat("◐", sessionDuration(stats.thinkingSeconds), "Thinking time", Mint)
-        Stat("⟩", stats.activity(stats.prompts, stats.promptAt, now), "Prompts; latest prompt age", Muted)
-        Stat("⋖", stats.activity(stats.completions, stats.completionAt, now), "Completions; latest completion age", Muted)
+        if (prefs.visible("sessionTime")) Stat("◉", sessionDuration(stats.duration(session.active, now)), "Session time", Color(0xFF79B8FF))
+        if (prefs.visible("thinkingTime")) Stat("◐", sessionDuration(stats.thinkingSeconds), "Thinking time", Mint)
+        fun activity(countKey: String, ageKey: String, count: Long?, at: Long): String =
+            if (prefs.visible(countKey)) stats.activity(count, if (prefs.visible(ageKey)) at else 0, now)
+            else if (at > 0) sessionAge(at, now) else "—"
+        if (prefs.visible("prompts") || prefs.visible("promptRecency")) Stat("⟩", activity("prompts", "promptRecency", stats.prompts, stats.promptAt), "Prompts; latest prompt age", Muted)
+        if (prefs.visible("completions") || prefs.visible("completionRecency")) Stat("⋖", activity("completions", "completionRecency", stats.completions, stats.completionAt), "Completions; latest completion age", Muted)
+        if (prefs.visible("tools")) Stat("⚒", stats.tools?.toString() ?: "—", "Tools", Peach)
+        if (prefs.visible("compactions")) Stat("⊜", stats.compactions?.toString() ?: "—", "Compactions", Color(0xFFE879F9))
     }
 }
 @Composable private fun Stat(symbol: String, value: String, label: String, color: Color) {
@@ -172,13 +206,13 @@ class MainActivity : ComponentActivity() {
         Text(value, color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
     }
 }
-@Composable private fun SessionRow(session: Session, selected: Boolean, open: () -> Unit) {
+@Composable private fun SessionRow(session: Session, selected: Boolean, clickable: Boolean = true, open: () -> Unit) {
     val color = remember(session.color) { runCatching { Color(android.graphics.Color.parseColor(session.color)) }.getOrDefault(Peach) }
     val background = remember(session.background) { runCatching { Color(android.graphics.Color.parseColor(session.background)) }.getOrDefault(Panel) }
     val status = if (!session.active) "Ended" else when (session.state) {
         "question" -> "Question"; "permission" -> "Permission"; "thinking" -> "Working"; "complete" -> "Complete"; else -> "Ready"
     }
-    Row(Modifier.fillMaxWidth().clickable(onClick = open).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+    Row(Modifier.fillMaxWidth().then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
         Surface(color = background, shape = RoundedCornerShape(8.dp)) { Text(session.glyph, color = color, fontSize = 16.sp, lineHeight = 20.sp, modifier = Modifier.padding(5.dp)) }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(session.title, color = if (selected) Peach else Color(0xFFE9EEF4), maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium)
@@ -190,37 +224,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun SessionDetail(s: AppState, model: SessionModel, wide: Boolean) {
-    val session = s.selected ?: return
-    var replying by rememberSaveable(session.id) { mutableStateOf(false) }; var draft by rememberSaveable(session.id) { mutableStateOf("") }; var history by rememberSaveable(session.id) { mutableStateOf(false) }; var fontSize by rememberSaveable { mutableIntStateOf(13) }
-    val focus = remember { FocusRequester() }
-    Column(Modifier.fillMaxSize().imePadding()) {
-        Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Control(if (wide) R.drawable.ic_close else R.drawable.ic_back, if (wide) "Close session" else "Back to board", onClick = model::close)
-            Column(Modifier.weight(1f)) { Text(session.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium); Text(if (s.connected) "${session.machine} · Live" else "Reconnecting…", fontSize = 11.sp, lineHeight = 15.sp, color = if (s.connected) Mint else Peach) }
-            Control(if (replying) R.drawable.ic_check else R.drawable.ic_reply, if (replying) "Done" else "Reply", selected = replying) { replying = !replying }
-        }
-        HorizontalDivider(color = Color(0xFF303A46))
-        Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) { Control(R.drawable.ic_terminal, "Terminal", selected = !history) { history = false }; Control(R.drawable.ic_transcript, "Transcript", selected = history) { history = true }; Spacer(Modifier.weight(1f)); TextButton(onClick = { fontSize = (fontSize - 1).coerceAtLeast(9) }) { Text("A−") }; TextButton(onClick = { fontSize = (fontSize + 1).coerceAtMost(22) }) { Text("A+") } }
-        val content = if (history) s.history else s.screen
-        val formatted = remember(content) { TerminalText.parse(content) }
-        val vScroll = rememberScrollState(); val hScroll = rememberScrollState()
-        Box(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF0B0F14))) {
-            if (content.isEmpty()) CircularProgressIndicator(Modifier.align(Alignment.Center).size(24.dp), strokeWidth = 2.dp)
-            else SelectionContainer { Text(formatted, modifier = Modifier.fillMaxSize().verticalScroll(vScroll).then(if (history) Modifier else Modifier.horizontalScroll(hScroll)).padding(16.dp), fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, lineHeight = (fontSize * 1.45).sp, softWrap = history) }
-        }
-        if (s.prompt != null) PromptPanel(s.prompt, s.sending || !s.connected || s.revision == null) { action -> model.send(action.route, action.body, guarded = true, expectedRevision = s.revision) }
-        if (replying) {
-            LaunchedEffect(session.id, replying) { focus.requestFocus() }
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp)) { listOf("Esc" to "escape", "Tab" to "tab", "↑" to "up", "↓" to "down", "←" to "left", "→" to "right", "Enter" to "enter", "Ctrl+C" to "ctrl_c").forEach { (label, key) -> TextButton(onClick = { model.send("key", JSONObject().put("key", key)) }, enabled = !s.sending && s.connected) { Text(label) } } }
-            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(draft, { draft = it }, placeholder = { Text("Reply") }, modifier = Modifier.weight(1f).focusRequester(focus), shape = RoundedCornerShape(16.dp), maxLines = 5)
-                Control(R.drawable.ic_send, "Send", selected = true, enabled = draft.isNotBlank() && s.connected && !s.sending) { model.send("answer", JSONObject().put("text", draft)) { draft = "" } }
-            }
-        }
-    }
-}
-@Composable private fun PromptPanel(prompt: JSONObject, disabled: Boolean, send: (PromptActions.Action) -> Unit) {
+@Composable internal fun PromptPanel(prompt: JSONObject, disabled: Boolean, send: (PromptActions.Action) -> Unit) {
     var other by remember(prompt.toString()) { mutableStateOf("") }
     Surface(color = Color(0xFF28251F)) {
         Column(Modifier.fillMaxWidth().heightIn(max = 330.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
