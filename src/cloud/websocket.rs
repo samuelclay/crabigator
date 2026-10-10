@@ -236,7 +236,9 @@ impl WebSocketHandle {
 
     /// Check if the connection is still alive
     pub fn is_alive(&self) -> bool {
-        !self.event_tx.is_closed()
+        // The reader owns the answer sender. Its closure must trigger
+        // reconnect even while the writer waits for terminal output.
+        !self.event_tx.is_closed() && !self.answer_rx.is_closed()
     }
 }
 
@@ -283,5 +285,31 @@ mod tests {
             );
         }
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn closed_reader_marks_an_idle_connection_dead() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}/connect", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            socket.close(None).await.unwrap();
+        });
+        let socket = CloudWebSocket::connect(&url, "test-device", "test-signature", "0")
+            .await
+            .unwrap();
+        let (handle, shutdown) = socket.into_parts();
+        // Initial connections run on the main runtime and do not retain this
+        // receiver. No terminal output follows to wake the outgoing task.
+        drop(shutdown);
+        server.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while handle.is_alive() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("a stopped reader must trigger reconnect even while the terminal is idle");
     }
 }
