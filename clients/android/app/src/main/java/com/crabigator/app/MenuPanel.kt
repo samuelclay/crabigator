@@ -35,7 +35,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-private val Cyan = Color(0xFF67DCE7)
+private val Cyan = CrabColors.Cyan
 
 @Composable internal fun MenuPanel(menu: String?, anchor: Rect, model: SessionModel, notifications: () -> Unit, navigate: (String) -> Unit, close: () -> Unit) {
     val prefs by model.preferences.collectAsStateWithLifecycle()
@@ -126,7 +126,6 @@ private val Cyan = Color(0xFF67DCE7)
     MenuSection("Text size") { Stepper("${p.fontSize} sp", { update { it.copy(fontSize = (it.fontSize - 1).coerceAtLeast(9)) } }, { update { it.copy(fontSize = (it.fontSize + 1).coerceAtMost(24)) } }) }
     MenuSection("Line spacing") { Choices(listOf("Tight", "Normal", "Relaxed"), listOf(120,145,170).indexOf(p.lineSpacing)) { n -> update { it.copy(lineSpacing = listOf(120,145,170)[n]) } } }
     MenuSection("Text wrap") { Choices(listOf("Wrap", "Scroll"), if (p.wrap) 0 else 1) { n -> update { it.copy(wrap = n == 0) } } }
-    MenuSection("Content") { Choices(listOf("Terminal", "Transcript"), if (p.transcript) 1 else 0) { n -> update { it.copy(transcript = n == 1) } } }
     MenuSection("Terminal height") { Choices(listOf("Full", "250", "350", "500", "700"), listOf(0,250,350,500,700).indexOf(p.terminalHeight)) { n -> update { it.copy(terminalHeight = listOf(0,250,350,500,700)[n]) } } }
     MenuSection("Widgets") { Choices(listOf("Expanded", "Collapsed"), if (p.widgets) 0 else 1) { n -> update { it.copy(widgets = n == 0) } } }
     MenuSection("Visible sections") {

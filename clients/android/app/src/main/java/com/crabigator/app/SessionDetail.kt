@@ -9,8 +9,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
@@ -31,17 +29,15 @@ import org.json.JSONObject
     val session = s.selected ?: return
     val p by model.preferences.collectAsStateWithLifecycle()
     var styleAnchor by remember { mutableStateOf(Rect.Zero) }
-    var replying by rememberSaveable(session.id) { mutableStateOf(false) }
-    var draft by rememberSaveable(session.id) { mutableStateOf("") }
     var pinned by rememberSaveable(session.id) { mutableStateOf(true) }
-    var waiting by remember(session.id, p.transcript) { mutableStateOf(true) }
-    LaunchedEffect(session.id, p.transcript) { delay(8000); waiting = false }
+    var waiting by remember(session.id) { mutableStateOf(true) }
+    LaunchedEffect(session.id) { delay(8000); waiting = false }
     val sections = remember(s.details, session, p, s.prs) { sessionWidgetSections(s, p) }
-    val focus = remember { FocusRequester() }
-    val content = if (p.transcript) s.history else s.screen
-    val loaded = if (p.transcript) s.historyLoaded else s.screenLoaded
-    val formatted = remember(content, p.wrap) { TerminalText.parse(content).let { if (p.wrap) TerminalText.trimLineEnds(it) else it } }
-    val vScroll = key(session.id, p.transcript) { rememberScrollState() }
+    val hasOutput = s.history.isNotEmpty() || s.screen.isNotEmpty()
+    val loaded = s.historyLoaded && s.screenLoaded
+    val history = remember(s.history, p.wrap) { TerminalText.parse(s.history).let { if (p.wrap) TerminalText.trimLineEnds(it) else it } }
+    val screen = remember(s.screen, p.wrap) { TerminalText.parse(s.screen).let { if (p.wrap) TerminalText.trimLineEnds(it) else it } }
+    val vScroll = key(session.id) { rememberScrollState() }
     val hScroll = rememberScrollState()
     val userScroll = remember(vScroll) { object : NestedScrollConnection {
         override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
@@ -53,16 +49,15 @@ import org.json.JSONObject
             return Offset.Zero
         }
     } }
-    LaunchedEffect(pinned, vScroll.maxValue, content) { if (pinned) vScroll.scrollTo(vScroll.maxValue) }
+    LaunchedEffect(pinned, vScroll.maxValue, s.history, s.screen) { if (pinned) vScroll.scrollTo(vScroll.maxValue) }
     Column(Modifier.fillMaxSize().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Control(if (wide) R.drawable.ic_close else R.drawable.ic_back, if (wide) "Close session" else "Back to list", onClick = model::close)
             Column(Modifier.weight(1f)) {
-                Text(session.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
-                Text(if (s.connected) "${session.machine} · Live" else if (!session.active) "${session.machine} · Ended" else "Reconnecting…", fontSize = 11.sp, lineHeight = 15.sp, color = if (s.connected) Mint else Peach)
+                Text(session.title, color = CrabColors.Title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
+                Text(if (s.connected) "${session.machine} · Live" else if (!session.active) "${session.machine} · Ended" else "Reconnecting…", fontSize = 11.sp, lineHeight = 15.sp, color = if (s.connected) Mint else Muted)
             }
             Control(R.drawable.ic_pin, if (pinned) "Unpin scroll" else "Pin scroll to bottom", selected = pinned) { pinned = !pinned }
-            Control(if (replying) R.drawable.ic_check else R.drawable.ic_reply, if (replying) "Done" else "Reply", selected = replying) { replying = !replying }
             Control(R.drawable.ic_style, "Style", modifier = Modifier.onGloballyPositioned { styleAnchor = it.boundsInRoot() }) { style(styleAnchor) }
         }
         HorizontalDivider(color = Color(0xFF303A46))
@@ -72,28 +67,25 @@ import org.json.JSONObject
             val terminalHeight = p.terminalHeight.dp.coerceAtMost(terminalLimit)
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.then(if (p.terminalHeight == 0) Modifier.weight(1f) else Modifier.height(terminalHeight)).fillMaxWidth().background(Color(0xFF0B0F14))) {
-                    if (content.isEmpty()) {
+                    if (!hasOutput) {
                         if (!loaded && waiting && session.active) CircularProgressIndicator(Modifier.align(Alignment.Center).size(24.dp), strokeWidth = 2.dp)
-                        else Text(if (p.transcript) "No transcript available" else "No terminal output", color = Muted, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))
+                        else Text("No terminal output", color = Muted, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))
                     } else SelectionContainer {
-                        Text(formatted, modifier = Modifier.fillMaxWidth().nestedScroll(userScroll).verticalScroll(vScroll)
-                            .then(if (p.wrap) Modifier else Modifier.horizontalScroll(hScroll)).padding(16.dp),
-                            fontFamily = FontFamily.Monospace, fontSize = p.fontSize.sp,
-                            lineHeight = (p.fontSize * p.lineSpacing / 100f).sp, softWrap = p.wrap)
+                        Column(Modifier.fillMaxWidth().nestedScroll(userScroll).verticalScroll(vScroll)
+                            .then(if (p.wrap) Modifier else Modifier.horizontalScroll(hScroll)).padding(16.dp)) {
+                            if (history.isNotEmpty()) Text(history, fontFamily = FontFamily.Monospace, fontSize = p.fontSize.sp,
+                                lineHeight = (p.fontSize * p.lineSpacing / 100f).sp, softWrap = p.wrap)
+                            if (history.isNotEmpty() && screen.isNotEmpty()) Spacer(Modifier.height(8.dp))
+                            if (screen.isNotEmpty()) Text(screen, fontFamily = FontFamily.Monospace, fontSize = p.fontSize.sp,
+                                lineHeight = (p.fontSize * p.lineSpacing / 100f).sp, softWrap = p.wrap)
+                        }
                     }
                 }
                 if (p.widgets) SessionWidgets(sections, Modifier.then(if (p.terminalHeight == 0) Modifier.heightIn(max = availableHeight * .35f) else Modifier.weight(1f)))
             }
         }
         if (s.prompt != null) PromptPanel(s.prompt, s.sending || !s.connected || s.revision == null) { action -> model.send(action.route, action.body, guarded = true, expectedRevision = s.revision) }
-        if (replying) {
-            LaunchedEffect(session.id, replying) { focus.requestFocus() }
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp)) { listOf("Esc" to "escape", "Tab" to "tab", "↑" to "up", "↓" to "down", "←" to "left", "→" to "right", "Enter" to "enter", "Ctrl+C" to "ctrl_c").forEach { (label, key) -> TextButton(onClick = { model.send("key", JSONObject().put("key", key)) }, enabled = !s.sending && s.connected) { Text(label) } } }
-            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(draft, { draft = it }, placeholder = { Text("Reply") }, modifier = Modifier.weight(1f).focusRequester(focus), shape = RoundedCornerShape(16.dp), maxLines = 5)
-                Control(R.drawable.ic_send, "Send", selected = true, enabled = draft.isNotBlank() && s.connected && !s.sending) { model.send("answer", JSONObject().put("text", draft)) { draft = "" } }
-            }
-        }
+        key(session.id) { SessionComposer(s, model) }
     }
 }
 private fun sessionWidgetSections(s: AppState, p: UiPreferences): List<Pair<String, List<Pair<String, String?>>>> {
@@ -129,8 +121,8 @@ private fun sessionWidgetSections(s: AppState, p: UiPreferences): List<Pair<Stri
     val uri = LocalUriHandler.current
     Column(modifier.fillMaxWidth().background(Panel).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         sections.forEach { (title, rows) ->
-            Text(title, color = Mint, fontSize = 12.sp)
-            rows.forEach { (text, url) -> Text(text, color = if (url != null) Peach else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, lineHeight = 17.sp,
+            Text(title, color = when (title) { "Changes" -> CrabColors.Orange; "Git status" -> CrabColors.Green; else -> CrabColors.Title }, fontSize = 12.sp)
+            rows.forEach { (text, url) -> Text(text, color = if (url != null) CrabColors.Title else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, lineHeight = 17.sp,
                 modifier = Modifier.fillMaxWidth().then(if (url != null && url.startsWith("https://")) Modifier.clickable { uri.openUri(url) }.padding(vertical = 6.dp) else Modifier)) }
         }
     }

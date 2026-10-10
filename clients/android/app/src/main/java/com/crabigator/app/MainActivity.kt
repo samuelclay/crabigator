@@ -11,6 +11,14 @@ import androidx.activity.SystemBarStyle
 import androidx.compose.ui.res.painterResource
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -48,9 +56,9 @@ import org.json.JSONObject
 
 internal val Ink = Color(0xFF101419)
 internal val Panel = Color(0xFF1B2129)
-internal val Muted = Color(0xFF9CA9B8)
-internal val Peach = Color(0xFFFFAD7F)
-internal val Mint = Color(0xFF98D9B1)
+internal val Muted = CrabColors.Gray
+internal val Peach = CrabColors.Orange
+internal val Mint = CrabColors.Green
 private val CrabTheme = darkColorScheme(primary = Peach, onPrimary = Ink, background = Ink, surface = Ink, surfaceContainer = Panel, onSurface = Color(0xFFE9EEF4), secondary = Mint, secondaryContainer = Color(0xFF3D3028), onSecondaryContainer = Peach, outline = Color(0xFF37414E))
 
 class MainActivity : ComponentActivity() {
@@ -82,13 +90,33 @@ class MainActivity : ComponentActivity() {
     Column(Modifier.fillMaxSize().safeDrawingPadding().then(if (menu != null) Modifier.clearAndSetSemantics {} else Modifier)) {
         if (s.error != null) Surface(color = Color(0xFF4D2C2C)) { Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) { Text(s.error!!, Modifier.weight(1f), fontSize = 13.sp); TextButton(onClick = model::dismissError) { Text("Dismiss") } } }
         BoxWithConstraints(Modifier.weight(1f)) {
-            val wide = maxWidth >= 720.dp && s.selected != null
-            Row(Modifier.fillMaxSize()) {
-                if (!preferences.sidebarRight && (wide || s.selected == null)) Box(if (wide) Modifier.width(360.dp).fillMaxHeight() else Modifier.fillMaxSize()) { Board(s, model, { menuAnchor = it; menu = "Settings" }) }
-                if (wide && !preferences.sidebarRight) VerticalDivider(color = Color(0xFF303944))
-                if (s.selected != null) Box(Modifier.weight(1f).fillMaxHeight()) { SessionDetail(s, model, wide) { menuAnchor = it; menu = "Style" } }
-                if (wide && preferences.sidebarRight) VerticalDivider(color = Color(0xFF303944))
-                if (preferences.sidebarRight && (wide || s.selected == null)) Box(if (wide) Modifier.width(360.dp).fillMaxHeight() else Modifier.fillMaxSize()) { Board(s, model, { menuAnchor = it; menu = "Settings" }) }
+            val wide = maxWidth >= 720.dp
+            val detailWidth = maxWidth - 361.dp
+            val sidebarWidth by animateDpAsState(if (s.selected == null) maxWidth else 360.dp,
+                tween(320, easing = FastOutSlowInEasing), label = "Session list width")
+            val entrance = remember(s.selected?.id) { Animatable(1f) }
+            LaunchedEffect(s.selected?.id) { entrance.animateTo(0f, tween(360, easing = FastOutSlowInEasing)) }
+            val detail: @Composable () -> Unit = {
+                if (s.selected != null) Box(Modifier.fillMaxSize().clipToBounds()) {
+                    Box(Modifier.align(Alignment.CenterStart).then(if (wide) Modifier.requiredWidth(detailWidth).fillMaxHeight() else Modifier.fillMaxSize())
+                        .graphicsLayer { translationX = size.width * entrance.value }.background(Ink).pointerInput(Unit) { detectTapGestures {} }) {
+                        SessionDetail(s, model, wide) { menuAnchor = it; menu = "Style" }
+                    }
+                }
+            }
+            if (wide) Row(Modifier.fillMaxSize().clipToBounds()) {
+                if (!preferences.sidebarRight) Box(Modifier.width(sidebarWidth).fillMaxHeight()) { Board(s, model, { menuAnchor = it; menu = "Settings" }) }
+                if (s.selected != null) {
+                    if (!preferences.sidebarRight) VerticalDivider(color = Color(0xFF303944))
+                    Box(Modifier.weight(1f).fillMaxHeight()) { detail() }
+                    if (preferences.sidebarRight) VerticalDivider(color = Color(0xFF303944))
+                }
+                if (preferences.sidebarRight) Box(Modifier.width(sidebarWidth).fillMaxHeight()) { Board(s, model, { menuAnchor = it; menu = "Settings" }) }
+            } else Box(Modifier.fillMaxSize().clipToBounds()) {
+                Box(Modifier.fillMaxSize().then(if (s.selected != null) Modifier.clearAndSetSemantics {} else Modifier)) {
+                    Board(s, model, { menuAnchor = it; menu = "Settings" })
+                }
+                detail()
             }
         }
     }
@@ -167,10 +195,10 @@ class MainActivity : ComponentActivity() {
     Surface(color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFF303A46))) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) { Text(pr.repo, color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f)); Text("#${pr.number}", color = Peach, fontSize = 12.sp, lineHeight = 16.sp) }
-            if (pr.title.isNotBlank()) Text(pr.title, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
+            if (pr.title.isNotBlank()) Text(pr.title, color = CrabColors.Title, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
             if (pr.state.isNotBlank() || pr.checks.isNotBlank()) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (pr.state.isNotBlank()) Text(pr.state.lowercase().replaceFirstChar { it.uppercase() }, color = if (pr.state == "MERGED") Color(0xFFC5ACFF) else Mint, fontSize = 12.sp, lineHeight = 16.sp)
-                if (pr.checks.isNotBlank()) Text(pr.checks, color = if (pr.checks.contains("failed")) Color(0xFFFF9999) else Muted, fontSize = 12.sp, lineHeight = 16.sp)
+                if (pr.state.isNotBlank()) Text(pr.state.lowercase().replaceFirstChar { it.uppercase() }, color = if (pr.state == "MERGED") CrabColors.Purple else Mint, fontSize = 12.sp, lineHeight = 16.sp)
+                if (pr.checks.isNotBlank()) Text(pr.checks, color = if (pr.checks.contains("failed")) CrabColors.Red else Muted, fontSize = 12.sp, lineHeight = 16.sp)
             }
             pr.sessions.forEach { session -> HorizontalDivider(color = Color(0xFF303A46)); SessionRow(session, selected == session.id) { select(session) } }
             if (pr.sessions.isEmpty() && pr.url.startsWith("https://")) Control(R.drawable.ic_external, "Open pull request") { uri.openUri(pr.url) }
@@ -178,7 +206,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 @Composable private fun SessionCard(session: Session, selected: Boolean, now: Long? = null, prefs: UiPreferences = UiPreferences(), open: () -> Unit) {
-    Surface(onClick = open, color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected) Peach else Color(0xFF303A46))) {
+    Surface(onClick = open, color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected) CrabColors.Title else Color(0xFF303A46))) {
         Column(Modifier.padding(if (prefs.density == "compact") 6.dp else 10.dp)) {
             SessionRow(session, selected, clickable = false, open = open)
             if (now != null) SessionStatsFooter(session, now, prefs)
@@ -189,35 +217,33 @@ class MainActivity : ComponentActivity() {
     val stats = session.stats
     FlowRow(Modifier.fillMaxWidth().padding(top = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        if (prefs.visible("sessionTime")) Stat("◉", sessionDuration(stats.duration(session.active, now)), "Session time", Color(0xFF79B8FF))
+        if (prefs.visible("sessionTime")) Stat("◉", sessionDuration(stats.duration(session.active, now)), "Session time", CrabColors.Blue)
         if (prefs.visible("thinkingTime")) Stat("◐", sessionDuration(stats.thinkingSeconds), "Thinking time", Mint)
         fun activity(countKey: String, ageKey: String, count: Long?, at: Long): String =
             if (prefs.visible(countKey)) stats.activity(count, if (prefs.visible(ageKey)) at else 0, now)
             else if (at > 0) sessionAge(at, now) else "—"
-        if (prefs.visible("prompts") || prefs.visible("promptRecency")) Stat("⟩", activity("prompts", "promptRecency", stats.prompts, stats.promptAt), "Prompts; latest prompt age", Muted)
-        if (prefs.visible("completions") || prefs.visible("completionRecency")) Stat("⋖", activity("completions", "completionRecency", stats.completions, stats.completionAt), "Completions; latest completion age", Muted)
+        if (prefs.visible("prompts") || prefs.visible("promptRecency")) Stat("⟩", activity("prompts", "promptRecency", stats.prompts, stats.promptAt), "Prompts; latest prompt age", CrabColors.Title)
+        if (prefs.visible("completions") || prefs.visible("completionRecency")) Stat("⋖", activity("completions", "completionRecency", stats.completions, stats.completionAt), "Completions; latest completion age", CrabColors.Title)
         if (prefs.visible("tools")) Stat("⚒", stats.tools?.toString() ?: "—", "Tools", Peach)
-        if (prefs.visible("compactions")) Stat("⊜", stats.compactions?.toString() ?: "—", "Compactions", Color(0xFFE879F9))
+        if (prefs.visible("compactions")) Stat("⊜", stats.compactions?.toString() ?: "—", "Compactions", CrabColors.Pink)
     }
 }
 @Composable private fun Stat(symbol: String, value: String, label: String, color: Color) {
     Row(Modifier.clearAndSetSemantics { contentDescription = "$label: $value" }, horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(symbol, color = color, fontSize = 13.sp, lineHeight = 16.sp)
-        Text(value, color = Muted, fontSize = 11.sp, lineHeight = 16.sp)
+        Text(symbol, color = Muted, fontSize = 13.sp, lineHeight = 16.sp)
+        Text(value, color = color, fontSize = 11.sp, lineHeight = 16.sp)
     }
 }
 @Composable private fun SessionRow(session: Session, selected: Boolean, clickable: Boolean = true, open: () -> Unit) {
     val color = remember(session.color) { runCatching { Color(android.graphics.Color.parseColor(session.color)) }.getOrDefault(Peach) }
     val background = remember(session.background) { runCatching { Color(android.graphics.Color.parseColor(session.background)) }.getOrDefault(Panel) }
-    val status = if (!session.active) "Ended" else when (session.state) {
-        "question" -> "Question"; "permission" -> "Permission"; "thinking" -> "Working"; "complete" -> "Complete"; else -> "Ready"
-    }
+
     Row(Modifier.fillMaxWidth().then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
         Surface(color = background, shape = RoundedCornerShape(8.dp)) { Text(session.glyph, color = color, fontSize = 16.sp, lineHeight = 20.sp, modifier = Modifier.padding(5.dp)) }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text(session.title, color = if (selected) Peach else Color(0xFFE9EEF4), maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(status, color = if (session.attention) Peach else Mint, fontSize = 11.sp, lineHeight = 14.sp)
+            Text(session.title, color = CrabColors.Title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                SessionStatus(session)
                 Text(session.machine, color = Muted, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
