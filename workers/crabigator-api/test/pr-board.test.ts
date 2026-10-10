@@ -10,6 +10,7 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
     await ensureAccountSchema(testEnv);
     await testEnv.DB.batch([
         testEnv.DB.prepare('ALTER TABLE sessions ADD COLUMN work_seconds INTEGER'),
+        testEnv.DB.prepare('ALTER TABLE sessions ADD COLUMN compressions INTEGER NOT NULL DEFAULT 0'),
         testEnv.DB.prepare('ALTER TABLE sessions ADD COLUMN slack_threads TEXT'),
         testEnv.DB.prepare('CREATE TABLE pr_overrides (group_key TEXT, owner TEXT, repo TEXT, number INTEGER, scope_key TEXT, disposition TEXT)'),
         testEnv.DB.prepare('CREATE TABLE watched_prs (group_key TEXT, owner TEXT, repo TEXT, number INTEGER, url TEXT, added_at INTEGER, data TEXT, refreshed_at INTEGER)'),
@@ -19,8 +20,8 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
     for (const active of [0, 1]) {
         await testEnv.DB.prepare(`INSERT INTO sessions
             (id, device_id, client_session_id, cwd, platform, is_active, started_at, ended_at, last_seen_at,
-             work_seconds, thinking_seconds, prompts, completions, prompts_changed_at, completions_changed_at)
-            VALUES (?, 'stats-device', ?, '/project', 'claude', ?, 1000, ?, 1600, ?, 123, 7, 6, 1400, 1500)`)
+             work_seconds, thinking_seconds, prompts, completions, prompts_changed_at, completions_changed_at, tool_calls, compressions)
+            VALUES (?, 'stats-device', ?, '/project', 'claude', ?, 1000, ?, 1600, ?, 123, 7, 6, 1400, 1500, 9, 2)`)
             .bind(`stats-${active}`, `local-${active}`, active, active ? null : 1600, active ? null : 590).run();
     }
     const pr = { owner: 'o', repo: 'r', number: 1, url: 'https://github.com/o/r/pull/1', branch: 'feature', title: 'Work',
@@ -39,7 +40,7 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
     expect(response.status, JSON.stringify(body)).toBe(200);
     expect(body.sessions).toHaveLength(1);
     const shared = { started_at: 1000, last_seen_at: 1600, prompts_changed_at: 1400, completions_changed_at: 1500,
-        stats: { thinking_seconds: 123, prompts: 7, completions: 6 } };
+        stats: { thinking_seconds: 123, prompts: 7, completions: 6, tools: 9, compressions: 2 } };
     expect(body.sessions[0]).toMatchObject({ ...shared, session_id: 'stats-1', active: true, ended_at: null,
         stats: { ...shared.stats, work_seconds: null } });
     expect(body.prs[0].sessions[0]).toMatchObject({ ...shared, session_id: 'stats-0', active: false, ended_at: 1600,

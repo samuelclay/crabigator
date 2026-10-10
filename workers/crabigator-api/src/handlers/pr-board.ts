@@ -18,6 +18,8 @@ interface BoardSessionRow {
     ended_at: number | null;
     work_seconds: number | null;
     thinking_seconds: number;
+    tool_calls: number;
+    compressions: number;
     prompts: number;
     completions: number;
     prompts_changed_at: number | null;
@@ -282,6 +284,8 @@ interface BoardEntry {
         stats: {
             work_seconds: number | null;
             thinking_seconds: number;
+            tools: number;
+            compressions: number;
             prompts: number;
             completions: number;
         };
@@ -410,6 +414,8 @@ function boardSession(row: BoardSessionRow): BoardSession {
         stats: {
             work_seconds: row.work_seconds,
             thinking_seconds: row.thinking_seconds,
+            tools: row.tool_calls,
+            compressions: row.compressions,
             prompts: row.prompts,
             completions: row.completions,
         },
@@ -599,7 +605,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
                 sp.is_primary,
                 s.client_session_id,
                 s.platform, s.cwd, s.pr_scope, s.state AS session_state, s.is_active, s.last_seen_at,
-                s.started_at, s.ended_at, s.work_seconds, s.thinking_seconds, s.prompts, s.completions,
+                s.started_at, s.ended_at, s.work_seconds, s.thinking_seconds, s.prompts, s.completions, s.tool_calls, s.compressions,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,
                 s.repo_owner, s.repo_name, s.branch,
@@ -774,7 +780,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
     const sessionRows = await env.DB.prepare(
         `SELECT s.id AS session_id, s.client_session_id, s.platform, s.cwd, s.pr_scope, s.state AS session_state,
                 s.is_active, s.last_seen_at,
-                s.started_at, s.ended_at, s.work_seconds, s.thinking_seconds, s.prompts, s.completions,
+                s.started_at, s.ended_at, s.work_seconds, s.thinking_seconds, s.prompts, s.completions, s.tool_calls, s.compressions,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,
                 s.repo_owner, s.repo_name, s.branch,
