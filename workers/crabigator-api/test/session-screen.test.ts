@@ -2,6 +2,32 @@ import { env, evictDurableObject } from 'cloudflare:test';
 import { expect, it } from 'vitest';
 import type { CloudToDesktopMessage, SessionEvent } from '../src/types/session';
 
+it('replays full transcripts to late viewers and replaces history on resync', async () => {
+    const stub = env.SESSION.get(env.SESSION.idFromName('transcript-replay'));
+    const response = await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } });
+    const desktop = response.webSocket!;
+    desktop.accept();
+    const snapshot = async () => (await stub.fetch('https://internal/snapshot')).json<{ scrollback: string }>();
+    let viewer: WebSocket | undefined;
+    try {
+        desktop.send(JSON.stringify({ type: 'scrollback_history', content: 'First prompt\nFirst answer\n' }));
+        await expect.poll(async () => (await snapshot()).scrollback).toBe('First prompt\nFirst answer\n');
+        desktop.send(JSON.stringify({ type: 'scrollback', diff: 'Next prompt\n', total_lines: 3 }));
+        await expect.poll(async () => (await snapshot()).scrollback).toContain('Next prompt');
+        desktop.send(JSON.stringify({ type: 'scrollback_history', content: 'A complete replacement\n' }));
+        await expect.poll(async () => (await snapshot()).scrollback).toBe('A complete replacement\n');
+        const result = await stub.fetch('https://internal/events', { headers: { Upgrade: 'websocket' } });
+        viewer = result.webSocket!;
+        const events: SessionEvent[] = [];
+        viewer.addEventListener('message', e => { events.push(JSON.parse(String(e.data))); });
+        viewer.accept();
+        await expect.poll(() => events).toContainEqual({ type: 'scrollback_history', content: 'A complete replacement\n' });
+        desktop.send(JSON.stringify({ type: 'scrollback_history', content: 'old\n'.repeat(150000) + 'last line\n' }));
+        await expect.poll(async () => (await snapshot()).scrollback.endsWith('last line\n')).toBe(true);
+        await expect.poll(async () => (await snapshot()).scrollback.length).toBeLessThanOrEqual(500 * 1024);
+    } finally { viewer?.close(); desktop.close(); }
+});
+
 it('recovers an idle screen after hibernation and retries until the desktop replies', async () => {
     const sessions = env.SESSION as DurableObjectNamespace;
     const stub = sessions.get(sessions.idFromName('screen-recovery'));

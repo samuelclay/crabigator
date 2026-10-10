@@ -780,9 +780,15 @@ export class SessionDO implements DurableObject {
         return added;
     }
 
-    /**
-     * Handle incoming event from desktop
-     */
+    private trimScrollback(content: string): string {
+        const limit = 500 * 1024;
+        if (content.length <= limit) return content;
+        const start = content.length - limit;
+        const newline = content.indexOf('\n', start);
+        return content.slice(newline >= 0 ? newline + 1 : start);
+    }
+
+    /** Handle incoming event from desktop. */
     private async handleEvent(event: SessionEvent): Promise<void> {
         if (event.type === 'heartbeat') {
             if (this.sessionInfo) {
@@ -828,25 +834,15 @@ export class SessionDO implements DurableObject {
                     });
                 }
                 break;
+            case 'scrollback_history':
+                // A full snapshot replaces history, including after reconnect.
+                this.ephemeralState.scrollbackContent = this.trimScrollback(event.content);
+                this.ephemeralState.lastScrollbackLine = event.content.split('\n').length;
+                break;
             case 'scrollback':
-                // Ephemeral state - no storage write
                 this.ephemeralState.lastScrollbackLine = event.total_lines;
-                // Accumulate scrollback content (cap at ~500KB to avoid memory issues)
-                const MAX_SCROLLBACK_SIZE = 500 * 1024;
-                if (event.diff) {
-                    this.ephemeralState.scrollbackContent += event.diff;
-                    // Trim from the beginning if too large
-                    if (this.ephemeralState.scrollbackContent.length > MAX_SCROLLBACK_SIZE) {
-                        // Find a good break point (newline) near the trim point
-                        const trimPoint = this.ephemeralState.scrollbackContent.length - MAX_SCROLLBACK_SIZE;
-                        const newlineAfterTrim = this.ephemeralState.scrollbackContent.indexOf('\n', trimPoint);
-                        if (newlineAfterTrim > 0) {
-                            this.ephemeralState.scrollbackContent = this.ephemeralState.scrollbackContent.slice(newlineAfterTrim + 1);
-                        } else {
-                            this.ephemeralState.scrollbackContent = this.ephemeralState.scrollbackContent.slice(trimPoint);
-                        }
-                    }
-                }
+                this.ephemeralState.scrollbackContent = this.trimScrollback(
+                    this.ephemeralState.scrollbackContent + event.diff);
                 break;
             case 'screen':
                 // Ephemeral state - no storage write
