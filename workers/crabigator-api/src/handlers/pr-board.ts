@@ -14,6 +14,12 @@ interface BoardSessionRow {
     session_state: string | null;
     is_active: number | null;
     last_seen_at: number | null;
+    started_at: number;
+    ended_at: number | null;
+    work_seconds: number | null;
+    thinking_seconds: number;
+    prompts: number;
+    completions: number;
     prompts_changed_at: number | null;
     completions_changed_at: number | null;
     titles: string | null;
@@ -271,6 +277,14 @@ interface BoardEntry {
         state: string;
         active: boolean;
         last_seen_at: number;
+        started_at: number;
+        ended_at: number | null;
+        stats: {
+            work_seconds: number | null;
+            thinking_seconds: number;
+            prompts: number;
+            completions: number;
+        };
         /** When the session last received a prompt, as Unix seconds. */
         prompts_changed_at: number;
         /** When the session's completion count last changed, as Unix seconds. */
@@ -391,6 +405,14 @@ function boardSession(row: BoardSessionRow): BoardSession {
         state: row.session_state || '',
         active: !!row.is_active,
         last_seen_at: row.last_seen_at || 0,
+        started_at: row.started_at,
+        ended_at: row.ended_at,
+        stats: {
+            work_seconds: row.work_seconds,
+            thinking_seconds: row.thinking_seconds,
+            prompts: row.prompts,
+            completions: row.completions,
+        },
         prompts_changed_at: row.prompts_changed_at || 0,
         completions_changed_at: row.completions_changed_at || 0,
         title: sessionTitle(row.titles),
@@ -577,6 +599,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
                 sp.is_primary,
                 s.client_session_id,
                 s.platform, s.cwd, s.pr_scope, s.state AS session_state, s.is_active, s.last_seen_at,
+                s.started_at, s.ended_at, s.work_seconds, s.thinking_seconds, s.prompts, s.completions,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,
                 s.repo_owner, s.repo_name, s.branch,
@@ -751,6 +774,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
     const sessionRows = await env.DB.prepare(
         `SELECT s.id AS session_id, s.client_session_id, s.platform, s.cwd, s.pr_scope, s.state AS session_state,
                 s.is_active, s.last_seen_at,
+                s.started_at, s.ended_at, s.work_seconds, s.thinking_seconds, s.prompts, s.completions,
                 s.prompts_changed_at, s.completions_changed_at,
                 s.titles, s.titles_changed_at, s.recap,
                 s.repo_owner, s.repo_name, s.branch,
