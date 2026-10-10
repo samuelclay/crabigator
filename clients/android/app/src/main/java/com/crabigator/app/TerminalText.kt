@@ -33,13 +33,14 @@ object TerminalText {
     }
     fun parse(input: String): AnnotatedString {
         val out = AnnotatedString.Builder()
-        var fg = Color(0xFFDDE3ED); var bg = Color.Unspecified; var bold = false; var underline = false; var inverse = false
+        var fg = Color(0xFFDDE3ED); var bg = Color.Unspecified; var bold = false; var dim = false; var underline = false; var inverse = false
         var i = 0; var column = 0
         val pending = StringBuilder()
         fun flush() {
             if (pending.isEmpty()) return
             val start = out.length; out.append(pending.toString()); pending.clear()
-            out.addStyle(SpanStyle(color = if (inverse) bg.takeOrElse { Color(0xFF11151B) } else fg, background = if (inverse) fg else bg, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal, textDecoration = if (underline) TextDecoration.Underline else TextDecoration.None), start, out.length)
+            val foreground = if (inverse) bg.takeOrElse { Color(0xFF11151B) } else fg
+            out.addStyle(SpanStyle(color = foreground.copy(alpha = if (dim) .5f else 1f), background = if (inverse) fg else bg, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal, textDecoration = if (underline) TextDecoration.Underline else TextDecoration.None), start, out.length)
         }
         fun append(s: String) { pending.append(s); column += s.length }
         while (i < input.length) {
@@ -52,8 +53,8 @@ object TerminalText {
                     when (input[end]) {
                         'm' -> { flush(); var p = 0; while (p < nums.size) {
                             when (val n = nums[p]) {
-                                0 -> { fg = Color(0xFFDDE3ED); bg = Color.Unspecified; bold = false; underline = false; inverse = false }
-                                1 -> bold = true; 22 -> bold = false; 4 -> underline = true; 24 -> underline = false
+                                0 -> { fg = Color(0xFFDDE3ED); bg = Color.Unspecified; bold = false; dim = false; underline = false; inverse = false }
+                                1 -> { bold = true; dim = false }; 2 -> { dim = true; bold = false }; 22 -> { bold = false; dim = false }; 4 -> underline = true; 24 -> underline = false
                                 7 -> inverse = true; 27 -> inverse = false
                                 in 30..37 -> fg = palette(n - 30); in 90..97 -> fg = palette(n - 90 + 8)
                                 in 40..47 -> bg = palette(n - 40); in 100..107 -> bg = palette(n - 100 + 8)

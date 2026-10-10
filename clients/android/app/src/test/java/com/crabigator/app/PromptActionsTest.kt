@@ -6,6 +6,17 @@ import org.junit.Test
 
 class PromptActionsTest {
     private fun prompt(extra: String = "") = JSONObject("""{"prompt_type":"question","cursor_row":3,"questions":[{"question":"Which one?","options":[{"label":"One","value":"1"},{"label":"Two","value":"2"}],"allows_other":true}]$extra}""")
+    @Test fun screenIntensityMatchesCodexWorkingAndBuildOutput() {
+        val parsed = TerminalText.parse("\u001b[2mBUILD SUCCESSFUL\u001b[0m normal\n\u001b[2mWorking (\u001b[1mesc\u001b[2m to interrupt)\u001b[22m normal")
+        fun style(word: String) = parsed.spanStyles.first { parsed.text.indexOf(word) in it.start until it.end }.item
+        assertEquals(.5f, style("BUILD").color.alpha, .01f)
+        assertEquals(.5f, style("Working").color.alpha, .01f)
+        assertEquals(1f, style("esc").color.alpha, .01f)
+        assertEquals(androidx.compose.ui.text.font.FontWeight.Bold, style("esc").fontWeight)
+        assertEquals(.5f, style("to interrupt").color.alpha, .01f)
+        assertEquals(androidx.compose.ui.text.font.FontWeight.Normal, style("to interrupt").fontWeight)
+        assertEquals(1f, parsed.spanStyles.last().item.color.alpha, .01f)
+    }
     @Test fun wrappingRemovesDesktopPaddingAndPreservesTextStyles() {
         val parsed = TerminalText.parse("\u001b[31m  red text    \n\u001b[0mnext  ")
         val wrapped = TerminalText.trimLineEnds(parsed)
