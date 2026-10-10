@@ -54,19 +54,26 @@ import androidx.compose.ui.unit.sp
             }
             AnimatedContent(letters, label = "Keyboard keys") { alphabet ->
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val rows = if (alphabet) ('A'..'Z').map(Char::toString).chunked(6) else listOf(
+                    val rows = if (alphabet) listOf("QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM").map { it.map(Char::toString) } else listOf(
                         listOf("Esc", "Tab", "Enter", "⌫"), listOf("Home", "↑", "End", "PgUp"),
                         listOf("←", "↓", "→", "PgDn"), listOf("Space", "Insert", "Delete"))
-                    rows.forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    rows.forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(if (alphabet) 3.dp else 6.dp)) {
+                        val inset = (10 - row.size) / 2f
+                        if (alphabet && inset > 0) Spacer(Modifier.weight(inset))
                         row.forEach { key -> Keycap(key, Modifier.weight(if (key == "Space") 2f else 1f), enabled, modified) {
                             send(terminalKey(key, shift, control, alt))
                         } }
-                        if (alphabet) repeat(6 - row.size) { Spacer(Modifier.weight(1f)) }
+                        if (alphabet && inset > 0) Spacer(Modifier.weight(inset))
                     } }
+                    if (alphabet) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("Space", "⌫", "Enter").forEach { key -> Keycap(key, Modifier.weight(if (key == "Space") 3f else 1f), enabled, modified) {
+                            send(terminalKey(key, shift, control, alt))
+                        } }
+                    }
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton({ letters = !letters }) { Text(if (letters) "← Navigation" else "A–Z →", fontSize = 12.sp) }
+                TextButton({ letters = !letters }) { Text(if (letters) "← Navigation" else "QWERTY →", fontSize = 12.sp) }
             }
         }
     }
