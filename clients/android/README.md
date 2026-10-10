@@ -1,6 +1,6 @@
 # Crabigator for Android
 
-Native Kotlin and Jetpack Compose client. The session list opens first. The icon toolbar switches between the board and session list, filters live or ended work, searches, and opens an animated Settings popover. Selecting a session slides its live terminal in from the right. A growing message composer, microphone, and terminal keyboard stay at the bottom. At 720 dp and wider, the board stays beside the session.
+Native Kotlin and Jetpack Compose client. The session list opens first. The icon toolbar switches between the board and session list, filters live or ended work, searches, and opens an animated Settings popover. Selecting a session slides its live terminal in from the right. Drag right anywhere on the terminal to reveal the list; release a short drag to return, or swipe farther or flick to close. On tablets, selecting another row pages the terminal left or right in list order. Only the selected session has a live connection; outgoing pages keep their last screen until the transition finishes, then are discarded. A growing message composer, microphone, and terminal keyboard stay at the bottom. At 720 dp and wider, the board stays beside the session.
 
 ## Build and install
 
@@ -35,7 +35,7 @@ Android and FCM may delay background work under battery restrictions or while of
 
 ## Terminal
 
-The server supplies complete row-formatted ANSI snapshots. `TerminalText` converts foreground/background colors, bold, underline, inverse, and horizontal spacing into native text spans. Native text wraps to the detail pane by default; Style can switch to horizontal scrolling to preserve the desktop columns. The pin control follows new output; scrolling up releases it. The normalized conversation history sits above the live terminal in the same scrollable view, cached for late joiners by the Worker. Empty output has an explicit empty state. Viewing a session sends a five-second foreground heartbeat so the desktop keeps its screen current; no foreground service or background screen polling is required.
+The server supplies complete row-formatted ANSI snapshots. `TerminalText` converts foreground/background colors, bold, dim, underline, inverse, and horizontal spacing into native text spans. Native text wraps to the detail pane by default; Style can switch to horizontal scrolling to preserve the desktop columns. The pin control follows new output; scrolling up releases it. The normalized conversation history sits above the live terminal in the same scrollable view, cached for late joiners by the Worker. Empty output has an explicit empty state. Viewing a session sends a five-second foreground heartbeat so the desktop keeps its screen current; no foreground service or background screen polling is required.
 
 ## Input
 

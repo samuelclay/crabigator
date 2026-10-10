@@ -25,7 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 
-@Composable internal fun SessionDetail(s: AppState, model: SessionModel, wide: Boolean, close: () -> Unit, style: (Rect) -> Unit) {
+@Composable internal fun SessionDetail(s: AppState, model: SessionModel, wide: Boolean, close: () -> Unit, swipe: Modifier = Modifier, active: Boolean = true, style: (Rect) -> Unit) {
     val session = s.selected ?: return
     val p by model.preferences.collectAsStateWithLifecycle()
     var styleAnchor by remember { mutableStateOf(Rect.Zero) }
@@ -66,7 +66,7 @@ import org.json.JSONObject
             val terminalLimit = if (p.widgets && sections.isNotEmpty()) maxHeight * .65f else maxHeight
             val terminalHeight = p.terminalHeight.dp.coerceAtMost(terminalLimit)
             Column(Modifier.fillMaxSize()) {
-                Box(Modifier.then(if (p.terminalHeight == 0) Modifier.weight(1f) else Modifier.height(terminalHeight)).fillMaxWidth().background(Color(0xFF0B0F14))) {
+                Box(Modifier.then(if (p.terminalHeight == 0) Modifier.weight(1f) else Modifier.height(terminalHeight)).fillMaxWidth().then(swipe).background(Color(0xFF0B0F14))) {
                     if (!hasOutput) {
                         if (!loaded && waiting && session.active) CircularProgressIndicator(Modifier.align(Alignment.Center).size(24.dp), strokeWidth = 2.dp)
                         else Text("No terminal output", color = Muted, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))
@@ -85,7 +85,7 @@ import org.json.JSONObject
             }
         }
         if (s.prompt != null) PromptPanel(s.prompt, s.sending || !s.connected || s.revision == null) { action -> model.send(action.route, action.body, guarded = true, expectedRevision = s.revision) }
-        key(session.id) { SessionComposer(s, model) }
+        key(session.id) { SessionComposer(s, model, active) }
     }
 }
 private fun sessionWidgetSections(s: AppState, p: UiPreferences): List<Pair<String, List<Pair<String, String?>>>> {

@@ -39,7 +39,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.sqrt
 
-@Composable internal fun SessionComposer(s: AppState, model: SessionModel) {
+@Composable internal fun SessionComposer(s: AppState, model: SessionModel, active: Boolean = true) {
     val sessionId = s.selected?.id ?: return
     var draft by rememberSaveable(sessionId) { mutableStateOf("") }
     var shortcuts by remember { mutableStateOf(false) }
@@ -59,9 +59,10 @@ import kotlin.math.sqrt
     val keyboard = LocalSoftwareKeyboardController.current
     val singleLineHeight = with(LocalDensity.current) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() + 24.dp }.coerceAtLeast(48.dp)
     val buttonAlignment = Modifier.height(singleLineHeight).wrapContentHeight(Alignment.CenterVertically)
-    val enabled = s.connected && !s.sending && !processing
+    val enabled = active && s.connected && !s.sending && !processing
     val currentDraft by rememberUpdatedState(draft)
     fun send(text: String) {
+        if (!active || model.state.value.selected?.id != sessionId) return
         model.send("answer", JSONObject().put("text", text)) { if (draft == text) draft = "" }
     }
     fun cancel() {
@@ -69,6 +70,7 @@ import kotlin.math.sqrt
         recorder.cancel(); recording = false; processing = false; focusAfterProcessing = false; startAfterPermission = false
     }
     fun start() {
+        if (!active || model.state.value.selected?.id != sessionId) return
         error = null
         try {
             recorder.start(); recording = true; elapsed = 0; levels = List(32) { 0f }
@@ -107,6 +109,7 @@ import kotlin.math.sqrt
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer); cancel() }
     }
+    LaunchedEffect(active) { if (!active) { shortcuts = false; cancel() } }
     LaunchedEffect(recording) {
         if (recording) {
             val started = android.os.SystemClock.elapsedRealtime()

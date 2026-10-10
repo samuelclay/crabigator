@@ -12,7 +12,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.ui.draw.clipToBounds
@@ -41,6 +40,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flow
 import org.json.JSONObject
@@ -95,32 +97,60 @@ class MainActivity : ComponentActivity() {
         BoxWithConstraints(Modifier.weight(1f)) {
             val wide = maxWidth >= 720.dp
             val detailWidth = maxWidth - 361.dp
-            val sidebarWidth by animateDpAsState(if (s.selected == null || closing) maxWidth else 360.dp,
-                tween(320, easing = FastOutSlowInEasing), label = "Session list width")
-            val entrance = remember(s.selected?.id) { Animatable(1f) }
+            val entrance = remember(s.selected != null) { Animatable(1f) }
+            var swipe by remember(s.selected?.id) { mutableStateOf<Float?>(null) }
+            val scope = rememberCoroutineScope()
+            var settleJob by remember { mutableStateOf<Job?>(null) }
+            val currentlyClosing by rememberUpdatedState(closing)
+            val density = LocalDensity.current
+            val travel = with(density) { (if (wide) detailWidth else maxWidth).toPx() }
+            val progress = swipe ?: entrance.value
+            val sidebarWidth = if (s.selected == null) maxWidth else 360.dp + (maxWidth - 360.dp) * progress
             LaunchedEffect(s.selected?.id, closing) {
+                settleJob?.cancel()
+                swipe = null
                 entrance.animateTo(if (closing) 1f else 0f, tween(360, easing = FastOutSlowInEasing))
                 if (closing && model.state.value.selected?.id == closingSession) {
                     closingSession = null
                     model.close()
                 }
             }
+            val swipeModifier = if (closing) Modifier else Modifier.sessionSwipe(s.selected?.id to travel,
+                start = {
+                    if (!currentlyClosing && model.state.value.selected?.id == s.selected?.id) {
+                        settleJob?.cancel()
+                        swipe = entrance.value
+                        settleJob = scope.launch { entrance.stop() }
+                    }
+                },
+                drag = { delta -> swipe?.let { swipe = (it + delta / travel).coerceIn(0f, 1f) } },
+                finish = finish@{ velocity, cancelled ->
+                    val fraction = swipe ?: return@finish
+                    if (currentlyClosing || model.state.value.selected?.id != s.selected?.id) return@finish
+                    val threshold = with(density) { 600.dp.toPx() }
+                    val dismiss = !cancelled && (velocity > threshold || (fraction > .33f && velocity > -threshold))
+                    settleJob?.cancel()
+                    settleJob = scope.launch {
+                        entrance.snapTo(fraction)
+                        if (currentlyClosing || model.state.value.selected?.id != s.selected?.id) return@launch
+                        swipe = null
+                        if (dismiss) closeSession()
+                        else entrance.animateTo(0f, tween(280, easing = FastOutSlowInEasing))
+                    }
+                })
             val detail: @Composable () -> Unit = {
                 if (s.selected != null) Box(Modifier.fillMaxSize().clipToBounds()) {
-                    Box(Modifier.align(Alignment.CenterStart).then(if (wide) Modifier.requiredWidth(detailWidth).fillMaxHeight() else Modifier.fillMaxSize())
-                        .graphicsLayer { translationX = size.width * entrance.value }.background(Ink).pointerInput(Unit) { detectTapGestures {} }) {
-                        SessionDetail(s, model, wide, closeSession) { menuAnchor = it; menu = "Style" }
+                    Box(Modifier.fillMaxSize().graphicsLayer { translationX = size.width * progress }
+                        .background(Ink).pointerInput(Unit) { detectTapGestures {} }) {
+                        SessionPages(s, model, wide, closeSession, swipeModifier) { menuAnchor = it; menu = "Style" }
                     }
                 }
             }
-            if (wide) Row(Modifier.fillMaxSize().clipToBounds()) {
-                if (!preferences.sidebarRight) Box(Modifier.width(sidebarWidth).fillMaxHeight()) { Board(s, model, { menuAnchor = it; menu = "Settings" }) }
-                if (s.selected != null) {
-                    if (!preferences.sidebarRight) VerticalDivider(color = Color(0xFF303944))
-                    Box(Modifier.weight(1f).fillMaxHeight()) { detail() }
-                    if (preferences.sidebarRight) VerticalDivider(color = Color(0xFF303944))
-                }
-                if (preferences.sidebarRight) Box(Modifier.width(sidebarWidth).fillMaxHeight()) { Board(s, model, { menuAnchor = it; menu = "Settings" }) }
+            if (wide) Box(Modifier.fillMaxSize().clipToBounds()) {
+                Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterEnd else Alignment.CenterStart)
+                    .width(sidebarWidth).fillMaxHeight()) { Board(s, model, { menuAnchor = it; menu = "Settings" }) }
+                if (s.selected != null) Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterStart else Alignment.CenterEnd)
+                    .width(detailWidth).fillMaxHeight()) { detail() }
             } else Box(Modifier.fillMaxSize().clipToBounds()) {
                 Box(Modifier.fillMaxSize().then(if (s.selected != null) Modifier.clearAndSetSemantics {} else Modifier)) {
                     Board(s, model, { menuAnchor = it; menu = "Settings" })
@@ -157,6 +187,10 @@ class MainActivity : ComponentActivity() {
     var settingsAnchor by remember { mutableStateOf(Rect.Zero) }
     val prefs by model.preferences.collectAsStateWithLifecycle()
     val sessions = s.sessions.filter { (all || it.active) && "${it.title} ${it.repo} ${it.machine}".contains(query, true) }.sortedWith(compareByDescending<Session> { it.attention }.thenByDescending { maxOf(it.stats.promptAt, it.stats.completionAt, it.stats.startedAt) }.thenBy { it.id })
+    fun select(session: Session, order: List<Session> = sessions) {
+        val direction = if (order.indexOfFirst { it.id == session.id } < order.indexOfFirst { it.id == s.selected?.id }) -1 else 1
+        model.select(session, direction)
+    }
     val prs = s.prs.map { it.copy(sessions = it.sessions.filter { session -> all || session.active }) }.filter { (all || it.watched || it.sessions.isNotEmpty()) && "${it.title} ${it.repo} ${it.number}".contains(query, true) }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -178,18 +212,18 @@ class MainActivity : ComponentActivity() {
             LazyVerticalGrid(columns = GridCells.Fixed(count), contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 groups.forEach { (group, rows) ->
                     if (group.isNotEmpty()) item(key = "group-$group", span = { GridItemSpan(maxLineSpan) }) { Text(group, color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 10.dp)) }
-                    gridItems(rows, key = { it.id }) { SessionCard(it, it.id == s.selected?.id, now, prefs) { model.select(it) } }
+                    gridItems(rows, key = { it.id }) { SessionCard(it, it.id == s.selected?.id, now, prefs) { select(it, groups.flatMap { group -> group.second }) } }
                 }
             }
         }
         else LazyColumn(contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             run {
                 val attention = sessions.filter { it.attention }
-                if (attention.isNotEmpty()) { items(attention, key = { "attention-${it.id}" }) { SessionCard(it, it.id == s.selected?.id) { model.select(it) } }; item { Spacer(Modifier.height(8.dp)) } }
-                items(prs, key = { it.key }) { pr -> PrCard(pr, s.selected?.id, model::select) }
+                if (attention.isNotEmpty()) { items(attention, key = { "attention-${it.id}" }) { SessionCard(it, it.id == s.selected?.id) { select(it) } }; item { Spacer(Modifier.height(8.dp)) } }
+                items(prs, key = { it.key }) { pr -> PrCard(pr, s.selected?.id, { select(it) }) }
                 val owned = prs.flatMap { it.sessions }.map { it.id }.toSet()
                 val others = sessions.filter { it.id !in owned && !it.attention }
-                if (others.isNotEmpty()) { items(others, key = { it.id }) { SessionCard(it, it.id == s.selected?.id) { model.select(it) } } }
+                if (others.isNotEmpty()) { items(others, key = { it.id }) { SessionCard(it, it.id == s.selected?.id) { select(it) } } }
             }
         }
     }
