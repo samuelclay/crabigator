@@ -4,7 +4,11 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -53,7 +57,7 @@ import kotlin.math.sqrt
     val scope = rememberCoroutineScope()
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    val singleLineHeight = with(LocalDensity.current) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() + 32.dp }.coerceAtLeast(56.dp)
+    val singleLineHeight = with(LocalDensity.current) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() + 24.dp }.coerceAtLeast(48.dp)
     val buttonAlignment = Modifier.height(singleLineHeight).wrapContentHeight(Alignment.CenterVertically)
     val enabled = s.connected && !s.sending && !processing
     val currentDraft by rememberUpdatedState(draft)
@@ -159,9 +163,20 @@ import kotlin.math.sqrt
                         model.send("key-sequence", JSONObject().put("steps", JSONArray().put(JSONObject().put("type", "text").put("text", bytes))))
                     }
                 }
-                OutlinedTextField(draft, { draft = it }, placeholder = { Text("Message") },
-                    modifier = Modifier.weight(1f).focusRequester(focus), shape = RoundedCornerShape(16.dp), minLines = 1, maxLines = 6)
-                Control(R.drawable.ic_send, "Send", selected = true, enabled = enabled && draft.isNotBlank(), modifier = buttonAlignment) { send(draft) }
+                BasicTextField(draft, { draft = it }, minLines = 1, maxLines = 6,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(CrabColors.Title),
+                    modifier = Modifier.weight(1f).focusRequester(focus),
+                    decorationBox = { inner ->
+                        Box(Modifier.fillMaxWidth().border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline), RoundedCornerShape(14.dp))
+                            .padding(horizontal = 12.dp, vertical = 12.dp)) {
+                            if (draft.isEmpty()) Text("Message", style = MaterialTheme.typography.bodyLarge, color = Muted)
+                            inner()
+                        }
+                    })
+                AnimatedVisibility(draft.isNotBlank(), enter = fadeIn() + expandHorizontally(), exit = fadeOut() + shrinkHorizontally()) {
+                    Control(R.drawable.ic_send, "Send", selected = true, enabled = enabled && draft.isNotBlank(), modifier = buttonAlignment) { send(draft) }
+                }
             }
         }
     }
