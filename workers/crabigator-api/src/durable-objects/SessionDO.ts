@@ -1,3 +1,4 @@
+import { notifyMobilePrompt } from '../mobile-push';
 import type {
     SessionEvent,
     SessionState,
@@ -53,6 +54,11 @@ interface PersistentState {
     sessionId: string;
     state: SessionState;
     currentPrompt: CloudPromptData | null;
+    promptRevision?: number;
+    answeredRevision?: number;
+    /** A cleared structured prompt must not become a generic question at Stop. */
+    unstructuredAttentionBlocked?: boolean;
+    attentionPromptCount?: number;
     lastTitle: string | null;
     lastTitleHistory: string[] | null;
     /** Most recent recap event (status + latest finished recap). */
@@ -259,6 +265,9 @@ export class SessionDO implements DurableObject {
             const stored = await state.storage.get<PersistentState>('persistentState');
             if (stored) {
                 this.persistentState = { ...this.persistentState, ...stored };
+                // Existing accepted prompts also need the latch after an upgrade.
+                this.persistentState.unstructuredAttentionBlocked ??=
+                    stored.currentPrompt !== null || stored.answeredRevision !== undefined;
             }
             const storedInfo = await state.storage.get<SessionInfo>('sessionInfo');
             if (storedInfo) {
@@ -404,6 +413,7 @@ export class SessionDO implements DurableObject {
         // Use Hibernation API - DO can sleep between messages, reducing billed duration
         this.state.acceptWebSocket(server, ['desktop']);
         this.desktopWs = server;
+        if (this.hasPendingAttention()) this.notifyMobileAttention();
 
         // Event handling is done via webSocketMessage/webSocketClose/webSocketError methods
         // instead of addEventListener, enabling the DO to hibernate between messages
@@ -782,8 +792,15 @@ export class SessionDO implements DurableObject {
             return;
         }
 
+        const hadPendingAttention = this.hasPendingAttention();
         // Track whether persistent state changed (requires storage write)
+        // Only these events change attention. Comparing across an awaited stats
+        // update can otherwise count another event's prompt change twice.
+        const previousAttention = event.type === 'state' || event.type === 'prompt'
+            ? JSON.stringify([this.persistentState.state, this.persistentState.currentPrompt])
+            : null;
         let persistentChanged = false;
+        let attentionTurnChanged = false;
         const postBroadcastEvents: SessionEvent[] = [];
 
         // Update local state based on event type
@@ -793,6 +810,9 @@ export class SessionDO implements DurableObject {
                     const previousState = this.persistentState.state;
                     this.persistentState.state = event.state;
                     persistentChanged = true;
+                    if (event.state === 'ready' || event.state === 'complete') {
+                        this.persistentState.unstructuredAttentionBlocked = false;
+                    }
                     // Clear prompt when leaving interactive states (permission/question)
                     // This prevents stale prompts from being sent to reconnecting viewers
                     if (event.state !== 'permission' && event.state !== 'question') {
@@ -948,6 +968,19 @@ export class SessionDO implements DurableObject {
                 break;
             case 'stats': {
                 const stats = event as StatsEvent;
+                const previousPrompts = this.persistentState.attentionPromptCount;
+                if (Number.isSafeInteger(stats.prompts) && stats.prompts >= 0
+                    && (previousPrompts === undefined || stats.prompts > previousPrompts)) {
+                    this.persistentState.attentionPromptCount = stats.prompts;
+                    persistentChanged = true;
+                    if (previousPrompts !== undefined && this.persistentState.currentPrompt === null) {
+                        // Thinking is also emitted while an answered dialog closes.
+                        // Only a new user turn (or ready/complete) resets its latch.
+                        this.persistentState.unstructuredAttentionBlocked = false;
+                        this.persistentState.promptRevision = (this.persistentState.promptRevision || 0) + 1;
+                        attentionTurnChanged = true;
+                    }
+                }
                 this.statsUpdateQueue = this.statsUpdateQueue.then(async () => {
                     // Cache for late-joining viewers and persist low-frequency
                     // prompt/completion timestamps for the D1-backed session list.
@@ -997,6 +1030,7 @@ export class SessionDO implements DurableObject {
                 const newPromptJson = JSON.stringify(event.prompt);
                 if (currentPromptJson !== newPromptJson) {
                     this.persistentState.currentPrompt = event.prompt;
+                    if (event.prompt) this.persistentState.unstructuredAttentionBlocked = true;
                     persistentChanged = true;
                     if (event.prompt) {
                         this.publishMcp(McpEventName.prompt, promptEventData(event.prompt));
@@ -1008,6 +1042,11 @@ export class SessionDO implements DurableObject {
         // Increment ephemeral sequence
         this.ephemeralState.eventSequence++;
 
+        const attentionChanged = previousAttention !== null && previousAttention !== JSON.stringify([this.persistentState.state, this.persistentState.currentPrompt]);
+        if (attentionChanged) {
+            this.persistentState.promptRevision = (this.persistentState.promptRevision || 0) + 1;
+            persistentChanged = true;
+        }
         // Only persist to storage on meaningful state changes
         // This is the key optimization: screen/scrollback updates (high frequency)
         // no longer trigger storage writes
@@ -1016,6 +1055,7 @@ export class SessionDO implements DurableObject {
         }
 
         // Broadcast to all dashboard viewers (still immediate for real-time feel)
+        if ((attentionChanged || attentionTurnChanged) && (hadPendingAttention || this.hasPendingAttention())) this.notifyMobileAttention();
         this.broadcast(event);
         for (const followupEvent of postBroadcastEvents) {
             this.broadcast(followupEvent);
@@ -1217,6 +1257,36 @@ export class SessionDO implements DurableObject {
         this.broadcast(event);
     }
 
+    private hasPendingAttention(): boolean {
+        return ['question', 'permission'].includes(this.persistentState.state)
+            && (this.persistentState.currentPrompt !== null || !this.persistentState.unstructuredAttentionBlocked)
+            && this.persistentState.answeredRevision !== (this.persistentState.promptRevision || 0);
+    }
+
+    private notifyMobileAttention(): void {
+        if (!this.sessionInfo?.group_id) return;
+        this.state.waitUntil(notifyMobilePrompt(this.env, this.sessionInfo.group_id, this.sessionInfo.id)
+            .catch(error => console.error('Mobile notification failed:', error)));
+    }
+
+    private checkPromptRevision(revision: number | undefined): Response | null {
+        if (revision === undefined) return null;
+        if (Number.isSafeInteger(revision) && revision === (this.persistentState.promptRevision || 0)
+            && this.hasPendingAttention()) return null;
+        return new Response(JSON.stringify({ error: 'This question has changed or was already answered.' }),
+            { status: 409, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    private async consumePromptRevision(revision: number | undefined): Promise<void> {
+        if (revision === undefined) return;
+        // Reserve synchronously before yielding so simultaneous phone replies
+        // cannot both reach the terminal. A changed prompt opens a new revision.
+        this.persistentState.answeredRevision = revision;
+        this.persistentState.unstructuredAttentionBlocked = true;
+        await this.state.storage.put('persistentState', this.persistentState);
+        this.notifyMobileAttention();
+    }
+
     /**
      * Handle answer from mobile, forward to desktop
      */
@@ -1225,7 +1295,7 @@ export class SessionDO implements DurableObject {
             return new Response('Method not allowed', { status: 405 });
         }
 
-        let body: { text: string };
+        let body: { text: string; expected_prompt_revision?: number };
         try {
             body = await request.json();
         } catch {
@@ -1234,6 +1304,9 @@ export class SessionDO implements DurableObject {
                 { status: 400, headers: { 'Content-Type': 'application/json' } }
             );
         }
+
+        const stalePrompt = this.checkPromptRevision(body.expected_prompt_revision);
+        if (stalePrompt) return stalePrompt;
 
         if (!body.text) {
             return new Response(
@@ -1256,6 +1329,7 @@ export class SessionDO implements DurableObject {
 
         try {
             this.desktopWs.send(JSON.stringify(message));
+            await this.consumePromptRevision(body.expected_prompt_revision);
         } catch (error) {
             console.error('Error sending to desktop:', error);
             return new Response(
@@ -1279,7 +1353,7 @@ export class SessionDO implements DurableObject {
             return new Response('Method not allowed', { status: 405 });
         }
 
-        let body: { key: string };
+        let body: { key: string; expected_prompt_revision?: number };
         try {
             body = await request.json();
         } catch {
@@ -1288,6 +1362,9 @@ export class SessionDO implements DurableObject {
                 { status: 400, headers: { 'Content-Type': 'application/json' } }
             );
         }
+
+        const stalePrompt = this.checkPromptRevision(body.expected_prompt_revision);
+        if (stalePrompt) return stalePrompt;
 
         if (!body.key) {
             return new Response(
@@ -1307,6 +1384,7 @@ export class SessionDO implements DurableObject {
 
         try {
             this.desktopWs.send(JSON.stringify(message));
+            await this.consumePromptRevision(body.expected_prompt_revision);
         } catch (error) {
             console.error('Error sending key to desktop:', error);
             return new Response(
@@ -1330,7 +1408,7 @@ export class SessionDO implements DurableObject {
             return new Response('Method not allowed', { status: 405 });
         }
 
-        let body: { steps: KeyStep[] };
+        let body: { steps: KeyStep[]; expected_prompt_revision?: number };
         try {
             body = await request.json();
         } catch {
@@ -1339,6 +1417,9 @@ export class SessionDO implements DurableObject {
                 { status: 400, headers: { 'Content-Type': 'application/json' } }
             );
         }
+
+        const stalePrompt = this.checkPromptRevision(body.expected_prompt_revision);
+        if (stalePrompt) return stalePrompt;
 
         if (!body.steps || !Array.isArray(body.steps) || body.steps.length === 0) {
             return new Response(
@@ -1361,6 +1442,7 @@ export class SessionDO implements DurableObject {
 
         try {
             this.desktopWs.send(JSON.stringify(message));
+            await this.consumePromptRevision(body.expected_prompt_revision);
         } catch (error) {
             console.error('Error sending key sequence to desktop:', error);
             return new Response(
@@ -1465,8 +1547,7 @@ export class SessionDO implements DurableObject {
      */
     private async handleSnapshot(): Promise<Response> {
         const draft = await this.state.storage.get<string>('draft') || '';
-        const interactive = this.persistentState.state === 'permission'
-            || this.persistentState.state === 'question';
+        const attentionPending = this.hasPendingAttention();
         return new Response(
             JSON.stringify({
                 id: this.persistentState.sessionId || this.sessionInfo?.id || null,
@@ -1477,7 +1558,9 @@ export class SessionDO implements DurableObject {
                 state: this.persistentState.state,
                 title: this.persistentState.lastTitle,
                 title_history: this.persistentState.lastTitleHistory,
-                prompt: interactive ? this.persistentState.currentPrompt : null,
+                prompt: attentionPending ? this.persistentState.currentPrompt : null,
+                prompt_revision: this.persistentState.promptRevision || 0,
+                attention_pending: attentionPending,
                 recap: this.persistentState.lastRecap,
                 recap_history: this.persistentState.lastRecapHistory,
                 prs: this.persistentState.lastPrs,
@@ -1510,6 +1593,11 @@ export class SessionDO implements DurableObject {
                 has_screen: this.ephemeralState.lastScreen !== null,
                 title: this.persistentState.lastTitle,
                 event_sequence: this.ephemeralState.eventSequence,
+                prompt_revision: this.persistentState.promptRevision || 0,
+                answered_prompt_revision: this.persistentState.answeredRevision ?? null,
+                attention_pending: this.hasPendingAttention(),
+                unstructured_attention_blocked: this.persistentState.unstructuredAttentionBlocked ?? false,
+                attention_prompt_count: this.persistentState.attentionPromptCount ?? null,
                 desktop_connected: this.desktopWs !== null,
                 viewer_websockets: this.state.getWebSockets('viewer').length,
                 has_active_viewers: this.hasActiveViewers(),
@@ -1620,6 +1708,7 @@ export class SessionDO implements DurableObject {
         }
 
         this.desktopWs = null;
+        if (this.hasPendingAttention()) this.notifyMobileAttention();
         this.broadcastDesktopStatus(false);
         if (this.sessionInfo) {
             await this.notifySessionList('disconnect', { id: this.sessionInfo.id });
@@ -1642,6 +1731,7 @@ export class SessionDO implements DurableObject {
 
         console.error('Desktop WebSocket error:', error);
         this.desktopWs = null;
+        if (this.hasPendingAttention()) this.notifyMobileAttention();
         this.broadcastDesktopStatus(false);
         if (this.sessionInfo) {
             await this.notifySessionList('disconnect', { id: this.sessionInfo.id });

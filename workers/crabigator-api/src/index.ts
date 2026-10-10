@@ -1,3 +1,4 @@
+import { registerPush, mobileSnapshot } from './handlers/mobile';
 import { Router, jsonResponse } from './router';
 import type { Env } from './types/env';
 import type { SessionInfo } from './types/session';
@@ -198,6 +199,8 @@ router.post('/api/pr-overrides', setPrOverride);
 // Self-closing action page behind the TUI's ★/✕ links
 router.get('/pr-action', getPrActionPage);
 // Cross-session PR board (durable, D1-backed)
+router.post('/api/mobile/push', registerPush);
+router.get('/api/mobile/sessions/:id', mobileSnapshot);
 router.get('/api/prs/board', getPrBoard);
 router.get('/api/prs/search', searchSessionScrollback);
 // Explicitly watched PRs: add/remove, list, and board-relayed GitHub stats
