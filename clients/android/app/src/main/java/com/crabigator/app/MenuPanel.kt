@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.input.pointer.pointerInput
@@ -47,6 +48,7 @@ private val Cyan = CrabColors.Cyan
     BackHandler(menu != null) { if (menu == "Notifications") navigate("Settings") else close() }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
+        val phone = LocalConfiguration.current.smallestScreenWidthDp < 600
         val direction = LocalLayoutDirection.current
         val viewport = listOf(maxWidth.value, maxHeight.value, density.density, density.fontScale)
         var previousViewport by remember { mutableStateOf(viewport) }
@@ -59,7 +61,8 @@ private val Cyan = CrabColors.Cyan
         val left = (with(density) { anchor.right.toDp() } - menuWidth).coerceIn(safeLeft, (maxWidth - menuWidth - safeRight).coerceAtLeast(safeLeft))
         val latestTop = (maxHeight - safeBottom - 120.dp).coerceAtLeast(safeTop)
         val top = (with(density) { anchor.bottom.toDp() } + 8.dp).coerceIn(safeTop, latestTop)
-        val menuHeight = (maxHeight - top - safeBottom).coerceAtLeast(1.dp)
+        val availableHeight = (maxHeight - top - safeBottom).coerceAtLeast(1.dp)
+        val menuHeight = if (phone) availableHeight * .75f else availableHeight
         AnimatedVisibility(menu != null, enter = fadeIn(tween(160)), exit = fadeOut(tween(140))) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .12f)).clickable(onClickLabel = "Close menu", onClick = close))
         }

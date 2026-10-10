@@ -25,7 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 
-@Composable internal fun SessionDetail(s: AppState, model: SessionModel, wide: Boolean, style: (Rect) -> Unit) {
+@Composable internal fun SessionDetail(s: AppState, model: SessionModel, wide: Boolean, close: () -> Unit, style: (Rect) -> Unit) {
     val session = s.selected ?: return
     val p by model.preferences.collectAsStateWithLifecycle()
     var styleAnchor by remember { mutableStateOf(Rect.Zero) }
@@ -52,7 +52,7 @@ import org.json.JSONObject
     LaunchedEffect(pinned, vScroll.maxValue, s.history, s.screen) { if (pinned) vScroll.scrollTo(vScroll.maxValue) }
     Column(Modifier.fillMaxSize().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Control(if (wide) R.drawable.ic_close else R.drawable.ic_back, if (wide) "Close session" else "Back to list", onClick = model::close)
+            Control(if (wide) R.drawable.ic_close else R.drawable.ic_back, if (wide) "Close session" else "Back to list", onClick = close)
             Column(Modifier.weight(1f)) {
                 Text(session.title, color = CrabColors.Title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
                 Text(if (s.connected) "${session.machine} · Live" else if (!session.active) "${session.machine} · Ended" else "Reconnecting…", fontSize = 11.sp, lineHeight = 15.sp, color = if (s.connected) Mint else Muted)

@@ -83,24 +83,33 @@ class MainActivity : ComponentActivity() {
     val context = LocalContext.current
     var menu by remember { mutableStateOf<String?>(null) }
     var menuAnchor by remember { mutableStateOf(Rect.Zero) }
+    var closingSession by remember(s.selected?.id) { mutableStateOf<String?>(null) }
+    val closing = s.selected != null && closingSession == s.selected?.id
+    val closeSession: () -> Unit = { closingSession = s.selected?.id }
     val preferences by model.preferences.collectAsStateWithLifecycle()
     if (!s.paired) { Pairing(s, model); return }
-    BackHandler(s.selected != null) { model.close() }
+    BackHandler(s.selected != null, onBack = closeSession)
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().safeDrawingPadding().then(if (menu != null) Modifier.clearAndSetSemantics {} else Modifier)) {
         if (s.error != null) Surface(color = Color(0xFF4D2C2C)) { Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) { Text(s.error!!, Modifier.weight(1f), fontSize = 13.sp); TextButton(onClick = model::dismissError) { Text("Dismiss") } } }
         BoxWithConstraints(Modifier.weight(1f)) {
             val wide = maxWidth >= 720.dp
             val detailWidth = maxWidth - 361.dp
-            val sidebarWidth by animateDpAsState(if (s.selected == null) maxWidth else 360.dp,
+            val sidebarWidth by animateDpAsState(if (s.selected == null || closing) maxWidth else 360.dp,
                 tween(320, easing = FastOutSlowInEasing), label = "Session list width")
             val entrance = remember(s.selected?.id) { Animatable(1f) }
-            LaunchedEffect(s.selected?.id) { entrance.animateTo(0f, tween(360, easing = FastOutSlowInEasing)) }
+            LaunchedEffect(s.selected?.id, closing) {
+                entrance.animateTo(if (closing) 1f else 0f, tween(360, easing = FastOutSlowInEasing))
+                if (closing && model.state.value.selected?.id == closingSession) {
+                    closingSession = null
+                    model.close()
+                }
+            }
             val detail: @Composable () -> Unit = {
                 if (s.selected != null) Box(Modifier.fillMaxSize().clipToBounds()) {
                     Box(Modifier.align(Alignment.CenterStart).then(if (wide) Modifier.requiredWidth(detailWidth).fillMaxHeight() else Modifier.fillMaxSize())
                         .graphicsLayer { translationX = size.width * entrance.value }.background(Ink).pointerInput(Unit) { detectTapGestures {} }) {
-                        SessionDetail(s, model, wide) { menuAnchor = it; menu = "Style" }
+                        SessionDetail(s, model, wide, closeSession) { menuAnchor = it; menu = "Style" }
                     }
                 }
             }
