@@ -12,7 +12,7 @@
     "types": "wrangler types worker-configuration.d.ts --config wrangler.example.jsonc",
     "types:check": "wrangler types --check worker-configuration.d.ts --config wrangler.example.jsonc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "node --test scripts/test-ansi.mjs && vitest run"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",

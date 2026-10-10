@@ -185,8 +185,8 @@ export const ansiJs = `
                         for (let k = 0; k < codes.length; k++) {
                             const code = codes[k];
                             if (code === 0) { resetState(); }
-                            else if (code === 1) state.bold = true;
-                            else if (code === 2) state.dim = true;
+                            else if (code === 1) { state.bold = true; state.dim = false; }
+                            else if (code === 2) { state.dim = true; state.bold = false; }
                             else if (code === 3) state.italic = true;
                             else if (code === 4) state.underline = true;
                             else if (code === 7) state.inverse = true;
