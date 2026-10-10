@@ -4,11 +4,13 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.KeyStore
@@ -68,13 +70,23 @@ class Api(val credentials: Credentials) {
         val (origin, token) = credentials.connection()
         return Request.Builder().url(origin + path).header("Authorization", "Bearer $token")
     }
-    private suspend fun execute(request: Request): JSONObject = withContext(Dispatchers.IO) {
-        client.newCall(request).execute().use { response ->
-            val json = runCatching { JSONObject(response.body?.string().orEmpty()) }.getOrNull()
-            if (!response.isSuccessful) throw ApiException(response.code, json?.optString("error")
-                ?.takeIf { it.isNotBlank() } ?: "Request failed (${response.code})")
-            json ?: throw java.io.IOException("The server returned an unreadable response.")
-        }
+    private suspend fun execute(request: Request): JSONObject = suspendCancellableCoroutine { continuation ->
+        val call = client.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: java.io.IOException) {
+                if (continuation.isActive) continuation.resumeWithException(e)
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val result = runCatching { response.use {
+                    val json = runCatching { JSONObject(it.body?.string().orEmpty()) }.getOrNull()
+                    if (!it.isSuccessful) throw ApiException(it.code, json?.optString("error")
+                        ?.takeIf { message -> message.isNotBlank() } ?: "Request failed (${it.code})")
+                    json ?: throw java.io.IOException("The server returned an unreadable response.")
+                } }
+                if (continuation.isActive) result.fold(continuation::resume, continuation::resumeWithException)
+            }
+        })
     }
     suspend fun call(path: String, body: JSONObject? = null): JSONObject = execute(request(path)
         .apply { if (body != null) post(body.toString().toRequestBody("application/json".toMediaType())) }.build())
@@ -84,6 +96,10 @@ class Api(val credentials: Credentials) {
         require(token.isNotBlank()) { "The server did not return a pairing credential." }
         credentials.saveConnection(origin.trim(), token)
     }
+    suspend fun transcribe(file: java.io.File): String = execute(request("/api/transcribe").post(
+        MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("file", "recording.m4a", file.asRequestBody("audio/mp4".toMediaType()))
+            .build()).build()).text("text").trim()
     suspend fun snapshot(id: String) = call("/api/mobile/sessions/$id")
     suspend fun action(id: String, route: String, body: JSONObject, revision: Long? = null): JSONObject {
         val payload = JSONObject(body.toString())
