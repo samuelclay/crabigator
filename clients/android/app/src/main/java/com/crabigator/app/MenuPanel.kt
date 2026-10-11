@@ -185,16 +185,21 @@ private val Cyan = CrabColors.Cyan
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var status by remember { mutableStateOf(Notifications.status(context)) }
+    var sound by remember { mutableStateOf(Notifications.soundEnabled(context)) }
     DisposableEffect(lifecycle, context) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) status = Notifications.status(context)
+            if (event == Lifecycle.Event.ON_RESUME) {
+                status = Notifications.status(context)
+                sound = Notifications.soundEnabled(context)
+            }
         }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
     MenuSection("Questions and permissions") {
         Text(status, color = Cyan, fontSize = 15.sp)
+        CheckRow("Sound", sound) { sound = !sound; Notifications.setSoundEnabled(context, sound) }
         TextButton(requestPermission) { Text("Enable notifications") }
-        TextButton({ context.startActivity(Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName).putExtra(Settings.EXTRA_CHANNEL_ID, Notifications.CHANNEL)) }) { Text("Sound, vibration and lock screen") }
+        TextButton({ context.startActivity(Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName).putExtra(Settings.EXTRA_CHANNEL_ID, Notifications.CHANNEL)) }) { Text("Android notification settings") }
     }
 }

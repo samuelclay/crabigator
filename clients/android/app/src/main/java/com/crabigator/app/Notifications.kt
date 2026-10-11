@@ -24,6 +24,11 @@ class CrabigatorApplication : Application() {
 object Notifications {
     const val CHANNEL = "questions"
     fun channel(context: Context) { context.getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL, "Questions and permissions", NotificationManager.IMPORTANCE_HIGH).apply { description = "Answer your Crabigator sessions"; lockscreenVisibility = Notification.VISIBILITY_PRIVATE }) }
+    private fun preferences(context: Context) = context.getSharedPreferences("notifications", Context.MODE_PRIVATE)
+    fun soundEnabled(context: Context): Boolean = preferences(context).getBoolean("sound", false)
+    fun setSoundEnabled(context: Context, enabled: Boolean) { preferences(context).edit().putBoolean("sound", enabled).apply() }
+    private fun builder(context: Context) = NotificationCompat.Builder(context, CHANNEL).setSilent(!soundEnabled(context))
+
     fun register(context: Context, api: Api) {
         if (FirebaseApp.getApps(context).isEmpty() || api.credentials.token.isBlank()) return
         val request = OneTimeWorkRequestBuilder<PushRegistrationWorker>()
@@ -69,7 +74,7 @@ object Notifications {
         val open = PendingIntent.getActivity(context, id.hashCode(), Intent(context, MainActivity::class.java).putExtra("session_id", id).setData(android.net.Uri.parse("crabigator://session/$id")), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val details = PromptActions.details(prompt)
         val text = listOf(PromptActions.title(prompt), details.take(2000) + if (details.length > 2000) "…" else "").filter { it.isNotBlank() }.joinToString("\n")
-        val builder = NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_crabigator).setContentTitle(title).setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text)).setContentIntent(open).setOnlyAlertOnce(true).setAutoCancel(false).setCategory(NotificationCompat.CATEGORY_MESSAGE).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setTimeoutAfter(3600000).setExtras(android.os.Bundle().apply { putString("session_id", id); putLong("revision", revision) })
+        val builder = builder(context).setSmallIcon(R.drawable.ic_crabigator).setContentTitle(title).setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text)).setContentIntent(open).setOnlyAlertOnce(true).setAutoCancel(false).setCategory(NotificationCompat.CATEGORY_MESSAGE).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setTimeoutAfter(3600000).setExtras(android.os.Bundle().apply { putString("session_id", id); putLong("revision", revision) })
         fun pending(action: String, option: Int = -1, mutable: Boolean = false): PendingIntent {
             val intent = Intent(context, ReplyReceiver::class.java).setAction(action).setData(android.net.Uri.parse("crabigator://reply/$id/$revision/$option")).putExtra("session_id", id).putExtra("revision", revision).putExtra("option", option)
             return PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE)
@@ -83,7 +88,7 @@ object Notifications {
     @Suppress("MissingPermission")
     fun failed(context: Context, id: String, message: String = "Open the session to try again.") {
         val open = PendingIntent.getActivity(context, id.hashCode(), Intent(context, MainActivity::class.java).putExtra("session_id", id), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        NotificationManagerCompat.from(context).notify(id, 1, NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_crabigator).setContentTitle("Answer was not sent").setContentText(message).setContentIntent(open).setAutoCancel(true).build())
+        NotificationManagerCompat.from(context).notify(id, 1, builder(context).setSmallIcon(R.drawable.ic_crabigator).setContentTitle("Answer was not sent").setContentText(message).setContentIntent(open).setAutoCancel(true).build())
     }
 }
 class PushService : FirebaseMessagingService() {
