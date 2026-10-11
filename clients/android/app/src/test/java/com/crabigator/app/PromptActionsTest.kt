@@ -6,6 +6,16 @@ import org.junit.Test
 
 class PromptActionsTest {
     private fun prompt(extra: String = "") = JSONObject("""{"prompt_type":"question","cursor_row":3,"questions":[{"question":"Which one?","options":[{"label":"One","value":"1"},{"label":"Two","value":"2"}],"allows_other":true}]$extra}""")
+    @Test fun terminalStatusSymbolsKeepTheirCharactersAndAnsiColor() {
+        val text = "  ⏵⏵ auto mode on · 1 shell · ⏺"
+        val parsed = TerminalText.parse("\u001b[33m$text\u001b[0m")
+        assertEquals(text, parsed.text)
+        assertEquals(TerminalText.palette(3), parsed.spanStyles.first().item.color)
+        val fontSpans = parsed.spanStyles.filter { it.item.fontFamily != null }
+        assertEquals(listOf("⏵", "⏵", "⏺"), fontSpans.map { parsed.text.substring(it.start, it.end) })
+        val wrapped = TerminalText.trimLineEnds(parsed)
+        assertEquals(fontSpans, wrapped.spanStyles.filter { it.item.fontFamily != null })
+    }
     @Test fun screenIntensityMatchesCodexWorkingAndBuildOutput() {
         val parsed = TerminalText.parse("\u001b[2mBUILD SUCCESSFUL\u001b[0m normal\n\u001b[2mWorking (\u001b[1mesc\u001b[2m to interrupt)\u001b[22m normal")
         fun style(word: String) = parsed.spanStyles.first { parsed.text.indexOf(word) in it.start until it.end }.item

@@ -3,11 +3,14 @@ package com.crabigator.app
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 
 /** Screen frames are complete, row-formatted snapshots, not an incremental VT stream. */
 object TerminalText {
+    private val statusSymbols = FontFamily(Font(R.font.noto_sans_symbols2))
     /** Screen rows contain padding to the desktop width; wrapping must not wrap that padding. */
     fun trimLineEnds(input: AnnotatedString): AnnotatedString {
         val result = AnnotatedString.Builder()
@@ -38,9 +41,13 @@ object TerminalText {
         val pending = StringBuilder()
         fun flush() {
             if (pending.isEmpty()) return
-            val start = out.length; out.append(pending.toString()); pending.clear()
+            val start = out.length; val text = pending.toString(); out.append(text); pending.clear()
             val foreground = if (inverse) bg.takeOrElse { Color(0xFF11151B) } else fg
             out.addStyle(SpanStyle(color = foreground.copy(alpha = if (dim) .5f else 1f), background = if (inverse) fg else bg, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal, textDecoration = if (underline) TextDecoration.Underline else TextDecoration.None), start, out.length)
+            // Samsung's monospace fallback lacks these terminal transport/status symbols.
+            text.forEachIndexed { index, char ->
+                if (char in '\u23f4'..'\u23fa') out.addStyle(SpanStyle(fontFamily = statusSymbols), start + index, start + index + 1)
+            }
         }
         fun append(s: String) { pending.append(s); column += s.length }
         while (i < input.length) {
@@ -86,7 +93,7 @@ object TerminalText {
                 '\n' -> { pending.append('\n'); column = 0 }
                 '\r' -> Unit
                 '\t' -> append(" ".repeat(8 - column % 8))
-                else -> if (input[i] >= ' ') { append(if (input[i] == '\u23fa') "●" else input[i].toString()) }
+                else -> if (input[i] >= ' ') { append(input[i].toString()) }
             }; i++
         }
         flush()
