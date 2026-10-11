@@ -12,7 +12,7 @@ class PromptActionsTest {
         assertEquals(text, parsed.text)
         assertEquals(TerminalText.palette(3), parsed.spanStyles.first().item.color)
         val fontSpans = parsed.spanStyles.filter { it.item.fontFamily != null }
-        assertEquals(listOf("⏵", "⏵", "⏺"), fontSpans.map { parsed.text.substring(it.start, it.end) })
+        assertEquals(listOf("⏵", "⏵", "·", "·", "⏺"), fontSpans.map { parsed.text.substring(it.start, it.end) })
         val wrapped = TerminalText.trimLineEnds(parsed)
         assertEquals(fontSpans, wrapped.spanStyles.filter { it.item.fontFamily != null })
     }

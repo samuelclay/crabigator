@@ -1,5 +1,7 @@
 package com.crabigator.app
 
+import android.graphics.Paint
+import android.graphics.Typeface
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,8 +37,11 @@ import org.json.JSONObject
     val sections = remember(s.details, session, p, s.prs) { sessionWidgetSections(s, p) }
     val hasOutput = s.history.isNotEmpty() || s.screen.isNotEmpty()
     val loaded = s.historyLoaded && s.screenLoaded
-    val history = remember(s.history, p.wrap) { TerminalText.parse(s.history).let { if (p.wrap) TerminalText.trimLineEnds(it) else it } }
-    val screen = remember(s.screen, p.wrap) { TerminalText.parse(s.screen).let { if (p.wrap) TerminalText.trimLineEnds(it) else it } }
+    val cellWidthEm = remember {
+        Paint().apply { typeface = Typeface.MONOSPACE; textSize = 1000f }.measureText(" ") / 1000f
+    }
+    val history = remember(s.history, p.wrap, cellWidthEm) { TerminalText.parse(s.history, cellWidthEm).let { if (p.wrap) TerminalText.trimLineEnds(it) else it } }
+    val screen = remember(s.screen, p.wrap, cellWidthEm) { TerminalText.parse(s.screen, cellWidthEm).let { if (p.wrap) TerminalText.trimLineEnds(it) else it } }
     val vScroll = key(session.id) { rememberScrollState() }
     val hScroll = rememberScrollState()
     val userScroll = remember(vScroll) { object : NestedScrollConnection {

@@ -7,6 +7,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextGeometricTransform
 
 /** Screen frames are complete, row-formatted snapshots, not an incremental VT stream. */
 object TerminalText {
@@ -34,7 +35,7 @@ object TerminalText {
         fun channel(v: Int) = if (v == 0) 0 else 55 + v * 40
         return Color(channel(c / 36), channel(c / 6 % 6), channel(c % 6))
     }
-    fun parse(input: String): AnnotatedString {
+    fun parse(input: String, cellWidthEm: Float = .6f): AnnotatedString {
         val out = AnnotatedString.Builder()
         var fg = Color(0xFFDDE3ED); var bg = Color.Unspecified; var bold = false; var dim = false; var underline = false; var inverse = false
         var i = 0; var column = 0
@@ -44,9 +45,11 @@ object TerminalText {
             val start = out.length; val text = pending.toString(); out.append(text); pending.clear()
             val foreground = if (inverse) bg.takeOrElse { Color(0xFF11151B) } else fg
             out.addStyle(SpanStyle(color = foreground.copy(alpha = if (dim) .5f else 1f), background = if (inverse) fg else bg, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal, textDecoration = if (underline) TextDecoration.Underline else TextDecoration.None), start, out.length)
-            // Samsung's monospace fallback lacks these terminal transport/status symbols.
+            // The bundled symbols advance 0.6em; match this device's monospace cell exactly.
             text.forEachIndexed { index, char ->
-                if (char in '\u23f4'..'\u23fa') out.addStyle(SpanStyle(fontFamily = statusSymbols), start + index, start + index + 1)
+                if (char in '\u23f4'..'\u23fa' || char in "·✢✳✶✻✽") {
+                    out.addStyle(SpanStyle(fontFamily = statusSymbols, textGeometricTransform = TextGeometricTransform(scaleX = cellWidthEm / .6f)), start + index, start + index + 1)
+                }
             }
         }
         fun append(s: String) { pending.append(s); column += s.length }
