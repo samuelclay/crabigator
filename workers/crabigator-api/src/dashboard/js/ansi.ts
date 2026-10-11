@@ -22,13 +22,6 @@ export const ansiJs = `
 
             text = text.split('\\n').map(trimLineEndPreserveAnsi).join('\\n');
 
-            // Claude Code's paragraph bullet ⏺ (and friends ⏸ ⏹, plus the
-            // ✳ spinner) are single-width in the terminal, but browsers give
-            // them double-width color emoji glyphs by default. That makes text
-            // bounce sideways when the bullet blinks. Variation selector 15
-            // (U+FE0E) forces the single-width monochrome text glyph.
-            text = text.replace(/[\\u23F8-\\u23FA\\u2733]/g, '$&\\uFE0E');
-
             const colors = {
                 30: '#0d1117', 31: '#f85149', 32: '#3fb950', 33: '#d29922',
                 34: '#58a6ff', 35: '#bc8cff', 36: '#39c5cf', 37: '#c9d1d9',
@@ -251,7 +244,13 @@ export const ansiJs = `
 
                 // Regular character - escape HTML
                 const ch = text[i];
-                if (ch === '<') result += '&lt;';
+                // Text presentation alone does not make fallback glyphs monospaced.
+                // Give every status/animation symbol exactly one terminal cell.
+                if (/[\\u23F4-\\u23FA·✢✳✶✻✽]/.test(ch)) {
+                    result += '<span class="terminal-symbol">' + ch + '\\uFE0E</span>';
+                    if (text[i + 1] === '\\uFE0E' || text[i + 1] === '\\uFE0F') i++;
+                }
+                else if (ch === '<') result += '&lt;';
                 else if (ch === '>') result += '&gt;';
                 else if (ch === '&') result += '&amp;';
                 else result += ch;
@@ -283,24 +282,18 @@ export const ansiJs = `
                 const leftIdx = findHtmlIndex(html, leftEnd);
                 const rightIdx = findHtmlIndex(html, rightStart);
 
-                let leftHtml = html.slice(0, leftIdx);
-                let rightHtml = html.slice(rightIdx);
-
-                // Check if we need to close/reopen a span at the split
-                // Count open spans in left part
-                const leftSpanOpens = (leftHtml.match(/<span[^>]*>/g) || []).length;
-                const leftSpanCloses = (leftHtml.match(/<\\/span>/g) || []).length;
-                const unclosedSpans = leftSpanOpens - leftSpanCloses;
-
-                if (unclosedSpans > 0) {
-                    // Find the last unclosed span's style
-                    const spanMatches = leftHtml.match(/<span[^>]*>/g) || [];
-                    const lastSpan = spanMatches[spanMatches.length - 1];
-                    // Close it in left, reopen in right
-                    leftHtml += '</span>';
-                    rightHtml = lastSpan + rightHtml;
+                function openSpansAt(index) {
+                    const stack = [];
+                    for (const match of html.slice(0, index).matchAll(/<\\/?span\\b[^>]*>/g)) {
+                        if (match[0].startsWith('</')) stack.pop();
+                        else stack.push(match[0]);
+                    }
+                    return stack;
                 }
-
+                // Symbol spans may already be closed, and ANSI styles can change
+                // inside the discarded gap. Balance each boundary independently.
+                const leftHtml = html.slice(0, leftIdx) + '</span>'.repeat(openSpansAt(leftIdx).length);
+                const rightHtml = openSpansAt(rightIdx).join('') + html.slice(rightIdx);
                 return [leftHtml, rightHtml];
             }
 

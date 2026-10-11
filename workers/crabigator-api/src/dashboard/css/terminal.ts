@@ -22,6 +22,12 @@ export const terminalCss = `
     max-width: 100%;
     display: block;
 }
+/* Fallback symbol fonts have proportional advances, even inside monospace text. */
+.terminal-symbol {
+    display: inline-block;
+    width: 1ch;
+    text-align: center;
+}
 /* Scroll active - click to enable scrolling */
 .terminal.scroll-active {
     overflow-y: auto;
