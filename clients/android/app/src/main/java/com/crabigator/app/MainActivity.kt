@@ -42,9 +42,12 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -221,7 +224,7 @@ class MainActivity : ComponentActivity() {
             run {
                 val attention = sessions.filter { it.attention }
                 if (attention.isNotEmpty()) { items(attention, key = { "attention-${it.id}" }) { SessionCard(it, it.id == selectedId) { select(it) } }; item { Spacer(Modifier.height(8.dp)) } }
-                items(prs, key = { it.key }) { pr -> PrCard(pr, selectedId, { select(it) }) }
+                items(prs, key = { it.key }) { pr -> PrCard(pr) { select(it) } }
                 val owned = prs.flatMap { it.sessions }.map { it.id }.toSet()
                 val others = sessions.filter { it.id !in owned && !it.attention }
                 if (others.isNotEmpty()) { items(others, key = { it.id }) { SessionCard(it, it.id == selectedId) { select(it) } } }
@@ -234,7 +237,7 @@ class MainActivity : ComponentActivity() {
         Icon(painterResource(icon), contentDescription = label, tint = if (selected) Peach else Muted, modifier = Modifier.size(22.dp))
     }
 }
-@Composable private fun PrCard(pr: PullRequest, selected: String?, select: (Session) -> Unit) {
+@Composable private fun PrCard(pr: PullRequest, select: (Session) -> Unit) {
     val uri = LocalUriHandler.current
     Surface(color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFF303A46))) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -244,53 +247,54 @@ class MainActivity : ComponentActivity() {
                 if (pr.state.isNotBlank()) Text(pr.state.lowercase().replaceFirstChar { it.uppercase() }, color = if (pr.state == "MERGED") CrabColors.Purple else Mint, fontSize = 12.sp, lineHeight = 16.sp)
                 if (pr.checks.isNotBlank()) Text(pr.checks, color = if (pr.checks.contains("failed")) CrabColors.Red else Muted, fontSize = 12.sp, lineHeight = 16.sp)
             }
-            pr.sessions.forEach { session -> HorizontalDivider(color = Color(0xFF303A46)); SessionRow(session, selected == session.id) { select(session) } }
+            pr.sessions.forEach { session -> HorizontalDivider(color = Color(0xFF303A46)); SessionRow(session) { select(session) } }
             if (pr.sessions.isEmpty() && pr.url.startsWith("https://")) Control(R.drawable.ic_external, "Open pull request") { uri.openUri(pr.url) }
         }
     }
 }
 @Composable private fun SessionCard(session: Session, selected: Boolean, now: State<Long>? = null, prefs: UiPreferences = UiPreferences(), open: () -> Unit) {
     Surface(onClick = open, color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected) CrabColors.Title else Color(0xFF303A46))) {
-        Column(Modifier.padding(if (prefs.density == "compact") 6.dp else 10.dp)) {
-            SessionRow(session, selected, clickable = false, open = open)
-            if (now != null) SessionStatsFooter(session, now, prefs)
+        Box(Modifier.padding(if (prefs.density == "compact") 6.dp else 10.dp)) {
+            SessionRow(session, clickable = false, footer = {
+                if (now != null) SessionStatsFooter(session, now, prefs)
+            }, open = open)
         }
     }
 }
 @Composable private fun SessionStatsFooter(session: Session, clock: State<Long>, prefs: UiPreferences) {
     val now = clock.value
     val stats = session.stats
-    FlowRow(Modifier.fillMaxWidth().padding(top = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    FlowRow(Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         if (prefs.visible("sessionTime")) Stat("◉", sessionDuration(stats.duration(session.active, now)), "Session time", CrabColors.Blue)
         if (prefs.visible("thinkingTime")) Stat("◐", sessionDuration(stats.thinkingSeconds), "Thinking time", Mint)
-        fun activity(countKey: String, ageKey: String, count: Long?, at: Long): String =
-            if (prefs.visible(countKey)) stats.activity(count, if (prefs.visible(ageKey)) at else 0, now)
-            else if (at > 0) sessionAge(at, now) else "—"
-        if (prefs.visible("prompts") || prefs.visible("promptRecency")) Stat("⟩", activity("prompts", "promptRecency", stats.prompts, stats.promptAt), "Prompts; latest prompt age", CrabColors.Title)
-        if (prefs.visible("completions") || prefs.visible("completionRecency")) Stat("⋖", activity("completions", "completionRecency", stats.completions, stats.completionAt), "Completions; latest completion age", CrabColors.Title)
+        if (prefs.visible("promptRecency")) Stat("⟩", if (stats.promptAt > 0) sessionAge(stats.promptAt, now) else "—", "Last prompt", Muted)
+        if (prefs.visible("completionRecency")) Stat("⋖", if (stats.completionAt > 0) sessionAge(stats.completionAt, now) else "—", "Last completion", Muted)
         if (prefs.visible("tools")) Stat("⚒", stats.tools?.toString() ?: "—", "Tools", Peach)
         if (prefs.visible("compactions")) Stat("⊜", stats.compactions?.toString() ?: "—", "Compactions", CrabColors.Pink)
     }
 }
 @Composable private fun Stat(symbol: String, value: String, label: String, color: Color) {
-    Row(Modifier.clearAndSetSemantics { contentDescription = "$label: $value" }, horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.clearAndSetSemantics { contentDescription = "$label: $value" }, horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(symbol, color = Muted, fontSize = 13.sp, lineHeight = 16.sp)
-        Text(value, color = color, fontSize = 11.sp, lineHeight = 16.sp)
+        Text(value, color = color, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.sp)
     }
 }
-@Composable private fun SessionRow(session: Session, selected: Boolean, clickable: Boolean = true, open: () -> Unit) {
+@Composable private fun SessionRow(session: Session, clickable: Boolean = true, footer: @Composable () -> Unit = {}, open: () -> Unit) {
     val color = remember(session.color) { runCatching { Color(android.graphics.Color.parseColor(session.color)) }.getOrDefault(Peach) }
     val background = remember(session.background) { runCatching { Color(android.graphics.Color.parseColor(session.background)) }.getOrDefault(Panel) }
-
-    Row(Modifier.fillMaxWidth().then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-        Surface(color = background, shape = RoundedCornerShape(8.dp)) { Text(session.glyph, color = color, fontSize = 16.sp, lineHeight = 20.sp, modifier = Modifier.padding(5.dp)) }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text(session.title, color = CrabColors.Title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                SessionStatus(session)
-                Text(session.machine, color = Muted, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+    val title = remember(session.title, session.machine) { buildAnnotatedString {
+        append(session.title)
+        if (session.machine.isNotBlank()) withStyle(SpanStyle(color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Normal)) {
+            append("  ·\u00a0${session.machine}")
+        }
+    } }
+    Row(Modifier.fillMaxWidth().then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+        Surface(color = background, shape = RoundedCornerShape(8.dp), modifier = Modifier.width(58.dp)) { Text(session.glyph, color = color, fontSize = 16.sp, lineHeight = 20.sp, textAlign = TextAlign.Center, maxLines = 1, softWrap = false, modifier = Modifier.padding(vertical = 5.dp)) }
+        SessionStatus(session)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(title, color = CrabColors.Title, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium)
+            footer()
         }
     }
 }

@@ -2,6 +2,7 @@ package com.crabigator.app
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material3.Text
@@ -10,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -47,7 +49,7 @@ internal object CrabColors {
     }
     if (thinking) {
         val width = with(LocalDensity.current) { 12.sp.toDp() }
-        val height = with(LocalDensity.current) { 16.sp.toDp() }
+        val height = with(LocalDensity.current) { 19.sp.toDp() }
         Canvas(Modifier.size(width, height).clearAndSetSemantics { contentDescription = "Working" }) {
             // Draw the braille cells on one fixed grid. Font fallback can give
             // different glyphs different bounds and make the row appear to jump.
@@ -61,13 +63,13 @@ internal object CrabColors {
         }
         return
     }
-    val (label, color) = if (!session.active) "○ Ended" to CrabColors.Gray else when (session.state) {
-        "permission" -> "» ? « Perm" to CrabColors.Yellow
-        "question" -> "» ? « Ask" to CrabColors.Orange
-        "complete" -> "✓ Complete" to CrabColors.Purple
-        "interrupted" -> "⊘ Interrupted" to CrabColors.Red
-        else -> "○ Ready" to CrabColors.Gray
+    val (symbol, label, color) = if (!session.active) Triple("○", "Ended", CrabColors.Gray) else when (session.state) {
+        "permission" -> Triple("!", "Permission needed", CrabColors.Yellow)
+        "question" -> Triple("?", "Question", CrabColors.Orange)
+        "complete" -> Triple("✓", "Complete", CrabColors.Purple)
+        "interrupted" -> Triple("⊘", "Interrupted", CrabColors.Red)
+        else -> Triple("○", "Ready", CrabColors.Gray)
     }
-    Text(label, color = color, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 16.sp,
-        modifier = Modifier.clearAndSetSemantics { contentDescription = label })
+    Text(symbol, color = color, fontFamily = FontFamily.Monospace, fontSize = 14.sp, lineHeight = 19.sp, textAlign = TextAlign.Center,
+        modifier = Modifier.width(with(LocalDensity.current) { 12.sp.toDp() }).clearAndSetSemantics { contentDescription = label })
 }

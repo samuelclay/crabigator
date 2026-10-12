@@ -11,14 +11,13 @@ class SessionStatsTest {
         assertEquals(1100L, stats.duration(true, 2100))
         assertEquals(590L, stats.duration(false, 2000))
         assertEquals(590L, stats.duration(false, 2100))
-        assertEquals("4 · 8m ago", stats.activity(stats.prompts, stats.promptAt, 2000))
-        assertEquals("3 · 7m ago", stats.activity(stats.completions, stats.completionAt, 2000))
+        assertEquals("8m ago", sessionAge(stats.promptAt, 2000))
+        assertEquals("7m ago", sessionAge(stats.completionAt, 2000))
         assertEquals("2m", sessionDuration(stats.thinkingSeconds))
     }
     @Test fun missingStatsAndUncleanEndsDoNotInventLiveTime() {
         val unknown = SessionStats.parse(JSONObject("{}"))
         assertEquals("—", sessionDuration(unknown.duration(true, 2000)))
-        assertEquals("—", unknown.activity(unknown.prompts, 0, 2000))
         val stopped = SessionStats(startedAt = 1000, lastSeenAt = 1500)
         assertEquals(500L, stopped.duration(false, 9000))
         assertEquals(600L, stopped.copy(endedAt = 1600).duration(false, 9000))

@@ -157,7 +157,7 @@ private val Cyan = CrabColors.Cyan
         Spacer(Modifier.height(8.dp)); Text("Density", color = Muted, fontSize = 12.sp)
         Choices(listOf("Compact", "Comfortable"), if (p.density == "compact") 0 else 1) { n -> model.style { it.copy(density = if (n == 0) "compact" else "comfortable") } }
     }
-    MenuSection("Visible stats") { listOf("sessionTime" to "Session time", "thinkingTime" to "Thinking time", "prompts" to "Prompt count", "promptRecency" to "Last prompt", "completions" to "Completion count", "completionRecency" to "Last completion", "tools" to "Tools", "compactions" to "Compactions").forEach { (key,label) -> CheckRow(label, p.visible(key)) { model.style { it.toggle(key) } } } }
+    MenuSection("Visible stats") { listOf("sessionTime" to "Session time", "thinkingTime" to "Thinking time", "promptRecency" to "Last prompt", "completionRecency" to "Last completion", "tools" to "Tools", "compactions" to "Compactions").forEach { (key,label) -> CheckRow(label, p.visible(key)) { model.style { it.toggle(key) } } } }
     MenuSection("Sign-in") {
         val identities = account?.array("identities").orEmpty()
         if (account == null && message.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())

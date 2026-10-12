@@ -21,11 +21,6 @@ data class SessionStats(
         return if (startedAt > 0 && end > 0) (end - startedAt).coerceAtLeast(0) else workSeconds
     }
 
-    fun activity(count: Long?, changedAt: Long, now: Long): String {
-        if (count == null) return "—"
-        return if (changedAt > 0 && count > 0) "$count · ${sessionAge(changedAt, now)}" else "$count"
-    }
-
     companion object {
         fun parse(session: JSONObject): SessionStats {
             val stats = session.optJSONObject("stats")
