@@ -1,22 +1,17 @@
 package com.crabigator.app
 
-import android.graphics.Paint
-import android.graphics.Typeface
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.*
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -37,24 +32,6 @@ import org.json.JSONObject
     val sections = remember(s.details, session, p, s.prs) { sessionWidgetSections(s, p) }
     val hasOutput = s.history.isNotEmpty() || s.screen.isNotEmpty()
     val loaded = s.historyLoaded && s.screenLoaded
-    val cellWidthEm = remember {
-        Paint().apply { typeface = Typeface.MONOSPACE; textSize = 1000f }.measureText(" ") / 1000f
-    }
-    val history = remember(s.history, p.wrap, cellWidthEm) { TerminalText.parse(s.history, cellWidthEm).let { if (p.wrap) TerminalText.trimLineEnds(it) else it } }
-    val screen = remember(s.screen, p.wrap, cellWidthEm) { TerminalText.parse(s.screen, cellWidthEm).let { if (p.wrap) TerminalText.trimLineEnds(it) else it } }
-    val vScroll = key(session.id) { rememberScrollState() }
-    val hScroll = rememberScrollState()
-    val userScroll = remember(vScroll) { object : NestedScrollConnection {
-        override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-            if (source == NestedScrollSource.UserInput && available.y > 0) pinned = false
-            return Offset.Zero
-        }
-        override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-            if (source == NestedScrollSource.UserInput && consumed.y < 0 && !vScroll.canScrollForward) pinned = true
-            return Offset.Zero
-        }
-    } }
-    LaunchedEffect(pinned, vScroll.maxValue, s.history, s.screen) { if (pinned) vScroll.scrollTo(vScroll.maxValue) }
     Column(Modifier.fillMaxSize().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Control(if (wide) R.drawable.ic_close else R.drawable.ic_back, if (wide) "Close session" else "Back to list", onClick = close)
@@ -75,16 +52,7 @@ import org.json.JSONObject
                     if (!hasOutput) {
                         if (!loaded && waiting && session.active) CircularProgressIndicator(Modifier.align(Alignment.Center).size(24.dp), strokeWidth = 2.dp)
                         else Text("No terminal output", color = Muted, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))
-                    } else SelectionContainer {
-                        Column(Modifier.fillMaxWidth().nestedScroll(userScroll).verticalScroll(vScroll)
-                            .then(if (p.wrap) Modifier else Modifier.horizontalScroll(hScroll)).padding(16.dp)) {
-                            if (history.isNotEmpty()) Text(history, fontFamily = FontFamily.Monospace, fontSize = p.fontSize.sp,
-                                lineHeight = (p.fontSize * p.lineSpacing / 100f).sp, softWrap = p.wrap)
-                            if (history.isNotEmpty() && screen.isNotEmpty()) Spacer(Modifier.height(8.dp))
-                            if (screen.isNotEmpty()) Text(screen, fontFamily = FontFamily.Monospace, fontSize = p.fontSize.sp,
-                                lineHeight = (p.fontSize * p.lineSpacing / 100f).sp, softWrap = p.wrap)
-                        }
-                    }
+                    } else key(session.id) { TerminalViewport(s.history, s.screen, p, pinned) { pinned = it } }
                 }
                 if (p.widgets) SessionWidgets(sections, Modifier.then(if (p.terminalHeight == 0) Modifier.heightIn(max = availableHeight * .35f) else Modifier.weight(1f)))
             }

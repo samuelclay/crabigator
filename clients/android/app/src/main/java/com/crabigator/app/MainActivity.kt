@@ -148,12 +148,12 @@ class MainActivity : ComponentActivity() {
             }
             if (wide) Box(Modifier.fillMaxSize().clipToBounds()) {
                 Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterEnd else Alignment.CenterStart)
-                    .width(sidebarWidth).fillMaxHeight()) { Board(s, model, { menuAnchor = it; menu = "Settings" }) }
+                    .width(sidebarWidth).fillMaxHeight()) { Board(s.sessions, s.prs, s.selected?.id, s.loading, model) { menuAnchor = it; menu = "Settings" } }
                 if (s.selected != null) Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterStart else Alignment.CenterEnd)
                     .width(detailWidth).fillMaxHeight()) { detail() }
             } else Box(Modifier.fillMaxSize().clipToBounds()) {
                 Box(Modifier.fillMaxSize().then(if (s.selected != null) Modifier.clearAndSetSemantics {} else Modifier)) {
-                    Board(s, model, { menuAnchor = it; menu = "Settings" })
+                    Board(s.sessions, s.prs, s.selected?.id, s.loading, model) { menuAnchor = it; menu = "Settings" }
                 }
                 detail()
             }
@@ -180,18 +180,18 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun Board(s: AppState, model: SessionModel, settings: (Rect) -> Unit) {
+@Composable private fun Board(roster: List<Session>, pullRequests: List<PullRequest>, selectedId: String?, loading: Boolean, model: SessionModel, settings: (Rect) -> Unit) {
     var list by rememberSaveable { mutableStateOf(true) }; var query by rememberSaveable { mutableStateOf("") }; var all by rememberSaveable { mutableStateOf(false) }; var searching by rememberSaveable { mutableStateOf(false) }
-    val now by remember { flow { while (true) { emit(System.currentTimeMillis() / 1000); delay(1000) } } }
+    val now = remember { flow { while (true) { emit(System.currentTimeMillis() / 1000); delay(1000) } } }
         .collectAsStateWithLifecycle(initialValue = System.currentTimeMillis() / 1000)
     var settingsAnchor by remember { mutableStateOf(Rect.Zero) }
     val prefs by model.preferences.collectAsStateWithLifecycle()
-    val sessions = s.sessions.filter { (all || it.active) && "${it.title} ${it.repo} ${it.machine}".contains(query, true) }.sortedWith(compareByDescending<Session> { it.attention }.thenByDescending { maxOf(it.stats.promptAt, it.stats.completionAt, it.stats.startedAt) }.thenBy { it.id })
+    val sessions = remember(roster, all, query) { roster.filter { (all || it.active) && "${it.title} ${it.repo} ${it.machine}".contains(query, true) }.sortedWith(compareByDescending<Session> { it.attention }.thenByDescending { maxOf(it.stats.promptAt, it.stats.completionAt, it.stats.startedAt) }.thenBy { it.id }) }
     fun select(session: Session, order: List<Session> = sessions) {
-        val direction = if (order.indexOfFirst { it.id == session.id } < order.indexOfFirst { it.id == s.selected?.id }) -1 else 1
+        val direction = if (order.indexOfFirst { it.id == session.id } < order.indexOfFirst { it.id == selectedId }) -1 else 1
         model.select(session, direction)
     }
-    val prs = s.prs.map { it.copy(sessions = it.sessions.filter { session -> all || session.active }) }.filter { (all || it.watched || it.sessions.isNotEmpty()) && "${it.title} ${it.repo} ${it.number}".contains(query, true) }
+    val prs = remember(pullRequests, all, query) { pullRequests.map { it.copy(sessions = it.sessions.filter { session -> all || session.active }) }.filter { (all || it.watched || it.sessions.isNotEmpty()) && "${it.title} ${it.repo} ${it.number}".contains(query, true) } }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Image(painterResource(R.drawable.ic_crabigator), "Crabigator", Modifier.padding(8.dp).size(28.dp))
@@ -203,27 +203,28 @@ class MainActivity : ComponentActivity() {
             Control(R.drawable.ic_settings, "Settings", modifier = Modifier.onGloballyPositioned { settingsAnchor = it.boundsInRoot() }) { settings(settingsAnchor) }
         }
         if (searching) OutlinedTextField(query, { query = it }, placeholder = { Text("Search") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
-        if (s.sessions.isEmpty() && s.prs.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { if (s.loading) CircularProgressIndicator(Modifier.size(24.dp)) else Text("No sessions", color = Muted) }
+        if (roster.isEmpty() && pullRequests.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { if (loading) CircularProgressIndicator(Modifier.size(24.dp)) else Text("No sessions", color = Muted) }
         else if (list) BoxWithConstraints(Modifier.weight(1f)) {
             val count = if (prefs.columns == 0) (maxWidth.value / 320).toInt().coerceAtLeast(1) else prefs.columns.coerceAtMost((maxWidth.value / 280).toInt().coerceAtLeast(1))
-            val groups = if (prefs.grouping == "project") sessions.groupBy { it.repo.ifBlank { "Sessions" } }.entries.let { entries ->
+            val groups = remember(sessions, prefs.grouping, prefs.order) { if (prefs.grouping == "project") sessions.groupBy { it.repo.ifBlank { "Sessions" } }.entries.let { entries ->
                 if (prefs.order == "alpha") entries.sortedBy { it.key.lowercase() } else entries.sortedByDescending { entry -> entry.value.maxOfOrNull { maxOf(it.stats.promptAt, it.stats.completionAt, it.stats.startedAt) } ?: 0 }
-            }.map { it.key to it.value } else listOf("" to sessions)
+            }.map { it.key to it.value } else listOf("" to sessions) }
+            val order = remember(groups) { groups.flatMap { it.second } }
             LazyVerticalGrid(columns = GridCells.Fixed(count), contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 groups.forEach { (group, rows) ->
-                    if (group.isNotEmpty()) item(key = "group-$group", span = { GridItemSpan(maxLineSpan) }) { Text(group, color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 10.dp)) }
-                    gridItems(rows, key = { it.id }) { SessionCard(it, it.id == s.selected?.id, now, prefs) { select(it, groups.flatMap { group -> group.second }) } }
+                    if (group.isNotEmpty()) item(key = "group-$group", contentType = "group", span = { GridItemSpan(maxLineSpan) }) { Text(group, color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 10.dp)) }
+                    gridItems(rows, key = { it.id }, contentType = { "session" }) { SessionCard(it, it.id == selectedId, now, prefs) { select(it, order) } }
                 }
             }
         }
         else LazyColumn(contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             run {
                 val attention = sessions.filter { it.attention }
-                if (attention.isNotEmpty()) { items(attention, key = { "attention-${it.id}" }) { SessionCard(it, it.id == s.selected?.id) { select(it) } }; item { Spacer(Modifier.height(8.dp)) } }
-                items(prs, key = { it.key }) { pr -> PrCard(pr, s.selected?.id, { select(it) }) }
+                if (attention.isNotEmpty()) { items(attention, key = { "attention-${it.id}" }) { SessionCard(it, it.id == selectedId) { select(it) } }; item { Spacer(Modifier.height(8.dp)) } }
+                items(prs, key = { it.key }) { pr -> PrCard(pr, selectedId, { select(it) }) }
                 val owned = prs.flatMap { it.sessions }.map { it.id }.toSet()
                 val others = sessions.filter { it.id !in owned && !it.attention }
-                if (others.isNotEmpty()) { items(others, key = { it.id }) { SessionCard(it, it.id == s.selected?.id) { select(it) } } }
+                if (others.isNotEmpty()) { items(others, key = { it.id }) { SessionCard(it, it.id == selectedId) { select(it) } } }
             }
         }
     }
@@ -248,7 +249,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-@Composable private fun SessionCard(session: Session, selected: Boolean, now: Long? = null, prefs: UiPreferences = UiPreferences(), open: () -> Unit) {
+@Composable private fun SessionCard(session: Session, selected: Boolean, now: State<Long>? = null, prefs: UiPreferences = UiPreferences(), open: () -> Unit) {
     Surface(onClick = open, color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected) CrabColors.Title else Color(0xFF303A46))) {
         Column(Modifier.padding(if (prefs.density == "compact") 6.dp else 10.dp)) {
             SessionRow(session, selected, clickable = false, open = open)
@@ -256,7 +257,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-@Composable private fun SessionStatsFooter(session: Session, now: Long, prefs: UiPreferences) {
+@Composable private fun SessionStatsFooter(session: Session, clock: State<Long>, prefs: UiPreferences) {
+    val now = clock.value
     val stats = session.stats
     FlowRow(Modifier.fillMaxWidth().padding(top = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
