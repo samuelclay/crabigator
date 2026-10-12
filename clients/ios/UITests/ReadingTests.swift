@@ -37,6 +37,7 @@ final class ReadingTests: XCTestCase {
             XCTAssertTrue(row.waitForExistence(timeout: 25))
             XCTAssertEqual(app.buttons["PR board"].value as? String, "Selected, full width")
             XCTAssertEqual(row.value as? String, "Selected")
+            capture("Selected session in full width PR board")
             app.buttons["PR board"].tap()
             app.buttons["List"].tap()
             XCTAssertEqual(row.value as? String, "Selected")

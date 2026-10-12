@@ -126,7 +126,7 @@ struct BoardView: View {
         let shape = RoundedRectangle(cornerRadius: list ? 12 : 6)
         return Button { select(session, order) } label: {
             SessionRow(session: session, prs: model.ordering.prsBySession[session.id] ?? [], preferences: model.preferences, list: list, wide: full)
-                .padding(.horizontal, list ? 12 : 8).padding(.vertical, model.preferences.density == "compact" ? 8 : 12)
+                .padding(.horizontal, list ? 12 : 8).padding(.vertical, list ? (model.preferences.density == "compact" ? 8 : 12) : 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(selected ? Crab.orange.opacity(0.13) : list ? Crab.panel : .clear, in: shape)
                 .overlay { if selected { shape.strokeBorder(Crab.orange, lineWidth: 2) } }
@@ -159,7 +159,7 @@ struct SessionRow: View {
                     ForEach(prs) { pr in PRRow(pr: pr, wide: wide) }
                 }
             }
-        }.contentShape(Rectangle())
+        }.fixedSize(horizontal: false, vertical: true).contentShape(Rectangle())
     }
     var recency: some View {
         TimelineView(.periodic(from: .now, by: 1)) { t in
@@ -175,17 +175,30 @@ struct PRRow: View {
                 Text(verbatim: "#\(pr.number)  \(pr.title)").boardFont(13).foregroundStyle(pr.primary || pr.watched ? Crab.purple : Crab.muted).lineLimit(wide ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
                 if wide {
                     Text(pr.branch).boardFont(12).foregroundStyle(Crab.muted).lineLimit(1).frame(width: 180, alignment: .leading)
-                    HStack(alignment: .top, spacing: 12) { changes.frame(maxWidth: .infinity, alignment: .leading); badge.frame(width: 60, alignment: .leading); checks.frame(width: 116, alignment: .leading) }.frame(width: 300, alignment: .leading)
+                    status.frame(width: 300)
                 }
             }
-            if !wide { HStack(spacing: 8) { badge; changes }; checks }
-        }
+            if !wide { status }
+        }.fixedSize(horizontal: false, vertical: true)
     }
-    @ViewBuilder var checks: some View {
-            if !pr.checks.isEmpty || (pr.state == "OPEN" && !pr.mergeState.isEmpty && pr.mergeState != "UNKNOWN") {
-                Text([pr.checks, pr.state == "OPEN" && pr.mergeState != "UNKNOWN" ? (pr.mergeable == "CONFLICTING" ? "Conflicts" : pr.mergeState.capitalized) : ""].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .boardFont(11).foregroundStyle(pr.checksFailed > 0 || pr.mergeable == "CONFLICTING" ? Crab.red : Crab.muted).lineLimit(2)
+    var status: some View {
+        HStack(spacing: 6) {
+            badge; changes
+            Spacer(minLength: 4)
+            HStack(spacing: 6) {
+                if !pr.checks.isEmpty {
+                    Text(pr.checks).foregroundStyle(pr.checksFailed > 0 ? Crab.red : pr.checksPending > 0 ? Crab.yellow : Crab.mint)
+                        .accessibilityLabel(pr.checksFailed > 0 ? "\(pr.checksFailed) checks failed" : pr.checksPending > 0 ? "\(pr.checksPending) checks pending" : "Checks passed")
+                }
+                if pr.state == "OPEN" {
+                    if pr.mergeable == "CONFLICTING" { Text("Conflicts").foregroundStyle(Crab.red) }
+                    else if pr.mergeable == "MERGEABLE" {
+                        Text(pr.mergeState == "BEHIND" ? "Behind" : "Clean").foregroundStyle(pr.mergeState == "BEHIND" ? Crab.yellow : Crab.mint)
+                    }
+                }
             }
+            .boardFont(11)
+        }.lineLimit(1).minimumScaleFactor(0.8)
     }
     var changes: some View {
         HStack(spacing: 8) {

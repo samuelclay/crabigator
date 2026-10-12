@@ -51,7 +51,7 @@ struct PullRequest: Identifiable, Equatable {
         repo = "\(j.text("owner"))/\(j.text("repo"))"; number = j.int("number"); id = "\(repo)#\(number)"
         title = p.text("title", "Pull request"); state = p.text("state", "OPEN"); url = p.text("url"); branch = p.text("branch")
         checksFailed = p.int("checks_failed"); checksPending = p.int("checks_pending")
-        checks = checksFailed > 0 ? "\(checksFailed) failed" : checksPending > 0 ? "Checks running" : p.int("checks_total") > 0 ? "Checks passed" : ""
+        checks = checksFailed > 0 ? "✗\(checksFailed) CI" : checksPending > 0 ? "●\(checksPending) CI" : p.int("checks_total") > 0 ? "✓ CI" : ""
         mergeable = p.text("mergeable"); mergeState = p.text("merge_state_status"); review = p.text("review_decision")
         additions = p["additions"] as? Int; deletions = p["deletions"] as? Int
         draft = p.bool("is_draft"); primary = p.bool("primary"); watched = p.bool("watched")
