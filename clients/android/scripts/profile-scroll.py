@@ -6,6 +6,7 @@ changes device settings. Trace files stay local and may contain session titles.
 import argparse
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -59,6 +60,7 @@ with subprocess.Popen([args.adb, '-s', args.serial, 'shell', 'perfetto', '--txt'
     trace.stdin.close()
     trace.stdin = None
     try:
+        started = time.monotonic()
         time.sleep(1)
         for i in range(8):
             check_focus()
@@ -66,6 +68,8 @@ with subprocess.Popen([args.adb, '-s', args.serial, 'shell', 'perfetto', '--txt'
             adb('shell', 'input', 'swipe', str(args.x), str(start), str(args.x), str(end), '700')
             time.sleep(.25)
         check_focus()
+        if time.monotonic() - started >= 18:
+            print('Gestures outlasted the 18-second trace; frame stats cover the full run, Perfetto does not.', file=sys.stderr)
         stats = adb('shell', 'dumpsys', 'gfxinfo', package, 'framestats')
         if 'Total frames rendered: 0\n' in stats:
             raise RuntimeError('No app frames rendered; discard this run')
