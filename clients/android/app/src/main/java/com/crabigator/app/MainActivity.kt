@@ -306,7 +306,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable internal fun Control(icon: Int, label: String, selected: Boolean = false, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = modifier.size(44.dp).background(if (selected) Peach.copy(alpha = .12f) else Color.Transparent, RoundedCornerShape(12.dp))) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = modifier.size(48.dp).background(if (selected) Peach.copy(alpha = .12f) else Color.Transparent, RoundedCornerShape(12.dp))) {
         Icon(painterResource(icon), contentDescription = label, tint = if (selected) Peach else Muted, modifier = Modifier.size(22.dp))
     }
 }
