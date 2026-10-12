@@ -31,8 +31,8 @@ class TerminalScrollTest {
         }
         compose.waitUntil(10_000) { compose.onAllNodesWithText("LIVE FOOTER", substring = true).fetchSemanticsNodes().isNotEmpty() }
         val list = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.CollectionInfo))
-        // 42 history blocks, the separator, and one live block. Wait for both background parses.
-        compose.waitUntil(10_000) { list.fetchSemanticsNode().config[SemanticsProperties.CollectionInfo].rowCount == 44 }
+        // 42 history blocks and one live block. Wait for both background parses.
+        compose.waitUntil(10_000) { list.fetchSemanticsNode().config[SemanticsProperties.CollectionInfo].rowCount == 43 }
         compose.onNodeWithText("LIVE FOOTER", substring = true).assertIsDisplayed()
         compose.onNodeWithTag("terminal").performTouchInput { swipeDown(durationMillis = 600) }
         compose.waitForIdle()
@@ -44,7 +44,7 @@ class TerminalScrollTest {
         val readingTop = reading.positionInRoot.y
         compose.runOnIdle { screen.value = (0 until 80).joinToString("\n") { "New output $it" } + "\nNEW LIVE FOOTER" }
         // The new live frame has four blocks. Await its parse and lazy-list layout before checking.
-        compose.waitUntil(10_000) { list.fetchSemanticsNode().config[SemanticsProperties.CollectionInfo].rowCount == 47 }
+        compose.waitUntil(10_000) { list.fetchSemanticsNode().config[SemanticsProperties.CollectionInfo].rowCount == 46 }
         compose.onNodeWithText(readingText).assertIsDisplayed()
         assertEquals("New output must not move the history being read", readingTop,
             compose.onNodeWithText(readingText).fetchSemanticsNode().positionInRoot.y, 1f)
@@ -77,4 +77,20 @@ class TerminalScrollTest {
         assertTrue("Horizontal scrolling must reveal the final cell", lastCellRight() <= viewport.right + 1f)
         assertTrue("The final cell must remain inside the viewport", lastCellRight() > viewport.left)
     }
+    @Test fun capturedHistoryMeetsTheLiveScreenWithoutAnExtraBlankRow() {
+        compose.setContent {
+            MaterialTheme {
+                TerminalViewport("\u001b[0m\u001b[31mSaved terminal row\u001b[0m\n",
+                    "Live terminal row\n", UiPreferences(), true) {}
+            }
+        }
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("Saved terminal row").fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodesWithText("Live terminal row").fetchSemanticsNodes().isNotEmpty()
+        }
+        val history = compose.onNodeWithText("Saved terminal row").fetchSemanticsNode().boundsInRoot
+        val live = compose.onNodeWithText("Live terminal row").fetchSemanticsNode().boundsInRoot
+        assertEquals("History and live rows must be adjacent", history.bottom, live.top, 1f)
+    }
+
 }

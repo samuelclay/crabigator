@@ -46,7 +46,7 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
 @Composable private fun terminalDocument(source: String, wrap: Boolean, cellWidthEm: Float): State<TerminalDocument> =
     produceState(TerminalDocument(), source, wrap, cellWidthEm) {
         value = withContext(Dispatchers.Default) {
-            val parsed = TerminalText.parse(source, cellWidthEm).let { if (wrap) TerminalText.trimLineEnds(it) else it }
+            val parsed = TerminalText.parse(source.removeSuffix("\n"), cellWidthEm).let { if (wrap) TerminalText.trimLineEnds(it) else it }
             var widthEm = 0f
             var columns = 0
             if (!wrap) {
@@ -56,7 +56,9 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
                     columns = maxOf(columns, line.length)
                 }
             }
-            TerminalDocument(terminalBlocks(parsed), widthEm, columns)
+            // A single blank terminal row is still one row after its delimiter is removed.
+            val blocks = if (parsed.isEmpty() && source.isNotEmpty()) listOf(parsed) else terminalBlocks(parsed)
+            TerminalDocument(blocks, widthEm, columns)
         }
     }
 
@@ -66,6 +68,10 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
     }
     val historyDocument by terminalDocument(history, prefs.wrap, cellWidthEm)
     val screenDocument by terminalDocument(screen, prefs.wrap, cellWidthEm)
+    // Capture one immutable list per composition so lazy item counts, keys,
+    // and content cannot read different background parse results.
+    val historyBlocks = historyDocument.blocks
+    val screenBlocks = screenDocument.blocks
     val scroll = rememberLazyListState()
     val horizontal = rememberScrollState()
     val currentSetPinned by rememberUpdatedState(setPinned)
@@ -75,12 +81,15 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
             return Offset.Zero
         }
         override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-            if (consumed.y < 0 && !scroll.canScrollBackward) currentSetPinned(true)
+            if (consumed.y < 0 && !scroll.canScrollForward) currentSetPinned(true)
             return Offset.Zero
         }
     } }
-    // Reverse layout anchors the live end, even when a new frame changes height.
-    LaunchedEffect(pinned, historyDocument, screenDocument) { if (pinned) scroll.scrollToItem(0) }
+    // Normal order keeps the row being read anchored when the live frame grows.
+    LaunchedEffect(pinned, historyDocument, screenDocument) {
+        val count = historyBlocks.size + screenBlocks.size
+        if (pinned && count > 0) scroll.scrollToItem(count - 1, Int.MAX_VALUE)
+    }
     BoxWithConstraints(Modifier.fillMaxSize().graphicsLayer()) {
         val density = LocalDensity.current
         val letterSpacing = LocalTextStyle.current.letterSpacing
@@ -91,16 +100,15 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
             maxOf(maxWidth, widthPx.toDp() + 32.dp)
         }
         SelectionContainer {
-            LazyColumn(reverseLayout = true, state = scroll,
+            LazyColumn(state = scroll,
                 modifier = Modifier.fillMaxHeight().nestedScroll(userScroll)
                     .then(if (prefs.wrap) Modifier.fillMaxWidth() else Modifier.horizontalScroll(horizontal).width(contentWidth)),
                 contentPadding = PaddingValues(16.dp)) {
-                items(screenDocument.blocks.size, key = { "screen-${screenDocument.blocks.lastIndex - it}" }, contentType = { "terminal" }) { index ->
-                    TerminalBlock(screenDocument.blocks[screenDocument.blocks.lastIndex - index], prefs)
+                items(historyBlocks.size, key = { "history-$it" }, contentType = { "terminal" }) { index ->
+                    TerminalBlock(historyBlocks[index], prefs)
                 }
-                if (historyDocument.blocks.isNotEmpty() && screenDocument.blocks.isNotEmpty()) item(key = "separator", contentType = "separator") { Spacer(Modifier.height(8.dp)) }
-                items(historyDocument.blocks.size, key = { "history-${historyDocument.blocks.lastIndex - it}" }, contentType = { "terminal" }) { index ->
-                    TerminalBlock(historyDocument.blocks[historyDocument.blocks.lastIndex - index], prefs)
+                items(screenBlocks.size, key = { "screen-$it" }, contentType = { "terminal" }) { index ->
+                    TerminalBlock(screenBlocks[index], prefs)
                 }
             }
         }
