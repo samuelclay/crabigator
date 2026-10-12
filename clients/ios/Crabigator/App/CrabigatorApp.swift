@@ -60,8 +60,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 }
 struct RootView: View {
     @ObservedObject var model: SessionModel
-    @State private var listMode = true
-    @State private var expanded = true
     @State private var outgoing: SessionStream?
     @State private var pageOffset: CGFloat = 0
     @State private var outgoingOffset: CGFloat = 0
@@ -75,7 +73,7 @@ struct RootView: View {
                 GeometryReader { geometry in
                     let wide = geometry.size.width >= 720, width = wide ? geometry.size.width - 361 : geometry.size.width
                     if !wide {
-                        PhoneNavigation(model: model, listMode: $listMode, expanded: $expanded)
+                        PhoneNavigation(model: model, listMode: $model.navigation.listMode, expanded: $model.navigation.expanded)
                     } else {
                         ZStack(alignment: model.preferences.sidebarRight ? .trailing : .leading) {
                             HStack(spacing: 0) {
@@ -83,24 +81,24 @@ struct RootView: View {
                                 detail(wide: true, width: width).frame(maxWidth: .infinity)
                                 if model.preferences.sidebarRight { Spacer().frame(width: 361) }
                             }
-                            BoardView(model: model, listMode: $listMode, expanded: $expanded, wide: true) { session, order in select(session, order: order, width: width) }
-                                .frame(width: expanded ? geometry.size.width : 360)
+                            BoardView(model: model, listMode: $model.navigation.listMode, expanded: $model.navigation.expanded, wide: true) { session, order in select(session, order: order, width: width) }
+                                .frame(width: model.navigation.expanded ? geometry.size.width : 360)
+                                .animation(.easeInOut(duration: 0.36), value: model.navigation.expanded)
                         }.clipped()
                     }
                 }
             }
         }.background(Crab.ink).foregroundStyle(Color(uiColor: TerminalText.rgb(0xE9EEF4)))
-            .onChange(of: model.selectionID) { _, value in if value != nil { withAnimation(.easeInOut(duration: 0.36)) { expanded = false } } }
     }
     @ViewBuilder func detail(wide: Bool, width: CGFloat) -> some View {
         ZStack {
             if model.selectionID == nil {
                 VStack(spacing: 12) { Image(systemName: "terminal").font(.system(size: 40)).opacity(0.4); Text("Select a session").font(.system(size: 14)) }.foregroundStyle(Crab.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                SessionDetail(model: model, stream: model.stream, wide: wide, active: !wide || !expanded, close: close).offset(x: pageOffset)
+                SessionDetail(model: model, stream: model.stream, wide: wide, active: !wide || !model.navigation.expanded, close: close).offset(x: pageOffset)
                 if let outgoing { SessionDetail(model: model, stream: outgoing, wide: wide, active: false, close: {}).allowsHitTesting(false).accessibilityHidden(true).offset(x: outgoingOffset) }
             }
-        }.background(Crab.ink).clipped().accessibilityHidden(wide && expanded)
+        }.background(Crab.ink).clipped().accessibilityHidden(wide && model.navigation.expanded)
     }
     func close() { withAnimation(.easeInOut(duration: 0.32)) { outgoing = nil; model.close(); pageOffset = 0 } }
     func select(_ session: Session, order: [Session], width: CGFloat) {
@@ -114,9 +112,9 @@ struct RootView: View {
             let distance = CGFloat(model.pageDirection) * width
             outgoingOffset = 0; pageOffset = distance
             DispatchQueue.main.async {
-                withAnimation(.easeInOut(duration: 0.36)) { outgoingOffset = -distance; pageOffset = 0; expanded = false }
+                withAnimation(.easeInOut(duration: 0.36)) { outgoingOffset = -distance; pageOffset = 0; model.navigation.expanded = false }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) { if navigation == epoch { outgoing = nil } }
             }
-        } else { withAnimation(.easeInOut(duration: 0.36)) { expanded = false } }
+        } else { withAnimation(.easeInOut(duration: 0.36)) { model.navigation.expanded = false } }
     }
 }

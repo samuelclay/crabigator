@@ -4,6 +4,16 @@ The native app is installed, paired and running on the physical ClayPad Air and 
 
 On October 12, Xcode automatic signing succeeded with the NewsBlur team (`HR7P97SD72`). The signed Debug build and notification extension installed on both physical devices. Each device claimed its own pairing code, and screenshots confirmed that the live session roster loaded. This verifies installation, launch, pairing and roster access; it does not establish full device interaction or push-delivery coverage.
 
+## Restoring the board and selected session
+
+iOS and Android now save the List/PR board choice, selected session ID, and tablet sidebar/full-width choice. The first successful roster refresh resolves the saved ID and reconnects its terminal. Closing a session clears the saved selection; an unavailable saved ID falls back to the board. A delayed iOS deep link cannot replace a newer manual selection.
+
+The iPhone simulator and physical ClayPad passed a terminate/relaunch UI test that restores a selected session and PR board, preserves a full-width tablet board with its selection, then remembers an explicit close and the List choice. The Samsung S22 and tablet passed force-stop/relaunch checks in both modes; the tablet also retained both widths. Twelve iOS unit tests and 28 Android unit tests passed. Updated builds are installed on all four physical devices. The physical iPhone UI runner timed out enabling automation; its installation and launch succeeded separately.
+
+The reported PR #1750 session had a stuck desktop cloud connection. The Worker now reconnects a desktop that fails to answer missing-screen requests for ten seconds and announces when the replacement connection is ready. Fifteen Worker tests passed, including a hibernation/recovery check. That particular desktop process predated the October 9 reader-disconnect fix, so automatic recovery alone did not repair it. At the user's request, it was exited and resumed in the same Ghostty tab with the installed binary and the same Claude conversation UUID. Its replacement cloud session is `f2be6c06-1aa3-48f7-ae2b-2eec06d6129f`. The full streamed screen matched the local captured screen, and the iPad then passed the restoration test using that specific resumed session.
+
+Results: `/tmp/crabigator-restore-sim.xcresult`, `/tmp/crabigator-restore-ipad-navigation.xcresult`, `/tmp/crabigator-restore-resumed-ipad.xcresult`. Android checks and screenshots: `/tmp/crabigator-android-restoration.py` and `/tmp/crab-R5CT601C8DA-*-restored.png`, `/tmp/crab-R8YW810E3FF-*-restored.png`. Worker deployment: `4c9690be-f223-49f9-9d79-d220ceb234dc`.
+
 ## Initial terminal loading
 
 The iOS stream previously opened its socket, then awaited the mobile prompt snapshot before reading terminal frames or starting viewer heartbeats. A slow metadata request could therefore hide output already waiting on the socket. Prompt refreshes now run independently, cancel when replaced or disconnected, and discard canceled responses. An eight-second wait now shows “Waiting for terminal output…” with a Reconnect button instead of claiming the terminal is empty.

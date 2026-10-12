@@ -127,7 +127,7 @@ struct BoardView: View {
                 .padding(.horizontal, list ? 12 : 8).padding(.vertical, model.preferences.density == "compact" ? 8 : 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(model.selectionID == session.id ? Crab.title.opacity(0.13) : list ? Crab.panel : .clear, in: RoundedRectangle(cornerRadius: list ? 12 : 6))
-        }.buttonStyle(.plain).accessibilityIdentifier("Session \(session.id)")
+        }.buttonStyle(.plain).accessibilityIdentifier("Session \(session.id)").accessibilityValue(model.selectionID == session.id ? "Selected" : "")
     }
 }
 struct SessionRow: View {

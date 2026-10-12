@@ -20,7 +20,7 @@ struct SessionDetail: View {
                     HStack(spacing: 2) {
                         IconButton(icon: wide ? "xmark" : "chevron.left", label: wide ? "Close session" : "Back to list", action: close)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(session.title).font(.system(size: 15, weight: .medium)).foregroundStyle(Crab.title).lineLimit(2)
+                            Text(session.title).font(.system(size: 15, weight: .medium)).foregroundStyle(Crab.title).lineLimit(2).accessibilityIdentifier("Selected session \(session.id)")
                             Text(stream.connected ? "\(session.machine) · Live" : session.active ? "Reconnecting…" : "\(session.machine) · Ended").font(.system(size: 11)).foregroundStyle(stream.connected ? Crab.mint : Crab.muted).lineLimit(1)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                         if !prs.isEmpty {

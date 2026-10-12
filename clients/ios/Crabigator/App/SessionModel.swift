@@ -132,10 +132,13 @@ import SwiftUI
     @Published var preferences = Preferences.load() { didSet { preferences.save(); updateOrder() } }
     @Published var layoutVersion = 0
     @Published var selectionID: String?
+    @Published var navigation = NavigationState.load() { didSet { navigation.save() } }
     @Published var pageDirection = 1
     let stream = SessionStream(), ordering = RosterOrder(), api = API.shared
     private var polling: Task<Void, Never>?
     private var epoch = 0, foreground = false
+    private var restoreSelection = true
+    private var selectionEpoch = 0
     var drafts: [String: String] = [:]
     var origin: String { api.credentials.connection().origin }
     func start() {
@@ -155,6 +158,17 @@ import SwiftUI
             var seen = Set<String>()
             sessions = (result.array("sessions").map(Session.init) + prs.flatMap(\.sessions)).filter { !$0.id.isEmpty && seen.insert($0.id).inserted }
             rosterStatus = .ready; error = nil; updateOrder()
+            if restoreSelection {
+                restoreSelection = false
+                if let id = navigation.selectedID {
+                    if let session = sessions.first(where: { $0.id == id }) {
+                        // Keep the saved full-width/sidebar choice during restoration.
+                        selectionID = id; stream.select(session)
+                    } else {
+                        navigation.selectedID = nil; navigation.expanded = true
+                    }
+                }
+            }
         } catch {
             guard !Task.isCancelled, generation == epoch else { return }
             self.error = error.localizedDescription; if rosterStatus != .ready { rosterStatus = .failed }
@@ -162,11 +176,21 @@ import SwiftUI
     }
     private func updateOrder() { ordering.update(sessions, prs: prs, prefs: preferences); layoutVersion += 1 }
     func select(_ session: Session, order: [Session]) {
+        selectionEpoch += 1
+        restoreSelection = false
+        navigation.selectedID = session.id; navigation.expanded = false
         pageDirection = (order.firstIndex(where: { $0.id == session.id }) ?? 0) < (order.firstIndex(where: { $0.id == selectionID }) ?? 0) ? -1 : 1
         selectionID = session.id; stream.select(session)
     }
-    func open(_ id: String) async { guard paired else { return }; await refresh(); if let session = sessions.first(where: { $0.id == id }) { select(session, order: sessions) } }
-    func close() { selectionID = nil; stream.close() }
+    func open(_ id: String) async {
+        guard paired else { return }
+        restoreSelection = false; selectionEpoch += 1
+        let request = selectionEpoch
+        await refresh()
+        guard request == selectionEpoch, foreground, !Task.isCancelled else { return }
+        if let session = sessions.first(where: { $0.id == id }) { select(session, order: sessions) }
+    }
+    func close() { selectionEpoch += 1; restoreSelection = false; navigation.selectedID = nil; selectionID = nil; stream.close() }
     func pair(code: String, origin: String) async {
         guard !loading else { return }; loading = true; error = nil; defer { loading = false }
         do {

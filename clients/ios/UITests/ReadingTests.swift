@@ -3,6 +3,54 @@ import UIKit
 
 /// Opt-in live checks. Pair this simulator first; these never send terminal input.
 final class ReadingTests: XCTestCase {
+    func testRestoresBoardModeAndSelectedSessionAfterRelaunch() throws {
+        guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires an already paired device.")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Session "))
+        // A prior run may have left a phone on its restored terminal page.
+        XCTAssertTrue(app.buttons["PR board"].waitForExistence(timeout: 25) || app.buttons["Back to list"].exists)
+        if app.buttons["Back to list"].exists { app.buttons["Back to list"].tap() }
+        if !(app.buttons["PR board"].value as? String ?? "").hasPrefix("Selected") { app.buttons["PR board"].tap() }
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 25))
+        let requestedID = ProcessInfo.processInfo.environment["CRABIGATOR_TEST_SESSION_ID"]
+        let row = try XCTUnwrap(requestedID.map { app.buttons["Session " + $0] } ?? rows.allElementsBoundByIndex.first { $0.isHittable })
+        XCTAssertTrue(row.isHittable)
+        let id = String(row.identifier.dropFirst("Session ".count))
+        row.tap()
+        XCTAssertTrue(app.staticTexts["Selected session " + id].waitForExistence(timeout: 5))
+        let terminal = app.textViews["terminal-output"]
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            terminal.exists && !(terminal.value as? String ?? "").isEmpty
+        }, object: terminal)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 25), .completed)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["Selected session " + id].waitForExistence(timeout: 25))
+        capture("Restored selected session")
+        if app.frame.width >= 720 {
+            XCTAssertEqual(app.buttons["PR board"].value as? String, "Selected, sidebar")
+            app.buttons["PR board"].tap()
+            app.terminate(); app.launch()
+            XCTAssertTrue(row.waitForExistence(timeout: 25))
+            XCTAssertEqual(app.buttons["PR board"].value as? String, "Selected, full width")
+            XCTAssertEqual(row.value as? String, "Selected")
+            app.buttons["PR board"].tap()
+            app.buttons["Close session"].tap()
+        } else {
+            app.buttons["Back to list"].tap()
+            XCTAssertEqual(app.buttons["PR board"].value as? String, "Selected")
+        }
+        app.buttons["List"].tap()
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["List"].waitForExistence(timeout: 25))
+        XCTAssertTrue((app.buttons["List"].value as? String ?? "").hasPrefix("Selected"))
+        XCTAssertFalse(app.staticTexts["Selected session " + id].exists, "Closing must clear the saved selection")
+        capture("Restored List with no selected session")
+    }
+
     func testSlowPromptRequestDoesNotDelayTerminalOutput() throws {
         guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
             throw XCTSkip("Requires an already paired device and CRABIGATOR_LIVE_UI_TESTS=1.")

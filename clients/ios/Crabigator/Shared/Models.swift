@@ -77,6 +77,18 @@ func ageText(_ timestamp: Int, now: Int) -> String {
     if s < 60 { return "now" }; if s < 3600 { return "\(s / 60)m ago" }; if s < 86400 { return "\(s / 3600)h ago" }; return "\(s / 86400)d ago"
 }
 
+struct NavigationState: Codable, Equatable {
+    var listMode = true
+    var expanded = true
+    var selectedID: String?
+    static func load() -> Self {
+        UserDefaults.standard.data(forKey: "navigation").flatMap { try? JSONDecoder().decode(Self.self, from: $0) } ?? Self()
+    }
+    func save() {
+        if let data = try? JSONEncoder().encode(self) { UserDefaults.standard.set(data, forKey: "navigation") }
+    }
+}
+
 struct Preferences: Codable, Equatable {
     // Optional storage lets older saved preferences keep their existing values.
     private var boardFontSize: Int?
