@@ -10,6 +10,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -79,8 +80,9 @@ import androidx.compose.ui.unit.sp
 
 @Composable internal fun BoardSessionBlock(entry: BoardSession, selected: Boolean, wide: Boolean, clock: State<Long>, open: () -> Unit) {
     val session = entry.session
-    Surface(onClick = open, color = if (selected) CrabColors.Title.copy(alpha = .13f) else Color.Transparent,
-        shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth()) {
+    Surface(onClick = open, color = if (selected) Peach.copy(alpha = .13f) else Color.Transparent,
+        border = if (selected) BorderStroke(2.dp, Peach) else null,
+        shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().semantics { this.selected = selected }) {
         Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             val fg = remember(session.color) { runCatching { Color(android.graphics.Color.parseColor(session.color)) }.getOrDefault(Peach) }
             val bg = remember(session.background) { runCatching { Color(android.graphics.Color.parseColor(session.background)) }.getOrDefault(Panel) }

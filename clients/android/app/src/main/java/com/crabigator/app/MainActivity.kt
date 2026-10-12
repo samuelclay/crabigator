@@ -59,6 +59,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -305,8 +306,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 @Composable private fun SessionCard(session: Session, selected: Boolean, now: State<Long>? = null, prefs: UiPreferences = UiPreferences(), showMachine: Boolean = true, modifier: Modifier = Modifier, open: () -> Unit) {
-    Surface(onClick = open, modifier = modifier, color = Panel,
-        shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected) CrabColors.Title else Color(0xFF303A46))) {
+    Surface(onClick = open, modifier = modifier.semantics { this.selected = selected },
+        color = if (selected) Peach.copy(alpha = .13f) else Panel,
+        shape = RoundedCornerShape(12.dp), border = if (selected) BorderStroke(2.dp, Peach) else null) {
         Box(Modifier.padding(if (prefs.density == "compact") 6.dp else 10.dp)) {
             SessionRow(session, clickable = false, showMachine = showMachine, footer = {
                 if (now != null) SessionStatsFooter(session, now, prefs)
