@@ -6,6 +6,8 @@ Both views group sessions under sticky machine headers. Tap a header to collapse
 
 On tablets the list keeps its width when a session opens or closes, leaving an empty detail pane when nothing is selected. Session cards use separate identity and status columns, with title and timing aligned beside them. Questions have an orange badge and card accent; permission requests use yellow. Timing stays on one line: durations sit at the left, prompt/completion recency at the right, without repeated “ago” labels. Durations shorten to their largest unit when space is tight. At very large text sizes, recency takes priority and the full duration values remain in the accessible description.
 
+The initial session request shows animated loading dots. Connection failures offer Retry; only a successful empty response shows “No sessions,” the desktop pairing command, and a pairing-code field. Background refreshes keep the last successful list visible.
+
 ## Build and install
 
 Use JDK 17 or later and Android SDK 36:

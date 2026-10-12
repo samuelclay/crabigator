@@ -9,7 +9,9 @@ import kotlinx.coroutines.flow.update
 import okhttp3.*
 import org.json.JSONObject
 
-data class AppState(val paired: Boolean = false, val sessions: List<Session> = emptyList(), val prs: List<PullRequest> = emptyList(), val loading: Boolean = false, val error: String? = null, val selected: Session? = null, val screen: String = "", val history: String = "", val historyLoaded: Boolean = false, val screenLoaded: Boolean = false, val details: Map<String, JSONObject> = emptyMap(), val prompt: JSONObject? = null, val revision: Long? = null, val connected: Boolean = false, val sending: Boolean = false, val pageDirection: Int = 1)
+enum class RosterStatus { Loading, Ready, Failed }
+
+data class AppState(val paired: Boolean = false, val sessions: List<Session> = emptyList(), val prs: List<PullRequest> = emptyList(), val loading: Boolean = false, val rosterStatus: RosterStatus = RosterStatus.Loading, val error: String? = null, val selected: Session? = null, val screen: String = "", val history: String = "", val historyLoaded: Boolean = false, val screenLoaded: Boolean = false, val details: Map<String, JSONObject> = emptyMap(), val prompt: JSONObject? = null, val revision: Long? = null, val connected: Boolean = false, val sending: Boolean = false, val pageDirection: Int = 1)
 class SessionModel(app: Application) : AndroidViewModel(app) {
     private val preferenceStore = PreferenceStore(app)
     val preferences = MutableStateFlow(preferenceStore.load())
@@ -22,6 +24,8 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
     private var heartbeat: Job? = null
     private var reconnect: Job? = null
     private var foreground = false
+    private var pairing = false
+    private var rosterEpoch = 0L
     private var selectionEpoch = 0L
     private var connectionEpoch = 0L
     private var snapshotRequest = 0L
@@ -38,22 +42,39 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
         heartbeat?.cancel(); reconnect?.cancel(); socket?.cancel(); socket = null
         state.update { it.copy(connected = false, revision = null) }
     }
-    fun stop() { foreground = false; polling?.cancel(); polling = null; disconnect() }
+    fun stop() { foreground = false; rosterEpoch++; polling?.cancel(); polling = null; disconnect() }
     fun pair(code: String, origin: String) = viewModelScope.launch {
+        if (pairing) return@launch
+        pairing = true
         state.update { it.copy(loading = true, error = null) }
         try {
             api.pair(code, origin)
-            state.update { it.copy(paired = true, loading = false) }
-            start()
+            val resume = foreground
+            selectionEpoch++
+            stop()
+            state.value = AppState(paired = true)
+            if (resume) start()
         } catch (e: Exception) { failure(e) }
+        finally { pairing = false; state.update { it.copy(loading = false) } }
+    }
+    fun retryRoster() = viewModelScope.launch {
+        if (foreground && state.value.paired) refresh()
     }
     suspend fun refresh() {
+        val epoch = rosterEpoch
+        state.update { if (it.rosterStatus == RosterStatus.Ready) it else it.copy(rosterStatus = RosterStatus.Loading, error = null) }
         try {
             val data = api.call("/api/prs/board")
+            if (epoch != rosterEpoch) return
             val prs = data.array("prs").map(PullRequest::parse)
             val sessions = (data.array("sessions").map(Session::parse) + prs.flatMap { it.sessions }).distinctBy { it.id }
-            state.update { it.copy(prs = prs, sessions = sessions, loading = false, error = null) }
-        } catch (e: Exception) { if (e is CancellationException) throw e; failure(e) }
+            state.update { it.copy(prs = prs, sessions = sessions, rosterStatus = RosterStatus.Ready, error = null) }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            if (epoch != rosterEpoch) return
+            state.update { it.copy(rosterStatus = if (it.rosterStatus == RosterStatus.Ready) RosterStatus.Ready else RosterStatus.Failed,
+                error = e.message ?: "Could not connect. Try again.") }
+        }
     }
     fun select(session: Session, direction: Int = 1) {
         if (state.value.selected?.id == session.id) return
@@ -63,7 +84,9 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
     }
     fun open(id: String) = viewModelScope.launch {
         if (!state.value.paired) return@launch
+        val epoch = selectionEpoch
         refresh()
+        if (epoch != selectionEpoch || !foreground) return@launch
         state.value.sessions.find { it.id == id }?.let { select(it) }
     }
     fun close() {
@@ -154,6 +177,6 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) { failure(e) }
     }
     fun dismissError() { state.update { it.copy(error = null) } }
-    private fun failure(e: Exception) { if (e is CancellationException) throw e; state.update { it.copy(loading = false, error = e.message ?: "Could not connect. Try again.") } }
+    private fun failure(e: Exception) { if (e is CancellationException) throw e; state.update { it.copy(error = e.message ?: "Could not connect. Try again.") } }
     override fun onCleared() { stop() }
 }

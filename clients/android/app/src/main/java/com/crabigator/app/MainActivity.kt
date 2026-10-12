@@ -157,7 +157,7 @@ class MainActivity : ComponentActivity() {
             }
             if (wide) Box(Modifier.fillMaxSize().clipToBounds()) {
                 Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterEnd else Alignment.CenterStart)
-                    .width(360.dp).fillMaxHeight()) { Board(s.sessions, s.prs, s.selected?.id, s.loading, model) { menuAnchor = it; menu = "Settings" } }
+                    .width(360.dp).fillMaxHeight()) { Board(s.sessions, s.prs, s.selected?.id, s.rosterStatus, model) { menuAnchor = it; menu = "Settings" } }
                 Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterStart else Alignment.CenterEnd)
                     .width(detailWidth).fillMaxHeight()) {
                     if (s.selected == null) Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -168,7 +168,7 @@ class MainActivity : ComponentActivity() {
                 }
             } else Box(Modifier.fillMaxSize().clipToBounds()) {
                 Box(Modifier.fillMaxSize().then(if (s.selected != null) Modifier.clearAndSetSemantics {} else Modifier)) {
-                    Board(s.sessions, s.prs, s.selected?.id, s.loading, model) { menuAnchor = it; menu = "Settings" }
+                    Board(s.sessions, s.prs, s.selected?.id, s.rosterStatus, model) { menuAnchor = it; menu = "Settings" }
                 }
                 detail()
             }
@@ -195,7 +195,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun Board(roster: List<Session>, pullRequests: List<PullRequest>, selectedId: String?, loading: Boolean, model: SessionModel, settings: (Rect) -> Unit) {
+@Composable private fun Board(roster: List<Session>, pullRequests: List<PullRequest>, selectedId: String?, rosterStatus: RosterStatus, model: SessionModel, settings: (Rect) -> Unit) {
     var list by rememberSaveable { mutableStateOf(true) }; var query by rememberSaveable { mutableStateOf("") }; var all by rememberSaveable { mutableStateOf(false) }; var searching by rememberSaveable { mutableStateOf(false) }
     val now = remember { flow { while (true) { emit(System.currentTimeMillis() / 1000); delay(1000) } } }
         .collectAsStateWithLifecycle(initialValue = System.currentTimeMillis() / 1000)
@@ -223,7 +223,9 @@ class MainActivity : ComponentActivity() {
             Control(R.drawable.ic_settings, "Settings", modifier = Modifier.onGloballyPositioned { settingsAnchor = it.boundsInRoot() }) { settings(settingsAnchor) }
         }
         if (searching) OutlinedTextField(query, { query = it }, placeholder = { Text("Search") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
-        if (roster.isEmpty() && pullRequests.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { if (loading) CircularProgressIndicator(Modifier.size(24.dp)) else Text("No sessions", color = Muted) }
+        if (roster.isEmpty() && pullRequests.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            RosterPlaceholder(rosterStatus, model::retryRoster) { EmptyPairing(model) }
+        }
         else if (list) BoxWithConstraints(Modifier.weight(1f)) {
             val count = if (prefs.columns == 0) (maxWidth.value / 320).toInt().coerceAtLeast(1) else prefs.columns.coerceAtMost((maxWidth.value / 280).toInt().coerceAtLeast(1))
             val gridState = rememberLazyGridState()
