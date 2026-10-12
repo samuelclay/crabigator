@@ -48,9 +48,12 @@ class SessionTimelineTest {
         }
         compose.waitForIdle()
         checkAlignment()
-        compose.runOnIdle { width.value = 170.dp }
+        assertTrue(compose.onAllNodesWithText("59m ago", useUnmergedTree = true).fetchSemanticsNodes().any { it.boundsInRoot.width > 0 && it.boundsInRoot.height > 0 })
+        assertTrue(compose.onAllNodesWithText("42m ago", useUnmergedTree = true).fetchSemanticsNodes().any { it.boundsInRoot.width > 0 && it.boundsInRoot.height > 0 })
+        compose.runOnIdle { width.value = 200.dp }
         compose.waitForIdle()
         checkAlignment()
+        assertTrue(compose.onAllNodesWithText("42m ago", useUnmergedTree = true).fetchSemanticsNodes().any { it.boundsInRoot.width > 0 && it.boundsInRoot.height > 0 })
         compose.runOnIdle { fontScale.value = 1.8f }
         compose.waitForIdle()
         val container = compose.onNodeWithTag("timeline").fetchSemanticsNode().boundsInRoot
@@ -65,6 +68,7 @@ class SessionTimelineTest {
         assertTrue(largest.left >= container.left)
         assertEquals(container.right, largest.right, 1f)
         compose.runOnIdle {
+            width.value = 170.dp
             fontScale.value = 4f
             prefs.value = UiPreferences(hidden = setOf("promptRecency", "completionRecency", "tools", "compactions"))
         }
