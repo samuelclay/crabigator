@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.animation.core.tween
@@ -23,9 +24,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -38,15 +36,14 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
@@ -82,7 +79,7 @@ class MainActivity : ComponentActivity() {
             if (android.os.Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
             else startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName))
         } } } }
-        handleIntent(intent)
+        if (savedInstanceState == null) handleIntent(intent)
     }
     override fun onStart() { super.onStart(); model.start() }
     override fun onStop() { model.stop(); super.onStop() }
@@ -92,10 +89,18 @@ class MainActivity : ComponentActivity() {
 
 @Composable private fun App(model: SessionModel, notifications: () -> Unit) {
     val s by model.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
+    var listMode by rememberSaveable { mutableStateOf(true) }
+    var browserExpanded by rememberSaveable { mutableStateOf(true) }
+    var handledNavigation by rememberSaveable { mutableLongStateOf(0L) }
     var menu by remember { mutableStateOf<String?>(null) }
     var menuAnchor by remember { mutableStateOf(Rect.Zero) }
     var closingSession by remember(s.selected?.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(s.navigationId) {
+        if (handledNavigation != s.navigationId) {
+            handledNavigation = s.navigationId
+            if (s.selected != null) { browserExpanded = false; closingSession = null }
+        }
+    }
     val closing = s.selected != null && closingSession == s.selected?.id
     val closeSession: () -> Unit = { closingSession = s.selected?.id }
     val preferences by model.preferences.collectAsStateWithLifecycle()
@@ -107,6 +112,18 @@ class MainActivity : ComponentActivity() {
         BoxWithConstraints(Modifier.weight(1f)) {
             val wide = maxWidth >= 720.dp
             val detailWidth = maxWidth - 361.dp
+            val fullBoard = wide && browserExpanded
+            val focusManager = LocalFocusManager.current
+            val keyboard = LocalSoftwareKeyboardController.current
+            LaunchedEffect(fullBoard) { if (fullBoard) { focusManager.clearFocus(); keyboard?.hide() } }
+            val sidebarWidth by animateDpAsState(if (fullBoard) maxWidth else 360.dp, tween(360, easing = FastOutSlowInEasing), label = "Board width")
+            val board: @Composable () -> Unit = {
+                Board(s.sessions, s.prs, s.selected?.id, s.rosterStatus, model,
+                    listMode, { next ->
+                        if (listMode == next) { if (wide) browserExpanded = !browserExpanded }
+                        else { listMode = next; browserExpanded = true }
+                    }, if (wide) fullBoard else null, { browserExpanded = false }) { menuAnchor = it; menu = "Settings" }
+            }
             val entrance = remember(s.selected != null) { Animatable(1f) }
             var swipe by remember(s.selected?.id) { mutableStateOf<Float?>(null) }
             val scope = rememberCoroutineScope()
@@ -151,24 +168,24 @@ class MainActivity : ComponentActivity() {
                 if (s.selected != null) Box(Modifier.fillMaxSize().clipToBounds()) {
                     Box(Modifier.fillMaxSize().graphicsLayer { translationX = size.width * progress }
                         .background(Ink).pointerInput(Unit) { detectTapGestures {} }) {
-                        SessionPages(s, model, wide, closeSession, swipeModifier) { menuAnchor = it; menu = "Style" }
+                        SessionPages(s, model, wide, closeSession, swipeModifier, visible = !fullBoard) { menuAnchor = it; menu = "Style" }
                     }
                 }
             }
             if (wide) Box(Modifier.fillMaxSize().clipToBounds()) {
-                Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterEnd else Alignment.CenterStart)
-                    .width(360.dp).fillMaxHeight()) { Board(s.sessions, s.prs, s.selected?.id, s.rosterStatus, model) { menuAnchor = it; menu = "Settings" } }
                 Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterStart else Alignment.CenterEnd)
                     .width(detailWidth).fillMaxHeight()) {
-                    if (s.selected == null) Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (s.selected == null && !fullBoard) Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Icon(painterResource(R.drawable.ic_terminal), null, tint = Muted.copy(alpha = .4f), modifier = Modifier.size(40.dp))
                         Text("Select a session", color = Muted, fontSize = 14.sp)
                     }
-                    detail()
+                    Box(Modifier.fillMaxSize().then(if (fullBoard) Modifier.clearAndSetSemantics {} else Modifier)) { detail() }
                 }
+                Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterEnd else Alignment.CenterStart)
+                    .width(sidebarWidth).fillMaxHeight().background(Ink)) { board() }
             } else Box(Modifier.fillMaxSize().clipToBounds()) {
                 Box(Modifier.fillMaxSize().then(if (s.selected != null) Modifier.clearAndSetSemantics {} else Modifier)) {
-                    Board(s.sessions, s.prs, s.selected?.id, s.rosterStatus, model) { menuAnchor = it; menu = "Settings" }
+                    board()
                 }
                 detail()
             }
@@ -195,30 +212,31 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun Board(roster: List<Session>, pullRequests: List<PullRequest>, selectedId: String?, rosterStatus: RosterStatus, model: SessionModel, settings: (Rect) -> Unit) {
-    var list by rememberSaveable { mutableStateOf(true) }; var query by rememberSaveable { mutableStateOf("") }; var all by rememberSaveable { mutableStateOf(false) }; var searching by rememberSaveable { mutableStateOf(false) }
+@Composable private fun Board(roster: List<Session>, pullRequests: List<PullRequest>, selectedId: String?, rosterStatus: RosterStatus, model: SessionModel,
+    list: Boolean, mode: (Boolean) -> Unit, expanded: Boolean?, selected: () -> Unit, settings: (Rect) -> Unit) {
+    var query by rememberSaveable { mutableStateOf("") }; var searching by rememberSaveable { mutableStateOf(false) }
     val now = remember { flow { while (true) { emit(System.currentTimeMillis() / 1000); delay(1000) } } }
         .collectAsStateWithLifecycle(initialValue = System.currentTimeMillis() / 1000)
     var settingsAnchor by remember { mutableStateOf(Rect.Zero) }
     val prefs by model.preferences.collectAsStateWithLifecycle()
+    val all = prefs.showEnded
     val sessions = remember(roster, all, query) { roster.filter { (all || it.active) && "${it.title} ${it.repo} ${it.machine}".contains(query, true) }.sortedWith(compareByDescending<Session> { it.attention }.thenByDescending { maxOf(it.stats.promptAt, it.stats.completionAt, it.stats.startedAt) }.thenBy { it.id }) }
     var machineOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
-    var watchedCollapsed by rememberSaveable { mutableStateOf(false) }
     var collapsedMachines by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val gridState = rememberLazyGridState()
+    val boardState = rememberLazyListState()
     val machines = remember(roster, machineOrder) { retainMachineOrder(machineOrder, roster) }
     SideEffect { if (machineOrder != machines) machineOrder = machines }
     fun select(session: Session, order: List<Session> = sessions) {
         val direction = if (order.indexOfFirst { it.id == session.id } < order.indexOfFirst { it.id == selectedId }) -1 else 1
         model.select(session, direction)
+        selected()
     }
-    val prs = remember(pullRequests, all, query) { pullRequests.map { it.copy(sessions = it.sessions.filter { session -> all || session.active }) }.filter { (all || it.watched || it.sessions.isNotEmpty()) && "${it.title} ${it.repo} ${it.number}".contains(query, true) } }
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
             Image(painterResource(R.drawable.ic_crabigator), "Crabigator", Modifier.padding(8.dp).size(28.dp))
             Spacer(Modifier.weight(1f))
-            Control(R.drawable.ic_board, "PR board", selected = !list) { list = false }
-            Control(R.drawable.ic_list, "Session list", selected = list) { list = true }
-            Control(if (all) R.drawable.ic_history else R.drawable.ic_live, if (all) "All sessions" else "Live sessions", selected = !all) { all = !all }
             Control(R.drawable.ic_search, "Search", selected = searching) { searching = !searching; if (!searching) query = "" }
             Control(R.drawable.ic_settings, "Settings", modifier = Modifier.onGloballyPositioned { settingsAnchor = it.boundsInRoot() }) { settings(settingsAnchor) }
         }
@@ -228,11 +246,10 @@ class MainActivity : ComponentActivity() {
         }
         else if (list) BoxWithConstraints(Modifier.weight(1f)) {
             val count = if (prefs.columns == 0) (maxWidth.value / 320).toInt().coerceAtLeast(1) else prefs.columns.coerceAtMost((maxWidth.value / 280).toInt().coerceAtLeast(1))
-            val gridState = rememberLazyGridState()
             val groups = remember(sessions, machines, prefs.grouping, prefs.order) { sessionListGroups(sessions, machines, prefs.grouping, prefs.order) }
             val order = remember(groups) { groups.flatMap { it.sessions } }
             val counts = remember(groups) { groups.groupBy { it.machine }.mapValues { (_, sections) -> sections.sumOf { it.sessions.size } } }
-            LazyVerticalGrid(columns = GridCells.Fixed(count), state = gridState, contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyVerticalGrid(columns = GridCells.Fixed(count), state = gridState, contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 88.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 groups.forEachIndexed { index, group ->
                     if (index == 0 || groups[index - 1].machine != group.machine) stickyHeader(key = "machine-${group.machine}", contentType = "machine") { headerIndex ->
                         MachineHeader(group.machine, counts.getValue(group.machine), group.machine in collapsedMachines, Modifier.animateItem(placementSpec = tween(320))) {
@@ -248,48 +265,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        else {
-            val boardState = rememberLazyListState()
-            val groups = remember(sessions, prs, machines) { machinePrGroups(sessions, prs, machines) }
-            val order = remember(groups) { groups.flatMap { it.sessions }.distinctBy { it.id } }
-            val watched = remember(prs) { prs.filter { it.sessions.isEmpty() } }
-            LazyColumn(state = boardState, contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                groups.forEach { group ->
-                    stickyHeader(key = "machine-${group.machine}", contentType = "machine") { headerIndex ->
-                        MachineHeader(group.machine, group.sessions.size, group.machine in collapsedMachines, Modifier.animateItem(placementSpec = tween(320))) {
-                            if (group.machine !in collapsedMachines && boardState.firstVisibleItemIndex > headerIndex) boardState.requestScrollToItem(headerIndex)
-                            collapsedMachines = if (group.machine in collapsedMachines) collapsedMachines - group.machine else collapsedMachines + group.machine
-                        }
-                    }
-                    if (group.machine in collapsedMachines) return@forEach
-                    val attention = group.sessions.filter { it.attention }
-                    items(attention, key = { "attention-${it.id}" }, contentType = { "session" }) {
-                        SessionCard(it, it.id == selectedId, showMachine = false, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180))) { select(it, order) }
-                    }
-                    items(group.prs, key = { "pr-${group.machine.length}:${group.machine}${it.key}" }, contentType = { "pr" }) { pr ->
-                        PrCard(pr, Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180)), showMachine = false) { select(it, order) }
-                    }
-                    val owned = group.prs.flatMap { it.sessions }.map { it.id }.toSet()
-                    items(group.sessions.filter { it.id !in owned && !it.attention }, key = { it.id }, contentType = { "session" }) {
-                        SessionCard(it, it.id == selectedId, showMachine = false, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180))) { select(it, order) }
-                    }
-                }
-                if (watched.isNotEmpty()) {
-                    stickyHeader(key = "watched", contentType = "machine") { headerIndex ->
-                        MachineHeader("Tracked PRs", watched.size, watchedCollapsed, Modifier.animateItem(placementSpec = tween(320)), countNoun = "pull request") {
-                            if (!watchedCollapsed && boardState.firstVisibleItemIndex > headerIndex) boardState.requestScrollToItem(headerIndex)
-                            watchedCollapsed = !watchedCollapsed
-                        }
-                    }
-                    if (!watchedCollapsed) items(watched, key = { "watched-${it.key}" }, contentType = { "pr" }) { pr ->
-                        PrCard(pr, Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180))) { select(it, order) }
-                    }
-                }
-            }
-        }
+        else PrBoard(roster, pullRequests, machines, now, all, query, selectedId, collapsedMachines, boardState,
+            { machine -> collapsedMachines = if (machine in collapsedMachines) collapsedMachines - machine else collapsedMachines + machine },
+            ::select)
+    }
+    BoardModeFooter(list, mode, expanded, Modifier.align(Alignment.BottomCenter).padding(12.dp))
     }
 }
-@Composable private fun MachineHeader(name: String, count: Int, collapsed: Boolean, modifier: Modifier = Modifier, countNoun: String = "session", toggle: () -> Unit) {
+@Composable internal fun MachineHeader(name: String, count: Int, collapsed: Boolean, modifier: Modifier = Modifier, countNoun: String = "session", toggle: () -> Unit) {
     val angle by animateFloatAsState(if (collapsed) -90f else 0f, tween(240), label = "Machine folder")
     Surface(onClick = toggle, color = Ink, modifier = modifier.fillMaxWidth().semantics {
         heading()
@@ -310,25 +293,9 @@ class MainActivity : ComponentActivity() {
         Icon(painterResource(icon), contentDescription = label, tint = if (selected) Peach else Muted, modifier = Modifier.size(22.dp))
     }
 }
-@Composable private fun PrCard(pr: PullRequest, modifier: Modifier = Modifier, showMachine: Boolean = true, select: (Session) -> Unit) {
-    val uri = LocalUriHandler.current
-    Surface(modifier = modifier, color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFF303A46))) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) { Text(pr.repo, color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f)); Text("#${pr.number}", color = Peach, fontSize = 12.sp, lineHeight = 16.sp) }
-            if (pr.title.isNotBlank()) Text(pr.title, color = CrabColors.Title, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
-            if (pr.state.isNotBlank() || pr.checks.isNotBlank()) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (pr.state.isNotBlank()) Text(pr.state.lowercase().replaceFirstChar { it.uppercase() }, color = if (pr.state == "MERGED") CrabColors.Purple else Mint, fontSize = 12.sp, lineHeight = 16.sp)
-                if (pr.checks.isNotBlank()) Text(pr.checks, color = if (pr.checks.contains("failed")) CrabColors.Red else Muted, fontSize = 12.sp, lineHeight = 16.sp)
-            }
-            pr.sessions.forEach { session -> HorizontalDivider(color = Color(0xFF303A46)); SessionRow(session, showMachine = showMachine) { select(session) } }
-            if (pr.sessions.isEmpty() && pr.url.startsWith("https://")) Control(R.drawable.ic_external, "Open pull request") { uri.openUri(pr.url) }
-        }
-    }
-}
 @Composable private fun SessionCard(session: Session, selected: Boolean, now: State<Long>? = null, prefs: UiPreferences = UiPreferences(), showMachine: Boolean = true, modifier: Modifier = Modifier, open: () -> Unit) {
-    val attention = session.attentionColor
-    Surface(onClick = open, modifier = modifier, color = attention?.let { androidx.compose.ui.graphics.lerp(Panel, it, .12f) } ?: Panel,
-        shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, attention ?: if (selected) CrabColors.Title else Color(0xFF303A46))) {
+    Surface(onClick = open, modifier = modifier, color = Panel,
+        shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected) CrabColors.Title else Color(0xFF303A46))) {
         Box(Modifier.padding(if (prefs.density == "compact") 6.dp else 10.dp)) {
             SessionRow(session, clickable = false, showMachine = showMachine, footer = {
                 if (now != null) SessionStatsFooter(session, now, prefs)
@@ -345,8 +312,7 @@ class MainActivity : ComponentActivity() {
             append("  ·\u00a0${session.machine}")
         }
     } }
-    val attention = if (clickable) session.attentionColor else null
-    Row(Modifier.fillMaxWidth().background(attention?.copy(alpha = .12f) ?: Color.Transparent, RoundedCornerShape(8.dp)).then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+    Row(Modifier.fillMaxWidth().then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
         Surface(color = background, shape = RoundedCornerShape(8.dp), modifier = Modifier.width(58.dp)) { Text(session.glyph, color = color, fontSize = 16.sp, lineHeight = 20.sp, textAlign = TextAlign.Center, maxLines = 1, softWrap = false, modifier = Modifier.padding(vertical = 5.dp)) }
         SessionStatus(session)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {

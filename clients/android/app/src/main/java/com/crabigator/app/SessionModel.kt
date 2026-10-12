@@ -11,7 +11,7 @@ import org.json.JSONObject
 
 enum class RosterStatus { Loading, Ready, Failed }
 
-data class AppState(val paired: Boolean = false, val sessions: List<Session> = emptyList(), val prs: List<PullRequest> = emptyList(), val loading: Boolean = false, val rosterStatus: RosterStatus = RosterStatus.Loading, val error: String? = null, val selected: Session? = null, val screen: String = "", val history: String = "", val historyLoaded: Boolean = false, val screenLoaded: Boolean = false, val details: Map<String, JSONObject> = emptyMap(), val prompt: JSONObject? = null, val revision: Long? = null, val connected: Boolean = false, val sending: Boolean = false, val pageDirection: Int = 1)
+data class AppState(val paired: Boolean = false, val sessions: List<Session> = emptyList(), val prs: List<PullRequest> = emptyList(), val loading: Boolean = false, val rosterStatus: RosterStatus = RosterStatus.Loading, val error: String? = null, val selected: Session? = null, val screen: String = "", val history: String = "", val historyLoaded: Boolean = false, val screenLoaded: Boolean = false, val details: Map<String, JSONObject> = emptyMap(), val prompt: JSONObject? = null, val revision: Long? = null, val connected: Boolean = false, val sending: Boolean = false, val pageDirection: Int = 1, val navigationId: Long = 0)
 class SessionModel(app: Application) : AndroidViewModel(app) {
     private val preferenceStore = PreferenceStore(app)
     val preferences = MutableStateFlow(preferenceStore.load())
@@ -77,9 +77,12 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
         }
     }
     fun select(session: Session, direction: Int = 1) {
-        if (state.value.selected?.id == session.id) return
+        if (state.value.selected?.id == session.id) {
+            state.update { it.copy(navigationId = it.navigationId + 1) }
+            return
+        }
         selectionEpoch++
-        state.update { it.copy(selected = session, pageDirection = direction, screen = "", history = "", historyLoaded = false, screenLoaded = false, details = emptyMap(), prompt = null, revision = null, connected = false, sending = false, error = null) }
+        state.update { it.copy(selected = session, navigationId = it.navigationId + 1, pageDirection = direction, screen = "", history = "", historyLoaded = false, screenLoaded = false, details = emptyMap(), prompt = null, revision = null, connected = false, sending = false, error = null) }
         connect(session.id)
     }
     fun open(id: String) = viewModelScope.launch {

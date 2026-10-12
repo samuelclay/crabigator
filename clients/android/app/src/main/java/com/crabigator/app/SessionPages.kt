@@ -22,6 +22,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
     wide: Boolean,
     close: () -> Unit,
     swipe: Modifier,
+    visible: Boolean = true,
     style: (Rect) -> Unit,
 ) {
     val selected = state.selected?.id ?: return
@@ -33,7 +34,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
                 slideOutHorizontally(tween(360, easing = FastOutSlowInEasing)) { -it * state.pageDirection })
                 .using(null)
         }) { id ->
-        val active = id == selected
+        val active = id == selected && visible
         val frame = if (active) state else frames[id]
         DisposableEffect(id) { onDispose { frames.remove(id) } }
         if (frame != null) Box(Modifier.fillMaxSize().then(if (active) Modifier else Modifier

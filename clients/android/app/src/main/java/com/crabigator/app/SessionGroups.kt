@@ -24,17 +24,3 @@ internal fun sessionListGroups(sessions: List<Session>, machines: List<String>, 
         }.map { SessionListGroup(machine, it.key, it.value) }
     }
 }
-
-internal data class MachinePrGroup(val machine: String, val sessions: List<Session>, val prs: List<PullRequest>)
-
-/** A shared PR belongs in each contributing machine's section, with only its local sessions. */
-internal fun machinePrGroups(sessions: List<Session>, prs: List<PullRequest>, machines: List<String>): List<MachinePrGroup> =
-    machines.mapNotNull { machine ->
-        val localPrs = prs.mapNotNull { pr ->
-            val local = pr.sessions.filter { it.machineGroup == machine }
-            if (local.isEmpty()) null else pr.copy(sessions = local)
-        }
-        val localSessions = (sessions.filter { it.machineGroup == machine } + localPrs.flatMap { it.sessions }).distinctBy { it.id }
-            .sortedWith(compareByDescending<Session> { it.attention }.thenByDescending { it.activityAt }.thenBy { it.id })
-        if (localSessions.isEmpty()) null else MachinePrGroup(machine, localSessions, localPrs)
-    }

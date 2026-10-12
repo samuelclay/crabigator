@@ -119,12 +119,20 @@ data class Session(val id: String, val title: String, val repo: String, val mach
         fun parse(j: JSONObject) = Session(j.text("session_id", j.text("id")), j.text("title").ifBlank { j.text("dir_name", "Session") }, listOf(j.text("repo_owner"), j.text("repo_name")).filter { it.isNotBlank() }.joinToString("/"), j.text("device_name"), j.text("state", "ready"), j.optBoolean("active", true), j.optJSONObject("session_mark")?.text("glyph", "◈") ?: "◈", j.optJSONObject("session_mark")?.text("fg_hex", "#FFAA77") ?: "#FFAA77", j.optJSONObject("recap")?.text("headline") ?: "", j.text("platform"), j.text("branch"), j.optJSONObject("session_mark")?.text("bg_hex", "#352B25") ?: "#352B25", SessionStats.parse(j))
     }
 }
-data class PullRequest(val key: String, val title: String, val repo: String, val number: Int, val state: String, val checks: String, val url: String, val sessions: List<Session>, val watched: Boolean = false) {
+data class PullRequest(val key: String, val title: String, val repo: String, val number: Int, val state: String, val checks: String, val url: String, val sessions: List<Session>, val watched: Boolean = false,
+    val branch: String = "", val additions: Int? = null, val deletions: Int? = null,
+    val mergeable: String = "", val mergeState: String = "", val draft: Boolean = false,
+    val primary: Boolean = false, val review: String = "", val checksFailed: Int = 0, val checksPending: Int = 0,
+    val lastMentionedAt: Long = 0, val updatedAt: Long = 0, val closedAt: Long = 0,
+) {
     companion object {
         fun parse(j: JSONObject): PullRequest {
             val p = j.optJSONObject("pr") ?: j
             val repo = "${j.text("owner")}/${j.text("repo")}"
-            return PullRequest("$repo#${j.optInt("number")}", p.text("title", "Pull request"), repo, j.optInt("number"), p.text("state", "OPEN"), when { p.optInt("checks_failed") > 0 -> "${p.optInt("checks_failed")} failed"; p.optInt("checks_pending") > 0 -> "Checks running"; p.optInt("checks_total") > 0 -> "Checks passed"; else -> "" }, p.text("url"), (j.array("sessions") + j.array("touching")).map(Session::parse).distinctBy { it.id }, p.optBoolean("watched"))
+            return PullRequest("$repo#${j.optInt("number")}", p.text("title", "Pull request"), repo, j.optInt("number"), p.text("state", "OPEN"), when { p.optInt("checks_failed") > 0 -> "${p.optInt("checks_failed")} failed"; p.optInt("checks_pending") > 0 -> "Checks running"; p.optInt("checks_total") > 0 -> "Checks passed"; else -> "" }, p.text("url"), (j.array("sessions") + j.array("touching")).map(Session::parse).distinctBy { it.id }, p.optBoolean("watched"),
+                p.text("branch"), if (p.isNull("additions")) null else p.optInt("additions"), if (p.isNull("deletions")) null else p.optInt("deletions"),
+                p.text("mergeable"), p.text("merge_state_status"), p.optBoolean("is_draft"), p.optBoolean("primary"), p.text("review_decision"),
+                p.optInt("checks_failed"), p.optInt("checks_pending"), p.optLong("last_mentioned_at") / 1000, p.optLong("updated_at") / 1000, p.optLong("closed_at") / 1000)
         }
     }
 }

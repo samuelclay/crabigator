@@ -31,16 +31,4 @@ class SessionGroupsTest {
         assertEquals(listOf("Studio/a", "Studio/z", "Book/z"), groups.map { "${it.machine}/${it.project}" })
         assertEquals(listOf("c", "a", "b"), groups.flatMap { it.sessions }.map { it.id })
     }
-    @Test fun sharedPrIsSplitByMachineWithoutLosingSessionsOrDoubleCounting() {
-        val studio = session("a", "Studio", 100)
-        val book = session("b", "Book", 200)
-        val pr = PullRequest("repo#1", "Shared work", "repo", 1, "OPEN", "", "", listOf(studio, book))
-        val groups = machinePrGroups(listOf(studio, book), listOf(pr), listOf("Studio", "Book"))
-        assertEquals(listOf("Studio", "Book"), groups.map { it.machine })
-        assertEquals(listOf(1, 1), groups.map { it.sessions.size })
-        assertEquals(listOf("a", "b"), groups.flatMap { it.prs.single().sessions }.map { it.id })
-        // A PR-title search can find the PR even when no session title matches.
-        assertEquals(listOf("a", "b"), machinePrGroups(emptyList(), listOf(pr), listOf("Studio", "Book")).flatMap { it.sessions }.map { it.id })
-    }
-
 }

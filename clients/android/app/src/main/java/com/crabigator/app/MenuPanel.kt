@@ -152,6 +152,7 @@ private val Cyan = CrabColors.Cyan
     MenuSection("Appearance") { TextButton({ navigate("Style") }, Modifier.fillMaxWidth()) { Text("Style", color = Cyan) } }
     MenuSection("Notifications") { TextButton({ navigate("Notifications") }, Modifier.fillMaxWidth()) { Text(Notifications.status(context), color = Cyan) } }
     MenuSection("Session list") {
+        CheckRow("Show ended sessions", p.showEnded) { model.style { it.copy(showEnded = !it.showEnded) } }
         Text("Position", color = Muted, fontSize = 12.sp)
         Choices(listOf("Left", "Right"), if (p.sidebarRight) 1 else 0) { n -> model.style { it.copy(sidebarRight = n == 1) } }
         Spacer(Modifier.height(8.dp)); Text("Density", color = Muted, fontSize = 12.sp)
