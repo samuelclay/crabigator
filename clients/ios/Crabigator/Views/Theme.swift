@@ -50,7 +50,7 @@ struct SessionTiming: View {
                 timing(now, compact: false, duration: true)
                 timing(now, compact: true, duration: true)
                 timing(now, compact: true, duration: false)
-            }.font(.system(size: 11)).monospacedDigit().lineLimit(1)
+            }.boardFont(11).monospacedDigit().lineLimit(1)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Session time \(durationText(session.duration(now))), thinking time \(durationText(session.thinkingSeconds)), last prompt \(ageText(session.promptAt, now: now)), last completion \(ageText(session.completionAt, now: now))")
         }
@@ -67,4 +67,27 @@ struct SessionTiming: View {
         }
     }
     func short(_ text: String, _ compact: Bool) -> String { compact ? String(text.split(separator: " ").first ?? "—") : text }
+}
+
+private struct BoardTextSizeKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 14
+}
+extension EnvironmentValues {
+    var boardTextSize: CGFloat {
+        get { self[BoardTextSizeKey.self] }
+        set { self[BoardTextSizeKey.self] = newValue }
+    }
+}
+private struct BoardFont: ViewModifier {
+    @Environment(\.boardTextSize) var size
+    var base: CGFloat
+    var weight: Font.Weight
+    func body(content: Content) -> some View {
+        content.font(.system(size: base * size / 14, weight: weight))
+    }
+}
+extension View {
+    func boardFont(_ size: CGFloat, weight: Font.Weight = .regular) -> some View {
+        modifier(BoardFont(base: size, weight: weight))
+    }
 }

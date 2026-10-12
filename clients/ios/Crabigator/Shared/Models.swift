@@ -78,6 +78,12 @@ func ageText(_ timestamp: Int, now: Int) -> String {
 }
 
 struct Preferences: Codable, Equatable {
+    // Optional storage lets older saved preferences keep their existing values.
+    private var boardFontSize: Int?
+    var boardTextSize: Int {
+        get { boardFontSize ?? 14 }
+        set { boardFontSize = newValue }
+    }
     var fontSize = 13, lineSpacing = 145, columns = 0, terminalHeight = 0
     var wrap = true, widgets = false, sidebarRight = false, showEnded = false
     var grouping = "all", order = "recent", density = "comfortable"

@@ -4,6 +4,12 @@ The native app is installed, paired and running on the physical ClayPad Air and 
 
 On October 12, Xcode automatic signing succeeded with the NewsBlur team (`HR7P97SD72`). The signed Debug build and notification extension installed on both physical devices. Each device claimed its own pairing code, and screenshots confirmed that the live session roster loaded. This verifies installation, launch, pairing and roster access; it does not establish full device interaction or push-delivery coverage.
 
+## Independent text sizes
+
+Style now saves List / PR board text size separately from Terminal text size. The default board size preserves the existing layout. An iPhone simulator UI check changed the board size, verified the terminal setting stayed unchanged, and confirmed both values survived restarting the app. Eleven unit tests passed, including decoding older preferences without resetting terminal settings. The signed update installed on ClayPad Air and ClayPhone SE 3; the iPad launched, while the phone was locked. The matching Android update passed 28 unit tests and was installed on both Samsung devices. The S22 visual check covered list and PR board text at size 24 while terminal text stayed at 9.
+
+Results: `/tmp/crabigator-independent-text-sizes-final.xcresult`. The UI check restored the simulator's original board size afterward.
+
 ## Phone navigation follow-up
 
 Phone pages now use a `UINavigationController` with an interactive slide transition. The board stays underneath the entire detail page. A one-finger rightward pan works on the loading page as well as the terminal; cancelled swipes retain the session and its connection. Text editing, selections and terminal content already scrolled horizontally keep their own gestures. The tablet retains its sidebar and session paging.
@@ -40,8 +46,8 @@ Result bundles are `/tmp/crabigator-reading-verified.xcresult`, `/tmp/crabigator
 ## Still required
 
 - Exercise the remaining phone/tablet interactions on the physical devices. Signing and installation are now complete.
-- Provide an APNs signing key for the NewsBlur team, apply migration 0023, configure the Worker secret and deploy the reviewed notification changes. None of those production operations has been performed.
+- Provide an APNs signing key for the NewsBlur team and configure the Worker secret. Migration 0023 and the Worker deployment completed on October 12; both existing Android registrations were preserved and the health check passed. Apple delivery remains unconfigured.
 - Verify actual APNs delivery, sound off/on, lock-screen choices and replies, stale-revision rejection, cross-device resolution and revoked pairing on real devices.
 - Verify microphone permission, recording, cancellation, transcription and background interruption on a physical device.
 
-The app is left paired and running on ClayPad Air and ClayPhone SE 3. Production release and Apple push deployment remain pending.
+The app is left paired and running on ClayPad Air and ClayPhone SE 3. Production app release and Apple push credentials remain pending.

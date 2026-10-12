@@ -34,7 +34,7 @@ struct BoardView: View {
                         boardContent(list: true, width: geometry.size.width).opacity(listMode ? 1 : 0).allowsHitTesting(listMode).accessibilityHidden(!listMode)
                         boardContent(list: false, width: geometry.size.width).opacity(listMode ? 0 : 1).allowsHitTesting(!listMode).accessibilityHidden(listMode)
                     }
-                }
+                }.environment(\.boardTextSize, CGFloat(model.preferences.boardTextSize))
             }
         }.background(Crab.ink).overlay(alignment: .bottom) { footer.padding(.bottom, 16) }
     }
@@ -51,8 +51,8 @@ struct BoardView: View {
             }
         } label: {
             HStack(spacing: 7) {
-                Image(systemName: icon); Text(label).font(.system(size: 13, weight: .medium))
-                if wide && listMode == isList { Image(systemName: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").font(.system(size: 10)) }
+                Image(systemName: icon); Text(label).boardFont(13, weight: .medium)
+                if wide && listMode == isList { Image(systemName: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").boardFont(10) }
             }.padding(.horizontal, 14).frame(height: 40).background(listMode == isList ? Crab.orange.opacity(0.18) : .clear, in: Capsule()).foregroundStyle(listMode == isList ? Crab.orange : Crab.muted)
         }.buttonStyle(.plain).accessibilityIdentifier(label).accessibilityValue(listMode == isList ? (wide ? (expanded ? "Selected, full width" : "Selected, sidebar") : "Selected") : "")
     }
@@ -79,9 +79,9 @@ struct BoardView: View {
                                 if !collapsed.contains(machine) {
                                     ForEach(groups) { group in
                                         if let age = group.age, groups.first(where: { $0.age == age })?.id == group.id {
-                                            Text(age.label).font(.system(size: 12, weight: .medium)).foregroundStyle(Crab.color(age.palette)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 6).background(Crab.color(age.palette).opacity(0.13), in: RoundedRectangle(cornerRadius: 4))
+                                            Text(age.label).boardFont(12, weight: .medium).foregroundStyle(Crab.color(age.palette)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 6).background(Crab.color(age.palette).opacity(0.13), in: RoundedRectangle(cornerRadius: 4))
                                         }
-                                        if !group.project.isEmpty { Text(group.project).font(.system(size: 12)).foregroundStyle(Crab.yellow).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.top, 4) }
+                                        if !group.project.isEmpty { Text(group.project).boardFont(12).foregroundStyle(Crab.yellow).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.top, 4) }
                                         if list {
                                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: columns), spacing: 8) {
                                                 ForEach(group.sessions) { session in sessionButton(session, list: true, full: false, order: order) }
@@ -93,8 +93,8 @@ struct BoardView: View {
                                 Button {
                                     withAnimation(.easeInOut(duration: 0.3)) { if !collapsed.insert(machine).inserted { collapsed.remove(machine) }; proxy.scrollTo(machine, anchor: .top) }
                                 } label: {
-                                    HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).lineLimit(1); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").font(.system(size: 11)); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").font(.system(size: 11)) }
-                                        .font(.system(size: 13, weight: .medium)).foregroundStyle(Crab.muted).padding(.vertical, 13).padding(.horizontal, 8).background(Crab.ink)
+                                    HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).lineLimit(1); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").boardFont(11); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").boardFont(11) }
+                                        .boardFont(13, weight: .medium).foregroundStyle(Crab.muted).padding(.vertical, 13).padding(.horizontal, 8).background(Crab.ink)
                                 }.buttonStyle(.plain).id(machine).accessibilityIdentifier("Machine \(machine)")
                             }
                         }
@@ -111,7 +111,7 @@ struct BoardView: View {
                                 Button {
                                     withAnimation { if !collapsed.insert("\u{0}watched").inserted { collapsed.remove("\u{0}watched") }; proxy.scrollTo("watched", anchor: .top) }
                                 } label: {
-                                    HStack { Text("Tracked PRs"); Spacer(); Text("\(watched.count) pull requests"); Image(systemName: collapsed.contains("\u{0}watched") ? "chevron.right" : "chevron.down") }.font(.system(size: 12)).foregroundStyle(Crab.muted).padding(10).background(Crab.ink)
+                                    HStack { Text("Tracked PRs"); Spacer(); Text("\(watched.count) pull requests"); Image(systemName: collapsed.contains("\u{0}watched") ? "chevron.right" : "chevron.down") }.boardFont(12).foregroundStyle(Crab.muted).padding(10).background(Crab.ink)
                                 }.buttonStyle(.plain).id("watched")
                             }
                         }
@@ -139,19 +139,19 @@ struct SessionRow: View {
             if list || !wide { SessionStatus(session: session) }
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .top, spacing: 12) {
-                    Text(session.title).font(.system(size: 14, weight: .medium)).foregroundStyle(session.active ? Crab.title : Crab.muted).lineLimit(wide ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(session.title).boardFont(14, weight: .medium).foregroundStyle(session.active ? Crab.title : Crab.muted).lineLimit(wide ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
                     if wide {
-                        Text(session.branch).font(.system(size: 12)).foregroundStyle(Crab.muted).lineLimit(1).frame(width: 180, alignment: .leading)
+                        Text(session.branch).boardFont(12).foregroundStyle(Crab.muted).lineLimit(1).frame(width: 180, alignment: .leading)
                         HStack(alignment: .top) { SessionStatus(session: session); Spacer(); recency }.frame(width: 300, alignment: .leading)
                     }
                 }
                 if list {
                     SessionTiming(session: session, preferences: preferences)
                     if preferences.visible("tools") || preferences.visible("compactions") {
-                        HStack { if preferences.visible("tools") { Text("⚒ \(session.tools.map(String.init) ?? "—")") }; if preferences.visible("compactions") { Text("⊜ \(session.compactions.map(String.init) ?? "—")") } }.font(.system(size: 11)).foregroundStyle(Crab.orange)
+                        HStack { if preferences.visible("tools") { Text("⚒ \(session.tools.map(String.init) ?? "—")") }; if preferences.visible("compactions") { Text("⊜ \(session.compactions.map(String.init) ?? "—")") } }.boardFont(11).foregroundStyle(Crab.orange)
                     }
                 } else {
-                    if !wide { HStack(alignment: .top) { Text(session.branch).font(.system(size: 11)).foregroundStyle(Crab.muted).lineLimit(1); Spacer(); recency } }
+                    if !wide { HStack(alignment: .top) { Text(session.branch).boardFont(11).foregroundStyle(Crab.muted).lineLimit(1); Spacer(); recency } }
                     ForEach(prs) { pr in PRRow(pr: pr, wide: wide) }
                 }
             }
@@ -159,7 +159,7 @@ struct SessionRow: View {
     }
     var recency: some View {
         TimelineView(.periodic(from: .now, by: 1)) { t in
-            HStack(spacing: 10) { Text("⟩ " + ageText(session.promptAt, now: Int(t.date.timeIntervalSince1970)).replacingOccurrences(of: " ago", with: "")).foregroundStyle(Crab.orange); Text("⋖ " + ageText(session.completionAt, now: Int(t.date.timeIntervalSince1970))).foregroundStyle(Crab.deepOrange) }.font(.system(size: 11)).monospacedDigit().lineLimit(1).fixedSize()
+            HStack(spacing: 10) { Text("⟩ " + ageText(session.promptAt, now: Int(t.date.timeIntervalSince1970)).replacingOccurrences(of: " ago", with: "")).foregroundStyle(Crab.orange); Text("⋖ " + ageText(session.completionAt, now: Int(t.date.timeIntervalSince1970))).foregroundStyle(Crab.deepOrange) }.boardFont(11).monospacedDigit().lineLimit(1).fixedSize()
         }
     }
 }
@@ -168,9 +168,9 @@ struct PRRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: 12) {
-                Text(verbatim: "#\(pr.number)  \(pr.title)").font(.system(size: 13)).foregroundStyle(pr.primary || pr.watched ? Crab.purple : Crab.muted).lineLimit(wide ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
+                Text(verbatim: "#\(pr.number)  \(pr.title)").boardFont(13).foregroundStyle(pr.primary || pr.watched ? Crab.purple : Crab.muted).lineLimit(wide ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
                 if wide {
-                    Text(pr.branch).font(.system(size: 12)).foregroundStyle(Crab.muted).lineLimit(1).frame(width: 180, alignment: .leading)
+                    Text(pr.branch).boardFont(12).foregroundStyle(Crab.muted).lineLimit(1).frame(width: 180, alignment: .leading)
                     HStack(alignment: .top, spacing: 12) { changes.frame(maxWidth: .infinity, alignment: .leading); badge.frame(width: 60, alignment: .leading); checks.frame(width: 116, alignment: .leading) }.frame(width: 300, alignment: .leading)
                 }
             }
@@ -180,16 +180,16 @@ struct PRRow: View {
     @ViewBuilder var checks: some View {
             if !pr.checks.isEmpty || (pr.state == "OPEN" && !pr.mergeState.isEmpty && pr.mergeState != "UNKNOWN") {
                 Text([pr.checks, pr.state == "OPEN" && pr.mergeState != "UNKNOWN" ? (pr.mergeable == "CONFLICTING" ? "Conflicts" : pr.mergeState.capitalized) : ""].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.system(size: 11)).foregroundStyle(pr.checksFailed > 0 || pr.mergeable == "CONFLICTING" ? Crab.red : Crab.muted).lineLimit(2)
+                    .boardFont(11).foregroundStyle(pr.checksFailed > 0 || pr.mergeable == "CONFLICTING" ? Crab.red : Crab.muted).lineLimit(2)
             }
     }
     var changes: some View {
         HStack(spacing: 8) {
             if let n = pr.additions { Text("+\(n)").foregroundStyle(Crab.mint) }; if let n = pr.deletions { Text("−\(n)").foregroundStyle(Crab.red) }
-        }.font(.system(size: 11)).lineLimit(1)
+        }.boardFont(11).lineLimit(1)
     }
     var badge: some View {
             let color = pr.state == "MERGED" ? Crab.purple : pr.state == "CLOSED" ? Crab.red : pr.draft ? Crab.muted : Crab.mint
-            return Text(pr.draft && pr.state == "OPEN" ? "Draft" : pr.state.isEmpty ? "Pending" : pr.state.capitalized).padding(.horizontal, 5).padding(.vertical, 2).foregroundStyle(color).background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4)).font(.system(size: 11)).lineLimit(1)
+            return Text(pr.draft && pr.state == "OPEN" ? "Draft" : pr.state.isEmpty ? "Pending" : pr.state.capitalized).padding(.horizontal, 5).padding(.vertical, 2).foregroundStyle(color).background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4)).boardFont(11).lineLimit(1)
     }
 }

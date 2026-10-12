@@ -13,7 +13,8 @@ struct StyleMenu: View {
     }
     var form: some View {
             Form {
-                Section("Text size") { Stepper("\(model.preferences.fontSize) pt", value: $model.preferences.fontSize, in: 9...24) }
+                Section("List / PR board text size") { Stepper("\(model.preferences.boardTextSize) pt", value: $model.preferences.boardTextSize, in: 10...24).accessibilityIdentifier("Board text size") }
+                Section("Terminal text size") { Stepper("\(model.preferences.fontSize) pt", value: $model.preferences.fontSize, in: 9...24).accessibilityIdentifier("Terminal text size") }
                 Section("Line spacing") { Picker("Line spacing", selection: $model.preferences.lineSpacing) { Text("Tight").tag(120); Text("Normal").tag(145); Text("Relaxed").tag(170) }.pickerStyle(.segmented) }
                 Section("Text wrap") { Picker("Text wrap", selection: $model.preferences.wrap) { Text("Wrap").tag(true); Text("Scroll").tag(false) }.pickerStyle(.segmented) }
                 Section("Terminal height") { Picker("Height", selection: $model.preferences.terminalHeight) { Text("Full").tag(0); ForEach([250, 350, 500, 700], id: \.self) { Text("\($0)").tag($0) } }.pickerStyle(.menu) }

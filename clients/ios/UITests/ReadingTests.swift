@@ -59,6 +59,35 @@ final class ReadingTests: XCTestCase {
         }
         capture("Returned to board")
     }
+    func testBoardAndTerminalTextSizesStayIndependent() throws {
+        guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires an already paired simulator.")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 20))
+        app.buttons["Settings"].tap()
+        app.buttons["Style"].tap()
+        let board = app.steppers["Board text size"], terminal = app.steppers["Terminal text size"]
+        XCTAssertTrue(board.waitForExistence(timeout: 5))
+        let oldBoard = board.label, oldTerminal = terminal.label
+        for _ in 0..<4 { board.buttons["Board text size-Increment"].tap() }
+        let largerBoard = board.label
+        XCTAssertNotEqual(largerBoard, oldBoard)
+        XCTAssertEqual(terminal.label, oldTerminal)
+        capture("Independent text size controls")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.7)).tap()
+        capture("Larger list text")
+        app.buttons["PR board"].tap()
+        capture("Larger PR board text")
+        app.terminate(); app.launch()
+        app.buttons["Settings"].tap(); app.buttons["Style"].tap()
+        XCTAssertEqual(board.label, largerBoard)
+        XCTAssertEqual(terminal.label, oldTerminal)
+        for _ in 0..<4 { board.buttons["Board text size-Decrement"].tap() }
+        XCTAssertEqual(board.label, oldBoard)
+    }
     private func capture(_ name: String) {
         // The app's longest transition is 360 ms. Capture its settled geometry.
         Thread.sleep(forTimeInterval: 0.5)

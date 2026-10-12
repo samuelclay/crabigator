@@ -6,6 +6,19 @@ final class CrabigatorTests: XCTestCase {
     func session(_ id: String, prompt: Int, machine: String = "Mac", state: String = "complete") -> Session {
         Session(["session_id": id, "title": id, "device_name": machine, "prompts_changed_at": prompt, "state": state, "active": true])
     }
+    func testAddingBoardTextSizePreservesSavedTerminalSettings() throws {
+        let legacy = Data(#"{"fontSize":19,"lineSpacing":170,"columns":2,"terminalHeight":350,"wrap":false,"widgets":true,"sidebarRight":true,"showEnded":true,"grouping":"project","order":"alpha","density":"compact","hidden":["tools"]}"#.utf8)
+        var prefs = try JSONDecoder().decode(Preferences.self, from: legacy)
+        XCTAssertEqual(prefs.boardTextSize, 14)
+        XCTAssertEqual(prefs.fontSize, 19)
+        XCTAssertEqual(prefs.lineSpacing, 170)
+        XCTAssertTrue(prefs.sidebarRight)
+        prefs.boardTextSize = 20
+        let restored = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs))
+        XCTAssertEqual(restored, prefs)
+        XCTAssertEqual(restored.boardTextSize, 20)
+        XCTAssertEqual(restored.fontSize, 19)
+    }
     func testOrderingKeepsLiveContentButOnlyMovesOnNewSessionsOrTenMinutes() {
         let order = RosterOrder(), prefs = Preferences()
         let a = session("a", prompt: 100), b = session("b", prompt: 90)
