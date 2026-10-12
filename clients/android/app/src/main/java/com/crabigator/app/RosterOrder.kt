@@ -14,15 +14,16 @@ internal class RosterOrder {
         val list = sessionListGroups(sessions, machines, grouping, order)
         val board = prBoardGroups(roster, prs, machines, now, true, "")
         val watched = prs.filter { it.sessions.isEmpty() }
+        val machineRanks = machines.withIndex().associate { it.value to it.index }
         layout = if (reset) RosterLayout(list, board, watched) else RosterLayout(
             retainSections(layout.list.map { (it.machine to it.project) to it.sessions },
                 list.map { (it.machine to it.project) to it.sessions }, { it.id })
-                .groupBy { it.first.first }.values.flatMap { groups ->
+                .groupBy { it.first.first }.entries.sortedBy { machineRanks[it.key] ?: Int.MAX_VALUE }.flatMap { (_, groups) ->
                     groups.map { (key, rows) -> SessionListGroup(key.first, key.second, rows) }
                 },
             retainSections(layout.board.sections(), board.sections(), { it.session.id }) { old, live ->
                 live.copy(prs = retainRows(old.prs, live.prs) { it.key })
-            }.groupBy { it.first.machine }.map { (machine, sections) ->
+            }.groupBy { it.first.machine }.entries.sortedBy { machineRanks[it.key] ?: Int.MAX_VALUE }.map { (machine, sections) ->
                 BoardMachine(machine, sections.groupBy { it.first.age }.map { (age, repos) ->
                     BoardBand(age, repos.map { (key, rows) -> BoardRepository(key.repo, rows) })
                 })

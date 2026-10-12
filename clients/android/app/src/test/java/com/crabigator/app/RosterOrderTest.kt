@@ -79,4 +79,22 @@ class RosterOrderTest {
         val changedGrouping = update(cache, listOf(fresh, extraRepo, ended, book), 50, grouping = "project", order = "alpha")
         assertEquals(listOf("app", "other", "app"), changedGrouping.list.map { it.project })
     }
+
+    @Test fun returningMachineKeepsItsPlaceBeforeTheNextRefresh() {
+        val cache = RosterOrder()
+        val studio = session("studio", 100)
+        val book = session("book", 200, machine = "Book")
+        update(cache, listOf(studio, book), 0)
+
+        val absent = update(cache, listOf(book), 10)
+        assertEquals(listOf("Book"), absent.list.map { it.machine })
+        assertEquals(listOf("Book"), absent.board.map { it.machine })
+
+        val returning = session("new-studio", 0)
+        val restored = update(cache, listOf(book, returning), 20)
+        assertEquals(listOf("Studio", "Book"), restored.list.map { it.machine })
+        assertEquals(listOf("Studio", "Book"), restored.board.map { it.machine })
+        assertEquals(listOf("new-studio", "book"), restored.ids())
+        assertEquals(listOf("new-studio", "book"), restored.boardIds())
+    }
 }
