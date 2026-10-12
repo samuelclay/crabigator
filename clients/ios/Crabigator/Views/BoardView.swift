@@ -9,6 +9,7 @@ struct BoardView: View {
     @State private var searching = false
     @State private var query = ""
     @State private var settings = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var collapsed: Set<String> = []
     var body: some View {
         VStack(spacing: 0) {
@@ -128,8 +129,14 @@ struct BoardView: View {
             SessionRow(session: session, prs: model.ordering.prsBySession[session.id] ?? [], preferences: model.preferences, list: list, wide: full)
                 .padding(.horizontal, list ? 12 : 8).padding(.vertical, list ? (model.preferences.density == "compact" ? 8 : 12) : 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(selected ? Crab.orange.opacity(0.13) : list ? Crab.panel : .clear, in: shape)
-                .overlay { if selected { shape.strokeBorder(Crab.orange, lineWidth: 2) } }
+                .background {
+                    ZStack {
+                        shape.fill(list ? Crab.panel : .clear).opacity(selected ? 0 : 1)
+                        shape.fill(Crab.orange.opacity(0.13)).opacity(selected ? 1 : 0)
+                    }
+                }
+                .overlay { shape.strokeBorder(Crab.orange, lineWidth: 2).opacity(selected ? 1 : 0) }
+                .animation(reduceMotion ? nil : .easeOut(duration: selected ? 0.12 : 0.35), value: selected)
         }.buttonStyle(.plain).accessibilityIdentifier("Session \(session.id)").accessibilityValue(selected ? "Selected" : "")
             .accessibilityAddTraits(selected ? .isSelected : [])
     }
