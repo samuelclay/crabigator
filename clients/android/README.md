@@ -35,7 +35,7 @@ Android and FCM may delay background work under battery restrictions or while of
 
 ## Terminal
 
-The server supplies complete row-formatted ANSI snapshots. `TerminalText` converts foreground/background colors, bold, dim, underline, inverse, and horizontal spacing into native text spans. Terminal status markers such as `⏵⏵` and Claude’s animated bullets and spinners use a single-cell subset of [Noto Sans Symbols 2](https://github.com/google/fonts/tree/main/ofl/notosanssymbols2) so they render on devices whose system font lacks them. All animation frames advance exactly one native monospace cell, so nearby text stays still. Rebuild the subset from the upstream font with `scripts/terminal-symbols.py`. Its SIL Open Font License is included in `app/src/main/assets/licenses/`. Native text wraps to the detail pane by default; Style can switch to horizontal scrolling to preserve the desktop columns. The pin control follows new output; scrolling up releases it. The normalized conversation history sits above the live terminal in the same scrollable view, cached for late joiners by the Worker. Empty output has an explicit empty state. Viewing a session sends a five-second foreground heartbeat so the desktop keeps its screen current; no foreground service or background screen polling is required.
+The server supplies complete row-formatted ANSI snapshots. `TerminalText` converts foreground/background colors, bold, dim, underline, inverse, and horizontal spacing into native text spans. Terminal status markers such as `⏵⏵` and Claude’s animated bullets and spinners use a single-cell subset of [Noto Sans Symbols 2](https://github.com/google/fonts/tree/main/ofl/notosanssymbols2) so they render on devices whose system font lacks them. All animation frames advance exactly one native monospace cell, so nearby text stays still. Rebuild the subset from the upstream font with `scripts/terminal-symbols.py`. Its SIL Open Font License is included in `app/src/main/assets/licenses/`. Native text wraps to the detail pane by default; Style can switch to horizontal scrolling to preserve the desktop columns. The pin control follows new output; scrolling up releases it. The normalized conversation history sits above the live terminal in the same scrollable view, cached for late joiners by the Worker. ANSI parsing runs off the UI thread. The view lays out small blocks near the viewport instead of drawing the entire transcript, and an independent drawing layer keeps terminal updates from redrawing the session list. Native selection works on loaded blocks; Select all does not include offscreen blocks that have not been composed. Empty output has an explicit empty state. Viewing a session sends a five-second foreground heartbeat so the desktop keeps its screen current; no foreground service or background screen polling is required.
 
 ## Input
 
@@ -50,3 +50,24 @@ The detail pane’s top-right Style menu contains text size, line spacing, wrapp
 Unit tests cover terminal color/spacing and question input translation. `TerminalCellTest` measures native text on a device: the blinking bullet and all six spinner frames must preserve following text positions and row height at three font sizes. Worker tests cover prompt revisions, simultaneous replies, hibernation, auth/account isolation, and FCM token lifecycle. Device checks should cover phone and tablet layouts, rotation, composer/IME, voice edit/cancel/send, terminal selection, option and free-text replies, background notification delivery, desktop resolution, and an old notification racing a newer question.
 
 The first builds are direct debug installs, not a Play Store release. Release signing, store listing, and store submission are separate work.
+
+## Scroll profiling
+
+Use the `profile` build for performance checks. It is optimized, non-debuggable, and signed with the local debug key, so `adb install -r` preserves the existing pairing. This is a local install, not a store release. Compose tracing is included only in this build.
+
+```bash
+./gradlew :app:assembleProfile
+adb -s DEVICE install -r app/build/outputs/apk/profile/app-profile.apk
+adb -s DEVICE shell cmd package compile -m speed -f com.crabigator.app
+```
+
+Open a long-running session on the tablet in landscape and let initial history loading settle. Capture each pane separately, starting with the list at the top and terminal pinned to its bottom:
+
+```bash
+python3 scripts/profile-scroll.py --serial DEVICE --label before-list --output /tmp/crabigator-profile --x 250
+python3 scripts/profile-scroll.py --serial DEVICE --label before-terminal --output /tmp/crabigator-profile --x 1300 --start-down
+```
+
+Coordinates default to the 1920 × 1200 Samsung tablet; adjust `--x`, `--top`, and `--bottom` on other devices. Each run makes eight 700 ms swipes. Frame statistics cover the gestures; the 18-second Perfetto trace also includes a settling period afterward. `--start-down` starts toward older output, avoiding idle swipes against the pinned bottom. It aborts if another app takes focus. Keep the session, app compilation mode, pane sizes, and gestures the same when comparing builds. Allow initial history loading to finish before each capture. A session finishing work changes the workload: do not compare an active run with a settled run.
+
+Open the trace in Perfetto or run `trace_processor query -f scripts/scroll-summary.sql TRACE` using [Perfetto’s trace processor](https://perfetto.dev/docs/analysis/trace-processor). Look at UI-thread drawing and measurement, not just recomposition counts. Frame statistics include live updates during the gestures; compare repeated runs rather than treating a single percentage as a universal benchmark.
