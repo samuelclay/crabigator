@@ -121,7 +121,7 @@ class MainActivity : ComponentActivity() {
                 Board(s.sessions, s.prs, s.selected?.id, s.rosterStatus, model,
                     listMode, { next ->
                         if (listMode == next) { if (wide) browserExpanded = !browserExpanded }
-                        else { listMode = next; browserExpanded = true }
+                        else { listMode = next }
                     }, if (wide) fullBoard else null, { browserExpanded = false }) { menuAnchor = it; menu = "Settings" }
             }
             val entrance = remember(s.selected != null) { Animatable(1f) }
