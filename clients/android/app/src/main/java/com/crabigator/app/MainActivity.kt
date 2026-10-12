@@ -91,8 +91,9 @@ class MainActivity : ComponentActivity() {
 
 @Composable private fun App(model: SessionModel, notifications: () -> Unit) {
     val s by model.state.collectAsStateWithLifecycle()
-    var listMode by rememberSaveable { mutableStateOf(true) }
-    var browserExpanded by rememberSaveable { mutableStateOf(true) }
+    val navigation by model.navigation.collectAsStateWithLifecycle()
+    val listMode = navigation.listMode
+    val browserExpanded = navigation.expanded
     var handledNavigation by rememberSaveable { mutableLongStateOf(0L) }
     var menu by remember { mutableStateOf<String?>(null) }
     var menuAnchor by remember { mutableStateOf(Rect.Zero) }
@@ -100,7 +101,7 @@ class MainActivity : ComponentActivity() {
     LaunchedEffect(s.navigationId) {
         if (handledNavigation != s.navigationId) {
             handledNavigation = s.navigationId
-            if (s.selected != null) { browserExpanded = false; closingSession = null }
+            if (s.selected != null) { closingSession = null }
         }
     }
     val closing = s.selected != null && closingSession == s.selected?.id
@@ -122,9 +123,9 @@ class MainActivity : ComponentActivity() {
             val board: @Composable () -> Unit = {
                 Board(s.sessions, s.prs, s.selected?.id, s.rosterStatus, model,
                     listMode, { next ->
-                        if (listMode == next) { if (wide) browserExpanded = !browserExpanded }
-                        else { listMode = next }
-                    }, if (wide) fullBoard else null, { browserExpanded = false }) { menuAnchor = it; menu = "Settings" }
+                        if (listMode == next) { if (wide) model.navigate { it.copy(expanded = !it.expanded) } }
+                        else { model.navigate { it.copy(listMode = next) } }
+                    }, if (wide) fullBoard else null, { model.navigate { it.copy(expanded = false) } }) { menuAnchor = it; menu = "Settings" }
             }
             val entrance = remember(s.selected != null) { Animatable(1f) }
             var swipe by remember(s.selected?.id) { mutableStateOf<Float?>(null) }

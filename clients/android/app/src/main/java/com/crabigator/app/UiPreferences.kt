@@ -3,6 +3,17 @@ package com.crabigator.app
 import android.content.Context
 import org.json.JSONObject
 
+data class NavigationState(val listMode: Boolean = true, val expanded: Boolean = true, val selectedId: String? = null)
+
+class NavigationStore(context: Context) {
+    private val storage = context.getSharedPreferences("navigation", Context.MODE_PRIVATE)
+    fun load() = NavigationState(storage.getBoolean("listMode", true), storage.getBoolean("expanded", true), storage.getString("selectedId", null))
+    fun save(state: NavigationState) {
+        storage.edit().putBoolean("listMode", state.listMode).putBoolean("expanded", state.expanded)
+            .putString("selectedId", state.selectedId).apply()
+    }
+}
+
 data class UiPreferences(
     val fontSize: Int = 13,
     val lineSpacing: Int = 145,

@@ -15,6 +15,9 @@ data class AppState(val paired: Boolean = false, val sessions: List<Session> = e
 class SessionModel(app: Application) : AndroidViewModel(app) {
     private val preferenceStore = PreferenceStore(app)
     val preferences = MutableStateFlow(preferenceStore.load())
+    private val navigationStore = NavigationStore(app)
+    val navigation = MutableStateFlow(navigationStore.load())
+    fun navigate(update: (NavigationState) -> NavigationState) { navigation.update(update); navigationStore.save(navigation.value) }
     fun style(update: (UiPreferences) -> UiPreferences) { preferences.update(update); preferenceStore.save(preferences.value) }
     val credentials = Credentials(app)
     val api = Api(credentials)
@@ -29,6 +32,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
     private var selectionEpoch = 0L
     private var connectionEpoch = 0L
     private var snapshotRequest = 0L
+    private var restoreSelection = true
     fun start() {
         foreground = true
         if (!state.value.paired || polling?.isActive == true) return
@@ -52,6 +56,8 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
             val resume = foreground
             selectionEpoch++
             stop()
+            restoreSelection = false
+            navigate { it.copy(selectedId = null) }
             state.value = AppState(paired = true)
             if (resume) start()
         } catch (e: Exception) { failure(e) }
@@ -69,6 +75,14 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
             val prs = data.array("prs").map(PullRequest::parse)
             val sessions = (data.array("sessions").map(Session::parse) + prs.flatMap { it.sessions }).distinctBy { it.id }
             state.update { it.copy(prs = prs, sessions = sessions, rosterStatus = RosterStatus.Ready, error = null) }
+            if (restoreSelection) {
+                restoreSelection = false
+                navigation.value.selectedId?.let { id ->
+                    val session = sessions.find { it.id == id }
+                    if (session != null) select(session, restoring = true)
+                    else navigate { it.copy(selectedId = null, expanded = true) }
+                }
+            }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             if (epoch != rosterEpoch) return
@@ -76,23 +90,28 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
                 error = e.message ?: "Could not connect. Try again.") }
         }
     }
-    fun select(session: Session, direction: Int = 1) {
+    fun select(session: Session, direction: Int = 1, restoring: Boolean = false) {
+        restoreSelection = false
+        if (!restoring) navigate { it.copy(selectedId = session.id, expanded = false) }
         if (state.value.selected?.id == session.id) {
             state.update { it.copy(navigationId = it.navigationId + 1) }
             return
         }
         selectionEpoch++
         state.update { it.copy(selected = session, navigationId = it.navigationId + 1, pageDirection = direction, screen = "", history = "", historyLoaded = false, screenLoaded = false, details = emptyMap(), prompt = null, revision = null, connected = false, sending = false, error = null) }
-        connect(session.id)
+        if (foreground) connect(session.id)
     }
     fun open(id: String) = viewModelScope.launch {
         if (!state.value.paired) return@launch
+        restoreSelection = false
         val epoch = selectionEpoch
         refresh()
         if (epoch != selectionEpoch || !foreground) return@launch
         state.value.sessions.find { it.id == id }?.let { select(it) }
     }
     fun close() {
+        restoreSelection = false
+        navigate { it.copy(selectedId = null) }
         selectionEpoch++; disconnect()
         state.update { it.copy(selected = null, prompt = null, screen = "", history = "", sending = false) }
     }
@@ -175,6 +194,8 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
         try {
             api.call("/api/account/logout", JSONObject())
             stop(); credentials.clear()
+            restoreSelection = false
+            navigate { it.copy(selectedId = null) }
             androidx.core.app.NotificationManagerCompat.from(getApplication()).cancelAll()
             state.value = AppState()
         } catch (e: Exception) { failure(e) }
