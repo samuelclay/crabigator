@@ -126,7 +126,8 @@ private val Cyan = CrabColors.Cyan
     }
 }
 @Composable private fun StyleMenu(p: UiPreferences, update: ((UiPreferences) -> UiPreferences) -> Unit) {
-    MenuSection("Text size") { Stepper("${p.fontSize} sp", { update { it.copy(fontSize = (it.fontSize - 1).coerceAtLeast(9)) } }, { update { it.copy(fontSize = (it.fontSize + 1).coerceAtMost(24)) } }) }
+    MenuSection("List / PR board text size") { Stepper("${p.boardFontSize} sp", { update { it.copy(boardFontSize = (it.boardFontSize - 1).coerceAtLeast(10)) } }, { update { it.copy(boardFontSize = (it.boardFontSize + 1).coerceAtMost(24)) } }) }
+    MenuSection("Terminal text size") { Stepper("${p.fontSize} sp", { update { it.copy(fontSize = (it.fontSize - 1).coerceAtLeast(9)) } }, { update { it.copy(fontSize = (it.fontSize + 1).coerceAtMost(24)) } }) }
     MenuSection("Line spacing") { Choices(listOf("Tight", "Normal", "Relaxed"), listOf(120,145,170).indexOf(p.lineSpacing)) { n -> update { it.copy(lineSpacing = listOf(120,145,170)[n]) } } }
     MenuSection("Text wrap") { Choices(listOf("Wrap", "Scroll"), if (p.wrap) 0 else 1) { n -> update { it.copy(wrap = n == 0) } } }
     MenuSection("Terminal height") { Choices(listOf("Full", "250", "350", "500", "700"), listOf(0,250,350,500,700).indexOf(p.terminalHeight)) { n -> update { it.copy(terminalHeight = listOf(0,250,350,500,700)[n]) } } }

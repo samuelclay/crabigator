@@ -49,7 +49,9 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -237,6 +239,7 @@ class MainActivity : ComponentActivity() {
         model.select(session, direction)
         selected()
     }
+    val density = LocalDensity.current
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -246,6 +249,7 @@ class MainActivity : ComponentActivity() {
             Control(R.drawable.ic_settings, "Settings", modifier = Modifier.onGloballyPositioned { settingsAnchor = it.boundsInRoot() }) { settings(settingsAnchor) }
         }
         if (searching) OutlinedTextField(query, { query = it }, placeholder = { Text("Search") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
+        CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * prefs.boardFontSize / 14f)) {
         if (roster.isEmpty() && pullRequests.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             RosterPlaceholder(rosterStatus, model::retryRoster) { EmptyPairing(model) }
         }
@@ -273,6 +277,7 @@ class MainActivity : ComponentActivity() {
         else PrBoard(visible.board, visible.watched, now, query, selectedId, collapsedMachines, boardState,
             { machine -> collapsedMachines = if (machine in collapsedMachines) collapsedMachines - machine else collapsedMachines + machine },
             ::select)
+        }
     }
     BoardModeFooter(list, mode, expanded, Modifier.align(Alignment.BottomCenter).padding(12.dp))
     }
@@ -285,7 +290,7 @@ class MainActivity : ComponentActivity() {
     }) {
         Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(painterResource(if (countNoun == "session") R.drawable.ic_machine else R.drawable.ic_board), null, tint = Muted, modifier = Modifier.size(18.dp))
-            Text(name, color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+            Text(name, color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Text(if (count == 1) "1 $countNoun" else "$count ${countNoun}s", color = Muted, fontSize = 12.sp,
                 modifier = Modifier.background(Panel, RoundedCornerShape(6.dp)).padding(horizontal = 7.dp, vertical = 2.dp))
             Icon(painterResource(R.drawable.ic_chevron_down), null, tint = Muted, modifier = Modifier.size(18.dp).rotate(angle))
