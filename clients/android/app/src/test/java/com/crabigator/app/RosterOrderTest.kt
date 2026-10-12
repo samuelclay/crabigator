@@ -59,7 +59,7 @@ class RosterOrderTest {
         assertEquals(listOf("a", "z"), refreshed.list.map { it.project })
     }
 
-    @Test fun newRowsAppendRemovedRowsDisappearAndFiltersDoNotResetPositions() {
+    @Test fun newSessionsRefreshRemovedRowsDisappearAndFiltersDoNotResetPositions() {
         val cache = RosterOrder()
         val a = session("a", 100)
         val b = session("b", 200)
@@ -69,15 +69,54 @@ class RosterOrderTest {
         val extraRepo = session("extra", 1, "other")
         val ended = b.copy(active = false)
         val live = update(cache, listOf(fresh, extraRepo, a, ended, book), 30)
-        assertEquals(listOf("a", "b", "new", "extra", "book"), live.ids())
-        assertEquals(listOf("a", "b", "new", "extra", "book"), live.boardIds())
-        assertEquals(listOf("a", "new", "extra", "book"), live.filtered(false, "").ids())
-        assertEquals(listOf("a", "b", "new", "extra", "book"), live.filtered(true, "").ids())
+        assertEquals(listOf("new", "extra", "a", "b", "book"), live.ids())
+        assertEquals(listOf("new", "a", "b", "extra", "book"), live.boardIds())
+        assertEquals(listOf("new", "extra", "a", "book"), live.filtered(false, "").ids())
+        assertEquals(listOf("new", "extra", "a", "b", "book"), live.filtered(true, "").ids())
         val removed = update(cache, listOf(fresh, extraRepo, ended, book), 40)
-        assertEquals(listOf("b", "new", "extra", "book"), removed.ids())
+        assertEquals(listOf("new", "extra", "b", "book"), removed.ids())
         assertEquals(listOf("Studio", "Book"), removed.board.map { it.machine })
         val changedGrouping = update(cache, listOf(fresh, extraRepo, ended, book), 50, grouping = "project", order = "alpha")
         assertEquals(listOf("app", "other", "app"), changedGrouping.list.map { it.project })
+    }
+
+    @Test fun aNewSessionRefreshesBothViewsAndRestartsTheTenMinuteTimer() {
+        val cache = RosterOrder()
+        val a = session("a", 100)
+        val b = session("b", 200)
+        update(cache, listOf(a, b), 0)
+        val activeB = b.copy(stats = b.stats.copy(promptAt = now + 50))
+        assertEquals(listOf("a", "b"), update(cache, listOf(a, activeB), 50).ids())
+
+        val fresh = session("new", -120)
+        val refreshed = update(cache, listOf(a, activeB, fresh), 120)
+        assertEquals(listOf("new", "b", "a"), refreshed.ids())
+        assertEquals(listOf("new", "b", "a"), refreshed.boardIds())
+
+        val activeA = a.copy(stats = a.stats.copy(promptAt = now + 121))
+        for (at in listOf(121L, 600L, 719L)) {
+            val held = update(cache, listOf(activeA, activeB, fresh), at)
+            assertEquals(listOf("new", "b", "a"), held.ids())
+            assertEquals(listOf("new", "b", "a"), held.boardIds())
+        }
+        val next = update(cache, listOf(activeA, activeB, fresh), 720)
+        assertEquals(listOf("a", "new", "b"), next.ids())
+        assertEquals(listOf("a", "new", "b"), next.boardIds())
+    }
+
+    @Test fun aPreviouslySeenSessionReturningDoesNotRestartTheTimer() {
+        val cache = RosterOrder()
+        val a = session("a", 100)
+        val b = session("b", 200)
+        update(cache, listOf(a, b), 0)
+        update(cache, listOf(a), 50)
+        val returning = b.copy(stats = b.stats.copy(promptAt = now + 100))
+        val held = update(cache, listOf(returning, a), 100)
+        assertEquals(listOf("a", "b"), held.ids())
+        assertEquals(listOf("a", "b"), held.boardIds())
+        val refreshed = update(cache, listOf(returning, a), 600)
+        assertEquals(listOf("b", "a"), refreshed.ids())
+        assertEquals(listOf("b", "a"), refreshed.boardIds())
     }
 
     @Test fun returningMachineKeepsItsPlaceBeforeTheNextRefresh() {

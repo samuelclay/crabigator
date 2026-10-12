@@ -1,14 +1,17 @@
 package com.crabigator.app
 
-/** Refresh positions every ten minutes; always render the latest row contents. */
+/** Refresh positions every ten minutes or when a new session arrives; keep row contents live. */
 internal class RosterOrder {
     private var refreshedAt: Long? = null
+    private val seenSessionIds = mutableSetOf<String>()
     private var preferences: Pair<String, String>? = null
     private var layout = RosterLayout(emptyList(), emptyList(), emptyList())
 
     fun update(roster: List<Session>, prs: List<PullRequest>, machines: List<String>, now: Long,
         elapsedSeconds: Long, grouping: String, order: String): RosterLayout {
-        val reset = refreshedAt == null || elapsedSeconds - refreshedAt!! >= 600 || preferences != (grouping to order)
+        // Remember sessions across temporary absences so reconnects do not bypass the throttle.
+        val hasNewSession = seenSessionIds.addAll(roster.map { it.id })
+        val reset = refreshedAt == null || hasNewSession || elapsedSeconds - refreshedAt!! >= 600 || preferences != (grouping to order)
         val sessions = roster.sortedWith(compareByDescending<Session> { it.attention }
             .thenByDescending { it.activityAt }.thenBy { it.id })
         val list = sessionListGroups(sessions, machines, grouping, order)
