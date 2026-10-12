@@ -1,6 +1,7 @@
 package com.crabigator.app
 
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -80,8 +81,9 @@ import androidx.compose.ui.unit.sp
 
 @Composable internal fun BoardSessionBlock(entry: BoardSession, selected: Boolean, wide: Boolean, clock: State<Long>, open: () -> Unit) {
     val session = entry.session
-    Surface(onClick = open, color = if (selected) Peach.copy(alpha = .13f) else Color.Transparent,
-        border = if (selected) BorderStroke(2.dp, Peach) else null,
+    val selection by animateFloatAsState(if (selected) 1f else 0f, tween(if (selected) 120 else 350), label = "Session selection")
+    Surface(onClick = open, color = Peach.copy(alpha = .13f * selection),
+        border = BorderStroke(2.dp, Peach.copy(alpha = selection)),
         shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().semantics { this.selected = selected }) {
         Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             val fg = remember(session.color) { runCatching { Color(android.graphics.Color.parseColor(session.color)) }.getOrDefault(Peach) }

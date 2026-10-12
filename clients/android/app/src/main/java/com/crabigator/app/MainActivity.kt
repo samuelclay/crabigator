@@ -37,6 +37,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -306,9 +308,10 @@ class MainActivity : ComponentActivity() {
     }
 }
 @Composable private fun SessionCard(session: Session, selected: Boolean, now: State<Long>? = null, prefs: UiPreferences = UiPreferences(), showMachine: Boolean = true, modifier: Modifier = Modifier, open: () -> Unit) {
+    val selection by animateFloatAsState(if (selected) 1f else 0f, tween(if (selected) 120 else 350), label = "Session selection")
     Surface(onClick = open, modifier = modifier.semantics { this.selected = selected },
-        color = if (selected) Peach.copy(alpha = .13f) else Panel,
-        shape = RoundedCornerShape(12.dp), border = if (selected) BorderStroke(2.dp, Peach) else null) {
+        color = lerp(Panel, Peach.copy(alpha = .13f).compositeOver(Ink), selection),
+        shape = RoundedCornerShape(12.dp), border = BorderStroke(2.dp, Peach.copy(alpha = selection))) {
         Box(Modifier.padding(if (prefs.density == "compact") 6.dp else 10.dp)) {
             SessionRow(session, clickable = false, showMachine = showMachine, footer = {
                 if (now != null) SessionStatsFooter(session, now, prefs)
