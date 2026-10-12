@@ -1,5 +1,18 @@
 // Dashboard JavaScript - scrollback
 export const scrollbackJs = `
+        // Events end with a row delimiter, not an extra blank terminal row.
+        function scrollbackLines(content) {
+            if (!content) return [];
+            const lines = content.split('\\n');
+            if (lines[lines.length - 1] === '') lines.pop();
+            return lines;
+        }
+
+        function scrollbackHtml(lines) {
+            // Even a history consisting of one blank row must occupy a cell row.
+            return lines.length ? ansiToHtml(lines.join('\\n') || '\\x1b[0m') : '';
+        }
+
         function loadMoreScrollback(sessionId) {
             const sessionData = sessions.get(sessionId);
             if (!sessionData || !sessionData.scrollbackBuffer) return;
@@ -11,7 +24,6 @@ export const scrollbackJs = `
             if (alreadyRendered >= totalLines) return; // Already showing everything
 
             const scrollbackEl = document.getElementById('scrollback-' + sessionId);
-            const separatorEl = document.getElementById('separator-' + sessionId);
             const terminal = document.getElementById('terminal-' + sessionId);
             if (!scrollbackEl || !terminal) return;
 
@@ -22,7 +34,7 @@ export const scrollbackJs = `
 
             // Get the lines to prepend (they go at the beginning)
             const newLines = buffer.slice(startIdx, endIdx);
-            const newHtml = ansiToHtml(newLines.join('\\n') + '\\n');
+            const newHtml = scrollbackHtml(newLines);
 
             // Remember scroll position to maintain view after prepending
             const prevScrollHeight = terminal.scrollHeight;
@@ -30,7 +42,6 @@ export const scrollbackJs = `
             // Prepend new content
             scrollbackEl.insertAdjacentHTML('afterbegin', newHtml);
             scrollbackEl.classList.add('has-content');
-            if (separatorEl) separatorEl.classList.add('visible');
 
             // Update rendered count
             sessionData.scrollbackRendered = alreadyRendered + linesToLoad;
@@ -40,8 +51,6 @@ export const scrollbackJs = `
             terminal.scrollTop += (newScrollHeight - prevScrollHeight);
             sessionData.lastScrollTop = terminal.scrollTop;
 
-            // Show indicator if there's more to load
-            updateScrollbackIndicator(sessionId, sessionData.scrollbackRendered, totalLines);
         }
 
         // Render initial scrollback - buffer only, render lazily on scroll activate
@@ -49,9 +58,19 @@ export const scrollbackJs = `
             const sessionData = sessions.get(sessionId);
             if (!sessionData) return;
 
+            // Another viewer joining can resend the same history. Keep the
+            // reader's loaded range and scroll position in that case.
+            const previous = sessionData.scrollbackBuffer;
+            if (previous && previous.length === lines.length && previous.every((line, i) => line === lines[i])) return;
+
             // Store full buffer (rendered lazily when scroll is activated)
             sessionData.scrollbackBuffer = lines;
             sessionData.scrollbackRendered = 0;
+            const scrollbackEl = document.getElementById('scrollback-' + sessionId);
+            if (scrollbackEl) {
+                scrollbackEl.innerHTML = '';
+                scrollbackEl.classList.remove('has-content');
+            }
 
             // If scroll is already active on this terminal, render now
             if (activeTerminalId === sessionId) {
@@ -65,21 +84,19 @@ export const scrollbackJs = `
             if (!sessionData || !sessionData.scrollbackBuffer || sessionData.scrollbackRendered > 0) return;
 
             const scrollbackEl = document.getElementById('scrollback-' + sessionId);
-            const separatorEl = document.getElementById('separator-' + sessionId);
             const terminal = document.getElementById('terminal-' + sessionId);
             if (!scrollbackEl) return;
 
             const lines = sessionData.scrollbackBuffer;
+            if (!lines.length) return;
             const linesToRender = Math.min(SCROLLBACK_CHUNK_SIZE, lines.length);
             const startIdx = lines.length - linesToRender;
             const visibleLines = lines.slice(startIdx);
 
-            scrollbackEl.innerHTML = ansiToHtml(visibleLines.join('\\n') + '\\n');
+            scrollbackEl.innerHTML = scrollbackHtml(visibleLines);
             scrollbackEl.classList.add('has-content');
-            if (separatorEl) separatorEl.classList.add('visible');
 
             sessionData.scrollbackRendered = linesToRender;
-            updateScrollbackIndicator(sessionId, linesToRender, lines.length);
 
             if (sessionData.pinned && terminal) {
                 terminal.scrollTop = terminal.scrollHeight;
@@ -93,7 +110,7 @@ export const scrollbackJs = `
             if (!sessionData) return;
 
             // Always buffer
-            const newLines = newContent.split('\\n');
+            const newLines = scrollbackLines(newContent);
             if (!sessionData.scrollbackBuffer) sessionData.scrollbackBuffer = [];
             sessionData.scrollbackBuffer.push(...newLines);
 
@@ -101,13 +118,11 @@ export const scrollbackJs = `
             if (activeTerminalId !== sessionId) return;
 
             const scrollbackEl = document.getElementById('scrollback-' + sessionId);
-            const separatorEl = document.getElementById('separator-' + sessionId);
             const terminal = document.getElementById('terminal-' + sessionId);
             if (!scrollbackEl) return;
 
-            scrollbackEl.insertAdjacentHTML('beforeend', ansiToHtml(newContent));
+            scrollbackEl.insertAdjacentHTML('beforeend', scrollbackHtml(newLines));
             scrollbackEl.classList.add('has-content');
-            if (separatorEl) separatorEl.classList.add('visible');
 
             sessionData.scrollbackRendered = (sessionData.scrollbackRendered || 0) + newLines.length;
 
@@ -115,19 +130,6 @@ export const scrollbackJs = `
             if (sessionData.pinned && terminal) {
                 terminal.scrollTop = terminal.scrollHeight;
                 sessionData.lastScrollTop = terminal.scrollTop;
-            }
-        }
-
-        // Update indicator showing how much scrollback is available
-        function updateScrollbackIndicator(sessionId, rendered, total) {
-            const separatorEl = document.getElementById('separator-' + sessionId);
-            if (!separatorEl) return;
-
-            if (rendered < total) {
-                const remaining = total - rendered;
-                separatorEl.textContent = \`─── scrollback (\${remaining} more lines) ───\`;
-            } else {
-                separatorEl.textContent = '─── scrollback ───';
             }
         }
 

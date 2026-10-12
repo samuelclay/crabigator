@@ -52,19 +52,6 @@ export const terminalCss = `
 .terminal-scrollback.has-content {
     display: block;
 }
-.terminal-separator {
-    display: none;
-    text-align: center;
-    color: var(--text-dim);
-    font-size: 9px;
-    margin: 10px 0;
-    user-select: none;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-.terminal-separator.visible {
-    display: block;
-}
 .terminal-screen {
     min-width: 0;
     width: 100%;

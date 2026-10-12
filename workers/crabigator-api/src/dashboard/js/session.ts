@@ -421,7 +421,6 @@ export const sessionJs = `
                     <div class="session-body-inner">
                         <div class="terminal" id="terminal-\${session.id}" style="height:\${TERMINAL_HEIGHTS[currentHeightIndex]}px">
                             <div class="terminal-scrollback" id="scrollback-\${session.id}"></div>
-                            <div class="terminal-separator" id="separator-\${session.id}">─── scrollback ───</div>
                             <div class="terminal-screen" id="screen-\${session.id}">Connecting...</div>
                         </div>
                         <div class="session-recap empty" id="recap-\${session.id}"

@@ -181,7 +181,6 @@ export const eventsJs = `
             const terminal = document.getElementById('terminal-' + sessionId);
             const card = document.getElementById('session-' + sessionId);
             const scrollbackEl = document.getElementById('scrollback-' + sessionId);
-            const separatorEl = document.getElementById('separator-' + sessionId);
             const screenEl = document.getElementById('screen-' + sessionId);
             if (!terminal || !card) return;
 
@@ -233,10 +232,7 @@ export const eventsJs = `
                     break;
                 case 'scrollback_history':
                     // Full scrollback history for late joiners (chunked - only render last N lines)
-                    if (event.content) {
-                        const lines = event.content.split('\\n');
-                        renderScrollback(sessionId, lines);
-                    }
+                    renderScrollback(sessionId, scrollbackLines(event.content || ''));
                     break;
                 case 'git':
                     if (sessionData) {
