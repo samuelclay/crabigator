@@ -4,6 +4,14 @@ The native app is installed, paired and running on the physical ClayPad Air and 
 
 On October 12, Xcode automatic signing succeeded with the NewsBlur team (`HR7P97SD72`). The signed Debug build and notification extension installed on both physical devices. Each device claimed its own pairing code, and screenshots confirmed that the live session roster loaded. This verifies installation, launch, pairing and roster access; it does not establish full device interaction or push-delivery coverage.
 
+## Initial terminal loading
+
+The iOS stream previously opened its socket, then awaited the mobile prompt snapshot before reading terminal frames or starting viewer heartbeats. A slow metadata request could therefore hide output already waiting on the socket. Prompt refreshes now run independently, cancel when replaced or disconnected, and discard canceled responses. An eight-second wait now shows “Waiting for terminal output…” with a Reconnect button instead of claiming the terminal is empty.
+
+A live regression check deliberately delays prompt metadata by 15 seconds. It failed before the fix and passed afterward: terminal text appeared in 1.66 seconds on the simulator, 1.81 seconds on ClayPhone, and 1.88 seconds on ClayPad, including the tap and page transition. A second check holds the stream and verifies that the waiting state remains after eight seconds. Both checks passed on each device; twelve unit tests also passed on the simulator and phone. Direct production socket probes received cached screens in about 0.54 seconds and recovered a missing screen from the desktop in 1.28 seconds. The server cache remains in memory and can be lost during hibernation; this change does not add persistent terminal storage.
+
+Results: `/tmp/crabigator-load-before.xcresult`, `/tmp/crabigator-load-after.xcresult`, `/tmp/crabigator-load-ipad.xcresult`, and `/tmp/crabigator-load-phone-final.xcresult`. Live checks require an already paired device and `TEST_RUNNER_CRABIGATOR_LIVE_UI_TESTS=1` when invoked with xcodebuild. They never send terminal input.
+
 ## Terminal scrolling momentum
 
 Live frames previously edited TextKit storage and restored the content offset during native deceleration, cutting off momentum. The viewer now keeps the latest source while either scroll view is dragging or coasting, applies it when scrolling settles, and honors a pending Follow action even when no new output arrives.

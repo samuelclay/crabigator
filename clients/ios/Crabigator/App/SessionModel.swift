@@ -12,7 +12,7 @@ import SwiftUI
     @Published var revision: Int?
     @Published var details: [String: JSON] = [:]
     @Published var error: String?
-    private var task: Task<Void, Never>?, heartbeat: Task<Void, Never>?
+    private var task: Task<Void, Never>?, heartbeat: Task<Void, Never>?, promptTask: Task<Void, Never>?
     private var socket: URLSessionWebSocketTask?
     private var generation = 0, snapshotRequest = 0
     private let api = API.shared
@@ -27,6 +27,7 @@ import SwiftUI
     func close() { stop(); selected = nil; screen = ""; history = ""; details = [:]; prompt = nil; sending = false }
     func stop() {
         generation += 1; snapshotRequest += 1; task?.cancel(); task = nil; heartbeat?.cancel(); heartbeat = nil
+        promptTask?.cancel(); promptTask = nil
         socket?.cancel(with: .goingAway, reason: nil); socket = nil; connected = false; revision = nil
     }
     func start() {
@@ -41,7 +42,8 @@ import SwiftUI
                 do {
                     let ws = api.session.webSocketTask(with: try api.request("/api/sessions/\(id)/events"))
                     socket = ws; ws.resume()
-                    await refreshPrompt()
+                    // Cached terminal frames must not wait for the separate HTTP metadata request.
+                    schedulePromptRefresh()
                     heartbeat?.cancel()
                     heartbeat = Task {
                         while !Task.isCancelled && epoch == generation {
@@ -59,6 +61,7 @@ import SwiftUI
                     }
                 } catch {
                     guard !Task.isCancelled, epoch == generation else { return }
+                    snapshotRequest += 1; promptTask?.cancel(); promptTask = nil
                     connected = false; revision = nil; heartbeat?.cancel(); socket?.cancel(with: .goingAway, reason: nil)
                     try? await Task.sleep(for: .seconds(3))
                 }
@@ -76,14 +79,28 @@ import SwiftUI
         case "git", "changes", "recap", "prs", "commit_history", "stats": details[e.text("type")] = e
         default: break
         }
-        if ["prompt", "state"].contains(e.text("type")) { Task { await refreshPrompt(); if let id = selected?.id { await Notifications.shared.reconcile(id: id) } } }
+        if ["prompt", "state"].contains(e.text("type")) { schedulePromptRefresh(reconcile: true) }
+    }
+    private func schedulePromptRefresh(reconcile: Bool = false) {
+        promptTask?.cancel()
+        let id = selected?.id
+        promptTask = Task {
+            await refreshPrompt()
+            if !Task.isCancelled, reconcile, let id { await Notifications.shared.reconcile(id: id) }
+        }
     }
     func refreshPrompt() async {
-        guard let id = selected?.id else { return }
+        guard !Task.isCancelled, let id = selected?.id else { return }
         snapshotRequest += 1; let request = snapshotRequest, epoch = generation
         do {
+            #if DEBUG
+            // Exercise a stalled metadata request without delaying the terminal socket.
+            if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_SLOW_PROMPT"] == "1" {
+                try await Task.sleep(for: .seconds(15))
+            }
+            #endif
             let snap = try await api.snapshot(id)
-            guard request == snapshotRequest, epoch == generation, id == selected?.id else { return }
+            guard !Task.isCancelled, request == snapshotRequest, epoch == generation, id == selected?.id else { return }
             prompt = snap["prompt"] as? JSON; revision = snap["prompt_revision"] as? Int; connected = snap.bool("desktop_connected")
         } catch { /* Screen streaming still works with servers without the mobile snapshot route. */ }
     }

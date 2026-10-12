@@ -8,7 +8,7 @@ struct SessionDetail: View {
     @State private var pinned = true
     @State private var style = false
     @State private var drag: CGFloat = 0
-    @State private var emptyTimedOut = false
+    @State private var loadingSlowly = false
     var prs: [PullRequest] {
         if let live = stream.details["prs"] { return live.array("prs").filter { !$0.bool("dismissed") }.map(PullRequest.init) }
         return model.prs.filter { $0.sessions.contains { $0.id == stream.selected?.id } }
@@ -37,8 +37,19 @@ struct SessionDetail: View {
                         VStack(spacing: 0) {
                             ZStack {
                                 if stream.history.isEmpty && stream.screen.isEmpty {
-                                    if !emptyTimedOut && !(stream.screenLoaded && stream.historyLoaded) && session.active { ProgressView().tint(Crab.orange).accessibilityIdentifier("session-loading") }
-                                    else { Text("No terminal output").font(.system(size: 13)).foregroundStyle(Crab.muted) }
+                                    if stream.screenLoaded && stream.historyLoaded {
+                                        Text("No terminal output").font(.system(size: 13)).foregroundStyle(Crab.muted)
+                                    } else if !session.active {
+                                        Text("Terminal unavailable for this ended session").font(.system(size: 13)).foregroundStyle(Crab.muted)
+                                    } else {
+                                        VStack(spacing: 12) {
+                                            ProgressView().tint(Crab.orange).accessibilityIdentifier("session-loading")
+                                            if loadingSlowly {
+                                                Text("Waiting for terminal output…").font(.system(size: 13)).foregroundStyle(Crab.muted)
+                                                Button("Reconnect") { stream.stop(); stream.start() }
+                                            }
+                                        }
+                                    }
                                 }
                                 TerminalViewport(history: stream.history, screen: stream.screen, preferences: model.preferences, pinned: $pinned, swipe: wide ? { distance, velocity, ended in
                                     drag = distance
@@ -48,6 +59,7 @@ struct SessionDetail: View {
                                         if dismiss { DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { if model.selectionID == session.id { close() } } }
                                     }
                                 } : nil).id(session.id).opacity(stream.history.isEmpty && stream.screen.isEmpty ? 0 : 1)
+                                    .allowsHitTesting(!stream.history.isEmpty || !stream.screen.isEmpty)
                             }.frame(height: terminalHeight(area.size.height)).frame(maxWidth: .infinity).background(Color(uiColor: TerminalText.rgb(0x0B0F14)))
                             if model.preferences.widgets { SessionWidgets(stream: stream, prefs: model.preferences, prs: prs).frame(maxHeight: .infinity) }
                             else if model.preferences.terminalHeight > 0 { Spacer(minLength: 0) }
@@ -56,7 +68,7 @@ struct SessionDetail: View {
                     if let prompt = stream.prompt { PromptPanel(prompt: prompt, revision: stream.revision, disabled: stream.sending || !stream.connected || stream.revision == nil) { action, revision in stream.send(action, guarded: true, expectedRevision: revision) } }
                     SessionComposer(stream: stream, model: model, sessionID: session.id, active: active).id(session.id)
                 }.background(Crab.ink).offset(x: drag).clipped()
-                    .task(id: session.id) { pinned = true; drag = 0; emptyTimedOut = false; try? await Task.sleep(for: .seconds(8)); if !Task.isCancelled { emptyTimedOut = true } }
+                    .task(id: session.id) { pinned = true; drag = 0; loadingSlowly = false; try? await Task.sleep(for: .seconds(8)); if !Task.isCancelled { loadingSlowly = true } }
             }
         }.background(Crab.ink)
     }

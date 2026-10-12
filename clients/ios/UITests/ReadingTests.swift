@@ -3,6 +3,48 @@ import UIKit
 
 /// Opt-in live checks. Pair this simulator first; these never send terminal input.
 final class ReadingTests: XCTestCase {
+    func testSlowPromptRequestDoesNotDelayTerminalOutput() throws {
+        guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires an already paired device and CRABIGATOR_LIVE_UI_TESTS=1.")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment["CRABIGATOR_TEST_SLOW_PROMPT"] = "1"
+        app.launch()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Session "))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 25), "Pair this device before running this live check")
+        let row = try XCTUnwrap(rows.allElementsBoundByIndex.first { $0.isHittable })
+        let start = Date()
+        row.tap()
+        let terminal = app.textViews["terminal-output"]
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            terminal.exists && !(terminal.value as? String ?? "").isEmpty
+        }, object: terminal)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 5), .completed,
+                       "Cached terminal output must arrive while the 15-second prompt request is pending")
+        print("Terminal visible after \(Date().timeIntervalSince(start)) seconds including the tap and page transition")
+        capture("Terminal loaded while prompt request is pending")
+    }
+
+    func testSlowTerminalDoesNotBecomeEmptyAfterEightSeconds() throws {
+        guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires an already paired device and CRABIGATOR_LIVE_UI_TESTS=1.")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment["CRABIGATOR_TEST_HOLD_SESSION_LOADING"] = "1"
+        app.launch()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Session "))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 25), "Pair this device before running this live check")
+        try XCTUnwrap(rows.allElementsBoundByIndex.first { $0.isHittable }).tap()
+        XCTAssertTrue(app.activityIndicators["session-loading"].waitForExistence(timeout: 5))
+        // Wait beyond the old empty-state timeout while the stream is deliberately held.
+        XCTAssertTrue(app.staticTexts["Waiting for terminal output…"].waitForExistence(timeout: 12))
+        XCTAssertFalse(app.staticTexts["No terminal output"].exists)
+        XCTAssertTrue(app.buttons["Reconnect"].isHittable)
+        capture("Slow terminal remains loading")
+    }
+
     func testReadLiveSessionAndReturnToBoard() throws {
         guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
             throw XCTSkip("Set CRABIGATOR_LIVE_UI_TESTS=1 and pair this simulator before running live checks.")
