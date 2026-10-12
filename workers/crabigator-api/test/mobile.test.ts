@@ -7,12 +7,14 @@ import type { Env } from '../src/types/env';
 import type { CloudToDesktopMessage } from '../src/types/session';
 import { ensureAccountSchema } from './schema';
 import migration from '../migrations/0022_mobile_push.sql?raw';
+import appleMigration from '../migrations/0023_apple_push.sql?raw';
 
 const testEnv = env as unknown as Env;
 
 beforeAll(async () => {
     await ensureAccountSchema(testEnv);
     await testEnv.DB.prepare(migration).run();
+    for (const sql of appleMigration.split(';').map(s => s.trim()).filter(Boolean)) await testEnv.DB.prepare(sql).run();
 });
 
 async function pairedMobile(name: string, group = 'mobile-group') {
@@ -289,4 +291,73 @@ it('keeps pre-upgrade accepted questions resolved when their structured prompt i
     expect(snapshot).toMatchObject({ prompt: null, prompt_revision: 6, attention_pending: false });
     const diagnostics = await (await stub.fetch('https://internal/state')).json();
     expect(diagnostics).toMatchObject({ unstructured_attention_blocked: true, answered_prompt_revision: 4, attention_prompt_count: null });
+});
+
+it('registers Apple environments and silent defaults, rejecting invalid tokens', async () => {
+    const mobile = await pairedMobile('apple-registration');
+    const register = (body: unknown) => registerPush(mobile.request('/api/mobile/push', body), testEnv);
+    expect((await register({ platform: 'ios', token: 'a'.repeat(64), environment: 'sandbox' })).status).toBe(200);
+    expect(await testEnv.DB.prepare('SELECT platform, environment, sound FROM mobile_push_tokens WHERE mobile_id = ?')
+        .bind('apple-registration').first()).toEqual({ platform: 'ios', environment: 'sandbox', sound: 0 });
+    expect((await register({ platform: 'ios', token: 'b'.repeat(64), environment: 'production', sound: true })).status).toBe(200);
+    expect(await testEnv.DB.prepare('SELECT token, environment, sound FROM mobile_push_tokens WHERE mobile_id = ?')
+        .bind('apple-registration').first()).toEqual({ token: 'b'.repeat(64), environment: 'production', sound: 1 });
+    for (const body of [
+        { token: 'not-a-device-token', environment: 'sandbox' },
+        { token: 'b'.repeat(64), environment: 'unknown' },
+        { token: 'b'.repeat(64), environment: 'sandbox', sound: 'false' },
+    ]) expect((await register({ platform: 'ios', ...body })).status).toBe(400);
+    expect((await register({ platform: 'android', token: 'firebase-migrated-device-token' })).status).toBe(200);
+    expect(await testEnv.DB.prepare('SELECT platform, environment, sound FROM mobile_push_tokens WHERE mobile_id = ?')
+        .bind('apple-registration').first()).toEqual({ platform: 'android', environment: 'production', sound: 0 });
+});
+
+async function appleCredentials(keyId: string) {
+    const keys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']) as CryptoKeyPair;
+    const der = new Uint8Array(await crypto.subtle.exportKey('pkcs8', keys.privateKey));
+    return { keys, account: { team_id: 'TEAM', key_id: keyId, topic: 'com.newsblur.crabigator',
+        private_key: `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----` } };
+}
+
+it('signs Apple alerts and sends silent background refreshes for resolution', async () => {
+    const { sendApplePush } = await import('../src/apple-push');
+    const { keys, account } = await appleCredentials('APPLE_TEST');
+    const appleEnv = { ...testEnv, APNS_CREDENTIALS: JSON.stringify(account) };
+    const device = { mobile_id: 'apple-registration', token: 'c'.repeat(64), environment: 'sandbox', sound: 0 };
+    const calls: { headers: Headers; body: Record<string, any>; url: string }[] = [];
+    const mocked = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        calls.push({ headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)), url: String(input) });
+        return new Response(null, { status: 200 });
+    });
+    try {
+        await sendApplePush(appleEnv, device, 'apple-session', true);
+        await sendApplePush(appleEnv, { ...device, environment: 'production' }, 'apple-session', false);
+        expect(calls[0].url).toContain('api.sandbox.push.apple.com');
+        expect(calls[0].headers.get('apns-push-type')).toBe('alert');
+        expect(calls[0].headers.get('apns-topic')).toBe('com.newsblur.crabigator');
+        expect(calls[0].body.aps['mutable-content']).toBe(1);
+        expect(calls[0].body.aps.sound).toBeUndefined();
+        expect(calls[0].body.session_id).toBe('apple-session');
+        const jwt = calls[0].headers.get('authorization')!.slice(7).split('.');
+        const signature = Uint8Array.from(atob(jwt[2].replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+        expect(await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, keys.publicKey, signature, new TextEncoder().encode(jwt.slice(0, 2).join('.')))).toBe(true);
+        expect(calls[1].url).toContain('api.push.apple.com');
+        expect(calls[1].headers.get('apns-push-type')).toBe('background');
+        expect(calls[1].headers.get('apns-priority')).toBe('5');
+        expect(calls[1].body.aps).toEqual({ 'content-available': 1 });
+    } finally { mocked.mockRestore(); }
+});
+
+it('continues Apple delivery when Firebase authentication fails', async () => {
+    const group = 'provider-isolation';
+    const apple = await pairedMobile('isolation-apple', group), android = await pairedMobile('isolation-android', group);
+    await registerPush(apple.request('/api/mobile/push', { platform: 'ios', token: 'd'.repeat(64), environment: 'sandbox' }), testEnv);
+    await registerPush(android.request('/api/mobile/push', { platform: 'android', token: 'isolation-android-token' }), testEnv);
+    const { account } = await appleCredentials('ISOLATION');
+    const mocked = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
+    try {
+        await expect(notifyMobilePrompt({ ...testEnv, APNS_CREDENTIALS: JSON.stringify(account), FIREBASE_SERVICE_ACCOUNT: '{invalid' }, group, 'isolation-session')).rejects.toBeInstanceOf(AggregateError);
+        expect(mocked).toHaveBeenCalledOnce();
+        expect(String(mocked.mock.calls[0][0])).toContain('api.sandbox.push.apple.com');
+    } finally { mocked.mockRestore(); }
 });

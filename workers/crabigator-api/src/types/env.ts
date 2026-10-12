@@ -8,6 +8,7 @@ export type Env = Omit<Cloudflare.Env, 'APP_CONFIG'> & {
     APP_CONFIG: AppConfig;
 
     FIREBASE_SERVICE_ACCOUNT?: string;
+    APNS_CREDENTIALS?: string;
     STRIPE_SECRET_KEY?: string;
     STRIPE_WEBHOOK_SECRET?: string;
     STRIPE_PRICE_ID?: string;

@@ -1,3 +1,4 @@
+import { sendApplePush } from './apple-push';
 import type { Env } from './types/env';
 
 interface ServiceAccount { project_id: string; client_email: string; private_key: string }
@@ -53,18 +54,37 @@ async function accessToken(account: ServiceAccount, deadline: number): Promise<s
 /** Push carries only a session id. Devices authenticate and fetch the latest prompt,
  * so delayed/out-of-order pushes cannot revive answered questions or leak their text. */
 export async function notifyMobilePrompt(env: Env, groupId: string, sessionId: string): Promise<void> {
-    if (!env.FIREBASE_SERVICE_ACCOUNT) return;
+    if (!env.FIREBASE_SERVICE_ACCOUNT && !env.APNS_CREDENTIALS) return;
     const deadline = Date.now() + 25000;
-    const rows = await env.DB.prepare(`SELECT DISTINCT p.mobile_id, p.token, p.token_hash FROM mobile_push_tokens p
+    const rows = await env.DB.prepare(`SELECT DISTINCT p.mobile_id, p.token, p.token_hash, p.platform, p.environment, p.sound FROM mobile_push_tokens p
         JOIN linked_devices l ON l.mobile_id = p.mobile_id AND l.mobile_token_hash = p.token_hash
         JOIN devices d ON d.id = l.desktop_id
-        WHERE d.group_id = ? AND l.revoked_at IS NULL`).bind(groupId).all<{ mobile_id: string; token: string; token_hash: string }>();
+        WHERE d.group_id = ? AND l.revoked_at IS NULL`).bind(groupId).all<{ mobile_id: string; token: string; token_hash: string; platform: string; environment: string; sound: number }>();
     if (!rows.results.length) return;
-    const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT) as ServiceAccount;
-    const bearer = await accessToken(account, deadline);
+    // Cache each platform's preparation independently. A provider outage must not
+    // prevent the other platform from receiving its notifications.
+    let firebase: Promise<{ account: ServiceAccount; bearer: string }> | undefined;
+    const prepareFirebase = () => firebase ??= (async () => {
+        const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT!) as ServiceAccount;
+        return { account, bearer: await accessToken(account, deadline) };
+    })();
+    let apple: Promise<boolean> | undefined;
+    const prepareApple = () => apple ??= (async () => {
+        const stub = env.SESSION.get(env.SESSION.idFromName(sessionId));
+        const response = await stub.fetch('https://internal/snapshot');
+        if (!response.ok) throw new Error('Could not read Apple notification state');
+        const snapshot = await response.json() as { attention_pending?: boolean; desktop_connected?: boolean };
+        return Boolean(snapshot.attention_pending && snapshot.desktop_connected);
+    })();
     const deliveries = await Promise.allSettled(rows.results.map(async row => {
         // Revoked/expired credentials must stop background delivery as well as API access.
         if (!await env.TOKENS.get(`mobile:${row.token_hash}`)) return;
+        if (row.platform === 'ios') {
+            if (env.APNS_CREDENTIALS) await sendApplePush(env, row, sessionId, await prepareApple());
+            return;
+        }
+        if (!env.FIREBASE_SERVICE_ACCOUNT) return;
+        const { account, bearer } = await prepareFirebase();
         const response = await fetchWithRetry(`https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`, {
             method: 'POST', headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: { token: row.token, data: { session_id: sessionId },
