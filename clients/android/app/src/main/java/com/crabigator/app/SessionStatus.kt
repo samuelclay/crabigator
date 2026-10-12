@@ -28,6 +28,7 @@ internal object CrabColors {
     val Green = TerminalText.palette(83)
     val Yellow = TerminalText.palette(220)
     val Orange = TerminalText.palette(179)
+    val DarkOrange = TerminalText.palette(208)
     val Red = TerminalText.palette(203)
     val Cyan = TerminalText.palette(45)
     val Blue = TerminalText.palette(39)

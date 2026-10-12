@@ -11,6 +11,9 @@ import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,16 +39,19 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
                 if (prefs.visible("thinkingTime")) Stat("◐", if (compact) compactDuration(stats.thinkingSeconds) else sessionDuration(stats.thinkingSeconds), "Thinking time: ${sessionDuration(stats.thinkingSeconds)}", Mint)
             }
         }, compactEnd = {
-            val ages = buildList {
-                if (prefs.visible("promptRecency")) add(prompt.removeSuffix(" ago"))
-                if (prefs.visible("completionRecency")) add(completion)
+            val ages = buildAnnotatedString {
+                if (prefs.visible("promptRecency")) withStyle(SpanStyle(color = CrabColors.Orange)) { append(prompt.removeSuffix(" ago")) }
+                if (prefs.visible("completionRecency")) {
+                    if (length > 0) append(" · ")
+                    withStyle(SpanStyle(color = CrabColors.DarkOrange)) { append(completion) }
+                }
             }
-            Text(ages.joinToString(" · "), color = Muted, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.sp,
+            Text(ages, color = Muted, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.sp,
                 maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }, end = { compact ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (prefs.visible("promptRecency")) Stat("⟩", if (compact) prompt.removeSuffix(" ago") else prompt, "Last prompt: $prompt", Muted)
-                if (prefs.visible("completionRecency")) Stat("⋖", completion, "Last completion: $completion", Muted)
+                if (prefs.visible("promptRecency")) Stat("⟩", if (compact) prompt.removeSuffix(" ago") else prompt, "Last prompt: $prompt", CrabColors.Orange)
+                if (prefs.visible("completionRecency")) Stat("⋖", completion, "Last completion: $completion", CrabColors.DarkOrange)
             }
         })
         if (prefs.visible("tools") || prefs.visible("compactions")) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
