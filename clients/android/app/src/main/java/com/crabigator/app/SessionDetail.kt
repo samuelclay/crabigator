@@ -13,6 +13,8 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,17 +32,23 @@ import org.json.JSONObject
     var waiting by remember(session.id) { mutableStateOf(true) }
     LaunchedEffect(session.id) { delay(8000); waiting = false }
     val sections = remember(s.details, session, p, s.prs) { sessionWidgetSections(s, p) }
+    val prs = remember(s.details["prs"], s.prs, session.id) { sessionPullRequests(s) }
     val hasOutput = s.history.isNotEmpty() || s.screen.isNotEmpty()
     val loaded = s.historyLoaded && s.screenLoaded
     Column(Modifier.fillMaxSize().imePadding()) {
-        Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Control(if (wide) R.drawable.ic_close else R.drawable.ic_back, if (wide) "Close session" else "Back to list", onClick = close)
-            Column(Modifier.weight(1f)) {
-                Text(session.title, color = CrabColors.Title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
-                Text(if (s.connected) "${session.machine} · Live" else if (!session.active) "${session.machine} · Ended" else "Reconnecting…", fontSize = 11.sp, lineHeight = 15.sp, color = if (s.connected) Mint else Muted)
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // Reserve the title and three controls even in a narrow tablet detail pane.
+            val prWidth = (maxWidth - 272.dp).coerceIn(64.dp, 240.dp)
+            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Control(if (wide) R.drawable.ic_close else R.drawable.ic_back, if (wide) "Close session" else "Back to list", onClick = close)
+                Column(Modifier.weight(1f)) {
+                    Text(session.title, color = CrabColors.Title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
+                    Text(if (s.connected) "${session.machine} · Live" else if (!session.active) "${session.machine} · Ended" else "Reconnecting…", fontSize = 11.sp, lineHeight = 15.sp, color = if (s.connected) Mint else Muted)
+                }
+                SessionPrLinks(prs, Modifier.widthIn(max = prWidth))
+                Control(R.drawable.ic_follow_output, if (pinned) "Stop following output" else "Follow latest output", selected = pinned) { pinned = !pinned }
+                Control(R.drawable.ic_style, "Style", modifier = Modifier.onGloballyPositioned { styleAnchor = it.boundsInRoot() }) { style(styleAnchor) }
             }
-            Control(R.drawable.ic_follow_output, if (pinned) "Stop following output" else "Follow latest output", selected = pinned) { pinned = !pinned }
-            Control(R.drawable.ic_style, "Style", modifier = Modifier.onGloballyPositioned { styleAnchor = it.boundsInRoot() }) { style(styleAnchor) }
         }
         HorizontalDivider(color = Color(0xFF303A46))
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -61,6 +69,31 @@ import org.json.JSONObject
         key(session.id) { SessionComposer(s, model, active) }
     }
 }
+internal fun sessionPullRequests(s: AppState): List<PullRequest> {
+    val session = s.selected ?: return emptyList()
+    val live = s.details["prs"]
+    return (if (live != null) live.array("prs").filterNot { it.optBoolean("dismissed") }.map(PullRequest::parse)
+        else s.prs.filter { pr -> pr.sessions.any { it.id == session.id } })
+        .distinctBy { it.key }
+}
+
+@Composable internal fun SessionPrLinks(prs: List<PullRequest>, modifier: Modifier = Modifier) {
+    val links = prs.filter { it.url.startsWith("https://") }.distinctBy { it.url }
+    if (links.isEmpty()) return
+    val uri = LocalUriHandler.current
+    Row(modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        links.forEach { pr ->
+            OutlinedButton(onClick = { uri.openUri(pr.url) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Open ${pr.repo}#${pr.number} on GitHub: ${pr.title}" },
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = CrabColors.Purple),
+                border = BorderStroke(1.dp, CrabColors.Purple.copy(alpha = .3f)), shape = RoundedCornerShape(8.dp)) {
+                Text("#${pr.number}", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
 private fun sessionWidgetSections(s: AppState, p: UiPreferences): List<Pair<String, List<Pair<String, String?>>>> {
     val session = s.selected ?: return emptyList()
     return buildList {
@@ -69,8 +102,7 @@ private fun sessionWidgetSections(s: AppState, p: UiPreferences): List<Pair<Stri
             if (recap.isNotBlank()) add("Recap" to listOf(recap to null))
         }
         if (p.visible("prs")) {
-            val prs = s.details["prs"]?.array("prs")?.map { "#${it.optInt("number")} ${it.text("title")}" to it.text("url").takeIf { url -> url.startsWith("https://") } }
-                ?: s.prs.filter { pr -> pr.sessions.any { it.id == session.id } }.map { "#${it.number} ${it.title}" to it.url }
+            val prs = sessionPullRequests(s).map { "#${it.number} ${it.title}" to it.url.takeIf { url -> url.startsWith("https://") } }
             if (prs.isNotEmpty()) add("Pull requests" to prs)
         }
         val git = s.details["git"]

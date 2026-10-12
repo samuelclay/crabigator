@@ -1,0 +1,79 @@
+package com.crabigator.app
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.unit.dp
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+
+class PrBoardInteractionTest {
+    @get:Rule val compose = createComposeRule()
+    private val session = Session.parse(JSONObject("""{"id":"session", "title":"A session title that wraps across several lines", "branch":"session-branch", "state":"complete"}"""))
+    private val pr = PullRequest("owner/repo#123", "A pull request with a longer title", "owner/repo", 123, "OPEN", "Checks passed",
+        "https://github.com/owner/repo/pull/123", listOf(session), additions = 531763, deletions = 6931, branch = "pr-branch", primary = true)
+
+    @Test fun prContentOpensSessionAndSharesTheTitleColumn() {
+        val wide = mutableStateOf(false)
+        var opened = 0
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(if (wide.value) 1000.dp else 320.dp)) {
+                    BoardSessionBlock(BoardSession(session, listOf(pr, pr.copy(number = 124, title = "Already merged", state = "MERGED", checks = "", additions = null, deletions = null)), 0), false, wide.value, mutableStateOf(1000L)) { opened++ }
+                }
+            }
+        }
+        fun bounds(text: String) = compose.onNodeWithText(text, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        for (isWide in listOf(false, true)) {
+            compose.runOnIdle { wide.value = isWide }
+            compose.waitForIdle()
+            val title = bounds(session.title)
+            val pull = bounds("#123  ${pr.title}")
+            assertEquals("PR titles should share the session title indent", title.left, pull.left, 1f)
+            if (isWide) {
+                assertEquals("Session columns should be top-aligned", title.top, bounds(session.branch).top, 1f)
+                assertEquals("PR columns should be top-aligned", pull.top,
+                    compose.onAllNodesWithText(pr.branch, useUnmergedTree = true)[0].fetchSemanticsNode().boundsInRoot.top, 1f)
+                assertEquals("Absent checks must not shift the state column", bounds("Open").left, bounds("Merged").left, 1f)
+            } else {
+                val status = compose.onNodeWithContentDescription("Complete", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+                assertEquals("Status should stay at the first title line", title.top, status.top, 1f)
+            }
+            compose.onRoot().performTouchInput { click(pull.center) }
+            compose.onRoot().performTouchInput { click(bounds("+531763").center) }
+        }
+        compose.runOnIdle { assertEquals(4, opened) }
+    }
+
+    @Test fun detailHeaderOpensEachExplicitPrLink() {
+        val urls = mutableListOf<String>()
+        val second = pr.copy(key = "owner/repo#124", number = 124, url = "https://github.com/owner/repo/pull/124")
+        val prs = sessionPullRequests(AppState(selected = session, prs = listOf(pr, second, pr)))
+        assertEquals(2, prs.size)
+        compose.setContent {
+            CompositionLocalProvider(LocalUriHandler provides object : UriHandler {
+                override fun openUri(uri: String) { urls.add(uri) }
+            }) { MaterialTheme { SessionPrLinks(prs, Modifier.widthIn(max = 96.dp)) } }
+        }
+        compose.onNodeWithText("#123").performClick()
+        compose.onNodeWithText("#124").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf(pr.url, second.url), urls) }
+        val updated = AppState(selected = session, prs = prs, details = mapOf("prs" to JSONObject("""{"prs":[
+            {"number":125,"owner":"owner","repo":"repo","url":"https://github.com/owner/repo/pull/125"},
+            {"number":124,"url":"https://github.com/owner/repo/pull/124","dismissed":true}
+        ]}""")))
+        assertEquals(listOf(125), sessionPullRequests(updated).map { it.number })
+        assertTrue(sessionPullRequests(updated.copy(details = mapOf("prs" to JSONObject("{\"prs\":[]}")))).isEmpty())
+    }
+}
