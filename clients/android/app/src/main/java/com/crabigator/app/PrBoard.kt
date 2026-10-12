@@ -132,20 +132,20 @@ import androidx.compose.ui.unit.sp
                 maxLines = if (wide) 1 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (wide) {
                 Text(pr.branch, color = Muted, fontSize = 12.sp, lineHeight = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(180.dp))
-                Row(Modifier.width(300.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
-                    Box(Modifier.weight(1f)) { PrChanges(pr) }
-                    Box(Modifier.width(60.dp)) { PrState(pr) }
-                    Box(Modifier.width(116.dp)) { PrChecks(pr) }
-                }
+                PrStatus(pr, Modifier.width(300.dp))
             }
         }
         if (!wide) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                PrState(pr)
-                Box(Modifier.padding(top = 2.dp)) { PrChanges(pr) }
-            }
-            PrChecks(pr)
+            PrStatus(pr, Modifier.fillMaxWidth())
         }
+    }
+}
+
+@Composable private fun PrStatus(pr: PullRequest, modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        PrState(pr)
+        Box(Modifier.weight(1f)) { PrChanges(pr) }
+        PrChecks(pr)
     }
 }
 
@@ -158,16 +158,23 @@ import androidx.compose.ui.unit.sp
 
 @Composable private fun PrChanges(pr: PullRequest) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        pr.additions?.let { Text("+$it", color = Mint, fontSize = 11.sp, lineHeight = 14.sp) }
-        pr.deletions?.let { Text("−$it", color = CrabColors.Red, fontSize = 11.sp, lineHeight = 14.sp) }
+        pr.additions?.let { Text("+$it", color = Mint, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        pr.deletions?.let { Text("−$it", color = CrabColors.Red, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
     }
 }
 
-@Composable private fun PrChecks(pr: PullRequest, modifier: Modifier = Modifier) {
-    val merge = if (pr.state != "OPEN" || pr.mergeState == "UNKNOWN") "" else if (pr.mergeable == "CONFLICTING") "Conflicts" else pr.mergeState.lowercase().replaceFirstChar { it.uppercase() }
-    val label = listOf(pr.checks, merge).filter { it.isNotBlank() }.joinToString(" · ")
-    if (label.isBlank()) return
-    Text(label,
-        color = if (pr.checksFailed > 0 || (pr.state == "OPEN" && pr.mergeable == "CONFLICTING")) CrabColors.Red else Muted,
-        fontSize = 11.sp, maxLines = 2, lineHeight = 14.sp, modifier = modifier)
+@Composable private fun PrChecks(pr: PullRequest) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (pr.checks.isNotBlank()) Text(pr.checks,
+            color = when { pr.checksFailed > 0 -> CrabColors.Red; pr.checksPending > 0 -> CrabColors.Yellow; else -> Mint },
+            fontSize = 11.sp, maxLines = 1, lineHeight = 14.sp, modifier = Modifier.clearAndSetSemantics {
+                contentDescription = when { pr.checksFailed > 0 -> "${pr.checksFailed} checks failed"; pr.checksPending > 0 -> "${pr.checksPending} checks pending"; else -> "Checks passed" }
+            })
+        if (pr.state == "OPEN") {
+            val merge = when { pr.mergeable == "CONFLICTING" -> "Conflicts"; pr.mergeable == "MERGEABLE" -> if (pr.mergeState == "BEHIND") "Behind" else "Clean"; else -> "" }
+            if (merge.isNotBlank()) Text(merge,
+                color = when (merge) { "Conflicts" -> CrabColors.Red; "Behind" -> CrabColors.Yellow; else -> Mint },
+                fontSize = 11.sp, maxLines = 1, lineHeight = 14.sp)
+        }
+    }
 }

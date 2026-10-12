@@ -129,7 +129,7 @@ data class PullRequest(val key: String, val title: String, val repo: String, val
         fun parse(j: JSONObject): PullRequest {
             val p = j.optJSONObject("pr") ?: j
             val repo = "${j.text("owner")}/${j.text("repo")}"
-            return PullRequest("$repo#${j.optInt("number")}", p.text("title", "Pull request"), repo, j.optInt("number"), p.text("state", "OPEN"), when { p.optInt("checks_failed") > 0 -> "${p.optInt("checks_failed")} failed"; p.optInt("checks_pending") > 0 -> "Checks running"; p.optInt("checks_total") > 0 -> "Checks passed"; else -> "" }, p.text("url"), (j.array("sessions") + j.array("touching")).map(Session::parse).distinctBy { it.id }, p.optBoolean("watched"),
+            return PullRequest("$repo#${j.optInt("number")}", p.text("title", "Pull request"), repo, j.optInt("number"), p.text("state", "OPEN"), when { p.optInt("checks_failed") > 0 -> "✗${p.optInt("checks_failed")} CI"; p.optInt("checks_pending") > 0 -> "●${p.optInt("checks_pending")} CI"; p.optInt("checks_total") > 0 -> "✓ CI"; else -> "" }, p.text("url"), (j.array("sessions") + j.array("touching")).map(Session::parse).distinctBy { it.id }, p.optBoolean("watched"),
                 p.text("branch"), if (p.isNull("additions")) null else p.optInt("additions"), if (p.isNull("deletions")) null else p.optInt("deletions"),
                 p.text("mergeable"), p.text("merge_state_status"), p.optBoolean("is_draft"), p.optBoolean("primary"), p.text("review_decision"),
                 p.optInt("checks_failed"), p.optInt("checks_pending"), p.optLong("last_mentioned_at") / 1000, p.optLong("updated_at") / 1000, p.optLong("closed_at") / 1000)
