@@ -1,6 +1,11 @@
 package com.crabigator.app
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.geometry.Offset
@@ -30,6 +35,12 @@ internal object CrabColors {
     val Purple = TerminalText.palette(141)
     val Pink = TerminalText.palette(213)
     val Gray = TerminalText.palette(245)
+}
+
+internal val Session.attentionColor: Color? get() = if (!active) null else when (state) {
+    "question" -> TerminalText.palette(208)
+    "permission" -> CrabColors.Yellow
+    else -> null
 }
 
 @Composable internal fun SessionStatus(session: Session) {
@@ -70,6 +81,7 @@ internal object CrabColors {
         "interrupted" -> Triple("⊘", "Interrupted", CrabColors.Red)
         else -> Triple("○", "Ready", CrabColors.Gray)
     }
-    Text(symbol, color = color, fontFamily = FontFamily.Monospace, fontSize = 14.sp, lineHeight = 19.sp, textAlign = TextAlign.Center,
-        modifier = Modifier.width(with(LocalDensity.current) { 12.sp.toDp() }).clearAndSetSemantics { contentDescription = label })
+    val attention = session.attentionColor
+    Text(symbol, color = if (attention != null) TerminalText.palette(16) else color, fontWeight = if (attention != null) FontWeight.Bold else FontWeight.Normal, fontFamily = FontFamily.Monospace, fontSize = 14.sp, lineHeight = 19.sp, textAlign = TextAlign.Center,
+        modifier = Modifier.width(with(LocalDensity.current) { 12.sp.toDp() }).background(attention ?: Color.Transparent, RoundedCornerShape(3.dp)).clearAndSetSemantics { contentDescription = label })
 }

@@ -2,6 +2,10 @@
 
 Native Kotlin and Jetpack Compose client. The session list opens first. The icon toolbar switches between the board and session list, filters live or ended work, searches, and opens an animated Settings popover. Selecting a session slides its live terminal in from the right. Drag right anywhere on the terminal to reveal the list; release a short drag to return, or swipe farther or flick to close. On tablets, selecting another row pages the terminal left or right in list order. Only the selected session has a live connection; outgoing pages keep their last screen until the transition finishes, then are discarded. A growing message composer, microphone, and terminal keyboard stay at the bottom. At 720 dp and wider, the board stays beside the session.
 
+Both views group sessions under sticky machine headers. Tap a header to collapse or expand its sessions; the count remains visible. Machines start in order of their newest session, then keep their positions while the screen is open. New machines append at the bottom. Search and live updates do not reshuffle machines; sessions inside each machine still update. Project folders remain inside their machine, and PRs shared across computers appear once under each contributing machine with only its sessions. Tracked PRs without sessions have a separate folder.
+
+On tablets the list keeps its width when a session opens or closes, leaving an empty detail pane when nothing is selected. Session cards use separate identity and status columns, with title and timing aligned beside them. Questions have an orange badge and card accent; permission requests use yellow. Timing stays on one line: durations sit at the left, prompt/completion recency at the right, without repeated “ago” labels. Durations shorten to their largest unit when space is tight. At very large text sizes, recency takes priority and the full duration values remain in the accessible description.
+
 ## Build and install
 
 Use JDK 17 or later and Android SDK 36:

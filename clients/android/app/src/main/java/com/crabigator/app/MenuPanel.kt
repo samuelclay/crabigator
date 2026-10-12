@@ -135,7 +135,7 @@ private val Cyan = CrabColors.Cyan
         listOf("recap" to "Recap", "prs" to "Pull requests", "commits" to "Commits", "git" to "Git status", "changes" to "Changes").forEach { (key, label) -> CheckRow(label, p.visible(key)) { update { it.toggle(key) } } }
     }
     MenuSection("Columns") { Choices(listOf("1", "2", "3", "4", "Fit"), if (p.columns == 0) 4 else p.columns - 1) { n -> update { it.copy(columns = if (n == 4) 0 else n + 1) } } }
-    MenuSection("Grouping") { Choices(listOf("All", "By project"), if (p.grouping == "all") 0 else 1) { n -> update { it.copy(grouping = if (n == 0) "all" else "project") } } }
+    MenuSection("Projects within each machine") { Choices(listOf("Together", "Grouped"), if (p.grouping == "all") 0 else 1) { n -> update { it.copy(grouping = if (n == 0) "all" else "project") } } }
     if (p.grouping == "project") MenuSection("Project order") { Choices(listOf("Most recent", "Alphabetical"), if (p.order == "recent") 0 else 1) { n -> update { it.copy(order = if (n == 0) "recent" else "alpha") } } }
 }
 

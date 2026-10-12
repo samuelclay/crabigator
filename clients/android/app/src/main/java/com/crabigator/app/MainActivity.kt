@@ -12,6 +12,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.ui.draw.clipToBounds
@@ -21,10 +24,12 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -53,6 +58,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -108,7 +115,6 @@ class MainActivity : ComponentActivity() {
             val density = LocalDensity.current
             val travel = with(density) { (if (wide) detailWidth else maxWidth).toPx() }
             val progress = swipe ?: entrance.value
-            val sidebarWidth = if (s.selected == null) maxWidth else 360.dp + (maxWidth - 360.dp) * progress
             LaunchedEffect(s.selected?.id, closing) {
                 settleJob?.cancel()
                 swipe = null
@@ -151,9 +157,15 @@ class MainActivity : ComponentActivity() {
             }
             if (wide) Box(Modifier.fillMaxSize().clipToBounds()) {
                 Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterEnd else Alignment.CenterStart)
-                    .width(sidebarWidth).fillMaxHeight()) { Board(s.sessions, s.prs, s.selected?.id, s.loading, model) { menuAnchor = it; menu = "Settings" } }
-                if (s.selected != null) Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterStart else Alignment.CenterEnd)
-                    .width(detailWidth).fillMaxHeight()) { detail() }
+                    .width(360.dp).fillMaxHeight()) { Board(s.sessions, s.prs, s.selected?.id, s.loading, model) { menuAnchor = it; menu = "Settings" } }
+                Box(Modifier.align(if (preferences.sidebarRight) Alignment.CenterStart else Alignment.CenterEnd)
+                    .width(detailWidth).fillMaxHeight()) {
+                    if (s.selected == null) Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(painterResource(R.drawable.ic_terminal), null, tint = Muted.copy(alpha = .4f), modifier = Modifier.size(40.dp))
+                        Text("Select a session", color = Muted, fontSize = 14.sp)
+                    }
+                    detail()
+                }
             } else Box(Modifier.fillMaxSize().clipToBounds()) {
                 Box(Modifier.fillMaxSize().then(if (s.selected != null) Modifier.clearAndSetSemantics {} else Modifier)) {
                     Board(s.sessions, s.prs, s.selected?.id, s.loading, model) { menuAnchor = it; menu = "Settings" }
@@ -190,6 +202,11 @@ class MainActivity : ComponentActivity() {
     var settingsAnchor by remember { mutableStateOf(Rect.Zero) }
     val prefs by model.preferences.collectAsStateWithLifecycle()
     val sessions = remember(roster, all, query) { roster.filter { (all || it.active) && "${it.title} ${it.repo} ${it.machine}".contains(query, true) }.sortedWith(compareByDescending<Session> { it.attention }.thenByDescending { maxOf(it.stats.promptAt, it.stats.completionAt, it.stats.startedAt) }.thenBy { it.id }) }
+    var machineOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var watchedCollapsed by rememberSaveable { mutableStateOf(false) }
+    var collapsedMachines by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val machines = remember(roster, machineOrder) { retainMachineOrder(machineOrder, roster) }
+    SideEffect { if (machineOrder != machines) machineOrder = machines }
     fun select(session: Session, order: List<Session> = sessions) {
         val direction = if (order.indexOfFirst { it.id == session.id } < order.indexOfFirst { it.id == selectedId }) -1 else 1
         model.select(session, direction)
@@ -209,37 +226,91 @@ class MainActivity : ComponentActivity() {
         if (roster.isEmpty() && pullRequests.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { if (loading) CircularProgressIndicator(Modifier.size(24.dp)) else Text("No sessions", color = Muted) }
         else if (list) BoxWithConstraints(Modifier.weight(1f)) {
             val count = if (prefs.columns == 0) (maxWidth.value / 320).toInt().coerceAtLeast(1) else prefs.columns.coerceAtMost((maxWidth.value / 280).toInt().coerceAtLeast(1))
-            val groups = remember(sessions, prefs.grouping, prefs.order) { if (prefs.grouping == "project") sessions.groupBy { it.repo.ifBlank { "Sessions" } }.entries.let { entries ->
-                if (prefs.order == "alpha") entries.sortedBy { it.key.lowercase() } else entries.sortedByDescending { entry -> entry.value.maxOfOrNull { maxOf(it.stats.promptAt, it.stats.completionAt, it.stats.startedAt) } ?: 0 }
-            }.map { it.key to it.value } else listOf("" to sessions) }
-            val order = remember(groups) { groups.flatMap { it.second } }
-            LazyVerticalGrid(columns = GridCells.Fixed(count), contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                groups.forEach { (group, rows) ->
-                    if (group.isNotEmpty()) item(key = "group-$group", contentType = "group", span = { GridItemSpan(maxLineSpan) }) { Text(group, color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 10.dp)) }
-                    gridItems(rows, key = { it.id }, contentType = { "session" }) { SessionCard(it, it.id == selectedId, now, prefs) { select(it, order) } }
+            val gridState = rememberLazyGridState()
+            val groups = remember(sessions, machines, prefs.grouping, prefs.order) { sessionListGroups(sessions, machines, prefs.grouping, prefs.order) }
+            val order = remember(groups) { groups.flatMap { it.sessions } }
+            val counts = remember(groups) { groups.groupBy { it.machine }.mapValues { (_, sections) -> sections.sumOf { it.sessions.size } } }
+            LazyVerticalGrid(columns = GridCells.Fixed(count), state = gridState, contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                groups.forEachIndexed { index, group ->
+                    if (index == 0 || groups[index - 1].machine != group.machine) stickyHeader(key = "machine-${group.machine}", contentType = "machine") { headerIndex ->
+                        MachineHeader(group.machine, counts.getValue(group.machine), group.machine in collapsedMachines, Modifier.animateItem(placementSpec = tween(320))) {
+                            if (group.machine !in collapsedMachines && gridState.firstVisibleItemIndex > headerIndex) gridState.requestScrollToItem(headerIndex)
+                            collapsedMachines = if (group.machine in collapsedMachines) collapsedMachines - group.machine else collapsedMachines + group.machine
+                        }
+                    }
+                    if (group.machine in collapsedMachines) return@forEachIndexed
+                    if (group.project.isNotEmpty()) item(key = "project-${group.machine.length}:${group.machine}${group.project}", contentType = "group", span = { GridItemSpan(maxLineSpan) }) {
+                        Text(group.project, color = Muted, fontSize = 12.sp, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180)).padding(vertical = 6.dp))
+                    }
+                    gridItems(group.sessions, key = { it.id }, contentType = { "session" }) { SessionCard(it, it.id == selectedId, now, prefs, showMachine = false, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180))) { select(it, order) } }
                 }
             }
         }
-        else LazyColumn(contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            run {
-                val attention = sessions.filter { it.attention }
-                if (attention.isNotEmpty()) { items(attention, key = { "attention-${it.id}" }) { SessionCard(it, it.id == selectedId) { select(it) } }; item { Spacer(Modifier.height(8.dp)) } }
-                items(prs, key = { it.key }) { pr -> PrCard(pr) { select(it) } }
-                val owned = prs.flatMap { it.sessions }.map { it.id }.toSet()
-                val others = sessions.filter { it.id !in owned && !it.attention }
-                if (others.isNotEmpty()) { items(others, key = { it.id }) { SessionCard(it, it.id == selectedId) { select(it) } } }
+        else {
+            val boardState = rememberLazyListState()
+            val groups = remember(sessions, prs, machines) { machinePrGroups(sessions, prs, machines) }
+            val order = remember(groups) { groups.flatMap { it.sessions }.distinctBy { it.id } }
+            val watched = remember(prs) { prs.filter { it.sessions.isEmpty() } }
+            LazyColumn(state = boardState, contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                groups.forEach { group ->
+                    stickyHeader(key = "machine-${group.machine}", contentType = "machine") { headerIndex ->
+                        MachineHeader(group.machine, group.sessions.size, group.machine in collapsedMachines, Modifier.animateItem(placementSpec = tween(320))) {
+                            if (group.machine !in collapsedMachines && boardState.firstVisibleItemIndex > headerIndex) boardState.requestScrollToItem(headerIndex)
+                            collapsedMachines = if (group.machine in collapsedMachines) collapsedMachines - group.machine else collapsedMachines + group.machine
+                        }
+                    }
+                    if (group.machine in collapsedMachines) return@forEach
+                    val attention = group.sessions.filter { it.attention }
+                    items(attention, key = { "attention-${it.id}" }, contentType = { "session" }) {
+                        SessionCard(it, it.id == selectedId, showMachine = false, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180))) { select(it, order) }
+                    }
+                    items(group.prs, key = { "pr-${group.machine.length}:${group.machine}${it.key}" }, contentType = { "pr" }) { pr ->
+                        PrCard(pr, Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180)), showMachine = false) { select(it, order) }
+                    }
+                    val owned = group.prs.flatMap { it.sessions }.map { it.id }.toSet()
+                    items(group.sessions.filter { it.id !in owned && !it.attention }, key = { it.id }, contentType = { "session" }) {
+                        SessionCard(it, it.id == selectedId, showMachine = false, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180))) { select(it, order) }
+                    }
+                }
+                if (watched.isNotEmpty()) {
+                    stickyHeader(key = "watched", contentType = "machine") { headerIndex ->
+                        MachineHeader("Tracked PRs", watched.size, watchedCollapsed, Modifier.animateItem(placementSpec = tween(320)), countNoun = "pull request") {
+                            if (!watchedCollapsed && boardState.firstVisibleItemIndex > headerIndex) boardState.requestScrollToItem(headerIndex)
+                            watchedCollapsed = !watchedCollapsed
+                        }
+                    }
+                    if (!watchedCollapsed) items(watched, key = { "watched-${it.key}" }, contentType = { "pr" }) { pr ->
+                        PrCard(pr, Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180))) { select(it, order) }
+                    }
+                }
             }
         }
     }
 }
+@Composable private fun MachineHeader(name: String, count: Int, collapsed: Boolean, modifier: Modifier = Modifier, countNoun: String = "session", toggle: () -> Unit) {
+    val angle by animateFloatAsState(if (collapsed) -90f else 0f, tween(240), label = "Machine folder")
+    Surface(onClick = toggle, color = Ink, modifier = modifier.fillMaxWidth().semantics {
+        heading()
+        stateDescription = if (collapsed) "Collapsed" else "Expanded"
+    }) {
+        Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(painterResource(if (countNoun == "session") R.drawable.ic_machine else R.drawable.ic_board), null, tint = Muted, modifier = Modifier.size(18.dp))
+            Text(name, color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+            Text(if (count == 1) "1 $countNoun" else "$count ${countNoun}s", color = Muted, fontSize = 12.sp,
+                modifier = Modifier.background(Panel, RoundedCornerShape(6.dp)).padding(horizontal = 7.dp, vertical = 2.dp))
+            Icon(painterResource(R.drawable.ic_chevron_down), null, tint = Muted, modifier = Modifier.size(18.dp).rotate(angle))
+        }
+    }
+}
+
 @Composable internal fun Control(icon: Int, label: String, selected: Boolean = false, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
     IconButton(onClick = onClick, enabled = enabled, modifier = modifier.size(44.dp).background(if (selected) Peach.copy(alpha = .12f) else Color.Transparent, RoundedCornerShape(12.dp))) {
         Icon(painterResource(icon), contentDescription = label, tint = if (selected) Peach else Muted, modifier = Modifier.size(22.dp))
     }
 }
-@Composable private fun PrCard(pr: PullRequest, select: (Session) -> Unit) {
+@Composable private fun PrCard(pr: PullRequest, modifier: Modifier = Modifier, showMachine: Boolean = true, select: (Session) -> Unit) {
     val uri = LocalUriHandler.current
-    Surface(color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFF303A46))) {
+    Surface(modifier = modifier, color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Color(0xFF303A46))) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) { Text(pr.repo, color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f)); Text("#${pr.number}", color = Peach, fontSize = 12.sp, lineHeight = 16.sp) }
             if (pr.title.isNotBlank()) Text(pr.title, color = CrabColors.Title, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
@@ -247,49 +318,33 @@ class MainActivity : ComponentActivity() {
                 if (pr.state.isNotBlank()) Text(pr.state.lowercase().replaceFirstChar { it.uppercase() }, color = if (pr.state == "MERGED") CrabColors.Purple else Mint, fontSize = 12.sp, lineHeight = 16.sp)
                 if (pr.checks.isNotBlank()) Text(pr.checks, color = if (pr.checks.contains("failed")) CrabColors.Red else Muted, fontSize = 12.sp, lineHeight = 16.sp)
             }
-            pr.sessions.forEach { session -> HorizontalDivider(color = Color(0xFF303A46)); SessionRow(session) { select(session) } }
+            pr.sessions.forEach { session -> HorizontalDivider(color = Color(0xFF303A46)); SessionRow(session, showMachine = showMachine) { select(session) } }
             if (pr.sessions.isEmpty() && pr.url.startsWith("https://")) Control(R.drawable.ic_external, "Open pull request") { uri.openUri(pr.url) }
         }
     }
 }
-@Composable private fun SessionCard(session: Session, selected: Boolean, now: State<Long>? = null, prefs: UiPreferences = UiPreferences(), open: () -> Unit) {
-    Surface(onClick = open, color = Panel, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected) CrabColors.Title else Color(0xFF303A46))) {
+@Composable private fun SessionCard(session: Session, selected: Boolean, now: State<Long>? = null, prefs: UiPreferences = UiPreferences(), showMachine: Boolean = true, modifier: Modifier = Modifier, open: () -> Unit) {
+    val attention = session.attentionColor
+    Surface(onClick = open, modifier = modifier, color = attention?.let { androidx.compose.ui.graphics.lerp(Panel, it, .12f) } ?: Panel,
+        shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, attention ?: if (selected) CrabColors.Title else Color(0xFF303A46))) {
         Box(Modifier.padding(if (prefs.density == "compact") 6.dp else 10.dp)) {
-            SessionRow(session, clickable = false, footer = {
+            SessionRow(session, clickable = false, showMachine = showMachine, footer = {
                 if (now != null) SessionStatsFooter(session, now, prefs)
             }, open = open)
         }
     }
 }
-@Composable private fun SessionStatsFooter(session: Session, clock: State<Long>, prefs: UiPreferences) {
-    val now = clock.value
-    val stats = session.stats
-    FlowRow(Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        if (prefs.visible("sessionTime")) Stat("◉", sessionDuration(stats.duration(session.active, now)), "Session time", CrabColors.Blue)
-        if (prefs.visible("thinkingTime")) Stat("◐", sessionDuration(stats.thinkingSeconds), "Thinking time", Mint)
-        if (prefs.visible("promptRecency")) Stat("⟩", if (stats.promptAt > 0) sessionAge(stats.promptAt, now) else "—", "Last prompt", Muted)
-        if (prefs.visible("completionRecency")) Stat("⋖", if (stats.completionAt > 0) sessionAge(stats.completionAt, now) else "—", "Last completion", Muted)
-        if (prefs.visible("tools")) Stat("⚒", stats.tools?.toString() ?: "—", "Tools", Peach)
-        if (prefs.visible("compactions")) Stat("⊜", stats.compactions?.toString() ?: "—", "Compactions", CrabColors.Pink)
-    }
-}
-@Composable private fun Stat(symbol: String, value: String, label: String, color: Color) {
-    Row(Modifier.clearAndSetSemantics { contentDescription = "$label: $value" }, horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(symbol, color = Muted, fontSize = 13.sp, lineHeight = 16.sp)
-        Text(value, color = color, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.sp)
-    }
-}
-@Composable private fun SessionRow(session: Session, clickable: Boolean = true, footer: @Composable () -> Unit = {}, open: () -> Unit) {
+@Composable private fun SessionRow(session: Session, clickable: Boolean = true, showMachine: Boolean = true, footer: @Composable () -> Unit = {}, open: () -> Unit) {
     val color = remember(session.color) { runCatching { Color(android.graphics.Color.parseColor(session.color)) }.getOrDefault(Peach) }
     val background = remember(session.background) { runCatching { Color(android.graphics.Color.parseColor(session.background)) }.getOrDefault(Panel) }
-    val title = remember(session.title, session.machine) { buildAnnotatedString {
+    val title = remember(session.title, session.machine, showMachine) { buildAnnotatedString {
         append(session.title)
-        if (session.machine.isNotBlank()) withStyle(SpanStyle(color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Normal)) {
+        if (showMachine && session.machine.isNotBlank()) withStyle(SpanStyle(color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Normal)) {
             append("  ·\u00a0${session.machine}")
         }
     } }
-    Row(Modifier.fillMaxWidth().then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+    val attention = if (clickable) session.attentionColor else null
+    Row(Modifier.fillMaxWidth().background(attention?.copy(alpha = .12f) ?: Color.Transparent, RoundedCornerShape(8.dp)).then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
         Surface(color = background, shape = RoundedCornerShape(8.dp), modifier = Modifier.width(58.dp)) { Text(session.glyph, color = color, fontSize = 16.sp, lineHeight = 20.sp, textAlign = TextAlign.Center, maxLines = 1, softWrap = false, modifier = Modifier.padding(vertical = 5.dp)) }
         SessionStatus(session)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
