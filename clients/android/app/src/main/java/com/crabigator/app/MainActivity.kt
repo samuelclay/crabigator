@@ -220,14 +220,19 @@ class MainActivity : ComponentActivity() {
     var settingsAnchor by remember { mutableStateOf(Rect.Zero) }
     val prefs by model.preferences.collectAsStateWithLifecycle()
     val all = prefs.showEnded
-    val sessions = remember(roster, all, query) { roster.filter { (all || it.active) && "${it.title} ${it.repo} ${it.machine}".contains(query, true) }.sortedWith(compareByDescending<Session> { it.attention }.thenByDescending { maxOf(it.stats.promptAt, it.stats.completionAt, it.stats.startedAt) }.thenBy { it.id }) }
     var machineOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var collapsedMachines by rememberSaveable { mutableStateOf(emptyList<String>()) }
     val gridState = rememberLazyGridState()
     val boardState = rememberLazyListState()
     val machines = remember(roster, machineOrder) { retainMachineOrder(machineOrder, roster) }
     SideEffect { if (machineOrder != machines) machineOrder = machines }
-    fun select(session: Session, order: List<Session> = sessions) {
+    val ordering = remember { RosterOrder() }
+    val minute by remember { derivedStateOf { now.value / 60 } }
+    val layout = remember(roster, pullRequests, machines, minute, prefs.grouping, prefs.order) {
+        ordering.update(roster, pullRequests, machines, now.value, android.os.SystemClock.elapsedRealtime() / 1000, prefs.grouping, prefs.order)
+    }
+    val visible = remember(layout, all, query) { layout.filtered(all, query) }
+    fun select(session: Session, order: List<Session>) {
         val direction = if (order.indexOfFirst { it.id == session.id } < order.indexOfFirst { it.id == selectedId }) -1 else 1
         model.select(session, direction)
         selected()
@@ -246,7 +251,7 @@ class MainActivity : ComponentActivity() {
         }
         else if (list) BoxWithConstraints(Modifier.weight(1f)) {
             val count = if (prefs.columns == 0) (maxWidth.value / 320).toInt().coerceAtLeast(1) else prefs.columns.coerceAtMost((maxWidth.value / 280).toInt().coerceAtLeast(1))
-            val groups = remember(sessions, machines, prefs.grouping, prefs.order) { sessionListGroups(sessions, machines, prefs.grouping, prefs.order) }
+            val groups = visible.list
             val order = remember(groups) { groups.flatMap { it.sessions } }
             val counts = remember(groups) { groups.groupBy { it.machine }.mapValues { (_, sections) -> sections.sumOf { it.sessions.size } } }
             LazyVerticalGrid(columns = GridCells.Fixed(count), state = gridState, contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 88.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -265,7 +270,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        else PrBoard(roster, pullRequests, machines, now, all, query, selectedId, collapsedMachines, boardState,
+        else PrBoard(visible.board, visible.watched, now, query, selectedId, collapsedMachines, boardState,
             { machine -> collapsedMachines = if (machine in collapsedMachines) collapsedMachines - machine else collapsedMachines + machine },
             ::select)
     }

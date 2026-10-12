@@ -22,17 +22,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable internal fun PrBoard(
-    roster: List<Session>, prs: List<PullRequest>, machines: List<String>, clock: State<Long>,
-    showEnded: Boolean, query: String, selectedId: String?, collapsed: List<String>, state: LazyListState, toggle: (String) -> Unit,
+    groups: List<BoardMachine>, watched: List<PullRequest>, clock: State<Long>,
+    query: String, selectedId: String?, collapsed: List<String>, state: LazyListState, toggle: (String) -> Unit,
     select: (Session, List<Session>) -> Unit,
 ) {
-    // Regroup at minute boundaries, while the recency text keeps its normal clock.
-    val minute = clock.value / 60
-    val groups = remember(roster, prs, machines, minute, showEnded, query) {
-        prBoardGroups(roster, prs, machines, minute * 60, showEnded, query)
-    }
     val order = remember(groups) { groups.flatMap { it.sessions }.map { it.session } }
-    val watched = remember(prs, query) { prs.filter { it.sessions.isEmpty() && "${it.title} ${it.repo} ${it.number}".contains(query, true) } }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 840.dp
         if (groups.isEmpty() && watched.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
