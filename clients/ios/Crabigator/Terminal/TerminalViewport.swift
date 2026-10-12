@@ -31,7 +31,7 @@ struct TerminalViewport: UIViewRepresentable {
         var cachedWidth: CGFloat = 0
         var appliedHistory = "", appliedStyle: Preferences?
         var rendering = false
-        var revision = 0
+        var revision = 0, appliedRevision = 0
         init(_ parent: TerminalViewport) { self.parent = parent }
         func update() {
             guard let view else { return }
@@ -43,7 +43,10 @@ struct TerminalViewport: UIViewRepresentable {
             renderLatest()
         }
         private func renderLatest() {
-            guard !rendering, let prefs = style else { return }
+            // TextKit edits and offset restoration can cancel native deceleration.
+            // Keep only the latest source while the user drags or coasts.
+            guard !rendering, revision != appliedRevision, let view, !view.isUserScrolling,
+                  let prefs = style else { return }
             rendering = true
             let revision = revision, history = sourceHistory, screen = sourceScreen
             queue.async { [weak self] in
@@ -64,7 +67,8 @@ struct TerminalViewport: UIViewRepresentable {
                     guard let self else { return }
                     self.rendering = false
                     guard self.style == prefs else { self.renderLatest(); return }
-                    guard let view = self.view else { return }
+                    // A swipe may have started while ANSI parsing was off the main thread.
+                    guard let view = self.view, !view.isUserScrolling else { return }
                     view.documentWidth = prefs.wrap ? 0 : ceil(width) + 32
                     let text = view.text, offset = text.contentOffset, selection = text.selectedRange
                     let old = text.attributedText ?? NSAttributedString(string: "")
@@ -82,11 +86,11 @@ struct TerminalViewport: UIViewRepresentable {
                     text.textStorage.endEditing()
                     // VoiceOver needs the text, not thousands of terminal color runs.
                     text.accessibilityAttributedValue = NSAttributedString(string: result.string)
-                    self.appliedHistory = history; self.appliedStyle = prefs
+                    self.appliedHistory = history; self.appliedStyle = prefs; self.appliedRevision = revision
                     if selection.location <= result.length { text.selectedRange = NSRange(location: selection.location, length: min(selection.length, result.length - selection.location)) }
                     view.setNeedsLayout(); view.layoutIfNeeded()
                     if self.parent.pinned { view.followBottom() }
-                    else { text.setContentOffset(offset, animated: false) }
+                    else if text.contentOffset != offset { text.setContentOffset(offset, animated: false) }
                     // Apply completed frames even while newer output arrives. Dropping every
                     // older frame would freeze a busy session until its output paused.
                     if self.revision != revision { self.renderLatest() }
@@ -96,8 +100,25 @@ struct TerminalViewport: UIViewRepresentable {
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             if scrollView === view?.text { view?.follow = false; parent.pinned = false }
         }
-        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { repin(scrollView) }
-        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) { if !decelerate { repin(scrollView) } }
+        #if DEBUG
+        func scrollViewWillBeginDecelerating(_ scrollView: UIScrollView) {
+            guard ProcessInfo.processInfo.environment["CRABIGATOR_TEST_MOMENTUM"] == "1", scrollView === view?.text else { return }
+            let offset = scrollView.contentOffset.y
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak scrollView] in
+                guard let scrollView else { return }
+                scrollView.accessibilityLabel = "Coasting: \(scrollView.isDecelerating); distance: \(Int(abs(scrollView.contentOffset.y - offset)))"
+            }
+        }
+        #endif
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { finishScrolling(scrollView) }
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            if !decelerate { finishScrolling(scrollView) }
+        }
+        private func finishScrolling(_ scrollView: UIScrollView) {
+            repin(scrollView)
+            if parent.pinned { view?.followBottom() }
+            renderLatest()
+        }
         func repin(_ scrollView: UIScrollView) {
             guard scrollView === view?.text else { return }
             if scrollView.contentOffset.y + scrollView.bounds.height >= scrollView.contentSize.height - 12 { parent.pinned = true; view?.follow = true }
@@ -117,15 +138,21 @@ final class TerminalScrollView: UIScrollView {
     let text = UITextView(usingTextLayoutManager: true)
     var documentWidth: CGFloat = 0
     var follow = true
+    var isUserScrolling: Bool { isDragging || isDecelerating || text.isDragging || text.isDecelerating }
     override init(frame: CGRect) { super.init(frame: frame); addSubview(text); alwaysBounceHorizontal = false; showsVerticalScrollIndicator = false }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func layoutSubviews() {
         super.layoutSubviews()
         let width = max(bounds.width, documentWidth)
-        text.frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
-        contentSize = CGSize(width: width, height: bounds.height)
+        let frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
+        if text.frame != frame { text.frame = frame }
+        if contentSize != frame.size { contentSize = frame.size }
     }
-    func followBottom() { text.setContentOffset(CGPoint(x: 0, y: max(-text.adjustedContentInset.top, text.contentSize.height - text.bounds.height + text.adjustedContentInset.bottom)), animated: false) }
+    func followBottom() {
+        guard !isUserScrolling else { return }
+        let offset = CGPoint(x: 0, y: max(-text.adjustedContentInset.top, text.contentSize.height - text.bounds.height + text.adjustedContentInset.bottom))
+        if text.contentOffset != offset { text.setContentOffset(offset, animated: false) }
+    }
 }
 private extension String.UTF16View {
     func commonPrefixCount(with other: String.UTF16View) -> Int { var count = 0; for (a, b) in zip(self, other) { if a != b { break }; count += 1 }; return count }
@@ -151,3 +178,21 @@ private extension NSAttributedString {
         return common
     }
 }
+
+#if DEBUG
+/// Repeatable incoming output for the native momentum regression test. No session input.
+struct TerminalMomentumFixture: View {
+    @State private var frame = 0
+    @State private var pinned = true
+    private let history = (0..<1000).map { "History row \($0): terminal scrollback" }.joined(separator: "\n") + "\n"
+    var body: some View {
+        TerminalViewport(history: history, screen: "Live frame \(frame)", preferences: Preferences(), pinned: $pinned)
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    frame += 1
+                }
+            }
+    }
+}
+#endif

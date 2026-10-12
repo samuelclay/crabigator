@@ -4,6 +4,14 @@ The native app is installed, paired and running on the physical ClayPad Air and 
 
 On October 12, Xcode automatic signing succeeded with the NewsBlur team (`HR7P97SD72`). The signed Debug build and notification extension installed on both physical devices. Each device claimed its own pairing code, and screenshots confirmed that the live session roster loaded. This verifies installation, launch, pairing and roster access; it does not establish full device interaction or push-delivery coverage.
 
+## Terminal scrolling momentum
+
+Live frames previously edited TextKit storage and restored the content offset during native deceleration, cutting off momentum. The viewer now keeps the latest source while either scroll view is dragging or coasting, applies it when scrolling settles, and honors a pending Follow action even when no new output arrives.
+
+A repeatable UI test streams ten frames per second into 1,000 history rows. Before the fix, the physical iPhone stopped coasting within 350 milliseconds and moved only 20 points after release. After the fix, it was still coasting at that sample and had moved 325 points. The simulator reproduced the failure and passed after the fix too. Both passing runs also confirmed live output resumes afterward. Twelve unit tests passed, including the pending Follow case. The updated signed app is installed on the phone and iPad; iPad UI automation timed out while enabling automation, so the physical momentum proof is from the phone.
+
+Results: `/tmp/crabigator-momentum-phone-before.xcresult`, `/tmp/crabigator-momentum-phone-after.xcresult`, and `/tmp/crabigator-momentum-final.xcresult`.
+
 ## Independent text sizes
 
 Style now saves List / PR board text size separately from Terminal text size. The default board size preserves the existing layout. An iPhone simulator UI check changed the board size, verified the terminal setting stayed unchanged, and confirmed both values survived restarting the app. Eleven unit tests passed, including decoding older preferences without resetting terminal settings. The signed update installed on ClayPad Air and ClayPhone SE 3; the iPad launched, while the phone was locked. The matching Android update passed 28 unit tests and was installed on both Samsung devices. The S22 visual check covered list and PR board text at size 24 while terminal text stayed at 9.

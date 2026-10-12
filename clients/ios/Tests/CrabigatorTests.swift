@@ -1,10 +1,26 @@
 import XCTest
 import UIKit
+import SwiftUI
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
     func session(_ id: String, prompt: Int, machine: String = "Mac", state: String = "complete") -> Session {
         Session(["session_id": id, "title": id, "device_name": machine, "prompts_changed_at": prompt, "state": state, "active": true])
+    }
+    @MainActor func testFollowRequestedDuringCoastingRunsWhenIdleEvenWithoutNewOutput() {
+        let terminal = TerminalViewport(history: "", screen: "", preferences: Preferences(), pinned: .constant(true))
+        let coordinator = terminal.makeCoordinator()
+        let view = TerminalScrollView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        coordinator.view = view
+        view.text.text = Array(repeating: "A history row", count: 200).joined(separator: "\n")
+        view.layoutIfNeeded()
+        view.text.layoutIfNeeded()
+        XCTAssertGreaterThan(view.text.contentSize.height, view.text.bounds.height)
+        view.text.setContentOffset(.zero, animated: false)
+        // No new source revision: ending a coast must still honor the follow button.
+        coordinator.scrollViewDidEndDecelerating(view.text)
+        XCTAssertGreaterThan(view.text.contentOffset.y, 0)
+        XCTAssertEqual(view.text.contentOffset.y, view.text.contentSize.height - view.text.bounds.height, accuracy: 1)
     }
     func testAddingBoardTextSizePreservesSavedTerminalSettings() throws {
         let legacy = Data(#"{"fontSize":19,"lineSpacing":170,"columns":2,"terminalHeight":350,"wrap":false,"widgets":true,"sidebarRight":true,"showEnded":true,"grouping":"project","order":"alpha","density":"compact","hidden":["tools"]}"#.utf8)

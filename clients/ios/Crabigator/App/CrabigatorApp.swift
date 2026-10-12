@@ -7,7 +7,7 @@ import UserNotifications
     @Environment(\.scenePhase) private var phase
     var body: some Scene {
         WindowGroup {
-            RootView(model: model).preferredColorScheme(.dark).tint(Crab.orange)
+            content.preferredColorScheme(.dark).tint(Crab.orange)
                 .onAppear { delegate.model = model; model.start() }
                 .onChange(of: phase) { _, phase in if phase == .active { model.start() } else { model.stop() } }
                 .onOpenURL { url in
@@ -15,6 +15,15 @@ import UserNotifications
                     if url.scheme == "crabigator", url.host == "pair", let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "code" })?.value { Task { await model.pair(code: code, origin: model.origin) } }
                 }
         }
+    }
+    @ViewBuilder private var content: some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_MOMENTUM"] == "1" {
+            TerminalMomentumFixture()
+        } else { RootView(model: model) }
+        #else
+        RootView(model: model)
+        #endif
     }
 }
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {

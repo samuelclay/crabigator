@@ -1,6 +1,32 @@
 import XCTest
 
 final class ScrollPerformanceTests: XCTestCase {
+    func testIncomingFramesDoNotStopMomentum() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment["CRABIGATOR_TEST_MOMENTUM"] = "1"
+        app.launch()
+        let terminal = app.textViews["terminal-output"]
+        XCTAssertTrue(terminal.waitForExistence(timeout: 10))
+        let populated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (terminal.value as? String ?? "").contains("History row 999")
+        }, object: terminal)
+        XCTAssertEqual(XCTWaiter.wait(for: [populated], timeout: 10), .completed)
+        terminal.swipeDown(velocity: .fast)
+        let coast = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            terminal.label.contains("Coasting:")
+        }, object: terminal)
+        XCTAssertEqual(XCTWaiter.wait(for: [coast], timeout: 5), .completed)
+        print("Momentum sample: \(terminal.label)")
+        XCTAssertTrue(terminal.label.contains("Coasting: true"), terminal.label)
+        let previous = terminal.value as? String
+        let refreshed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (terminal.value as? String) != previous
+        }, object: terminal)
+        XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 8), .completed, "Live output must catch up after coasting finishes")
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "After coasting through incoming output"; screenshot.lifetime = .keepAlways; add(screenshot)
+    }
     func testScrollThroughLiveHistory() throws {
         guard ProcessInfo.processInfo.environment["CRABIGATOR_PROFILE_SCROLL"] == "1" else {
             throw XCTSkip("Run scripts/profile-scroll.sh on a paired device with terminal history.")
