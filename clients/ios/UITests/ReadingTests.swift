@@ -38,12 +38,15 @@ final class ReadingTests: XCTestCase {
             XCTAssertEqual(app.buttons["PR board"].value as? String, "Selected, full width")
             XCTAssertEqual(row.value as? String, "Selected")
             app.buttons["PR board"].tap()
+            app.buttons["List"].tap()
+            XCTAssertEqual(row.value as? String, "Selected")
+            capture("Selected session in List sidebar")
             app.buttons["Close session"].tap()
         } else {
             app.buttons["Back to list"].tap()
             XCTAssertEqual(app.buttons["PR board"].value as? String, "Selected")
         }
-        app.buttons["List"].tap()
+        if !(app.buttons["List"].value as? String ?? "").hasPrefix("Selected") { app.buttons["List"].tap() }
         app.terminate(); app.launch()
         XCTAssertTrue(app.buttons["List"].waitForExistence(timeout: 25))
         XCTAssertTrue((app.buttons["List"].value as? String ?? "").hasPrefix("Selected"))

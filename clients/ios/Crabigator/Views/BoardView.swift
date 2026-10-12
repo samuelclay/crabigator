@@ -122,12 +122,16 @@ struct BoardView: View {
         }
     }
     func sessionButton(_ session: Session, list: Bool, full: Bool, order: [Session]) -> some View {
-        Button { select(session, order) } label: {
+        let selected = model.selectionID == session.id
+        let shape = RoundedRectangle(cornerRadius: list ? 12 : 6)
+        return Button { select(session, order) } label: {
             SessionRow(session: session, prs: model.ordering.prsBySession[session.id] ?? [], preferences: model.preferences, list: list, wide: full)
                 .padding(.horizontal, list ? 12 : 8).padding(.vertical, model.preferences.density == "compact" ? 8 : 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(model.selectionID == session.id ? Crab.title.opacity(0.13) : list ? Crab.panel : .clear, in: RoundedRectangle(cornerRadius: list ? 12 : 6))
-        }.buttonStyle(.plain).accessibilityIdentifier("Session \(session.id)").accessibilityValue(model.selectionID == session.id ? "Selected" : "")
+                .background(selected ? Crab.orange.opacity(0.13) : list ? Crab.panel : .clear, in: shape)
+                .overlay { if selected { shape.strokeBorder(Crab.orange, lineWidth: 2) } }
+        }.buttonStyle(.plain).accessibilityIdentifier("Session \(session.id)").accessibilityValue(selected ? "Selected" : "")
+            .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 struct SessionRow: View {
