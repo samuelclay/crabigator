@@ -229,8 +229,6 @@ pub struct App {
     cloud_client: Option<CloudClient>,
     /// Last state sent to cloud (to avoid duplicate events)
     last_cloud_state: Option<SessionState>,
-    /// Last scrollback line count sent to cloud (for diffs)
-    last_cloud_scrollback_lines: usize,
     /// Last title sent to cloud (to avoid duplicate events)
     last_cloud_title: Option<String>,
     /// Last Slack thread list sent to cloud.
@@ -454,7 +452,6 @@ impl App {
             initial_git_time_ms: None,
             initial_diff_time_ms: None,
             last_cloud_state: None,
-            last_cloud_scrollback_lines: 0,
             last_cloud_title: None,
             last_cloud_slack_threads: Vec::new(),
             last_cloud_pr_slack_threads: Vec::new(),
@@ -1407,12 +1404,6 @@ impl App {
                     // its key reports change mode along with the child.
                     self.kitty_keyboard.scan(&passthrough);
 
-                    // Keep debug capture tied to the real PTY stream, then
-                    // render/process the virtualized stream that the user's
-                    // terminal actually sees.
-                    if let Err(e) = self.capture_manager.capture_output(&passthrough) {
-                        eprintln!("Capture error: {}", e);
-                    }
                     let scroll_region_result = self.scroll_region_filter.scan(&passthrough);
                     if scroll_region_result.needs_redraw {
                         self.last_status_bar_hash = None;
@@ -1423,6 +1414,11 @@ impl App {
                     }
                     wrote_output = true;
 
+                    // History and the live screen must see the same filtered
+                    // stream as the host, including alternate-screen handling.
+                    if let Err(e) = self.capture_manager.capture_output(&terminal_output) {
+                        eprintln!("Capture error: {}", e);
+                    }
                     self.platform_pty.process_output(&terminal_output);
                     self.output_boundary.scan(&terminal_output);
                     self.flow.hear_output(terminal_output.len());
@@ -2383,13 +2379,12 @@ impl App {
 
     /// Send scrollback diff event to cloud
     fn send_cloud_scrollback_event(&mut self, update: ScrollbackUpdate) {
-        if update.total_lines <= self.last_cloud_scrollback_lines {
-            return;
-        }
-        self.last_cloud_scrollback_lines = update.total_lines;
-
         if let Some(ref mut client) = self.cloud_client {
-            let event = SessionEventBuilder::scrollback(update.diff, update.total_lines);
+            let event = if update.reset {
+                SessionEventBuilder::scrollback_history(update.diff)
+            } else {
+                SessionEventBuilder::scrollback(update.diff, update.total_lines)
+            };
             client.send_event(event);
         }
     }

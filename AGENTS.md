@@ -118,7 +118,7 @@ The application uses a **scroll region approach** to layer UI:
 - **flow/**: The flow column's scenes, a Rust port of [flow](https://github.com/robdmac/flow) (MIT, `src/flow/LICENSE`). `flow.rs` holds `FlowColumn`: the session's scene, stepped in the event loop at its own pace (~14 fps busy, 8 calm), fed by Claude Code's hooks as they fire (`hooks.rs`) or by other assistants' stats (`feed.rs`), with fade off unless `[flow] fade` is set (`activity.rs`). `claim.rs` claims a different scene per live session (like session marks) and takes the hue of the session mark (`palette.rs`). `scenes/` has one file per scene; `sky.rs` and `clouds.rs` are the balloon's and rockets' world. Each scene's `frames_match_flow` test replays flow's own frames (`testdata/`, recorded by `make flow-reference FLOW_DIR=../flow`) cell for cell, so keep the port exact (`js.rs`). **`src/flow/FORK.md` is the fork log**: when porting a new upstream flow commit, follow it and add a row.
 - **ui/**: Status bar rendering - `status_bar.rs` orchestrates layout (`column_widths` splits Stats │ Git │ Changes │ Flow; flow takes 15% from 100 columns); `git.rs`, `changes.rs`, `stats.rs` are the individual widgets; `flow.rs` draws the flow column (rows fitted to its exact width, and a column-only repaint between full draws); `handoff.rs` is the strip above the widgets (setup prompts, update notices, latest recap, tracked PRs); `pr_cells.rs` is the PR cell rendering shared by the handoff strip and the PR board; `pairing.rs` renders full-width pairing/update banners; `sparkline.rs` renders Unicode sparklines.
 - **cloud/**: Streaming to the configured cloud origin - endpoint selection, host-scoped device identity, session registration, event queue, and WebSocket connection with auto-reconnect.
-- **capture.rs**: Output capture. Writes the session transcript to `scrollback.log` (from platform JSONL) and periodic screen snapshots to `screen.txt`.
+- **capture.rs**: Output capture. Writes actual styled terminal rows to `terminal_history.log` for remote viewers, the searchable platform transcript to `scrollback.log`, and periodic screen snapshots to `screen.txt`.
 - **mirror.rs**: Widget state mirroring. Publishes throttled JSON snapshots of all widget state to `inspect.json`.
 - **inspect.rs**: `crabigator inspect` implementation for viewing other running instances.
 - **recap.rs**: Automatic per-turn recaps, generated on the desktop from local transcripts; only the finished recap is sent to the cloud.
@@ -157,6 +157,7 @@ This keeps module declarations visible at the top level rather than buried in su
 
 Each crabigator session creates `/tmp/crabigator-{session_id}/` containing:
 - **scrollback.log**: Session transcript (append-only, built from the platform's JSONL log)
+- **terminal_history.log**: Styled rows that actually scrolled off the primary terminal, streamed to remote viewers
 - **screen.txt**: Current screen snapshot from the vt100 parser (updated ~100ms)
 - **inspect.json**: Widget state for external inspection (updated ~1s when changed)
 - **hooks.log**: Debug log of hook invocations (Claude Code)
