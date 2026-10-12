@@ -377,9 +377,9 @@ fn compact_metric_cell(labels: &[String], value: &str, width: usize) -> String {
     format!("{}{:gap$}{}", label, "", value, gap = gap)
 }
 
-fn compact_elapsed(timestamp: Option<f64>) -> String {
+fn compact_elapsed(timestamp: Option<f64>, age_color: u8) -> String {
     format_elapsed_age(timestamp)
-        .map(|elapsed| format!("{}{}{}", fg(color::GRAY), elapsed, RESET))
+        .map(|elapsed| format!("{}{}{}", fg(age_color), elapsed, RESET))
         .unwrap_or_default()
 }
 
@@ -575,7 +575,7 @@ fn draw_compact_row(
             );
             let prompts = compact_metric_cell(
                 &prompt_labels,
-                &compact_elapsed(stats.prompts_changed_at),
+                &compact_elapsed(stats.prompts_changed_at, color::ORANGE),
                 left_width,
             );
             let completion_labels = compact_count_labels(
@@ -587,7 +587,7 @@ fn draw_compact_row(
             );
             let completions = compact_metric_cell(
                 &completion_labels,
-                &compact_elapsed(stats.completions_changed_at),
+                &compact_elapsed(stats.completions_changed_at, color::DARK_ORANGE),
                 right_width,
             );
 
@@ -604,7 +604,7 @@ fn draw_compact_row(
             );
             let compactions = compact_metric_cell(
                 &compaction_labels,
-                &compact_elapsed(stats.compressions_changed_at),
+                &compact_elapsed(stats.compressions_changed_at, color::GRAY),
                 right_width,
             );
 
@@ -670,7 +670,7 @@ fn draw_normal_row(
                 RESET
             );
             let elapsed = format_elapsed(stats.prompts_changed_at);
-            let timer = format!("{}{}{}", fg(color::GRAY), elapsed, RESET);
+            let timer = format!("{}{}{}", fg(color::ORANGE), elapsed, RESET);
             let label_len = strip_ansi_len(&label);
             let timer_len = strip_ansi_len(&timer);
             let gap = (width as usize).saturating_sub(label_len + timer_len);
@@ -687,7 +687,7 @@ fn draw_normal_row(
                 RESET
             );
             let elapsed = format_elapsed(stats.completions_changed_at);
-            let timer = format!("{}{}{}", fg(color::GRAY), elapsed, RESET);
+            let timer = format!("{}{}{}", fg(color::DARK_ORANGE), elapsed, RESET);
             let label_len = strip_ansi_len(&label);
             let timer_len = strip_ansi_len(&timer);
             let gap = (width as usize).saturating_sub(label_len + timer_len);
