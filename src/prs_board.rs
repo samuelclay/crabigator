@@ -88,10 +88,6 @@ const RECENCY_6H: u8 = 39;
 const RECENCY_9H: u8 = 33;
 const RECENCY_12H: u8 = 27;
 const RECENCY_24H: u8 = 25;
-/// The event that matches the session's current state.
-const ACTIVITY_BRIGHT_TEAL: u8 = 51;
-/// The previous event in the prompt/completion pair.
-const ACTIVITY_DARK_TEAL: u8 = 30;
 /// Machine names on repository headings. Cornflower, so it stays apart from
 /// the cyan recency bars and from the light blue of session titles.
 const MACHINE_BLUE: u8 = 69;
@@ -2300,7 +2296,7 @@ struct ActivityCell {
 }
 
 /// The newest prompt and completion among every session attached to a PR.
-/// Thinking highlights the prompt; every settled state highlights completion.
+/// Prompt and completion ages keep distinct colors in every session state.
 fn activity_cell(
     sessions: &[SessionRef],
     now_ms: u64,
@@ -2325,27 +2321,8 @@ fn activity_cell(
         .max()
         .unwrap_or(0);
     let activity_state = activity_state(sessions);
-    let prompt_is_active = activity_state == Some(SessionState::Thinking);
-    let prompt = activity_part(
-        PROMPT_ICON,
-        prompted_at,
-        now,
-        if prompt_is_active {
-            ACTIVITY_BRIGHT_TEAL
-        } else {
-            ACTIVITY_DARK_TEAL
-        },
-    );
-    let completion = activity_part(
-        COMPLETION_ICON,
-        completed_at,
-        now,
-        if prompt_is_active {
-            ACTIVITY_DARK_TEAL
-        } else {
-            ACTIVITY_BRIGHT_TEAL
-        },
-    );
+    let prompt = activity_part(PROMPT_ICON, prompted_at, now, color::ORANGE);
+    let completion = activity_part(COMPLETION_ICON, completed_at, now, color::DARK_ORANGE);
     let state = activity_state
         .map(|state| crate::ui::session_state_badge(state, throbber_frame, badge_tint))
         .unwrap_or_else(|| " ".repeat(crate::ui::STATE_BADGE_WIDTH));
@@ -10125,20 +10102,20 @@ mod tests {
         );
         assert!(activity
             .styled
-            .contains(&format!("{}⟩ 30m", fg(ACTIVITY_BRIGHT_TEAL))));
+            .contains(&format!("{}⟩ 30m", fg(color::ORANGE))));
         assert!(activity
             .styled
-            .contains(&format!("{}⋖ 2h", fg(ACTIVITY_DARK_TEAL))));
+            .contains(&format!("{}⋖ 2h", fg(color::DARK_ORANGE))));
         assert!(!activity.styled.contains("\x1b[48;5;"));
 
         sessions[1].state = SessionState::Complete;
         let settled = activity_cell(&sessions, now * 1000, 0, &Cooldowns::default());
         assert!(settled
             .styled
-            .contains(&format!("{}⟩ 30m", fg(ACTIVITY_DARK_TEAL))));
+            .contains(&format!("{}⟩ 30m", fg(color::ORANGE))));
         assert!(settled
             .styled
-            .contains(&format!("{}⋖ 2h", fg(ACTIVITY_BRIGHT_TEAL))));
+            .contains(&format!("{}⋖ 2h", fg(color::DARK_ORANGE))));
 
         assert_eq!(recency_color(0), RECENCY_1H);
         assert_eq!(recency_color(3_600), RECENCY_3H);
@@ -10198,13 +10175,13 @@ mod tests {
             assert!(
                 activity
                     .styled
-                    .contains(&format!("{}⟩ 1m", fg(ACTIVITY_DARK_TEAL))),
+                    .contains(&format!("{}⟩ 1m", fg(color::ORANGE))),
                 "{state:?}"
             );
             assert!(
                 activity
                     .styled
-                    .contains(&format!("{}⋖ 1m", fg(ACTIVITY_BRIGHT_TEAL))),
+                    .contains(&format!("{}⋖ 1m", fg(color::DARK_ORANGE))),
                 "{state:?}"
             );
         }
@@ -10240,10 +10217,10 @@ mod tests {
         assert!(first.styled.contains(&fg(color::GREEN)));
         assert!(first
             .styled
-            .contains(&format!("{}⟩ 1m", fg(ACTIVITY_BRIGHT_TEAL))));
+            .contains(&format!("{}⟩ 1m", fg(color::ORANGE))));
         assert!(first
             .styled
-            .contains(&format!("{}⋖ 1m", fg(ACTIVITY_DARK_TEAL))));
+            .contains(&format!("{}⋖ 1m", fg(color::DARK_ORANGE))));
     }
 
     #[test]
