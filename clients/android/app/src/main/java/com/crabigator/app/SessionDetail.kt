@@ -39,7 +39,7 @@ import org.json.JSONObject
                 Text(session.title, color = CrabColors.Title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
                 Text(if (s.connected) "${session.machine} · Live" else if (!session.active) "${session.machine} · Ended" else "Reconnecting…", fontSize = 11.sp, lineHeight = 15.sp, color = if (s.connected) Mint else Muted)
             }
-            Control(R.drawable.ic_pin, if (pinned) "Unpin scroll" else "Pin scroll to bottom", selected = pinned) { pinned = !pinned }
+            Control(R.drawable.ic_follow_output, if (pinned) "Stop following output" else "Follow latest output", selected = pinned) { pinned = !pinned }
             Control(R.drawable.ic_style, "Style", modifier = Modifier.onGloballyPositioned { styleAnchor = it.boundsInRoot() }) { style(styleAnchor) }
         }
         HorizontalDivider(color = Color(0xFF303A46))
