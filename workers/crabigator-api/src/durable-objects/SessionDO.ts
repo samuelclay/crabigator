@@ -397,10 +397,6 @@ export class SessionDO implements DurableObject {
             // disconnects or a prior stale cleanup.
             this.updateD1LastSeen(true);
 
-            // Notify desktop of current viewer status
-            if (this.hasActiveViewers()) {
-                this.notifyDesktopViewerStatus(true);
-            }
             this.publishMcp(McpEventName.connected, {
                 state: this.persistentState.state,
                 ...(deviceName ? { device_name: deviceName } : {}),
@@ -413,6 +409,10 @@ export class SessionDO implements DurableObject {
         // Use Hibernation API - DO can sleep between messages, reducing billed duration
         this.state.acceptWebSocket(server, ['desktop']);
         this.desktopWs = server;
+        this.broadcastDesktopStatus(true);
+        if (this.hasActiveViewers() || this.state.getWebSockets('viewer').length > 0) {
+            this.notifyDesktopViewerStatus(true);
+        }
         if (this.hasPendingAttention()) this.notifyMobileAttention();
 
         // Event handling is done via webSocketMessage/webSocketClose/webSocketError methods
@@ -847,6 +847,9 @@ export class SessionDO implements DurableObject {
             case 'screen':
                 // Ephemeral state - no storage write
                 this.ephemeralState.lastScreen = event.content;
+                if (this.desktopWs?.deserializeAttachment()?.screenRequestedAt !== undefined) {
+                    this.desktopWs.serializeAttachment(null);
+                }
                 break;
             case 'title':
                 if (this.persistentState.lastTitle !== event.title) {
@@ -1656,6 +1659,20 @@ export class SessionDO implements DurableObject {
      */
     private notifyDesktopViewerStatus(active: boolean): void {
         if (!this.desktopWs) return;
+
+        // Older desktops cannot honor refresh_screen while viewers are already
+        // active. Reopen only the cloud connection if requests go unanswered;
+        // reconnecting makes them replay their current screen without terminal input.
+        // The attachment survives hibernation, unlike ordinary instance fields.
+        if (active && this.ephemeralState.lastScreen === null) {
+            const requestedAt = this.desktopWs.deserializeAttachment()?.screenRequestedAt as number | undefined;
+            if (requestedAt === undefined) {
+                this.desktopWs.serializeAttachment({ screenRequestedAt: Date.now() });
+            } else if (Date.now() - requestedAt >= 10_000) {
+                this.desktopWs.close(1012, 'Refresh missing terminal screen');
+                return;
+            }
+        }
 
         // For inactive notifications, still track to avoid spam
         // For active notifications, always send (heartbeats are throttled to 5s anyway)

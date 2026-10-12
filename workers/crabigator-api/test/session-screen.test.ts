@@ -2,6 +2,45 @@ import { env, evictDurableObject } from 'cloudflare:test';
 import { expect, it } from 'vitest';
 import type { CloudToDesktopMessage, SessionEvent } from '../src/types/session';
 
+it('reconnects an older desktop that cannot refresh its missing screen', async () => {
+    const stub = env.SESSION.get(env.SESSION.idFromName('legacy-screen-recovery'));
+    const connect = async () => {
+        const response = await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } });
+        const socket = response.webSocket!;
+        socket.accept();
+        return socket;
+    };
+    const desktop = await connect();
+    const closed: number[] = [];
+    desktop.addEventListener('close', event => { closed.push(event.code); });
+    const response = await stub.fetch('https://internal/events', { headers: { Upgrade: 'websocket' } });
+    const viewer = response.webSocket!;
+    const events: SessionEvent[] = [];
+    viewer.addEventListener('message', event => { events.push(JSON.parse(String(event.data))); });
+    viewer.accept();
+    let replacement: WebSocket | undefined;
+    try {
+        // Recovery must retain its deadline even if the object hibernates.
+        await evictDurableObject(stub);
+        await stub.fetch('https://internal/viewer-active', { method: 'POST' });
+        expect(closed).toEqual([]);
+        await new Promise(resolve => setTimeout(resolve, 10_100));
+        await stub.fetch('https://internal/viewer-active', { method: 'POST' });
+        await expect.poll(() => closed).toContain(1012);
+        await expect.poll(() => events.some(event => event.type === 'desktop_status' && !event.connected)).toBe(true);
+        events.length = 0;
+        replacement = await connect();
+        await expect.poll(() => events.some(event => event.type === 'desktop_status' && event.connected)).toBe(true);
+        replacement.send(JSON.stringify({ type: 'screen', content: 'Recovered idle screen' }));
+        await expect.poll(() => events).toContainEqual({ type: 'screen', content: 'Recovered idle screen' });
+        // A valid empty response also completes recovery (capture may be disabled).
+        replacement.send(JSON.stringify({ type: 'screen', content: '' }));
+        await expect.poll(() => events).toContainEqual({ type: 'screen', content: '' });
+        await stub.fetch('https://internal/viewer-active', { method: 'POST' });
+        expect(replacement.readyState).toBe(WebSocket.OPEN);
+    } finally { viewer.close(); replacement?.close(); desktop.close(); }
+}, 20_000);
+
 it('replays full transcripts to late viewers and replaces history on resync', async () => {
     const stub = env.SESSION.get(env.SESSION.idFromName('transcript-replay'));
     const response = await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } });
