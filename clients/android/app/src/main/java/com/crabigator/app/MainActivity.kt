@@ -296,7 +296,7 @@ class MainActivity : ComponentActivity() {
             shape = RoundedCornerShape(if (floating) 28.dp else 0.dp),
             border = if (floating) BorderStroke(1.dp, Muted.copy(alpha = .2f)) else null,
             shadowElevation = if (floating) 8.dp else 0.dp) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = if (floating) 2.dp else 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures {} }.padding(horizontal = 8.dp, vertical = if (floating) 2.dp else 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Image(painterResource(R.drawable.ic_crabigator), "Crabigator", Modifier.padding(8.dp).size(28.dp))
                 Spacer(Modifier.weight(1f))
                 Control(R.drawable.ic_search, "Search", selected = searching) { searching = !searching; if (!searching) query = "" }
@@ -357,10 +357,9 @@ class MainActivity : ComponentActivity() {
         }
     } }
     Row(Modifier.fillMaxWidth().then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = spacing.gap(4)), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-        Surface(color = background, shape = RoundedCornerShape(8.dp), modifier = Modifier.width(58.dp)) { Text(session.glyph, color = color, fontSize = 16.sp, lineHeight = 20.sp, textAlign = TextAlign.Center, maxLines = 1, softWrap = false, modifier = Modifier.padding(vertical = 5.dp)) }
-        SessionStatus(session)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(spacing.gap(6))) {
-            Text(title, color = CrabColors.Title, fontSize = 14.sp, lineHeight = spacing.lineHeight(19), fontWeight = FontWeight.Medium, maxLines = if (spacing.tight) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis, modifier = Modifier.animateContentSize(tween(300), alignment = Alignment.TopStart))
+        Surface(color = background, shape = RoundedCornerShape(8.dp), modifier = Modifier.width(58.dp).alignBy { it.measuredHeight / 2 }) { Text(session.glyph, color = color, fontSize = 16.sp, lineHeight = 20.sp, textAlign = TextAlign.Center, maxLines = 1, softWrap = false, modifier = Modifier.padding(vertical = 5.dp)) }
+        Column(Modifier.weight(1f).alignBy(SessionTitleCenter), verticalArrangement = Arrangement.spacedBy(spacing.gap(6))) {
+            Text(title, color = CrabColors.Title, fontSize = 14.sp, lineHeight = spacing.lineHeight(19), fontWeight = FontWeight.Medium, maxLines = if (spacing.tight) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis, modifier = Modifier.sessionTitleAlignment().animateContentSize(tween(300), alignment = Alignment.TopStart))
             footer()
         }
     }

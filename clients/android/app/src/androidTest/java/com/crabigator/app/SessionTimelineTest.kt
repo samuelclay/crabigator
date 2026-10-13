@@ -44,7 +44,7 @@ class SessionTimelineTest {
             assertEquals(container.right, completion.right, 1f)
             assertEquals(prompt.top, completion.top, 1f)
             assertTrue(prompt.right <= completion.left)
-            assertEquals(duration.top, prompt.top, 1f)
+            assertEquals(duration.center.y, prompt.center.y, 1f)
         }
         compose.waitForIdle()
         checkAlignment()

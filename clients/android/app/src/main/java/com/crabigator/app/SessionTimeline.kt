@@ -30,13 +30,13 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
         if (prefs.visible("completionRecency")) add("Last completion: $completion")
     }.joinToString("; ")
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        OneLineTimeline(summary, start = { compact ->
+        OneLineTimeline(summary, prioritizeDuration = !prefs.visible("promptRecency") && !prefs.visible("completionRecency"), start = { compact ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (prefs.visible("sessionTime")) Stat("◉", if (compact) compactDuration(duration) else sessionDuration(duration), "Session time: ${sessionDuration(duration)}", CrabColors.Blue)
                 if (prefs.visible("thinkingTime")) Stat("◐", if (compact) compactDuration(stats.thinkingSeconds) else sessionDuration(stats.thinkingSeconds), "Thinking time: ${sessionDuration(stats.thinkingSeconds)}", Mint)
             }
         }, end = {
-            BoardRecency(session, clock, prefs.visible("promptRecency"), prefs.visible("completionRecency"))
+            BoardRecency(session, clock, prefs.visible("promptRecency"), prefs.visible("completionRecency"), showStatus = true)
         })
         if (prefs.visible("tools") || prefs.visible("compactions")) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (prefs.visible("tools")) Stat("⚒", stats.tools?.toString() ?: "—", "Tools: ${stats.tools ?: "—"}", Peach)
@@ -46,7 +46,7 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
 }
 
 /** Shorten durations before giving up space reserved for the two right-aligned recency values. */
-@Composable private fun OneLineTimeline(summary: String, modifier: Modifier = Modifier, start: @Composable (Boolean) -> Unit, end: @Composable () -> Unit) {
+@Composable private fun OneLineTimeline(summary: String, prioritizeDuration: Boolean, modifier: Modifier = Modifier, start: @Composable (Boolean) -> Unit, end: @Composable () -> Unit) {
     SubcomposeLayout(modifier.fillMaxWidth()) { constraints ->
         val loose = Constraints(maxHeight = constraints.maxHeight)
         // Probes choose a format only. Hide their semantics so only the visible values are announced.
@@ -56,11 +56,16 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
         val compact = leftProbe.width + gap + rightProbe.width > constraints.maxWidth
         if (compact) leftProbe = subcompose("measure-compact") { Box(Modifier.clearAndSetSemantics {}) { start(true) } }.single().measure(loose)
         val showLeft = leftProbe.width + gap + rightProbe.width <= constraints.maxWidth
-        if (!showLeft && rightProbe.width == 0) {
+        if (!showLeft && (rightProbe.width == 0 || prioritizeDuration)) {
             val durationOnly = subcompose("visible") {
                 Box(Modifier.clearAndSetSemantics { contentDescription = summary }) { start(true) }
-            }.single().measure(loose.copy(maxWidth = constraints.maxWidth))
-            return@SubcomposeLayout layout(constraints.maxWidth, durationOnly.height) { durationOnly.placeRelative(0, 0) }
+            }.single().measure(loose.copy(maxWidth = (constraints.maxWidth - rightProbe.width - gap).coerceAtLeast(0)))
+            val status = subcompose("visible-status") { end() }.single().measure(loose.copy(maxWidth = constraints.maxWidth))
+            val height = maxOf(durationOnly.height, status.height)
+            return@SubcomposeLayout layout(constraints.maxWidth, height) {
+                durationOnly.placeRelative(0, (height - durationOnly.height) / 2)
+                status.placeRelative(constraints.maxWidth - status.width, (height - status.height) / 2)
+            }
         }
         val visible = subcompose("visible") {
             if (showLeft) Box { start(compact) }
@@ -69,9 +74,10 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
             }
         }.map { it.measure(loose.copy(maxWidth = constraints.maxWidth)) }
         val right = visible.last()
-        layout(constraints.maxWidth, visible.maxOf { it.height }) {
-            if (showLeft) visible.first().placeRelative(0, 0)
-            right.placeRelative(constraints.maxWidth - right.width, 0)
+        val height = visible.maxOf { it.height }
+        layout(constraints.maxWidth, height) {
+            if (showLeft) visible.first().placeRelative(0, (height - visible.first().height) / 2)
+            right.placeRelative(constraints.maxWidth - right.width, (height - right.height) / 2)
         }
     }
 }

@@ -107,27 +107,27 @@ import androidx.compose.ui.unit.sp
         Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = spacing.gap(7)), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
             val fg = remember(session.color) { runCatching { Color(android.graphics.Color.parseColor(session.color)) }.getOrDefault(Peach) }
             val bg = remember(session.background) { runCatching { Color(android.graphics.Color.parseColor(session.background)) }.getOrDefault(Panel) }
-            Surface(color = bg, shape = RoundedCornerShape(4.dp), modifier = Modifier.width(38.dp)) {
+            Surface(color = bg, shape = RoundedCornerShape(4.dp), modifier = Modifier.width(38.dp).alignBy { it.measuredHeight / 2 }) {
                 Text(session.glyph, color = fg, fontSize = 13.sp, maxLines = 1, softWrap = false, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(vertical = 2.dp))
             }
-            if (!wide) SessionStatus(session)
             // PRs share the title column, so their indent stays correct at every font size.
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(spacing.gap(7))) {
+            Column(Modifier.weight(1f).alignBy(SessionTitleCenter), verticalArrangement = Arrangement.spacedBy(spacing.gap(7))) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(spacing.gap(4))) {
                         Text(session.title, color = if (session.active) CrabColors.Title else Muted, fontSize = 14.sp, lineHeight = spacing.lineHeight(19),
-                            maxLines = if (wide || spacing.tight) 1 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.animateContentSize(tween(300), alignment = Alignment.TopStart))
+                            maxLines = if (wide || spacing.tight) 1 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.sessionTitleAlignment().animateContentSize(tween(300), alignment = Alignment.TopStart))
                         if (!wide) Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(session.branch, color = Muted, fontSize = 11.sp, lineHeight = spacing.lineHeight(15), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                            BoardRecency(session, clock)
+                            BoardRecency(session, clock, showStatus = true)
                         }
                     }
                     if (wide) {
                         Text(session.branch, color = Muted, fontSize = 12.sp, lineHeight = spacing.lineHeight(17), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(180.dp))
-                        Row(Modifier.width(300.dp), verticalAlignment = Alignment.Top) {
+                        Row(Modifier.width(360.dp), verticalAlignment = Alignment.Top) {
                             SessionStatus(session)
-                            Spacer(Modifier.weight(1f))
+                            Spacer(Modifier.width(8.dp))
                             BoardRecency(session, clock)
+                            Spacer(Modifier.weight(1f))
                         }
                     }
                 }
@@ -138,13 +138,15 @@ import androidx.compose.ui.unit.sp
     }
 }
 
-@Composable internal fun BoardRecency(session: Session, clock: State<Long>, showPrompt: Boolean = true, showCompletion: Boolean = true) {
+@Composable internal fun BoardRecency(session: Session, clock: State<Long>, showPrompt: Boolean = true, showCompletion: Boolean = true, showStatus: Boolean = false) {
     val spacing = LocalBoardSpacing.current
     val now = clock.value
     val count = (if (showPrompt) 1 else 0) + (if (showCompletion) 1 else 0)
-    if (count == 0) return
+    if (count == 0 && !showStatus) return
     val columnWidth = with(LocalDensity.current) { 66.sp.toDp() }
-    Row(Modifier.width(columnWidth * count + if (count == 2) 8.dp else 0.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    val statusWidth = with(LocalDensity.current) { 14.sp.toDp() } + 8.dp
+    Row(Modifier.width(columnWidth * count + (if (count == 2) 8.dp else 0.dp) + if (showStatus) statusWidth else 0.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (showStatus) SessionStatus(session)
         if (showPrompt) Text("⟩ ${if (session.stats.promptAt > 0) sessionAge(session.stats.promptAt, now) else "—"}", color = CrabColors.Orange,
             fontSize = 11.sp, lineHeight = spacing.lineHeight(15), maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).clearAndSetSemantics { contentDescription = "Last prompt: ${if (session.stats.promptAt > 0) sessionAge(session.stats.promptAt, now) else "unknown"}" })
@@ -163,7 +165,7 @@ import androidx.compose.ui.unit.sp
                 maxLines = if (wide || spacing.tight) 1 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).animateContentSize(tween(300), alignment = Alignment.TopStart))
             if (wide) {
                 Text(pr.branch, color = Muted, fontSize = 12.sp, lineHeight = spacing.lineHeight(17), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(180.dp))
-                PrStatus(pr, Modifier.width(300.dp))
+                PrStatus(pr, Modifier.width(360.dp))
             }
         }
         if (!wide) {
@@ -173,12 +175,26 @@ import androidx.compose.ui.unit.sp
 }
 
 @Composable private fun PrStatus(pr: PullRequest, modifier: Modifier = Modifier) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            PrState(pr)
-            PrChanges(pr)
+    val spacing = LocalBoardSpacing.current
+    BoxWithConstraints(modifier) {
+        if (maxWidth < 320.dp) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(spacing.gap(4))) {
+                PrSummary(pr, Modifier.fillMaxWidth())
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { PrChecks(pr) }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                PrSummary(pr, Modifier.weight(1f))
+                PrChecks(pr)
+            }
         }
-        PrChecks(pr)
+    }
+}
+
+@Composable private fun PrSummary(pr: PullRequest, modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        PrState(pr)
+        PrChanges(pr, Modifier.weight(1f))
     }
 }
 
@@ -189,15 +205,25 @@ import androidx.compose.ui.unit.sp
         modifier = Modifier.background(color.copy(alpha = .12f), RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 2.dp))
 }
 
-@Composable private fun PrChanges(pr: PullRequest) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        pr.additions?.let { Text("+$it", color = Mint, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-        pr.deletions?.let { Text("−$it", color = CrabColors.Red, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+@Composable private fun PrChanges(pr: PullRequest, modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        pr.additions?.let { FittedStatusText("+$it", Mint, Modifier.weight(1f, fill = false)) }
+        pr.deletions?.let { FittedStatusText("−$it", CrabColors.Red, Modifier.weight(1f, fill = false)) }
     }
 }
 
 @Composable private fun PrChecks(pr: PullRequest) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        StatusColumn("💬${pr.unresolvedComments.takeIf { it > 0 } ?: "—"}", width = 36.dp,
+            color = if (pr.unresolvedComments > 0) CrabColors.Orange else Muted, description = "Unresolved comments: ${pr.unresolvedComments}")
+        val approval = when {
+            pr.state != "OPEN" -> Triple("—", "Not applicable", Muted)
+            pr.review == "APPROVED" -> Triple("✓", "Approved", Mint)
+            pr.review == "CHANGES_REQUESTED" -> Triple("✗", "Changes requested", CrabColors.Red)
+            pr.reviewDismissed -> Triple("⊘", "Review dismissed", CrabColors.Orange)
+            else -> Triple("◌", "Awaiting review", Muted)
+        }
+        StatusColumn(approval.first, width = 20.dp, color = approval.third, description = "Approval: ${approval.second}")
         StatusColumn(pr.checks.ifBlank { "—" }, width = 48.dp,
             color = when { pr.checks.isBlank() -> Muted; pr.checksFailed > 0 -> CrabColors.Red; pr.checksPending > 0 -> CrabColors.Yellow; else -> Mint },
             description = when { pr.checks.isBlank() -> "CI status unavailable"; pr.checksFailed > 0 -> "${pr.checksFailed} checks failed"; pr.checksPending > 0 -> "${pr.checksPending} checks pending"; else -> "Checks passed" })
@@ -216,8 +242,12 @@ import androidx.compose.ui.unit.sp
 
 // Keep status words readable in fixed columns when the surrounding board text is enlarged.
 @Composable private fun StatusColumn(text: String, width: Dp, color: Color, description: String) {
+    FittedStatusText(text, color, Modifier.width(width).semantics { contentDescription = description })
+}
+
+@Composable private fun FittedStatusText(text: String, color: Color, modifier: Modifier = Modifier) {
     val minimumSize = with(LocalDensity.current) { 8.dp.toSp() }.value.coerceAtMost(11f).sp
-    BasicText(text, modifier = Modifier.width(width).semantics { contentDescription = description },
+    BasicText(text, modifier = modifier,
         style = TextStyle(color = color, fontSize = 11.sp, lineHeight = 14.sp),
         maxLines = 1, softWrap = false,
         autoSize = TextAutoSize.StepBased(minFontSize = minimumSize, maxFontSize = 11.sp, stepSize = .25.sp))

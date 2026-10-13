@@ -85,21 +85,29 @@ class MobileParityTest {
             compose.setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) { MaterialTheme { App(model) {} } } }
             for (mode in listOf("List", "PR board")) {
                 if (mode == "PR board") compose.onNodeWithText(mode).performClick()
-                compose.runOnIdle { model.style { it.copy(density = "comfortable") } }
+                compose.runOnIdle { model.style { it.copy(density = "comfortable", boardFontSize = 14) } }
                 val row = compose.onNode(hasText(session.title) and hasClickAction())
                 val normalHeight = row.fetchSemanticsNode().boundsInRoot.height
                 compose.mainClock.autoAdvance = false
-                compose.runOnIdle { model.style { it.copy(density = "compact") } }
+                compose.runOnIdle { model.style { it.copy(density = "compact", boardFontSize = 10) } }
                 compose.mainClock.advanceTimeBy(160)
                 val movingHeight = row.fetchSemanticsNode().boundsInRoot.height
                 compose.mainClock.advanceTimeBy(600)
                 val tightHeight = row.fetchSemanticsNode().boundsInRoot.height
+                val rowBounds = row.fetchSemanticsNode().boundsInRoot
+                val glyph = compose.onAllNodesWithText(session.glyph, useUnmergedTree = true).fetchSemanticsNodes().single { rowBounds.contains(it.boundsInRoot.center) }.boundsInRoot
+                val title = compose.onAllNodesWithText(session.title, useUnmergedTree = true).fetchSemanticsNodes().single { rowBounds.contains(it.boundsInRoot.center) }.boundsInRoot
+                assertEquals("Session glyph must center on the one-line title", title.center.y, glyph.center.y, 2f)
                 assertTrue("Row should be shrinking midway through the animation", movingHeight < normalHeight && movingHeight > tightHeight)
                 compose.mainClock.autoAdvance = true
                 compose.onNodeWithText(mode).performClick()
                 val search = compose.onNodeWithContentDescription("Search")
                 val logo = compose.onNodeWithContentDescription("Crabigator")
                 assertTrue(search.fetchSemanticsNode().boundsInRoot.left - logo.fetchSemanticsNode().boundsInRoot.right > 20)
+                val logoBounds = logo.fetchSemanticsNode().boundsInRoot
+                val searchBounds = search.fetchSemanticsNode().boundsInRoot
+                compose.onRoot().performTouchInput { click(androidx.compose.ui.geometry.Offset((logoBounds.right + searchBounds.left) / 2, searchBounds.center.y)) }
+                row.assertExists()
                 search.performClick()
                 compose.onNode(hasSetTextAction()).assertIsDisplayed()
                 search.performClick()

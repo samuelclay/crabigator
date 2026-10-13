@@ -26,7 +26,7 @@ class PrBoardInteractionTest {
     @get:Rule val compose = createComposeRule()
     private val session = Session.parse(JSONObject("""{"id":"session", "title":"A session title that wraps across several lines", "branch":"session-branch", "state":"complete"}"""))
     private val pr = PullRequest("owner/repo#123", "A pull request with a longer title", "owner/repo", 123, "OPEN", "Checks passed",
-        "https://github.com/owner/repo/pull/123", listOf(session), additions = 531763, deletions = 6931, branch = "pr-branch", primary = true, mergeable = "MERGEABLE", mergeState = "BEHIND")
+        "https://github.com/owner/repo/pull/123", listOf(session), additions = 531763, deletions = 6931, branch = "pr-branch", primary = true, mergeable = "MERGEABLE", mergeState = "BEHIND", unresolvedComments = 7, review = "APPROVED")
 
     @Test fun prContentOpensSessionAndSharesTheTitleColumn() {
         val wide = mutableStateOf(false)
@@ -52,7 +52,11 @@ class PrBoardInteractionTest {
             val emptyBranch = compose.onNodeWithContentDescription("Branch status: —", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
             assertEquals("CI column must keep its place when empty", ci.left, emptyCi.left, 1f)
             assertEquals("Branch column must keep its place when empty", behind.left, emptyBranch.left, 1f)
-            assertTrue("CI and branch status must occupy separate columns", ci.right < behind.left)
+            val comments = compose.onAllNodesWithContentDescription("Unresolved comments: 7", useUnmergedTree = true)[0].fetchSemanticsNode().boundsInRoot
+            val approval = compose.onNodeWithContentDescription("Approval: Approved", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val noApproval = compose.onNodeWithContentDescription("Approval: Not applicable", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertEquals("Approval column must keep its place", approval.left, noApproval.left, 1f)
+            assertTrue("All four status columns must stay separate", comments.right < approval.left && approval.right < ci.left && ci.right < behind.left)
             if (isWide) {
                 assertEquals("Session columns should be top-aligned", title.top, bounds(session.branch).top, 1f)
                 assertEquals("PR columns should be top-aligned", pull.top,
@@ -60,7 +64,9 @@ class PrBoardInteractionTest {
                 assertEquals("Absent checks must not shift the state column", bounds("Open").left, bounds("Merged").left, 1f)
             } else {
                 val status = compose.onNodeWithContentDescription("Complete", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-                assertEquals("Status should stay at the first title line", title.top, status.top, 1f)
+                val prompt = compose.onNodeWithContentDescription("Last prompt: unknown", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+                assertTrue("Session status must sit immediately before prompt time", status.right < prompt.left && prompt.left - status.right <= 24f)
+                assertEquals("Session status must center on the timing line", prompt.center.y, status.center.y, 2f)
             }
             compose.onRoot().performTouchInput { click(pull.center) }
             compose.onRoot().performTouchInput { click(bounds("+531763").center) }
@@ -83,7 +89,18 @@ class PrBoardInteractionTest {
         }
         for (scale in listOf(24f / 14f, 10f / 14f)) {
             compose.runOnIdle { fontScale.value = scale }
-            for (label in listOf("999 checks failed", "Branch status: Conflicts")) {
+            val additions = compose.onNodeWithText("+531763", useUnmergedTree = true)
+            val deletions = compose.onNodeWithText("−6931", useUnmergedTree = true)
+            for (node in listOf(additions, deletions)) {
+                node.assertIsDisplayed()
+                val results = mutableListOf<TextLayoutResult>()
+                node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+                assertTrue("Diff counts must fit without clipping", results.isNotEmpty() && results.none { it.hasVisualOverflow })
+            }
+            val diffBounds = additions.fetchSemanticsNode().boundsInRoot
+            val comments = compose.onNodeWithContentDescription("Unresolved comments: 7", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertTrue("Narrow PR rows must put review columns below the diff counts", comments.top >= diffBounds.bottom)
+            for (label in listOf("999 checks failed", "Branch status: Conflicts", "Unresolved comments: 7", "Approval: Approved")) {
                 val results = mutableListOf<TextLayoutResult>()
                 compose.onNodeWithContentDescription(label, useUnmergedTree = true)
                     .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
