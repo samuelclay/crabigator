@@ -35,7 +35,7 @@ import androidx.compose.ui.unit.sp
                 val combos = listOf(
                     Shortcut("⇧ Tab", "Mode", "Tab", shift = true),
                     Shortcut("Ctrl C", "Interrupt", "C", control = true),
-                    if (codex) Shortcut("Alt ↑", "Questions", "↑", alt = true) else Shortcut("Ctrl L", "Clear screen", "L", control = true),
+                    if (codex) Shortcut("⇧ ←", "Questions", "←", shift = true) else Shortcut("Ctrl L", "Clear screen", "L", control = true),
                     Shortcut("Ctrl A", "Line start", "A", control = true),
                     Shortcut("Ctrl E", "Line end", "E", control = true),
                     Shortcut("Ctrl U", "Clear line", "U", control = true),

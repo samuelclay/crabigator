@@ -29,8 +29,8 @@ import org.json.JSONObject
     val p by model.preferences.collectAsStateWithLifecycle()
     var styleAnchor by remember { mutableStateOf(Rect.Zero) }
     var pinned by rememberSaveable(session.id) { mutableStateOf(true) }
-    var waiting by remember(session.id) { mutableStateOf(true) }
-    LaunchedEffect(session.id) { delay(8000); waiting = false }
+    var loadingSlowly by remember(session.id) { mutableStateOf(false) }
+    LaunchedEffect(session.id) { delay(8000); loadingSlowly = true }
     val sections = remember(s.details, session, p, s.prs) { sessionWidgetSections(s, p) }
     val prs = remember(s.details["prs"], s.prs, session.id) { sessionPullRequests(s) }
     val hasOutput = s.history.isNotEmpty() || s.screen.isNotEmpty()
@@ -58,8 +58,7 @@ import org.json.JSONObject
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.then(if (p.terminalHeight == 0) Modifier.weight(1f) else Modifier.height(terminalHeight)).fillMaxWidth().then(swipe).background(Color(0xFF0B0F14))) {
                     if (!hasOutput) {
-                        if (!loaded && waiting && session.active) CircularProgressIndicator(Modifier.align(Alignment.Center).size(24.dp), strokeWidth = 2.dp)
-                        else Text("No terminal output", color = Muted, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))
+                        TerminalPlaceholder(session.active, loaded, loadingSlowly, model::reconnectSession, Modifier.align(Alignment.Center))
                     } else key(session.id) { TerminalViewport(s.history, s.screen, p, pinned) { pinned = it } }
                 }
                 if (p.widgets) SessionWidgets(sections, Modifier.then(if (p.terminalHeight == 0) Modifier.heightIn(max = availableHeight * .35f) else Modifier.weight(1f)))
@@ -67,6 +66,21 @@ import org.json.JSONObject
         }
         if (s.prompt != null) PromptPanel(s.prompt, s.sending || !s.connected || s.revision == null) { action -> model.send(action.route, action.body, guarded = true, expectedRevision = s.revision) }
         key(session.id) { SessionComposer(s, model, active) }
+    }
+}
+@Composable internal fun TerminalPlaceholder(active: Boolean, loaded: Boolean, loadingSlowly: Boolean, reconnect: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        when {
+            loaded -> Text("No terminal output", color = Muted, fontSize = 13.sp)
+            !active -> Text("Terminal unavailable for this ended session", color = Muted, fontSize = 13.sp)
+            else -> {
+                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                if (loadingSlowly) {
+                    Text("Waiting for terminal output…", color = Muted, fontSize = 13.sp)
+                    TextButton(reconnect) { Text("Reconnect") }
+                }
+            }
+        }
     }
 }
 internal fun sessionPullRequests(s: AppState): List<PullRequest> {

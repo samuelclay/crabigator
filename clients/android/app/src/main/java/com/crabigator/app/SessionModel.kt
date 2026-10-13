@@ -22,6 +22,10 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
     val credentials = Credentials(app)
     val api = Api(credentials)
     val state = MutableStateFlow(AppState(paired = credentials.token.isNotEmpty()))
+    val drafts = MutableStateFlow<Map<String, String>>(emptyMap())
+    fun setDraft(id: String, text: String) {
+        drafts.update { if (text.isEmpty()) it - id else it + (id to text) }
+    }
     private var socket: WebSocket? = null
     private var polling: Job? = null
     private var heartbeat: Job? = null
@@ -59,6 +63,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
             restoreSelection = false
             navigate { it.copy(selectedId = null) }
             state.value = AppState(paired = true)
+            drafts.value = emptyMap()
             if (resume) start()
         } catch (e: Exception) { failure(e) }
         finally { pairing = false; state.update { it.copy(loading = false) } }
@@ -150,6 +155,9 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
         })
         viewModelScope.launch { refreshPrompt(id) }
     }
+    fun reconnectSession() {
+        if (foreground) state.value.selected?.let { connect(it.id) }
+    }
     private fun retry(ws: WebSocket, id: String) {
         if (socket !== ws || !foreground || state.value.selected?.id != id) return
         state.update { it.copy(connected = false) }
@@ -178,8 +186,9 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
         state.update { it.copy(sending = true, error = null) }
         try {
             api.action(id, route, body, if (guarded) expectedRevision else null)
+            onSent()
             if (guarded) Notifications.answered(getApplication(), id, api)
-            if (selectionEpoch == epoch) { onSent(); refreshPrompt(id) }
+            if (selectionEpoch == epoch) refreshPrompt(id)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             if (selectionEpoch == epoch) {
@@ -198,6 +207,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
             navigate { it.copy(selectedId = null) }
             androidx.core.app.NotificationManagerCompat.from(getApplication()).cancelAll()
             state.value = AppState()
+            drafts.value = emptyMap()
         } catch (e: Exception) { failure(e) }
     }
     fun dismissError() { state.update { it.copy(error = null) } }

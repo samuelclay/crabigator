@@ -16,7 +16,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -34,6 +33,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -41,7 +41,8 @@ import kotlin.math.sqrt
 
 @Composable internal fun SessionComposer(s: AppState, model: SessionModel, active: Boolean = true) {
     val sessionId = s.selected?.id ?: return
-    var draft by rememberSaveable(sessionId) { mutableStateOf("") }
+    val drafts by model.drafts.collectAsStateWithLifecycle()
+    val draft = drafts[sessionId].orEmpty()
     var shortcuts by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     var startAfterPermission by remember { mutableStateOf(false) }
@@ -63,7 +64,9 @@ import kotlin.math.sqrt
     val currentDraft by rememberUpdatedState(draft)
     fun send(text: String) {
         if (!active || model.state.value.selected?.id != sessionId) return
-        model.send("answer", JSONObject().put("text", text)) { if (draft == text) draft = "" }
+        model.send("answer", JSONObject().put("text", text)) {
+            if (model.drafts.value[sessionId] == text) model.setDraft(sessionId, "")
+        }
     }
     fun cancel() {
         processingJob?.cancel(); processingJob = null
@@ -87,8 +90,9 @@ import kotlin.math.sqrt
                 val text = model.api.transcribe(file)
                 ensureActive()
                 if (text.isBlank()) { error = "No speech detected."; return@launch }
-                draft = listOf(currentDraft.trimEnd(), text).filter { it.isNotBlank() }.joinToString("\n")
-                if (sendImmediately && model.state.value.selected?.id == sessionId) send(draft)
+                val combined = listOf(currentDraft.trimEnd(), text).filter { it.isNotBlank() }.joinToString("\n")
+                model.setDraft(sessionId, combined)
+                if (sendImmediately && model.state.value.selected?.id == sessionId) send(combined)
                 else focusAfterProcessing = true
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { error = e.message ?: "Could not transcribe the recording." }
@@ -166,7 +170,7 @@ import kotlin.math.sqrt
                         model.send("key-sequence", JSONObject().put("steps", JSONArray().put(JSONObject().put("type", "text").put("text", bytes))))
                     }
                 }
-                BasicTextField(draft, { draft = it }, minLines = 1, maxLines = 6,
+                BasicTextField(draft, { model.setDraft(sessionId, it) }, minLines = 1, maxLines = 6,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(CrabColors.Title),
                     modifier = Modifier.weight(1f).focusRequester(focus),
