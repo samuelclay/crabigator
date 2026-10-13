@@ -207,6 +207,11 @@ pub struct PlatformStats {
     pub idle_since: Option<f64>,
     /// Unix timestamp of last update
     pub last_updated: Option<f64>,
+    /// Activity times from the transcript, preserved when replaying a resume.
+    #[serde(default)]
+    pub prompts_changed_at: Option<f64>,
+    #[serde(default)]
+    pub completions_changed_at: Option<f64>,
     /// Rolling log of hook events for debugging
     #[serde(default)]
     pub event_history: Vec<HookEvent>,
@@ -287,6 +292,9 @@ pub trait Platform {
     /// resume from a concurrent same-cwd session in another pane: a resume
     /// always starts with input, an idle pane receives none. Default: ignored.
     fn note_user_input(&self) {}
+
+    /// Native OSC title, used to identify automatically reopened conversations.
+    fn note_terminal_title(&self, _title: &str) {}
 
     /// Load current stats from the platform's data source
     fn load_stats(&self, cwd: &str) -> Result<PlatformStats>;

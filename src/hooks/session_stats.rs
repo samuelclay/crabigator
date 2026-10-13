@@ -260,12 +260,20 @@ impl SessionStats {
 
                 if stats.prompts != self.last_prompts {
                     self.last_prompts = stats.prompts;
-                    self.prompts_changed_at = Some(now);
+                    self.prompts_changed_at = Some(stats.prompts_changed_at.unwrap_or(now));
                 }
 
                 if stats.completions != self.last_completions {
                     self.last_completions = stats.completions;
-                    self.completions_changed_at = Some(now);
+                    self.completions_changed_at = Some(stats.completions_changed_at.unwrap_or(now));
+                }
+
+                // Resuming a different transcript can leave counts unchanged.
+                if stats.prompts_changed_at.is_some() {
+                    self.prompts_changed_at = stats.prompts_changed_at;
+                }
+                if stats.completions_changed_at.is_some() {
+                    self.completions_changed_at = stats.completions_changed_at;
                 }
 
                 if stats.compressions != self.last_compressions {

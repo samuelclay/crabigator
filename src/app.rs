@@ -1381,6 +1381,7 @@ impl App {
                             })
                             .to_string();
 
+                        self.platform.note_terminal_title(&clean_title);
                         self.terminal_title = Some(clean_title.clone());
                         self.refresh_display_title();
                     }

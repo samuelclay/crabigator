@@ -1177,6 +1177,8 @@ fn update_activity_from_jsonl(line: &[u8], activity: &mut ActivityTimes) {
     };
     if !line.contains("user_message")
         && !line.contains("agent_message")
+        && !line.contains("task_complete")
+        && !line.contains("response_item")
         && !line.contains("\"type\":\"user\"")
         && !line.contains("\"type\":\"assistant\"")
     {
@@ -1201,9 +1203,43 @@ fn update_activity_from_jsonl(line: &[u8], activity: &mut ActivityTimes) {
             .and_then(|value| value.as_str())
         {
             Some("user_message") => activity.prompted_at = activity.prompted_at.max(timestamp),
-            Some("agent_message") => activity.completed_at = activity.completed_at.max(timestamp),
+            Some("agent_message")
+                if value.pointer("/payload/phase").and_then(|v| v.as_str())
+                    != Some("commentary") =>
+            {
+                activity.completed_at = activity.completed_at.max(timestamp)
+            }
+            Some("task_complete") => activity.completed_at = activity.completed_at.max(timestamp),
             _ => {}
         },
+        Some("response_item")
+            if value.pointer("/payload/type").and_then(|v| v.as_str()) == Some("message") =>
+        {
+            match value.pointer("/payload/role").and_then(|v| v.as_str()) {
+                Some("user")
+                    if value
+                        .pointer("/payload/content")
+                        .and_then(|v| v.as_array())
+                        .is_some_and(|parts| {
+                            parts
+                                .iter()
+                                .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
+                                .any(|text| {
+                                    !crate::platforms::codex_cli::is_injected_user_message(text)
+                                })
+                        }) =>
+                {
+                    activity.prompted_at = activity.prompted_at.max(timestamp)
+                }
+                Some("assistant")
+                    if value.pointer("/payload/phase").and_then(|v| v.as_str())
+                        == Some("final") =>
+                {
+                    activity.completed_at = activity.completed_at.max(timestamp)
+                }
+                _ => {}
+            }
+        }
         Some("user")
             if value
                 .pointer("/message/content")
@@ -10215,9 +10251,7 @@ mod tests {
             crate::parsers::strip_ansi_for_debug(&second.styled)
         );
         assert!(first.styled.contains(&fg(color::GREEN)));
-        assert!(first
-            .styled
-            .contains(&format!("{}⟩ 1m", fg(color::ORANGE))));
+        assert!(first.styled.contains(&format!("{}⟩ 1m", fg(color::ORANGE))));
         assert!(first
             .styled
             .contains(&format!("{}⋖ 1m", fg(color::DARK_ORANGE))));
@@ -10424,6 +10458,23 @@ mod tests {
     }
 
     #[test]
+    fn modern_codex_activity_ignores_commentary_and_injected_instructions() {
+        let mut activity = ActivityTimes::default();
+        for payload in [
+            serde_json::json!({"type":"message","role":"user","content":[{"text":"Fix the board"}]}),
+            serde_json::json!({"type":"message","role":"assistant","phase":"commentary","content":[{"text":"Checking"}]}),
+        ] {
+            update_activity_from_jsonl(serde_json::json!({"timestamp":"2026-10-13T17:00:00Z","type":"response_item","payload":payload}).to_string().as_bytes(), &mut activity);
+        }
+        assert_eq!(activity.prompted_at, 1791910800);
+        assert_eq!(activity.completed_at, 0);
+        update_activity_from_jsonl(serde_json::json!({"timestamp":"2026-10-13T17:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"# AGENTS.md instructions for /repo\n<INSTRUCTIONS>"}]}}).to_string().as_bytes(), &mut activity);
+        assert_eq!(activity.prompted_at, 1791910800);
+        update_activity_from_jsonl(serde_json::json!({"timestamp":"2026-10-13T17:02:00Z","type":"event_msg","payload":{"type":"task_complete"}}).to_string().as_bytes(), &mut activity);
+        assert_eq!(activity.completed_at, 1791910920);
+    }
+
+    #[test]
     fn legacy_transcripts_supply_and_increment_activity() {
         use std::io::Write as _;
 
@@ -10436,7 +10487,7 @@ mod tests {
         std::fs::write(
             &path,
             format!(
-                "{{\"timestamp\":\"2026-08-06T12:00:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\"}}}}\n{large_tool_line}{{\"timestamp\":\"2026-08-06T12:02:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"agent_message\",\"phase\":\"commentary\"}}}}\n"
+                "{{\"timestamp\":\"2026-08-06T12:00:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\"}}}}\n{large_tool_line}{{\"timestamp\":\"2026-08-06T12:02:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"agent_message\",\"phase\":\"final\"}}}}\n"
             ),
         )
         .unwrap();

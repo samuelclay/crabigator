@@ -95,6 +95,24 @@ impl CodexPlatform {
             return Ok(Some((path, None)));
         }
 
+        // Re-check new title evidence before keeping a guessed startup path:
+        // the first stats poll can run before Codex emits its OSC title.
+        if state.title_lookup_pending
+            && state
+                .last_title_scan
+                .is_none_or(|last| last.elapsed().unwrap_or_default() >= Duration::from_secs(2))
+        {
+            state.last_title_scan = Some(SystemTime::now());
+            if let Some(id) = self.titled_session_id(cwd, state) {
+                if let Some(path) = self.find_launch_resume(cwd, state, Some(&id)) {
+                    state.title_lookup_pending = false;
+                    state.resume_followed = true;
+                    let started = Self::session_meta_info(&path, cwd)?.session_start;
+                    return Ok(Some((path, started)));
+                }
+            }
+        }
+
         let threshold = state
             .app_start
             .checked_sub(Duration::from_secs(2))
@@ -131,7 +149,7 @@ impl CodexPlatform {
         state.last_scan = Some(SystemTime::now());
 
         if state.resume_requested && state.session_path.is_none() {
-            if let Some(path) = self.find_launch_resume(cwd, state) {
+            if let Some(path) = self.find_launch_resume(cwd, state, None) {
                 state.resume_followed = true;
                 let started = Self::session_meta_info(&path, cwd)
                     .ok()
@@ -171,9 +189,15 @@ impl CodexPlatform {
     /// Explicit resumes may point to files much older than the normal launch
     /// discovery window. A picker selection must have fresh transcript or
     /// shell initialization evidence and must not belong to another live pane.
-    fn find_launch_resume(&self, cwd: &str, state: &CodexState) -> Option<PathBuf> {
+    fn find_launch_resume(
+        &self,
+        cwd: &str,
+        state: &CodexState,
+        title_id: Option<&str>,
+    ) -> Option<PathBuf> {
         let claimed = self.rollouts_claimed_by_other_sessions();
         let initialized = self.recent_shell_snapshots(state.app_start);
+        let resume_id = state.explicit_resume_id.as_deref().or(title_id);
         let mut directories = vec![self.sessions_dir.clone()];
         let mut newest: Option<(PathBuf, SystemTime)> = None;
         while let Some(directory) = directories.pop() {
@@ -196,11 +220,18 @@ impl CodexPlatform {
                 {
                     continue;
                 }
-                if let Some(id) = state.explicit_resume_id.as_deref() {
+                if let Some(id) = resume_id {
                     if path
                         .file_name()
                         .and_then(|name| name.to_str())
                         .is_some_and(|name| name.ends_with(&format!("{id}.jsonl")))
+                        && (state.explicit_resume_id.is_some()
+                            || (!claimed.contains(&path)
+                                && Self::session_meta_info(
+                                    &path,
+                                    if state.resume_all { "" } else { cwd },
+                                )
+                                .is_ok_and(|meta| meta.matches)))
                     {
                         return Some(path);
                     }
@@ -238,6 +269,43 @@ impl CodexPlatform {
             }
         }
         newest.map(|(path, _)| path)
+    }
+
+    /// Only an exact, unique thread name is evidence; a nearby pane's activity
+    /// or this pane's navigation keystrokes must never select its transcript.
+    fn titled_session_id(&self, cwd: &str, state: &CodexState) -> Option<String> {
+        let title = crate::title::strip_provider_title_marker(state.terminal_title.as_deref()?);
+        let title = title
+            .strip_prefix("[ ! ] Action Required | ")
+            .or_else(|| title.strip_prefix("[ . ] Action Required | "))
+            .unwrap_or(title);
+        let directory = Path::new(cwd).file_name()?.to_str()?;
+        let title = title
+            .strip_suffix(&format!(" | {directory}"))
+            .unwrap_or(title);
+        let path = self.sessions_dir.parent()?.join("session_index.jsonl");
+        let size = fs::metadata(&path).ok()?.len();
+        let start = size.saturating_sub(4 * 1024 * 1024);
+        let window =
+            crate::jsonl::read_jsonl_window(&path, start, 4 * 1024 * 1024, start > 0).ok()?;
+        let mut names = HashMap::new();
+        for line in window.text.lines() {
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let (Some(id), Some(name)) = (
+                value.get("id").and_then(Value::as_str),
+                value.get("thread_name").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            if uuid::Uuid::parse_str(id).is_ok() {
+                names.insert(id.to_owned(), name.to_owned());
+            }
+        }
+        let mut matches = names.into_iter().filter(|(_, name)| name == title);
+        let (id, _) = matches.next()?;
+        matches.next().is_none().then_some(id)
     }
 
     /// Codex may leave a resumed rollout unchanged until the next prompt.
@@ -623,6 +691,16 @@ impl Platform for CodexPlatform {
         state.last_user_input = Some(SystemTime::now());
     }
 
+    fn note_terminal_title(&self, title: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.terminal_title.as_deref() != Some(title) {
+            state.terminal_title = Some(title.to_owned());
+            state.title_lookup_pending = true;
+            state.last_title_scan = None;
+            state.last_scan = None;
+        }
+    }
+
     fn load_stats(&self, cwd: &str) -> Result<PlatformStats> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let (session_path, session_started_at) = match self.resolve_session_path(cwd, &mut state)? {
@@ -689,6 +767,37 @@ impl Platform for CodexPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "Read-only check against a local Codex conversation; set CRABIGATOR_VERIFY_CODEX_TITLE and CRABIGATOR_VERIFY_CODEX_ID"]
+    fn verify_automatically_reopened_live_conversation() {
+        let title = std::env::var("CRABIGATOR_VERIFY_CODEX_TITLE").unwrap();
+        let id = std::env::var("CRABIGATOR_VERIFY_CODEX_ID").unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        let platform = CodexPlatform::new();
+        platform.note_terminal_title(&title);
+        let mut stats = platform.load_stats(cwd.to_str().unwrap()).unwrap();
+        for _ in 0..100 {
+            let offset = platform.state.lock().unwrap().session_offset;
+            stats = platform.load_stats(cwd.to_str().unwrap()).unwrap();
+            if platform.state.lock().unwrap().session_offset == offset {
+                break;
+            }
+        }
+        assert_eq!(stats.native_session_id.as_deref(), Some(id.as_str()));
+        assert!(stats.prompts > 0);
+        assert!(stats.completions > 0);
+        assert!(stats.total_tool_calls() > 0);
+        println!(
+            "prompts={} completions={} tools={} last_prompt={:?} last_completion={:?} state={:?}",
+            stats.prompts,
+            stats.completions,
+            stats.total_tool_calls(),
+            stats.prompts_changed_at,
+            stats.completions_changed_at,
+            stats.state
+        );
+    }
 
     #[test]
     fn ignores_stale_same_cwd_sessions_when_start_time_is_known() {
@@ -788,6 +897,42 @@ mod tests {
         state.app_start = app_start;
         state.last_user_input = Some(SystemTime::now());
         state
+    }
+
+    #[test]
+    fn automatically_reopened_conversation_matches_its_title_before_a_new_neighbor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(&tmp.path().join("sessions"));
+        let id = "01a0724d-3a0b-75a2-82c0-ee65fe6f5547";
+        let before = SystemTime::now() - Duration::from_secs(30 * 86_400);
+        let selected = write_rollout(&platform, 30, &format!("rollout-{id}.jsonl"), before);
+        write_rollout(&platform, 0, "neighbor.jsonl", SystemTime::now());
+        platform.spawn_args(vec![]);
+        platform.note_terminal_title("An unindexed startup title");
+        // The first poll sees only a fresh neighbor before the title arrives.
+        assert!(platform
+            .load_stats(CWD)
+            .unwrap()
+            .transcript_path
+            .unwrap()
+            .ends_with("neighbor.jsonl"));
+        platform.note_terminal_title("⟁  [ . ] Action Required | Existing conversation");
+        fs::write(
+            tmp.path().join("session_index.jsonl"),
+            serde_json::json!({"id":id,"thread_name":"Existing conversation"}).to_string() + "\n",
+        )
+        .unwrap();
+        let mut state = platform.state.lock().unwrap();
+        let result = platform
+            .resolve_session_path(CWD, &mut state)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.0, selected);
+        assert!(state.resume_followed);
+        // Duplicate names are ambiguous; do not guess which pane owns a thread.
+        use std::io::Write;
+        writeln!(File::options().append(true).open(tmp.path().join("session_index.jsonl")).unwrap(), "{}", serde_json::json!({"id":"01a0724d-3a0b-75a2-82c0-ee65fe6f5548","thread_name":"Existing conversation"})).unwrap();
+        assert!(platform.titled_session_id(CWD, &state).is_none());
     }
 
     #[test]

@@ -74,8 +74,13 @@ pub struct CodexState {
     /// starts with input, so the resume-follow scan requires input newer
     /// than the tracked rollout's last write before it adopts anything.
     pub last_user_input: Option<SystemTime>,
+    pub terminal_title: Option<String>,
+    pub title_lookup_pending: bool,
+    pub last_title_scan: Option<SystemTime>,
     pub prompt_counts: MessageCounters,
     pub completion_counts: MessageCounters,
+    task_lifecycle: bool,
+    event_timestamp: Option<f64>,
     pub stats: PlatformStats,
     active_prompt_call_id: Option<String>,
     cwd: super::cwd::CodexCwd,
@@ -97,8 +102,13 @@ impl Default for CodexState {
             native_session_started_at: None,
             native_mtime_at_switch: None,
             last_user_input: None,
+            terminal_title: None,
+            title_lookup_pending: false,
+            last_title_scan: None,
             prompt_counts: MessageCounters::default(),
             completion_counts: MessageCounters::default(),
+            task_lifecycle: false,
+            event_timestamp: None,
             stats: PlatformStats::default(),
             active_prompt_call_id: None,
             cwd: super::cwd::CodexCwd::default(),
@@ -144,6 +154,12 @@ pub fn update_from_log(state: &mut CodexState, line: &str) {
         Err(_) => return,
     };
     let entry_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    state.event_timestamp = value
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(parse_timestamp)
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|time| time.as_secs_f64());
     state.cwd.observe(&value);
     state.stats.working_directory = state.cwd.current.clone();
     state.stats.working_directory_from_command = state.cwd.from_command;
@@ -151,6 +167,7 @@ pub fn update_from_log(state: &mut CodexState, line: &str) {
         "response_item" => handle_response_item(state, &value),
         "event_msg" => handle_event_msg(state, &value),
         "turn_context" => handle_turn_context(state, &value),
+        "compacted" => state.stats.compressions = state.stats.compressions.saturating_add(1),
         "session_meta" => {
             set_state(state, SessionState::Ready);
             if let Some(id) = value
@@ -175,7 +192,10 @@ fn handle_response_item(state: &mut CodexState, value: &Value) {
         Some("message") => {
             let role = payload.get("role").and_then(|v| v.as_str());
             match role {
-                Some("assistant") => {
+                Some("assistant")
+                    if !state.task_lifecycle
+                        && payload.get("phase").and_then(Value::as_str) != Some("commentary") =>
+                {
                     record_completion(state, MessageSource::ResponseItem);
                 }
                 Some("user") if !is_bootstrap_message(payload) => {
@@ -184,14 +204,14 @@ fn handle_response_item(state: &mut CodexState, value: &Value) {
                 _ => {}
             }
         }
-        Some("function_call") => {
+        Some("function_call") | Some("custom_tool_call") => {
             if let Some(name) = payload.get("name").and_then(|v| v.as_str()) {
                 let call_id = payload.get("call_id").and_then(|v| v.as_str());
                 let tool_input = parse_function_call_input(payload);
                 record_tool_call(state, name, call_id, tool_input);
             }
         }
-        Some("function_call_output") => {
+        Some("function_call_output") | Some("custom_tool_call_output") => {
             if let Some(call_id) = payload.get("call_id").and_then(|v| v.as_str()) {
                 record_tool_output(state, call_id);
             }
@@ -208,10 +228,35 @@ fn handle_event_msg(state: &mut CodexState, value: &Value) {
     };
     match payload.get("type").and_then(|v| v.as_str()) {
         Some("user_message") => record_prompt(state, MessageSource::EventMsg),
-        Some("agent_message") => {
+        Some("agent_message")
+            if !state.task_lifecycle
+                && payload.get("phase").and_then(Value::as_str) != Some("commentary") =>
+        {
             record_completion(state, MessageSource::EventMsg);
         }
+        Some("task_started") => {
+            begin_task_lifecycle(state);
+            clear_active_prompt(state);
+            set_state(state, SessionState::Thinking);
+        }
+        Some("task_complete") => {
+            begin_task_lifecycle(state);
+            record_completion(state, MessageSource::EventMsg);
+        }
+        Some("turn_aborted") => {
+            clear_active_prompt(state);
+            set_state(state, SessionState::Interrupted);
+        }
         _ => {}
+    }
+}
+
+fn begin_task_lifecycle(state: &mut CodexState) {
+    if !state.task_lifecycle {
+        // Older portions of a resumed log may contain response items only.
+        state.completion_counts.event_msg = state.completion_counts.effective();
+        state.completion_counts.prefer_event = true;
+        state.task_lifecycle = true;
     }
 }
 
@@ -235,7 +280,7 @@ pub fn set_state(state: &mut CodexState, new_state: SessionState) {
     state.stats.state = new_state;
     match new_state {
         SessionState::Complete | SessionState::Question => {
-            state.stats.idle_since = Some(now_unix());
+            state.stats.idle_since = Some(state.event_timestamp.unwrap_or_else(now_unix));
         }
         _ => {
             state.stats.idle_since = None;
@@ -253,6 +298,7 @@ fn record_prompt(state: &mut CodexState, source: MessageSource) {
         matches!(source, MessageSource::ResponseItem)
     };
     if should_set_state {
+        state.stats.prompts_changed_at = state.event_timestamp;
         clear_active_prompt(state);
         set_state(state, SessionState::Thinking);
     }
@@ -262,6 +308,7 @@ fn record_prompt(state: &mut CodexState, source: MessageSource) {
 fn record_completion(state: &mut CodexState, source: MessageSource) {
     state.completion_counts.record(source);
     state.stats.completions = state.completion_counts.effective();
+    state.stats.completions_changed_at = state.event_timestamp;
     clear_active_prompt(state);
     set_state(state, SessionState::Complete);
 }
@@ -275,7 +322,10 @@ fn record_tool_call(
 ) {
     let entry = state.stats.tools.entry(name.to_string()).or_insert(0);
     *entry = entry.saturating_add(1);
-    state.stats.tool_timestamps.push(now_unix());
+    state
+        .stats
+        .tool_timestamps
+        .push(state.event_timestamp.unwrap_or_else(now_unix));
 
     if is_question_tool(name) {
         set_question_prompt(state, call_id, tool_input.as_ref());
@@ -299,7 +349,10 @@ fn record_tool_output(state: &mut CodexState, call_id: &str) {
 
 /// Check if a tool is a question tool
 fn is_question_tool(name: &str) -> bool {
-    matches!(name, "AskUserQuestion" | "ask_user" | "request_user_input")
+    matches!(
+        name.rsplit('.').next().unwrap_or(name),
+        "AskUserQuestion" | "ask_user" | "request_user_input" | "request_user_input_async"
+    )
 }
 
 /// Parse function_call arguments from payload.
@@ -440,6 +493,8 @@ pub fn reset_state(state: &mut CodexState, path: PathBuf, session_started_at: Op
     state.session_started_at = session_started_at;
     state.prompt_counts = MessageCounters::default();
     state.completion_counts = MessageCounters::default();
+    state.task_lifecycle = false;
+    state.event_timestamp = None;
     state.stats = PlatformStats::default();
     state.active_prompt_call_id = None;
     state.cwd = super::cwd::CodexCwd::default();
@@ -450,6 +505,55 @@ pub fn reset_state(state: &mut CodexState, path: PathBuf, session_started_at: Op
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn modern_turns_count_finishes_not_commentary_and_keep_original_times() {
+        let mut state = CodexState::default();
+        for entry in [
+            json!({"type":"event_msg","payload":{"type":"task_started"}}),
+            json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"Fix it"}]}}),
+            json!({"type":"response_item","payload":{"type":"message","role":"assistant","phase":"commentary"}}),
+            json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"functions.exec","call_id":"tool","input":"text(1)"}}),
+            json!({"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"tool","output":"1"}}),
+            json!({"type":"response_item","payload":{"type":"message","role":"assistant","phase":"final"}}),
+        ] {
+            let mut entry = entry;
+            entry["timestamp"] = json!("2026-10-13T17:00:00Z");
+            update_from_log(&mut state, &entry.to_string());
+        }
+        assert_eq!(state.stats.prompts, 1);
+        assert_eq!(state.stats.completions, 0);
+        assert_eq!(state.stats.total_tool_calls(), 1);
+        assert_eq!(state.stats.state, SessionState::Thinking);
+        assert_eq!(state.stats.prompts_changed_at, Some(1791910800.0));
+        update_from_log(&mut state, &json!({"timestamp":"2026-10-13T17:01:00Z","type":"event_msg","payload":{"type":"task_complete"}}).to_string());
+        assert_eq!(state.stats.completions, 1);
+        assert_eq!(state.stats.completions_changed_at, Some(1791910860.0));
+        assert_eq!(state.stats.idle_since, Some(1791910860.0));
+        assert_eq!(state.stats.state, SessionState::Complete);
+    }
+
+    #[test]
+    fn modern_turns_preserve_legacy_completion_totals() {
+        let mut state = CodexState::default();
+        for _ in 0..3 {
+            update_from_log(
+                &mut state,
+                &json!({"type":"response_item","payload":{"type":"message","role":"assistant"}})
+                    .to_string(),
+            );
+        }
+        update_from_log(
+            &mut state,
+            &json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
+        );
+        update_from_log(&mut state, &json!({"type":"response_item","payload":{"type":"message","role":"assistant","phase":"final"}}).to_string());
+        update_from_log(
+            &mut state,
+            &json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string(),
+        );
+        assert_eq!(state.stats.completions, 4);
+    }
 
     fn user_message(text: &str) -> String {
         json!({
