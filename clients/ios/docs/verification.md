@@ -60,6 +60,8 @@ A screenshot from the user's Mini showed the selected second PR-board row extend
 
 The live device check switches between two sessions through fullscreen, verifies the selected row and its visible title remain within the sidebar, and repeats in portrait and both landscape orientations. The original screenshot is `/tmp/crabigator-mini-layout-before.png`. Automated attempts on the previous build did not reproduce the intermittent failure, so they are coverage of the transition rather than proof of its exact cause. The updated device result is `/tmp/crabigator-mini-row-final.xcresult`.
 
+At 15:35 on October 13, Mini still showed several wide rows extending off the sidebar's left edge (`/tmp/crabigator-mini-collapse-before.png`). After installing the latest build from `0d97359`, three repeated fullscreen-to-sidebar transitions passed on the physical Mini. The strengthened check validates every visible session row and its PR text, not just the selected title. It stays in landscapeRight. The selected row measured 336 points wide; no clipping reproduced after reinstall. This does not establish that an old build caused the earlier stale layout. Result: `/tmp/crabigator-mini-collapse-current.xcresult`. Standalone PR-group headers and offscreen scrolling are outside this check.
+
 ### Board settings, actions and review columns
 
 Both apps expose activity cutoff, live/all sessions, computers, recaps and session/PR grouping. The cutoff defaults to 24 hours. Grouping retains older touching sessions beneath a recent PR after applying the computer/live/search filters. New session selects a desktop, folder and assistant; Watch PR accepts a GitHub URL or owner/repo#number.

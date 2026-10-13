@@ -128,7 +128,7 @@ final class ReadingTests: XCTestCase {
         continueAfterFailure = false
         let startingOrientation = XCUIDevice.shared.orientation
         defer { XCUIDevice.shared.orientation = startingOrientation }
-        XCUIDevice.shared.orientation = .landscapeLeft
+        XCUIDevice.shared.orientation = .landscapeRight
         let app = XCUIApplication()
         app.launch()
         let mode = app.buttons["PR board"]
@@ -142,8 +142,7 @@ final class ReadingTests: XCTestCase {
         let initial = try XCTUnwrap(requestedID.map { app.buttons["Session " + $0] } ?? visible.dropFirst().first)
         let row = app.buttons[initial.identifier]
         let other = app.buttons[try XCTUnwrap(visible.first { $0.identifier != row.identifier }).identifier]
-        for orientation in [UIDeviceOrientation.landscapeLeft, .portrait, .landscapeRight] {
-            XCUIDevice.shared.orientation = orientation
+        for _ in 0..<3 {
             other.tap()
             mode.tap()
             row.tap()
@@ -161,6 +160,19 @@ final class ReadingTests: XCTestCase {
             XCTAssertGreaterThan(title.frame.width, 0)
             XCTAssertGreaterThanOrEqual(title.frame.minX, row.frame.minX)
             XCTAssertLessThanOrEqual(title.frame.maxX, row.frame.maxX)
+            // Check all visible session rows and PR text, not only the selected title.
+            for candidate in rows.allElementsBoundByIndex {
+                let bounds = candidate.frame
+                guard bounds.maxY > 100 && bounds.minY < app.frame.maxY - 90 else { continue }
+                XCTAssertGreaterThanOrEqual(bounds.minX, app.frame.minX, candidate.label)
+                XCTAssertLessThanOrEqual(bounds.maxX, app.frame.minX + 361, candidate.label)
+                for text in candidate.staticTexts.allElementsBoundByIndex {
+                    let textBounds = text.frame
+                    guard textBounds.width > 0 else { continue }
+                    XCTAssertGreaterThanOrEqual(textBounds.minX, bounds.minX, text.label)
+                    XCTAssertLessThanOrEqual(textBounds.maxX, bounds.maxX, text.label)
+                }
+            }
             mode.tap()
             XCTAssertEqual(mode.value as? String, "Selected, full width")
             XCTAssertNotEqual(row.value as? String, "Selected")
