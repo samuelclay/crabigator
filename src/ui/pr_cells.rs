@@ -375,31 +375,27 @@ pub(crate) fn pr_row_text_tinted(
 }
 
 /// Render the PR view's header row: identity (`★ #142: title`) and branch on
-/// the left, then the sessions' activity, diff, and GitHub status anchored
-/// right. The block stands for the PR across every session, so its action
+/// the left, then the diff and GitHub status anchored right. The block stands for the PR across every session, so its action
 /// links act group-wide.
 pub(crate) fn pr_view_row_text(
     width: u16,
     pr: &SessionPr,
     widths: &PrColumnWidths,
     title: &str,
-    activity: PrCell,
     tints: StatusTints,
 ) -> String {
-    pr_row_text_with_optional_activity(width, pr, widths, Some(title), Some(activity), tints, "")
+    pr_row_text_with_optional_activity(width, pr, widths, Some(title), None, tints, "")
 }
 
 /// Render a session-view PR sub-row: the PR-view row anatomy (identity,
 /// branch, and diff beside the GitHub status) indented beneath its session,
-/// with the activity column left empty — the session's header row carries
-/// the state and ages. Its action links act in that session's scope.
+/// sharing its right cluster with the session header's state and ages. Its action links act in that session's scope.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn session_view_pr_row_text(
     width: u16,
     pr: &SessionPr,
     widths: &PrColumnWidths,
     title: &str,
-    activity_width: usize,
     tints: StatusTints,
     scope: &str,
 ) -> String {
@@ -409,15 +405,7 @@ pub(crate) fn session_view_pr_row_text(
     let mut left_cells = pr_left_cells_with_identity(pr, widths, identity, scope);
     left_cells[0].0.insert_str(0, INDENT);
     left_cells[0].1 += INDENT.width();
-    pr_row_text_with_left_cells(
-        width,
-        pr,
-        widths,
-        &left_cells,
-        Some((String::new(), 0, activity_width)),
-        tints,
-        scope,
-    )
+    pr_row_text_with_left_cells(width, pr, widths, &left_cells, None, tints, scope)
 }
 
 /// Render an active session without a PR in the same columns as PR rows.
@@ -447,10 +435,10 @@ pub(crate) fn session_row_text_with_activity(
         mark.chip(),
         fg(title_color),
     );
-    // The diff sits where a PR row's diff does, at the head of an otherwise
-    // empty status cluster.
-    let status = if widths.stats_cell_width() == 0 {
-        (String::new(), 0, widths.right_width())
+    // A workspace has both activity and a diff on one row. Keep them together
+    // inside the right cluster shared by session headers and PR rows.
+    let status = if widths.stats_cell_width() == 0 || (additions == 0 && deletions == 0) {
+        (String::new(), 0, 0)
     } else {
         let diff = workspace_diff_text(additions, deletions);
         let diff_cell = colored_diff_cell(
@@ -461,7 +449,7 @@ pub(crate) fn session_row_text_with_activity(
             color::GRAY,
             diff.width().min(PR_DIFF_MAX),
         );
-        stats_right_cell(&diff_cell, widths.right_width())
+        stats_right_cell(&diff_cell, diff_cell.2 + 2)
     };
     let left_cells = [
         (identity_styled, identity_visible, widths.identity),
@@ -473,10 +461,15 @@ pub(crate) fn session_row_text_with_activity(
     let mut row = " ".repeat(PR_LEFT_PADDING);
     row.push_str(&cells_text(&left_cells));
 
-    let right_cells = [
-        (styled_activity, activity_visible, activity_width),
-        with_session_mark(status, mark),
-    ];
+    let content = [(styled_activity, activity_visible, activity_width), status];
+    let right_cells = [with_session_mark(
+        (
+            right_cells_text(&content),
+            right_cells_width(&content),
+            widths.right_width(),
+        ),
+        mark,
+    )];
     let right_width = right_cells_width(&right_cells);
     if right_width > 0 {
         let gap = (width as usize)
@@ -490,13 +483,22 @@ pub(crate) fn session_row_text_with_activity(
     row
 }
 
-/// Repeat the session chip at the right edge without crowding existing stats.
+/// Keep the session chip at the right edge, clipping activity when space is tight.
 pub(crate) fn with_session_mark(cell: PrCell, mark: SessionMark) -> PrCell {
-    let (text, visible, width) = cell;
-    let gap = width.saturating_sub(visible + mark.width());
-    if width < visible + mark.width() || (visible > 0 && gap == 0) {
-        return (text, visible, width);
+    let (mut text, mut visible, width) = cell;
+    if width < mark.width() {
+        return (
+            crate::ui::utils::fit_ansi_to_width(&text, width),
+            width,
+            width,
+        );
     }
+    let content_width = width.saturating_sub(mark.width() + 1);
+    if visible > content_width {
+        text = crate::ui::utils::fit_ansi_to_width(&text, content_width);
+        visible = content_width;
+    }
+    let gap = width.saturating_sub(visible + mark.width());
     (
         format!("{text}{}{}", " ".repeat(gap), mark.chip()),
         width,

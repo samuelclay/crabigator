@@ -51,7 +51,6 @@ use crate::terminal::escape::{self, color, fg, RESET, RESET_FG, RESET_UNDERLINE,
 use crate::ui::cooldown::Cooldowns;
 use crate::ui::pr_cells::{
     board_detail_row_text, session_row_text_with_activity, PrCell, PrColumnWidths, BRANCH_PREFIX,
-    PR_RIGHT_COLUMN_GAP,
 };
 use crate::ui::{COMPLETION_ICON, PROMPT_ICON};
 
@@ -2966,26 +2965,18 @@ struct DetailLayout<'a> {
 }
 
 impl DetailLayout<'_> {
-    /// The cells a Slack link may fill: the activity column, its gap, and the
-    /// right cluster. Links only share a row with the judgment or stand
-    /// alone, so the activity column beneath them is always empty.
+    /// Slack links use the same right cluster as status and activity.
     fn link_span(&self) -> usize {
-        activity_span(self.activity_width) + self.widths.right_width()
+        self.widths.right_width()
     }
 
-    /// A Slack link's row cells: the activity cell collapses so the link
-    /// spans it along with the right cluster.
+    /// A Slack link replaces the row's other right-cluster metadata.
     fn link_cells(&self, link: &ActivityCell) -> (PrCell, PrCell) {
         (
             (String::new(), 0, 0),
             (link.styled.clone(), link.visible, self.link_span()),
         )
     }
-}
-
-/// The activity column plus the gap that separates it from the right cluster.
-fn activity_span(activity_width: usize) -> usize {
-    activity_width + usize::from(activity_width > 0) * PR_RIGHT_COLUMN_GAP
 }
 
 impl RecapLineKind {
@@ -3041,18 +3032,18 @@ fn recap_line(
         fg(color::DARK_GRAY),
         delta,
     );
-    // A Slack link takes the activity column with it; without one the column
-    // carries the recap's age.
+    // A Slack link or recap age occupies the shared right cluster.
     let (activity, right) = match link {
         Some(link) => layout.link_cells(link),
         None => {
+            let age_width = layout.activity_width.min(layout.widths.right_width());
             let age = recap.map_or_else(
-                || empty_cell(layout.activity_width),
-                |recap| timestamp_cell(recap.generated_at, layout.now_ms, layout.activity_width),
+                || empty_cell(age_width),
+                |recap| timestamp_cell(recap.generated_at, layout.now_ms, age_width),
             );
             (
-                (age.styled, age.visible, layout.activity_width),
-                (String::new(), 0, layout.widths.right_width()),
+                (String::new(), 0, 0),
+                (age.styled, age.visible, layout.widths.right_width()),
             )
         }
     };
@@ -3392,8 +3383,7 @@ struct RowContext<'a> {
     cooldowns: &'a Cooldowns,
 }
 
-/// One PR-view block: the PR header row with its sessions' activity, diff,
-/// file count, and GitHub status inline, the ✦ judgment and Slack links when
+/// One PR-view block: the PR header row with diff and GitHub status inline, the ✦ judgment and Slack links when
 /// detail is on, then one sub-row per touching session with its recap
 /// headline (and full recap at detail).
 fn render_pr_view_block(board_row: &BoardRow<'_>, context: RowContext<'_>) -> Vec<String> {
@@ -3403,24 +3393,46 @@ fn render_pr_view_block(board_row: &BoardRow<'_>, context: RowContext<'_>) -> Ve
         now_ms,
         activity_width,
         widths,
-        throbber_frame,
         cooldowns,
+        ..
     } = context;
     let entry = board_row.entry;
     let title = pr_row_title(entry);
-    let activity = pr_view_activity_cell(entry, now_ms, activity_width, throbber_frame, cooldowns);
     let mut row = crate::ui::pr_cells::pr_view_row_text(
         width,
         &entry.pr,
         widths,
         &title,
-        (activity.styled, activity.visible, activity_width),
         cooldowns.pr_tints(&entry.pr, now_ms),
     );
     if entry.stale {
         row = format!("{}{row}", fg(color::DARK_GRAY));
     }
     let mut lines = vec![format!("{row}{RESET}")];
+    if entry.pr.watched && entry.sessions.is_empty() {
+        let updated = entry_recency_time(entry, now_ms / 1000);
+        let label = if updated == 0 {
+            "Updated —".to_string()
+        } else {
+            format!(
+                "Updated {}",
+                format_age((now_ms / 1000).saturating_sub(updated))
+            )
+        };
+        let label = crate::ui::pr_cells::truncate_to_width(&label, widths.right_width());
+        lines.push(board_detail_row_text(
+            width,
+            widths,
+            String::new(),
+            0,
+            (String::new(), 0, 0),
+            (
+                format!("{}{label}{RESET}", fg(color::DARK_GRAY)),
+                label.width(),
+                widths.right_width(),
+            ),
+        ));
+    }
 
     let layout = DetailLayout {
         width,
@@ -3435,7 +3447,7 @@ fn render_pr_view_block(board_row: &BoardRow<'_>, context: RowContext<'_>) -> Ve
     }
 
     for session in &entry.sessions {
-        lines.push(pr_view_session_row(session, width, activity_width, widths));
+        lines.push(pr_view_session_row(session, context));
         if detail > DEFAULT_DETAIL {
             if let Some(recap) = session.recap.as_ref() {
                 lines.extend(detail_lines(&recap_detail_rows(recap), &[], &layout));
@@ -3446,37 +3458,23 @@ fn render_pr_view_block(board_row: &BoardRow<'_>, context: RowContext<'_>) -> Ve
     lines
 }
 
-/// The PR-view header's activity cell: the state and prompt/completion ages
-/// aggregated across the PR's sessions. A PR no session touches (a watch)
-/// shows the age of its latest GitHub event instead.
-fn pr_view_activity_cell(
-    entry: &BoardPr,
-    now_ms: u64,
-    activity_width: usize,
-    throbber_frame: usize,
-    cooldowns: &Cooldowns,
-) -> ActivityCell {
-    if entry.sessions.is_empty() {
-        return timestamp_cell(
-            entry_recency_time(entry, now_ms / 1000) * 1000,
-            now_ms,
-            activity_width,
-        );
-    }
-    activity_cell(&entry.sessions, now_ms, throbber_frame, cooldowns)
-}
-
-/// One session beneath a PR-view header: `◆ title — recap headline`. The
-/// state and activity ages live on the header row, so the sub-row leaves
-/// that column empty. Ended sessions render entirely dim so the live ones
-/// stand out.
-fn pr_view_session_row(
-    session: &SessionRef,
-    width: u16,
-    activity_width: usize,
-    widths: &PrColumnWidths,
-) -> String {
+/// A PR's session sub-row shares the PR status columns for its own state and times.
+fn pr_view_session_row(session: &SessionRef, context: RowContext<'_>) -> String {
+    let RowContext {
+        width,
+        widths,
+        now_ms,
+        throbber_frame,
+        cooldowns,
+        ..
+    } = context;
     let (left_styled, left_visible) = session_title_cell(session, "  ◆ ", session.ended, widths);
+    let activity = activity_cell(
+        std::slice::from_ref(session),
+        now_ms,
+        throbber_frame,
+        cooldowns,
+    );
     format!(
         "{}{RESET}",
         board_detail_row_text(
@@ -3484,9 +3482,9 @@ fn pr_view_session_row(
             widths,
             left_styled,
             left_visible,
-            (String::new(), 0, activity_width),
+            (String::new(), 0, 0),
             crate::ui::pr_cells::with_session_mark(
-                (String::new(), 0, widths.right_width()),
+                (activity.styled, activity.visible, widths.right_width()),
                 session.mark,
             ),
         )
@@ -3550,8 +3548,7 @@ fn session_title_cell(
 
 /// One session-view block: the session's title and recap headline with its
 /// state and activity ages, then one sub-row per PR it touches — the PR-view
-/// row anatomy with the activity column left empty, since the header carries
-/// it. Detail adds the recap under the header and each PR's ✦ judgment and
+/// row anatomy in the same right-hand columns the header uses for activity. Detail adds the recap under the header and each PR's ✦ judgment and
 /// Slack links under its row.
 fn render_session_view_block(
     session_row: &SessionBlockRow<'_>,
@@ -3581,9 +3578,9 @@ fn render_session_view_block(
         widths,
         left_styled,
         left_visible,
-        (activity.styled, activity.visible, activity_width),
+        (String::new(), 0, 0),
         crate::ui::pr_cells::with_session_mark(
-            (String::new(), 0, widths.right_width()),
+            (activity.styled, activity.visible, widths.right_width()),
             session.mark,
         ),
     );
@@ -3613,7 +3610,6 @@ fn render_session_view_block(
             &sub.pr,
             widths,
             &title,
-            activity_width,
             cooldowns.pr_tints(&sub.pr, now_ms),
             &session.pr_scope,
         );
@@ -3995,10 +3991,15 @@ fn render_at(
 
     let activity_width = pr_slices
         .iter()
-        .map(|slice| {
-            // A PR no session touches shows only an age stamp, capped at
-            // four cells; the sessions set the real column width.
-            pr_view_activity_cell(&slice.entry, now * 1000, 4, throbber_frame, cooldowns).visible
+        .flat_map(|slice| slice.entry.sessions.iter())
+        .map(|session| {
+            activity_cell(
+                std::slice::from_ref(session),
+                now_ms,
+                throbber_frame,
+                cooldowns,
+            )
+            .visible
         })
         .chain(visible_session_indices.iter().map(|&index| {
             activity_cell(
@@ -4020,9 +4021,7 @@ fn render_at(
         }))
         .max()
         .unwrap_or(0);
-    let shared_width = (width as usize)
-        .saturating_sub(activity_span(activity_width))
-        .min(u16::MAX as usize) as u16;
+    let shared_width = width;
     let visible_entries: Vec<&BoardPr> = pr_slices
         .iter()
         .map(|slice| &slice.entry)
@@ -4048,7 +4047,16 @@ fn render_at(
         )
         .max()
         .unwrap_or(0);
-    widths.include_board_detail_right(mark_width, shared_width as usize);
+    widths.include_board_detail_right(
+        activity_width + mark_width + usize::from(mark_width > 0),
+        shared_width as usize,
+    );
+    if visible_entries
+        .iter()
+        .any(|entry| entry.pr.watched && entry.sessions.is_empty())
+    {
+        widths.include_board_detail_right("Updated 999d".width(), shared_width as usize);
+    }
     for &index in &visible_workspace_indices {
         let entry = workspace_rows[index].entry;
         let (title, _) = workspace_title(entry);
@@ -4060,18 +4068,20 @@ fn render_at(
         );
         let diff_width = workspace_diff_text(entry).width().min(widths.natural_diff);
         widths.include_board_detail_right(
-            entry.session.mark.width() + if diff_width > 0 { diff_width + 2 } else { 0 },
+            activity_width
+                + 1
+                + entry.session.mark.width()
+                + if diff_width > 0 { diff_width + 3 } else { 0 },
             shared_width as usize,
         );
     }
     if detail > DEFAULT_DETAIL {
         // Compact view never draws Slack links, so it reserves nothing for
-        // them and the title keeps the room. In recap view a link spans the
-        // empty activity column too; only the excess widens the right cluster.
+        // them and the title keeps the room. Recap links may widen the shared
+        // right cluster.
         for entry in &visible_entries {
             widths.include_board_detail_right(
-                slack_links_width(&entry.slack_threads)
-                    .saturating_sub(activity_span(activity_width)),
+                slack_links_width(&entry.slack_threads),
                 shared_width as usize,
             );
         }
@@ -7222,11 +7232,10 @@ mod tests {
         assert!(frame.contains("Moved the mirror logic"), "{frame}");
     }
 
-    /// The header row carries everything about the PR: the full title, the
-    /// sessions' state and ages, then the diff and file count beside the
-    /// GitHub status. Sub-rows only name the session and its headline.
+    /// PR headers show GitHub status; session sub-rows reuse that space for
+    /// their own state and activity, leaving more room for both titles.
     #[test]
-    fn pr_view_header_holds_the_title_activity_and_stats() {
+    fn pr_and_session_rows_share_status_columns() {
         let mut pr = board_pr(7, "portal");
         make_primary(&mut pr);
         pr.title = "A title well past the forty-four cells the session view allows".to_string();
@@ -7261,31 +7270,104 @@ mod tests {
             header.contains("A title well past the forty-four cells the session view allows"),
             "the title is not cut at the session view's cap: {header}"
         );
-        assert!(header.contains("⟩ 30m") && header.contains("⋖ 5m"));
-        let activity_at = header.find("⟩ 30m").unwrap();
-        let diff_at = header.find("+49 -5").unwrap();
-        let state_at = header.find("open").unwrap();
-        assert!(
-            activity_at < diff_at && diff_at < state_at,
-            "activity, then diff, then status: {header}"
-        );
-        assert!(
-            header.contains("+49 -5  open") && !header.contains('☰'),
-            "only the diff sits beside the status: {header}"
-        );
-        assert!(
-            header.contains("⋖ 5m  +49"),
-            "the stats sit apart from the activity: {header}"
-        );
+        assert!(!header.contains(PROMPT_ICON) && !header.contains(COMPLETION_ICON));
+        assert!(header.find("+49 -5").unwrap() < header.find("open").unwrap());
+        assert!(header.contains("+49 -5  open") && !header.contains('☰'));
 
         let sub_row = lines
             .iter()
             .find(|line| line.trim_start().starts_with('◆'))
             .expect("the session sub-row renders");
         assert!(
-            !sub_row.contains('⋖') && !sub_row.contains("30m") && !sub_row.contains("5m"),
-            "sub-rows leave the activity to the header: {sub_row}"
+            sub_row.contains("⟩ 30m") && sub_row.contains("⋖ 5m"),
+            "each session shows its own activity: {sub_row}"
         );
+        let diff_column = header[..header.find("+49").unwrap()].width();
+        let prompt_column = sub_row[..sub_row.find("⟩ 30m").unwrap()].width();
+        let badge_column = sub_row[..sub_row.find('○').unwrap()].width();
+        let status_end = header.trim_end().width();
+        assert!(
+            badge_column.abs_diff(diff_column) <= 1
+                && (diff_column..status_end).contains(&prompt_column),
+            "Activity must reuse the PR status space: {header}\n{sub_row}"
+        );
+    }
+
+    #[test]
+    fn shared_activity_cluster_fits_narrow_rows() {
+        let now = now_secs() as u64;
+        let mut pr = board_pr(7, "portal");
+        make_primary(&mut pr);
+        pr.additions = 531763;
+        pr.deletions = 6931;
+        let mut session = snapshot("one", vec![pr]);
+        session.prompted_at = now - 1800;
+        session.completed_at = now - 300;
+        session.recap = Some(RecapBrief {
+            headline: "Recap headline".to_string(),
+            bullets: vec![],
+            next_prompt_notes: vec![],
+            artifacts: vec![],
+            generated_at: (now - 300) * 1000,
+            line_delta: crate::recap::TurnLineDelta::default(),
+        });
+        let mut workspace = snapshot("workspace", vec![]);
+        workspace.prompted_at = now - 1800;
+        workspace.completed_at = now - 300;
+        workspace.additions = 42;
+        workspace.deletions = 5;
+        let snapshots = vec![session, workspace];
+        let entries = aggregate(&snapshots, &ScopedOverrides::default());
+        let workspaces = local_workspaces(&snapshots, &entries);
+        for mode in [BoardMode::Prs, BoardMode::Sessions] {
+            let shaped = entries_for_mode(entries.clone(), mode);
+            let rows: Vec<_> = shaped
+                .prs
+                .iter()
+                .map(|entry| BoardRow {
+                    entry,
+                    preview_lines: vec![],
+                })
+                .collect();
+            let sessions: Vec<_> = shaped
+                .sessions
+                .iter()
+                .map(|entry| SessionBlockRow {
+                    entry,
+                    preview_lines: vec![],
+                })
+                .collect();
+            let workspaces: Vec<_> = workspaces
+                .iter()
+                .map(|entry| WorkspaceRow {
+                    entry,
+                    preview_lines: vec![],
+                })
+                .collect();
+            for width in [24, 32, 40, 60, 80, 160] {
+                let frame = render(
+                    &rows,
+                    &sessions,
+                    &workspaces,
+                    width,
+                    false,
+                    BoardView::new(MAX_DETAIL, RecencyBucket::Older).with_mode(mode),
+                );
+                for line in &frame.lines {
+                    let plain = crate::parsers::strip_ansi_for_debug(line);
+                    if plain.contains('◆')
+                        || plain.contains('◇')
+                        || plain.contains("#7:")
+                        || plain.contains('✦')
+                    {
+                        assert!(
+                            crate::ui::utils::strip_ansi_len(line) <= width as usize,
+                            "row exceeds {width} columns: {plain}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// A session badge or status cell that changed since the last frame
@@ -7389,6 +7471,7 @@ mod tests {
         let mut solo = SessionPr::watched_stub("o", "elsewhere", 9);
         solo.state = "OPEN".to_string();
         solo.refreshed_at = 1_000;
+        solo.updated_at = now_ms() - 270 * 1000;
         solo.title = "Watched from afar".to_string();
         let watched = HashMap::from([
             (
@@ -7413,6 +7496,11 @@ mod tests {
         assert_eq!(prs.len(), 2);
         let frame = render_prs_frame(&prs, DEFAULT_DETAIL).lines.join("\n");
         assert!(frame.contains('◉'), "the watch glyph renders: {frame}");
+        assert_eq!(
+            frame.matches("Updated 5m").count(),
+            1,
+            "only the watch without sessions needs its own update age: {frame}"
+        );
         assert!(
             crate::parsers::strip_ansi_for_debug(&frame).contains("#9: Watched from afar"),
             "{frame}"
@@ -7541,7 +7629,18 @@ mod tests {
         );
 
         let widths = PrColumnWidths::from_pr_refs(&[&shaped[0].pr], 120);
-        let ended_row = pr_view_session_row(&shaped[0].sessions[1], 120, 12, &widths);
+        let ended_row = pr_view_session_row(
+            &shaped[0].sessions[1],
+            RowContext {
+                width: 120,
+                detail: 0,
+                now_ms: now_ms(),
+                activity_width: 12,
+                widths: &widths,
+                throbber_frame: 0,
+                cooldowns: &Cooldowns::default(),
+            },
+        );
         assert!(
             ended_row.trim_start().starts_with(&fg(color::DARK_GRAY)),
             "ended sub-rows dim: {ended_row:?}"
@@ -9262,19 +9361,21 @@ mod tests {
             4,
             "each session row repeats its identity chip at the right edge: {frame}"
         );
+        for row in frame
+            .lines()
+            .filter(|line| line.contains("Shared builder document work"))
+        {
+            assert!(
+                row.contains(PROMPT_ICON) && row.contains(COMPLETION_ICON),
+                "Session lost its activity: {row}"
+            );
+        }
         for number in [1099, 2573] {
             let row = frame
                 .lines()
                 .find(|line| line.contains(&format!("#{number}:")))
-                .unwrap_or_else(|| panic!("PR #{number} is missing from: {frame}"));
-            assert!(
-                row.contains(PROMPT_ICON),
-                "PR #{number} lost its prompt time: {row}"
-            );
-            assert!(
-                row.contains(COMPLETION_ICON),
-                "PR #{number} lost its completion time: {row}"
-            );
+                .unwrap();
+            assert!(!row.contains(PROMPT_ICON) && !row.contains(COMPLETION_ICON));
         }
     }
 
@@ -10032,8 +10133,9 @@ mod tests {
 
         let row = crate::parsers::strip_ansi_for_debug(&compact);
         assert!(
-            row.find("⋖ 2h").unwrap() < row.find("open").unwrap(),
-            "activity belongs before the GitHub status"
+            row.lines()
+                .any(|line| line.contains("⋖ 2h") && !line.contains("#9:")),
+            "Session activity belongs on its own row"
         );
         let main_row = compact
             .lines()
