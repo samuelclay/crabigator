@@ -199,6 +199,10 @@ crabigator --no-capture       # Run without writing scrollback.log/screen.txt
 
 Any unrecognized arguments pass through to the underlying assistant CLI.
 
+Crabigator starts Codex in inline mode (`--no-alt-screen`) so you can scroll
+through terminal history and select text without holding Shift. This also
+applies when resuming or continuing a Codex session.
+
 ## Configuration
 
 Preferences live in `~/.crabigator/config.toml`:

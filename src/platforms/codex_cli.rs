@@ -588,6 +588,11 @@ impl Platform for CodexPlatform {
 
     fn spawn_args(&self, user_args: Vec<String>) -> Vec<String> {
         let mut args = Vec::new();
+        // Keep scrolling and text selection in the host terminal. Codex's
+        // alternate screen also captures the mouse, bypassing native scrollback.
+        if !user_args.iter().any(|arg| arg == "--no-alt-screen") {
+            args.push("--no-alt-screen".to_string());
+        }
         for arg in user_args {
             match arg.as_str() {
                 "--resume" => args.push("resume".to_string()),
@@ -794,7 +799,7 @@ mod tests {
         let path = write_rollout(&platform, 30, &format!("rollout-{id}.jsonl"), before);
         set_mtime(&path, before);
         let args = platform.spawn_args(vec!["--resume".into(), id.into()]);
-        assert_eq!(args, vec!["resume", id]);
+        assert_eq!(args, vec!["--no-alt-screen", "resume", id]);
         let mut state = platform.state.lock().unwrap();
         // An explicit choice also works when launched from a different cwd.
         let (actual, _) = platform
@@ -824,7 +829,7 @@ mod tests {
         write_mirror_claim(&platform, "other-pane", &claimed);
         assert_eq!(
             platform.spawn_args(vec!["--continue".into()]),
-            vec!["resume", "--last"]
+            vec!["--no-alt-screen", "resume", "--last"]
         );
         let mut state = platform.state.lock().unwrap();
         assert!(platform
