@@ -1,4 +1,4 @@
-import { registerPush, mobileSnapshot } from './handlers/mobile';
+import { spawnOnSessionDesktop, registerPush, mobileSnapshot } from './handlers/mobile';
 import { Router, jsonResponse } from './router';
 import type { Env } from './types/env';
 import type { SessionInfo } from './types/session';
@@ -502,6 +502,9 @@ router.get('/api/sessions/:id/events', async (request, env, params) => {
     url.pathname = '/events';
     return stub.fetch(new Request(url.toString(), request));
 });
+
+router.post('/api/sessions/:id/spawn', (request, env, params) =>
+    spawnOnSessionDesktop(request, env, params.id));
 
 // Send answer from dashboard/mobile (no auth required for dashboard)
 // Note: Skips D1 lookup - DO handles non-existent sessions gracefully

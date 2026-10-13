@@ -2,7 +2,7 @@ import { env, evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { beforeAll, expect, it, vi } from 'vitest';
 import { notifyMobilePrompt } from '../src/mobile-push';
 import { sha256 } from '../src/auth/tokens';
-import { mobileSnapshot, registerPush } from '../src/handlers/mobile';
+import { mobileSnapshot, registerPush, spawnOnSessionDesktop } from '../src/handlers/mobile';
 import type { Env } from '../src/types/env';
 import type { CloudToDesktopMessage } from '../src/types/session';
 import { ensureAccountSchema } from './schema';
@@ -360,4 +360,35 @@ it('continues Apple delivery when Firebase authentication fails', async () => {
         expect(mocked).toHaveBeenCalledOnce();
         expect(String(mocked.mock.calls[0][0])).toContain('api.sandbox.push.apple.com');
     } finally { mocked.mockRestore(); }
+});
+
+it('spawns only on the selected desktop and rejects another account or invalid inputs', async () => {
+    const owner = await pairedMobile('spawn-owner', 'spawn-group');
+    const stranger = await pairedMobile('spawn-stranger', 'spawn-other-group');
+    const ids = ['spawn-selected', 'spawn-unselected'];
+    const desktops: WebSocket[] = [];
+    const received: CloudToDesktopMessage[][] = [[], []];
+    for (const [index, id] of ids.entries()) {
+        await testEnv.DB.prepare('INSERT INTO sessions (id, device_id, client_session_id, cwd, platform) VALUES (?, ?, ?, ?, ?)')
+            .bind(id, 'spawn-owner-desktop', id, '/test/project', 'codex').run();
+        const stub = testEnv.SESSION.get(testEnv.SESSION.idFromName(id));
+        const response = await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } });
+        const socket = response.webSocket!;
+        socket.accept();
+        socket.addEventListener('message', event => { received[index].push(JSON.parse(String(event.data))); });
+        desktops.push(socket);
+    }
+    try {
+        const path = '/api/sessions/spawn-selected/spawn';
+        const body = { cwd: '/test/project with spaces', platform: 'codex' };
+        expect((await spawnOnSessionDesktop(stranger.request(path, body), testEnv, ids[0])).status).toBe(403);
+        expect((await spawnOnSessionDesktop(owner.request(path, { ...body, cwd: 'relative' }), testEnv, ids[0])).status).toBe(400);
+        expect((await spawnOnSessionDesktop(owner.request(path, { ...body, platform: 'shell' }), testEnv, ids[0])).status).toBe(400);
+        expect((await spawnOnSessionDesktop(owner.request(path, { ...body, platform: ['codex'] }), testEnv, ids[0])).status).toBe(400);
+        expect((await spawnOnSessionDesktop(owner.request(path, body), testEnv, ids[0])).status).toBe(200);
+        await expect.poll(() => received[0].filter(m => m.type === 'spawn')).toEqual([{ type: 'spawn', ...body }]);
+        expect(received[1].filter(m => m.type === 'spawn')).toEqual([]);
+    } finally {
+        for (const socket of desktops) socket.close();
+    }
 });

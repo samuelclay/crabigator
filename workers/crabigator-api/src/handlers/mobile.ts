@@ -41,3 +41,19 @@ export async function mobileSnapshot(request: Request, env: Env, params: Record<
         desktop_connected: snapshot.desktop_connected, prompt: snapshot.prompt,
         prompt_revision: snapshot.prompt_revision, attention_pending: snapshot.attention_pending });
 }
+
+/** Relay a new session through the desktop the mobile user selected. */
+export async function spawnOnSessionDesktop(request: Request, env: Env, sessionId: string): Promise<Response> {
+    const access = await requireSessionAccess(request, env, sessionId);
+    if ('error' in access) return access.error;
+    const body = await request.json().catch(() => null) as { cwd?: unknown; platform?: unknown } | null;
+    if (!body || typeof body.cwd !== 'string' || !body.cwd.startsWith('/') || body.cwd.includes('\0')
+        || typeof body.platform !== 'string' || !['claude', 'codex', 'opencode', 'grok'].includes(body.platform)) {
+        return jsonResponse({ error: 'Choose an assistant and enter an absolute folder path.' }, 400);
+    }
+    const stub = env.SESSION.get(env.SESSION.idFromName(sessionId));
+    return stub.fetch(new Request('https://internal/spawn', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd: body.cwd, platform: body.platform }),
+    }));
+}
