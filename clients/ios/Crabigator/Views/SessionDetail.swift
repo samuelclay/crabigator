@@ -13,6 +13,10 @@ struct SessionDetail: View {
         if let live = stream.details["prs"] { return live.array("prs").filter { !$0.bool("dismissed") }.map(PullRequest.init) }
         return model.prs.filter { $0.sessions.contains { $0.id == stream.selected?.id } }
     }
+    var widgetSections: [SessionWidgetSection] {
+        sessionWidgetSections(session: stream.selected, details: stream.details, prefs: model.preferences, prs: prs)
+    }
+    var showsWidgets: Bool { model.preferences.widgets && !widgetSections.isEmpty }
     var body: some View {
         GeometryReader { geometry in
             if let session = stream.selected {
@@ -50,18 +54,18 @@ struct SessionDetail: View {
                                             }
                                         }
                                     }
+                                } else {
+                                    TerminalViewport(history: stream.history, screen: stream.screen, preferences: model.preferences, pinned: $pinned, swipe: wide ? { distance, velocity, ended in
+                                        drag = distance
+                                        if ended {
+                                            let dismiss = velocity > 600 || (distance > geometry.size.width / 3 && velocity > -600)
+                                            withAnimation(.easeOut(duration: 0.28)) { drag = dismiss ? geometry.size.width : 0 }
+                                            if dismiss { DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { if model.selectionID == session.id { close() } } }
+                                        }
+                                    } : nil).id(session.id)
                                 }
-                                TerminalViewport(history: stream.history, screen: stream.screen, preferences: model.preferences, pinned: $pinned, swipe: wide ? { distance, velocity, ended in
-                                    drag = distance
-                                    if ended {
-                                        let dismiss = velocity > 600 || (distance > geometry.size.width / 3 && velocity > -600)
-                                        withAnimation(.easeOut(duration: 0.28)) { drag = dismiss ? geometry.size.width : 0 }
-                                        if dismiss { DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { if model.selectionID == session.id { close() } } }
-                                    }
-                                } : nil).id(session.id).opacity(stream.history.isEmpty && stream.screen.isEmpty ? 0 : 1)
-                                    .allowsHitTesting(!stream.history.isEmpty || !stream.screen.isEmpty)
                             }.frame(height: terminalHeight(area.size.height)).frame(maxWidth: .infinity).background(Color(uiColor: TerminalText.rgb(0x0B0F14)))
-                            if model.preferences.widgets { SessionWidgets(stream: stream, prefs: model.preferences, prs: prs).frame(maxHeight: .infinity) }
+                            if showsWidgets { SessionWidgets(sections: widgetSections).frame(maxHeight: .infinity) }
                             else if model.preferences.terminalHeight > 0 { Spacer(minLength: 0) }
                         }
                     }
@@ -73,27 +77,53 @@ struct SessionDetail: View {
         }.background(Crab.ink)
     }
     func terminalHeight(_ available: CGFloat) -> CGFloat {
-        let maxHeight = model.preferences.widgets ? available * 0.65 : available
+        let maxHeight = showsWidgets ? available * 0.65 : available
         return model.preferences.terminalHeight == 0 ? maxHeight : min(CGFloat(model.preferences.terminalHeight), maxHeight)
     }
 }
+struct SessionWidgetSection {
+    struct Row {
+        var text: String
+        var url: URL? = nil
+    }
+    var title: String
+    var rows: [Row]
+}
+func sessionWidgetSections(session: Session?, details: [String: JSON], prefs: Preferences, prs: [PullRequest]) -> [SessionWidgetSection] {
+    var sections: [SessionWidgetSection] = []
+    func append(_ key: String, _ title: String, _ rows: [String]) {
+        if prefs.visible(key) && !rows.isEmpty {
+            sections.append(SessionWidgetSection(title: title, rows: rows.map { .init(text: $0) }))
+        }
+    }
+    let recap = details["recap"]?.object("latest").text("headline") ?? session?.recap ?? ""
+    append("recap", "Recap", recap.isEmpty ? [] : [recap])
+    if prefs.visible("prs") {
+        let links: [SessionWidgetSection.Row] = prs.compactMap { pr in
+            guard let url = URL(string: pr.url), url.scheme == "https" else { return nil }
+            return .init(text: "#\(pr.number) \(pr.title)", url: url)
+        }
+        if !links.isEmpty { sections.append(SessionWidgetSection(title: "Pull requests", rows: links)) }
+    }
+    let git = details["git"] ?? [:], branch = git.text("branch", session?.branch ?? "")
+    append("git", "Git status", (branch.isEmpty ? [] : ["⎇ " + branch]) + git.array("files").map { "\($0.text("status")) \($0.text("path"))  +\($0.int("additions")) −\($0.int("deletions"))" })
+    append("commits", "Commits", (details["commit_history"]?.array("history") ?? git.array("recent_commits")).map { "\($0.text("short_hash")) \($0.text("subject"))" })
+    append("changes", "Changes", (details["changes"]?.array("by_language") ?? []).flatMap { $0.array("changes") }.map { "\($0.text("name"))  +\($0.int("additions")) −\($0.int("deletions"))" })
+    return sections
+}
 struct SessionWidgets: View {
-    @ObservedObject var stream: SessionStream
-    var prefs: Preferences, prs: [PullRequest]
+    var sections: [SessionWidgetSection]
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                let recap = stream.details["recap"]?.object("latest").text("headline") ?? stream.selected?.recap ?? ""
-                if prefs.visible("recap") && !recap.isEmpty { section("Recap", rows: [recap]) }
-                if prefs.visible("prs") && !prs.isEmpty { Text("Pull requests").foregroundStyle(Crab.title); ForEach(prs) { pr in if let url = URL(string: pr.url), url.scheme == "https" { Link(String("#\(pr.number) \(pr.title)"), destination: url) } } }
-                if prefs.visible("git") {
-                    let git = stream.details["git"] ?? [:], branch = git.text("branch", stream.selected?.branch ?? "")
-                    section("Git status", rows: (branch.isEmpty ? [] : ["⎇ " + branch]) + git.array("files").map { "\($0.text("status")) \($0.text("path"))  +\($0.int("additions")) −\($0.int("deletions"))" })
+                ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+                    Text(section.title).foregroundStyle(Crab.title)
+                    ForEach(Array(section.rows.enumerated()), id: \.offset) { _, row in
+                        if let url = row.url { Link(row.text, destination: url) }
+                        else { Text(row.text) }
+                    }
                 }
-                if prefs.visible("commits") { section("Commits", rows: (stream.details["commit_history"]?.array("history") ?? stream.details["git"]?.array("recent_commits") ?? []).map { "\($0.text("short_hash")) \($0.text("subject"))" }) }
-                if prefs.visible("changes") { section("Changes", rows: (stream.details["changes"]?.array("by_language") ?? []).flatMap { $0.array("changes") }.map { "\($0.text("name"))  +\($0.int("additions")) −\($0.int("deletions"))" }) }
             }.font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(16).textSelection(.enabled)
         }.background(Crab.panel)
     }
-    @ViewBuilder func section(_ title: String, rows: [String]) -> some View { if !rows.isEmpty { Text(title).foregroundStyle(Crab.title); ForEach(Array(rows.enumerated()), id: \.offset) { _, row in Text(row) } } }
 }
