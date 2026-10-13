@@ -1,6 +1,84 @@
-# iOS verification — October 12, 2026
+# iOS verification — October 13, 2026
 
-The native app is installed, paired and running on the physical ClayPad Air and ClayPhone SE 3, as well as the iPhone 17e and iPad Air simulators. Live Apple notifications are not configured yet.
+The updated native app is installed and paired on ClayPad Mini. The October 13 checks below verify its live terminal, board navigation and real APNs delivery. Earlier checks on ClayPad Air, ClayPhone SE 3 and simulators remain recorded below.
+
+
+## Mobile parity and ClayPad Mini
+
+On October 13, the signed Debug build and notification extension installed on ClayPad Mini (iPad mini A17 Pro, listed by Xcode as “Samuel’s iPad”). Thirteen unit tests and five live UI tests passed across two runs. They covered terminal reading, scrollback, Follow, Style, QWERTY, slow prompt metadata, the loading Reconnect button, fullscreen boards, restart restoration, and a real Apple notification. The delayed-metadata check displayed terminal output in 1.84 seconds while the prompt request was held for 15 seconds.
+
+Both platforms now hide the session highlight when the board fills the screen. The session stays remembered: tapping the selected List or PR board control again returns to it, including after restarting iOS. Explicitly closing the session still clears it. PR board separator lines were removed on both platforms; List already used spacing between repository groups.
+
+Android now keeps drafts per session when switching or closing details, clears a sent draft even if the selection changes before the response, sends Shift+Left from Questions, and distinguishes slow terminal loading from an empty result. iOS gives unused widget space back to the terminal. Its hidden UIKit terminal view had also intercepted Reconnect; the view is now created only when output exists, and the physical Mini test taps Reconnect successfully.
+
+Android passed 28 unit tests, lint, app/test builds, and four instrumentation tests on the Samsung SM-X200 tablet. The tests exercise draft retention, exact Questions shortcut bytes, loading/reconnect states, and the fullscreen round trip in both board modes. The signed-in device state was preserved.
+
+The NewsBlur APNs credential is now configured in the production Worker. The key originally supplied was rejected by Apple; the working key was located in Studio’s NewsBlur secrets repository. Apple accepted a direct alert for Mini with HTTP 200, and XCTest observed and captured its notification on the physical device. The app also reported “Notifications on” after registering with production. This establishes real APNs transport and visible delivery; it does not establish all prompt-action, sound, or cross-device notification behavior.
+
+Results: `/tmp/crabigator-mini-first.xcresult` (13 unit tests and three reading/loading UI tests), `/tmp/crabigator-mini-final.xcresult` (fullscreen restoration and real APNs delivery). Android logs on Studio: `/tmp/crabigator-mobile-parity-final-build.log` and `/tmp/crabigator-mobile-parity-final-tablet.log`. Screenshots are local test artifacts and contain private session content.
+
+
+### Board spacing and fullscreen toolbar
+
+Style now has separate Tight, Normal and Relaxed spacing for List and PR board. Tight uses one-line titles and smaller row and group gaps; terminal settings are independent. The fullscreen header floats in the center of the machine-name row, with the logo on the left and Search/Settings on the right. Opening a session moves it back into the sidebar header. Search reserves space beneath the floating control.
+
+Android passed its 28 unit tests, lint, app/test builds, and five instrumentation tests on the Samsung tablet, including measured row-height reductions in both modes, toolbar controls, persistence, and unchanged terminal line spacing. The updated APK is installed on the tablet and S22. Final instrumentation log on Studio: `/tmp/crabigator-style-instrument-final.log`.
+
+ClayPad Mini passed 13 unit tests and the physical UI spacing/toolbar test in `/tmp/crabigator-style-mini-final.xcresult`. The UI check measures shorter rows in List and PR board, verifies the centered fullscreen controls and sidebar return, taps Search, checks unchanged terminal spacing, and verifies saved Tight spacing after relaunch. It restores the original spacing afterward. The device remains in its original landscape orientation. Four earlier passing screenshots are exported under `/tmp/crabigator-style-mini7-shots/`.
+
+### Style tabs, animated spacing and aligned columns
+
+Style now has pinned List / PR board and Terminal tabs. Settings opens the board controls; the terminal's Style button opens terminal controls. Board spacing changes animate over 300 milliseconds, with reduced motion respected. The layout setting is labeled List columns.
+
+Prompt and completion ages have separate reserved columns in both views. PR rows reserve independent CI and branch-status columns; missing values show a dash without moving the neighboring column. Android fits status text within its columns at both the smallest and largest board text sizes.
+
+ClayPad Mini passed 13 unit tests and the live spacing, scope-tab and toolbar test in `/tmp/crabigator-style-columns-mini.xcresult`. The device stayed in landscapeRight. Screenshots in `/tmp/crabigator-style-columns-mini-shots/` show both tabs and the List/PR board in fullscreen and the sidebar. The first attempt failed while tapping Search during its animated move; the passing test waits for the control to become hittable.
+
+Android passed 28 unit tests, lint and both APK builds. Ten instrumentation tests passed across focused runs on the Samsung tablet: six mobile parity checks, three PR interactions/column checks, and one timeline check. They measure an intermediate row height during animation, verify independent style controls, compare column positions with missing or changing values, and check that status text does not overflow at minimum/maximum board font sizes. Logs: `/tmp/crabigator-columns-device.log`, `/tmp/crabigator-columns-timeline.log`, and `/tmp/crabigator-columns-size-final.log`. The initial timeline run used outdated text-node queries; the final check uses the controls' accessible labels and geometry.
+
+The latest builds are installed on Mini and both Samsung devices. Real roster screenshots are saved locally as `/tmp/crabigator-columns-mini.png`, `/tmp/crabigator-columns-tablet.png`, and `/tmp/crabigator-style-android-tabs.png`. These private artifacts are not tracked in Git.
+
+### Move active sessions into the current time band
+
+The ten-minute ordering cache also retained a session's old time band after its prompt timestamp changed. Both apps now update band membership on each roster refresh while preserving unrelated row order, repository order and PR order. New prompts and working states move a session into Last hour; ordinary aging also changes bands. The normal ordering refresh still runs on its original schedule.
+
+Fifteen iOS unit tests passed on ClayPad Mini, including prompt changes after a quick completion, working-state changes before their timestamp arrives, ordinary aging, and unchanged unrelated ordering. Result: `/tmp/crabigator-live-age-mini.xcresult`. The updated app's real roster places “Portal Fix and Eval Coverage PRs” in Last hour (`/tmp/crabigator-live-age-mini.png`).
+
+Android passed 30 unit tests, lint, app/test builds, and a physical-tablet UI regression that updates the session while the PR board stays open and measures its move from below 1–3 hours to above that heading. Logs: `/tmp/crabigator-live-age-android.log` and `/tmp/crabigator-live-age-device.log`. The update is installed on Mini and both Samsung devices. Code simplifier review found no further issues.
+
+### Codex activity and Older grouping
+
+The affected desktop pane had no attached transcript, zero prompts/completions/tools, and no activity timestamps. Codex had automatically reopened an older conversation without creating a new rollout or shell snapshot. The desktop now matches its native terminal title to a unique entry in Codex's thread index, checks the repository and ownership, and handles a title that arrives after the first stats poll. Ambiguous names are not guessed.
+
+The parser now recognizes modern task completion and custom-tool events, excludes commentary from completed-turn counts, and retains transcript timestamps when replaying a resumed conversation. Mixed old/new logs keep their prior completion totals. PR-board transcript fallback also recognizes the newer activity records.
+
+The Rust suite passed 673 tests with seven opt-in tests skipped. The additional modern-board activity regression and final discovery regression passed separately. A read-only probe of the actual conversation recovered 21 prompts, five completed turns and 205 tools at the time of capture, with recent activity timestamps and Thinking state (`/tmp/crabigator-live-codex-final.log`). The local Debug binary is rebuilt; existing Crabigator desktop processes need restarting to load it. Native Codex scrolling remains enabled. Clippy completed with two existing warnings in `src/pr/budget.rs` and `src/prs_board.rs` outside these changes.
+
+### PR row layout after collapsing the board
+
+A screenshot from the user's Mini showed the selected second PR-board row extending off the left edge while its terminal remained correct. The row appeared to retain full-width columns inside the sidebar. Session rows now rebuild their column subtree when the width mode changes, and that subtree does not inherit selection/width animations. Selection highlighting and the board's width animation remain outside this subtree.
+
+The live device check switches between two sessions through fullscreen, verifies the selected row and its visible title remain within the sidebar, and repeats in portrait and both landscape orientations. The original screenshot is `/tmp/crabigator-mini-layout-before.png`. Automated attempts on the previous build did not reproduce the intermittent failure, so they are coverage of the transition rather than proof of its exact cause. The updated device result is `/tmp/crabigator-mini-row-final.xcresult`.
+
+### Board settings, actions and review columns
+
+Both apps expose activity cutoff, live/all sessions, computers, recaps and session/PR grouping. The cutoff defaults to 24 hours. Grouping retains older touching sessions beneath a recent PR after applying the computer/live/search filters. New session selects a desktop, folder and assistant; Watch PR accepts a GitHub URL or owner/repo#number.
+
+The Worker spawn route checks session ownership and sends the request only to the chosen desktop. Worker type checking and 59 tests passed in `/tmp/crabigator-board-actions-worker.log`. Production deployment `6e7a441c-a4cc-4266-bc85-dc8f9f35b1fd` succeeded; an unauthenticated production request returned 401. The live form checks do not submit a spawn or watch request.
+
+The board now has four separate review/status columns: unresolved comments, approval, CI and behind/conflicts. Session glyphs center on the first title line at tight spacing. Prompt/completion times sit directly beside the status throbber. Narrow PR rows put checks on a second line to preserve readable diffs. Floating-header gaps consume taps.
+
+Android passed 34 unit tests, lint and both APK builds. Device checks passed for all three PR interaction/column tests, tight-spacing glyph geometry, floating-header gap taps and timeline layout at large font sizes. The last check also caught and fixed hidden durations when both recency columns were disabled. Logs: `/tmp/crabigator-board-review-final-device.log` and `/tmp/crabigator-timeline-duration-device.log`. The first log has an older timeline assertion failure; the second passes the corrected check and duration fallback. Updated APKs are installed on the Samsung tablet and S22. The real board screenshot is `/tmp/crabigator-board-reviews-tablet.png`.
+
+ClayPad Mini passed 19 unit tests and two live UI tests in `/tmp/crabigator-board-complete-mini.xcresult`. These verify saved cutoff after relaunch, the Watch PR and New session forms, and gap taps followed by working Settings controls in both fullscreen views. The test restores the 24-hour cutoff and keeps the device in landscapeRight. Earlier attempts exposed invalid native-popover hit points and taps beneath the navigation bar; the final test uses visible screen bounds and scrolls controls clear of that bar.
+
+Final accessibility review restored the session state in combined timing labels after moving the throbber. The final Mini build passed its 19 unit tests and repeated header-gap UI check in `/tmp/crabigator-board-accessibility-mini.xcresult`. Android's large-text timeline and accessible state check passed in `/tmp/crabigator-board-accessibility-final-android.log`. The final builds are installed on Mini and both Samsung devices.
+
+### Shared CLI status columns
+
+Session activity and PR metadata now occupy the same right-hand columns, leaving more width for titles. In PR grouping, every session sub-row shows its own state and prompt/completion ages, while the PR header holds GitHub status. Watched PRs without sessions retain an Updated age below the header. Width checks cover narrow rows, workspace diffs, recaps and the repeated identity chip.
+
+The Rust suite passed 675 tests with seven opt-in tests skipped. Clippy, Debug and Release builds passed; Clippy retained two existing warnings outside these changes. A real `prs --once` frame confirms the shared layout. Logs: `/tmp/crabigator-consolidated-full-tests.log`, `/tmp/crabigator-consolidated-clippy.log` and `/tmp/crabigator-consolidated-live-board.txt`. Restart an existing desktop board to load the rebuilt binary.
 
 On October 12, Xcode automatic signing succeeded with the NewsBlur team (`HR7P97SD72`). The signed Debug build and notification extension installed on both physical devices. Each device claimed its own pairing code, and screenshots confirmed that the live session roster loaded. This verifies installation, launch, pairing and roster access; it does not establish full device interaction or push-delivery coverage.
 
@@ -72,8 +150,8 @@ Result bundles are `/tmp/crabigator-reading-verified.xcresult`, `/tmp/crabigator
 ## Still required
 
 - Exercise the remaining phone/tablet interactions on the physical devices. Signing and installation are now complete.
-- Provide an APNs signing key for the NewsBlur team and configure the Worker secret. Migration 0023 and the Worker deployment completed on October 12; both existing Android registrations were preserved and the health check passed. Apple delivery remains unconfigured.
-- Verify actual APNs delivery, sound off/on, lock-screen choices and replies, stale-revision rejection, cross-device resolution and revoked pairing on real devices.
+- APNs credentials and real transport delivery are verified as of October 13; production prompt dispatch and action flows still need their separate end-to-end checks.
+- Verify sound off/on, lock-screen choices and replies, stale-revision rejection, cross-device resolution and revoked pairing on real devices.
 - Verify microphone permission, recording, cancellation, transcription and background interruption on a physical device.
 
-The app is left paired and running on ClayPad Air and ClayPhone SE 3. Production app release and Apple push credentials remain pending.
+The updated app is left paired on ClayPad Mini. A production app release has not been requested.
