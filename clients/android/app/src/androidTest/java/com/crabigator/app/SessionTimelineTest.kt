@@ -25,7 +25,7 @@ class SessionTimelineTest {
         val fontScale = mutableStateOf(1f)
         val prefs = mutableStateOf(UiPreferences())
         val now = mutableStateOf(1_000_000L)
-        val session = mutableStateOf(Session.parse(JSONObject()).copy(stats = SessionStats(startedAt = 400_000, thinkingSeconds = 18_800,
+        val session = mutableStateOf(Session.parse(JSONObject()).copy(active = true, state = "complete", stats = SessionStats(startedAt = 400_000, thinkingSeconds = 18_800,
             promptAt = now.value - 59 * 60, completionAt = now.value - 42 * 60)))
         compose.setContent {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale.value)) {
@@ -62,13 +62,13 @@ class SessionTimelineTest {
         compose.waitForIdle()
         val container = compose.onNodeWithTag("timeline").fetchSemanticsNode().boundsInRoot
         // Recency stays on one line at large text sizes; the accessible summary retains hidden durations.
-        val summary = bounds("Session time: 6d 22h; Thinking time: 5h 13m; Last prompt: 59m ago; Last completion: 42m ago")
+        val summary = bounds("Complete; Session time: 6d 22h; Thinking time: 5h 13m; Last prompt: 59m ago; Last completion: 42m ago")
         assertEquals(container.right, summary.right, 1f)
         assertTrue(summary.left >= container.left)
         assertEquals(container.top, summary.top, 1f)
         compose.runOnIdle { fontScale.value = 3f }
         compose.waitForIdle()
-        val largest = bounds("Session time: 6d 22h; Thinking time: 5h 13m; Last prompt: 59m ago; Last completion: 42m ago")
+        val largest = bounds("Complete; Session time: 6d 22h; Thinking time: 5h 13m; Last prompt: 59m ago; Last completion: 42m ago")
         assertTrue(largest.left >= container.left)
         assertEquals(container.right, largest.right, 1f)
         compose.runOnIdle {

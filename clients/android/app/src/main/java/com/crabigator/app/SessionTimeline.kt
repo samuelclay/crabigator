@@ -30,7 +30,7 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
         if (prefs.visible("completionRecency")) add("Last completion: $completion")
     }.joinToString("; ")
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        OneLineTimeline(summary, prioritizeDuration = !prefs.visible("promptRecency") && !prefs.visible("completionRecency"), start = { compact ->
+        OneLineTimeline(summary, statusLabel = if (!session.active) "Ended" else if (session.state == "thinking") "Working" else session.state.replaceFirstChar { it.uppercase() }, prioritizeDuration = !prefs.visible("promptRecency") && !prefs.visible("completionRecency"), start = { compact ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (prefs.visible("sessionTime")) Stat("◉", if (compact) compactDuration(duration) else sessionDuration(duration), "Session time: ${sessionDuration(duration)}", CrabColors.Blue)
                 if (prefs.visible("thinkingTime")) Stat("◐", if (compact) compactDuration(stats.thinkingSeconds) else sessionDuration(stats.thinkingSeconds), "Thinking time: ${sessionDuration(stats.thinkingSeconds)}", Mint)
@@ -46,7 +46,7 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
 }
 
 /** Shorten durations before giving up space reserved for the two right-aligned recency values. */
-@Composable private fun OneLineTimeline(summary: String, prioritizeDuration: Boolean, modifier: Modifier = Modifier, start: @Composable (Boolean) -> Unit, end: @Composable () -> Unit) {
+@Composable private fun OneLineTimeline(summary: String, statusLabel: String, prioritizeDuration: Boolean, modifier: Modifier = Modifier, start: @Composable (Boolean) -> Unit, end: @Composable () -> Unit) {
     SubcomposeLayout(modifier.fillMaxWidth()) { constraints ->
         val loose = Constraints(maxHeight = constraints.maxHeight)
         // Probes choose a format only. Hide their semantics so only the visible values are announced.
@@ -69,7 +69,7 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
         }
         val visible = subcompose("visible") {
             if (showLeft) Box { start(compact) }
-            Box(if (showLeft) Modifier else Modifier.clearAndSetSemantics { contentDescription = summary }) {
+            Box(if (showLeft) Modifier else Modifier.clearAndSetSemantics { contentDescription = "$statusLabel; $summary" }) {
                 end()
             }
         }.map { it.measure(loose.copy(maxWidth = constraints.maxWidth)) }
