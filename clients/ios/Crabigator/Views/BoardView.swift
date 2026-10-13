@@ -114,9 +114,14 @@ struct BoardView: View {
                                         } else {
                                             ForEach(group.pullRequests) { block in
                                                 VStack(alignment: .leading, spacing: spacing.gap(4)) {
-                                                    if let url = URL(string: block.pr.url), url.scheme == "https" {
-                                                        Link(destination: url) { PRRow(pr: block.pr, wide: width >= 840) }.buttonStyle(.plain).padding(.horizontal, 8)
-                                                    } else { PRRow(pr: block.pr, wide: width >= 840).padding(.horizontal, 8) }
+                                                    Group {
+                                                        if let url = URL(string: block.pr.url), url.scheme == "https" {
+                                                            Link(destination: url) { PRRow(pr: block.pr, wide: width >= 840) }.buttonStyle(.plain)
+                                                        } else { PRRow(pr: block.pr, wide: width >= 840) }
+                                                    }
+                                                    .padding(.horizontal, 8)
+                                                    // Match the session title's inset past its 38-point identity chip and 10-point gap.
+                                                    .padding(.leading, width < 840 ? 48 : 0)
                                                     ForEach(block.sessions) { session in sessionButton(session, list: false, full: width >= 840, order: order, prs: []) }
                                                 }
                                             }
