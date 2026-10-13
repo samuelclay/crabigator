@@ -17,10 +17,12 @@ struct IconButton: View {
 }
 struct IdentityChip: View {
     var session: Session
-    var body: some View { Text(session.glyph).font(.system(size: 13, design: .monospaced)).lineLimit(1).frame(width: 38, height: 25).foregroundStyle(Crab.hex(session.color)).background(Crab.hex(session.background), in: RoundedRectangle(cornerRadius: 5)).accessibilityHidden(true) }
+    @Environment(\.boardTextSize) private var size
+    var body: some View { Text(session.glyph).font(.system(size: 13 * size / 14, design: .monospaced)).lineLimit(1).frame(width: 38, height: max(16, 25 * size / 14)).foregroundStyle(Crab.hex(session.color)).background(Crab.hex(session.background), in: RoundedRectangle(cornerRadius: 5)).accessibilityHidden(true) }
 }
 struct SessionStatus: View {
     var session: Session
+    var label: String { !session.active ? "Ended" : session.state == "thinking" ? "Working" : session.state.capitalized }
     var body: some View {
         if session.active && session.state == "thinking" {
             TimelineView(.animation(minimumInterval: 0.1)) { timeline in
@@ -32,12 +34,12 @@ struct SessionStatus: View {
                         context.fill(Path(ellipseIn: rect), with: .color(Crab.mint))
                     } }
                 }.frame(width: 14, height: 21)
-            }.accessibilityLabel("Working")
+            }.accessibilityLabel(label)
         } else {
             let state = session.active ? session.state : "ended"
             let symbol = ["permission": "!", "question": "?", "complete": "✓", "interrupted": "⊘"][state] ?? "○"
             let color = state == "question" ? Crab.deepOrange : state == "permission" ? Crab.yellow : state == "complete" ? Crab.purple : state == "interrupted" ? Crab.red : Crab.muted
-            Text(symbol).font(.system(size: 14, weight: session.attention ? .bold : .regular, design: .monospaced)).frame(width: 14, height: 21).foregroundStyle(session.attention ? Crab.ink : color).background(session.attention ? color : .clear, in: RoundedRectangle(cornerRadius: 3)).accessibilityLabel(state.capitalized)
+            Text(symbol).font(.system(size: 14, weight: session.attention ? .bold : .regular, design: .monospaced)).frame(width: 14, height: 21).foregroundStyle(session.attention ? Crab.ink : color).background(session.attention ? color : .clear, in: RoundedRectangle(cornerRadius: 3)).accessibilityLabel(label)
         }
     }
 }
@@ -52,7 +54,7 @@ struct SessionTiming: View {
                 timing(now, compact: true, duration: false)
             }.boardFont(11).monospacedDigit().lineLimit(1)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Session time \(durationText(session.duration(now))), thinking time \(durationText(session.thinkingSeconds)), last prompt \(ageText(session.promptAt, now: now)), last completion \(ageText(session.completionAt, now: now))")
+                .accessibilityLabel("\(SessionStatus(session: session).label), session time \(durationText(session.duration(now))), thinking time \(durationText(session.thinkingSeconds)), last prompt \(ageText(session.promptAt, now: now)), last completion \(ageText(session.completionAt, now: now))")
         }
     }
     func timing(_ now: Int, compact: Bool, duration: Bool) -> some View {
@@ -62,6 +64,7 @@ struct SessionTiming: View {
                 if preferences.visible("thinkingTime") { Text("◐ " + short(durationText(session.thinkingSeconds), compact)).foregroundStyle(Crab.mint).fixedSize() }
             }
             Spacer(minLength: 4)
+            SessionStatus(session: session)
             RecencyColumns(session: session, now: now, showPrompt: preferences.visible("promptRecency"), showCompletion: preferences.visible("completionRecency"))
         }
     }
@@ -121,4 +124,22 @@ extension EnvironmentValues {
         get { self[BoardSpacingKey.self] }
         set { self[BoardSpacingKey.self] = newValue }
     }
+}
+
+// Propagate the first title line's center through the row's nested stacks.
+private enum SessionTitleCenter: AlignmentID {
+    static func defaultValue(in context: ViewDimensions) -> CGFloat { context[VerticalAlignment.center] }
+}
+extension VerticalAlignment {
+    static let sessionTitleCenter = VerticalAlignment(SessionTitleCenter.self)
+}
+private struct SessionTitleAlignment: ViewModifier {
+    @Environment(\.boardTextSize) var size
+    func body(content: Content) -> some View {
+        let font = UIFont.systemFont(ofSize: size, weight: .medium)
+        content.alignmentGuide(.sessionTitleCenter) { $0[.firstTextBaseline] - font.ascender + font.lineHeight / 2 }
+    }
+}
+extension View {
+    func sessionTitleAlignment() -> some View { modifier(SessionTitleAlignment()) }
 }

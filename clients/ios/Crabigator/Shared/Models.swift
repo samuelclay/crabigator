@@ -49,7 +49,8 @@ struct PullRequest: Identifiable, Equatable {
     var number, checksFailed, checksPending, mentionedAt, updatedAt, closedAt: Int
     var additions, deletions: Int?
     var sessions: [Session]
-    var draft, primary, watched: Bool
+    var draft, primary, watched, reviewDismissed: Bool
+    var unresolvedComments: Int
     init(_ j: JSON) {
         let p = j["pr"] as? JSON ?? j
         repo = "\(j.text("owner"))/\(j.text("repo"))"; number = j.int("number"); id = "\(repo)#\(number)"
@@ -58,6 +59,7 @@ struct PullRequest: Identifiable, Equatable {
         checks = checksFailed > 0 ? "✗\(checksFailed) CI" : checksPending > 0 ? "●\(checksPending) CI" : p.int("checks_total") > 0 ? "✓ CI" : ""
         mergeable = p.text("mergeable"); mergeState = p.text("merge_state_status"); review = p.text("review_decision")
         additions = p["additions"] as? Int; deletions = p["deletions"] as? Int
+        unresolvedComments = max(0, p.int("unresolved_comments")); reviewDismissed = p.bool("review_dismissed")
         draft = p.bool("is_draft"); primary = p.bool("primary"); watched = p.bool("watched")
         mentionedAt = p.int("last_mentioned_at") / 1000; updatedAt = p.int("updated_at") / 1000; if updatedAt == 0 && watched { updatedAt = j.int("updated_at") }; closedAt = p.int("closed_at") / 1000
         var seen = Set<String>()

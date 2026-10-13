@@ -3,6 +3,33 @@ import UIKit
 
 /// Opt-in live checks. Pair this simulator first; these never send terminal input.
 final class ReadingTests: XCTestCase {
+    func testFloatingHeaderConsumesGaps() throws {
+        guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires an already paired tablet.")
+        }
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeRight
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 25))
+        for name in ["List", "PR board"] {
+            let mode = app.buttons[name]
+            if !(mode.value as? String ?? "").hasPrefix("Selected") { tapCenter(mode, in: app) }
+            if mode.value as? String != "Selected, full width" { tapCenter(mode, in: app) }
+            capture("Fullscreen \(name) before gap tap")
+            let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Session "))
+            let first = try XCTUnwrap(rows.allElementsBoundByIndex.first { $0.isHittable })
+            let row = app.buttons[first.identifier]
+            let search = app.buttons["Search"], logo = app.images["Crabigator"]
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: (logo.frame.maxX + search.frame.minX) / 2, dy: search.frame.midY)).tap()
+            XCTAssertTrue(row.exists, "A tap between header controls must not collapse the device")
+            tapCenter(app.buttons["Settings"], in: app)
+            XCTAssertTrue(app.buttons["Activity cutoff"].waitForExistence(timeout: 5))
+            capture("Settings from floating \(name) header")
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.9)).tap()
+        }
+    }
+
     func testBoardSpacingAndFloatingToolbar() throws {
         guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
             throw XCTSkip("Requires an already paired tablet.")
@@ -18,7 +45,9 @@ final class ReadingTests: XCTestCase {
         }
         func openStyle() {
             app.buttons["Settings"].tap()
-            app.popovers.buttons["Style"].tap()
+            let style = app.buttons["Style"].firstMatch
+            revealInSettings(style, in: app)
+            tapCenter(style, in: app)
         }
         func dismissStyle() { app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.9)).tap() }
         openStyle()
@@ -43,6 +72,13 @@ final class ReadingTests: XCTestCase {
             let fullscreen = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in mode.value as? String == "Selected, full width" }, object: mode)
             XCTAssertEqual(XCTWaiter.wait(for: [fullscreen], timeout: 15), .completed)
             let search = app.buttons["Search"]
+            let machine = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Machine ")).firstMatch
+            let before = machine.label
+            let logo = app.images["Crabigator"]
+            if logo.exists {
+                app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: (logo.frame.maxX + search.frame.minX) / 2, dy: search.frame.midY)).tap()
+                XCTAssertEqual(machine.label, before)
+            }
             let centered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in abs(search.frame.midX - appBounds.midX) < 100 }, object: search)
             XCTAssertEqual(XCTWaiter.wait(for: [centered], timeout: 20), .completed)
             XCTAssertLessThan(search.frame.minY, appBounds.minY + 90)
@@ -365,34 +401,34 @@ final class ReadingTests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 25))
-        app.buttons["Settings"].tap()
+        capture("Board before settings")
+        tapCenter(app.buttons["Settings"], in: app)
         let cutoff = app.buttons["Activity cutoff"]
         XCTAssertTrue(cutoff.waitForExistence(timeout: 5))
-        cutoff.tap()
-        app.buttons["Last hour"].tap()
+        tapCenter(cutoff, in: app, horizontal: 0.85)
+        capture("Activity choices")
+        let hour = app.buttons["Last hour"]
+        XCTAssertTrue(hour.waitForExistence(timeout: 5))
+        tapCenter(hour, in: app)
         capture("Board activity cutoff")
         app.terminate(); app.launch()
-        app.buttons["Settings"].tap()
+        capture("Board before settings")
+        tapCenter(app.buttons["Settings"], in: app)
         XCTAssertTrue(cutoff.waitForExistence(timeout: 5))
         XCTAssertTrue(cutoff.label.contains("Last hour") || (cutoff.value as? String) == "Last hour")
-        cutoff.tap()
+        tapCenter(cutoff, in: app, horizontal: 0.85)
         let day = app.buttons["Last 24 hours"]
         XCTAssertTrue(day.waitForExistence(timeout: 5))
-        day.tap()
+        tapCenter(day, in: app)
         // Native menus can open upward after relaunch; retry if the first tap only dismisses it.
         if !cutoff.label.contains("Last 24 hours") {
-            cutoff.tap(); day.tap()
+            tapCenter(cutoff, in: app, horizontal: 0.85); tapCenter(day, in: app)
         }
         XCTAssertTrue(cutoff.label.contains("Last 24 hours"))
-        func reveal(_ button: XCUIElement) {
-            for _ in 0..<4 {
-                if button.exists && button.isHittable { return }
-                app.coordinate(withNormalizedOffset: CGVector(dx: 0.59, dy: 0.70)).press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.59, dy: 0.36)))
-            }
-        }
+        func reveal(_ button: XCUIElement) { revealInSettings(button, in: app) }
         let watch = app.buttons["Watch PR"]
         reveal(watch)
-        watch.tap()
+        tapCenter(watch, in: app)
         let target = app.textFields["Watch PR target"]
         XCTAssertTrue(target.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Watch PR"].isEnabled)
@@ -401,14 +437,33 @@ final class ReadingTests: XCTestCase {
         capture("Watch PR form")
         app.terminate(); app.launch()
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
-        app.buttons["Settings"].tap()
+        capture("Board before settings")
+        tapCenter(app.buttons["Settings"], in: app)
         let newSession = app.buttons["New session"]
         reveal(newSession)
-        newSession.tap()
+        tapCenter(newSession, in: app)
         XCTAssertTrue(app.textFields["Folder"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Start session"].exists)
         capture("New session desktop and folder")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.9)).tap()
+    }
+    private func revealInSettings(_ button: XCUIElement, in app: XCUIApplication) {
+        let form = app.descendants(matching: .any).matching(identifier: "Settings form").firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 5))
+        for _ in 0..<6 {
+            let frame = form.frame
+            let top = frame.minY + 90, bottom = frame.maxY - 40
+            if button.exists && button.frame.midY > top && button.frame.midY < bottom { return }
+            let down = button.exists && button.frame.midY <= top
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let from = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (down ? 0.4 : 0.7)))
+            let to = origin.withOffset(CGVector(dx: frame.midX, dy: frame.minY + frame.height * (down ? 0.7 : 0.4)))
+            from.press(forDuration: 0.05, thenDragTo: to)
+        }
+    }
+    private func tapCenter(_ element: XCUIElement, in app: XCUIApplication, horizontal: CGFloat = 0.5) {
+        let frame = element.frame
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.minX + frame.width * horizontal - app.frame.minX, dy: frame.midY - app.frame.minY)).tap()
     }
     private func capture(_ name: String) {
         // The app's longest transition is 360 ms. Capture its settled geometry.

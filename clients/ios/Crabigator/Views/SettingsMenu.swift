@@ -121,7 +121,7 @@ struct SettingsMenu: View {
                     Button("Unpair this device", role: .destructive) { confirm = true }
                 }
                 if !error.isEmpty { Text(error).foregroundStyle(Crab.red) }
-            }.navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
+            }.accessibilityIdentifier("Settings form").navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
                 .confirmationDialog("Unpair this device?", isPresented: $confirm, titleVisibility: .visible) { Button("Unpair", role: .destructive) { Task { await model.unpair() } } }
         }.tint(Crab.cyan).task {
             do { identities = try await model.api.call("/api/account").array("identities") } catch { self.error = error.localizedDescription }; accountLoaded = true

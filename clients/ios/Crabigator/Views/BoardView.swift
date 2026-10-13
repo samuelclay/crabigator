@@ -37,6 +37,7 @@ struct BoardView: View {
         }.background(Crab.ink)
             .overlay(alignment: .top) {
                 header.frame(maxWidth: floatingToolbar ? 228 : .infinity)
+                    .contentShape(Rectangle()).simultaneousGesture(TapGesture().onEnded {})
                     .background { if floatingToolbar { Capsule().fill(.ultraThinMaterial).overlay(Capsule().strokeBorder(Color.white.opacity(0.12))).shadow(color: .black.opacity(0.25), radius: 8, y: 3) } }
                     .animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
             }
@@ -184,15 +185,14 @@ struct SessionRow: View {
     var list: Bool, wide: Bool
     @Environment(\.boardSpacing) private var spacing
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .sessionTitleCenter, spacing: 10) {
             IdentityChip(session: session)
-            if list || !wide { SessionStatus(session: session) }
             VStack(alignment: .leading, spacing: spacing.gap(6)) {
-                HStack(alignment: .top, spacing: 12) {
-                    Text(session.title).boardFont(14, weight: .medium).foregroundStyle(session.active ? Crab.title : Crab.muted).lineLimit(wide || spacing.tight ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
+                HStack(alignment: .sessionTitleCenter, spacing: 12) {
+                    Text(session.title).sessionTitleAlignment().boardFont(14, weight: .medium).foregroundStyle(session.active ? Crab.title : Crab.muted).lineLimit(wide || spacing.tight ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
                     if wide {
                         Text(session.branch).boardFont(12).foregroundStyle(Crab.muted).lineLimit(1).frame(width: 180, alignment: .leading)
-                        HStack(alignment: .top) { SessionStatus(session: session); Spacer(); recency }.frame(width: 300, alignment: .leading)
+                        HStack(alignment: .sessionTitleCenter, spacing: 8) { SessionStatus(session: session); recency; Spacer(minLength: 0) }.frame(width: 360, alignment: .leading)
                     }
                 }
                 if preferences.boardRecaps && !session.recap.isEmpty {
@@ -204,7 +204,7 @@ struct SessionRow: View {
                         HStack { if preferences.visible("tools") { Text("⚒ \(session.tools.map(String.init) ?? "—")") }; if preferences.visible("compactions") { Text("⊜ \(session.compactions.map(String.init) ?? "—")") } }.boardFont(11).foregroundStyle(Crab.orange)
                     }
                 } else {
-                    if !wide { HStack(alignment: .top) { Text(session.branch).boardFont(11).foregroundStyle(Crab.muted).lineLimit(1); Spacer(); recency } }
+                    if !wide { HStack(alignment: .sessionTitleCenter) { Text(session.branch).boardFont(11).foregroundStyle(Crab.muted).lineLimit(1); Spacer(); HStack(spacing: 8) { SessionStatus(session: session); recency } } }
                     ForEach(prs) { pr in PRRow(pr: pr, wide: wide) }
                 }
             }
@@ -225,16 +225,43 @@ struct PRRow: View {
                 Text(verbatim: "#\(pr.number)  \(pr.title)").boardFont(13).foregroundStyle(pr.primary || pr.watched ? Crab.purple : Crab.muted).lineLimit(wide || spacing.tight ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
                 if wide {
                     Text(pr.branch).boardFont(12).foregroundStyle(Crab.muted).lineLimit(1).frame(width: 180, alignment: .leading)
-                    status.frame(width: 300)
+                    status.frame(width: 360)
                 }
             }
             if !wide { status }
         }.fixedSize(horizontal: false, vertical: true)
     }
     var status: some View {
+        Group {
+            if wide { statusLine }
+            else {
+                ViewThatFits(in: .horizontal) {
+                    statusLine.frame(minWidth: 320)
+                    VStack(alignment: .leading, spacing: spacing.gap(4)) {
+                        statusSummary
+                        statusColumns.frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                }
+            }
+        }.boardFont(11).lineLimit(1).minimumScaleFactor(0.65)
+    }
+    var statusLine: some View {
+        HStack(spacing: 6) { statusSummary; statusColumns }
+    }
+    var statusSummary: some View {
+        HStack(spacing: 6) { badge; changes; Spacer(minLength: 0) }
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    var statusColumns: some View {
         HStack(spacing: 6) {
-            HStack(spacing: 6) { badge; changes; Spacer(minLength: 0) }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 2) {
+                Image(systemName: "bubble.left")
+                Text(pr.unresolvedComments > 0 ? "\(pr.unresolvedComments)" : "—")
+            }.foregroundStyle(pr.unresolvedComments > 0 ? Crab.orange : Crab.muted)
+                .frame(width: 36, alignment: .leading).accessibilityElement(children: .ignore)
+                .accessibilityLabel("Unresolved comments: \(pr.unresolvedComments)")
+            Text(approval.symbol).foregroundStyle(approval.color).frame(width: 20)
+                .accessibilityLabel("Approval: " + approval.label)
             Text(pr.checks.isEmpty ? "—" : pr.checks)
                 .foregroundStyle(pr.checks.isEmpty ? Crab.muted : pr.checksFailed > 0 ? Crab.red : pr.checksPending > 0 ? Crab.yellow : Crab.mint)
                 .frame(width: 48, alignment: .leading)
@@ -242,7 +269,14 @@ struct PRRow: View {
             Text(mergeStatus).foregroundStyle(mergeStatus == "Conflicts" ? Crab.red : mergeStatus == "Behind" ? Crab.yellow : mergeStatus == "Clean" ? Crab.mint : Crab.muted)
                 .frame(width: 54, alignment: .leading)
                 .accessibilityLabel("Branch status: " + mergeStatus)
-        }.boardFont(11).lineLimit(1).minimumScaleFactor(0.65)
+        }
+    }
+    var approval: (symbol: String, label: String, color: Color) {
+        guard pr.state == "OPEN" else { return ("—", "Not applicable", Crab.muted) }
+        if pr.review == "APPROVED" { return ("✓", "Approved", Crab.mint) }
+        if pr.review == "CHANGES_REQUESTED" { return ("✗", "Changes requested", Crab.red) }
+        if pr.reviewDismissed { return ("⊘", "Review dismissed", Crab.orange) }
+        return ("◌", "Awaiting review", Crab.muted)
     }
     var mergeStatus: String {
         guard pr.state == "OPEN" else { return "—" }
