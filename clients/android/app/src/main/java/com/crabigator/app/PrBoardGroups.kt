@@ -20,10 +20,19 @@ internal enum class BoardAge(val label: String, val palette: Int) {
 internal data class BoardSession(val session: Session, val prs: List<PullRequest>, val activity: Long) {
     val repo get() = prs.firstOrNull()?.repo ?: session.repo.ifBlank { "Sessions" }
 }
-internal data class BoardRepository(val repo: String, val sessions: List<BoardSession>)
+internal data class BoardPRGroup(val pr: PullRequest, val sessions: List<BoardSession>) {
+    val activity: Long get() {
+        val prompted = sessions.maxOfOrNull {
+            if (it.session.active && it.session.state in listOf("thinking", "question", "permission")) it.activity
+            else it.session.stats.promptAt
+        } ?: 0
+        return prompted.takeIf { it > 0 } ?: maxOf(pr.updatedAt, pr.closedAt, pr.lastMentionedAt)
+    }
+}
+internal data class BoardRepository(val repo: String, val sessions: List<BoardSession>, val pullRequests: List<BoardPRGroup> = emptyList())
 internal data class BoardBand(val age: BoardAge, val repositories: List<BoardRepository>)
 internal data class BoardMachine(val machine: String, val bands: List<BoardBand>) {
-    val sessions get() = bands.flatMap { it.repositories }.flatMap { it.sessions }
+    val sessions get() = bands.flatMap { it.repositories }.flatMap { it.pullRequests.flatMap { pr -> pr.sessions } + it.sessions }.distinctBy { it.session.id }
 }
 
 private val PullRequest.attentionRank get() = when {
@@ -61,4 +70,31 @@ internal fun prBoardGroups(roster: List<Session>, prs: List<PullRequest>, machin
         }
         BoardMachine(machine, bands)
     }
+}
+
+
+/** Each primary PR appears once per computer, with every visible touching session beneath it. */
+internal fun groupBoardByPullRequest(machines: List<BoardMachine>, now: Long,
+    includesActivity: (Long) -> Boolean = { true }): List<BoardMachine> = machines.mapNotNull { machine ->
+    val groups = linkedMapOf<String, BoardPRGroup>()
+    val represented = mutableSetOf<String>()
+    machine.sessions.forEach { entry ->
+        entry.prs.filter { it.primary || it.watched }.forEach { pr ->
+            represented.add(entry.session.id)
+            val previous = groups[pr.key]
+            groups[pr.key] = BoardPRGroup(pr, previous?.sessions.orEmpty() + entry)
+        }
+    }
+    val bands = BoardAge.entries.mapNotNull { age ->
+        val loose = machine.bands.firstOrNull { it.age == age }?.repositories.orEmpty()
+            .map { it.copy(sessions = it.sessions.filter { entry -> entry.session.id !in represented && includesActivity(entry.activity) }) }
+        val requests = groups.values.filter { includesActivity(it.activity) && BoardAge.fromSeconds((now - it.activity).coerceAtLeast(0)) == age }.groupBy { it.pr.repo }
+        val repos = (loose.map { it.repo } + requests.keys).distinct().mapNotNull { repo ->
+            val sessions = loose.firstOrNull { it.repo == repo }?.sessions.orEmpty()
+            val prs = requests[repo].orEmpty()
+            if (sessions.isEmpty() && prs.isEmpty()) null else BoardRepository(repo, sessions, prs)
+        }
+        if (repos.isEmpty()) null else BoardBand(age, repos)
+    }
+    if (bands.isEmpty()) null else machine.copy(bands = bands)
 }

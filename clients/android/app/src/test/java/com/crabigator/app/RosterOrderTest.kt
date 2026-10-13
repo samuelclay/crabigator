@@ -36,7 +36,7 @@ class RosterOrderTest {
         assertEquals(listOf("a", "b"), update(cache, listOf(renewed, asking), 1200).ids())
     }
 
-    @Test fun ageBandsReposAndPrPriorityStayPutWhileTheirContentsUpdate() {
+    @Test fun timeBandsStayCurrentWhileRepoAndPrOrderRemainStable() {
         val cache = RosterOrder()
         val a = session("a", 3590, "z")
         val b = session("b", 7200, "a")
@@ -46,7 +46,9 @@ class RosterOrderTest {
         val working = b.copy(state = "thinking", stats = b.stats.copy(promptAt = now + 50))
         val failing = second.copy(checks = "1 failed", checksFailed = 1)
         val held = update(cache, listOf(a, working), 599, listOf(failing, first), "project")
-        assertEquals(initial.board.map { it.bands.map { band -> band.age } }, held.board.map { it.bands.map { band -> band.age } })
+        assertEquals(listOf(BoardAge.Hour, BoardAge.Three), held.board.single().bands.map { it.age })
+        assertEquals("b", held.board.single().bands.first().repositories.single().sessions.single().session.id)
+        assertEquals("a", held.board.single().bands.last().repositories.single().sessions.single().session.id)
         assertEquals(initial.list.map { it.project }, held.list.map { it.project })
         val heldA = held.board.single().sessions.first { it.session.id == "a" }
         assertEquals(listOf(first.key, second.key), heldA.prs.map { it.key })
@@ -57,6 +59,95 @@ class RosterOrderTest {
         assertEquals("other", refreshed.board.single().bands.last().repositories.single().repo)
         assertEquals(listOf(second.key, first.key), refreshed.board.single().sessions.last().prs.map { it.key })
         assertEquals(listOf("a", "z"), refreshed.list.map { it.project })
+    }
+
+    @Test fun newPromptMovesIntoLastHourWithoutReorderingOtherRows() {
+        val cache = RosterOrder()
+        val recent = session("recent", 10)
+        val other = session("other-recent", 20)
+        val portal = session("portal", 7200)
+        val old = session("old", 8000)
+        val initial = update(cache, listOf(recent, other, portal, old), 0)
+        assertEquals(listOf("portal", "old"), initial.board.single().bands.last().repositories.single().sessions.map { it.session.id })
+
+        // A quick response may already be complete at the next roster update.
+        val prompted = portal.copy(stats = portal.stats.copy(promptAt = now + 1))
+        val completed = old.copy(stats = old.stats.copy(completionAt = now + 1))
+        val live = update(cache, listOf(prompted, completed, other, recent), 1)
+        assertEquals(listOf(BoardAge.Hour, BoardAge.Three), live.board.single().bands.map { it.age })
+        assertEquals(listOf("recent", "other-recent", "portal"), live.board.single().bands.first().repositories.single().sessions.map { it.session.id })
+        assertEquals(listOf("old"), live.board.single().bands.last().repositories.single().sessions.map { it.session.id })
+        assertEquals(listOf("recent", "other-recent", "portal", "old"), live.ids())
+        assertEquals("portal", update(cache, listOf(prompted, completed, other, recent), 600).boardIds().first())
+    }
+
+    @Test fun workingSessionMovesUpBeforeItsPromptTimestampArrives() {
+        val cache = RosterOrder()
+        val portal = session("portal", 7200)
+        update(cache, listOf(portal), 0)
+        val working = portal.copy(state = "thinking")
+        assertEquals(listOf(BoardAge.Hour), update(cache, listOf(working), 1).board.single().bands.map { it.age })
+        val settled = portal.copy(stats = portal.stats.copy(promptAt = now + 1))
+        val aged = cache.update(listOf(settled), emptyList(), listOf("Studio"), now + 3601, 2, "all", "recent")
+        assertEquals(listOf(BoardAge.Three), aged.board.single().bands.map { it.age })
+    }
+
+    @Test fun filtersHideOldSessionsInBothViewsWithoutChangingSavedOrder() {
+        val cache = RosterOrder()
+        val fresh = session("fresh", 10)
+        val old = session("old", 7200)
+        val working = session("working", 100_000).copy(state = "thinking")
+        val book = session("book", 20, machine = "Book")
+        val source = update(cache, listOf(fresh, old, working, book), 0)
+        val prefs = UiPreferences(boardAgeHours = 1, boardComputer = "Studio")
+        val filtered = source.filtered(false, "", prefs, now)
+        assertEquals(setOf("fresh", "working"), filtered.ids().toSet())
+        assertEquals(filtered.ids().toSet(), filtered.boardIds().toSet())
+        assertEquals(source.ids(), source.filtered(true, "", prefs.copy(boardAgeHours = 0, boardComputer = ""), now).ids())
+        for (hours in listOf(1, 3, 6, 9, 12, 24)) {
+            assertTrue(prefs.copy(boardAgeHours = hours).includesActivity(now - hours * 3600 + 1, now))
+            assertFalse(prefs.copy(boardAgeHours = hours).includesActivity(now - hours * 3600 - 1, now))
+        }
+    }
+
+    @Test fun prGroupingCombinesTouchingSessionsAcrossTimeBands() {
+        val a = session("a", 10)
+        val b = session("b", 7200)
+        val pr = PullRequest("owner/repo#1", "Shared PR", "owner/repo", 1, "OPEN", "", "", listOf(a, b), primary = true)
+        val prefs = UiPreferences(boardAgeHours = 1, boardGrouping = "prs")
+        val layout = update(RosterOrder(), listOf(a, b), 0, listOf(pr))
+        val visible = layout.filtered(true, "", prefs, now)
+        assertEquals(listOf("a"), visible.ids())
+        assertEquals(listOf("a"), layout.filtered(true, "", prefs.copy(boardGrouping = "sessions"), now).boardIds())
+        val grouped = groupBoardByPullRequest(visible.board, now) { prefs.includesActivity(it, now) }.single()
+        assertEquals(listOf(BoardAge.Hour), grouped.bands.map { it.age })
+        val block = grouped.bands.single().repositories.single().pullRequests.single()
+        assertEquals(listOf("a", "b"), block.sessions.map { it.session.id })
+        assertTrue(grouped.bands.single().repositories.single().sessions.isEmpty())
+    }
+
+    @Test fun prGroupsUseTheirOwnEventsOnlyWhenNoSessionHasPrompted() {
+        val never = session("never", now)
+        val primary = PullRequest("owner/repo#1", "Old primary", "owner/repo", 1, "OPEN", "", "", listOf(never), primary = true, updatedAt = now - 7200)
+        val secondary = primary.copy(key = "owner/repo#2", number = 2, primary = false, updatedAt = now)
+        val prefs = UiPreferences(boardAgeHours = 1, boardGrouping = "prs")
+        val source = prBoardGroups(listOf(never), listOf(primary, secondary), listOf("Studio"), now, true, "")
+        assertTrue(groupBoardByPullRequest(source, now) { prefs.includesActivity(it, now) }.isEmpty())
+        val fresh = primary.copy(updatedAt = now)
+        val noPrompt = prBoardGroups(listOf(never), listOf(fresh), listOf("Studio"), now, true, "")
+        assertEquals(BoardAge.Hour, groupBoardByPullRequest(noPrompt, now).single().bands.single().age)
+        val prompted = session("never", 7200)
+        val oldPrompt = prBoardGroups(listOf(prompted), listOf(fresh), listOf("Studio"), now, true, "")
+        assertTrue(groupBoardByPullRequest(oldPrompt, now) { prefs.includesActivity(it, now) }.isEmpty())
+    }
+
+    @Test fun watchTargetParsingRejectsInvalidTargetsAndUsesNewWatchTime() {
+        assertEquals(12, BoardActions.watchTarget("owner/repo#12")?.optInt("number"))
+        assertEquals("repo", BoardActions.watchTarget("https://github.com/owner/repo/pull/12/files")?.text("repo"))
+        assertNull(BoardActions.watchTarget("https://other.test/owner/repo/pull/12"))
+        assertNull(BoardActions.watchTarget("owner/repo#0"))
+        val watched = PullRequest.parse(JSONObject("""{"owner":"owner","repo":"repo","number":12,"updated_at":100,"pr":{"watched":true}}"""))
+        assertEquals(100L, watched.updatedAt)
     }
 
     @Test fun newSessionsRefreshRemovedRowsDisappearAndFiltersDoNotResetPositions() {

@@ -11,9 +11,6 @@ import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,21 +35,8 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
                 if (prefs.visible("sessionTime")) Stat("◉", if (compact) compactDuration(duration) else sessionDuration(duration), "Session time: ${sessionDuration(duration)}", CrabColors.Blue)
                 if (prefs.visible("thinkingTime")) Stat("◐", if (compact) compactDuration(stats.thinkingSeconds) else sessionDuration(stats.thinkingSeconds), "Thinking time: ${sessionDuration(stats.thinkingSeconds)}", Mint)
             }
-        }, compactEnd = {
-            val ages = buildAnnotatedString {
-                if (prefs.visible("promptRecency")) withStyle(SpanStyle(color = CrabColors.Orange)) { append(prompt.removeSuffix(" ago")) }
-                if (prefs.visible("completionRecency")) {
-                    if (length > 0) append(" · ")
-                    withStyle(SpanStyle(color = CrabColors.DarkOrange)) { append(completion) }
-                }
-            }
-            Text(ages, color = Muted, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.sp,
-                maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-        }, end = { compact ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (prefs.visible("promptRecency")) Stat("⟩", if (compact) prompt.removeSuffix(" ago") else prompt, "Last prompt: $prompt", CrabColors.Orange)
-                if (prefs.visible("completionRecency")) Stat("⋖", completion, "Last completion: $completion", CrabColors.DarkOrange)
-            }
+        }, end = {
+            BoardRecency(session, clock, prefs.visible("promptRecency"), prefs.visible("completionRecency"))
         })
         if (prefs.visible("tools") || prefs.visible("compactions")) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (prefs.visible("tools")) Stat("⚒", stats.tools?.toString() ?: "—", "Tools: ${stats.tools ?: "—"}", Peach)
@@ -62,15 +46,13 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
 }
 
 /** Shorten durations before giving up space reserved for the two right-aligned recency values. */
-@Composable private fun OneLineTimeline(summary: String, modifier: Modifier = Modifier, start: @Composable (Boolean) -> Unit, compactEnd: @Composable () -> Unit, end: @Composable (Boolean) -> Unit) {
+@Composable private fun OneLineTimeline(summary: String, modifier: Modifier = Modifier, start: @Composable (Boolean) -> Unit, end: @Composable () -> Unit) {
     SubcomposeLayout(modifier.fillMaxWidth()) { constraints ->
         val loose = Constraints(maxHeight = constraints.maxHeight)
         // Probes choose a format only. Hide their semantics so only the visible values are announced.
-        var rightProbe = subcompose("measure-recency") { Box(Modifier.clearAndSetSemantics {}) { end(false) } }.single().measure(loose)
+        val rightProbe = subcompose("measure-recency") { Box(Modifier.clearAndSetSemantics {}) { end() } }.single().measure(loose)
         var leftProbe = subcompose("measure-duration") { Box(Modifier.clearAndSetSemantics {}) { start(false) } }.single().measure(loose)
         val gap = if (leftProbe.width > 0 && rightProbe.width > 0) 8.dp.roundToPx() else 0
-        val compactRecency = leftProbe.width + gap + rightProbe.width > constraints.maxWidth
-        if (compactRecency) rightProbe = subcompose("measure-compact-recency") { Box(Modifier.clearAndSetSemantics {}) { end(true) } }.single().measure(loose)
         val compact = leftProbe.width + gap + rightProbe.width > constraints.maxWidth
         if (compact) leftProbe = subcompose("measure-compact") { Box(Modifier.clearAndSetSemantics {}) { start(true) } }.single().measure(loose)
         val showLeft = leftProbe.width + gap + rightProbe.width <= constraints.maxWidth
@@ -83,7 +65,7 @@ internal fun compactDuration(seconds: Long?): String = sessionDuration(seconds).
         val visible = subcompose("visible") {
             if (showLeft) Box { start(compact) }
             Box(if (showLeft) Modifier else Modifier.clearAndSetSemantics { contentDescription = summary }) {
-                if (rightProbe.width > constraints.maxWidth) compactEnd() else end(compactRecency)
+                end()
             }
         }.map { it.measure(loose.copy(maxWidth = constraints.maxWidth)) }
         val right = visible.last()

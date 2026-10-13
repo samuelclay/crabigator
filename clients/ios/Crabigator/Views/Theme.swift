@@ -62,11 +62,26 @@ struct SessionTiming: View {
                 if preferences.visible("thinkingTime") { Text("◐ " + short(durationText(session.thinkingSeconds), compact)).foregroundStyle(Crab.mint).fixedSize() }
             }
             Spacer(minLength: 4)
-            if preferences.visible("promptRecency") { Text("⟩ " + (compact ? ageText(session.promptAt, now: now).replacingOccurrences(of: " ago", with: "") : ageText(session.promptAt, now: now))).foregroundStyle(Crab.orange).fixedSize() }
-            if preferences.visible("completionRecency") { Text("⋖ " + ageText(session.completionAt, now: now)).foregroundStyle(Crab.deepOrange).fixedSize() }
+            RecencyColumns(session: session, now: now, showPrompt: preferences.visible("promptRecency"), showCompletion: preferences.visible("completionRecency"))
         }
     }
     func short(_ text: String, _ compact: Bool) -> String { compact ? String(text.split(separator: " ").first ?? "—") : text }
+}
+
+struct RecencyColumns: View {
+    var session: Session, now: Int
+    var showPrompt = true, showCompletion = true
+    var body: some View {
+        HStack(spacing: 8) {
+            if showPrompt { column("⟩", timestamp: session.promptAt, label: "Last prompt", color: Crab.orange) }
+            if showCompletion { column("⋖", timestamp: session.completionAt, label: "Last completion", color: Crab.deepOrange) }
+        }.boardFont(11).monospacedDigit().lineLimit(1)
+    }
+    func column(_ symbol: String, timestamp: Int, label: String, color: Color) -> some View {
+        Text(symbol + " " + ageText(timestamp, now: now)).foregroundStyle(color)
+            .minimumScaleFactor(0.65).frame(width: 66, alignment: .leading)
+            .accessibilityLabel(label + ": " + ageText(timestamp, now: now))
+    }
 }
 
 private struct BoardTextSizeKey: EnvironmentKey {
@@ -89,5 +104,21 @@ private struct BoardFont: ViewModifier {
 extension View {
     func boardFont(_ size: CGFloat, weight: Font.Weight = .regular) -> some View {
         modifier(BoardFont(base: size, weight: weight))
+    }
+}
+
+// The saved density also controls PR rows; terminal spacing stays independent.
+struct BoardSpacing {
+    var density: String = "comfortable"
+    var tight: Bool { density == "compact" }
+    func gap(_ normal: CGFloat) -> CGFloat { normal * (tight ? 0.45 : density == "relaxed" ? 1.5 : 1) }
+}
+private struct BoardSpacingKey: EnvironmentKey {
+    static let defaultValue = BoardSpacing()
+}
+extension EnvironmentValues {
+    var boardSpacing: BoardSpacing {
+        get { self[BoardSpacingKey.self] }
+        set { self[BoardSpacingKey.self] = newValue }
     }
 }

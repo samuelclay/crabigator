@@ -25,12 +25,12 @@ class SessionTimelineTest {
         val fontScale = mutableStateOf(1f)
         val prefs = mutableStateOf(UiPreferences())
         val now = mutableStateOf(1_000_000L)
-        val session = Session.parse(JSONObject()).copy(stats = SessionStats(startedAt = 400_000, thinkingSeconds = 18_800,
-            promptAt = now.value - 59 * 60, completionAt = now.value - 42 * 60))
+        val session = mutableStateOf(Session.parse(JSONObject()).copy(stats = SessionStats(startedAt = 400_000, thinkingSeconds = 18_800,
+            promptAt = now.value - 59 * 60, completionAt = now.value - 42 * 60)))
         compose.setContent {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale.value)) {
                 MaterialTheme {
-                    Box(Modifier.width(width.value).testTag("timeline")) { SessionStatsFooter(session, now, prefs.value) }
+                    Box(Modifier.width(width.value).testTag("timeline")) { SessionStatsFooter(session.value, now, prefs.value) }
                 }
             }
         }
@@ -48,12 +48,16 @@ class SessionTimelineTest {
         }
         compose.waitForIdle()
         checkAlignment()
-        assertTrue(compose.onAllNodesWithText("59m ago", useUnmergedTree = true).fetchSemanticsNodes().any { it.boundsInRoot.width > 0 && it.boundsInRoot.height > 0 })
-        assertTrue(compose.onAllNodesWithText("42m ago", useUnmergedTree = true).fetchSemanticsNodes().any { it.boundsInRoot.width > 0 && it.boundsInRoot.height > 0 })
-        compose.runOnIdle { width.value = 200.dp }
+        val promptLeft = bounds("Last prompt: 59m ago").left
+        val completionLeft = bounds("Last completion: 42m ago").left
+        compose.runOnIdle { session.value = session.value.copy(stats = session.value.stats.copy(promptAt = now.value, completionAt = now.value - 3 * 86400)) }
+        assertEquals(promptLeft, bounds("Last prompt: now").left, 1f)
+        assertEquals(completionLeft, bounds("Last completion: 3d ago").left, 1f)
+        compose.runOnIdle {
+            session.value = session.value.copy(stats = session.value.stats.copy(promptAt = now.value - 59 * 60, completionAt = now.value - 42 * 60))
+            width.value = 200.dp
+        }
         compose.waitForIdle()
-        checkAlignment()
-        assertTrue(compose.onAllNodesWithText("42m ago", useUnmergedTree = true).fetchSemanticsNodes().any { it.boundsInRoot.width > 0 && it.boundsInRoot.height > 0 })
         compose.runOnIdle { fontScale.value = 1.8f }
         compose.waitForIdle()
         val container = compose.onNodeWithTag("timeline").fetchSemanticsNode().boundsInRoot

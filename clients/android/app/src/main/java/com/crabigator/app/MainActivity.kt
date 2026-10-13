@@ -11,6 +11,7 @@ import androidx.activity.SystemBarStyle
 import androidx.compose.ui.res.painterResource
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -92,7 +93,7 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent) { intent.getStringExtra("session_id")?.let(model::open) }
 }
 
-@Composable private fun App(model: SessionModel, notifications: () -> Unit) {
+@Composable internal fun App(model: SessionModel, notifications: () -> Unit) {
     val s by model.state.collectAsStateWithLifecycle()
     val navigation by model.navigation.collectAsStateWithLifecycle()
     val listMode = navigation.listMode
@@ -100,6 +101,7 @@ class MainActivity : ComponentActivity() {
     var handledNavigation by rememberSaveable { mutableLongStateOf(0L) }
     var menu by remember { mutableStateOf<String?>(null) }
     var menuAnchor by remember { mutableStateOf(Rect.Zero) }
+    var boardSearchRequest by remember { mutableIntStateOf(0) }
     var closingSession by remember(s.selected?.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(s.navigationId) {
         if (handledNavigation != s.navigationId) {
@@ -128,7 +130,7 @@ class MainActivity : ComponentActivity() {
                     listMode, { next ->
                         if (listMode == next) { if (wide) model.navigate { it.copy(expanded = !it.expanded) } }
                         else { model.navigate { it.copy(listMode = next) } }
-                    }, if (wide) fullBoard else null, { model.navigate { it.copy(expanded = false) } }) { menuAnchor = it; menu = "Settings" }
+                    }, if (wide) fullBoard else null, { model.navigate { it.copy(expanded = false) } }, boardSearchRequest) { menuAnchor = it; menu = "Settings" }
             }
             val entrance = remember(s.selected != null) { Animatable(1f) }
             var swipe by remember(s.selected?.id) { mutableStateOf<Float?>(null) }
@@ -197,7 +199,13 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    MenuPanel(menu, menuAnchor, model, notifications, { menu = it }, { menu = null })
+    MenuPanel(menu, menuAnchor, model, notifications, { destination ->
+        when (destination) {
+            "Search" -> { menu = null; boardSearchRequest++ }
+            "Toggle fullscreen" -> { menu = null; model.navigate { it.copy(expanded = !it.expanded) } }
+            else -> menu = destination
+        }
+    }, { menu = null })
     }
 
 }
@@ -219,8 +227,9 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun Board(roster: List<Session>, pullRequests: List<PullRequest>, selectedId: String?, rosterStatus: RosterStatus, model: SessionModel,
-    list: Boolean, mode: (Boolean) -> Unit, expanded: Boolean?, selected: () -> Unit, settings: (Rect) -> Unit) {
+    list: Boolean, mode: (Boolean) -> Unit, expanded: Boolean?, selected: () -> Unit, searchRequest: Int, settings: (Rect) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }; var searching by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(searchRequest) { if (searchRequest > 0) searching = true }
     val now = remember { flow { while (true) { emit(System.currentTimeMillis() / 1000); delay(1000) } } }
         .collectAsStateWithLifecycle(initialValue = System.currentTimeMillis() / 1000)
     var settingsAnchor by remember { mutableStateOf(Rect.Zero) }
@@ -237,67 +246,83 @@ class MainActivity : ComponentActivity() {
     val layout = remember(roster, pullRequests, machines, minute, prefs.grouping, prefs.order) {
         ordering.update(roster, pullRequests, machines, now.value, android.os.SystemClock.elapsedRealtime() / 1000, prefs.grouping, prefs.order)
     }
-    val visible = remember(layout, all, query) { layout.filtered(all, query) }
+    val visible = remember(layout, all, query, prefs.boardAgeHours, prefs.boardComputer, prefs.boardGrouping, minute) { layout.filtered(all, query, prefs, now.value) }
     fun select(session: Session, order: List<Session>) {
         val direction = if (order.indexOfFirst { it.id == session.id } < order.indexOfFirst { it.id == selectedId }) -1 else 1
         model.select(session, direction)
         selected()
     }
     val density = LocalDensity.current
-    Box(Modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Image(painterResource(R.drawable.ic_crabigator), "Crabigator", Modifier.padding(8.dp).size(28.dp))
-            Spacer(Modifier.weight(1f))
-            Control(R.drawable.ic_search, "Search", selected = searching) { searching = !searching; if (!searching) query = "" }
-            Control(R.drawable.ic_settings, "Settings", modifier = Modifier.onGloballyPositioned { settingsAnchor = it.boundsInRoot() }) { settings(settingsAnchor) }
-        }
-        if (searching) OutlinedTextField(query, { query = it }, placeholder = { Text("Search") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
-        CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * prefs.boardFontSize / 14f)) {
-        if (roster.isEmpty() && pullRequests.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            RosterPlaceholder(rosterStatus, model::retryRoster) { EmptyPairing(model) }
-        }
-        else if (list) BoxWithConstraints(Modifier.weight(1f)) {
-            val count = if (prefs.columns == 0) (maxWidth.value / 320).toInt().coerceAtLeast(1) else prefs.columns.coerceAtMost((maxWidth.value / 280).toInt().coerceAtLeast(1))
-            val groups = visible.list
-            val order = remember(groups) { groups.flatMap { it.sessions } }
-            val counts = remember(groups) { groups.groupBy { it.machine }.mapValues { (_, sections) -> sections.sumOf { it.sessions.size } } }
-            LazyVerticalGrid(columns = GridCells.Fixed(count), state = gridState, contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 88.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                groups.forEachIndexed { index, group ->
-                    if (index == 0 || groups[index - 1].machine != group.machine) stickyHeader(key = "machine-${group.machine}", contentType = "machine") { headerIndex ->
-                        MachineHeader(group.machine, counts.getValue(group.machine), group.machine in collapsedMachines, Modifier.animateItem(placementSpec = tween(320))) {
-                            if (group.machine !in collapsedMachines && gridState.firstVisibleItemIndex > headerIndex) gridState.requestScrollToItem(headerIndex)
-                            collapsedMachines = if (group.machine in collapsedMachines) collapsedMachines - group.machine else collapsedMachines + group.machine
+    val spacing = animatedBoardSpacing(prefs.density)
+    val floating = expanded == true
+    val headerSpace by animateDpAsState(if (floating && !searching) 0.dp else 60.dp, tween(360), label = "Board header space")
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val toolbarWidth by animateDpAsState(if (floating) 228.dp else maxWidth, tween(360), label = "Board toolbar width")
+        Column(Modifier.fillMaxSize()) {
+            Spacer(Modifier.height(headerSpace))
+            if (searching) OutlinedTextField(query, { query = it }, placeholder = { Text("Search") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
+            CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * prefs.boardFontSize / 14f), LocalBoardSpacing provides spacing, LocalFloatingBoardToolbar provides floating) {
+                if (roster.isEmpty() && pullRequests.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    RosterPlaceholder(rosterStatus, model::retryRoster) { EmptyPairing(model) }
+                }
+                else if (list) BoxWithConstraints(Modifier.weight(1f)) {
+                    val count = if (prefs.columns == 0) (maxWidth.value / 320).toInt().coerceAtLeast(1) else prefs.columns.coerceAtMost((maxWidth.value / 280).toInt().coerceAtLeast(1))
+                    val groups = visible.list
+                    val order = remember(groups) { groups.flatMap { it.sessions } }
+                    val counts = remember(groups) { groups.groupBy { it.machine }.mapValues { (_, sections) -> sections.sumOf { it.sessions.size } } }
+                    LazyVerticalGrid(columns = GridCells.Fixed(count), state = gridState, contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 88.dp), verticalArrangement = Arrangement.spacedBy(spacing.gap(8)), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        groups.forEachIndexed { index, group ->
+                            if (index == 0 || groups[index - 1].machine != group.machine) stickyHeader(key = "machine-${group.machine}", contentType = "machine") { headerIndex ->
+                                MachineHeader(group.machine, counts.getValue(group.machine), group.machine in collapsedMachines, Modifier.animateItem(placementSpec = tween(320))) {
+                                    if (group.machine !in collapsedMachines && gridState.firstVisibleItemIndex > headerIndex) gridState.requestScrollToItem(headerIndex)
+                                    collapsedMachines = if (group.machine in collapsedMachines) collapsedMachines - group.machine else collapsedMachines + group.machine
+                                }
+                            }
+                            if (group.machine in collapsedMachines) return@forEachIndexed
+                            if (group.project.isNotEmpty()) item(key = "project-${group.machine.length}:${group.machine}${group.project}", contentType = "group", span = { GridItemSpan(maxLineSpan) }) {
+                                Text(group.project, color = Muted, fontSize = 12.sp, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180)).padding(vertical = spacing.gap(6)))
+                            }
+                            gridItems(group.sessions, key = { it.id }, contentType = { "session" }) { SessionCard(it, expanded != true && it.id == selectedId, now, prefs, showMachine = false, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180))) { select(it, order) } }
                         }
                     }
-                    if (group.machine in collapsedMachines) return@forEachIndexed
-                    if (group.project.isNotEmpty()) item(key = "project-${group.machine.length}:${group.machine}${group.project}", contentType = "group", span = { GridItemSpan(maxLineSpan) }) {
-                        Text(group.project, color = Muted, fontSize = 12.sp, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180)).padding(vertical = 6.dp))
-                    }
-                    gridItems(group.sessions, key = { it.id }, contentType = { "session" }) { SessionCard(it, it.id == selectedId, now, prefs, showMachine = false, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180))) { select(it, order) } }
                 }
+                else PrBoard(visible.board, visible.watched, now, query, selectedId.takeUnless { expanded == true }, collapsedMachines, boardState,
+                    { machine -> collapsedMachines = if (machine in collapsedMachines) collapsedMachines - machine else collapsedMachines + machine },
+                    ::select, prefs)
             }
         }
-        else PrBoard(visible.board, visible.watched, now, query, selectedId, collapsedMachines, boardState,
-            { machine -> collapsedMachines = if (machine in collapsedMachines) collapsedMachines - machine else collapsedMachines + machine },
-            ::select)
+        Surface(modifier = Modifier.align(Alignment.TopCenter).width(toolbarWidth),
+            color = if (floating) Panel.copy(alpha = .96f) else Ink,
+            shape = RoundedCornerShape(if (floating) 28.dp else 0.dp),
+            border = if (floating) BorderStroke(1.dp, Muted.copy(alpha = .2f)) else null,
+            shadowElevation = if (floating) 8.dp else 0.dp) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = if (floating) 2.dp else 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Image(painterResource(R.drawable.ic_crabigator), "Crabigator", Modifier.padding(8.dp).size(28.dp))
+                Spacer(Modifier.weight(1f))
+                Control(R.drawable.ic_search, "Search", selected = searching) { searching = !searching; if (!searching) query = "" }
+                Control(R.drawable.ic_settings, "Settings", modifier = Modifier.onGloballyPositioned { settingsAnchor = it.boundsInRoot() }) { settings(settingsAnchor) }
+            }
         }
-    }
-    BoardModeFooter(list, mode, expanded, Modifier.align(Alignment.BottomCenter).padding(12.dp))
+        BoardModeFooter(list, mode, expanded, Modifier.align(Alignment.BottomCenter).padding(12.dp))
     }
 }
 @Composable internal fun MachineHeader(name: String, count: Int, collapsed: Boolean, modifier: Modifier = Modifier, countNoun: String = "session", toggle: () -> Unit) {
+    val spacing = LocalBoardSpacing.current
+    val floating = LocalFloatingBoardToolbar.current
     val angle by animateFloatAsState(if (collapsed) -90f else 0f, tween(240), label = "Machine folder")
     Surface(onClick = toggle, color = Ink, modifier = modifier.fillMaxWidth().semantics {
         heading()
         stateDescription = if (collapsed) "Collapsed" else "Expanded"
     }) {
-        Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(painterResource(if (countNoun == "session") R.drawable.ic_machine else R.drawable.ic_board), null, tint = Muted, modifier = Modifier.size(18.dp))
-            Text(name, color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text(if (count == 1) "1 $countNoun" else "$count ${countNoun}s", color = Muted, fontSize = 12.sp,
-                modifier = Modifier.background(Panel, RoundedCornerShape(6.dp)).padding(horizontal = 7.dp, vertical = 2.dp))
-            Icon(painterResource(R.drawable.ic_chevron_down), null, tint = Muted, modifier = Modifier.size(18.dp).rotate(angle))
+        BoxWithConstraints {
+            val nameWidth = if (floating) ((maxWidth - 260.dp) / 2 - 36.dp).coerceAtLeast(60.dp) else maxWidth
+            Row(Modifier.heightIn(min = if (floating) 56.dp else 44.dp).padding(horizontal = 8.dp, vertical = spacing.gap(8)), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(painterResource(if (countNoun == "session") R.drawable.ic_machine else R.drawable.ic_board), null, tint = Muted, modifier = Modifier.size(18.dp))
+                Text(name, color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).wrapContentWidth(Alignment.Start).widthIn(max = nameWidth))
+                Text(if (count == 1) "1 $countNoun" else "$count ${countNoun}s", color = Muted, fontSize = 12.sp,
+                    modifier = Modifier.background(Panel, RoundedCornerShape(6.dp)).padding(horizontal = 7.dp, vertical = 2.dp))
+                Icon(painterResource(R.drawable.ic_chevron_down), null, tint = Muted, modifier = Modifier.size(18.dp).rotate(angle))
+            }
         }
     }
 }
@@ -308,18 +333,21 @@ class MainActivity : ComponentActivity() {
     }
 }
 @Composable private fun SessionCard(session: Session, selected: Boolean, now: State<Long>? = null, prefs: UiPreferences = UiPreferences(), showMachine: Boolean = true, modifier: Modifier = Modifier, open: () -> Unit) {
+    val spacing = LocalBoardSpacing.current
     val selection by animateFloatAsState(if (selected) 1f else 0f, tween(if (selected) 120 else 350), label = "Session selection")
     Surface(onClick = open, modifier = modifier.semantics { this.selected = selected },
         color = lerp(Panel, Peach.copy(alpha = .13f).compositeOver(Ink), selection),
         shape = RoundedCornerShape(12.dp), border = BorderStroke(2.dp, Peach.copy(alpha = selection))) {
-        Box(Modifier.padding(if (prefs.density == "compact") 6.dp else 10.dp)) {
+        Box(Modifier.padding(horizontal = 10.dp, vertical = spacing.gap(10))) {
             SessionRow(session, clickable = false, showMachine = showMachine, footer = {
+                if (prefs.boardRecaps && session.recap.isNotBlank()) Text(session.recap, color = Muted, fontSize = 12.sp)
                 if (now != null) SessionStatsFooter(session, now, prefs)
             }, open = open)
         }
     }
 }
 @Composable private fun SessionRow(session: Session, clickable: Boolean = true, showMachine: Boolean = true, footer: @Composable () -> Unit = {}, open: () -> Unit) {
+    val spacing = LocalBoardSpacing.current
     val color = remember(session.color) { runCatching { Color(android.graphics.Color.parseColor(session.color)) }.getOrDefault(Peach) }
     val background = remember(session.background) { runCatching { Color(android.graphics.Color.parseColor(session.background)) }.getOrDefault(Panel) }
     val title = remember(session.title, session.machine, showMachine) { buildAnnotatedString {
@@ -328,11 +356,11 @@ class MainActivity : ComponentActivity() {
             append("  ·\u00a0${session.machine}")
         }
     } }
-    Row(Modifier.fillMaxWidth().then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+    Row(Modifier.fillMaxWidth().then(if (clickable) Modifier.clickable(onClick = open) else Modifier).padding(vertical = spacing.gap(4)), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
         Surface(color = background, shape = RoundedCornerShape(8.dp), modifier = Modifier.width(58.dp)) { Text(session.glyph, color = color, fontSize = 16.sp, lineHeight = 20.sp, textAlign = TextAlign.Center, maxLines = 1, softWrap = false, modifier = Modifier.padding(vertical = 5.dp)) }
         SessionStatus(session)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title, color = CrabColors.Title, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(spacing.gap(6))) {
+            Text(title, color = CrabColors.Title, fontSize = 14.sp, lineHeight = spacing.lineHeight(19), fontWeight = FontWeight.Medium, maxLines = if (spacing.tight) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis, modifier = Modifier.animateContentSize(tween(300), alignment = Alignment.TopStart))
             footer()
         }
     }

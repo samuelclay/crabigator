@@ -11,15 +11,12 @@ struct BoardView: View {
     @State private var settings = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var collapsed: Set<String> = []
+    var spacing: BoardSpacing { BoardSpacing(density: model.preferences.density) }
+    var spacingAnimation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.3) }
+    var floatingToolbar: Bool { wide && expanded }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 4) {
-                Image("Crabigator").resizable().scaledToFit().frame(width: 28, height: 28).padding(8).accessibilityLabel("Crabigator")
-                Spacer()
-                IconButton(icon: "magnifyingglass", label: "Search", selected: searching) { withAnimation { searching.toggle(); if !searching { query = "" } } }
-                IconButton(icon: "gearshape", label: "Settings") { settings = true }
-                    .popover(isPresented: $settings, attachmentAnchor: .rect(.bounds), arrowEdge: .top) { SettingsMenu(model: model).nativePopover() }
-            }.padding(.horizontal, 8).padding(.vertical, 6)
+            Color.clear.frame(height: floatingToolbar && !searching ? 0 : 60).animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
             if searching { TextField("Search", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, 12).padding(.bottom, 8).accessibilityIdentifier("Search sessions") }
             if model.sessions.isEmpty && model.prs.isEmpty {
                 Spacer()
@@ -35,9 +32,27 @@ struct BoardView: View {
                         boardContent(list: true, width: geometry.size.width).opacity(listMode ? 1 : 0).allowsHitTesting(listMode).accessibilityHidden(!listMode)
                         boardContent(list: false, width: geometry.size.width).opacity(listMode ? 0 : 1).allowsHitTesting(!listMode).accessibilityHidden(listMode)
                     }
-                }.environment(\.boardTextSize, CGFloat(model.preferences.boardTextSize))
+                }.environment(\.boardTextSize, CGFloat(model.preferences.boardTextSize)).environment(\.boardSpacing, spacing)
             }
-        }.background(Crab.ink).overlay(alignment: .bottom) { footer.padding(.bottom, 16) }
+        }.background(Crab.ink)
+            .overlay(alignment: .top) {
+                header.frame(maxWidth: floatingToolbar ? 228 : .infinity)
+                    .background { if floatingToolbar { Capsule().fill(.ultraThinMaterial).overlay(Capsule().strokeBorder(Color.white.opacity(0.12))).shadow(color: .black.opacity(0.25), radius: 8, y: 3) } }
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
+            }
+            .overlay(alignment: .bottom) { footer.padding(.bottom, 16) }
+    }
+    var header: some View {
+        HStack(spacing: 4) {
+            Image("Crabigator").resizable().scaledToFit().frame(width: 28, height: 28).padding(8).accessibilityLabel("Crabigator")
+            Spacer()
+            IconButton(icon: "magnifyingglass", label: "Search", selected: searching) { withAnimation { searching.toggle(); if !searching { query = "" } } }
+            IconButton(icon: "gearshape", label: "Settings") { settings = true }
+                .popover(isPresented: $settings, attachmentAnchor: .rect(.bounds), arrowEdge: .top) { SettingsMenu(model: model,
+                    search: { settings = false; searching = true },
+                    fullscreen: wide && model.selectionID != nil ? { settings = false; withAnimation(.easeInOut(duration: 0.36)) { expanded.toggle() } } : nil,
+                    expanded: expanded).nativePopover() }
+        }.padding(.horizontal, 8).padding(.vertical, floatingToolbar ? 2 : 6)
     }
     var footer: some View {
         HStack(spacing: 4) {
@@ -57,51 +72,69 @@ struct BoardView: View {
             }.padding(.horizontal, 14).frame(height: 40).background(listMode == isList ? Crab.orange.opacity(0.18) : .clear, in: Capsule()).foregroundStyle(listMode == isList ? Crab.orange : Crab.muted)
         }.buttonStyle(.plain).accessibilityIdentifier(label).accessibilityValue(listMode == isList ? (wide ? (expanded ? "Selected, full width" : "Selected, sidebar") : "Selected") : "")
     }
-    func sections(_ list: Bool) -> [RosterSection] {
-        (list ? model.ordering.list : model.ordering.board).compactMap { section in
+    func sections(_ list: Bool, includeAge: Bool = true) -> [RosterSection] {
+        var preferences = model.preferences
+        if !includeAge { preferences.boardAgeHours = 0 }
+        return (list ? model.ordering.list : model.ordering.board).compactMap { section in
             var copy = section
             copy.sessions = section.sessions.filter { session in
-                (model.preferences.showEnded || session.active) && (session.matches(query) || (!list && (model.ordering.prsBySession[session.id] ?? []).contains { $0.matches(query) }))
+                (preferences.includesSession(session, prs: model.ordering.prsBySession[session.id] ?? [], now: Int(Date().timeIntervalSince1970))) && (session.matches(query) || (!list && (model.ordering.prsBySession[session.id] ?? []).contains { $0.matches(query) }))
             }
             return copy.sessions.isEmpty ? nil : copy
         }
     }
     func boardContent(list: Bool, width: CGFloat) -> some View {
-        let sections = sections(list), order = sections.flatMap(\.sessions)
+        let byPR = !list && model.preferences.boardGrouping == "prs"
+        let now = Int(Date().timeIntervalSince1970)
+        let filtered = sections(list, includeAge: !byPR)
+        let sections = byPR
+            ? groupBoardByPullRequest(filtered, prsBySession: model.ordering.prsBySession, now: now) { model.preferences.includesActivity($0, now: now) } : filtered
+        var seen = Set<String>()
+        let order = sections.flatMap { $0.pullRequests.flatMap(\.sessions) + $0.sessions }.filter { seen.insert($0.id).inserted }
         let fit = max(1, Int(width / 320)), maximum = max(1, Int(width / 280))
         let columns = model.preferences.columns == 0 ? fit : min(maximum, model.preferences.columns)
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 8, pinnedViews: [.sectionHeaders]) {
+                LazyVStack(spacing: spacing.gap(8), pinnedViews: [.sectionHeaders]) {
                     ForEach(model.ordering.machines, id: \.self) { machine in
-                        let groups = sections.filter { $0.machine == machine }, rows = groups.flatMap(\.sessions)
+                        let groups = sections.filter { $0.machine == machine }, rows = order.filter { $0.machine == machine }
                         if !rows.isEmpty {
                             Section {
                                 if !collapsed.contains(machine) {
                                     ForEach(groups) { group in
                                         if let age = group.age, groups.first(where: { $0.age == age })?.id == group.id {
-                                            Text(age.label).boardFont(12, weight: .medium).foregroundStyle(Crab.color(age.palette)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 6).background(Crab.color(age.palette).opacity(0.13), in: RoundedRectangle(cornerRadius: 4))
+                                            Text(age.label).boardFont(12, weight: .medium).foregroundStyle(Crab.color(age.palette)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, spacing.gap(6)).background(Crab.color(age.palette).opacity(0.13), in: RoundedRectangle(cornerRadius: 4))
                                         }
-                                        if !group.project.isEmpty { Text(group.project).boardFont(12).foregroundStyle(Crab.yellow).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.top, 4) }
+                                        if !group.project.isEmpty { Text(group.project).boardFont(12).foregroundStyle(Crab.yellow).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.top, spacing.gap(4)) }
                                         if list {
-                                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: columns), spacing: 8) {
+                                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: columns), spacing: spacing.gap(8)) {
                                                 ForEach(group.sessions) { session in sessionButton(session, list: true, full: false, order: order) }
                                             }
-                                        } else { ForEach(group.sessions) { session in sessionButton(session, list: false, full: width >= 840, order: order); Divider().overlay(Color.white.opacity(0.06)) } }
+                                        } else {
+                                            ForEach(group.pullRequests) { block in
+                                                VStack(alignment: .leading, spacing: spacing.gap(4)) {
+                                                    if let url = URL(string: block.pr.url), url.scheme == "https" {
+                                                        Link(destination: url) { PRRow(pr: block.pr, wide: width >= 840) }.buttonStyle(.plain).padding(.horizontal, 8)
+                                                    } else { PRRow(pr: block.pr, wide: width >= 840).padding(.horizontal, 8) }
+                                                    ForEach(block.sessions) { session in sessionButton(session, list: false, full: width >= 840, order: order, prs: []) }
+                                                }
+                                            }
+                                            ForEach(group.sessions) { session in sessionButton(session, list: false, full: width >= 840, order: order) }
+                                        }
                                     }
                                 }
                             } header: {
                                 Button {
                                     withAnimation(.easeInOut(duration: 0.3)) { if !collapsed.insert(machine).inserted { collapsed.remove(machine) }; proxy.scrollTo(machine, anchor: .top) }
                                 } label: {
-                                    HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).lineLimit(1); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").boardFont(11); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").boardFont(11) }
-                                        .boardFont(13, weight: .medium).foregroundStyle(Crab.muted).padding(.vertical, 13).padding(.horizontal, 8).background(Crab.ink)
+                                    HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).lineLimit(1).frame(maxWidth: floatingToolbar ? max(60, (width - 260) / 2 - 36) : .infinity, alignment: .leading); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").boardFont(11); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").boardFont(11) }
+                                        .boardFont(13, weight: .medium).foregroundStyle(Crab.muted).padding(.vertical, spacing.gap(13)).frame(minHeight: floatingToolbar ? 52 : 44).padding(.horizontal, 8).background(Crab.ink)
                                 }.buttonStyle(.plain).id(machine).accessibilityIdentifier("Machine \(machine)")
                             }
                         }
                     }
                     if !list {
-                        let watched = model.ordering.watched.filter { $0.matches(query) }
+                        let watched = model.ordering.watched.filter { $0.matches(query) && model.preferences.includesActivity(max($0.updatedAt, $0.closedAt, $0.mentionedAt), now: Int(Date().timeIntervalSince1970)) }
                         if !watched.isEmpty {
                             Section {
                                 if !collapsed.contains("\u{0}watched") { ForEach(watched) { pr in
@@ -117,17 +150,22 @@ struct BoardView: View {
                             }
                         }
                     }
-                    if sections.isEmpty && (list || !model.ordering.watched.contains { $0.matches(query) }) { Text(query.isEmpty ? "No active sessions" : "No matching sessions").foregroundStyle(Crab.muted).padding(24) }
+                    if sections.isEmpty && (list || !model.ordering.watched.contains { $0.matches(query) && model.preferences.includesActivity(max($0.updatedAt, $0.closedAt, $0.mentionedAt), now: Int(Date().timeIntervalSince1970)) }) { Text("No sessions match your filters").foregroundStyle(Crab.muted).padding(24) }
                 }.padding(.horizontal, 12).padding(.bottom, 88)
             }.refreshable { await model.refresh() }
-        }
+        }.animation(spacingAnimation, value: model.preferences.density)
     }
-    func sessionButton(_ session: Session, list: Bool, full: Bool, order: [Session]) -> some View {
-        let selected = model.selectionID == session.id
+    func sessionButton(_ session: Session, list: Bool, full: Bool, order: [Session], prs: [PullRequest]? = nil) -> some View {
+        let selected = !(wide && expanded) && model.selectionID == session.id
         let shape = RoundedRectangle(cornerRadius: list ? 12 : 6)
         return Button { select(session, order) } label: {
-            SessionRow(session: session, prs: model.ordering.prsBySession[session.id] ?? [], preferences: model.preferences, list: list, wide: full)
-                .padding(.horizontal, list ? 12 : 8).padding(.vertical, list ? (model.preferences.density == "compact" ? 8 : 12) : 7)
+            SessionRow(session: session, prs: prs ?? model.ordering.prsBySession[session.id] ?? [], preferences: model.preferences, list: list, wide: full)
+                // Rebuild the column layout when switching between full width
+                // and the sidebar, without retaining an animated wide layout.
+                .animation(spacingAnimation, value: model.preferences.density)
+                .id(full)
+                .transaction { $0.animation = nil }
+                .padding(.horizontal, list ? 12 : 8).padding(.vertical, list ? spacing.gap(12) : spacing.gap(7))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background {
                     ZStack {
@@ -144,17 +182,21 @@ struct BoardView: View {
 struct SessionRow: View {
     var session: Session, prs: [PullRequest], preferences: Preferences
     var list: Bool, wide: Bool
+    @Environment(\.boardSpacing) private var spacing
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             IdentityChip(session: session)
             if list || !wide { SessionStatus(session: session) }
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: spacing.gap(6)) {
                 HStack(alignment: .top, spacing: 12) {
-                    Text(session.title).boardFont(14, weight: .medium).foregroundStyle(session.active ? Crab.title : Crab.muted).lineLimit(wide ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(session.title).boardFont(14, weight: .medium).foregroundStyle(session.active ? Crab.title : Crab.muted).lineLimit(wide || spacing.tight ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
                     if wide {
                         Text(session.branch).boardFont(12).foregroundStyle(Crab.muted).lineLimit(1).frame(width: 180, alignment: .leading)
                         HStack(alignment: .top) { SessionStatus(session: session); Spacer(); recency }.frame(width: 300, alignment: .leading)
                     }
+                }
+                if preferences.boardRecaps && !session.recap.isEmpty {
+                    Text(session.recap).boardFont(12).foregroundStyle(Crab.muted).fixedSize(horizontal: false, vertical: true)
                 }
                 if list {
                     SessionTiming(session: session, preferences: preferences)
@@ -170,16 +212,17 @@ struct SessionRow: View {
     }
     var recency: some View {
         TimelineView(.periodic(from: .now, by: 1)) { t in
-            HStack(spacing: 10) { Text("⟩ " + ageText(session.promptAt, now: Int(t.date.timeIntervalSince1970)).replacingOccurrences(of: " ago", with: "")).foregroundStyle(Crab.orange); Text("⋖ " + ageText(session.completionAt, now: Int(t.date.timeIntervalSince1970))).foregroundStyle(Crab.deepOrange) }.boardFont(11).monospacedDigit().lineLimit(1).fixedSize()
+            RecencyColumns(session: session, now: Int(t.date.timeIntervalSince1970))
         }
     }
 }
 struct PRRow: View {
     var pr: PullRequest, wide: Bool
+    @Environment(\.boardSpacing) private var spacing
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: spacing.gap(4)) {
             HStack(alignment: .top, spacing: 12) {
-                Text(verbatim: "#\(pr.number)  \(pr.title)").boardFont(13).foregroundStyle(pr.primary || pr.watched ? Crab.purple : Crab.muted).lineLimit(wide ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
+                Text(verbatim: "#\(pr.number)  \(pr.title)").boardFont(13).foregroundStyle(pr.primary || pr.watched ? Crab.purple : Crab.muted).lineLimit(wide || spacing.tight ? 1 : 2).frame(maxWidth: .infinity, alignment: .leading)
                 if wide {
                     Text(pr.branch).boardFont(12).foregroundStyle(Crab.muted).lineLimit(1).frame(width: 180, alignment: .leading)
                     status.frame(width: 300)
@@ -190,22 +233,22 @@ struct PRRow: View {
     }
     var status: some View {
         HStack(spacing: 6) {
-            badge; changes
-            Spacer(minLength: 4)
-            HStack(spacing: 6) {
-                if !pr.checks.isEmpty {
-                    Text(pr.checks).foregroundStyle(pr.checksFailed > 0 ? Crab.red : pr.checksPending > 0 ? Crab.yellow : Crab.mint)
-                        .accessibilityLabel(pr.checksFailed > 0 ? "\(pr.checksFailed) checks failed" : pr.checksPending > 0 ? "\(pr.checksPending) checks pending" : "Checks passed")
-                }
-                if pr.state == "OPEN" {
-                    if pr.mergeable == "CONFLICTING" { Text("Conflicts").foregroundStyle(Crab.red) }
-                    else if pr.mergeable == "MERGEABLE" {
-                        Text(pr.mergeState == "BEHIND" ? "Behind" : "Clean").foregroundStyle(pr.mergeState == "BEHIND" ? Crab.yellow : Crab.mint)
-                    }
-                }
-            }
-            .boardFont(11)
-        }.lineLimit(1).minimumScaleFactor(0.8)
+            HStack(spacing: 6) { badge; changes; Spacer(minLength: 0) }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(pr.checks.isEmpty ? "—" : pr.checks)
+                .foregroundStyle(pr.checks.isEmpty ? Crab.muted : pr.checksFailed > 0 ? Crab.red : pr.checksPending > 0 ? Crab.yellow : Crab.mint)
+                .frame(width: 48, alignment: .leading)
+                .accessibilityLabel(pr.checks.isEmpty ? "CI status unavailable" : pr.checksFailed > 0 ? "\(pr.checksFailed) checks failed" : pr.checksPending > 0 ? "\(pr.checksPending) checks pending" : "Checks passed")
+            Text(mergeStatus).foregroundStyle(mergeStatus == "Conflicts" ? Crab.red : mergeStatus == "Behind" ? Crab.yellow : mergeStatus == "Clean" ? Crab.mint : Crab.muted)
+                .frame(width: 54, alignment: .leading)
+                .accessibilityLabel("Branch status: " + mergeStatus)
+        }.boardFont(11).lineLimit(1).minimumScaleFactor(0.65)
+    }
+    var mergeStatus: String {
+        guard pr.state == "OPEN" else { return "—" }
+        if pr.mergeable == "CONFLICTING" { return "Conflicts" }
+        if pr.mergeState == "BEHIND" { return "Behind" }
+        return pr.mergeable == "MERGEABLE" ? "Clean" : "—"
     }
     var changes: some View {
         HStack(spacing: 8) {

@@ -113,10 +113,10 @@ fun JSONArray.objects(): List<JSONObject> = (0 until length()).mapNotNull { optJ
 fun JSONObject.array(key: String): List<JSONObject> = optJSONArray(key)?.objects().orEmpty()
 fun JSONObject.text(key: String, fallback: String = ""): String = if (isNull(key)) fallback else optString(key, fallback)
 
-data class Session(val id: String, val title: String, val repo: String, val machine: String, val state: String, val active: Boolean, val glyph: String, val color: String, val recap: String, val platform: String, val branch: String, val background: String, val stats: SessionStats = SessionStats()) {
+data class Session(val id: String, val title: String, val repo: String, val machine: String, val state: String, val active: Boolean, val glyph: String, val color: String, val recap: String, val platform: String, val branch: String, val background: String, val stats: SessionStats = SessionStats(), val cwd: String = "") {
     val attention get() = state == "question" || state == "permission"
     companion object {
-        fun parse(j: JSONObject) = Session(j.text("session_id", j.text("id")), j.text("title").ifBlank { j.text("dir_name", "Session") }, listOf(j.text("repo_owner"), j.text("repo_name")).filter { it.isNotBlank() }.joinToString("/"), j.text("device_name"), j.text("state", "ready"), j.optBoolean("active", true), j.optJSONObject("session_mark")?.text("glyph", "◈") ?: "◈", j.optJSONObject("session_mark")?.text("fg_hex", "#FFAA77") ?: "#FFAA77", j.optJSONObject("recap")?.text("headline") ?: "", j.text("platform"), j.text("branch"), j.optJSONObject("session_mark")?.text("bg_hex", "#352B25") ?: "#352B25", SessionStats.parse(j))
+        fun parse(j: JSONObject) = Session(j.text("session_id", j.text("id")), j.text("title").ifBlank { j.text("dir_name", "Session") }, listOf(j.text("repo_owner"), j.text("repo_name")).filter { it.isNotBlank() }.joinToString("/"), j.text("device_name"), j.text("state", "ready"), j.optBoolean("active", true), j.optJSONObject("session_mark")?.text("glyph", "◈") ?: "◈", j.optJSONObject("session_mark")?.text("fg_hex", "#FFAA77") ?: "#FFAA77", j.optJSONObject("recap")?.text("headline") ?: "", j.text("platform"), j.text("branch"), j.optJSONObject("session_mark")?.text("bg_hex", "#352B25") ?: "#352B25", SessionStats.parse(j), j.text("cwd"))
     }
 }
 data class PullRequest(val key: String, val title: String, val repo: String, val number: Int, val state: String, val checks: String, val url: String, val sessions: List<Session>, val watched: Boolean = false,
@@ -132,7 +132,18 @@ data class PullRequest(val key: String, val title: String, val repo: String, val
             return PullRequest("$repo#${j.optInt("number")}", p.text("title", "Pull request"), repo, j.optInt("number"), p.text("state", "OPEN"), when { p.optInt("checks_failed") > 0 -> "✗${p.optInt("checks_failed")} CI"; p.optInt("checks_pending") > 0 -> "●${p.optInt("checks_pending")} CI"; p.optInt("checks_total") > 0 -> "✓ CI"; else -> "" }, p.text("url"), (j.array("sessions") + j.array("touching")).map(Session::parse).distinctBy { it.id }, p.optBoolean("watched"),
                 p.text("branch"), if (p.isNull("additions")) null else p.optInt("additions"), if (p.isNull("deletions")) null else p.optInt("deletions"),
                 p.text("mergeable"), p.text("merge_state_status"), p.optBoolean("is_draft"), p.optBoolean("primary"), p.text("review_decision"),
-                p.optInt("checks_failed"), p.optInt("checks_pending"), p.optLong("last_mentioned_at") / 1000, p.optLong("updated_at") / 1000, p.optLong("closed_at") / 1000)
+                p.optInt("checks_failed"), p.optInt("checks_pending"), p.optLong("last_mentioned_at") / 1000, (p.optLong("updated_at") / 1000).takeIf { it > 0 } ?: if (p.optBoolean("watched")) j.optLong("updated_at") else 0, p.optLong("closed_at") / 1000)
         }
+    }
+}
+
+internal object BoardActions {
+    fun watchTarget(text: String): JSONObject? {
+        val match = Regex("""^(?:https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)(?:[/?#].*)?|([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#(\d+))$""").matchEntire(text.trim()) ?: return null
+        val offset = if (match.groupValues[1].isEmpty()) 4 else 1
+        val owner = match.groupValues[offset]
+        val repo = match.groupValues[offset + 1]
+        val number = match.groupValues[offset + 2].toIntOrNull()?.takeIf { it > 0 } ?: return null
+        return JSONObject().put("owner", owner).put("repo", repo).put("number", number).put("url", "https://github.com/$owner/$repo/pull/$number")
     }
 }

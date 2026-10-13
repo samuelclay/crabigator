@@ -9,6 +9,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
@@ -22,15 +26,16 @@ class PrBoardInteractionTest {
     @get:Rule val compose = createComposeRule()
     private val session = Session.parse(JSONObject("""{"id":"session", "title":"A session title that wraps across several lines", "branch":"session-branch", "state":"complete"}"""))
     private val pr = PullRequest("owner/repo#123", "A pull request with a longer title", "owner/repo", 123, "OPEN", "Checks passed",
-        "https://github.com/owner/repo/pull/123", listOf(session), additions = 531763, deletions = 6931, branch = "pr-branch", primary = true)
+        "https://github.com/owner/repo/pull/123", listOf(session), additions = 531763, deletions = 6931, branch = "pr-branch", primary = true, mergeable = "MERGEABLE", mergeState = "BEHIND")
 
     @Test fun prContentOpensSessionAndSharesTheTitleColumn() {
         val wide = mutableStateOf(false)
+        val clock = mutableStateOf(1000L)
         var opened = 0
         compose.setContent {
             MaterialTheme {
                 Box(Modifier.width(if (wide.value) 1000.dp else 320.dp)) {
-                    BoardSessionBlock(BoardSession(session, listOf(pr, pr.copy(number = 124, title = "Already merged", state = "MERGED", checks = "", additions = null, deletions = null)), 0), false, wide.value, mutableStateOf(1000L)) { opened++ }
+                    BoardSessionBlock(BoardSession(session, listOf(pr, pr.copy(number = 124, title = "Already merged", state = "MERGED", checks = "", additions = null, deletions = null)), 0), false, wide.value, clock) { opened++ }
                 }
             }
         }
@@ -41,6 +46,13 @@ class PrBoardInteractionTest {
             val title = bounds(session.title)
             val pull = bounds("#123  ${pr.title}")
             assertEquals("PR titles should share the session title indent", title.left, pull.left, 1f)
+            val ci = compose.onNodeWithContentDescription("Checks passed", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val emptyCi = compose.onNodeWithContentDescription("CI status unavailable", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val behind = compose.onNodeWithContentDescription("Branch status: Behind", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val emptyBranch = compose.onNodeWithContentDescription("Branch status: —", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertEquals("CI column must keep its place when empty", ci.left, emptyCi.left, 1f)
+            assertEquals("Branch column must keep its place when empty", behind.left, emptyBranch.left, 1f)
+            assertTrue("CI and branch status must occupy separate columns", ci.right < behind.left)
             if (isWide) {
                 assertEquals("Session columns should be top-aligned", title.top, bounds(session.branch).top, 1f)
                 assertEquals("PR columns should be top-aligned", pull.top,
@@ -54,6 +66,30 @@ class PrBoardInteractionTest {
             compose.onRoot().performTouchInput { click(bounds("+531763").center) }
         }
         compose.runOnIdle { assertEquals(4, opened) }
+    }
+
+    @Test fun statusColumnsKeepWordsReadableAtAllBoardTextSizes() {
+        val clock = mutableStateOf(1000L)
+        val fontScale = mutableStateOf(24f / 14f)
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale.value)) {
+                MaterialTheme {
+                    Box(Modifier.width(320.dp)) {
+                        BoardSessionBlock(BoardSession(session, listOf(pr.copy(checks = "✗999 CI", checksFailed = 999, mergeable = "CONFLICTING")), 0),
+                            false, false, clock) {}
+                    }
+                }
+            }
+        }
+        for (scale in listOf(24f / 14f, 10f / 14f)) {
+            compose.runOnIdle { fontScale.value = scale }
+            for (label in listOf("999 checks failed", "Branch status: Conflicts")) {
+                val results = mutableListOf<TextLayoutResult>()
+                compose.onNodeWithContentDescription(label, useUnmergedTree = true)
+                    .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+                assertTrue("Status text must fit without clipping", results.isNotEmpty() && results.none { it.hasVisualOverflow })
+            }
+        }
     }
 
     @Test fun detailHeaderOpensEachExplicitPrLink() {

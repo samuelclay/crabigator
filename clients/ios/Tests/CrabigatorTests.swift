@@ -4,6 +4,27 @@ import SwiftUI
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
+    @MainActor func testEmptyOrHiddenWidgetsGiveTheirSpaceBackToTerminal() {
+        let model = SessionModel(), stream = SessionStream()
+        let originalPreferences = model.preferences
+        defer { model.preferences = originalPreferences }
+        model.preferences = Preferences()
+        model.preferences.widgets = true
+        stream.selected = session("layout", prompt: 0)
+        let detail = SessionDetail(model: model, stream: stream, wide: true, active: true, close: {})
+        XCTAssertEqual(detail.terminalHeight(800), 800)
+        stream.details["git"] = ["branch": "main"]
+        XCTAssertEqual(detail.widgetSections.map(\.title), ["Git status"])
+        XCTAssertEqual(detail.terminalHeight(800), 520)
+        model.preferences.toggle("git")
+        XCTAssertEqual(detail.terminalHeight(800), 800)
+        model.preferences.terminalHeight = 700
+        XCTAssertEqual(detail.terminalHeight(800), 700)
+        model.preferences.toggle("git")
+        XCTAssertEqual(detail.terminalHeight(800), 520)
+        model.preferences.widgets = false
+        XCTAssertEqual(detail.terminalHeight(800), 700)
+    }
     func session(_ id: String, prompt: Int, machine: String = "Mac", state: String = "complete") -> Session {
         Session(["session_id": id, "title": id, "device_name": machine, "prompts_changed_at": prompt, "state": state, "active": true])
     }
@@ -63,6 +84,94 @@ final class CrabigatorTests: XCTestCase {
         order.update([old, session("working", prompt: 100, state: "thinking")], prs: [], prefs: Preferences(), now: 10000, elapsed: 0)
         XCTAssertEqual(order.board.first { $0.sessions.contains { $0.id == "old" } }?.age, .three)
         XCTAssertEqual(order.board.first { $0.sessions.contains { $0.id == "working" } }?.age, .hour)
+    }
+    func testNewPromptMovesIntoLastHourWithoutReorderingOtherRows() {
+        let order = RosterOrder(), prefs = Preferences(), now = 100_000
+        let recent = session("recent", prompt: now - 10)
+        let otherRecent = session("other-recent", prompt: now - 20)
+        let target = session("portal", prompt: now - 7200)
+        var old = session("old", prompt: now - 8000)
+        order.update([recent, otherRecent, target, old], prs: [], prefs: prefs, now: now, elapsed: 0)
+        XCTAssertEqual(order.board.first { $0.sessions.contains { $0.id == target.id } }?.age, .three)
+
+        // A quick response may already be complete when the next roster update arrives.
+        let prompted = session("portal", prompt: now + 1)
+        old.completionAt = now + 1
+        order.update([prompted, old, otherRecent, recent], prs: [], prefs: prefs, now: now + 1, elapsed: 1)
+        XCTAssertEqual(order.board.map(\.age), [.hour, .three])
+        XCTAssertEqual(order.board.first?.sessions.map(\.id), ["recent", "other-recent", "portal"])
+        XCTAssertEqual(order.board.last?.sessions.map(\.id), ["old"])
+        XCTAssertEqual(order.list.flatMap(\.sessions).map(\.id), ["recent", "other-recent", "portal", "old"])
+
+        order.update([prompted, old, otherRecent, recent], prs: [], prefs: prefs, now: now + 601, elapsed: 601)
+        XCTAssertEqual(order.board.first?.sessions.first?.id, "portal")
+    }
+    func testWorkingSessionMovesUpBeforeItsPromptTimestampArrives() {
+        let order = RosterOrder(), prefs = Preferences(), now = 100_000
+        var target = session("portal", prompt: now - 7200)
+        order.update([target], prs: [], prefs: prefs, now: now, elapsed: 0)
+        target.state = "thinking"
+        order.update([target], prs: [], prefs: prefs, now: now + 1, elapsed: 1)
+        XCTAssertEqual(order.board.map(\.age), [.hour])
+        target.state = "complete"; target.promptAt = now + 1
+        order.update([target], prs: [], prefs: prefs, now: now + 3601, elapsed: 2)
+        XCTAssertEqual(order.board.map(\.age), [.three])
+    }
+    func testBoardFiltersMatchCliAgesAndKeepWorkingSessions() throws {
+        var prefs = Preferences()
+        XCTAssertEqual(prefs.boardAgeHours, 24)
+        let now = 200_000
+        var old = session("old", prompt: now - 7200)
+        old.completionAt = now
+        prefs.boardAgeHours = 1
+        XCTAssertFalse(prefs.includesSession(old, prs: [], now: now))
+        old.state = "thinking"
+        XCTAssertTrue(prefs.includesSession(old, prs: [], now: now))
+        old.state = "complete"; prefs.boardAgeHours = 3
+        XCTAssertTrue(prefs.includesSession(old, prs: [], now: now))
+        prefs.boardComputer = "Another Mac"
+        XCTAssertFalse(prefs.includesSession(old, prs: [], now: now))
+        prefs.boardComputer = ""; prefs.boardAgeHours = 0; prefs.boardRecaps = true; prefs.boardGrouping = "prs"
+        XCTAssertTrue(prefs.includesSession(session("unknown", prompt: 0), prs: [], now: now))
+        XCTAssertEqual(try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs)), prefs)
+        for hours in [1, 3, 6, 9, 12, 24] {
+            prefs.boardAgeHours = hours
+            XCTAssertTrue(prefs.includesActivity(now - hours * 3600 + 1, now: now))
+            XCTAssertFalse(prefs.includesActivity(now - hours * 3600 - 1, now: now))
+        }
+    }
+    func testGroupingByPRCombinesSessionsAcrossTimeBands() {
+        let now = 200_000, first = session("first", prompt: 199_990), second = session("second", prompt: 192_800)
+        let pr = PullRequest(["owner": "owner", "repo": "repo", "number": 1, "pr": ["title": "Shared PR", "primary": true]])
+        let source = [RosterSection(machine: "Mac", project: "repo", age: .hour, sessions: [first]), RosterSection(machine: "Mac", project: "repo", age: .three, sessions: [second])]
+        var prefs = Preferences(); prefs.boardAgeHours = 1
+        let grouped = groupBoardByPullRequest(source, prsBySession: [first.id: [pr], second.id: [pr]], now: now) { prefs.includesActivity($0, now: now) }
+        XCTAssertEqual(grouped.count, 1)
+        XCTAssertEqual(grouped.first?.age, .hour)
+        XCTAssertEqual(grouped.first?.pullRequests.first?.sessions.map(\.id), ["first", "second"])
+        XCTAssertTrue(grouped.first?.sessions.isEmpty == true)
+    }
+    func testPRGroupsUseTheirOwnEventsOnlyWhenNoSessionHasPrompted() {
+        let now = 200_000, never = session("never", prompt: 0)
+        var primary = PullRequest(["owner": "owner", "repo": "repo", "number": 1, "pr": ["primary": true]])
+        primary.updatedAt = now - 7200
+        var secondary = PullRequest(["owner": "owner", "repo": "repo", "number": 2])
+        secondary.updatedAt = now
+        var prefs = Preferences(); prefs.boardAgeHours = 1
+        let source = [RosterSection(machine: "Mac", project: "repo", age: .hour, sessions: [never])]
+        XCTAssertTrue(groupBoardByPullRequest(source, prsBySession: [never.id: [primary, secondary]], now: now) { prefs.includesActivity($0, now: now) }.isEmpty)
+        primary.updatedAt = now
+        XCTAssertEqual(groupBoardByPullRequest(source, prsBySession: [never.id: [primary]], now: now).first?.age, .hour)
+        let oldPrompt = [RosterSection(machine: "Mac", project: "repo", age: .three, sessions: [session("never", prompt: now - 7200)])]
+        XCTAssertTrue(groupBoardByPullRequest(oldPrompt, prsBySession: [never.id: [primary]], now: now) { prefs.includesActivity($0, now: now) }.isEmpty)
+    }
+    func testWatchTargetsAndNewWatchRecency() {
+        XCTAssertEqual(BoardActions.watchTarget("owner/repo#12")?.int("number"), 12)
+        XCTAssertEqual(BoardActions.watchTarget("https://github.com/owner/repo/pull/12/files")?.text("repo"), "repo")
+        XCTAssertNil(BoardActions.watchTarget("https://other.test/owner/repo/pull/12"))
+        XCTAssertNil(BoardActions.watchTarget("owner/repo#0"))
+        let watched = PullRequest(["owner": "owner", "repo": "repo", "number": 12, "updated_at": 100, "pr": ["watched": true]])
+        XCTAssertEqual(watched.updatedAt, 100)
     }
     func testPromptTranslationForCheckboxesCustomAnswersAndGrok() throws {
         let q: JSON = ["question": "Choose", "multi_select": true, "allows_other": true, "options": [["label": "A"], ["label": "B"]]]

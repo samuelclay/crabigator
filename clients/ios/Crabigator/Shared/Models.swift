@@ -10,7 +10,7 @@ extension Dictionary where Key == String, Value == Any {
 }
 
 struct Session: Identifiable, Equatable {
-    var id, title, repo, machine, state, glyph, color, background, recap, platform, branch: String
+    var id, title, repo, machine, state, glyph, color, background, recap, platform, branch, cwd: String
     var active: Bool
     var startedAt, endedAt, lastSeenAt, promptAt, completionAt: Int
     var workSeconds, thinkingSeconds, tools, compactions: Int?
@@ -24,13 +24,17 @@ struct Session: Identifiable, Equatable {
         state = j.text("state", "ready"); active = j.bool("active", true)
         let mark = j.object("session_mark")
         glyph = mark.text("glyph", "◈"); color = mark.text("fg_hex", "#FFAA77"); background = mark.text("bg_hex", "#352B25")
-        recap = j.object("recap").text("headline"); platform = j.text("platform"); branch = j.text("branch")
+        recap = j.object("recap").text("headline"); platform = j.text("platform"); branch = j.text("branch"); cwd = j.text("cwd")
         startedAt = j.int("started_at"); endedAt = j.int("ended_at"); lastSeenAt = j.int("last_seen_at")
         promptAt = j.int("prompts_changed_at"); completionAt = j.int("completions_changed_at")
         let stats = j.object("stats")
         workSeconds = (stats["work_seconds"] as? Int).map { max(0, $0) }
         thinkingSeconds = (stats["thinking_seconds"] as? Int).map { max(0, $0) }
         tools = stats["tools"] as? Int; compactions = stats["compressions"] as? Int
+    }
+    func boardActivity(_ now: Int, prs: [PullRequest]) -> Int {
+        if active && ["thinking", "question", "permission"].contains(state) { return now }
+        return promptAt > 0 ? promptAt : (prs.map { max($0.updatedAt, $0.closedAt, $0.mentionedAt) }.max() ?? 0)
     }
     func duration(_ now: Int) -> Int? {
         if !active, let workSeconds { return workSeconds }
@@ -55,7 +59,7 @@ struct PullRequest: Identifiable, Equatable {
         mergeable = p.text("mergeable"); mergeState = p.text("merge_state_status"); review = p.text("review_decision")
         additions = p["additions"] as? Int; deletions = p["deletions"] as? Int
         draft = p.bool("is_draft"); primary = p.bool("primary"); watched = p.bool("watched")
-        mentionedAt = p.int("last_mentioned_at") / 1000; updatedAt = p.int("updated_at") / 1000; closedAt = p.int("closed_at") / 1000
+        mentionedAt = p.int("last_mentioned_at") / 1000; updatedAt = p.int("updated_at") / 1000; if updatedAt == 0 && watched { updatedAt = j.int("updated_at") }; closedAt = p.int("closed_at") / 1000
         var seen = Set<String>()
         sessions = (j.array("sessions") + j.array("touching")).map(Session.init).filter { seen.insert($0.id).inserted }
     }
@@ -92,6 +96,26 @@ struct NavigationState: Codable, Equatable {
 struct Preferences: Codable, Equatable {
     // Optional storage lets older saved preferences keep their existing values.
     private var boardFontSize: Int?
+    private var savedBoardAgeHours: Int?
+    private var savedBoardComputer: String?
+    private var savedBoardRecaps: Bool?
+    private var savedBoardGrouping: String?
+    var boardAgeHours: Int {
+        get { savedBoardAgeHours ?? 24 }
+        set { savedBoardAgeHours = newValue }
+    }
+    var boardComputer: String {
+        get { savedBoardComputer ?? "" }
+        set { savedBoardComputer = newValue }
+    }
+    var boardRecaps: Bool {
+        get { savedBoardRecaps ?? false }
+        set { savedBoardRecaps = newValue }
+    }
+    var boardGrouping: String {
+        get { savedBoardGrouping ?? "sessions" }
+        set { savedBoardGrouping = newValue }
+    }
     var boardTextSize: Int {
         get { boardFontSize ?? 14 }
         set { boardFontSize = newValue }
@@ -100,8 +124,30 @@ struct Preferences: Codable, Equatable {
     var wrap = true, widgets = false, sidebarRight = false, showEnded = false
     var grouping = "all", order = "recent", density = "comfortable"
     var hidden: Set<String> = ["tools", "compactions"]
+    func includesActivity(_ timestamp: Int, now: Int) -> Bool {
+        guard boardAgeHours > 0 else { return true }
+        let cutoff = boardAgeHours == 24 ? BoardAge.day : BoardAge.age(boardAgeHours * 3600 - 1)
+        return BoardAge.age(max(0, now - timestamp)).rawValue <= cutoff.rawValue
+    }
+    func includesSession(_ session: Session, prs: [PullRequest], now: Int) -> Bool {
+        (showEnded || session.active) && (boardComputer.isEmpty || boardComputer == session.machine)
+            && includesActivity(session.boardActivity(now, prs: prs), now: now)
+    }
     func visible(_ key: String) -> Bool { !hidden.contains(key) }
     mutating func toggle(_ key: String) { if !hidden.insert(key).inserted { hidden.remove(key) } }
     static func load() -> Self { UserDefaults.standard.data(forKey: "appearance").flatMap { try? JSONDecoder().decode(Self.self, from: $0) } ?? Self() }
     func save() { if let data = try? JSONEncoder().encode(self) { UserDefaults.standard.set(data, forKey: "appearance") } }
+}
+
+enum BoardActions {
+    static func watchTarget(_ text: String) -> JSON? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pattern = #"^(?:https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)(?:[/?#].*)?|([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#(\d+))$"#
+        guard let match = try? NSRegularExpression(pattern: pattern).firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) else { return nil }
+        let offset = match.range(at: 1).location == NSNotFound ? 4 : 1
+        func part(_ index: Int) -> String { Range(match.range(at: index), in: value).map { String(value[$0]) } ?? "" }
+        let owner = part(offset), repo = part(offset + 1)
+        guard let number = Int(part(offset + 2)), number > 0 else { return nil }
+        return ["owner": owner, "repo": repo, "number": number, "url": "https://github.com/\(owner)/\(repo)/pull/\(number)"]
+    }
 }
