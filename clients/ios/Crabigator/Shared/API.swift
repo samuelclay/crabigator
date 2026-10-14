@@ -94,6 +94,11 @@ final class API: NSObject, URLSessionTaskDelegate {
         try credentials.save(origin: origin, token: token)
     }
     func snapshot(_ id: String) async throws -> JSON { try await call("/api/mobile/sessions/\(id)") }
+    func terminalSnapshot(_ id: String) async throws -> JSON {
+        var request = try request("/api/mobile/sessions/\(id)?terminal=1")
+        request.timeoutInterval = 8
+        return try await execute(request)
+    }
     func action(_ id: String, _ action: TerminalAction, revision: Int? = nil) async throws {
         var body = action.body; body.removeValue(forKey: "expected_prompt_revision")
         if let revision { body["expected_prompt_revision"] = revision }

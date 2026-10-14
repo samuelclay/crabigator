@@ -1,4 +1,5 @@
 import SwiftUI
+import OSLog
 
 @MainActor final class SessionStream: ObservableObject {
     @Published var selected: Session?
@@ -14,6 +15,10 @@ import SwiftUI
     @Published var error: String?
     private var task: Task<Void, Never>?, heartbeat: Task<Void, Never>?, promptTask: Task<Void, Never>?
     private var socket: URLSessionWebSocketTask?
+    private var terminalTask: Task<Void, Never>?, screenWatchdog: Task<Void, Never>?
+    private var socketScreenReceived = false, socketHistoryReceived = false
+    private var historyRevision = 0
+    private let log = Logger(subsystem: "com.newsblur.crabigator", category: "TerminalStream")
     private var generation = 0, snapshotRequest = 0
     private let api = API.shared
     var foreground = false
@@ -28,6 +33,7 @@ import SwiftUI
     func stop() {
         generation += 1; snapshotRequest += 1; task?.cancel(); task = nil; heartbeat?.cancel(); heartbeat = nil
         promptTask?.cancel(); promptTask = nil
+        terminalTask?.cancel(); terminalTask = nil; screenWatchdog?.cancel(); screenWatchdog = nil
         socket?.cancel(with: .goingAway, reason: nil); socket = nil; connected = false; revision = nil
     }
     func start() {
@@ -41,13 +47,32 @@ import SwiftUI
             while !Task.isCancelled && epoch == generation {
                 do {
                     let ws = api.session.webSocketTask(with: try api.request("/api/sessions/\(id)/events"))
-                    socket = ws; ws.resume()
+                    // The server caps history at 500K characters; JSON escaping can multiply its byte size.
+                    ws.maximumMessageSize = 8 * 1024 * 1024
+                    socket = ws; socketScreenReceived = false; socketHistoryReceived = false
+                    #if DEBUG
+                    if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_STALL_TERMINAL_SOCKET"] != "1" { ws.resume() }
+                    #else
+                    ws.resume()
+                    #endif
+                    log.info("Connecting terminal session \(id, privacy: .public)")
+                    if terminalTask == nil { terminalTask = Task { await recoverTerminal(id: id, epoch: epoch) } }
+                    screenWatchdog?.cancel()
+                    screenWatchdog = Task {
+                        try? await Task.sleep(for: .seconds(10))
+                        guard !Task.isCancelled, epoch == generation, socket === ws, !socketScreenReceived else { return }
+                        log.notice("Restarting terminal socket without a screen for \(id, privacy: .public)")
+                        ws.cancel(with: .goingAway, reason: nil)
+                    }
                     // Cached terminal frames must not wait for the separate HTTP metadata request.
                     schedulePromptRefresh()
                     heartbeat?.cancel()
                     heartbeat = Task {
                         while !Task.isCancelled && epoch == generation {
                             _ = try? await api.call("/api/sessions/\(id)/viewer-active", body: [:])
+                            ws.sendPing { error in
+                                if error != nil { ws.cancel(with: .goingAway, reason: nil) }
+                            }
                             try? await Task.sleep(for: .seconds(5))
                         }
                     }
@@ -61,6 +86,8 @@ import SwiftUI
                     }
                 } catch {
                     guard !Task.isCancelled, epoch == generation else { return }
+                    log.error("Terminal socket failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    screenWatchdog?.cancel(); screenWatchdog = nil
                     snapshotRequest += 1; promptTask?.cancel(); promptTask = nil
                     connected = false; revision = nil; heartbeat?.cancel(); socket?.cancel(with: .goingAway, reason: nil)
                     try? await Task.sleep(for: .seconds(3))
@@ -68,11 +95,37 @@ import SwiftUI
             }
         }
     }
+    private func recoverTerminal(id: String, epoch: Int) async {
+        let started = Date()
+        while !Task.isCancelled && epoch == generation && !socketScreenReceived {
+            do {
+                let previousHistoryRevision = historyRevision
+                let snapshot = try await api.terminalSnapshot(id)
+                guard !Task.isCancelled, epoch == generation else { return }
+                // A late HTTP response must never replace newer WebSocket output.
+                if !socketScreenReceived, let content = snapshot["screen"] as? String {
+                    if !screenLoaded { log.info("Cached terminal loaded for \(id, privacy: .public) after \(Date().timeIntervalSince(started)) seconds") }
+                    screen = content; screenLoaded = true
+                }
+                if !socketHistoryReceived, historyRevision == previousHistoryRevision, let content = snapshot["scrollback"] as? String {
+                    history = String(content.suffix(250000)); historyLoaded = true
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                log.error("Terminal cache request failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+            try? await Task.sleep(for: .seconds(2))
+        }
+    }
     private func receive(_ e: JSON) {
         switch e.text("type") {
-        case "screen": screen = e.text("content"); screenLoaded = true
-        case "scrollback_history": history = String(e.text("content").suffix(250000)); historyLoaded = true
-        case "scrollback": history = String((history + e.text("diff")).suffix(250000)); historyLoaded = true
+        case "screen":
+            if !socketScreenReceived { log.info("Received terminal screen for \(self.selected?.id ?? "", privacy: .public)") }
+            socketScreenReceived = true; terminalTask?.cancel(); terminalTask = nil
+            screenWatchdog?.cancel(); screenWatchdog = nil
+            screen = e.text("content"); screenLoaded = true
+        case "scrollback_history": historyRevision += 1; socketHistoryReceived = true; history = String(e.text("content").suffix(250000)); historyLoaded = true
+        case "scrollback": historyRevision += 1; socketHistoryReceived = true; history = String((history + e.text("diff")).suffix(250000)); historyLoaded = true
         case "desktop_status": connected = e.bool("connected")
         case "prompt": prompt = e["prompt"] as? JSON; revision = nil
         case "state": selected?.state = e.text("state"); revision = nil; if !["question", "permission"].contains(e.text("state")) { prompt = nil }

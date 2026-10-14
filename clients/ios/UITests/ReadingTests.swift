@@ -3,6 +3,37 @@ import UIKit
 
 /// Opt-in live checks. Pair this simulator first; these never send terminal input.
 final class ReadingTests: XCTestCase {
+    func testCachedTerminalLoadsWithoutAWorkingWebSocket() throws {
+        guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires an already paired device and a server with terminal snapshots.")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment["CRABIGATOR_TEST_STALL_TERMINAL_SOCKET"] = "1"
+        app.launch()
+        XCTAssertTrue(app.buttons["PR board"].waitForExistence(timeout: 25) || app.buttons["Back to list"].exists)
+        if app.buttons["Back to list"].exists { app.buttons["Back to list"].tap() }
+        if let query = ProcessInfo.processInfo.environment["CRABIGATOR_TEST_SESSION_QUERY"] {
+            app.buttons["Search"].tap()
+            let search = app.textFields["Search sessions"]
+            XCTAssertTrue(search.waitForExistence(timeout: 5))
+            search.tap(); search.typeText(query)
+        }
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Session "))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 20))
+        let id = ProcessInfo.processInfo.environment["CRABIGATOR_TEST_SESSION_ID"]
+        let row = try XCTUnwrap(id.map { app.buttons["Session " + $0] } ?? rows.allElementsBoundByIndex.first { $0.isHittable })
+        let start = Date()
+        row.tap()
+        let terminal = app.textViews["terminal-output"]
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            terminal.exists && !(terminal.value as? String ?? "").isEmpty
+        }, object: terminal)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 8), .completed,
+                       "The cached terminal must load even when the WebSocket cannot deliver a frame")
+        print("Cached terminal visible after \(Date().timeIntervalSince(start)) seconds without WebSocket output")
+        capture("Terminal recovered over HTTP without WebSocket output")
+    }
     func testCompactPRStatusStaysOnOneLine() throws {
         guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
             throw XCTSkip("Requires an already paired device with visible PRs.")
