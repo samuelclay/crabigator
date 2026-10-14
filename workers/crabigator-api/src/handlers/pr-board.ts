@@ -264,6 +264,8 @@ interface BoardEntry {
     /** Sessions created with this PR or currently working on its branch. */
     sessions: {
         session_id: string;
+        /** Primary classification for this session, before aggregation. */
+        pr_primary: boolean;
         /** Local crabigator id. Fallback chips hash this when no mark is stored. */
         client_session_id: string;
         /** Glyph and colors the desktop stored for this session. */
@@ -393,11 +395,12 @@ function hasBoardSession(sessions: BoardSession[], sessionId: string): boolean {
     return sessions.some((session) => session.session_id === sessionId);
 }
 
-function boardSession(row: BoardSessionRow): BoardSession {
+function boardSession(row: BoardSessionRow, primary: boolean): BoardSession {
     const cwd = row.cwd || '';
     const dirName = cwd.split('/').filter(Boolean).pop() || cwd;
     return {
         session_id: row.session_id,
+        pr_primary: primary,
         client_session_id: row.client_session_id || '',
         session_mark: parseStoredSessionMark(row.session_mark),
         platform: row.platform || 'claude',
@@ -629,7 +632,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
     // title, state, and activity that it shares.
     const verifiedOwnerKeys = new Set<string>();
     const primaryCandidates: Array<{ key: string; row: SessionPrRow }> = [];
-    const touchingCandidates: Array<{ key: string; row: SessionPrRow }> = [];
+    const touchingCandidates: Array<{ key: string; row: SessionPrRow; primary: boolean }> = [];
     for (const row of rows.results ?? []) {
         const storedPr = parseSessionPr(row.data);
         if (!storedPr) continue;
@@ -701,14 +704,14 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
             && (sessionCreatedPr(row, pr) || prAttachedToSession(row, pr));
         if (representsSession) {
             verifiedOwnerKeys.add(key);
-            entry.sessions.push(boardSession(row));
+            entry.sessions.push(boardSession(row, true));
         } else if (pr.primary && !pr.dismissed) {
             // The session's own primary still identifies the PR when nobody
             // else owns it — including a checkout in another repo or org.
             primaryCandidates.push({ key, row });
-            touchingCandidates.push({ key, row });
+            touchingCandidates.push({ key, row, primary: !!pr.primary });
         } else if (!pr.dismissed) {
-            touchingCandidates.push({ key, row });
+            touchingCandidates.push({ key, row, primary: !!pr.primary });
         }
     }
 
@@ -717,7 +720,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
     // session still wins.
     for (const candidate of primaryCandidates) {
         if (verifiedOwnerKeys.has(candidate.key)) continue;
-        merged.get(candidate.key)?.sessions.push(boardSession(candidate.row));
+        merged.get(candidate.key)?.sessions.push(boardSession(candidate.row, true));
     }
 
     // Session view lists every primary or watched PR a session still tracks,
@@ -727,7 +730,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
         if (!entry) continue;
         const id = candidate.row.session_id;
         if (hasBoardSession(entry.sessions, id) || hasBoardSession(entry.touching, id)) continue;
-        entry.touching.push(boardSession(candidate.row));
+        entry.touching.push(boardSession(candidate.row, candidate.primary));
     }
 
     // Explicitly watched PRs join the board even when no session tracks
@@ -795,7 +798,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
     )
         .bind(groupId)
         .all<BoardSessionRow>();
-    const sessions = (sessionRows.results ?? []).map(boardSession);
+    const sessions = (sessionRows.results ?? []).map(row => boardSession(row, false));
 
     const slack = new Map<string, BoardSlackThread>();
     collectSlackThreads(rows.results ?? [], slack);

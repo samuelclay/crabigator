@@ -45,4 +45,19 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
         stats: { ...shared.stats, work_seconds: null } });
     expect(body.prs[0].sessions[0]).toMatchObject({ ...shared, session_id: 'stats-0', active: false, ended_at: 1600,
         stats: { ...shared.stats, work_seconds: 590 } });
+    // Aggregate primary status must not turn another session's secondary into a primary.
+    const merged = { ...pr, state: 'MERGED', refreshed_at: 3000 };
+    const secondary = { ...merged, primary: false, created_here: false, worktree_visit: true };
+    await testEnv.DB.prepare("UPDATE session_prs SET data = ? WHERE session_id = 'stats-0'").bind(JSON.stringify(merged)).run();
+    await testEnv.DB.prepare(`INSERT INTO session_prs (session_id, owner, repo, number, url, data, updated_at, is_primary)
+        VALUES ('stats-1', 'o', 'r', 1, ?, ?, 3000, 0)`).bind(pr.url, JSON.stringify(secondary)).run();
+    const next = await getPrBoard(new Request(`https://example.com${path}`, { headers: {
+        'X-Device-Id': 'stats-device', 'X-Timestamp': timestamp,
+        'X-Signature': await hmacSign(secret, `GET:${path}:${timestamp}`),
+    } }), testEnv);
+    const result = await next.json() as any;
+    expect(result.prs[0].pr.primary).toBe(true);
+    expect(result.prs[0].sessions[0]).toMatchObject({ session_id: 'stats-0', pr_primary: true });
+    expect(result.prs[0].touching[0]).toMatchObject({ session_id: 'stats-1', pr_primary: false });
+
 });
