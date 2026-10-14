@@ -68,19 +68,19 @@ flow keeps evolving. This log records which upstream commit the port matches, so
 - **Settings and `/flow`**: `hooks/settings.ts`, `hooks/pick.ts`. In crabigator the choices are fixed:
   - fade is off unless `[flow] fade = true`, as in flow, where it is off by default;
   - idle is a glow, never dark;
-  - the scene is claimed per session (`src/flow/claim.rs`) instead of drawn from a shuffle bag;
+  - Random claims a scene per session (`src/flow/claim.rs`) instead of drawing from a shuffle bag; a named scene stays selected for future sessions;
   - the colour comes from the session mark, not a setting;
   - day and night follow the clock.
 
-  The only settings are `[flow] enabled` and `[flow] fade` in `~/.crabigator/config.toml`.
+  The settings are `[flow] enabled`, `[flow] scene` (default `"random"`), and `[flow] fade` in `~/.crabigator/config.toml`.
 - **Tools**: `scripts/` (preview, check, sync-manifest, new-scene, make-sounds). `scripts/flow-reference.ts` here plays the part `check` plays there.
 - **`hooks/pixel-scene.ts`**: no scene uses it yet. Port it with the first scene that does.
 
 ## crabigator's own additions
 
 Not in flow, so keep them when porting upstream changes:
-- **ctrl+]** rotates the column's scene (`FlowColumn::next_scene`), and the separator above the column names the scene and the key. After the last scene it turns the column off (saved as `[flow] enabled = false`), and the separator reads `flow off ⌃]`.
-- Scenes are claimed per session (`claim.rs`), and the colour comes from the session mark.
+- **ctrl+]** cycles through Random, each named scene, and Off (`FlowColumn::next_scene`), saving each choice for future sessions, and the separator above the column names the scene and the key. After the last scene it turns the column off (saved as `[flow] enabled = false`), and the separator reads `flow off ⌃]`.
+- Random scenes are claimed per session (`claim.rs`), and the colour comes from the session mark.
 - **Figures wear the session's hue** (`Dials.accent`, `SceneDef.figure`): the balloon's stripes, the hero skier's hat and jacket, the hero surfer's board, the rockets' white and stainless bodies (a wash), Dragon's trunk and parachute gores. Those scenes keep their frame's own colours (no palette turn), so their skies stay blue. With no accent, every scene draws exactly flow's frames. When porting an upstream change to balloon, ski, surf or rocket, keep the `accent` lines.
 
 ## How the port stays exact

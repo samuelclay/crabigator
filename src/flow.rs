@@ -5,8 +5,9 @@
 //! Code plugin by Rob Macrae; `src/flow/FORK.md` records what was ported
 //! from which upstream commit, so upstream changes can be carried over.
 //!
-//! Each session claims its own scene (`claim`), so sessions side by side
-//! differ, and the scene takes the colour of the session's mark. The scene
+//! Random claims a scene per session (`claim`), so sessions side by side
+//! differ. A named choice is saved for future sessions. The scene takes
+//! the colour of the session's mark. The scene
 //! follows the work as flow's plugin does: work (tool calls, compactions)
 //! flares it, a turn climbs with its effort and length, and subagents add to
 //! it. With `[flow] fade = true`, every change of state also relights it, and
@@ -15,8 +16,8 @@
 //! the work as it happens (`hooks`); other assistants' stats tell it a
 //! refresh later (`feed`).
 //!
-//! ctrl+] steps through every scene from the session's own, then off. Off is
-//! saved as `[flow] enabled = false`, so new sessions start off too; the
+//! ctrl+] steps through Random, every named scene, then off. The choice is
+//! saved in `[flow]`, so new sessions start the same way; the
 //! separator keeps a label naming the key that turns it back on.
 
 mod activity;
@@ -82,9 +83,9 @@ pub struct FlowChange {
 /// The session's scene, stepped in place, and where it is drawn.
 pub struct FlowColumn {
     def: &'static SceneDef,
-    /// The scene this session claimed: where it starts, and where ctrl+]
-    /// comes back to after off.
-    home: &'static SceneDef,
+    /// The scene this session uses when Random is selected.
+    random_scene: &'static SceneDef,
+    random: bool,
     /// Turned off (ctrl+], or `[flow] enabled = false`): no column, no frames.
     off: bool,
     scene: Box<dyn Scene>,
@@ -121,14 +122,20 @@ impl FlowColumn {
         preferences: &FlowPreferences,
     ) -> Self {
         let name = claim::assign_scene(session_id, mark);
-        let def = scene::scene_def(&name).unwrap_or(&scene::scenes()[0]);
+        let random_scene = scene::scene_def(&name).unwrap_or(&scene::scenes()[0]);
+        let chosen = scene::scene_def(&preferences.scene);
+        let def = chosen.unwrap_or(random_scene);
+        if chosen.is_some() {
+            crate::session_mark::publish_stub(session_id, mark, Some(def.name));
+        }
         let target = claim::mark_accent(mark).and_then(|[r, g, b]| {
             palette::hue_of(&[(u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)])
         });
         let seed = f64::from(claim::scene_seed(session_id));
         Self {
             def,
-            home: def,
+            random_scene,
+            random: chosen.is_none(),
             off: !preferences.enabled,
             scene: (def.make)(seed),
             palette: palette_for(def, target),
@@ -157,9 +164,17 @@ impl FlowColumn {
         !self.off
     }
 
-    /// Rotate to the next scene (ctrl+]): each scene once from the session's
-    /// own, then off, then the session's own again. Answers the scene now
-    /// showing (`None`: off).
+    /// The saved choice and displayed label, distinct from Random's actual scene.
+    pub fn selection(&self) -> &'static str {
+        if self.random {
+            "random"
+        } else {
+            self.def.name
+        }
+    }
+
+    /// Rotate through Random, each named scene in order, then off.
+    /// Answers the actual scene showing (`None`: off) for the session mirror.
     pub fn next_scene(&mut self) -> Option<&'static str> {
         if self.off {
             self.off = false;
@@ -167,21 +182,26 @@ impl FlowColumn {
             if let Some(hooks) = self.hooks.as_mut() {
                 hooks.skip_ahead();
             }
-            self.show(self.home);
+            self.random = true;
+            self.show(self.random_scene);
             return self.scene();
         }
         let all = scene::scenes();
+        if self.random {
+            self.random = false;
+            self.show(&all[0]);
+            return self.scene();
+        }
         let at = all
             .iter()
             .position(|def| def.name == self.def.name)
             .unwrap_or(0);
-        let next = &all[(at + 1) % all.len()];
-        if next.name == self.home.name {
+        if let Some(next) = all.get(at + 1) {
+            self.show(next);
+        } else {
             self.off = true;
             self.frame = None;
             self.drawn = None;
-        } else {
-            self.show(next);
         }
         self.scene()
     }
@@ -276,7 +296,7 @@ impl FlowColumn {
         }
         Some(FlowView::Scene {
             rows: self.frame.as_deref()?,
-            scene: self.def.name,
+            scene: self.selection(),
         })
     }
 
@@ -429,7 +449,8 @@ mod tests {
         let def = scene::scene_def(scene).unwrap();
         FlowColumn {
             def,
-            home: def,
+            random_scene: def,
+            random: false,
             off: false,
             scene: (def.make)(7.0),
             palette: Palette::natural(),
@@ -508,27 +529,63 @@ mod tests {
     }
 
     #[test]
-    fn the_next_scene_goes_round_every_scene_then_off_then_home() {
-        let names: Vec<&str> = scene::scenes().iter().map(|def| def.name).collect();
-        let home = names[2];
-        let mut flow = column(home);
+    fn the_next_scene_cycles_random_named_scenes_and_off() {
+        let mut flow = column("avalon");
+        flow.random = true;
         flow.set_geometry(Some(rect(18, 6)));
-        let mut seen = vec![flow.scene().unwrap()];
-        for _ in 1..names.len() {
-            seen.push(flow.next_scene().unwrap());
+        flow.tick();
+        assert_eq!(flow.selection(), "random");
+        assert_eq!(flow.scene(), Some("avalon"));
+        assert!(matches!(
+            flow.view(),
+            Some(FlowView::Scene {
+                scene: "random",
+                ..
+            })
+        ));
+        for def in scene::scenes() {
+            assert_eq!(flow.next_scene(), Some(def.name));
+            assert_eq!(flow.selection(), def.name);
             assert!(flow.has_frame());
         }
-        assert_eq!(seen, [&names[2..], &names[..2]].concat());
-        // Then off: no frame, only the label, and the key is still the column's.
+        // Off keeps the key available even though the column is hidden.
         flow.set_drawn(Some(rect(18, 6)));
         assert_eq!(flow.next_scene(), None);
         assert!(!flow.has_frame() && flow.drawn_rect().is_none());
         assert!(matches!(flow.view(), Some(FlowView::Off)));
         assert!(flow.takes_key());
         assert_eq!(flow.tick(), FlowChange::default());
-        // And back to the session's own scene.
-        assert_eq!(flow.next_scene(), Some(home));
+        assert_eq!(flow.next_scene(), Some("avalon"));
+        assert_eq!(flow.selection(), "random");
         assert!(flow.has_frame());
+    }
+
+    #[test]
+    fn a_saved_scene_starts_new_sessions_on_that_scene() {
+        let mut flow = column("avalon");
+        flow.random = true;
+        flow.next_scene(); // Random -> Fire, even when Random drew Avalon.
+        let preferences = FlowPreferences {
+            scene: flow.selection().to_string(),
+            ..FlowPreferences::default()
+        };
+        let saved = toml::to_string(&preferences).unwrap();
+        let preferences: FlowPreferences = toml::from_str(&saved).unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("crabigator-flow-choice-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let name = dir.path().file_name().unwrap().to_str().unwrap();
+        let session_id = name.strip_prefix("crabigator-").unwrap();
+        let mark = SessionMark::from_seed(session_id);
+        let started = FlowColumn::new(session_id, mark, None, &preferences);
+        assert_eq!(started.scene(), Some("fire"));
+        assert_eq!(started.selection(), "fire");
+        let mirror: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("inspect.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(mirror["flow_scene"], "fire");
     }
 
     #[test]

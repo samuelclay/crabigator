@@ -2238,17 +2238,14 @@ impl App {
 
         // ctrl+] rotates the flow column's scene, and after the last scene
         // turns it off, while the column or its off label shows (it never reaches the
-        // assistant then). Off and back on are saved for new sessions. The
+        // assistant then). Every choice is saved for new sessions. The
         // byte it sends, 0x1d, reads as ctrl+5 without the kitty keyboard
         // protocol.
         let is_next_scene = key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5'));
         if is_next_scene && self.flow.takes_key() {
-            let was_on = self.flow.is_on();
             let scene = self.flow.next_scene();
-            if self.flow.is_on() != was_on {
-                let _ = save_flow_enabled(self.flow.is_on());
-            }
+            let _ = save_flow_selection(self.flow.is_on(), self.flow.selection());
             self.mirror_publisher.set_flow_scene(scene);
             self.last_status_bar_hash = None;
             self.draw_status_bar()?;
@@ -3060,11 +3057,12 @@ impl TermSignals {
     }
 }
 
-/// Save whether the flow column is on, so new sessions start the same way.
+/// Save the flow choice, so new sessions start the same way.
 /// A config that doesn't parse is left alone.
-fn save_flow_enabled(enabled: bool) -> Result<()> {
+fn save_flow_selection(enabled: bool, scene: &str) -> Result<()> {
     let mut config = Config::load()?;
     config.flow.enabled = enabled;
+    config.flow.scene = scene.to_string();
     config.save()
 }
 

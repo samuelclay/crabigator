@@ -52,6 +52,9 @@ pub struct Config {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FlowPreferences {
+    /// A named scene, or "random" to choose one for each session.
+    #[serde(default = "default_flow_scene")]
+    pub scene: String,
     /// Whether the flow column shows. Missing means it does. ctrl+] saves
     /// it: off after the last scene, and on again.
     #[serde(default = "default_true")]
@@ -66,10 +69,15 @@ pub struct FlowPreferences {
 impl Default for FlowPreferences {
     fn default() -> Self {
         Self {
+            scene: default_flow_scene(),
             enabled: true,
             fade: false,
         }
     }
+}
+
+fn default_flow_scene() -> String {
+    "random".to_string()
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -264,6 +272,7 @@ mod tests {
         assert_eq!(config.pr_board.view, "sessions");
         assert!(config.cloud.url.is_none());
         assert!(config.flow.enabled);
+        assert_eq!(config.flow.scene, "random");
         assert!(!config.flow.fade);
     }
 
@@ -273,6 +282,7 @@ mod tests {
             toml::from_str("default_platform = \"claude\"\n[flow]\nenabled = false\nfade = true\n")
                 .unwrap();
         assert!(!config.flow.enabled && config.flow.fade);
+        assert_eq!(config.flow.scene, "random");
         let saved = toml::to_string(&config).unwrap();
         let back: Config = toml::from_str(&saved).unwrap();
         assert!(!back.flow.enabled && back.flow.fade);
