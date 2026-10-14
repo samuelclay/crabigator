@@ -51,6 +51,7 @@ struct PullRequest: Identifiable, Equatable {
     var sessions: [Session]
     var draft, primary, watched, reviewDismissed: Bool
     var unresolvedComments: Int
+    var primaryBySession: [String: Bool]
     init(_ j: JSON) {
         let p = j["pr"] as? JSON ?? j
         repo = "\(j.text("owner"))/\(j.text("repo"))"; number = j.int("number"); id = "\(repo)#\(number)"
@@ -62,8 +63,14 @@ struct PullRequest: Identifiable, Equatable {
         unresolvedComments = max(0, p.int("unresolved_comments")); reviewDismissed = p.bool("review_dismissed")
         draft = p.bool("is_draft"); primary = p.bool("primary"); watched = p.bool("watched")
         mentionedAt = p.int("last_mentioned_at") / 1000; updatedAt = p.int("updated_at") / 1000; if updatedAt == 0 && watched { updatedAt = j.int("updated_at") }; closedAt = p.int("closed_at") / 1000
+        primaryBySession = Dictionary((j.array("sessions") + j.array("touching")).compactMap { row in
+            (row["pr_primary"] as? Bool).map { (row.text("session_id"), $0) }
+        }, uniquingKeysWith: { first, _ in first })
         var seen = Set<String>()
         sessions = (j.array("sessions") + j.array("touching")).map(Session.init).filter { seen.insert($0.id).inserted }
+    }
+    func visibleOnBoard(for sessionID: String) -> Bool {
+        state != "MERGED" || watched || (primaryBySession[sessionID] ?? primary)
     }
     var attentionRank: Int {
         if state.isEmpty { return 2 }; if state == "MERGED" { return 6 }; if state != "OPEN" { return 7 }

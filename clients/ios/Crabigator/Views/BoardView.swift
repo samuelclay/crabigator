@@ -210,7 +210,7 @@ struct SessionRow: View {
                     }
                 } else {
                     if !wide { HStack(alignment: .sessionTitleCenter) { Text(session.branch).boardFont(11).foregroundStyle(Crab.muted).lineLimit(1); Spacer(); HStack(spacing: 8) { SessionStatus(session: session); recency } } }
-                    ForEach(prs) { pr in PRRow(pr: pr, wide: wide) }
+                    ForEach(prs.filter { $0.visibleOnBoard(for: session.id) }) { pr in PRRow(pr: pr, wide: wide) }
                 }
             }
         }.fixedSize(horizontal: false, vertical: true).contentShape(Rectangle())

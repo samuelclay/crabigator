@@ -125,7 +125,9 @@ data class PullRequest(val key: String, val title: String, val repo: String, val
     val primary: Boolean = false, val review: String = "", val checksFailed: Int = 0, val checksPending: Int = 0,
     val lastMentionedAt: Long = 0, val updatedAt: Long = 0, val closedAt: Long = 0,
     val unresolvedComments: Int = 0, val reviewDismissed: Boolean = false,
+    val primaryBySession: Map<String, Boolean> = emptyMap(),
 ) {
+    fun visibleOnBoard(sessionId: String) = state != "MERGED" || watched || (primaryBySession[sessionId] ?: primary)
     companion object {
         fun parse(j: JSONObject): PullRequest {
             val p = j.optJSONObject("pr") ?: j
@@ -133,7 +135,8 @@ data class PullRequest(val key: String, val title: String, val repo: String, val
             return PullRequest("$repo#${j.optInt("number")}", p.text("title", "Pull request"), repo, j.optInt("number"), p.text("state", "OPEN"), when { p.optInt("checks_failed") > 0 -> "✗${p.optInt("checks_failed")} CI"; p.optInt("checks_pending") > 0 -> "●${p.optInt("checks_pending")} CI"; p.optInt("checks_total") > 0 -> "✓ CI"; else -> "" }, p.text("url"), (j.array("sessions") + j.array("touching")).map(Session::parse).distinctBy { it.id }, p.optBoolean("watched"),
                 p.text("branch"), if (p.isNull("additions")) null else p.optInt("additions"), if (p.isNull("deletions")) null else p.optInt("deletions"),
                 p.text("mergeable"), p.text("merge_state_status"), p.optBoolean("is_draft"), p.optBoolean("primary"), p.text("review_decision"),
-                p.optInt("checks_failed"), p.optInt("checks_pending"), p.optLong("last_mentioned_at") / 1000, (p.optLong("updated_at") / 1000).takeIf { it > 0 } ?: if (p.optBoolean("watched")) j.optLong("updated_at") else 0, p.optLong("closed_at") / 1000, p.optInt("unresolved_comments").coerceAtLeast(0), p.optBoolean("review_dismissed"))
+                p.optInt("checks_failed"), p.optInt("checks_pending"), p.optLong("last_mentioned_at") / 1000, (p.optLong("updated_at") / 1000).takeIf { it > 0 } ?: if (p.optBoolean("watched")) j.optLong("updated_at") else 0, p.optLong("closed_at") / 1000, p.optInt("unresolved_comments").coerceAtLeast(0), p.optBoolean("review_dismissed"),
+                (j.array("sessions") + j.array("touching")).filter { it.has("pr_primary") }.associate { it.text("session_id") to it.optBoolean("pr_primary") })
         }
     }
 }

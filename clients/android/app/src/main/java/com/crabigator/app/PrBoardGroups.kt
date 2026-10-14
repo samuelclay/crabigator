@@ -79,7 +79,7 @@ internal fun groupBoardByPullRequest(machines: List<BoardMachine>, now: Long,
     val groups = linkedMapOf<String, BoardPRGroup>()
     val represented = mutableSetOf<String>()
     machine.sessions.forEach { entry ->
-        entry.prs.filter { it.primary || it.watched }.forEach { pr ->
+        entry.prs.filter { (it.primary || it.watched) && it.visibleOnBoard(entry.session.id) }.forEach { pr ->
             represented.add(entry.session.id)
             val previous = groups[pr.key]
             groups[pr.key] = BoardPRGroup(pr, previous?.sessions.orEmpty() + entry)

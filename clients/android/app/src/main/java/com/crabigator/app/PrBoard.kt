@@ -132,7 +132,7 @@ import androidx.compose.ui.unit.sp
                     }
                 }
                 if (recaps && session.recap.isNotBlank()) Text(session.recap, color = Muted, fontSize = 12.sp)
-                entry.prs.forEach { BoardPrRow(it, wide) }
+                entry.prs.filter { it.visibleOnBoard(session.id) }.forEach { BoardPrRow(it, wide) }
             }
         }
     }

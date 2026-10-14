@@ -165,6 +165,25 @@ final class CrabigatorTests: XCTestCase {
         let oldPrompt = [RosterSection(machine: "Mac", project: "repo", age: .three, sessions: [session("never", prompt: now - 7200)])]
         XCTAssertTrue(groupBoardByPullRequest(oldPrompt, prsBySession: [never.id: [primary]], now: now) { prefs.includesActivity($0, now: now) }.isEmpty)
     }
+    func testMergedSecondaryPRsHideOnlyForTheirSecondarySession() {
+        let merged = PullRequest(["owner": "owner", "repo": "repo", "number": 1,
+            "pr": ["state": "MERGED", "primary": true],
+            "sessions": [["session_id": "owner", "pr_primary": true]],
+            "touching": [["session_id": "reader", "pr_primary": false]]])
+        XCTAssertTrue(merged.visibleOnBoard(for: "owner"))
+        XCTAssertFalse(merged.visibleOnBoard(for: "reader"))
+        var open = merged; open.state = "OPEN"
+        XCTAssertTrue(open.visibleOnBoard(for: "reader"))
+        var watched = merged; watched.watched = true
+        XCTAssertTrue(watched.visibleOnBoard(for: "reader"))
+        let secondary = PullRequest(["pr": ["state": "MERGED", "primary": false]])
+        XCTAssertFalse(secondary.visibleOnBoard(for: "reader"))
+        let source = [RosterSection(machine: "Mac", project: "owner/repo", age: .hour,
+            sessions: [session("owner", prompt: 100), session("reader", prompt: 100)])]
+        let groups = groupBoardByPullRequest(source, prsBySession: ["owner": [merged], "reader": [merged]], now: 100)
+        XCTAssertEqual(groups.flatMap(\.pullRequests).flatMap(\.sessions).map(\.id), ["owner"])
+        XCTAssertEqual(groups.flatMap(\.sessions).map(\.id), ["reader"])
+    }
     func testWatchTargetsAndNewWatchRecency() {
         XCTAssertEqual(BoardActions.watchTarget("owner/repo#12")?.int("number"), 12)
         XCTAssertEqual(BoardActions.watchTarget("https://github.com/owner/repo/pull/12/files")?.text("repo"), "repo")

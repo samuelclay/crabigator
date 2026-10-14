@@ -33,7 +33,7 @@ func groupBoardByPullRequest(_ sections: [RosterSection], prsBySession: [String:
         var groups: [BoardPRGroup] = []
         var represented = Set<String>()
         for session in source.flatMap(\.sessions) {
-            for pr in prsBySession[session.id] ?? [] where pr.primary || pr.watched {
+            for pr in prsBySession[session.id] ?? [] where (pr.primary || pr.watched) && pr.visibleOnBoard(for: session.id) {
                 represented.insert(session.id)
                 if let index = groups.firstIndex(where: { $0.id == pr.id }) { groups[index].sessions.append(session) }
                 else { groups.append(BoardPRGroup(pr: pr, sessions: [session])) }

@@ -10,6 +10,17 @@ class PrBoardGroupsTest {
         Session.parse(JSONObject().put("id", id).put("device_name", machine).put("repo_name", repo)
             .put("prompts_changed_at", now - age).put("state", state))
 
+    @Test fun mergedSecondaryPrsHideOnlyForTheirSecondarySession() {
+        val merged = PullRequest.parse(JSONObject("""{"owner":"owner","repo":"repo","number":1,
+            "pr":{"state":"MERGED","primary":true},
+            "sessions":[{"session_id":"owner","pr_primary":true}],
+            "touching":[{"session_id":"reader","pr_primary":false}]}"""))
+        assertTrue(merged.visibleOnBoard("owner"))
+        assertFalse(merged.visibleOnBoard("reader"))
+        assertTrue(merged.copy(state = "OPEN").visibleOnBoard("reader"))
+        assertTrue(merged.copy(watched = true).visibleOnBoard("reader"))
+        assertFalse(merged.copy(primary = false, primaryBySession = emptyMap()).visibleOnBoard("reader"))
+    }
     @Test fun machinesContainCliAgeBandsAndCompletionDoesNotReorderThem() {
         val oldButWorking = session("working", "Studio", 100_000, state = "thinking")
         val oneHour = session("one", "Studio", 3600)
