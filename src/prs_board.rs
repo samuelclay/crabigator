@@ -3010,7 +3010,8 @@ fn recap_line(
         }
     });
     let mut delta_width = crate::parsers::strip_ansi_for_debug(&delta).width();
-    let prefix_width = 2 + icon.width() + 1;
+    let indent = " ".repeat(layout.widths.board_mark);
+    let prefix_width = indent.width() + icon.width() + 1;
     if prefix_width + delta_width >= layout.widths.board_left_width() {
         delta.clear();
         delta_width = 0;
@@ -3024,7 +3025,7 @@ fn recap_line(
     );
     let left_visible = prefix_width + headline.width() + delta_width;
     let left_styled = format!(
-        "  {}{} {}{}{}{}",
+        "{indent}{}{} {}{}{}{}",
         fg(icon_color),
         icon,
         fg(color::GRAY),
@@ -3468,7 +3469,7 @@ fn pr_view_session_row(session: &SessionRef, context: RowContext<'_>) -> String 
         cooldowns,
         ..
     } = context;
-    let (left_styled, left_visible) = session_title_cell(session, "  ◆ ", session.ended, widths);
+    let (left_styled, left_visible) = session_title_cell(session, session.ended, widths);
     let activity = activity_cell(
         std::slice::from_ref(session),
         now_ms,
@@ -3495,7 +3496,7 @@ fn pr_view_session_row(session: &SessionRef, context: RowContext<'_>) -> String 
 /// to make room.
 const SESSION_TITLE_MIN: usize = 16;
 
-/// The `◆ title ⎇  branch` left cell shared by the PR view's session
+/// The `chip title ⎇  branch` left cell shared by the PR view's session
 /// sub-rows and the session view's block headers, truncated to the left
 /// columns. The branch renders whole or not at all — a clipped branch reads
 /// as noise — and the title gives way down to [`SESSION_TITLE_MIN`] before
@@ -3503,7 +3504,6 @@ const SESSION_TITLE_MIN: usize = 16;
 /// stand out.
 fn session_title_cell(
     session: &SessionRef,
-    prefix: &str,
     dimmed: bool,
     widths: &PrColumnWidths,
 ) -> (String, usize) {
@@ -3520,10 +3520,8 @@ fn session_title_cell(
     };
 
     let chip = session.mark.chip();
-    let mark_span = session.mark.width() + 1;
-    let budget = widths
-        .board_left_width()
-        .saturating_sub(prefix.width() + mark_span);
+    let mark_span = widths.board_mark.max(session.mark.width() + 1);
+    let budget = widths.board_left_width().saturating_sub(mark_span);
     let mut separator = if branch_text.is_empty() { "" } else { " " };
     let title_reserved = title.width().min(SESSION_TITLE_MIN);
     if !branch_text.is_empty() && title_reserved + separator.width() + branch_text.width() > budget
@@ -3535,10 +3533,10 @@ fn session_title_cell(
         &title,
         budget.saturating_sub(branch_text.width() + separator.width()),
     );
-    let visible =
-        prefix.width() + mark_span + title_text.width() + separator.width() + branch_text.width();
+    let visible = mark_span + title_text.width() + separator.width() + branch_text.width();
+    let mark_gap = " ".repeat(mark_span - session.mark.width());
     let styled = format!(
-        "{gray}{prefix}{chip} {}{title_text}{gray}{separator}{}{branch_text}{RESET_FG}",
+        "{gray}{chip}{mark_gap}{}{title_text}{gray}{separator}{}{branch_text}{RESET_FG}",
         fg(title_color),
         fg(text_color),
         gray = fg(color::DARK_GRAY),
@@ -3572,7 +3570,7 @@ fn render_session_view_block(
         cooldowns,
     );
 
-    let (left_styled, left_visible) = session_title_cell(session, "◆ ", entry.stale, widths);
+    let (left_styled, left_visible) = session_title_cell(session, entry.stale, widths);
     let mut row = board_detail_row_text(
         width,
         widths,
@@ -3626,7 +3624,8 @@ fn render_session_view_block(
     let hidden = entry.prs.len().saturating_sub(MAX_SESSION_PRS);
     if hidden > 0 {
         let label = format!(
-            "  +{hidden} more {}",
+            "{}+{hidden} more {}",
+            " ".repeat(crate::ui::pr_cells::PR_LEFT_PADDING + widths.board_mark),
             if hidden == 1 { "PR" } else { "PRs" }
         );
         lines.push(format!(
@@ -4045,8 +4044,14 @@ fn render_at(
                 .iter()
                 .map(|&index| session_rows[index].entry.session.mark.width()),
         )
+        .chain(
+            visible_workspace_indices
+                .iter()
+                .map(|&index| workspace_rows[index].entry.session.mark.width()),
+        )
         .max()
         .unwrap_or(0);
+    widths.board_mark = mark_width + usize::from(mark_width > 0);
     widths.include_board_detail_right(
         activity_width + mark_width + usize::from(mark_width > 0),
         shared_width as usize,
@@ -4061,7 +4066,7 @@ fn render_at(
         let entry = workspace_rows[index].entry;
         let (title, _) = workspace_title(entry);
         widths.include_board_row(
-            &format!("◇  {}  {title}", entry.session.mark.glyph),
+            &format!("{}{title}", " ".repeat(widths.board_mark)),
             &workspace_diff_text(entry),
             &workspace_branch_text(entry),
             shared_width as usize,
@@ -7211,7 +7216,7 @@ mod tests {
         assert_eq!(rendered.spans[0].key, "o/portal#5");
         let frame = crate::parsers::strip_ansi_for_debug(&rendered.lines.join("\n"));
         assert!(frame.contains("#5: Ship the fallback"), "{frame}");
-        assert!(frame.contains("◆"), "session sub-rows sit under the PR");
+        assert!(!frame.contains("◆"), "session chips replace the diamond bullets");
         assert!(frame.contains("one") && frame.contains("two"));
         assert!(
             frame.contains("⎇  sam/fallback-worktree"),
@@ -7276,7 +7281,7 @@ mod tests {
 
         let sub_row = lines
             .iter()
-            .find(|line| line.trim_start().starts_with('◆'))
+            .find(|line| line.contains("ᛝ  one"))
             .expect("the session sub-row renders");
         assert!(
             sub_row.contains("⟩ 30m") && sub_row.contains("⋖ 5m"),
@@ -7353,10 +7358,13 @@ mod tests {
                     false,
                     BoardView::new(MAX_DETAIL, RecencyBucket::Older).with_mode(mode),
                 );
+                let mut title_columns = Vec::new();
                 for line in &frame.lines {
                     let plain = crate::parsers::strip_ansi_for_debug(line);
-                    if plain.contains('◆')
-                        || plain.contains('◇')
+                    if let Some(start) = plain.find("#7:").or_else(|| plain.find("ᛝ")) {
+                        title_columns.push(crate::ui::utils::strip_ansi_len(&plain[..start]));
+                    }
+                    if plain.contains("ᛝ")
                         || plain.contains("#7:")
                         || plain.contains('✦')
                     {
@@ -7366,6 +7374,10 @@ mod tests {
                         );
                     }
                 }
+                assert!(
+                    title_columns.windows(2).all(|pair| pair[0] == pair[1]),
+                    "session titles and PR rows must align at {width} columns: {title_columns:?}"
+                );
             }
         }
     }
@@ -7491,11 +7503,11 @@ mod tests {
         assert!(solo.sessions.is_empty() && !solo.stale);
 
         // PR view keeps watched PRs even though nothing marks them primary,
-        // and the watch glyph shows on the rendered block.
+        // and shows their number without a leading action icon.
         let prs = entries_for_mode(entries, BoardMode::Prs).prs;
         assert_eq!(prs.len(), 2);
         let frame = render_prs_frame(&prs, DEFAULT_DETAIL).lines.join("\n");
-        assert!(frame.contains('◉'), "the watch glyph renders: {frame}");
+        assert!(!frame.contains('◉'), "PR rows have no leading action icons: {frame}");
         assert_eq!(
             frame.matches("Updated 5m").count(),
             1,
@@ -7506,8 +7518,8 @@ mod tests {
             "{frame}"
         );
         assert!(
-            frame.contains("disposition=unwatched"),
-            "the glyph links to the unwatch action: {frame}"
+            frame.contains("disposition=dismissed"),
+            "the dismiss action remains available: {frame}"
         );
 
         // A dismissed disposition hides the watch everywhere.
@@ -10087,7 +10099,7 @@ mod tests {
             .unwrap();
         let generated_plain = crate::parsers::strip_ansi_for_debug(generated_line);
         assert!(
-            generated_plain.contains("◆") && generated_plain.contains("ᛝ  "),
+            !generated_plain.contains("◆") && generated_plain.contains("ᛝ  "),
             "the session sub-row sits below the PR header: {generated_plain}"
         );
         assert!(
@@ -10123,11 +10135,11 @@ mod tests {
             )
         )));
         assert!(
-            crate::parsers::strip_ansi_for_debug(judgment_line).starts_with("   ✦ "),
+            crate::parsers::strip_ansi_for_debug(judgment_line).trim_start().starts_with("✦ "),
             "the PR judgment remains a separate line"
         );
         assert!(
-            crate::parsers::strip_ansi_for_debug(next_line).starts_with("     Next: "),
+            crate::parsers::strip_ansi_for_debug(next_line).trim_start().starts_with("Next: "),
             "the next step remains a separate recap line"
         );
 
@@ -10401,7 +10413,7 @@ mod tests {
         )
         .lines
         .join("\n");
-        assert!(styled.contains(&format!("{}◇ ", fg(color::PURPLE))));
+        assert!(!styled.contains("◇"), "session chips replace the diamond bullets");
         assert!(styled.contains(&format!("{}⟁  Standalone work", fg(color::LIGHT_BLUE))));
         assert!(styled.contains(&format!("{}Kept standalone rows visible", fg(color::GRAY))));
         let frame = crate::parsers::strip_ansi_for_debug(&styled);
@@ -10433,7 +10445,7 @@ mod tests {
         )
         .lines
         .join("\n");
-        assert!(styled.contains(&format!("{}◇ ", fg(color::PURPLE))));
+        assert!(!styled.contains("◇"), "session chips replace the diamond bullets");
         assert!(styled.contains(&format!("{}ᛝ  crabigator", fg(color::LIGHT_BLUE))));
     }
 

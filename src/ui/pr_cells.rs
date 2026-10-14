@@ -50,6 +50,8 @@ pub(crate) fn display_prs(prs: &[SessionPr]) -> Vec<&SessionPr> {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PrColumnWidths {
+    /// Shared session-chip column on the board, including its trailing gap.
+    pub(crate) board_mark: usize,
     pub(crate) identity: usize,
     pub(crate) number: usize,
     pub(crate) diff: usize,
@@ -190,7 +192,7 @@ impl PrColumnWidths {
     }
 
     /// Switch to the board's row shape: the number rides inside the
-    /// identity cell (`★ #142: title`) so the standalone number column
+    /// identity cell (`#142: title`) so the standalone number column
     /// collapses, and the diff moves beside the GitHub status so the title
     /// keeps the width it used to take.
     pub(crate) fn use_pr_view_layout(&mut self, total_width: usize) {
@@ -371,10 +373,11 @@ pub(crate) fn pr_row_text_tinted(
     tints: StatusTints,
     scope: &str,
 ) -> String {
-    pr_row_text_with_optional_activity(width, pr, widths, None, None, tints, scope)
+    let left_cells = pr_left_cells_scoped(pr, widths, scope);
+    pr_row_text_with_left_cells(width, pr, widths, &left_cells, None, tints, scope)
 }
 
-/// Render the PR view's header row: identity (`★ #142: title`) and branch on
+/// Render the PR view's header row: identity (`#142: title`) and branch on
 /// the left, then the diff and GitHub status anchored right. The block stands for the PR across every session, so its action
 /// links act group-wide.
 pub(crate) fn pr_view_row_text(
@@ -384,7 +387,7 @@ pub(crate) fn pr_view_row_text(
     title: &str,
     tints: StatusTints,
 ) -> String {
-    pr_row_text_with_optional_activity(width, pr, widths, Some(title), None, tints, "")
+    session_view_pr_row_text(width, pr, widths, title, tints, "")
 }
 
 /// Render a session-view PR sub-row: the PR-view row anatomy (identity,
@@ -399,18 +402,18 @@ pub(crate) fn session_view_pr_row_text(
     tints: StatusTints,
     scope: &str,
 ) -> String {
-    const INDENT: &str = "  ";
-    let budget = widths.identity.saturating_sub(INDENT.width());
+    let indent = " ".repeat(widths.board_mark);
+    let budget = widths.identity.saturating_sub(widths.board_mark);
     let identity = truncate_board_pr_identity(pr, title, budget);
     let mut left_cells = pr_left_cells_with_identity(pr, widths, identity, scope);
-    left_cells[0].0.insert_str(0, INDENT);
-    left_cells[0].1 += INDENT.width();
+    left_cells[0].0.insert_str(0, &indent);
+    left_cells[0].1 += widths.board_mark;
     pr_row_text_with_left_cells(width, pr, widths, &left_cells, None, tints, scope)
 }
 
 /// Render an active session without a PR in the same columns as PR rows.
-/// The `◇` keeps the board's purple identity color; `title_color` paints the
-/// title, normally the same blue as a PR's session sub-rows.
+/// The chip occupies the board's shared glyph column; `title_color` paints
+/// the title, normally the same blue as a PR's session sub-rows.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn session_row_text_with_activity(
     width: u16,
@@ -425,14 +428,14 @@ pub(crate) fn session_row_text_with_activity(
     activity_width: usize,
     mark: SessionMark,
 ) -> String {
-    let mark_span = mark.width() + 1;
-    let title_budget = widths.identity.saturating_sub("◇ ".width() + mark_span);
+    let mark_span = widths.board_mark.max(mark.width() + 1);
+    let title_budget = widths.identity.saturating_sub(mark_span);
     let title_text = truncate_to_width(title, title_budget);
-    let identity_visible = "◇ ".width() + mark_span + title_text.width();
+    let identity_visible = mark_span + title_text.width();
     let identity_styled = format!(
-        "{}◇ {RESET_FG}{} {}{title_text}{RESET_FG}",
-        fg(color::PURPLE),
+        "{}{}{}{title_text}{RESET_FG}",
         mark.chip(),
+        " ".repeat(mark_span - mark.width()),
         fg(title_color),
     );
     // A workspace has both activity and a diff on one row. Keep them together
@@ -537,22 +540,6 @@ pub(crate) fn board_detail_row_text(
         row.push_str(&right_cells_text(&right_cells));
     }
     row
-}
-
-fn pr_row_text_with_optional_activity(
-    width: u16,
-    pr: &SessionPr,
-    widths: &PrColumnWidths,
-    board_title: Option<&str>,
-    activity: Option<PrCell>,
-    tints: StatusTints,
-    scope: &str,
-) -> String {
-    let left_cells = board_title.map_or_else(
-        || pr_left_cells_scoped(pr, widths, scope),
-        |title| pr_left_cells_with_board_title(pr, widths, title, scope),
-    );
-    pr_row_text_with_left_cells(width, pr, widths, &left_cells, activity, tints, scope)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -694,16 +681,6 @@ pub(crate) fn pr_left_cells_scoped(
     scope: &str,
 ) -> [PrCell; 5] {
     let identity = truncate_identity(pr, widths.identity);
-    pr_left_cells_with_identity(pr, widths, identity, scope)
-}
-
-fn pr_left_cells_with_board_title(
-    pr: &SessionPr,
-    widths: &PrColumnWidths,
-    title: &str,
-    scope: &str,
-) -> [PrCell; 5] {
-    let identity = truncate_board_pr_identity(pr, title, widths.identity);
     pr_left_cells_with_identity(pr, widths, identity, scope)
 }
 
@@ -1121,7 +1098,7 @@ pub(crate) fn pr_identity_text(pr: &SessionPr) -> String {
 }
 
 fn board_pr_identity_text(pr: &SessionPr, title: &str) -> String {
-    format!("{} {}: {title}", pr_glyph(pr), pr_number_text(pr))
+    format!("{}: {title}", pr_number_text(pr))
 }
 
 fn pr_number_text(pr: &SessionPr) -> String {
