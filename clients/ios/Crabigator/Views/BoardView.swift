@@ -259,18 +259,20 @@ struct PRRow: View {
     }
     var statusColumns: some View {
         HStack(spacing: 6) {
-            HStack(spacing: 2) {
-                Image(systemName: "bubble.left")
-                Text(pr.unresolvedComments > 0 ? "\(pr.unresolvedComments)" : "—")
-            }.foregroundStyle(pr.unresolvedComments > 0 ? Crab.orange : Crab.muted)
-                .frame(width: 36, alignment: .leading).accessibilityElement(children: .ignore)
-                .accessibilityLabel("Unresolved comments: \(pr.unresolvedComments)")
-            Text(approval.symbol).foregroundStyle(approval.color).frame(width: 20)
-                .accessibilityLabel("Approval: " + approval.label)
             Text(pr.checks.isEmpty ? "—" : pr.checks)
                 .foregroundStyle(pr.checks.isEmpty ? Crab.muted : pr.checksFailed > 0 ? Crab.red : pr.checksPending > 0 ? Crab.yellow : Crab.mint)
                 .frame(width: 48, alignment: .leading)
                 .accessibilityLabel(pr.checks.isEmpty ? "CI status unavailable" : pr.checksFailed > 0 ? "\(pr.checksFailed) checks failed" : pr.checksPending > 0 ? "\(pr.checksPending) checks pending" : "Checks passed")
+            HStack(spacing: 2) {
+                if pr.unresolvedComments > 0 {
+                    Image(systemName: "bubble.left")
+                    Text("\(pr.unresolvedComments)")
+                }
+            }.foregroundStyle(Crab.orange)
+                .frame(width: 36, alignment: .leading).accessibilityElement(children: .ignore)
+                .accessibilityLabel("Unresolved comments: \(pr.unresolvedComments)")
+            Text(approval.symbol).foregroundStyle(approval.color).frame(width: 20)
+                .accessibilityLabel("Approval: " + approval.label)
             Text(mergeStatus).foregroundStyle(mergeStatus == "Conflicts" ? Crab.red : mergeStatus == "Behind" ? Crab.yellow : mergeStatus == "Clean" ? Crab.mint : Crab.muted)
                 .frame(width: 54, alignment: .leading)
                 .accessibilityLabel("Branch status: " + mergeStatus)

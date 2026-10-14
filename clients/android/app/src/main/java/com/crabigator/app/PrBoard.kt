@@ -214,8 +214,6 @@ import androidx.compose.ui.unit.sp
 
 @Composable private fun PrChecks(pr: PullRequest) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        StatusColumn("💬${pr.unresolvedComments.takeIf { it > 0 } ?: "—"}", width = 36.dp,
-            color = if (pr.unresolvedComments > 0) CrabColors.Orange else Muted, description = "Unresolved comments: ${pr.unresolvedComments}")
         val approval = when {
             pr.state != "OPEN" -> Triple("—", "Not applicable", Muted)
             pr.review == "APPROVED" -> Triple("✓", "Approved", Mint)
@@ -223,10 +221,12 @@ import androidx.compose.ui.unit.sp
             pr.reviewDismissed -> Triple("⊘", "Review dismissed", CrabColors.Orange)
             else -> Triple("◌", "Awaiting review", Muted)
         }
-        StatusColumn(approval.first, width = 20.dp, color = approval.third, description = "Approval: ${approval.second}")
         StatusColumn(pr.checks.ifBlank { "—" }, width = 48.dp,
             color = when { pr.checks.isBlank() -> Muted; pr.checksFailed > 0 -> CrabColors.Red; pr.checksPending > 0 -> CrabColors.Yellow; else -> Mint },
             description = when { pr.checks.isBlank() -> "CI status unavailable"; pr.checksFailed > 0 -> "${pr.checksFailed} checks failed"; pr.checksPending > 0 -> "${pr.checksPending} checks pending"; else -> "Checks passed" })
+        StatusColumn(if (pr.unresolvedComments > 0) "💬${pr.unresolvedComments}" else "", width = 36.dp,
+            color = CrabColors.Orange, description = "Unresolved comments: ${pr.unresolvedComments}")
+        StatusColumn(approval.first, width = 20.dp, color = approval.third, description = "Approval: ${approval.second}")
         val merge = when {
             pr.state != "OPEN" -> "—"
             pr.mergeable == "CONFLICTING" -> "Conflicts"

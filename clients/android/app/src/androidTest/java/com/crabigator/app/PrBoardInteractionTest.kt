@@ -35,7 +35,7 @@ class PrBoardInteractionTest {
         compose.setContent {
             MaterialTheme {
                 Box(Modifier.width(if (wide.value) 1000.dp else 320.dp)) {
-                    BoardSessionBlock(BoardSession(session, listOf(pr, pr.copy(number = 124, title = "Already merged", state = "MERGED", checks = "", additions = null, deletions = null)), 0), false, wide.value, clock) { opened++ }
+                    BoardSessionBlock(BoardSession(session, listOf(pr, pr.copy(number = 124, title = "Already merged", state = "MERGED", checks = "", unresolvedComments = 0, additions = null, deletions = null)), 0), false, wide.value, clock) { opened++ }
                 }
             }
         }
@@ -53,10 +53,13 @@ class PrBoardInteractionTest {
             assertEquals("CI column must keep its place when empty", ci.left, emptyCi.left, 1f)
             assertEquals("Branch column must keep its place when empty", behind.left, emptyBranch.left, 1f)
             val comments = compose.onAllNodesWithContentDescription("Unresolved comments: 7", useUnmergedTree = true)[0].fetchSemanticsNode().boundsInRoot
+            val emptyComments = compose.onNodeWithContentDescription("Unresolved comments: 0", useUnmergedTree = true)
+            assertEquals(comments.left, emptyComments.fetchSemanticsNode().boundsInRoot.left, 1f)
+            emptyComments.assertTextEquals("")
             val approval = compose.onNodeWithContentDescription("Approval: Approved", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
             val noApproval = compose.onNodeWithContentDescription("Approval: Not applicable", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
             assertEquals("Approval column must keep its place", approval.left, noApproval.left, 1f)
-            assertTrue("All four status columns must stay separate", comments.right < approval.left && approval.right < ci.left && ci.right < behind.left)
+            assertTrue("All four status columns must stay separate", ci.right < comments.left && comments.right < approval.left && approval.right < behind.left)
             if (isWide) {
                 assertEquals("Session columns should be top-aligned", title.top, bounds(session.branch).top, 1f)
                 assertEquals("PR columns should be top-aligned", pull.top,
