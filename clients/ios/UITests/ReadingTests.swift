@@ -3,6 +3,45 @@ import UIKit
 
 /// Opt-in live checks. Pair this simulator first; these never send terminal input.
 final class ReadingTests: XCTestCase {
+    func testCompactPRStatusStaysOnOneLine() throws {
+        guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires an already paired device with visible PRs.")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        let mode = app.buttons["PR board"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 25))
+        if !(mode.value as? String ?? "").hasPrefix("Selected") { mode.tap() }
+        if mode.value as? String == "Selected, full width" { mode.tap() }
+        let states = app.staticTexts.matching(NSPredicate(format: "label IN %@", ["Open", "Merged", "Closed", "Draft", "Pending"]))
+        XCTAssertTrue(states.firstMatch.waitForExistence(timeout: 25))
+        func descendants(of snapshot: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
+            snapshot.children.flatMap { [$0] + descendants(of: $0) }
+        }
+        let snapshot = try app.snapshot()
+        let rows = descendants(of: snapshot).filter { $0.elementType == .button && $0.identifier.hasPrefix("Session ") }
+        var checkedStates = 0, checkedDiffs = 0
+        for row in rows {
+            let texts = descendants(of: row).filter { $0.elementType == .staticText }
+            let checks = texts.filter { $0.label == "Checks passed" || $0.label == "CI status unavailable" || $0.label.hasSuffix(" checks failed") || $0.label.hasSuffix(" checks pending") }
+            let states = texts.filter { ["Open", "Merged", "Closed", "Draft", "Pending"].contains($0.label) }
+            let diffs = texts.filter { $0.label.hasPrefix("+") || $0.label.hasPrefix("−") }
+            for text in states + diffs {
+                guard text.frame.midY > 100 && text.frame.midY < snapshot.frame.maxY - 90 else { continue }
+                let ci = try XCTUnwrap(checks.first { abs($0.frame.midY - text.frame.midY) < 4 }, "CI must share the PR state and diff line")
+                XCTAssertGreaterThanOrEqual(text.frame.minX, row.frame.minX)
+                XCTAssertGreaterThan(text.frame.width, 0)
+                XCTAssertGreaterThan(ci.frame.minX, text.frame.maxX)
+                XCTAssertLessThanOrEqual(ci.frame.maxX, row.frame.maxX)
+                if ["Open", "Merged", "Closed", "Draft", "Pending"].contains(text.label) { checkedStates += 1 } else { checkedDiffs += 1 }
+            }
+        }
+        XCTAssertGreaterThan(checkedStates, 0, "Requires session grouping with visible PRs")
+        XCTAssertGreaterThan(checkedDiffs, 0, "Requires visible PR diff counts")
+        capture("Compact PR state diff and CI share one line")
+    }
+
     func testFloatingHeaderConsumesGaps() throws {
         guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
             throw XCTSkip("Requires an already paired tablet.")

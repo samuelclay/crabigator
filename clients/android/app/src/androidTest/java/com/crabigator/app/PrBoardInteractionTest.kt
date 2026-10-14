@@ -102,11 +102,17 @@ class PrBoardInteractionTest {
             }
             val diffBounds = additions.fetchSemanticsNode().boundsInRoot
             val comments = compose.onNodeWithContentDescription("Unresolved comments: 7", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-            assertTrue("Narrow PR rows must put review columns below the diff counts", comments.top >= diffBounds.bottom)
-            for (label in listOf("999 checks failed", "Branch status: Conflicts", "Unresolved comments: 7", "Approval: Approved")) {
+            assertEquals("Narrow PR rows must keep all status on one line", diffBounds.center.y, comments.center.y, 2f)
+            val state = compose.onNodeWithText("Open", useUnmergedTree = true)
+            assertEquals(diffBounds.center.y, state.fetchSemanticsNode().boundsInRoot.center.y, 2f)
+            for (node in listOf(state) + listOf("999 checks failed", "Branch status: Conflicts", "Unresolved comments: 7", "Approval: Approved").map {
+                compose.onNodeWithContentDescription(it, useUnmergedTree = true)
+            }) {
                 val results = mutableListOf<TextLayoutResult>()
-                compose.onNodeWithContentDescription(label, useUnmergedTree = true)
-                    .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+                val bounds = node.fetchSemanticsNode().boundsInRoot
+                assertEquals(diffBounds.center.y, bounds.center.y, 2f)
+                assertTrue("Columns must stay within the PR row", bounds.right <= compose.onRoot().fetchSemanticsNode().boundsInRoot.right)
+                node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
                 assertTrue("Status text must fit without clipping", results.isNotEmpty() && results.none { it.hasVisualOverflow })
             }
         }

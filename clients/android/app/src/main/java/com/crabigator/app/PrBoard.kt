@@ -175,45 +175,37 @@ import androidx.compose.ui.unit.sp
 }
 
 @Composable private fun PrStatus(pr: PullRequest, modifier: Modifier = Modifier) {
-    val spacing = LocalBoardSpacing.current
     BoxWithConstraints(modifier) {
-        if (maxWidth < 320.dp) {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(spacing.gap(4))) {
-                PrSummary(pr, Modifier.fillMaxWidth())
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { PrChecks(pr) }
-            }
-        } else {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                PrSummary(pr, Modifier.weight(1f))
-                PrChecks(pr)
-            }
+        val compact = maxWidth < 320.dp
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            PrSummary(pr, compact, Modifier.weight(1f))
+            PrChecks(pr, compact)
         }
     }
 }
 
-@Composable private fun PrSummary(pr: PullRequest, modifier: Modifier = Modifier) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        PrState(pr)
-        PrChanges(pr, Modifier.weight(1f))
+@Composable private fun PrSummary(pr: PullRequest, compact: Boolean, modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        PrState(pr, if (compact) Modifier.width(40.dp) else Modifier, compact)
+        PrChanges(pr, Modifier.weight(1f), compact)
     }
 }
 
-@Composable private fun PrState(pr: PullRequest) {
+@Composable private fun PrState(pr: PullRequest, modifier: Modifier = Modifier, compact: Boolean = false) {
     val color = when { pr.state == "MERGED" -> CrabColors.Purple; pr.state == "CLOSED" -> CrabColors.Red; pr.draft || pr.state.isBlank() -> Muted; else -> Mint }
-    Text(if (pr.draft && pr.state == "OPEN") "Draft" else pr.state.lowercase().replaceFirstChar { it.uppercase() }.ifBlank { "Pending" },
-        color = color, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1,
-        modifier = Modifier.background(color.copy(alpha = .12f), RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 2.dp))
+    FittedStatusText(if (pr.draft && pr.state == "OPEN") "Draft" else pr.state.lowercase().replaceFirstChar { it.uppercase() }.ifBlank { "Pending" },
+        color, modifier.background(color.copy(alpha = .12f), RoundedCornerShape(4.dp)).padding(horizontal = if (compact) 3.dp else 5.dp, vertical = 2.dp))
 }
 
-@Composable private fun PrChanges(pr: PullRequest, modifier: Modifier = Modifier) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+@Composable private fun PrChanges(pr: PullRequest, modifier: Modifier = Modifier, compact: Boolean = false) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 6.dp), verticalAlignment = Alignment.CenterVertically) {
         pr.additions?.let { FittedStatusText("+$it", Mint, Modifier.weight(1f, fill = false)) }
         pr.deletions?.let { FittedStatusText("−$it", CrabColors.Red, Modifier.weight(1f, fill = false)) }
     }
 }
 
-@Composable private fun PrChecks(pr: PullRequest) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+@Composable private fun PrChecks(pr: PullRequest, compact: Boolean) {
+    Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 6.dp), verticalAlignment = Alignment.CenterVertically) {
         val approval = when {
             pr.state != "OPEN" -> Triple("—", "Not applicable", Muted)
             pr.review == "APPROVED" -> Triple("✓", "Approved", Mint)
@@ -221,12 +213,12 @@ import androidx.compose.ui.unit.sp
             pr.reviewDismissed -> Triple("⊘", "Review dismissed", CrabColors.Orange)
             else -> Triple("◌", "Awaiting review", Muted)
         }
-        StatusColumn(pr.checks.ifBlank { "—" }, width = 48.dp,
+        StatusColumn(pr.checks.ifBlank { "—" }, width = if (compact) 42.dp else 48.dp,
             color = when { pr.checks.isBlank() -> Muted; pr.checksFailed > 0 -> CrabColors.Red; pr.checksPending > 0 -> CrabColors.Yellow; else -> Mint },
             description = when { pr.checks.isBlank() -> "CI status unavailable"; pr.checksFailed > 0 -> "${pr.checksFailed} checks failed"; pr.checksPending > 0 -> "${pr.checksPending} checks pending"; else -> "Checks passed" })
-        StatusColumn(if (pr.unresolvedComments > 0) "💬${pr.unresolvedComments}" else "", width = 36.dp,
+        StatusColumn(if (pr.unresolvedComments > 0) "💬${pr.unresolvedComments}" else "", width = if (compact) 24.dp else 36.dp,
             color = CrabColors.Orange, description = "Unresolved comments: ${pr.unresolvedComments}")
-        StatusColumn(approval.first, width = 20.dp, color = approval.third, description = "Approval: ${approval.second}")
+        StatusColumn(approval.first, width = if (compact) 12.dp else 20.dp, color = approval.third, description = "Approval: ${approval.second}")
         val merge = when {
             pr.state != "OPEN" -> "—"
             pr.mergeable == "CONFLICTING" -> "Conflicts"
@@ -234,7 +226,7 @@ import androidx.compose.ui.unit.sp
             pr.mergeable == "MERGEABLE" -> "Clean"
             else -> "—"
         }
-        StatusColumn(merge, width = 54.dp, color = when (merge) { "Conflicts" -> CrabColors.Red; "Behind" -> CrabColors.Yellow; "Clean" -> Mint; else -> Muted },
+        StatusColumn(merge, width = if (compact) 46.dp else 54.dp, color = when (merge) { "Conflicts" -> CrabColors.Red; "Behind" -> CrabColors.Yellow; "Clean" -> Mint; else -> Muted },
             description = "Branch status: $merge")
     }
 }

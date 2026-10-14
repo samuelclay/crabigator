@@ -239,31 +239,29 @@ struct PRRow: View {
         }.fixedSize(horizontal: false, vertical: true)
     }
     var status: some View {
-        Group {
-            if wide { statusLine }
-            else {
-                ViewThatFits(in: .horizontal) {
-                    statusLine.frame(minWidth: 320)
-                    VStack(alignment: .leading, spacing: spacing.gap(4)) {
-                        statusSummary
-                        statusColumns.frame(maxWidth: .infinity, alignment: .trailing)
-                    }
+        ViewThatFits(in: .horizontal) {
+            statusLine(compact: false).frame(minWidth: 320)
+            statusLine(compact: true)
+        }.boardFont(11).lineLimit(1).minimumScaleFactor(0.4)
+    }
+    func statusLine(compact: Bool) -> some View {
+        HStack(spacing: compact ? 3 : 6) {
+            HStack(spacing: compact ? 3 : 6) {
+                badge(compact: compact)
+                HStack(spacing: compact ? 3 : 8) {
+                    if let n = pr.additions { Text("+\(n)").foregroundStyle(Crab.mint) }
+                    if let n = pr.deletions { Text("−\(n)").foregroundStyle(Crab.red) }
                 }
-            }
-        }.boardFont(11).lineLimit(1).minimumScaleFactor(0.65)
+                Spacer(minLength: 0)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            statusColumns(compact: compact)
+        }
     }
-    var statusLine: some View {
-        HStack(spacing: 6) { statusSummary; statusColumns }
-    }
-    var statusSummary: some View {
-        HStack(spacing: 6) { badge; changes; Spacer(minLength: 0) }
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    var statusColumns: some View {
-        HStack(spacing: 6) {
+    func statusColumns(compact: Bool) -> some View {
+        HStack(spacing: compact ? 2 : 6) {
             Text(pr.checks.isEmpty ? "—" : pr.checks)
                 .foregroundStyle(pr.checks.isEmpty ? Crab.muted : pr.checksFailed > 0 ? Crab.red : pr.checksPending > 0 ? Crab.yellow : Crab.mint)
-                .frame(width: 48, alignment: .leading)
+                .frame(width: compact ? 42 : 48, alignment: .leading)
                 .accessibilityLabel(pr.checks.isEmpty ? "CI status unavailable" : pr.checksFailed > 0 ? "\(pr.checksFailed) checks failed" : pr.checksPending > 0 ? "\(pr.checksPending) checks pending" : "Checks passed")
             HStack(spacing: 2) {
                 if pr.unresolvedComments > 0 {
@@ -271,12 +269,12 @@ struct PRRow: View {
                     Text("\(pr.unresolvedComments)")
                 }
             }.foregroundStyle(Crab.orange)
-                .frame(width: 36, alignment: .leading).accessibilityElement(children: .ignore)
+                .frame(width: compact ? 24 : 36, alignment: .leading).accessibilityElement(children: .ignore)
                 .accessibilityLabel("Unresolved comments: \(pr.unresolvedComments)")
-            Text(approval.symbol).foregroundStyle(approval.color).frame(width: 20)
+            Text(approval.symbol).foregroundStyle(approval.color).frame(width: compact ? 12 : 20)
                 .accessibilityLabel("Approval: " + approval.label)
             Text(mergeStatus).foregroundStyle(mergeStatus == "Conflicts" ? Crab.red : mergeStatus == "Behind" ? Crab.yellow : mergeStatus == "Clean" ? Crab.mint : Crab.muted)
-                .frame(width: 54, alignment: .leading)
+                .frame(width: compact ? 46 : 54, alignment: .leading)
                 .accessibilityLabel("Branch status: " + mergeStatus)
         }
     }
@@ -293,13 +291,8 @@ struct PRRow: View {
         if pr.mergeState == "BEHIND" { return "Behind" }
         return pr.mergeable == "MERGEABLE" ? "Clean" : "—"
     }
-    var changes: some View {
-        HStack(spacing: 8) {
-            if let n = pr.additions { Text("+\(n)").foregroundStyle(Crab.mint) }; if let n = pr.deletions { Text("−\(n)").foregroundStyle(Crab.red) }
-        }.boardFont(11).lineLimit(1)
-    }
-    var badge: some View {
+    func badge(compact: Bool) -> some View {
             let color = pr.state == "MERGED" ? Crab.purple : pr.state == "CLOSED" ? Crab.red : pr.draft ? Crab.muted : Crab.mint
-            return Text(pr.draft && pr.state == "OPEN" ? "Draft" : pr.state.isEmpty ? "Pending" : pr.state.capitalized).padding(.horizontal, 5).padding(.vertical, 2).foregroundStyle(color).background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4)).boardFont(11).lineLimit(1)
+            return Text(pr.draft && pr.state == "OPEN" ? "Draft" : pr.state.isEmpty ? "Pending" : pr.state.capitalized).padding(.horizontal, compact ? 3 : 5).padding(.vertical, 2).foregroundStyle(color).background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4)).boardFont(11).lineLimit(1)
     }
 }

@@ -64,7 +64,7 @@ At 15:35 on October 13, Mini still showed several wide rows extending off the si
 
 ### Refresh PR columns in both width modes
 
-At 16:59, Mini showed the reverse problem: the first session kept its narrow layout after expanding the board, while later rows used the correct wide columns. The lazy stack now rebuilds when the board crosses its wide/narrow threshold. The scroll view remains in place. The fullscreen screenshot after the change shows merge state and diff beside CI on the PR title's line (`/tmp/crabigator-pr-status-now.png`). Narrow phone/sidebar layouts still wrap status when the available width cannot fit all columns.
+At 16:59, Mini showed the reverse problem: the first session kept its narrow layout after expanding the board, while later rows used the correct wide columns. The lazy stack now rebuilds when the board crosses its wide/narrow threshold. The scroll view remains in place. The fullscreen screenshot after the change shows merge state and diff beside CI on the PR title's line (`/tmp/crabigator-pr-status-now.png`). At this stage, narrow phone/sidebar layouts still wrapped status when the available width could not fit all columns; the follow-up below removes that fallback.
 
 Both apps now place unresolved comments immediately after CI and leave that cell blank at zero. Merged secondary PRs are hidden per session, using the new per-session classification from the Worker. Merged primary and explicitly watched PRs remain visible. Live screenshots on Mini and the Samsung tablet confirm the Safety session no longer shows its merged secondary PRs #1840 and #3280; its merged primary PRs remain.
 
@@ -73,6 +73,14 @@ Twenty iOS unit tests and 35 Android unit tests passed. Android lint, app/test b
 The physical Mini UI test passed three fullscreen/sidebar cycles in `/tmp/crabigator-mini-pr-status-verified.xcresult`, with visible sidebar text inside its row and fullscreen PR states on the right beside their titles. Each cycle must check at least one PR status. The test stayed in landscapeRight. An earlier run's test runner was killed without a layout assertion failure; the passing rerun selected a smaller session. The cause of that runner exit is not established. The unit result is `/tmp/crabigator-mini-pr-status-final.xcresult`.
 
 Worker type checking and all 59 tests passed. Production version `de4500d0-db6c-4dd4-96f2-1d9979c35bce` is deployed; health reports `ok`, and an unauthenticated board request returns 401. The code simplifier found no production issues and requested a nonzero count of checked PR statuses in the live layout test; that assertion is now included.
+
+### Keep compact PR status on one line
+
+Phone and sidebar PR rows now keep state, diff, CI, comments, approval and branch status on one line. Both apps reduce the gaps and reserved column widths below 320 points/dp; status text can shrink within its column. Android also centers differently scaled diff values vertically.
+
+ClayPhone's live PR-board test passed, and its saved screenshot shows state/diff/CI together with comments, approval and conflicts. A strengthened check passed on Mini's sidebar: visible states and diff counts must share CI's line, and CI must stay within the owning session row. Results: `/tmp/crabigator-phone-compact-status.xcresult` and `/tmp/crabigator-mini-compact-status-retry.xcresult`. Mini's first attempt failed before running the test because the device connection closed; the retry passed. Code simplifier review found no remaining issues.
+
+Android passed 35 unit tests, lint, both builds and three physical-tablet PR tests. The compact test uses large diff counts and 999 failed checks at the smallest/largest board text sizes, verifies one-line alignment and checks for text overflow. Logs: `/tmp/crabigator-compact-status-android-final.log` and `/tmp/crabigator-compact-status-android-device-final.log`. The update is installed on ClayPhone, Mini and both Samsung devices.
 
 ### Board settings, actions and review columns
 
