@@ -54,6 +54,7 @@ it('replays full transcripts to late viewers and replaces history on resync', as
         desktop.send(JSON.stringify({ type: 'scrollback', diff: 'Next prompt\n', total_lines: 3 }));
         await expect.poll(async () => (await snapshot()).scrollback).toContain('Next prompt');
         desktop.send(JSON.stringify({ type: 'scrollback_history', content: 'A complete replacement\n' }));
+        desktop.send(JSON.stringify({ type: 'screen', content: 'Small screen first' }));
         await expect.poll(async () => (await snapshot()).scrollback).toBe('A complete replacement\n');
         const result = await stub.fetch('https://internal/events', { headers: { Upgrade: 'websocket' } });
         viewer = result.webSocket!;
@@ -61,6 +62,8 @@ it('replays full transcripts to late viewers and replaces history on resync', as
         viewer.addEventListener('message', e => { events.push(JSON.parse(String(e.data))); });
         viewer.accept();
         await expect.poll(() => events).toContainEqual({ type: 'scrollback_history', content: 'A complete replacement\n' });
+        expect(events.findIndex(event => event.type === 'screen')).toBeGreaterThanOrEqual(0);
+        expect(events.findIndex(event => event.type === 'screen')).toBeLessThan(events.findIndex(event => event.type === 'scrollback_history'));
         desktop.send(JSON.stringify({ type: 'scrollback_history', content: 'old\n'.repeat(150000) + 'last line\n' }));
         await expect.poll(async () => (await snapshot()).scrollback.endsWith('last line\n')).toBe(true);
         await expect.poll(async () => (await snapshot()).scrollback.length).toBeLessThanOrEqual(500 * 1024);

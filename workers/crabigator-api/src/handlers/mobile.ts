@@ -37,9 +37,12 @@ export async function mobileSnapshot(request: Request, env: Env, params: Record<
     const stub = env.SESSION.get(env.SESSION.idFromName(params.id));
     const result = await stub.fetch('https://internal/snapshot');
     const snapshot = await result.json() as Record<string, unknown>;
+    const terminal = new URL(request.url).searchParams.get('terminal') === '1';
     return jsonResponse({ id: snapshot.id, title: snapshot.title, state: snapshot.state,
         desktop_connected: snapshot.desktop_connected, prompt: snapshot.prompt,
-        prompt_revision: snapshot.prompt_revision, attention_pending: snapshot.attention_pending });
+        prompt_revision: snapshot.prompt_revision, attention_pending: snapshot.attention_pending,
+        ...(terminal ? { screen: snapshot.screen, scrollback: snapshot.screen !== null || snapshot.scrollback
+            ? snapshot.scrollback : null } : {}) });
 }
 
 /** Relay a new session through the desktop the mobile user selected. */

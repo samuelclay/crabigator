@@ -1112,17 +1112,7 @@ export class SessionDO implements DurableObject {
             return;
         }
 
-        // Send accumulated scrollback history first (so it appears before screen)
-        // Note: This is ephemeral state - may be empty after DO hibernation
-        if (this.ephemeralState.scrollbackContent) {
-            const scrollbackHistoryEvent: SessionEvent = {
-                type: 'scrollback_history',
-                content: this.ephemeralState.scrollbackContent,
-            };
-            this.sendViewerEvent(viewer, scrollbackHistoryEvent);
-        }
-
-        // Send screen snapshot (for immediate visual)
+        // Send the small current screen before the potentially large history.
         // Note: This is ephemeral state - may be empty after DO hibernation
         if (this.ephemeralState.lastScreen !== null) {
             const screenEvent: SessionEvent = {
@@ -1134,6 +1124,13 @@ export class SessionDO implements DurableObject {
             // An idle desktop will not send an unchanged screen on its own.
             // Recover immediately on connect; viewer heartbeats retry if needed.
             this.notifyDesktopViewerStatus(true);
+        }
+
+        if (this.ephemeralState.scrollbackContent) {
+            this.sendViewerEvent(viewer, {
+                type: 'scrollback_history',
+                content: this.ephemeralState.scrollbackContent,
+            });
         }
 
         // Send current state (persistent)

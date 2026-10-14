@@ -61,6 +61,33 @@ it('keeps mobile snapshots within the paired device group', async () => {
     expect(await response.json()).toMatchObject({ prompt: null, prompt_revision: 0, desktop_connected: false });
 });
 
+it('recovers cached terminal output over HTTP without a viewer socket', async () => {
+    const owner = await pairedMobile('terminal-owner', 'terminal-group');
+    const stranger = await pairedMobile('terminal-stranger', 'other-terminal-group');
+    const id = 'mobile-terminal';
+    await testEnv.DB.prepare('INSERT INTO sessions (id, device_id, client_session_id, cwd, platform) VALUES (?, ?, ?, ?, ?)')
+        .bind(id, 'terminal-owner-desktop', 'terminal-local', '/tmp/terminal', 'claude').run();
+    const path = `/api/mobile/sessions/${id}?terminal=1`;
+    expect((await mobileSnapshot(stranger.request(path), testEnv, { id })).status).toBe(403);
+    const read = async () => (await mobileSnapshot(owner.request(path), testEnv, { id })).json<{ screen: string | null; scrollback: string | null }>();
+    expect(await read()).toMatchObject({ screen: null, scrollback: null });
+    const stub = testEnv.SESSION.get(testEnv.SESSION.idFromName(id));
+    const response = await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } });
+    const desktop = response.webSocket!;
+    desktop.accept();
+    try {
+        desktop.send(JSON.stringify({ type: 'scrollback_history', content: 'Actual terminal history\n' }));
+        desktop.send(JSON.stringify({ type: 'screen', content: 'Current terminal screen' }));
+        await expect.poll(read).toMatchObject({ screen: 'Current terminal screen', scrollback: 'Actual terminal history\n' });
+        const promptOnly = await mobileSnapshot(owner.request(`/api/mobile/sessions/${id}`), testEnv, { id });
+        expect(await promptOnly.json()).not.toHaveProperty('screen');
+        await evictDurableObject(stub);
+        expect(await read()).toMatchObject({ screen: null, scrollback: null });
+        desktop.send(JSON.stringify({ type: 'screen', content: '' }));
+        await expect.poll(read).toMatchObject({ screen: '', scrollback: '' });
+    } finally { desktop.close(); }
+});
+
 it('forwards only one concurrent reply per prompt and rejects old revisions after hibernation', async () => {
     const stub = testEnv.SESSION.get(testEnv.SESSION.idFromName('mobile-revisions'));
     const response = await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } });
