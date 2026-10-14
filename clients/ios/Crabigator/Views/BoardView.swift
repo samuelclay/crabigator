@@ -157,7 +157,9 @@ struct BoardView: View {
                         }
                     }
                     if sections.isEmpty && (list || !model.ordering.watched.contains { $0.matches(query) && model.preferences.includesActivity(max($0.updatedAt, $0.closedAt, $0.mentionedAt), now: Int(Date().timeIntervalSince1970)) }) { Text("No sessions match your filters").foregroundStyle(Crab.muted).padding(24) }
-                }.padding(.horizontal, 12).padding(.bottom, 88)
+                // Lazy rows must discard cached wide/narrow geometry in both directions.
+                }.id(!list && width >= 840).transition(.identity)
+                    .padding(.horizontal, 12).padding(.bottom, 88)
             }.refreshable { await model.refresh() }
         }.animation(spacingAnimation, value: model.preferences.density)
     }

@@ -142,6 +142,11 @@ final class ReadingTests: XCTestCase {
         let initial = try XCTUnwrap(requestedID.map { app.buttons["Session " + $0] } ?? visible.dropFirst().first)
         let row = app.buttons[initial.identifier]
         let other = app.buttons[try XCTUnwrap(visible.first { $0.identifier != row.identifier }).identifier]
+        func texts(in snapshot: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
+            snapshot.children.flatMap { child in
+                child.elementType == .staticText ? [child] : texts(in: child)
+            }
+        }
         for _ in 0..<3 {
             other.tap()
             mode.tap()
@@ -162,11 +167,12 @@ final class ReadingTests: XCTestCase {
             XCTAssertLessThanOrEqual(title.frame.maxX, row.frame.maxX)
             // Check all visible session rows and PR text, not only the selected title.
             for candidate in rows.allElementsBoundByIndex {
-                let bounds = candidate.frame
+                let snapshot = try candidate.snapshot()
+                let bounds = snapshot.frame
                 guard bounds.maxY > 100 && bounds.minY < app.frame.maxY - 90 else { continue }
-                XCTAssertGreaterThanOrEqual(bounds.minX, app.frame.minX, candidate.label)
-                XCTAssertLessThanOrEqual(bounds.maxX, app.frame.minX + 361, candidate.label)
-                for text in candidate.staticTexts.allElementsBoundByIndex {
+                XCTAssertGreaterThanOrEqual(bounds.minX, app.frame.minX, snapshot.label)
+                XCTAssertLessThanOrEqual(bounds.maxX, app.frame.minX + 361, snapshot.label)
+                for text in texts(in: snapshot) {
                     let textBounds = text.frame
                     guard textBounds.width > 0 else { continue }
                     XCTAssertGreaterThanOrEqual(textBounds.minX, bounds.minX, text.label)
@@ -176,6 +182,25 @@ final class ReadingTests: XCTestCase {
             mode.tap()
             XCTAssertEqual(mode.value as? String, "Selected, full width")
             XCTAssertNotEqual(row.value as? String, "Selected")
+            capture("PR status columns return beside titles in fullscreen")
+            var checkedStatuses = 0
+            let appBounds = app.frame
+            for candidate in rows.allElementsBoundByIndex {
+                let snapshot = try candidate.snapshot()
+                let candidateBounds = snapshot.frame
+                guard candidateBounds.maxY > 100 && candidateBounds.minY < appBounds.maxY - 90 else { continue }
+                let rowTexts = texts(in: snapshot)
+                for status in rowTexts where ["Open", "Merged", "Closed", "Draft", "Pending"].contains(status.label) {
+                    let bounds = status.frame
+                    guard bounds.midY > 100 && bounds.midY < appBounds.maxY - 90 else { continue }
+                    checkedStatuses += 1
+                    XCTAssertGreaterThan(bounds.minX, appBounds.midX, "PR state/diff must return to the right-hand columns")
+                    XCTAssertTrue(rowTexts.contains { text in
+                        text.label.hasPrefix("#") && abs(text.frame.midY - bounds.midY) < 16
+                    }, "PR status must share its title's line in fullscreen")
+                }
+            }
+            XCTAssertGreaterThan(checkedStatuses, 0, "This live check requires session grouping with visible PRs")
         }
         row.tap()
     }

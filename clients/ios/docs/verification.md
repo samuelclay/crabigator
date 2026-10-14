@@ -62,6 +62,18 @@ The live device check switches between two sessions through fullscreen, verifies
 
 At 15:35 on October 13, Mini still showed several wide rows extending off the sidebar's left edge (`/tmp/crabigator-mini-collapse-before.png`). After installing the latest build from `0d97359`, three repeated fullscreen-to-sidebar transitions passed on the physical Mini. The strengthened check validates every visible session row and its PR text, not just the selected title. It stays in landscapeRight. The selected row measured 336 points wide; no clipping reproduced after reinstall. This does not establish that an old build caused the earlier stale layout. Result: `/tmp/crabigator-mini-collapse-current.xcresult`. Standalone PR-group headers and offscreen scrolling are outside this check.
 
+### Refresh PR columns in both width modes
+
+At 16:59, Mini showed the reverse problem: the first session kept its narrow layout after expanding the board, while later rows used the correct wide columns. The lazy stack now rebuilds when the board crosses its wide/narrow threshold. The scroll view remains in place. The fullscreen screenshot after the change shows merge state and diff beside CI on the PR title's line (`/tmp/crabigator-pr-status-now.png`). Narrow phone/sidebar layouts still wrap status when the available width cannot fit all columns.
+
+Both apps now place unresolved comments immediately after CI and leave that cell blank at zero. Merged secondary PRs are hidden per session, using the new per-session classification from the Worker. Merged primary and explicitly watched PRs remain visible. Live screenshots on Mini and the Samsung tablet confirm the Safety session no longer shows its merged secondary PRs #1840 and #3280; its merged primary PRs remain.
+
+Twenty iOS unit tests and 35 Android unit tests passed. Android lint, app/test builds and three physical-tablet PR interaction tests passed, including blank comment cells and stable column order. The updated builds are installed on Mini, ClayPhone and both Samsung devices. Android logs: `/tmp/crabigator-pr-status-android-build.log` and `/tmp/crabigator-pr-status-android-device.log`.
+
+The physical Mini UI test passed three fullscreen/sidebar cycles in `/tmp/crabigator-mini-pr-status-verified.xcresult`, with visible sidebar text inside its row and fullscreen PR states on the right beside their titles. Each cycle must check at least one PR status. The test stayed in landscapeRight. An earlier run's test runner was killed without a layout assertion failure; the passing rerun selected a smaller session. The cause of that runner exit is not established. The unit result is `/tmp/crabigator-mini-pr-status-final.xcresult`.
+
+Worker type checking and all 59 tests passed. Production version `de4500d0-db6c-4dd4-96f2-1d9979c35bce` is deployed; health reports `ok`, and an unauthenticated board request returns 401. The code simplifier found no production issues and requested a nonzero count of checked PR statuses in the live layout test; that assertion is now included.
+
 ### Board settings, actions and review columns
 
 Both apps expose activity cutoff, live/all sessions, computers, recaps and session/PR grouping. The cutoff defaults to 24 hours. Grouping retains older touching sessions beneath a recent PR after applying the computer/live/search filters. New session selects a desktop, folder and assistant; Watch PR accepts a GitHub URL or owner/repo#number.
