@@ -2414,13 +2414,13 @@ impl App {
             return false;
         };
         if update.reset && had_cursor {
-            self.pr_tracker.reset_conversation();
-            self.pr_tracker.resolve_current_branch(&self.cwd);
+            self.pr_tracker.restart_transcript_scan();
         }
         let mut changed = update.reset;
         for turn in &update.turns {
             let historical = update.reset
-                && turn.timestamp < (self.session_stats.session_start_unix() * 1000.0) as u64;
+                && (had_cursor
+                    || turn.timestamp < (self.session_stats.session_start_unix() * 1000.0) as u64);
             changed |= self
                 .pr_tracker
                 .scan_transcript_turn(turn, &self.cwd, historical);

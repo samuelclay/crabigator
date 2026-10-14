@@ -893,6 +893,20 @@ impl PrTracker {
         *self = fresh;
     }
 
+    /// The same conversation's log was rewritten or reread. Its established
+    /// PRs and user dispositions still belong to it. Rebuild mention counts
+    /// from the reread so old mentions cannot accumulate on each reset.
+    /// A different conversation uses reset_conversation.
+    pub fn restart_transcript_scan(&mut self) {
+        self.reset_scan_deduplication();
+        self.pending_mentions.clear();
+        for pr in &mut self.prs {
+            pr.mentions = 0;
+            pr.user_mentions = 0;
+            pr.last_mention_prompt = 0;
+        }
+    }
+
     pub fn prs(&self) -> &[SessionPr] {
         &self.prs
     }
@@ -1948,9 +1962,11 @@ impl PrTracker {
                             self.force_refresh.remove(url);
                             if pr_does_not_exist(&error) {
                                 let before = self.prs.len();
-                                // Never drop a PR that once enriched — a repo
-                                // deleted later keeps its last known stats.
-                                self.prs.retain(|pr| pr.url != *url || pr.refreshed_at > 0);
+                                // Established primaries and previously enriched
+                                // PRs survive missing or inaccessible repositories.
+                                self.prs.retain(|pr| {
+                                    pr.url != *url || pr.primary || pr.refreshed_at > 0
+                                });
                                 changed |= self.prs.len() != before;
                             } else {
                                 // Real failure (auth, network, rate limit):
@@ -3615,6 +3631,101 @@ mod tests {
                 .iter()
                 .filter(|pr| [1437, 2889].contains(&pr.number))
                 .all(|pr| pr.dismissed));
+        }
+    }
+
+    #[test]
+    fn transcript_rescan_keeps_earlier_primaries_and_manual_dispositions() {
+        let cwd = Path::new("/tmp");
+        let mut tracker = PrTracker::new();
+        tracker.replaying_history = true;
+        tracker.scan_prompt("PR https://github.com/o/portal/pull/1865", cwd);
+        tracker.scan_prompt("PR https://github.com/o/portal/pull/1870", cwd);
+        tracker.scan_prompt("PR https://github.com/o/rqh/pull/3313", cwd);
+        tracker.scan_prompt("PR https://github.com/o/api/pull/1210", cwd);
+        tracker.scan_prompt("PR #1865 is the primary", cwd);
+        tracker.reclassify("main", cwd);
+        assert_eq!(tracker.prs.iter().filter(|pr| pr.primary).count(), 4);
+
+        tracker.restart_transcript_scan();
+        // A tail-only rescan has no evidence of the earlier PRs.
+        tracker.set_prompt_count(20);
+        tracker.scan_prompt("Look at https://github.com/o/rqh/pull/3302", cwd);
+        tracker.reclassify("main", cwd);
+        for number in [1865, 1870, 3313, 1210] {
+            let pr = tracker.prs.iter().find(|pr| pr.number == number).unwrap();
+            assert!(pr.primary && !pr.dismissed);
+        }
+        assert_eq!(
+            tracker.declared_numbers.get(&1865),
+            Some(&PrDisposition::Primary)
+        );
+        tracker.scan_prompt("dismiss PR #1865", cwd);
+        tracker.reclassify("main", cwd);
+        assert!(tracker
+            .prs
+            .iter()
+            .find(|pr| pr.number == 1865)
+            .unwrap()
+            .dismissed);
+
+        tracker.reset_conversation();
+        assert!(
+            tracker.prs.is_empty(),
+            "a genuinely new conversation starts fresh"
+        );
+    }
+
+    #[test]
+    fn repeated_transcript_rescans_do_not_accumulate_mentions_or_repeat_actions() {
+        let mut tracker = PrTracker::new();
+        let cwd = Path::new("/tmp");
+        let turn = crate::recap::TrackingTurn {
+            transcript: crate::recap::TurnTranscript {
+                user_prompt: Some("track PR https://github.com/o/portal/pull/1438".into()),
+                activity: "[tool]\nBash {\"command\":\"git push\"}\n".into(),
+                turn_start: 0,
+            },
+            number: 1,
+            timestamp: 1000,
+            cwd: None,
+        };
+        tracker.scan_transcript_turn(&turn, cwd, true);
+        tracker.reclassify("main", cwd);
+        let before = tracker.prs.clone();
+        for _ in 0..2 {
+            tracker.restart_transcript_scan();
+            tracker.scan_transcript_turn(&turn, cwd, true);
+            tracker.reclassify("main", cwd);
+            assert_eq!(tracker.prs, before);
+            assert!(tracker.pending.is_empty());
+            assert!(tracker.take_watch_adds().is_empty());
+            assert!(tracker.pr_active_at.is_empty());
+        }
+    }
+
+    #[test]
+    fn missing_pr_lookup_keeps_an_established_primary() {
+        for primary in [false, true] {
+            let mut tracker = PrTracker::new();
+            let mut pr = SessionPr::test_stub(500, "o", "r");
+            pr.primary = primary;
+            pr.refreshed_at = 0;
+            let url = pr.url.clone();
+            tracker.prs.push(pr);
+            let (sender, receiver) = mpsc::channel();
+            tracker.pending.insert(url.clone(), receiver);
+            sender
+                .send(JobResult::Pr(Box::new(FetchResult {
+                    requested_url: Some(url),
+                    created_here: false,
+                    pr_active: false,
+                    data: Err("Could not resolve to a PullRequest with the number of 500".into()),
+                    threads: None,
+                })))
+                .unwrap();
+            tracker.poll();
+            assert_eq!(tracker.prs.len(), usize::from(primary));
         }
     }
 
