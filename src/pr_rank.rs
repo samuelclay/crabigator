@@ -1,11 +1,12 @@
 //! Primary/secondary classification for session PRs.
 //!
 //! Distilled from an audit of 17 live sessions (78 PR-instances, 22
-//! hand-labeled primaries): a PR is primary when it was mentioned RECENTLY
+//! hand-labeled primaries): a PR becomes primary when it was mentioned RECENTLY
 //! and the session OWNS it — created it here, matches its branch or worktree,
 //! or the user typed it into a prompt — or when it dominates the session's
 //! discussion outright. Raw mention counts alone are noise: abandoned PRs can
-//! out-mention the real primary several times over.
+//! out-mention the real primary several times over. Once primary, it stays
+//! primary for this conversation unless the user demotes or dismisses it.
 
 use std::collections::HashMap;
 
@@ -151,8 +152,8 @@ pub fn classify(prs: &mut [SessionPr], ctx: &RankContext) -> bool {
     }
 
     let total_mentions: u64 = prs.iter().map(|p| p.mentions).sum();
-    // Created-here PRs, for the supersession veto: an eval/retry chain keeps
-    // only its newest link as primary.
+    // Created-here PRs prevent newly promoting an already superseded link.
+    // Existing primaries remain primary even when a newer PR replaces them.
     let created: Vec<(String, u64, u64)> = prs
         .iter()
         .filter(|p| p.created_here)
@@ -213,7 +214,8 @@ fn decide(
     {
         return apply_disposition(*disposition, "session");
     }
-    let primary = auto_primary(pr, ctx, total_mentions, created, has_recent_creation);
+    // Automatic scoring can promote a PR, but only the user can demote it.
+    let primary = pr.primary || auto_primary(pr, ctx, total_mentions, created, has_recent_creation);
     (
         primary,
         "auto",
@@ -232,9 +234,9 @@ fn apply_disposition(
     }
 }
 
-/// A current-worktree PR stays primary unless it is closed. Other PRs use the
-/// audited conjunction (F1 0.83): recent AND (ownership OR dominance), with a
-/// supersession veto.
+/// Eligibility for a new automatic promotion. A current-worktree PR qualifies
+/// unless closed; other PRs need recent ownership or dominant discussion,
+/// without supersession. Existing primaries bypass these checks.
 fn auto_primary(
     pr: &SessionPr,
     ctx: &RankContext,
@@ -491,10 +493,9 @@ mod tests {
         assert!(prs[1].primary);
     }
 
-    /// Audit session 15 (evals #31→#37): each rerun obsoletes the last; only
-    /// the link still mentioned after the newest was created stays primary.
+    /// Supersession still prevents a new promotion; it cannot undo one.
     #[test]
-    fn superseded_created_here_chains_keep_only_the_newest() {
+    fn superseded_prs_are_not_newly_promoted() {
         let mut prs = vec![pr(31, "evals"), pr(37, "evals")];
         prs[0].created_here = true;
         prs[0].mentions = 52;
@@ -506,23 +507,58 @@ mod tests {
         prs[1].last_mentioned_at = 2_500;
         prs[1].last_mention_prompt = 50;
         classify(&mut prs, &ctx(52));
-        assert!(!prs[0].primary, "obsoleted rerun must demote");
+        assert!(
+            !prs[0].primary,
+            "an already superseded PR is not newly promoted"
+        );
         assert!(prs[1].primary);
     }
 
-    /// Audit session 1: a pivot demotes the early phase's PR once its mentions
-    /// age out of the recent window.
+    /// A pivot may age out secondary references, but never established primaries.
     #[test]
-    fn stale_mentions_demote_on_pivot() {
+    fn established_primary_survives_a_pivot() {
         let mut prs = vec![pr(2557, "rqh")];
         prs[0].created_here = true;
         prs[0].mentions = 441;
         prs[0].user_mentions = 2;
         prs[0].last_mentioned_at = 100;
         prs[0].last_mention_prompt = 4;
-        let context = ctx(12);
+        classify(&mut prs, &ctx(4));
+        assert!(prs[0].primary);
+        classify(&mut prs, &ctx(12));
+        assert!(prs[0].primary);
+        assert!(!prs[0].dismissed);
+    }
+
+    #[test]
+    fn established_primaries_survive_closure_supersession_and_lost_dominance() {
+        let mut prs = vec![pr(31, "evals")];
+        prs[0].mentions = 2;
+        prs[0].last_mention_prompt = 1;
+        prs[0].last_mentioned_at = 100;
+        classify(&mut prs, &ctx(1));
+        assert!(prs[0].primary);
+
+        let mut sibling = pr(37, "evals");
+        sibling.created_here = true;
+        sibling.first_mentioned_at = 200;
+        sibling.mentions = 20;
+        sibling.last_mention_prompt = 20;
+        prs.push(sibling);
+        for state in ["OPEN", "MERGED", "CLOSED"] {
+            prs[0].state = state.into();
+            classify(&mut prs, &ctx(20));
+            assert!(prs[0].primary, "established primary survives {state}");
+            assert!(!prs[0].dismissed);
+        }
+
+        let mut context = ctx(20);
+        context.declared_numbers.insert(31, PrDisposition::Secondary);
         classify(&mut prs, &context);
-        assert!(!prs[0].primary, "last mention at prompt 4 of 12 is stale");
+        assert!(!prs[0].primary, "manual demotion still works");
+        context.declared_numbers.insert(37, PrDisposition::Dismissed);
+        classify(&mut prs, &context);
+        assert!(prs[1].dismissed, "manual dismissal still works");
     }
 
     /// Audit session 7: 100% of the discussion, but no ownership signal —
