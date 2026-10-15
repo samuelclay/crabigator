@@ -33,7 +33,7 @@ final class NotificationViewController: UIViewController, UNNotificationContentE
         fit()
     }
     func didReceive(_ response: UNNotificationResponse, completionHandler completion: @escaping (UNNotificationContentExtensionResponseOption) -> Void) {
-        guard model.canAnswer, ![UNNotificationDefaultActionIdentifier, UNNotificationDismissActionIdentifier].contains(response.actionIdentifier) else {
+        guard model.canAnswer, ![UNNotificationDefaultActionIdentifier, UNNotificationDismissActionIdentifier, NotificationContent.open].contains(response.actionIdentifier) else {
             completion(.dismissAndForwardAction); return
         }
         // The view shows the progress and closes itself once the session moves on.

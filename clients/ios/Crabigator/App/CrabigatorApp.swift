@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         Task { @MainActor in
             defer { completionHandler() }
             guard let id = response.notification.request.content.userInfo["session_id"] as? String else { return }
-            if response.actionIdentifier == UNNotificationDefaultActionIdentifier { await model?.open(id); return }
+            if [UNNotificationDefaultActionIdentifier, NotificationContent.open].contains(response.actionIdentifier) { await model?.open(id); return }
             if response.actionIdentifier == UNNotificationDismissActionIdentifier { return }
             await Notifications.shared.respond(response, id: id)
         }

@@ -277,7 +277,10 @@ final class CrabigatorTests: XCTestCase {
         XCTAssertEqual(NotificationContent.choice("option_2", id: "session"), .init(option: 2, revision: nil))
         XCTAssertNil(NotificationContent.choice(UNNotificationDefaultActionIdentifier, id: "session"))
         var multi = prompt; multi["questions"] = [["question": "Pick", "options": [["label": "A"]], "multi_select": true, "allows_other": false]]
-        XCTAssertTrue(NotificationContent.actions(multi, id: "session", revision: 7).isEmpty, "One tap would only tick a box")
+        // One tap would only tick a box, and iOS only expands a notification with a regular button.
+        XCTAssertEqual(NotificationContent.actions(multi, id: "session", revision: 7).map(\.title), ["Open session"])
+        multi["questions"] = [["question": "Pick", "options": [["label": "A"]], "multi_select": true, "allows_other": true]]
+        XCTAssertEqual(NotificationContent.actions(multi, id: "session", revision: 7).map(\.title), ["Reply", "Open session"])
     }
     func testCategorySlotsAreNeverSharedBetweenSessions() {
         var claims: [Int: NotificationContent.Claim] = [:]

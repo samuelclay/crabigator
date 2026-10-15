@@ -47,7 +47,7 @@ enum NotificationContent {
     /// Buttons named after the prompt's choices. Each identifier carries the
     /// session and revision it was made for, so a button can never answer another prompt.
     static func actions(_ prompt: JSON, id: String, revision: Int) -> [UNNotificationAction] {
-        guard quickAnswers(prompt) else { return [] }
+        guard quickAnswers(prompt) else { return [openAction] }
         let token = "@\(revision)@\(id)", reply = PromptActions.allowsText(prompt)
         // A tap on one checkbox would only tick it. The expanded view has Submit.
         let multi = prompt["review"] == nil && PromptActions.question(prompt)?.bool("multi_select") == true
@@ -55,7 +55,15 @@ enum NotificationContent {
             optionAction("option_\($0.offset)" + token, $0.element.text("label", "Choice \($0.offset + 1)"))
         }
         if reply { actions.append(replyAction("reply" + token)) }
-        return actions
+        return withOpen(actions)
+    }
+    /// Opens the session in the app, like tapping the notification.
+    static let open = "open"
+    private static let openAction = UNNotificationAction(identifier: open, title: "Open session", options: [.foreground])
+    /// A long press only expands a notification that has a regular button;
+    /// one with only Reply opens the reply field instead.
+    private static func withOpen(_ actions: [UNNotificationAction]) -> [UNNotificationAction] {
+        actions.contains { !($0 is UNTextInputNotificationAction) } ? actions : actions + [openAction]
     }
     struct Choice: Equatable {
         var option: Int?
@@ -89,7 +97,7 @@ enum NotificationContent {
         for count in 0...3 { for freeText in [false, true] {
             var actions: [UNNotificationAction] = (0..<count).map { optionAction("option_\($0)", "Choose \($0 + 1)") }
             if freeText { actions.append(replyAction("reply")) }
-            result.insert(category("\(category)_\(count)_\(freeText ? 1 : 0)", actions))
+            result.insert(category("\(category)_\(count)_\(freeText ? 1 : 0)", withOpen(actions)))
         } }
         return result
     }
