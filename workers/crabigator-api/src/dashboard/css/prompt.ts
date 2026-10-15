@@ -14,8 +14,8 @@ export const promptCss = `
     font-size: 11px;
     font-weight: 600;
     margin-bottom: 10px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    text-transform: none;
+    letter-spacing: 0;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -69,12 +69,12 @@ export const promptCss = `
 .prompt-option:hover {
     background: var(--bg-card);
     border-color: var(--accent-cyan);
-    box-shadow: 0 0 15px var(--glow-cyan);
+    box-shadow: none;
 }
 .prompt-option.selected {
     border-color: var(--accent-cyan);
     background: rgba(34, 211, 238, 0.1);
-    box-shadow: 0 0 20px var(--glow-cyan);
+    box-shadow: none;
 }
 .prompt-option-number {
     color: var(--text-dim);
@@ -111,25 +111,25 @@ export const promptCss = `
 .prompt-other input:focus {
     outline: none;
     border-color: var(--accent-cyan);
-    box-shadow: 0 0 15px var(--glow-cyan);
+    box-shadow: none;
 }
 .prompt-other button {
     font-family: 'JetBrains Mono', monospace;
     padding: 10px 18px;
-    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    background: var(--accent-peach);
     border: none;
     border-radius: 8px;
     color: var(--bg-abyss);
     font-weight: 700;
     font-size: 11px;
     cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
     transition: all 0.2s;
 }
 .prompt-other button:hover {
     transform: translateY(-1px);
-    box-shadow: 0 8px 20px var(--glow-cyan);
+    box-shadow: none;
 }
 
 /* Multi-select pages: each option is a checkbox */
@@ -227,7 +227,7 @@ export const promptCss = `
 .prompt-tab-input:focus {
     border-color: var(--accent-cyan);
     outline: none;
-    box-shadow: 0 0 15px var(--glow-cyan);
+    box-shadow: none;
 }
 .prompt-tab-input::placeholder {
     color: var(--text-dim);
@@ -236,21 +236,21 @@ export const promptCss = `
 .prompt-tab-send {
     font-family: 'JetBrains Mono', monospace;
     padding: 8px 12px;
-    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    background: var(--accent-peach);
     border: none;
     border-radius: 6px;
     color: var(--bg-abyss);
     font-weight: 700;
     font-size: 10px;
     cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
     transition: all 0.2s;
     white-space: nowrap;
 }
 .prompt-tab-send:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px var(--glow-cyan);
+    box-shadow: none;
 }
 @media (max-width: 768px) {
     .prompt-option-row {

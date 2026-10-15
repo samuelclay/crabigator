@@ -25,7 +25,7 @@ export const layoutCss = `
     column-count: 1 !important;
 }
 .project-group {
-    margin-bottom: 20px;
+    margin-bottom: 12px;
     break-inside: avoid;
 }
 .project-group:last-child {
@@ -54,7 +54,7 @@ export const layoutCss = `
 .container[data-grouping="project"][data-layout="4"] .session-card,
 .container[data-grouping="project"][data-layout="fit"] .session-card {
     border: 1px solid var(--border-dim);
-    border-radius: 12px;
+    border-radius: 8px;
     margin-bottom: 16px;
     break-inside: avoid;
 }
@@ -62,13 +62,13 @@ export const layoutCss = `
 .container[data-grouping="project"][data-layout="3"] .session-header,
 .container[data-grouping="project"][data-layout="4"] .session-header,
 .container[data-grouping="project"][data-layout="fit"] .session-header {
-    border-radius: 11px 11px 0 0;
+    border-radius: 7px 7px 0 0;
 }
 .container[data-grouping="project"][data-layout="2"] .input-area,
 .container[data-grouping="project"][data-layout="3"] .input-area,
 .container[data-grouping="project"][data-layout="4"] .input-area,
 .container[data-grouping="project"][data-layout="fit"] .input-area {
-    border-radius: 0 0 11px 11px;
+    border-radius: 0 0 7px 7px;
 }
 .container[data-grouping="project"][data-layout="2"] .project-sessions-inner,
 .container[data-grouping="project"][data-layout="3"] .project-sessions-inner,
@@ -81,8 +81,7 @@ export const layoutCss = `
 .container[data-grouping="project"][data-layout="3"] .project-sessions-content,
 .container[data-grouping="project"][data-layout="4"] .project-sessions-content,
 .container[data-grouping="project"][data-layout="fit"] .project-sessions-content {
-    padding: 16px;
-    padding-top: 10px;
+    padding: 10px 12px 0;
 }
 
 /* Project separator */
@@ -90,8 +89,8 @@ export const layoutCss = `
     display: flex;
     align-items: center;
     gap: 14px;
-    padding: 16px 22px;
-    background: linear-gradient(180deg, var(--bg-abyss) 0%, var(--bg-deep) 50%, var(--bg-abyss) 100%);
+    padding: 12px 14px;
+    background: var(--bg-deep);
     cursor: pointer;
     user-select: none;
     transition: all 0.2s;
@@ -100,18 +99,11 @@ export const layoutCss = `
     margin: 0;
     position: relative;
 }
-.project-separator::before,
-.project-separator::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, var(--border-dim) 20%, var(--border-dim) 80%, transparent);
-}
 .project-separator:hover {
-    background: linear-gradient(180deg, var(--bg-deep) 0%, var(--bg-card) 50%, var(--bg-deep) 100%);
+    background: var(--bg-deep);
 }
 .project-separator:active {
-    background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-surface) 50%, var(--bg-card) 100%);
+    background: var(--bg-deep);
 }
 .project-separator-content {
     display: flex;
@@ -142,8 +134,8 @@ export const layoutCss = `
     color: var(--accent-cyan);
     font-size: 12px;
     flex-shrink: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .project-path {
     font-family: 'JetBrains Mono', monospace;
@@ -286,9 +278,6 @@ export const layoutCss = `
 .container[data-grouping="project"] .session-card:first-child {
     border-top: none;
 }
-.container[data-grouping="project"] .session-card::before {
-    display: none;
-}
 
 /* Single column mode spacing */
 .container[data-grouping="project"][data-layout="1"] .project-sessions-content {
@@ -297,7 +286,7 @@ export const layoutCss = `
 
 /* Device grouping (wraps project groups when multiple devices) */
 .device-group {
-    margin-bottom: 20px;
+    margin-bottom: 12px;
 }
 .device-group:last-child {
     margin-bottom: 0;
@@ -306,8 +295,8 @@ export const layoutCss = `
     display: flex;
     align-items: center;
     gap: 14px;
-    padding: 12px 22px;
-    background: linear-gradient(180deg, var(--bg-abyss) 0%, rgba(139, 92, 246, 0.04) 50%, var(--bg-abyss) 100%);
+    padding: 10px 14px;
+    background: var(--bg-deep);
     cursor: pointer;
     user-select: none;
     transition: all 0.2s;
@@ -315,16 +304,8 @@ export const layoutCss = `
     border-bottom: 1px solid var(--border-dim);
     position: relative;
 }
-.device-separator::before,
-.device-separator::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, var(--accent-purple) 20%, var(--accent-purple) 80%, transparent);
-    opacity: 0.3;
-}
 .device-separator:hover {
-    background: linear-gradient(180deg, var(--bg-deep) 0%, rgba(139, 92, 246, 0.08) 50%, var(--bg-deep) 100%);
+    background: var(--bg-deep);
 }
 .device-separator-content {
     display: flex;
@@ -346,8 +327,8 @@ export const layoutCss = `
     color: var(--accent-purple);
     font-size: 11px;
     flex-shrink: 0;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .device-count {
     font-family: 'JetBrains Mono', monospace;
@@ -418,6 +399,11 @@ export const layoutCss = `
 
 /* Phones: grouped sessions also run edge-to-edge */
 @media (max-width: 600px) {
+    /* Keep desktop column preferences without squeezing phone sessions. */
+    .container[data-layout],
+    .container[data-grouping][data-layout] .project-sessions-content {
+        column-count: 1 !important;
+    }
     .container[data-grouping="project"] .session-card,
     .container[data-grouping="project"][data-layout="2"] .session-card,
     .container[data-grouping="project"][data-layout="3"] .session-card,

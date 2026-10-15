@@ -2,13 +2,13 @@
 export const inputCss = `
 /* Input area */
 .input-area {
-    padding: 14px;
+    padding: 10px 12px;
     border-top: 1px solid var(--border-dim);
     display: flex;
     align-items: flex-end;
     gap: 10px;
     background: var(--bg-card);
-    border-radius: 0 0 11px 11px;
+    border-radius: 0 0 7px 7px;
 }
 .input-area textarea {
     flex: 1;
@@ -18,7 +18,7 @@ export const inputCss = `
     border-radius: 8px;
     padding: 9px 14px;
     color: var(--text-bright);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 13px;
     line-height: 1.35;
     max-height: calc(1.35em * 6 + 20px);
@@ -29,14 +29,14 @@ export const inputCss = `
 .input-area textarea:focus {
     outline: none;
     border-color: var(--accent-cyan);
-    box-shadow: 0 0 20px var(--glow-cyan);
+    box-shadow: none;
 }
 .input-area textarea::placeholder {
     color: var(--text-dim);
 }
 .input-area button {
-    font-family: 'JetBrains Mono', monospace;
-    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    font-family: var(--font-ui);
+    background: var(--accent-peach);
     border: none;
     border-radius: 8px;
     padding: 10px 20px;
@@ -44,13 +44,13 @@ export const inputCss = `
     font-weight: 700;
     font-size: 12px;
     cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
     transition: transform 0.2s, box-shadow 0.2s;
 }
 .input-area button:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 8px 24px var(--glow-cyan);
+    transform: none;
+    box-shadow: none;
 }
 .input-area button:disabled {
     background: var(--bg-surface);
@@ -91,7 +91,7 @@ export const inputCss = `
 .input-area .keyboard-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
-    box-shadow: 0 0 12px var(--glow-cyan);
+    box-shadow: none;
     transform: none;
 }
 
@@ -106,7 +106,7 @@ export const inputCss = `
     border-radius: 12px;
     padding: 10px;
     z-index: 200;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 20px var(--glow-cyan);
+    box-shadow: none;
     min-width: 220px;
     touch-action: manipulation;
 }
@@ -148,11 +148,11 @@ export const inputCss = `
     right: 16px;
 }
 .keyboard-popover-title {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 11px;
     color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
     padding: 2px 4px 4px;
 }
 .keyboard-popover .key-btn {
@@ -165,7 +165,7 @@ export const inputCss = `
     padding: 8px 12px;
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s, background 0.15s, box-shadow 0.15s;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 12px;
     color: var(--text-mid);
     text-transform: none;
@@ -182,14 +182,14 @@ export const inputCss = `
 }
 .keyboard-popover .key-btn:active {
     background: var(--bg-abyss);
-    box-shadow: 0 0 12px var(--glow-cyan);
+    box-shadow: none;
 }
 .keyboard-popover .key-btn kbd {
     background: var(--bg-abyss);
     color: var(--accent-cyan);
     border-radius: 4px;
     padding: 2px 6px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 11px;
     min-width: 50px;
     text-align: center;
@@ -233,12 +233,12 @@ export const inputCss = `
     text-align: center;
     padding: 64px 24px;
     color: var(--text-mid);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
 }
 
 /* Refresh button */
 .refresh-btn {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     background: transparent;
     border: 1px solid var(--border-dim);
     border-radius: 6px;
@@ -247,8 +247,8 @@ export const inputCss = `
     cursor: pointer;
     font-size: 12px;
     transition: border-color 0.2s, color 0.2s, background 0.2s;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .refresh-btn:hover {
     border-color: var(--accent-cyan);

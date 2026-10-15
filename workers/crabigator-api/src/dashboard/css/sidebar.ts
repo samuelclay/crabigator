@@ -66,7 +66,7 @@ export const sidebarCss = `
     max-height: calc(100vh - var(--header-height, 67px) - 32px);
     border: 1px solid var(--border-dim);
     border-radius: 12px;
-    box-shadow: 0 20px 48px rgba(0,0,0,0.5), 0 0 40px rgba(34, 211, 238, 0.1);
+    box-shadow: none;
     z-index: 200;
 }
 /* Don't push content in popover mode */
@@ -89,16 +89,16 @@ export const sidebarCss = `
     flex-shrink: 0;
 }
 .sidebar-title {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-family: var(--font-ui);
+    font-size: 14px;
     font-weight: 600;
-    color: var(--accent-cyan);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    color: var(--text-bright);
+    text-transform: none;
+    letter-spacing: 0;
     flex: 1;
 }
 .sidebar-settings-btn {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     background: transparent;
     border: 1px solid var(--border-dim);
     height: 28px;
@@ -115,7 +115,7 @@ export const sidebarCss = `
 }
 .sidebar-pin-btn,
 .sidebar-close-btn {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     background: transparent;
     border: 1px solid var(--border-dim);
     height: 28px;
@@ -150,7 +150,7 @@ export const sidebarCss = `
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     background: rgba(34, 211, 238, 0.1);
-    box-shadow: 0 0 10px rgba(34, 211, 238, 0.2);
+    box-shadow: none;
 }
 .sidebar-pin-btn:hover {
     border-color: var(--accent-cyan);
@@ -183,12 +183,12 @@ export const sidebarCss = `
     margin-bottom: 0;
 }
 .sidebar-settings-label {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 9px;
     font-weight: 600;
     color: var(--accent-cyan);
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    text-transform: none;
+    letter-spacing: 0;
     margin-bottom: 8px;
 }
 
@@ -224,7 +224,7 @@ export const sidebarCss = `
     transition: all 0.2s;
 }
 .sidebar-checkbox input[type="checkbox"]:checked {
-    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    background: var(--accent-peach);
     border-color: transparent;
 }
 .sidebar-checkbox input[type="checkbox"]:checked::after {
@@ -243,7 +243,7 @@ export const sidebarCss = `
     flex-shrink: 0;
 }
 .sidebar-checkbox-label {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 10px;
     color: var(--text-mid);
 }
@@ -302,15 +302,15 @@ export const sidebarCss = `
 
 /* Active sidebar session */
 .sidebar .session-item.sidebar-active {
-    background: rgba(34, 211, 238, 0.08);
+    background: #23313b;
     border-left: 2px solid var(--accent-cyan);
 }
 .sidebar .session-item.focused {
-    background: rgba(74, 222, 128, 0.08);
-    border-left: 2px solid var(--accent-green);
+    background: #2b302f;
+    border-left: 2px solid var(--accent-peach);
 }
 .sidebar .session-item.focused.sidebar-active {
-    background: linear-gradient(90deg, rgba(74, 222, 128, 0.12), rgba(34, 211, 238, 0.06));
+    background: #2b302f;
 }
 
 /* Sessions button hidden when sidebar is pinned (toggled via JS) */
@@ -321,8 +321,8 @@ export const sidebarCss = `
 /* Session highlight animation when scrolled to */
 @keyframes session-highlight {
     0% { outline: 2px solid transparent; outline-offset: 2px; }
-    8% { outline: 2px solid var(--accent-cyan); outline-offset: 2px; box-shadow: 0 0 30px rgba(34, 211, 238, 0.4); }
-    50% { outline: 2px solid var(--accent-cyan); outline-offset: 2px; box-shadow: 0 0 15px rgba(34, 211, 238, 0.2); }
+    8% { outline: 2px solid var(--accent-cyan); outline-offset: 2px; box-shadow: none; }
+    50% { outline: 2px solid var(--accent-cyan); outline-offset: 2px; box-shadow: none; }
     100% { outline: 2px solid transparent; outline-offset: 2px; box-shadow: none; }
 }
 .session-card.highlight {
@@ -333,8 +333,8 @@ export const sidebarCss = `
 /* For grouped sessions that don't have individual borders */
 @keyframes session-highlight-grouped {
     0% { outline: 2px solid transparent; outline-offset: -2px; background: transparent; }
-    8% { outline: 2px solid var(--accent-cyan); outline-offset: -2px; background: rgba(34, 211, 238, 0.15); box-shadow: 0 0 30px rgba(34, 211, 238, 0.3); }
-    50% { outline: 2px solid var(--accent-cyan); outline-offset: -2px; background: rgba(34, 211, 238, 0.08); box-shadow: 0 0 10px rgba(34, 211, 238, 0.15); }
+    8% { outline: 2px solid var(--accent-cyan); outline-offset: -2px; background: rgba(34, 211, 238, 0.15); box-shadow: none; }
+    50% { outline: 2px solid var(--accent-cyan); outline-offset: -2px; background: #23313b; box-shadow: none; }
     100% { outline: 2px solid transparent; outline-offset: -2px; background: transparent; box-shadow: none; }
 }
 .container[data-grouping="project"] .session-card.highlight {

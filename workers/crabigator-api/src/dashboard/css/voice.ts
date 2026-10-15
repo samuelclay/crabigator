@@ -28,7 +28,7 @@ export const voiceCss = `
 .input-area .voice-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
-    box-shadow: 0 0 12px var(--glow-cyan);
+    box-shadow: none;
     transform: none;
 }
 
@@ -88,8 +88,8 @@ export const voiceCss = `
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
     font-weight: 500;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     transition: border-color 0.2s, color 0.2s, box-shadow 0.2s;
     display: flex;
     align-items: center;
@@ -104,7 +104,7 @@ export const voiceCss = `
 .input-area .voice-edit-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
-    box-shadow: 0 0 12px var(--glow-cyan);
+    box-shadow: none;
     transform: none;
 }
 .input-area .voice-edit-btn:disabled {
@@ -118,7 +118,7 @@ export const voiceCss = `
 
 /* Voice send button - primary gradient */
 .input-area .voice-send-btn {
-    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    background: var(--accent-peach);
     border: none;
     border-radius: 8px;
     padding: 10px 20px;
@@ -127,13 +127,13 @@ export const voiceCss = `
     font-weight: 700;
     font-size: 12px;
     cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
     transition: box-shadow 0.2s;
     white-space: nowrap;
 }
 .input-area .voice-send-btn:hover {
-    box-shadow: 0 8px 24px var(--glow-cyan);
+    box-shadow: none;
     transform: none;
 }
 .input-area .voice-send-btn:disabled {

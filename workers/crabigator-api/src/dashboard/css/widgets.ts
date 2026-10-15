@@ -143,8 +143,8 @@ export const widgetsCss = `
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    text-transform: none;
+    letter-spacing: 0;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -155,7 +155,7 @@ export const widgetsCss = `
     height: 6px;
     background: var(--accent-cyan);
     border-radius: 50%;
-    box-shadow: 0 0 8px var(--glow-cyan);
+    box-shadow: none;
 }
 .widget-row {
     display: flex;
@@ -459,7 +459,7 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     margin-bottom: 6px;
     color: #8b949e;
     font-size: 10px;
-    text-transform: uppercase;
+    text-transform: none;
     letter-spacing: 0.7px;
 }
 .commit-list {

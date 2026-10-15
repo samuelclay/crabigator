@@ -1,42 +1,32 @@
 // Pairing gate, install card
 export const pairingCss = `
+/* Keep setup centered without an empty session sidebar. */
+body:has(.pairing-gate) .sidebar,
+body:has(.pairing-gate) .header > :not(h1) { display: none; }
+body:has(.pairing-gate) .dashboard-layout { padding-inline: 0; }
+
 /* Pairing gate styles */
 .pairing-gate {
     width: 100%;
-    max-width: 420px;
+    max-width: 480px;
     margin: 0 auto;
     padding: 32px 16px;
 }
 .pairing-card {
     background: var(--bg-deep);
     border: 1px solid var(--border-dim);
-    border-radius: 16px;
-    padding: 40px;
+    border-radius: 10px;
+    padding: 32px;
     text-align: center;
     position: relative;
     overflow: hidden;
-}
-.pairing-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-magenta), var(--accent-cyan));
-    background-size: 200% 100%;
-    animation: gradient-shift 3s ease infinite;
-}
-@keyframes gradient-shift {
-    0%, 100% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
 }
 .pairing-icon {
     width: 72px;
     height: 72px;
     margin: 0 auto 28px;
     color: var(--accent-cyan);
-    filter: drop-shadow(0 0 20px var(--glow-cyan));
+
 }
 .pairing-icon svg {
     width: 100%;
@@ -46,7 +36,7 @@ export const pairingCss = `
     animation: spin 1s linear infinite;
 }
 .pairing-card h2 {
-    font-family: 'Space Grotesk', sans-serif;
+    font-family: 'DM Sans', sans-serif;
     font-size: 26px;
     font-weight: 700;
     margin-bottom: 14px;
@@ -71,7 +61,7 @@ export const pairingCss = `
     border: 1px solid var(--border-dim);
     border-radius: 10px;
     color: var(--text-bright);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 20px;
     text-align: center;
     letter-spacing: 3px;
@@ -81,7 +71,7 @@ export const pairingCss = `
 .pairing-form input:focus {
     outline: none;
     border-color: var(--accent-cyan);
-    box-shadow: 0 0 25px var(--glow-cyan);
+    box-shadow: none;
 }
 .pairing-form input::placeholder {
     color: var(--text-dim);
@@ -89,10 +79,10 @@ export const pairingCss = `
     font-size: 14px;
 }
 .pairing-form button {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     flex-shrink: 0;
     padding: 14px 28px;
-    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    background: var(--accent-peach);
     border: none;
     border-radius: 10px;
     color: var(--bg-abyss);
@@ -101,12 +91,12 @@ export const pairingCss = `
     cursor: pointer;
     transition: all 0.2s;
     white-space: nowrap;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .pairing-form button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 10px 30px var(--glow-cyan);
+    transform: none;
+    box-shadow: none;
 }
 .pairing-form button:disabled {
     background: var(--bg-surface);
@@ -116,20 +106,20 @@ export const pairingCss = `
     box-shadow: none;
 }
 .pairing-error {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     color: var(--accent-red);
     font-size: 12px;
     min-height: 20px;
     margin-bottom: 16px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .pairing-help {
     color: var(--text-dim);
     font-size: 12px;
 }
 .pairing-help code {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     background: var(--bg-surface);
     padding: 3px 8px;
     border-radius: 4px;
@@ -152,7 +142,7 @@ export const pairingCss = `
     border: 1px solid var(--border-dim);
     background: var(--bg-abyss);
     color: var(--text-bright);
-    font-family: 'Space Grotesk', sans-serif;
+    font-family: 'DM Sans', sans-serif;
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
@@ -161,7 +151,7 @@ export const pairingCss = `
 }
 .social-btn:hover {
     border-color: var(--accent-cyan);
-    box-shadow: 0 0 18px var(--glow-cyan);
+    box-shadow: none;
 }
 .pairing-divider {
     display: flex;
@@ -170,7 +160,7 @@ export const pairingCss = `
     color: var(--text-dim);
     font-size: 11px;
     letter-spacing: 0.12em;
-    text-transform: uppercase;
+    text-transform: none;
     margin: 8px 0 22px;
 }
 .pairing-divider::before,
@@ -243,10 +233,10 @@ export const pairingCss = `
     margin-bottom: 12px;
 }
 .install-command code {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 14px;
     color: var(--accent-cyan);
-    letter-spacing: 0.5px;
+    letter-spacing: 0;
 }
 .install-copy-btn {
     background: transparent;
@@ -270,7 +260,7 @@ export const pairingCss = `
     margin-bottom: 16px;
 }
 .install-hint code {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     background: var(--bg-card);
     padding: 2px 6px;
     border-radius: 4px;

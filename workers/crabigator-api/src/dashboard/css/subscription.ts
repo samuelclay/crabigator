@@ -4,7 +4,7 @@ export const subscriptionCss = `
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 11px;
     color: var(--accent-cyan);
     background: none;

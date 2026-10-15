@@ -2,7 +2,7 @@
 export const popoversCss = `
 /* Style popover button */
 .style-btn {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     background: transparent;
     border: 1px solid var(--border-dim);
     padding: 8px 14px;
@@ -14,8 +14,8 @@ export const popoversCss = `
     align-items: center;
     gap: 8px;
     transition: all 0.2s;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .style-btn:hover {
     border-color: var(--accent-cyan);
@@ -26,7 +26,7 @@ export const popoversCss = `
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     background: rgba(34, 211, 238, 0.1);
-    box-shadow: 0 0 15px var(--glow-cyan);
+    box-shadow: none;
 }
 .style-btn svg { width: 14px; height: 14px; }
 
@@ -41,7 +41,7 @@ export const popoversCss = `
     border-radius: 12px;
     padding: 18px;
     min-width: 240px;
-    box-shadow: 0 20px 48px rgba(0,0,0,0.5), 0 0 40px rgba(34, 211, 238, 0.1);
+    box-shadow: 0 12px 32px rgba(0,0,0,.25);
     z-index: 200;
 }
 .style-popover.visible { display: block; }
@@ -50,12 +50,12 @@ export const popoversCss = `
 }
 .style-section:last-child { margin-bottom: 0; }
 .style-section-label {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 9px;
+    font-family: var(--font-ui);
+    font-size: 12px;
     font-weight: 600;
-    color: var(--accent-magenta);
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    color: var(--text-mid);
+    text-transform: none;
+    letter-spacing: 0;
     margin-bottom: 10px;
 }
 .style-options {
@@ -67,7 +67,7 @@ export const popoversCss = `
     overflow: hidden;
 }
 .style-option {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     flex: 1;
     background: transparent;
     border: none;
@@ -85,7 +85,7 @@ export const popoversCss = `
     color: var(--text-mid);
 }
 .style-option.active {
-    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    background: var(--accent-peach);
     color: var(--bg-abyss);
     font-weight: 700;
 }
@@ -95,7 +95,7 @@ export const popoversCss = `
     gap: 10px;
 }
 .font-size-btn {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     background: var(--bg-surface);
     border: 1px solid var(--border-dim);
     width: 38px;
@@ -115,7 +115,7 @@ export const popoversCss = `
     background: rgba(34, 211, 238, 0.05);
 }
 .font-size-btn:active {
-    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    background: var(--accent-peach);
     color: var(--bg-abyss);
     border-color: transparent;
 }
@@ -124,7 +124,7 @@ export const popoversCss = `
 .font-size-value {
     flex: 1;
     text-align: center;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 13px;
     font-weight: 600;
     color: var(--text-bright);
@@ -142,7 +142,7 @@ export const popoversCss = `
     position: relative;
 }
 .settings-btn {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     background: transparent;
     border: 1px solid var(--border-dim);
     padding: 8px 14px;
@@ -154,8 +154,8 @@ export const popoversCss = `
     align-items: center;
     gap: 8px;
     transition: all 0.2s;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .settings-btn:hover {
     border-color: var(--accent-magenta);
@@ -166,7 +166,7 @@ export const popoversCss = `
     border-color: var(--accent-magenta);
     color: var(--accent-magenta);
     background: rgba(232, 121, 249, 0.1);
-    box-shadow: 0 0 15px var(--glow-magenta);
+    box-shadow: none;
 }
 .settings-btn svg { width: 14px; height: 14px; }
 .settings-popover {
@@ -179,7 +179,7 @@ export const popoversCss = `
     border-radius: 12px;
     padding: 20px;
     min-width: 300px;
-    box-shadow: 0 20px 48px rgba(0,0,0,0.5), 0 0 40px rgba(232, 121, 249, 0.1);
+    box-shadow: 0 12px 32px rgba(0,0,0,.25);
     z-index: 200;
 }
 .settings-popover.visible { display: block; }
@@ -187,7 +187,7 @@ export const popoversCss = `
     margin-bottom: 0;
 }
 .settings-section-label {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 12px;
     font-weight: 600;
     color: var(--text-bright);
@@ -201,19 +201,19 @@ export const popoversCss = `
 }
 .settings-description code {
     color: var(--accent-cyan);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 11px;
     word-break: break-all;
 }
 .settings-divider {
     height: 1px;
-    background: linear-gradient(90deg, transparent, var(--border-dim), transparent);
+    background: var(--border-dim);
     margin: 20px 0;
 }
 .settings-action-btn {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     width: 100%;
-    background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+    background: var(--accent-peach);
     border: none;
     padding: 12px 18px;
     color: var(--bg-abyss);
@@ -222,12 +222,12 @@ export const popoversCss = `
     font-weight: 700;
     border-radius: 8px;
     transition: all 0.2s;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .settings-action-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 8px 24px var(--glow-cyan);
+    transform: none;
+    box-shadow: none;
 }
 .settings-action-btn:disabled {
     opacity: 0.5;
@@ -236,7 +236,7 @@ export const popoversCss = `
     box-shadow: none;
 }
 .settings-danger-btn {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     width: 100%;
     background: transparent;
     border: 1px solid rgba(248, 113, 113, 0.4);
@@ -246,8 +246,8 @@ export const popoversCss = `
     font-size: 11px;
     border-radius: 6px;
     transition: all 0.2s;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .settings-danger-btn:hover {
     background: rgba(248, 113, 113, 0.1);
@@ -258,13 +258,12 @@ export const popoversCss = `
 /* Sessions popover container: PR board button + sessions button in a row */
 .sessions-container {
     position: relative;
-    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 8px;
 }
 .sessions-btn {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     background: transparent;
     border: 1px solid var(--border-dim);
     padding: 8px 14px;
@@ -276,8 +275,8 @@ export const popoversCss = `
     align-items: center;
     gap: 8px;
     transition: all 0.2s;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
     user-select: none;
     -webkit-user-select: none;
 }
@@ -297,7 +296,7 @@ export const popoversCss = `
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     background: rgba(34, 211, 238, 0.1);
-    box-shadow: 0 0 15px var(--glow-cyan);
+    box-shadow: none;
 }
 .sessions-count {
     font-weight: 700;
@@ -317,16 +316,16 @@ export const popoversCss = `
     gap: 8px;
 }
 .sessions-group-name {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
+    font-family: var(--font-ui);
+    font-size: 12px;
     font-weight: 600;
     color: var(--accent-cyan);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
     flex-shrink: 0;
 }
 .sessions-group-path {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 9px;
     color: var(--text-dim);
     overflow: hidden;
@@ -337,7 +336,7 @@ export const popoversCss = `
     opacity: 0.6;
 }
 .sessions-group-count {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 9px;
     color: var(--text-dim);
     background: var(--bg-abyss);
@@ -347,12 +346,12 @@ export const popoversCss = `
 }
 .sessions-device-header {
     padding: 10px 12px 4px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
+    font-family: var(--font-ui);
+    font-size: 12px;
     font-weight: 700;
     color: var(--accent-purple);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -420,29 +419,29 @@ export const popoversCss = `
     min-width: 0;
 }
 .session-item-title {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
+    font-family: var(--font-ui);
+    font-size: 13px;
     color: var(--text-bright);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
 }
-.session-item-title.official { color: #bc8cff; }
+.session-item-title.official { color: var(--text-bright); }
 .session-item-generated-title {
-    color: #58a6ff;
-    font-family: 'JetBrains Mono', monospace;
+    color: var(--accent-blue);
+    font-family: var(--font-ui);
     font-size: 9px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .session-item-state {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 8px;
     padding: 1px 5px;
     border-radius: 3px;
-    text-transform: uppercase;
+    text-transform: none;
     flex-shrink: 0;
     letter-spacing: 0.3px;
 }
@@ -456,7 +455,7 @@ export const popoversCss = `
     align-items: center;
     gap: 10px;
     margin-top: 2px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 9px;
 }
 .session-item-stats.dim {
@@ -480,7 +479,7 @@ export const popoversCss = `
     padding: 24px 16px;
     text-align: center;
     color: var(--text-dim);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 11px;
 }
 @media (max-width: 768px) {
@@ -505,7 +504,7 @@ export const popoversCss = `
 }
 .invite-result.visible { display: block; }
 .invite-code {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 24px;
     font-weight: 700;
     color: var(--accent-yellow);
@@ -515,12 +514,12 @@ export const popoversCss = `
     text-shadow: 0 0 20px rgba(251, 191, 36, 0.3);
 }
 .invite-hint {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 10px;
     color: var(--text-dim);
     text-align: center;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
 }
 .invite-link {
     margin-top: 10px;

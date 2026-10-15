@@ -2,60 +2,35 @@
 export const headerCss = `
 /* Header */
 .header {
-    background: rgba(10, 15, 26, 0.8);
-    backdrop-filter: blur(12px);
+    background: var(--bg-abyss);
     border-bottom: 1px solid var(--border-dim);
-    padding: 16px 24px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 210;
-    max-width: 100%;
-}
-/* Disable expensive backdrop-filter on mobile - use solid background instead */
-@media (hover: none) {
-    .header {
-        backdrop-filter: none;
-        -webkit-backdrop-filter: none;
-        background: var(--bg-deep);
-    }
-}
-.header h1 {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 18px;
-    font-weight: 700;
+    padding: 14px 24px;
     display: flex;
     align-items: center;
     gap: 10px;
-    letter-spacing: -0.5px;
-    color: var(--text-bright);
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 210;
+    max-width: 100%;
 }
-.header h1::before {
-    content: '>';
-    color: var(--accent-cyan);
-    animation: blink 1s step-end infinite;
-}
-@keyframes blink {
-    50% { opacity: 0; }
-}
+.header h1 { display: flex; align-items: center; gap: 20px; margin-right: auto; flex-shrink: 0; }
+.dashboard-brand { display: inline-flex; align-items: center; text-decoration: none; }
+.dashboard-brand .brand-logo { display: block; width: 216px; height: 27.2px; }
+.dashboard-brand .brand-crab { display: none; }
+.dashboard-label { font: 400 14px var(--font-ui); color: var(--text-dim); border-left: 1px solid var(--border-dim); padding-left: 20px; }
 .thinking-spinner {
     display: inline-block;
 }
 .header .status {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 11px;
     color: var(--text-dim);
-    margin-left: auto;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
 }
 
 /* Filter indicator */
@@ -67,21 +42,17 @@ export const headerCss = `
     background: rgba(251, 191, 36, 0.15);
     border: 1px solid var(--accent-yellow);
     border-radius: 6px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-ui);
     font-size: 11px;
     color: var(--accent-yellow);
-    animation: filter-pulse 2s ease-in-out infinite;
 }
 .filter-indicator.visible {
     display: flex;
 }
-@keyframes filter-pulse {
-    0%, 100% { box-shadow: 0 0 0 rgba(251, 191, 36, 0); }
-    50% { box-shadow: 0 0 12px rgba(251, 191, 36, 0.3); }
-}
+
 .filter-text {
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
     white-space: nowrap;
 }
 .filter-clear {
@@ -103,35 +74,55 @@ export const headerCss = `
     color: var(--text-bright);
 }
 
+/* One compact control language for navigation and utility actions. */
+.header .refresh-btn, .header .style-btn, .header .settings-btn,
+.header .sessions-btn, .header .pr-board-btn {
+    font-family: var(--font-ui);
+    min-height: 34px;
+    padding: 7px 11px;
+    border: 1px solid var(--border-dim);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-mid);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    box-shadow: none;
+}
+.header .sessions-btn.active, .header .pr-board-btn.active,
+.header .style-btn.active, .header .settings-btn.active {
+    color: var(--accent-peach);
+    border-color: #8a6f59;
+    background: #2b302f;
+}
+.header .sessions-count { color: inherit; }
+.header .pr-board-btn-icon { color: inherit; }
+.header .refresh-btn:hover, .header .style-btn:hover, .header .settings-btn:hover,
+.header .sessions-btn:hover, .header .pr-board-btn:hover { background: var(--bg-surface); color: var(--text-bright); }
+.header .status { flex: 0 1 auto; max-width: 170px; font: 11px var(--font-ui); }
+
 @media (max-width: 768px) {
+    .header-control-label { display: none; }
     .header {
         flex-wrap: nowrap;
         gap: 6px;
-        padding: 8px;
+        padding: 10px 12px;
     }
-    .header h1 {
-        flex: 0 0 24px;
-        width: 24px;
-        min-width: 24px;
-        overflow: hidden;
-        white-space: nowrap;
-        font-size: 16px;
-        gap: 0;
-        letter-spacing: 0;
-    }
-    .header h1::before {
-        display: none;
-    }
+    .header h1 { flex: 0 0 32px; margin-right: auto; }
+    .dashboard-brand .brand-logo, .dashboard-label { display: none; }
+    .dashboard-brand .brand-crab { display: block; width: 32px; height: 32px; }
     .header .refresh-btn,
     .header .style-btn,
     .header .settings-btn {
-        width: 30px;
-        height: 30px;
+        width: 32px;
+        height: 32px;
         padding: 0;
         display: flex;
         align-items: center;
         justify-content: center;
-        flex: 0 0 30px;
+        flex: 0 0 32px;
         gap: 0;
         font-size: 0;
         letter-spacing: 0;
@@ -148,11 +139,11 @@ export const headerCss = `
     }
     /* Icon-only PR board button, matching its style/settings neighbors */
     .header .pr-board-btn {
-        width: 30px;
-        height: 30px;
+        width: 32px;
+        height: 32px;
         padding: 0;
         justify-content: center;
-        flex: 0 0 30px;
+        flex: 0 0 32px;
         gap: 0;
         font-size: 0;
     }
@@ -166,7 +157,7 @@ export const headerCss = `
         flex: 0 0 auto;
     }
     .header .sessions-btn {
-        height: 30px;
+        height: 32px;
         min-width: 34px;
         padding: 0 10px;
         flex: 0 0 auto;
@@ -180,7 +171,7 @@ export const headerCss = `
         flex: 1 1 78px;
         min-width: 0;
         max-width: 92px;
-        height: 30px;
+        height: 32px;
         padding: 0 6px;
         gap: 4px;
         font-size: 9px;
@@ -201,9 +192,15 @@ export const headerCss = `
     }
 }
 
+@media (min-width: 769px) and (max-width: 1050px) { .dashboard-label { display: none; } }
+@media (max-width: 380px) {
+    .header { gap: 4px; padding: 8px; }
+    .header .sessions-btn { padding: 0 6px; }
+    .header .status { display: none; }
+}
 /* Container */
 .container {
-    padding: 16px;
+    padding: 16px 20px;
     column-gap: 16px;
     max-width: 100%;
     overflow-x: hidden;

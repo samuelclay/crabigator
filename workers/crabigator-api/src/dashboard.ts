@@ -1,7 +1,8 @@
+import { faviconPath, faviconIcoPath, touchIconPath } from './assets/home-brand';
 // Dashboard HTML served at /dashboard
 import { dashboardCss } from './dashboard/css';
 import { dashboardJs } from './dashboard/js';
-import { faviconSvg, iconChevronRight } from './dashboard/icons';
+import { brandCrabSvg, brandLogoSvg, iconChevronRight } from './dashboard/icons';
 import type { RuntimeConfig } from './config';
 import { metaPixelHtml, usePublicOrigin } from './html-render';
 
@@ -22,10 +23,12 @@ export const dashboardHtml = `<!DOCTYPE html>
     <meta name="twitter:title" content="Crabigator Dashboard">
     <meta name="twitter:description" content="Real-time monitoring dashboard for your Claude Code, Codex, opencode, and Grok sessions.">
     <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-dashboard.png">
-    <link rel="icon" href="data:image/svg+xml,${faviconSvg}">
+    <link rel="icon" type="image/svg+xml" href="${faviconPath}">
+    <link rel="icon" href="${faviconIcoPath}" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="${touchIconPath}" sizes="192x192">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=DM+Sans:wght@400;500;600;700&display=swap">
     <style>${dashboardCss}</style>
 </head>
 <body>
@@ -36,8 +39,8 @@ export const dashboardHtml = `<!DOCTYPE html>
         <div class="deploy-countdown" id="deploy-countdown"></div>
     </div>
     <div class="header">
-        <h1>🦀 Crabigator Dashboard</h1>
-        <button class="refresh-btn" onclick="loadSessions()">↻ Refresh</button>
+        <h1><a class="dashboard-brand" href="/" aria-label="Crabigator home">${brandLogoSvg}${brandCrabSvg}</a><span class="dashboard-label">Dashboard</span></h1>
+        <button class="refresh-btn" onclick="loadSessions()" aria-label="Refresh sessions" title="Refresh sessions"><span class="header-control-label">↻ Refresh</span></button>
         <div class="filter-indicator" id="filter-indicator">
             <span class="filter-text">Viewing 1 session</span>
             <button class="filter-clear" onclick="clearSessionFilter()" title="Show all sessions">✕</button>
@@ -52,12 +55,12 @@ export const dashboardHtml = `<!DOCTYPE html>
             </button>
         </div>
         <div class="style-container">
-            <button class="style-btn" id="style-btn" onclick="toggleStylePopover()">
+            <button class="style-btn" id="style-btn" aria-label="Style" title="Style" onclick="toggleStylePopover()">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="3"/>
                     <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
                 </svg>
-                Style
+                <span class="header-control-label">Style</span>
             </button>
             <div class="style-popover" id="style-popover">
                 <div class="style-section">
@@ -71,7 +74,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="style-section">
-                    <div class="style-section-label">Text Size</div>
+                    <div class="style-section-label">Text size</div>
                     <div class="font-size-control">
                         <button class="font-size-btn decrease" onclick="adjustFontSize(-1)" title="Smaller">A</button>
                         <div class="font-size-value" id="font-label">100%</div>
@@ -79,7 +82,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="style-section">
-                    <div class="style-section-label">Terminal Height</div>
+                    <div class="style-section-label">Terminal height</div>
                     <div class="font-size-control">
                         <button class="font-size-btn decrease" onclick="adjustTerminalHeight(-1)" title="Shorter">−</button>
                         <div class="font-size-value" id="height-label">350px</div>
@@ -87,7 +90,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="style-section">
-                    <div class="style-section-label">Text Wrap</div>
+                    <div class="style-section-label">Text wrap</div>
                     <div class="style-options">
                         <button class="style-option active" data-wrap="wrap" onclick="setTerminalWrap(true)">Wrap</button>
                         <button class="style-option" data-wrap="scroll" onclick="setTerminalWrap(false)">Scroll</button>
@@ -108,14 +111,14 @@ export const dashboardHtml = `<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="style-section" id="project-order-section" style="display:none">
-                    <div class="style-section-label">Project Order</div>
+                    <div class="style-section-label">Project order</div>
                     <div class="style-options">
                         <button class="style-option active" data-project-order="recent" onclick="setProjectOrder('recent')">Most Recent</button>
                         <button class="style-option" data-project-order="alpha" onclick="setProjectOrder('alpha')">Alphabetical</button>
                     </div>
                 </div>
                 <div class="style-section">
-                    <div class="style-section-label">Visible Sections</div>
+                    <div class="style-section-label">Visible sections</div>
                     <div class="sidebar-checkbox-list">
                         <label class="sidebar-checkbox"><input type="checkbox" id="section-recap" onchange="toggleSection('recap')" checked><span class="sidebar-checkbox-icon" style="color:#22d3ee">◈</span><span class="sidebar-checkbox-label">Recap</span></label>
                         <label class="sidebar-checkbox"><input type="checkbox" id="section-prs" onchange="toggleSection('prs')" checked><span class="sidebar-checkbox-icon" style="color:#a371f7">⇄</span><span class="sidebar-checkbox-label">Pull requests</span></label>
@@ -127,11 +130,11 @@ export const dashboardHtml = `<!DOCTYPE html>
             </div>
         </div>
         <div class="settings-container">
-            <button class="settings-btn" id="settings-btn" onclick="toggleSettingsPopover()">
+            <button class="settings-btn" id="settings-btn" aria-label="Account" title="Account" onclick="toggleSettingsPopover()">
                 <svg viewBox="0 0 16 16" fill="currentColor">
                     <path d="M8 8a3 3 0 100-6 3 3 0 000 6zm2-3a2 2 0 11-4 0 2 2 0 014 0zm4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4zm-1-.004c0-.246-.178-.987-.985-1.728C11.267 10.564 9.95 10 8 10s-3.267.564-4.015 1.268C3.178 12.01 3 12.75 3 12.996h10z"/>
                 </svg>
-                Account
+                <span class="header-control-label">Account</span>
             </button>
             <div class="settings-popover" id="settings-popover">
                 <div class="settings-section" id="subscription-section" hidden>
@@ -209,14 +212,14 @@ export const dashboardHtml = `<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="sidebar-settings-section">
-                    <div class="sidebar-settings-label">Click Action</div>
+                    <div class="sidebar-settings-label">Click action</div>
                     <div class="style-options">
                         <button class="style-option sb-opt-click" data-click="focus" onclick="setSessionClickAction('focus')">Focus</button>
                         <button class="style-option sb-opt-click" data-click="scroll" onclick="setSessionClickAction('scroll')">Scroll</button>
                     </div>
                 </div>
                 <div class="sidebar-settings-section">
-                    <div class="sidebar-settings-label">Visible Stats</div>
+                    <div class="sidebar-settings-label">Visible stats</div>
                     <div class="sidebar-checkbox-list">
                         <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-sessionTime" onchange="toggleSidebarStat('sessionTime')"><span class="sidebar-checkbox-icon" style="color:#58a6ff">◉</span><span class="sidebar-checkbox-label">Session time</span></label>
                         <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-thinkingTime" onchange="toggleSidebarStat('thinkingTime')"><span class="sidebar-checkbox-icon" style="color:#3fb950">◐</span><span class="sidebar-checkbox-label">Thinking time</span></label>

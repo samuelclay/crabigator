@@ -2,7 +2,7 @@
 export const terminalCss = `
 /* Terminal */
 .terminal {
-    background: var(--bg-abyss);
+    background: #0b1218;
     padding: 12px;
     overflow-y: hidden;
     overflow-x: hidden;
@@ -32,7 +32,7 @@ export const terminalCss = `
 .terminal.scroll-active {
     overflow-y: auto;
     border-color: var(--accent-cyan);
-    box-shadow: inset 0 0 30px 8px rgba(34, 211, 238, 0.25), inset 0 0 8px 2px rgba(34, 211, 238, 0.5);
+    box-shadow: none;
 }
 /* Scroll mode */
 .terminal.scroll-mode {

@@ -1,3 +1,4 @@
+import { brandCrabSvg } from '../icons';
 // Dashboard JavaScript - pairing gate
 export const pairingJs = `
         // Pairing state
@@ -194,17 +195,12 @@ export const pairingJs = `
             gate.className = 'pairing-gate';
             gate.innerHTML = \`
                 <div class="pairing-card">
-                    <div class="pairing-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="5" y="2" width="14" height="20" rx="2"/>
-                            <line x1="12" y1="18" x2="12" y2="18"/>
-                        </svg>
-                    </div>
-                    <h2>Pair with Desktop</h2>
+                    <div class="pairing-icon">${brandCrabSvg}</div>
+                    <h2>Connect your desktop</h2>
                     <p class="pairing-description">
                         \${SOCIAL_LOGIN_ENABLED
                             ? 'Sign in with GitHub or Google, or enter the pairing code shown in your terminal.'
-                            : 'Enter the pairing code shown in your terminal to connect this device.'}
+                            : 'Enter the code from your Crabigator terminal.'}
                     </p>
                     \${socialLoginButtons('login')}
                     <div class="pairing-form">

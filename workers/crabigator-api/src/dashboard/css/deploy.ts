@@ -21,11 +21,11 @@ export const deployCss = `
     border-top-color: var(--accent-cyan);
     border-radius: 50%;
     animation: spin 1s linear infinite;
-    box-shadow: 0 0 20px var(--glow-cyan);
+    box-shadow: none;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .deploy-text {
-    font-family: 'Space Grotesk', sans-serif;
+    font-family: 'DM Sans', sans-serif;
     font-size: 18px;
     color: var(--text-bright);
     text-align: center;
@@ -42,7 +42,7 @@ export const deployCss = `
 }
 
 body {
-    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     background: var(--bg-abyss);
     color: var(--text-bright);
     min-height: 100vh;

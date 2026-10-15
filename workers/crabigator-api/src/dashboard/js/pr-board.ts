@@ -53,11 +53,11 @@ export const prBoardJs = `
             try { localStorage.setItem('crabigatorPrBoardView', JSON.stringify(prBoardViewPrefs)); } catch (e) {}
         }
 
-        // xterm-256 palette hexes shared with the CLI renderer.
+        // Dashboard status colors; semantic roles match the CLI board.
         const PRB_C = {
-            purple: '#af87ff', gray: '#8a8a8a', darkGray: '#585858',
-            green: '#5fff5f', lightGreen: '#87d787', red: '#ff5f5f', yellow: '#ffd700',
-            orange: '#d7af5f', cyan: '#00d7ff',
+            purple: '#c5b0df', gray: '#b4bfc7', darkGray: '#91a1ad',
+            green: '#a7cfb6', lightGreen: '#a7cfb6', red: '#f29a98', yellow: '#e7c78c',
+            orange: '#edb583', cyan: '#9ac9df',
         };
         // Cooldown tints: a session badge or GitHub status cell that changed
         // lights up bright purple and fades over two minutes to a barely
@@ -68,15 +68,15 @@ export const prBoardJs = `
         const PRB_COOL_STOPS = [
             [214, 178, 255], [175, 135, 255], [135, 95, 215], [95, 65, 150], [55, 45, 80],
         ];
-        // Activity recency: one cyan-blue hue at falling intensity, gray after a day.
+        // Activity recency: quiet blue surfaces fade toward slate as sessions age.
         const PRB_BUCKETS = [
-            { max: 3600, label: 'Last hour', bg: '#00ffff', text: '#000000', hours: 1, ageLabel: '1h' },
-            { max: 10800, label: '1–3 hours', bg: '#00d7ff', text: '#000000', hours: 3, ageLabel: '3h' },
-            { max: 21600, label: '3–6 hours', bg: '#00afff', text: '#000000', hours: 6, ageLabel: '6h' },
-            { max: 32400, label: '6–9 hours', bg: '#0087ff', text: '#000000', hours: 9, ageLabel: '9h' },
-            { max: 43200, label: '9–12 hours', bg: '#005fff', text: '#ffffff', hours: 12, ageLabel: '12h' },
-            { max: 86401, label: '12–24 hours', bg: '#005faf', text: '#ffffff', hours: 24, ageLabel: '24h' },
-            { max: Infinity, label: 'Older', bg: '#585858', text: '#ffffff', hours: null, ageLabel: 'all' },
+            { max: 3600, label: 'Last hour', bg: '#304d59', text: '#d6e3e9', hours: 1, ageLabel: '1h' },
+            { max: 10800, label: '1–3 hours', bg: '#2c434f', text: '#d6e3e9', hours: 3, ageLabel: '3h' },
+            { max: 21600, label: '3–6 hours', bg: '#273b47', text: '#d6e3e9', hours: 6, ageLabel: '6h' },
+            { max: 32400, label: '6–9 hours', bg: '#243541', text: '#d6e3e9', hours: 9, ageLabel: '9h' },
+            { max: 43200, label: '9–12 hours', bg: '#21303b', text: '#b4bfc7', hours: 12, ageLabel: '12h' },
+            { max: 86401, label: '12–24 hours', bg: '#1d2933', text: '#b4bfc7', hours: 24, ageLabel: '24h' },
+            { max: Infinity, label: 'Older', bg: '#1b2731', text: '#b4bfc7', hours: null, ageLabel: 'all' },
         ];
         const PRB_THROBBER = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
         // Search needs this many characters, like the CLI: one or two letters

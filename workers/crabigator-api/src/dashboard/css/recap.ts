@@ -18,9 +18,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     column-gap: 10px;
     row-gap: 4px;
     padding: 10px 16px 12px;
-    background:
-        linear-gradient(135deg, rgba(34, 211, 238, 0.06), rgba(34, 211, 238, 0) 60%),
-        var(--bg-deep);
+    background: var(--bg-deep);
     border-top: 1px solid rgba(34, 211, 238, 0.18);
     cursor: pointer;
     position: relative;
@@ -29,9 +27,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     overflow: hidden;
 }
 .session-recap:hover {
-    background:
-        linear-gradient(135deg, rgba(34, 211, 238, 0.10), rgba(34, 211, 238, 0) 60%),
-        var(--bg-deep);
+    background: var(--bg-deep);
 }
 .session-recap.expanded {
     max-height: none;
@@ -42,7 +38,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     position: absolute;
     left: 0; top: 0; bottom: 0;
     width: 2px;
-    background: linear-gradient(180deg, var(--accent-cyan), rgba(34, 211, 238, 0.05));
+    background: var(--border-dim);
     opacity: 0.85;
 }
 .session-recap.empty,
@@ -56,10 +52,10 @@ body.hide-section-prs .session-prs { display: none !important; }
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
+    text-transform: none;
+    letter-spacing: 0;
     white-space: nowrap;
     padding-top: 1px;
 }
@@ -67,7 +63,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    box-shadow: 0 0 8px currentColor;
+    box-shadow: none;
     flex: 0 0 auto;
 }
 .session-recap-status .rs-label {
@@ -130,7 +126,7 @@ body.hide-section-prs .session-prs { display: none !important; }
 .session-recap-meta {
     grid-area: meta;
     align-self: start;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 10px;
     color: var(--text-dim);
     white-space: nowrap;
@@ -142,23 +138,16 @@ body.hide-section-prs .session-prs { display: none !important; }
 
 /* Distinct status accents pick up the appropriate left rail and label color. */
 .session-recap.failed::before {
-    background: linear-gradient(180deg, var(--accent-yellow), rgba(251, 191, 36, 0.05));
+    background: var(--bg-deep);
 }
 .session-recap.failed {
-    background:
-        linear-gradient(135deg, rgba(251, 191, 36, 0.07), rgba(251, 191, 36, 0) 60%),
-        var(--bg-deep);
+    background: var(--bg-deep);
 }
 .session-recap.updating::before {
-    background: linear-gradient(180deg, var(--accent-yellow), rgba(251, 191, 36, 0.05));
-    animation: recap-pulse 1.6s ease-in-out infinite;
+    background: var(--bg-deep);
 }
 .session-recap.missing-key::before {
-    background: linear-gradient(180deg, var(--text-mid), rgba(148, 163, 184, 0.05));
-}
-@keyframes recap-pulse {
-    0%, 100% { opacity: 0.45; }
-    50% { opacity: 1; }
+    background: var(--bg-deep);
 }
 
 /* Recap history sits directly under the recap card, outside Git/Changes collapse. */
@@ -166,14 +155,14 @@ body.hide-section-prs .session-prs { display: none !important; }
     padding: 12px 16px 14px;
     background: var(--bg-deep);
     border-top: 1px solid rgba(34, 211, 238, 0.14);
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 11px;
 }
 .recap-history-widget .widget-title { display: flex; justify-content: space-between; align-items: baseline; }
 .recap-history-widget .recap-history-count {
     color: var(--text-dim);
     font-size: 11px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
 }
 .recap-history-widget .recaps-list {
     display: flex;
@@ -214,7 +203,7 @@ body.hide-section-prs .session-prs { display: none !important; }
 }
 .recap-history-widget .rh-delta {
     margin-top: 4px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 10px;
     color: var(--text-dim);
 }
@@ -243,9 +232,7 @@ body.hide-section-prs .session-prs { display: none !important; }
    this session, linked to GitHub, with branch + live diff stats. */
 .session-prs {
     padding: 10px 16px 12px;
-    background:
-        linear-gradient(135deg, rgba(163, 113, 247, 0.06), rgba(163, 113, 247, 0) 60%),
-        var(--bg-deep);
+    background: var(--bg-deep);
     border-top: 1px solid rgba(163, 113, 247, 0.20);
     position: relative;
     display: flex;
@@ -257,17 +244,17 @@ body.hide-section-prs .session-prs { display: none !important; }
     position: absolute;
     left: 0; top: 0; bottom: 0;
     width: 2px;
-    background: linear-gradient(180deg, #a371f7, rgba(163, 113, 247, 0.05));
+    background: var(--border-dim);
     opacity: 0.85;
 }
 /* Header is its own full-width tap target. The padding/negative-margin pair
    grows the touch area into the surrounding whitespace without moving
    anything, so a tap near the title can't land on a PR row's controls. */
 .session-prs .pr-list-title {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
+    text-transform: none;
+    letter-spacing: 0;
     color: #c4a7f7;
     font-weight: 600;
     cursor: pointer;
@@ -316,10 +303,10 @@ body.hide-section-prs .session-prs { display: none !important; }
     flex-wrap: wrap;
 }
 .session-prs .pr-badge {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-transform: none;
+    letter-spacing: 0;
     font-weight: 700;
     padding: 1px 5px;
     border: 1px solid currentColor;
@@ -349,7 +336,7 @@ body.hide-section-prs .session-prs { display: none !important; }
 .session-prs .pr-flip:hover { opacity: 1; color: #d6bffb; }
 .session-prs .pr-dismiss:hover { opacity: 1; color: #f85149; }
 .session-prs .pr-link {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 12px;
     font-weight: 600;
     color: #c4a7f7;
@@ -363,7 +350,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     color: #d6bffb;
 }
 .session-prs .pr-diff {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 10px;
     margin-left: auto;
     white-space: nowrap;
@@ -389,7 +376,7 @@ a.pr-diff:hover, a.pr-ci:hover, a.pr-comments:hover { text-decoration: underline
 .session-prs .pr-comments,
 .session-prs .pr-review,
 .session-prs .pr-merge {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 10px;
     font-weight: 600;
     white-space: nowrap;
@@ -426,7 +413,7 @@ a.pr-diff:hover, a.pr-ci:hover, a.pr-comments:hover { text-decoration: underline
     gap: 6px;
 }
 .session-prs .pr-branch {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 10px;
     color: var(--text-dim);
     white-space: nowrap;

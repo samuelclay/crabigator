@@ -1,5 +1,5 @@
 // Dashboard CSS - cross-session PR board
-// Mirrors the CLI board's terminal look: xterm palette hexes, aligned
+// Keeps the CLI board's aligned
 // activity/status columns, recency section bars. Never scrolls horizontally —
 // the title column shrinks and narrow screens collapse into wrapped lines.
 export const prBoardCss = `
@@ -35,7 +35,7 @@ export const prBoardCss = `
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 11px;
     line-height: 1.6;
-    color: #8a8a8a;
+    color: var(--text-mid);
 }
 .pr-board[hidden] { display: none !important; }
 
@@ -47,12 +47,12 @@ export const prBoardCss = `
     gap: 6px 14px;
     margin-bottom: 14px;
 }
-.prb-hdr { color: #af87ff; font-weight: 700; font-size: 13px; white-space: nowrap; }
-.prb-ctl { color: #585858; cursor: pointer; user-select: none; white-space: nowrap; }
-.prb-ctl:hover { color: #8a8a8a; }
-.prb-ctl.active { color: #ffd700; }
+.prb-hdr { color: var(--text-bright); font-family: var(--font-ui); font-weight: 600; font-size: 16px; white-space: nowrap; }
+.prb-ctl { color: var(--text-dim); cursor: pointer; user-select: none; white-space: nowrap; }
+.prb-ctl:hover { color: var(--text-mid); }
+.prb-ctl.active { color: var(--accent-yellow); }
 .prb-ctl u { text-underline-offset: 2px; }
-.prb-keys { color: #585858; white-space: nowrap; }
+.prb-keys { color: var(--text-dim); white-space: nowrap; }
 .prb-keys u { text-underline-offset: 2px; }
 .prb-addwrap { margin-left: auto; }
 .prb-searchwrap { display: flex; align-items: center; gap: 8px; }
@@ -66,10 +66,10 @@ export const prBoardCss = `
     padding: 2px 8px;
     width: 170px;
 }
-#prb-search:focus, #prb-add:focus { outline: none; border-color: #ffd700; }
+#prb-search:focus, #prb-add:focus { outline: none; border-color: var(--accent-yellow); }
 /* A watch input that didn't parse or post flashes red briefly. */
-#prb-add.prb-add-error { border-color: #ff5f5f; }
-#prb-matches { color: #ffd700; white-space: nowrap; }
+#prb-add.prb-add-error { border-color: var(--accent-red); }
+#prb-matches { color: var(--accent-yellow); white-space: nowrap; }
 
 /* Shared columns: title stretches and truncates, then the activity, the
    diff, the file count, and the GitHub status stay compact and
@@ -89,15 +89,15 @@ export const prBoardCss = `
 .prb-bucket {
     grid-column: 1 / -1;
     margin: 14px 0 4px;
-    padding: 1px 8px;
-    font-weight: 700;
+    padding: 4px 8px;
+    font-weight: 600;
     border-radius: 3px;
 }
 .prb-bucket:first-child { margin-top: 0; }
-.prb-repo { grid-column: 1 / -1; color: #ffd700; font-weight: 700; margin: 6px 0 2px; }
-.prb-dot { color: #585858; font-weight: 400; }
-.prb-machine { color: #5f87ff; }
-.prb-empty { grid-column: 1 / -1; color: #8a8a8a; padding: 16px 0; }
+.prb-repo { grid-column: 1 / -1; color: var(--accent-yellow); font-weight: 700; margin: 6px 0 2px; }
+.prb-dot { color: var(--text-dim); font-weight: 400; }
+.prb-machine { color: var(--accent-blue); }
+.prb-empty { grid-column: 1 / -1; color: var(--text-mid); padding: 16px 0; }
 
 .prb-row {
     display: grid;
@@ -121,21 +121,21 @@ export const prBoardCss = `
 .prb-l1-left { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
 .prb-star { cursor: pointer; flex-shrink: 0; }
 /* A watch no session claims renders full purple, like a primary. */
-.prb-star.primary, .prb-star.watched { color: #af87ff; }
-.prb-star.secondary { color: #6c6c6c; }
+.prb-star.primary, .prb-star.watched { color: var(--accent-purple); }
+.prb-star.secondary { color: var(--text-dim); }
 .prb-star:hover { color: #d6bffb; }
-.prb-diamond { color: #af87ff; flex-shrink: 0; }
+.prb-diamond { color: var(--accent-purple); flex-shrink: 0; }
 /* A session without a PR carries its title in the same blue as the session
    sub-rows beneath a PR, so every session title reads alike. */
 .prb-session-title {
-    color: #5fafff;
+    color: var(--accent-blue);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
 }
 .prb-ident {
-    color: #af87ff;
+    color: var(--accent-purple);
     font-weight: 600;
     text-decoration: none;
     overflow: hidden;
@@ -147,7 +147,7 @@ a.prb-ident:hover { text-decoration: underline; }
 /* The PR's handle is bold and underlined so it stands out and reads as the link it is. */
 .prb-num { font-weight: 700; text-decoration: underline; }
 .prb-branch {
-    color: #585858;
+    color: var(--text-dim);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -156,7 +156,7 @@ a.prb-ident:hover { text-decoration: underline; }
 .prb-activity { grid-column: 2; white-space: nowrap; justify-self: end; }
 /* PR view's stats columns; both open the PR's Files-changed tab. */
 .prb-diff { grid-column: 3; white-space: nowrap; text-decoration: none; }
-.prb-files { grid-column: 4; white-space: nowrap; color: #585858; text-decoration: none; }
+.prb-files { grid-column: 4; white-space: nowrap; color: var(--text-dim); text-decoration: none; }
 a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
 /* States that wait on the user: chevrons on a filled background. */
 .prb-badge { color: #000; font-weight: 700; border-radius: 3px; padding: 0 1px; }
@@ -185,38 +185,38 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
 .prb-status a, .prb-a { text-decoration: none; }
 .prb-status a:hover, .prb-a:hover { text-decoration: underline; }
 /* Promote/demote (↑/↓) and dismiss (✕) actions at the right edge. */
-.prb-flip, .prb-x { color: #585858; opacity: 0.55; cursor: pointer; }
+.prb-flip, .prb-x { color: var(--text-dim); cursor: pointer; }
 .prb-flip:hover { opacity: 1; color: #d6bffb; }
-.prb-x:hover { opacity: 1; color: #ff5f5f; }
+.prb-x:hover { opacity: 1; color: var(--accent-red); }
 
 /* Metadata row: the PR header's branch, indented under its title */
 .prb-l2-left { display: flex; align-items: baseline; gap: 10px; min-width: 0; padding-left: 19px; }
-.prb-add { color: #5fff5f; font-weight: 700; }
-.prb-del { color: #ff5f5f; font-weight: 700; }
+.prb-add { color: var(--accent-green); font-weight: 700; }
+.prb-del { color: var(--accent-red); font-weight: 700; }
 
 /* Recap detail rows (r toggle): ✦ note, ↪ headline, bullets, Slack links */
 .prb-dl-left { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding-left: 19px; }
 .prb-dl-icon { flex-shrink: 0; }
-.prb-dl-text { color: #8a8a8a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.prb-dl-text { color: var(--text-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .prb-dl-right { grid-column: 2 / -1; justify-self: end; white-space: nowrap; display: inline-flex; gap: 10px; }
-.prb-slack { color: #00d7ff; text-decoration: none; }
+.prb-slack { color: var(--accent-cyan); text-decoration: none; }
 .prb-slack:hover { text-decoration: underline; }
 
 /* PR view (p): session sub-rows beneath each primary PR's header */
 .prb-sub-left { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding-left: 19px; }
-.prb-sub-bullet { color: #585858; flex-shrink: 0; }
+.prb-sub-bullet { color: var(--text-dim); flex-shrink: 0; }
 .prb-sub-left .session-mark, .prb-l1-left .session-mark { margin-right: 2px; }
 .prb-sub-title {
-    color: #5fafff;
+    color: var(--accent-blue);
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.prb-sub-headline { color: #8a8a8a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.prb-sub-headline { color: var(--text-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 /* Ended sessions dim in whole so the live ones stand out. */
-.prb-sub.prb-ended .prb-sub-title, .prb-sub.prb-ended .prb-sub-headline { color: #585858; }
+.prb-sub.prb-ended .prb-sub-title, .prb-sub.prb-ended .prb-sub-headline { color: var(--text-dim); }
 /* A session block's PR sub-rows: the PR-view anatomy indented beneath the
    session header. */
 .prb-pr-sub { padding-left: 19px; }
@@ -225,16 +225,16 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
 .prb-pv {
     grid-column: 1 / -1;
     padding-left: 19px;
-    color: #585858;
+    color: var(--text-dim);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.prb-pv-dir { color: #00d7ff; }
-.prb-pv-text { color: #8a8a8a; }
+.prb-pv-dir { color: var(--accent-cyan); }
+.prb-pv-text { color: var(--text-mid); }
 .prb-pv-ctx { padding-left: 31px; }
-.prb-pv-dim { color: #585858; }
-.prb-pv-gap { color: #585858; }
+.prb-pv-dim { color: var(--text-dim); }
+.prb-pv-gap { color: var(--text-dim); }
 .prb-mark { background: #ffd700; color: #000; border-radius: 2px; padding: 0 1px; }
 
 /* Quick look pane: the selected session's live screen (or a window into its
@@ -246,7 +246,7 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
     display: flex;
     flex-direction: column;
     margin-top: 8px;
-    border: 1px solid #00d7ff;
+    border: 1px solid var(--accent-cyan);
     border-radius: 4px;
     overflow: hidden;
 }
@@ -260,10 +260,10 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
     color: #c9d1d9;
     white-space: nowrap;
 }
-.prb-peek-glyph { color: #00d7ff; }
+.prb-peek-glyph { color: var(--accent-cyan); }
 .prb-peek-title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.prb-peek-dir { color: #585858; }
-.prb-peek-keys { margin-left: auto; color: #585858; }
+.prb-peek-dir { color: var(--text-dim); }
+.prb-peek-keys { margin-left: auto; color: var(--text-dim); }
 .prb-peek-body {
     flex: 1;
     min-height: 0;
@@ -273,7 +273,7 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
     color: #c9d1d9;
 }
 .prb-peek-line { overflow: hidden; text-overflow: clip; }
-.prb-peek-empty { color: #8a8a8a; }
+.prb-peek-empty { color: var(--text-mid); }
 
 /* Narrow screens: aligned columns collapse into wrapped lines so the board
    never scrolls horizontally. */
