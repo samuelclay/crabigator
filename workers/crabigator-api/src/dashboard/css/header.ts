@@ -34,13 +34,14 @@ export const headerCss = `
     letter-spacing: -0.5px;
     color: var(--text-bright);
 }
-.header h1::before {
-    content: '>';
-    color: var(--accent-cyan);
-    animation: blink 1s step-end infinite;
+/* The pixel logo: one CSS pixel per wordmark cell keeps every edge sharp. */
+.header h1 .brand-logo {
+    display: block;
+    width: 270px;
+    height: 34px;
 }
-@keyframes blink {
-    50% { opacity: 0; }
+.header h1 .brand-crab {
+    display: none;
 }
 .thinking-spinner {
     display: inline-block;
@@ -119,8 +120,13 @@ export const headerCss = `
         gap: 0;
         letter-spacing: 0;
     }
-    .header h1::before {
+    .header h1 .brand-logo {
         display: none;
+    }
+    .header h1 .brand-crab {
+        display: block;
+        width: 24px;
+        height: 24px;
     }
     .header .refresh-btn,
     .header .style-btn,

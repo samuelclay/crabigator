@@ -31,6 +31,17 @@ export const pairingCss = `
     0%, 100% { background-position: 0% 50%; }
     50% { background-position: 100% 50%; }
 }
+/* Two CSS pixels per wordmark cell. */
+.pairing-brand {
+    display: flex;
+    justify-content: center;
+    margin: 0 auto 28px;
+}
+.pairing-brand .brand-logo {
+    width: 540px;
+    max-width: 100%;
+    height: auto;
+}
 .pairing-icon {
     width: 72px;
     height: 72px;

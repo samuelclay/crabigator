@@ -1,4 +1,6 @@
 // Dashboard JavaScript - pairing gate
+import { brandLogoSvg } from '../icons';
+
 export const pairingJs = `
         // Pairing state
         let mobileToken = localStorage.getItem('crabigator_mobile_token');
@@ -194,12 +196,7 @@ export const pairingJs = `
             gate.className = 'pairing-gate';
             gate.innerHTML = \`
                 <div class="pairing-card">
-                    <div class="pairing-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="5" y="2" width="14" height="20" rx="2"/>
-                            <line x1="12" y1="18" x2="12" y2="18"/>
-                        </svg>
-                    </div>
+                    <div class="pairing-brand">${brandLogoSvg}</div>
                     <h2>Pair with Desktop</h2>
                     <p class="pairing-description">
                         \${SOCIAL_LOGIN_ENABLED

@@ -1,7 +1,7 @@
 // Dashboard HTML served at /dashboard
 import { dashboardCss } from './dashboard/css';
 import { dashboardJs } from './dashboard/js';
-import { faviconSvg, iconChevronRight } from './dashboard/icons';
+import { brandCrabSvg, brandLogoSvg, faviconSvg, iconChevronRight } from './dashboard/icons';
 import type { RuntimeConfig } from './config';
 import { metaPixelHtml, usePublicOrigin } from './html-render';
 
@@ -36,7 +36,7 @@ export const dashboardHtml = `<!DOCTYPE html>
         <div class="deploy-countdown" id="deploy-countdown"></div>
     </div>
     <div class="header">
-        <h1>🦀 Crabigator Dashboard</h1>
+        <h1 aria-label="Crabigator Dashboard">${brandLogoSvg}${brandCrabSvg}</h1>
         <button class="refresh-btn" onclick="loadSessions()">↻ Refresh</button>
         <div class="filter-indicator" id="filter-indicator">
             <span class="filter-text">Viewing 1 session</span>
