@@ -1170,6 +1170,50 @@ pizza?
         assert_eq!(page.cursor_row, Some(4));
     }
 
+    /// A remote answer types a row's digit only when the prompt names the
+    /// cursor row. Without it, clients walk down from row 1 and press Enter,
+    /// which picks whatever row the terminal cursor is on.
+    #[test]
+    fn sends_the_cursor_row_of_a_one_question_dialog() {
+        let one_question = vec![questions()[0].clone()];
+        for (screen, cursor_row) in [
+            (
+                include_str!("../parsers/testdata/one_question_cursor_on_thin.txt"),
+                1,
+            ),
+            (
+                include_str!("../parsers/testdata/one_question_cursor_on_thick.txt"),
+                2,
+            ),
+            (
+                include_str!("../parsers/testdata/one_question_cursor_on_type_something.txt"),
+                4,
+            ),
+        ] {
+            let event = SessionEventBuilder::prompt(
+                Some(&crate::platforms::ActivePrompt::Question {
+                    questions: one_question.clone(),
+                }),
+                None,
+                QuestionScreen::parse(screen).as_ref(),
+                None,
+            );
+            let json = serde_json::to_value(&event).unwrap();
+            assert_eq!(json["prompt"]["current_question"], 0);
+            assert_eq!(json["prompt"]["cursor_row"], cursor_row);
+            assert_eq!(json["prompt"].get("custom_text"), None);
+        }
+
+        // Earlier answered dialogs stay on screen above this one.
+        let screen = QuestionScreen::parse(include_str!(
+            "../parsers/testdata/one_question_typed_text.txt"
+        ));
+        let page = QuestionPageState::from_screen(&one_question, screen.as_ref());
+        assert_eq!(page.current_question, Some(0));
+        assert_eq!(page.cursor_row, Some(4));
+        assert_eq!(page.custom_text.as_deref(), Some("extra"));
+    }
+
     #[test]
     fn mirrors_the_review_page() {
         let screen = QuestionScreen::parse(
