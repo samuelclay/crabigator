@@ -66,10 +66,14 @@ enum PromptActions {
             toggling.forEach(pick)
             if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 guard q.bool("allows_other", true) else { throw invalid("This question requires one of its choices.") }
+                let existing = p.text("custom_text")
                 if grok { type("z") }
-                else if !multi { if cursor != count + 1 { type(String(count + 1)) }; cursor = count + 1 }
+                // The row's number moves onto an empty text row but sends the text already on it.
+                else if !multi && existing.isEmpty { if cursor != count + 1 { type(String(count + 1)) }; cursor = count + 1 }
                 else { move(count + 1) }
-                for _ in 0..<min(2000, p.text("custom_text").count) { key("backspace") }
+                // Arrows leave the caret at the start of the text; Ctrl+E jumps to its end to delete it.
+                if !grok && !existing.isEmpty { type("\u{5}") }
+                for _ in 0..<min(2000, existing.count) { key("backspace") }
                 type(text); steps.append(["type": "delay", "ms": 50])
                 if grok && multi { key("escape") }
             }

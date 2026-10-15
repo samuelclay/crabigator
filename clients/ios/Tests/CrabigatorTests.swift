@@ -206,6 +206,18 @@ final class CrabigatorTests: XCTestCase {
         XCTAssertThrowsError(try PromptActions.action(prompt, option: 9))
         XCTAssertThrowsError(try PromptActions.action(["prompt_type": "text", "state": "permission"], text: "yes"))
     }
+    func testCustomAnswerReplacesTextAlreadyOnTheRow() throws {
+        let q: JSON = ["question": "Which crust?", "allows_other": true, "options": [["label": "Thin"], ["label": "Thick"], ["label": "Stuffed"]]]
+        let prompt: JSON = ["prompt_type": "question", "questions": [q], "current_question": 0, "cursor_row": 2]
+        func steps(_ p: JSON) throws -> [String] { try PromptActions.action(p, text: "extra crispy").body.array("steps").map { $0.text("key", $0.text("text", $0.text("type"))) } }
+        XCTAssertEqual(try steps(prompt), ["4", "extra crispy", "delay", "enter"])
+        // Pressing 4 would send "extra" at once, so walk there and delete it from its end.
+        var typed = prompt; typed["custom_text"] = "extra"
+        let replace = ["\u{5}"] + Array(repeating: "backspace", count: 5) + ["extra crispy", "delay", "enter"]
+        XCTAssertEqual(try steps(typed), ["down", "down"] + replace)
+        typed["cursor_row"] = 4
+        XCTAssertEqual(try steps(typed), replace)
+    }
     func testReviewAndPermissionNeverUseGenericFreeText() throws {
         let review: JSON = ["prompt_type": "question", "review": [:]]
         XCTAssertEqual(try PromptActions.action(review, option: 0).body.array("steps").first?.text("text"), "1")
