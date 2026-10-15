@@ -1,11 +1,11 @@
 import Foundation
 import UserNotifications
 
-/// Shared by the app and service extension. Notification actions always re-fetch state.
+/// Shared by the app and both notification extensions. Answers always re-fetch state.
 enum NotificationContent {
     static let category = "CRABIGATOR_PROMPT"
-    /// Per-prompt categories carry the prompt's real choice labels. They reuse
-    /// numbered slots, so registered categories do not pile up.
+    /// Per-prompt categories carry the prompt's real choice labels. The content
+    /// extension's Info.plist must list every one, since it cannot match a pattern.
     static let slotPrefix = "CRABIGATOR_PROMPT_SLOT_"
     static let slotCount = 24
     /// iOS 27 shows at most ten actions under an expanded notification
@@ -13,6 +13,9 @@ enum NotificationContent {
     static let actionLimit = 10
     /// Longer requests do not fit a notification; they must be reviewed in the app.
     static let detailLimit = 2000
+    static var extensionCategories: [String] {
+        (0...3).flatMap { count in [0, 1].map { "\(category)_\(count)_\($0)" } } + (0..<slotCount).map { slotPrefix + String($0) }
+    }
 
     static func prompt(_ snapshot: JSON) -> JSON { snapshot["prompt"] as? JSON ?? ["prompt_type": "text", "state": snapshot.text("state")] }
     static func content(_ snapshot: JSON, id: String) -> UNMutableNotificationContent {
@@ -23,7 +26,10 @@ enum NotificationContent {
         content.body = body(prompt)
         content.categoryIdentifier = categoryID(prompt)
         content.threadIdentifier = id
-        content.userInfo = ["session_id": id, "revision": snapshot.int("prompt_revision")]
+        var info: [String: Any] = ["session_id": id, "revision": snapshot.int("prompt_revision")]
+        // The content extension draws this copy at once; it never leaves the device.
+        if let data = try? JSONSerialization.data(withJSONObject: prompt), data.count <= 32_000 { info["prompt"] = String(decoding: data, as: UTF8.self) }
+        content.userInfo = info
         content.sound = Credentials.defaults.bool(forKey: "notificationSound") ? .default : nil
         content.interruptionLevel = .active
         return content
@@ -158,12 +164,12 @@ enum NotificationContent {
 enum PromptAnswer {
     /// Answers only the revision the person saw. A changed, answered or
     /// disconnected prompt throws 409 before anything reaches the terminal.
-    static func send(_ id: String, revision: Int, option: Int? = nil, text: String? = nil) async throws {
+    static func send(_ id: String, revision: Int, option: Int? = nil, text: String? = nil, submit: Bool = false, toggling: [Int] = []) async throws {
         let snap = try await API.shared.snapshot(id)
         guard snap.bool("attention_pending"), snap.bool("desktop_connected"), snap.int("prompt_revision") == revision else {
             throw APIError(status: 409, message: "This question has changed or was already answered.")
         }
-        let action = try PromptActions.action(NotificationContent.prompt(snap), option: option, text: text)
+        let action = try PromptActions.action(NotificationContent.prompt(snap), option: option, text: text, submit: submit, toggling: toggling)
         try await API.shared.action(id, action, revision: revision)
     }
 }

@@ -289,4 +289,20 @@ final class CrabigatorTests: XCTestCase {
         XCTAssertNil(NotificationContent.claim("c", shown: shown, claims: [:], now: 103).slot)
         XCTAssertEqual(NotificationContent.claim("c", shown: [:], claims: claims, now: 100 + NotificationContent.claimLifetime + 2).slot, 0, "Unshown claims expire")
     }
+    func testContentExtensionListsEveryPromptCategory() throws {
+        let plugin = try XCTUnwrap(Bundle.main.builtInPlugInsURL?.appendingPathComponent("NotificationContentExtension.appex"))
+        let info = try XCTUnwrap(Bundle(url: plugin)?.infoDictionary?["NSExtension"] as? [String: Any])
+        let categories = (info["NSExtensionAttributes"] as? [String: Any])?["UNNotificationExtensionCategory"] as? [String]
+        XCTAssertEqual(Set(categories ?? []), Set(NotificationContent.extensionCategories))
+    }
+    func testMultiSelectSubmitTicksEveryChangedBoxThenSubmits() throws {
+        let q: JSON = ["question": "Toppings", "multi_select": true, "options": [["label": "A"], ["label": "B"], ["label": "C"]]]
+        let prompt: JSON = ["prompt_type": "question", "questions": [q], "cursor_row": 1, "checked": [2]]
+        let steps = try PromptActions.action(prompt, submit: true, toggling: [0, 1]).body.array("steps")
+        XCTAssertEqual(steps.map { $0.text("key", $0.text("text")) }, ["1", "2", "down", "down", "down", "down", "enter"])
+        var grok = prompt; grok["ui"] = "grok_card"
+        XCTAssertEqual(try PromptActions.action(grok, submit: true, toggling: [2]).body.array("steps").map { $0.text("key") }, ["down", "down", "space", "enter"])
+        var single = q; single["multi_select"] = false
+        XCTAssertThrowsError(try PromptActions.action(["prompt_type": "question", "questions": [single]], submit: true, toggling: [0]))
+    }
 }

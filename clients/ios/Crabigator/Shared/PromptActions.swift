@@ -29,9 +29,11 @@ enum PromptActions {
         if p.text("prompt_type") == "text" { return p.text("state") == "question" }
         return p["review"] == nil && question(p)?.bool("allows_other", true) == true
     }
-    static func action(_ p: JSON, option: Int? = nil, text: String? = nil, submit: Bool = false) throws -> TerminalAction {
+    /// `toggling` flips those checkboxes of a multi-select page before submitting it.
+    static func action(_ p: JSON, option: Int? = nil, text: String? = nil, submit: Bool = false, toggling: [Int] = []) throws -> TerminalAction {
         func invalid(_ message: String) -> APIError { APIError(status: 409, message: message) }
         if let option, !options(p).indices.contains(option) { throw invalid("This choice is no longer available.") }
+        if !toggling.isEmpty, question(p)?.bool("multi_select") != true || p["review"] != nil || !toggling.allSatisfy(options(p).indices.contains) { throw invalid("This choice is no longer available.") }
         if p.text("prompt_type") == "text" {
             guard p.text("state") == "question", let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw invalid("Open this session to review the request.") }
             return TerminalAction(route: "answer", body: ["text": text])
@@ -51,13 +53,17 @@ enum PromptActions {
         let count = q.array("options").count, grok = p.text("ui") == "grok_card", multi = q.bool("multi_select")
         var cursor = p.int("cursor_row", 1)
         func move(_ target: Int) { for _ in 0..<min(100, abs(target - cursor)) { key(target > cursor ? "down" : "up") }; cursor = target }
-        if let option {
+        func pick(_ option: Int) {
             if cursor == count + 1 { key(grok ? "escape" : "up"); cursor -= 1 }
             if grok && multi { move(option + 1); key("space") }
             else if grok { type(String(UnicodeScalar(97 + option)!)) }
             else if p["cursor_row"] != nil || multi { type(String(option + 1)) }
             else { move(option + 1); key("enter") }
-        } else if text != nil || submit {
+        }
+        if let option { pick(option) }
+        else if text != nil || submit {
+            // Claude's digits tick a row without moving the cursor; Grok's Space ticks the row under it.
+            toggling.forEach(pick)
             if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 guard q.bool("allows_other", true) else { throw invalid("This question requires one of its choices.") }
                 if grok { type("z") }

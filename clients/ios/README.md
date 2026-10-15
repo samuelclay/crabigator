@@ -20,7 +20,7 @@ The checked-in project is ready to open without extra packages. To regenerate it
 
 ## Apple notifications
 
-The app uses APNs directly. Firebase continues to serve Android. Enable Push Notifications for the application ID, register the NotificationService extension ID, and enable the shared app group for both targets. Xcode automatic signing needs the NewsBlur developer account signed in. A development certificate alone cannot create the required profiles.
+The app uses APNs directly. Firebase continues to serve Android. Enable Push Notifications for the application ID, register the NotificationService and NotificationContentExtension IDs, and enable the shared app group and Keychain group for all three targets. Xcode automatic signing needs the NewsBlur developer account signed in. A development certificate alone cannot create the required profiles.
 
 The Worker requires migration `0023_apple_push.sql` and an `APNS_CREDENTIALS` secret with these fields:
 
@@ -31,6 +31,10 @@ The Worker requires migration `0023_apple_push.sql` and an `APNS_CREDENTIALS` se
 Store the secret through Wrangler's secret input; never put it in this repository. Deploy using the repository's official deployment instructions after reviewing the prepared changes. Migration 0023 preserves existing Android registrations. Tests cover independence between Apple and Firebase provider failures.
 
 The device registers its token, signing environment, and sound preference after pairing. Enable notifications in Settings → Notifications. Sound defaults to off. The notification service extension loads the current prompt using the shared Keychain credential. Choices and free-text replies carry the displayed prompt revision; changed or disconnected prompts cannot receive stale answers. Ambiguous input failures are never retried by the app.
+
+A question notification shows the question, then every choice on one line. Long-pressing it opens the content extension, which lists every question with its choices and their descriptions. Each choice is a button there; multi-select questions get checkboxes and a Submit button. Answers from that view use the same revision check as the app, and a locked device opens the session instead of answering. Below the view, the action buttons carry the real choice labels, plus Reply when the question takes a typed answer. iOS shows at most ten actions.
+
+The service extension registers each prompt's buttons as a notification category. The content extension can only match categories listed in its `Info.plist`, so prompts reuse 24 numbered slots; a slot is never shared by two sessions' visible notifications. Each button names the session and revision it was made for, so a reused slot cannot answer another prompt. If every slot is busy, the notification falls back to generic “Choose 1” buttons. When the content extension cannot read the shared credential, its buttons hand the answer to the app and its choices open the session.
 
 Apple background delivery is best effort. A resolved prompt already in transit can still produce a passive “resolved” notification; foreground/background reconciliation removes stale notifications. The service extension cannot retract an alert before delivery. See Apple's [notification request documentation](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns) and [service extension documentation](https://developer.apple.com/documentation/usernotifications/modifying-content-in-newly-delivered-notifications).
 
