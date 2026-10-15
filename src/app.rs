@@ -1349,7 +1349,8 @@ impl App {
                             .chars()
                             .next()
                             .is_some_and(|c| ('\u{2800}'..='\u{28FF}').contains(&c));
-                        self.session_stats.set_title_spinner(has_braille_spinner);
+                        self.session_stats
+                            .set_title_spinner(has_braille_spinner, self.platform.kind());
 
                         // Strip leading progress spinner characters for history
                         let clean_title = t

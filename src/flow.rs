@@ -741,6 +741,33 @@ mod tests {
     }
 
     #[test]
+    fn codex_startup_spinner_does_not_relight_fade_but_a_real_turn_does() {
+        use crate::hooks::SessionStats;
+        use crate::platforms::PlatformKind;
+        let mut flow = column("doom3d");
+        let mut stats = SessionStats::new();
+        flow.sync_state(stats.effective_state());
+        for spinning in [true, true, false, true, false] {
+            stats.set_title_spinner(spinning, PlatformKind::Codex);
+            assert_eq!(stats.effective_state(), SessionState::Ready);
+            flow.sync_state(stats.effective_state());
+            flow.hear_output(1000); // startup repainting is not streamed work
+            flow.activity.tick(10.0);
+            assert_eq!(flow.level(), IDLE_GLOW);
+            assert!(!flow.activity.is_turn_active);
+        }
+        // task_started arrives in the rollout even without another title update.
+        stats.platform_stats.state = SessionState::Thinking;
+        flow.sync_state(stats.effective_state());
+        assert_eq!(flow.level(), 10.0);
+        assert!(flow.activity.is_turn_active);
+        stats.platform_stats.state = SessionState::Complete;
+        flow.sync_state(stats.effective_state());
+        assert_eq!(flow.level(), 10.0, "real completion still relights fade");
+        assert!(!flow.activity.is_turn_active);
+    }
+
+    #[test]
     fn a_session_opens_at_its_base_and_each_change_relights_it() {
         let mut flow = column("fire");
         // Opening (the first state seen) isn't a change: embers.

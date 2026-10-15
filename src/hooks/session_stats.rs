@@ -1,6 +1,6 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use crate::platforms::{ActivePrompt, Platform, PlatformStats, SessionState};
+use crate::platforms::{ActivePrompt, Platform, PlatformKind, PlatformStats, SessionState};
 use crate::ui::sparkline::bin_timestamps;
 
 #[derive(Clone, Debug)]
@@ -104,8 +104,12 @@ impl SessionStats {
     }
 
     /// Update title spinner state (called from write_pty_output on every title change)
-    pub fn set_title_spinner(&mut self, has_spinner: bool) {
-        self.title_has_spinner = has_spinner;
+    pub fn set_title_spinner(&mut self, has_spinner: bool, platform: PlatformKind) {
+        // Codex spins its title while connecting at startup, before any turn.
+        // Its rollout moves Ready to Thinking when real work starts.
+        self.title_has_spinner = has_spinner
+            && !(platform == PlatformKind::Codex
+                && self.platform_stats.state == SessionState::Ready);
     }
 
     /// Update screen input-wait state (called from handle_pty_output_capture)
@@ -384,7 +388,7 @@ mod tests {
     #[test]
     fn title_spinner_does_not_hide_question_or_permission() {
         let mut stats = SessionStats::new();
-        stats.set_title_spinner(true);
+        stats.set_title_spinner(true, PlatformKind::Grok);
 
         stats.platform_stats.state = SessionState::Question;
         assert_eq!(stats.effective_state(), SessionState::Question);
