@@ -7,6 +7,7 @@ struct PromptPanel: View {
     var send: (TerminalAction, Int?) -> Void
     @State private var text = ""
     @State private var error: String?
+    @State private var focused = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
@@ -26,7 +27,7 @@ struct PromptPanel: View {
                     }.buttonStyle(.plain).disabled(disabled).accessibilityIdentifier("Prompt option \(i + 1)")
                 }
                 if PromptActions.allowsText(prompt) {
-                    HStack { TextField("Your answer", text: $text, axis: .vertical).lineLimit(1...4).textFieldStyle(.roundedBorder); IconButton(icon: "arrow.up", label: "Send answer", enabled: !disabled && !text.isEmpty) { act(text: text) } }
+                    HStack { MessageField(placeholder: "Your answer", text: $text, focused: $focused, maxLines: 4) { if !disabled && !text.isEmpty { act(text: text) } }.padding(.horizontal, 8).padding(.vertical, 7).background(Crab.panel, in: RoundedRectangle(cornerRadius: 6)); IconButton(icon: "arrow.up", label: "Send answer", enabled: !disabled && !text.isEmpty) { act(text: text) } }
                 }
                 if PromptActions.question(prompt)?.bool("multi_select") == true && prompt["review"] == nil { Button("Continue") { act(submit: true) }.disabled(disabled) }
                 if let error { Text(error).font(.caption).foregroundStyle(Crab.red) }
