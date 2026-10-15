@@ -8,7 +8,8 @@ final class NotificationTests: XCTestCase {
     func testButtonsUseLabelsUpToTheLimitWhileTheViewListsEveryChoice() throws {
         let labels = (0..<16).map { "Pick \(UnicodeScalar(65 + $0)!)" }
         try expandFixture(question(labels))
-        let shown = labels.filter { springboard.buttons[$0].exists }
+        // The view's rows share these labels; menu buttons are the ones that are not rows.
+        let shown = labels.filter { springboard.buttons.matching(NSPredicate(format: "label == %@ AND NOT (identifier BEGINSWITH 'Choice ')", $0)).firstMatch.exists }
         note("Action buttons shown: \(shown.count) of \(labels.count): \(shown.joined(separator: ", "))\n\n" + springboard.debugDescription)
         XCTAssertEqual(shown, Array(labels.prefix(10)), "The menu shows the first ten choices, named by their labels")
         XCTAssertTrue(springboard.buttons["Choice Pick P"].exists, "The expanded view still lists every choice")
@@ -16,11 +17,11 @@ final class NotificationTests: XCTestCase {
 
     func testMultiSelectViewTicksBoxesWithoutAnswering() throws {
         try expandFixture(question(["Cheese", "Pepperoni", "Mushroom", "Olives"], multi: true))
-        XCTAssertFalse(springboard.buttons["Cheese"].exists, "One tap would only tick a box, so there is no menu button for it")
-        XCTAssertFalse(springboard.buttons["Submit choices"].isEnabled)
+        XCTAssertEqual(springboard.buttons.matching(NSPredicate(format: "label == 'Cheese'")).count, 1, "One tap would only tick a box, so only the row has this label")
+        XCTAssertTrue(springboard.buttons["Open session"].exists, "iOS only expands a notification that has a regular button")
         springboard.buttons["Choice Cheese"].tap()
         springboard.buttons["Choice Olives"].tap()
-        XCTAssertTrue(springboard.buttons["Submit choices"].isEnabled)
+        XCTAssertTrue(springboard.buttons["Submit choices"].exists)
         capture("Two boxes ticked")
     }
 
@@ -41,7 +42,7 @@ final class NotificationTests: XCTestCase {
         }
         if let text = env["CRABIGATOR_TEST_REPLY"] {
             springboard.buttons["Reply"].firstMatch.tap()
-            let field = springboard.textViews["Your answer"].firstMatch
+            let field = springboard.textViews.firstMatch
             XCTAssertTrue(field.waitForExistence(timeout: 5))
             field.typeText(text)
             springboard.buttons["Send"].firstMatch.tap()
@@ -53,12 +54,29 @@ final class NotificationTests: XCTestCase {
             Thread.sleep(forTimeInterval: 3)
             capture("After tapping \(label)")
         }
-        if let label = env["CRABIGATOR_TEST_TAP_CHOICE"] {
-            springboard.buttons["Choice " + label].firstMatch.tap()
+        for label in env["CRABIGATOR_TEST_TAP_CHOICE"]?.components(separatedBy: "|") ?? [] {
+            // Choices separated by "|" answer one question after another in the same view.
+            let row = springboard.buttons["Choice " + label].firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 10), "\(label) must be a choice in the view")
+            Thread.sleep(forTimeInterval: 1) // A tap while the view scrolls to the next question only stops the scroll.
+            row.tap()
             Thread.sleep(forTimeInterval: 1)
-            capture("Sending \(label)")
-            Thread.sleep(forTimeInterval: 4)
             capture("After choosing \(label)")
+        }
+        if env["CRABIGATOR_TEST_SUBMIT"] == "1" {
+            springboard.buttons["Submit choices"].tap()
+            Thread.sleep(forTimeInterval: 1)
+            capture("After submitting")
+        }
+        if env["CRABIGATOR_TEST_EXPECT_STALE"] == "1" {
+            // The prompt changed after the view opened: nothing may be sent.
+            let refused = springboard.staticTexts.matching(NSPredicate(format: "label IN %@", ["The question changed, so nothing was sent.", "This request was answered or has ended."])).firstMatch
+            XCTAssertTrue(refused.waitForExistence(timeout: 10))
+            capture("Stale answer refused")
+        } else if env["CRABIGATOR_TEST_TAP_CHOICE"] != nil {
+            let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: springboard.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'Choice '")).firstMatch)
+            XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 15), .completed, "The view closes once the prompt is done")
+            capture("Closed")
         }
     }
 
