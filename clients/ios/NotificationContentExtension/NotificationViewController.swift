@@ -20,7 +20,7 @@ final class NotificationViewController: UIViewController, UNNotificationContentE
         host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(host.view)
         host.didMove(toParent: self)
-        model.context = extensionContext
+        model.context = { [weak self] in self?.extensionContext }
         model.changed = { [weak self] in self?.fit() }
     }
     override func viewDidLayoutSubviews() {

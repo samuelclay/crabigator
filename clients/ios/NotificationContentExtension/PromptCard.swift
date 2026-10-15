@@ -17,7 +17,11 @@ import UserNotificationsUI
     @Published private(set) var answered: [Int: String] = [:]
     private(set) var id = ""
     private(set) var revision = -1
-    weak var context: NSExtensionContext?
+    /// The revision of the last answer sent from this view, and whether it is being watched.
+    private var lastSent: Int?
+    private var watching = false
+    /// The extension context, read when needed; it is not set yet when the view loads.
+    var context: () -> NSExtensionContext? = { nil }
     var changed: () -> Void = {}
 
     /// False when this extension cannot read the pairing credential; the app answers instead.
@@ -34,7 +38,7 @@ import UserNotificationsUI
         if let text = info["prompt"] as? String, let prompt = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? JSON {
             adopt(prompt, revision: info["revision"] as? Int ?? 0)
         } else { changed() }
-        Task { await refresh() }
+        Task { await refresh(); await watch() }
     }
 
     func tap(question: Int? = nil, option: Int) {
@@ -55,7 +59,7 @@ import UserNotificationsUI
         let revision = choice.revision ?? response.notification.request.content.userInfo["revision"] as? Int ?? -1
         answer(text ?? choice.option.flatMap(label) ?? "your answer", option: choice.option, text: text, revision: revision, authenticated: true)
     }
-    func openSession() { context?.performNotificationDefaultAction() }
+    func openSession() { context()?.performNotificationDefaultAction() }
 
     private func label(_ option: Int) -> String? {
         let options = PromptActions.options(prompt)
@@ -73,49 +77,65 @@ import UserNotificationsUI
             do {
                 try await PromptAnswer.send(id, revision: revision, option: option, text: text, submit: submit, toggling: toggling)
                 // A newer notification may already show what came next.
+                lastSent = revision
                 guard self.revision == revision else { status = .ready; changed(); return }
                 if let question { answered[question] = label }
                 status = .sent(label); changed()
-                await follow(after: revision)
             } catch {
-                status = .failed(error.localizedDescription); changed()
-                if (error as? APIError)?.status == 409 { await refresh() }
+                // Show the prompt as it is now, and say that the tap sent nothing.
+                let stale = (error as? APIError)?.status == 409
+                status = .failed(error.localizedDescription)
+                if stale { await refresh() }
+                if status != .resolved { status = .failed(stale ? "The question changed, so nothing was sent." : error.localizedDescription) }
+                changed()
             }
         }
     }
-    /// Shows the next question when the terminal moves on, and closes once it is done.
-    private func follow(after sent: Int) async {
-        for _ in 0..<12 {
-            try? await Task.sleep(nanoseconds: 600_000_000)
-            guard revision == sent else { return }
-            guard let snap = try? await API.shared.snapshot(id), revision == sent else { continue }
-            if snap.int("prompt_revision") == sent { continue }
+    /// Follows the session while the view is open: shows each newer prompt, such as
+    /// the next question, and closes once the session has moved past this view's answer.
+    private func watch() async {
+        guard !watching else { return }
+        watching = true
+        var quiet = 0
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if case .sending = status { continue }
+            guard let snap = try? await API.shared.snapshot(id) else { continue }
             if NotificationContent.answerable(snap) {
+                quiet = 0
                 adopt(NotificationContent.prompt(snap), revision: snap.int("prompt_revision"))
-                return
+                continue
             }
-            break
+            guard let sent = lastSent else {
+                if !busy { status = .resolved; context()?.notificationActions = []; changed() }
+                continue
+            }
+            // An answered prompt keeps its revision until the terminal moves on, if it ever does.
+            quiet += 1
+            if snap.int("prompt_revision") > sent || quiet >= 5 { break }
         }
+        // Close first: removing the notification under an open view can bring back an older copy.
+        context()?.dismissNotificationContentExtension()
         await NotificationContent.remove(id: id)
-        context?.dismissNotificationContentExtension()
     }
     private func refresh() async {
         guard let snap = try? await API.shared.snapshot(id) else { return }
         if NotificationContent.answerable(snap) {
             adopt(NotificationContent.prompt(snap), revision: snap.int("prompt_revision"))
         } else if !busy {
-            status = .resolved; context?.notificationActions = []; changed()
+            status = .resolved; context()?.notificationActions = []; changed()
         }
     }
     private func adopt(_ next: JSON, revision: Int) {
-        guard revision != self.revision || prompt.isEmpty else { return }
+        // Revisions only grow, and a late notification can carry an older prompt.
+        guard revision > self.revision || prompt.isEmpty else { return }
         func questions(_ p: JSON) -> [String] { p.array("questions").map { $0.text("question") } }
         let sameQuestions = questions(next) == questions(prompt)
         if !sameQuestions { answered = [:] }
         if !sameQuestions || next.int("current_question") != current || next["review"] != nil { selected = Self.checked(next) }
         prompt = next; self.revision = revision
         if case .sending = status {} else { status = .ready }
-        context?.notificationActions = NotificationContent.actions(next, id: id, revision: revision)
+        context()?.notificationActions = NotificationContent.actions(next, id: id, revision: revision)
         changed()
     }
     /// The terminal's ticked rows, which count from 1, as option indices.
@@ -141,7 +161,11 @@ private let textColor = Color(uiColor: TerminalText.rgb(0xE9EEF4))
 struct PromptCard: View {
     @ObservedObject var model: PromptCardModel
     var body: some View {
-        ScrollView { PromptCardContent(model: model) }.scrollBounceBehavior(.basedOnSize)
+        ScrollViewReader { proxy in
+            ScrollView { PromptCardContent(model: model) }.scrollBounceBehavior(.basedOnSize)
+                // Bring the next question into view once the terminal moves on to it.
+                .onChange(of: model.current) { _, current in withAnimation { proxy.scrollTo(current, anchor: .top) } }
+        }
     }
 }
 
@@ -184,7 +208,7 @@ struct PromptCardContent: View {
                 }.buttonStyle(.plain).disabled(!model.canSubmit).opacity(model.canSubmit ? 1 : 0.45)
                     .accessibilityIdentifier("Submit choices")
             }
-        }.opacity(current || index < model.current ? 1 : 0.6)
+        }.opacity(current || index < model.current ? 1 : 0.6).id(index)
     }
 
     /// Permissions, plans, the review page, and questions read only from the screen.
