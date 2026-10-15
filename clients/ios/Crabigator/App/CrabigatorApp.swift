@@ -68,7 +68,7 @@ struct RootView: View {
         VStack(spacing: 0) {
             if let error = model.error { HStack { Text(error).font(.caption); Spacer(); Button("Dismiss") { model.error = nil } }.padding(10).background(Crab.red.opacity(0.25)) }
             if !model.paired {
-                ScrollView { VStack(alignment: .leading, spacing: 24) { Image("Crabigator").resizable().frame(width: 64, height: 64); Text("Crabigator").font(.largeTitle.weight(.semibold)); PairingFields(model: model) }.frame(maxWidth: 430).padding(28).frame(maxWidth: .infinity) }.defaultScrollAnchor(.center)
+                ScrollView { VStack(alignment: .leading, spacing: 24) { BrandHeader(); PairingFields(model: model) }.frame(maxWidth: 430).padding(28).frame(maxWidth: .infinity) }.defaultScrollAnchor(.center)
             } else {
                 GeometryReader { geometry in
                     let wide = geometry.size.width >= 720, width = wide ? geometry.size.width - 361 : geometry.size.width
