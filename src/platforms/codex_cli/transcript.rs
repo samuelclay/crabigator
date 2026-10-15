@@ -79,6 +79,15 @@ fn format_message(payload: &Map<String, Value>) -> String {
         return String::new();
     }
 
+    if role == Some("user") {
+        if let Some(replies) = super::log_parser::question_replies(trimmed) {
+            return replies
+                .iter()
+                .map(|reply| format!("  ⎿  {} → {}\n", reply.question, reply.answer))
+                .collect();
+        }
+    }
+
     match role {
         Some("user") if !super::is_injected_user_message(trimmed) => format!(
             "\n{}{}> {}{}\n",
@@ -161,7 +170,7 @@ fn tool_input_preview(name: &str, payload: &Map<String, Value>) -> String {
         return String::new();
     }
 
-    if name == "request_user_input" {
+    if matches!(name, "request_user_input" | "request_user_input_async") {
         return "question".to_string();
     }
     String::new()
@@ -298,6 +307,19 @@ mod tests {
             read_transcript(transcript.path(), next_offset, &mut pending).unwrap();
         assert!(empty.is_empty());
         assert_eq!(final_offset, next_offset);
+    }
+
+    #[test]
+    fn shows_question_replies_as_answers() {
+        let reply = serde_json::json!({
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "<send_user_message_question_reply>\n[{\"answer\":\"Pesto\",\"question\":\"Which pizza sauce?\",\"questionItemId\":\"[\\\"request_user_input_async\\\",\\\"call_5e11\\\",0]\"}]\n</send_user_message_question_reply>"}]
+        });
+        assert_eq!(
+            format_message(reply.as_object().unwrap()),
+            "  ⎿  Which pizza sauce? → Pesto\n"
+        );
     }
 
     #[test]

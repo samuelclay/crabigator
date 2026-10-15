@@ -26,7 +26,7 @@ pub use permission_prompt::{
     PermissionPrompt,
 };
 pub use python::PythonParser;
-pub use question_prompt::QuestionScreen;
+pub use question_prompt::{CodexQuestionView, QuestionScreen};
 pub use rust::RustParser;
 pub use suggestion::SuggestionTracker;
 pub use summary::{DiffParser, DiffSummary};

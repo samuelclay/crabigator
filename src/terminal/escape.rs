@@ -343,6 +343,16 @@ pub mod key {
         format!("\x1b[1;{}{}", modifier, direction as char).into_bytes()
     }
 
+    /// Shift+Left (CSI 1 ; 2 D). Codex opens its waiting async questions
+    /// with it, and moves to the next one.
+    pub const SHIFT_LEFT: &[u8] = b"\x1b[1;2D";
+
+    /// Shift+Right (CSI 1 ; 2 C). Codex goes back from its async questions.
+    pub const SHIFT_RIGHT: &[u8] = b"\x1b[1;2C";
+
+    /// Ctrl+] (0x1d). Codex skips an async question with it.
+    pub const CTRL_RIGHT_BRACKET: u8 = 0x1d;
+
     // === Home/End Keys ===
 
     /// Home or End key without modifiers (CSI H or CSI F)

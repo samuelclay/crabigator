@@ -5,9 +5,12 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use serde::Deserialize;
 use serde_json::Value;
 
-use crate::platforms::{ActivePrompt, PermissionDetails, PlatformStats, Question, SessionState};
+use crate::platforms::{
+    ActivePrompt, PermissionDetails, PlatformStats, Question, QuestionOption, SessionState,
+};
 
 /// Source of a message count
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,7 +86,17 @@ pub struct CodexState {
     event_timestamp: Option<f64>,
     pub stats: PlatformStats,
     active_prompt_call_id: Option<String>,
+    /// Questions from `request_user_input_async` that wait for a reply. Codex
+    /// keeps working while they wait and drops them when the turn ends.
+    async_questions: Vec<AsyncQuestion>,
     cwd: super::cwd::CodexCwd,
+}
+
+/// One question of a `request_user_input_async` call.
+struct AsyncQuestion {
+    call_id: String,
+    index: usize,
+    question: Question,
 }
 
 impl Default for CodexState {
@@ -111,6 +124,7 @@ impl Default for CodexState {
             event_timestamp: None,
             stats: PlatformStats::default(),
             active_prompt_call_id: None,
+            async_questions: Vec::new(),
             cwd: super::cwd::CodexCwd::default(),
         }
     }
@@ -198,8 +212,13 @@ fn handle_response_item(state: &mut CodexState, value: &Value) {
                 {
                     record_completion(state, MessageSource::ResponseItem);
                 }
-                Some("user") if !is_bootstrap_message(payload) => {
-                    record_prompt(state, MessageSource::ResponseItem);
+                Some("user") => {
+                    let text = response_item_text(payload);
+                    if let Some(replies) = text.as_deref().and_then(question_replies) {
+                        record_question_replies(state, &replies);
+                    } else if !text.as_deref().is_some_and(is_injected_user_message) {
+                        record_prompt(state, MessageSource::ResponseItem);
+                    }
                 }
                 _ => {}
             }
@@ -227,7 +246,14 @@ fn handle_event_msg(state: &mut CodexState, value: &Value) {
         return;
     };
     match payload.get("type").and_then(|v| v.as_str()) {
-        Some("user_message") => record_prompt(state, MessageSource::EventMsg),
+        Some("user_message")
+            if !payload
+                .get("message")
+                .and_then(Value::as_str)
+                .is_some_and(is_injected_user_message) =>
+        {
+            record_prompt(state, MessageSource::EventMsg)
+        }
         Some("agent_message")
             if !state.task_lifecycle
                 && payload.get("phase").and_then(Value::as_str) != Some("commentary") =>
@@ -236,7 +262,7 @@ fn handle_event_msg(state: &mut CodexState, value: &Value) {
         }
         Some("task_started") => {
             begin_task_lifecycle(state);
-            clear_active_prompt(state);
+            end_turn_prompts(state);
             set_state(state, SessionState::Thinking);
         }
         Some("task_complete") => {
@@ -244,7 +270,7 @@ fn handle_event_msg(state: &mut CodexState, value: &Value) {
             record_completion(state, MessageSource::EventMsg);
         }
         Some("turn_aborted") => {
-            clear_active_prompt(state);
+            end_turn_prompts(state);
             set_state(state, SessionState::Interrupted);
         }
         _ => {}
@@ -299,8 +325,7 @@ fn record_prompt(state: &mut CodexState, source: MessageSource) {
     };
     if should_set_state {
         state.stats.prompts_changed_at = state.event_timestamp;
-        clear_active_prompt(state);
-        set_state(state, SessionState::Thinking);
+        settle_prompt(state, SessionState::Thinking);
     }
 }
 
@@ -309,7 +334,7 @@ fn record_completion(state: &mut CodexState, source: MessageSource) {
     state.completion_counts.record(source);
     state.stats.completions = state.completion_counts.effective();
     state.stats.completions_changed_at = state.event_timestamp;
-    clear_active_prompt(state);
+    end_turn_prompts(state);
     set_state(state, SessionState::Complete);
 }
 
@@ -327,31 +352,190 @@ fn record_tool_call(
         .tool_timestamps
         .push(state.event_timestamp.unwrap_or_else(now_unix));
 
-    if is_question_tool(name) {
+    let tool = name.rsplit('.').next().unwrap_or(name);
+    if tool == ASYNC_QUESTION_TOOL {
+        // Codex answers `{"accepted":true}` at once and keeps working; the
+        // answers arrive later as a reply message.
+        let call_id = call_id.unwrap_or_default();
+        let questions = parse_questions(tool_input.as_ref(), true);
+        let pending = questions
+            .into_iter()
+            .enumerate()
+            .map(|(index, question)| AsyncQuestion {
+                call_id: call_id.to_string(),
+                index,
+                question,
+            });
+        state.async_questions.extend(pending);
+        show_async_questions(state);
+    } else if is_question_tool(tool) {
         set_question_prompt(state, call_id, tool_input.as_ref());
         set_state(state, SessionState::Question);
     } else if is_permission_tool_call(tool_input.as_ref()) {
         set_permission_prompt(state, name, call_id, tool_input);
         set_state(state, SessionState::Permission);
     } else {
-        clear_active_prompt(state);
-        set_state(state, SessionState::Thinking);
+        settle_prompt(state, SessionState::Thinking);
     }
 }
 
 /// Record tool output and clear pending prompt state when the prompt is answered.
 fn record_tool_output(state: &mut CodexState, call_id: &str) {
     if state.active_prompt_call_id.as_deref() == Some(call_id) {
-        clear_active_prompt(state);
-        set_state(state, SessionState::Thinking);
+        settle_prompt(state, SessionState::Thinking);
     }
 }
 
-/// Check if a tool is a question tool
+/// Remove the async questions a reply answers. Codex is still working, so
+/// the session thinks again once none are left.
+fn record_question_replies(state: &mut CodexState, replies: &[QuestionReply]) {
+    let before = state.async_questions.len();
+    state.async_questions.retain(|pending| {
+        !replies.iter().any(|reply| match &reply.item {
+            Some((call_id, index)) => pending.call_id == *call_id && pending.index == *index,
+            None => pending.question.question == reply.question,
+        })
+    });
+    if state.async_questions.len() != before {
+        show_async_questions(state);
+    }
+}
+
+/// Drop an async question the user skipped with ctrl+]. Codex logs nothing
+/// for a skip, so the question shown on screen names it.
+pub fn skip_async_question(state: &mut CodexState, shown: &str) {
+    fn words(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+    let shown = words(shown);
+    let Some(index) = state
+        .async_questions
+        .iter()
+        .position(|pending| words(&pending.question.question) == shown)
+    else {
+        return;
+    };
+    state.async_questions.remove(index);
+    show_async_questions(state);
+    set_last_updated(state);
+}
+
+/// Show the async questions still waiting, or think again when none are
+/// left. A permission or question prompt that blocks Codex stays on top
+/// until it is answered.
+fn show_async_questions(state: &mut CodexState) {
+    if state.active_prompt_call_id.is_none() {
+        settle_prompt(state, SessionState::Thinking);
+    }
+}
+
+/// Codex's question tool that returns at once and takes its answers later.
+const ASYNC_QUESTION_TOOL: &str = "request_user_input_async";
+
+/// Check if a tool is a question tool that waits for its answer
 fn is_question_tool(name: &str) -> bool {
-    matches!(
-        name.rsplit('.').next().unwrap_or(name),
-        "AskUserQuestion" | "ask_user" | "request_user_input" | "request_user_input_async"
+    matches!(name, "AskUserQuestion" | "ask_user" | "request_user_input")
+}
+
+/// Read the questions of a Codex question tool call.
+///
+/// `request_user_input` sends `question` with `{label, description}`
+/// options and shows a "None of the above" row that takes notes, not a
+/// typed answer. `request_user_input_async` sends `title` with plain string
+/// options, or none for a typed answer, and shows an "Other" row.
+fn parse_questions(tool_input: Option<&Value>, typed_answers: bool) -> Vec<Question> {
+    let Some(questions) = tool_input
+        .and_then(|input| input.get("questions"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    questions
+        .iter()
+        .filter_map(|question| {
+            let text = question
+                .get("question")
+                .or_else(|| question.get("title"))
+                .and_then(Value::as_str)?;
+            let options: Vec<QuestionOption> = question
+                .get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|option| match option {
+                    Value::String(label) => Some(QuestionOption {
+                        label: label.clone(),
+                        description: None,
+                    }),
+                    _ => QuestionOption::deserialize(option).ok(),
+                })
+                .collect();
+            Some(Question {
+                question: text.to_string(),
+                header: question
+                    .get("header")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                allows_other: (!typed_answers && !options.is_empty()).then_some(false),
+                options,
+                multi_select: question
+                    .get("multiSelect")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            })
+        })
+        .collect()
+}
+
+/// Opening tag of the message that carries answers to async questions.
+const QUESTION_REPLY_TAG: &str = "<send_user_message_question_reply>";
+
+/// One answer from a `<send_user_message_question_reply>` message.
+pub(crate) struct QuestionReply {
+    pub question: String,
+    pub answer: String,
+    /// The `(call_id, index)` of the question it answers.
+    item: Option<(String, usize)>,
+}
+
+/// Read the answers in a question reply message, or `None` when the text is
+/// not one. Codex sends one per answered question:
+///
+/// ```text
+/// <send_user_message_question_reply>
+/// [{"answer":"Pesto","question":"Which sauce?",
+///   "questionItemId":"[\"request_user_input_async\",\"call_5e11\",0]"}]
+/// </send_user_message_question_reply>
+/// ```
+pub(crate) fn question_replies(text: &str) -> Option<Vec<QuestionReply>> {
+    let body = text.trim_start().strip_prefix(QUESTION_REPLY_TAG)?;
+    let body = body
+        .split_once("</send_user_message_question_reply>")
+        .map_or(body, |(inner, _)| inner);
+    let entries: Vec<Value> = serde_json::from_str(body.trim()).unwrap_or_default();
+    Some(
+        entries
+            .iter()
+            .map(|entry| {
+                let field = |key: &str| {
+                    entry
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string()
+                };
+                let item = entry
+                    .get("questionItemId")
+                    .and_then(Value::as_str)
+                    .and_then(|id| serde_json::from_str::<(String, String, usize)>(id).ok())
+                    .map(|(_, call_id, index)| (call_id, index));
+                QuestionReply {
+                    question: field("question"),
+                    answer: field("answer"),
+                    item,
+                }
+            })
+            .collect(),
     )
 }
 
@@ -388,10 +572,7 @@ fn is_permission_tool_call(tool_input: Option<&Value>) -> bool {
 fn set_question_prompt(state: &mut CodexState, call_id: Option<&str>, tool_input: Option<&Value>) {
     clear_active_prompt(state);
 
-    let questions = tool_input
-        .and_then(|input| input.get("questions"))
-        .and_then(|questions| serde_json::from_value::<Vec<Question>>(questions.clone()).ok())
-        .unwrap_or_default();
+    let questions = parse_questions(tool_input, false);
 
     state.stats.active_prompt = Some(ActivePrompt::Question { questions });
     state.stats.permission = None;
@@ -427,15 +608,37 @@ fn clear_active_prompt(state: &mut CodexState) {
     state.stats.permission = None;
 }
 
-/// Check if a user-role message was written by Codex itself (should not count as a user prompt)
-fn is_bootstrap_message(payload: &serde_json::Map<String, Value>) -> bool {
-    response_item_text(payload).is_some_and(|text| is_injected_user_message(&text))
+/// Clear the active prompt and move to `next`, unless async questions still
+/// wait for an answer: they keep the session in the question state.
+fn settle_prompt(state: &mut CodexState, next: SessionState) {
+    clear_active_prompt(state);
+    if state.async_questions.is_empty() {
+        set_state(state, next);
+        return;
+    }
+    let questions = state
+        .async_questions
+        .iter()
+        .map(|pending| pending.question.clone())
+        .collect();
+    state.stats.active_prompt = Some(ActivePrompt::Question { questions });
+    // Keep the idle time from when the first question arrived.
+    if state.stats.state != SessionState::Question {
+        set_state(state, SessionState::Question);
+    }
+}
+
+/// Codex drops unanswered async questions when its turn ends.
+fn end_turn_prompts(state: &mut CodexState) {
+    state.async_questions.clear();
+    clear_active_prompt(state);
 }
 
 /// Opening tags of the user-role messages Codex writes on its own behalf
 /// during a conversation. Most arrive once at session start; `<skill>` is
 /// appended right after any prompt that names a `$skill`, carrying the skill
-/// file so the model can follow it.
+/// file so the model can follow it, and a question reply carries the answers
+/// picked in Codex's question view.
 const INJECTED_MESSAGE_TAGS: &[&str] = &[
     "<skill>",
     "<skills_instructions>",
@@ -444,6 +647,7 @@ const INJECTED_MESSAGE_TAGS: &[&str] = &[
     "<permissions instructions>",
     "<collaboration_mode>",
     "<multi_agent_mode>",
+    QUESTION_REPLY_TAG,
 ];
 
 /// Whether a user-role message in a Codex rollout was written by Codex rather
@@ -497,6 +701,7 @@ pub fn reset_state(state: &mut CodexState, path: PathBuf, session_started_at: Op
     state.event_timestamp = None;
     state.stats = PlatformStats::default();
     state.active_prompt_call_id = None;
+    state.async_questions.clear();
     state.cwd = super::cwd::CodexCwd::default();
     set_last_updated(state);
 }
@@ -723,6 +928,8 @@ mod tests {
                 assert_eq!(questions[0].question, "Which scope?");
                 assert_eq!(questions[0].options.len(), 2);
                 assert_eq!(questions[0].options[0].label, "A");
+                // "None of the above" takes notes, not a typed answer.
+                assert_eq!(questions[0].allows_other, Some(false));
             }
             other => panic!("expected question prompt, got {other:?}"),
         }
@@ -743,6 +950,131 @@ mod tests {
         assert_eq!(state.stats.state, SessionState::Thinking);
         assert!(state.stats.active_prompt.is_none());
         assert!(state.stats.permission.is_none());
+    }
+
+    fn question_reply(call_id: &str, index: usize, question: &str, answer: &str) -> String {
+        let reply = json!([{
+            "answer": answer,
+            "question": question,
+            "questionItemId": json!(["request_user_input_async", call_id, index]).to_string(),
+        }]);
+        user_message(&format!(
+            "<send_user_message_question_reply>\n{reply}\n</send_user_message_question_reply>"
+        ))
+    }
+
+    fn prompt_questions(state: &CodexState) -> Vec<String> {
+        match state.stats.active_prompt.as_ref() {
+            Some(ActivePrompt::Question { questions }) => {
+                questions.iter().map(|q| q.question.clone()).collect()
+            }
+            other => panic!("expected question prompt, got {other:?}"),
+        }
+    }
+
+    /// Codex 0.162 asks with `request_user_input_async`: `title` and plain
+    /// string options, an immediate `{"accepted":true}` output, more work,
+    /// then one reply message per answered question.
+    #[test]
+    fn async_questions_wait_until_each_is_answered() {
+        let mut state = CodexState::default();
+        for line in [
+            json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
+            user_message("order a pizza"),
+            json!({"type":"response_item","payload":{"type":"function_call","name":"request_user_input_async","call_id":"call_q","arguments":"{\"questions\":[{\"title\":\"Which pizza size?\",\"options\":[\"Small\",\"Medium\",\"Large\"]},{\"title\":\"Any delivery notes?\"}]}"}}).to_string(),
+            json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"call_q","output":"{\"accepted\":true}"}}).to_string(),
+            json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"call_sleep","input":"sleep 240"}}).to_string(),
+            json!({"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_sleep","output":"done"}}).to_string(),
+        ] {
+            update_from_log(&mut state, &line);
+        }
+
+        assert_eq!(state.stats.state, SessionState::Question);
+        let Some(ActivePrompt::Question { questions }) = state.stats.active_prompt.as_ref() else {
+            panic!("expected question prompt");
+        };
+        assert_eq!(questions[0].question, "Which pizza size?");
+        let labels: Vec<&str> = questions[0]
+            .options
+            .iter()
+            .map(|o| o.label.as_str())
+            .collect();
+        assert_eq!(labels, ["Small", "Medium", "Large"]);
+        assert_eq!(
+            questions[0].allows_other, None,
+            "the async view has an Other row"
+        );
+        assert_eq!(questions[1].question, "Any delivery notes?");
+        assert!(questions[1].options.is_empty());
+
+        update_from_log(
+            &mut state,
+            &question_reply("call_q", 0, "Which pizza size?", "extra large"),
+        );
+        assert_eq!(state.stats.state, SessionState::Question);
+        assert_eq!(prompt_questions(&state), ["Any delivery notes?"]);
+
+        update_from_log(
+            &mut state,
+            &question_reply("call_q", 1, "Any delivery notes?", "ring the bell"),
+        );
+        assert_eq!(state.stats.state, SessionState::Thinking);
+        assert!(state.stats.active_prompt.is_none());
+        assert_eq!(state.stats.prompts, 1, "replies are not prompts");
+    }
+
+    /// ctrl+] skips an async question without a log entry.
+    #[test]
+    fn skipped_async_questions_stop_waiting() {
+        let mut state = CodexState::default();
+        update_from_log(
+            &mut state,
+            &json!({"type":"response_item","payload":{"type":"function_call","name":"request_user_input_async","call_id":"call_q","arguments":"{\"questions\":[{\"title\":\"Which sauce?\",\"options\":[\"Tomato\",\"Pesto\"]},{\"title\":\"Which drink?\",\"options\":[\"Cola\",\"Water\"]}]}"}}).to_string(),
+        );
+
+        skip_async_question(&mut state, "Which  drink?");
+        assert_eq!(state.stats.state, SessionState::Question);
+        assert_eq!(prompt_questions(&state), ["Which sauce?"]);
+
+        skip_async_question(&mut state, "Which sauce?");
+        assert_eq!(state.stats.state, SessionState::Thinking);
+        assert!(state.stats.active_prompt.is_none());
+    }
+
+    /// Codex drops an unanswered async question when its turn ends.
+    #[test]
+    fn async_questions_end_with_the_turn() {
+        let mut state = CodexState::default();
+        for line in [
+            json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
+            json!({"type":"response_item","payload":{"type":"function_call","name":"request_user_input_async","call_id":"call_q","arguments":"{\"questions\":[{\"title\":\"Which drink?\",\"options\":[\"Cola\",\"Water\"]}]}"}}).to_string(),
+            json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string(),
+        ] {
+            update_from_log(&mut state, &line);
+        }
+        assert_eq!(state.stats.state, SessionState::Complete);
+        assert!(state.stats.active_prompt.is_none());
+
+        update_from_log(
+            &mut state,
+            &json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
+        );
+        update_from_log(
+            &mut state,
+            &json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"call_ls","input":"ls"}}).to_string(),
+        );
+        assert_eq!(state.stats.state, SessionState::Thinking);
+    }
+
+    #[test]
+    fn reads_question_replies() {
+        let text = "<send_user_message_question_reply>\n[{\"answer\":\"Pesto\",\"question\":\"Which pizza sauce?\",\"questionItemId\":\"[\\\"request_user_input_async\\\",\\\"call_5e11\\\",0]\"}]\n</send_user_message_question_reply>";
+        let replies = question_replies(text).expect("a reply");
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].question, "Which pizza sauce?");
+        assert_eq!(replies[0].answer, "Pesto");
+        assert_eq!(replies[0].item, Some(("call_5e11".to_string(), 0)));
+        assert!(question_replies("Pesto, please").is_none());
     }
 
     #[test]

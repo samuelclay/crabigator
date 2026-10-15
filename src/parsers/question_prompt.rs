@@ -38,17 +38,54 @@
 //! Grok's question card is parsed from the same `parse` entry. It uses radio
 //! `(○)`/`(●)`, checkboxes `[ ]`/`[x]`, a `z` free-text row, and a `[N/M]`
 //! footer instead of Claude's tab strip.
+//!
+//! So are Codex's two question views. `request_user_input` shows a page
+//! that ends in a "None of the above" row, which takes notes (Tab) but no
+//! typed answer:
+//!
+//! ```text
+//!   Question 1/2 (2 unanswered)
+//!   Which crust?
+//!
+//!   › 1. Thin               Crispy
+//!     2. Thick              Doughy
+//!     3. None of the above  Optionally, add details in notes (tab)
+//!
+//!   tab to add notes | enter to submit answer | ←/→ to navigate questions | esc to interrupt
+//! ```
+//!
+//! `request_user_input_async` questions wait under the composer behind
+//! "⇧← to answer" while Codex keeps working. ⇧← opens them in place of the
+//! composer, with an "Other" row for a typed answer, or only a text field
+//! when the question has no options:
+//!
+//! ```text
+//! • Queued follow-up inputs
+//!
+//!   1 of 2
+//!   Which pizza size?
+//!
+//!   › 1. Small
+//!     2. Medium
+//!     3. Other
+//!
+//!   enter submit   ⌃] skip   ⇧→ main prompt   ⇧← next question
+//! ```
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 use super::permission_prompt::strip_ansi_codes;
+use crate::platforms::{Question, QuestionOption};
 
 /// Placeholder shown on the free-text row before the user types anything.
 const TYPE_SOMETHING: &str = "Type something";
 /// Grok's free-text row placeholder.
 const TYPE_YOUR_ANSWER: &str = "Type your answer here";
+/// Codex's last rows before anything is typed: the async view's "Other"
+/// row and text field, and the sync view's notes-only row.
+const CODEX_PLACEHOLDERS: &[&str] = &["Other", "Type your answer", "None of the above"];
 
 /// One numbered row of a question page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,7 +104,9 @@ impl ScreenRow {
     /// Whether this row still shows the "Type something" placeholder.
     pub fn is_placeholder(&self) -> bool {
         let label = self.label.trim_end_matches('.').trim();
-        label == TYPE_SOMETHING || label.eq_ignore_ascii_case(TYPE_YOUR_ANSWER)
+        label == TYPE_SOMETHING
+            || label.eq_ignore_ascii_case(TYPE_YOUR_ANSWER)
+            || CODEX_PLACEHOLDERS.contains(&label)
     }
 }
 
@@ -118,8 +157,205 @@ impl QuestionScreen {
     /// Parse the dialog from the terminal screen. Returns `None` when no
     /// AskUserQuestion dialog is visible.
     pub fn parse(screen_content: &str) -> Option<Self> {
-        parse_claude(screen_content).or_else(|| parse_grok(screen_content))
+        parse_claude(screen_content)
+            .or_else(|| parse_grok(screen_content))
+            .or_else(|| parse_codex(screen_content))
     }
+
+    /// The question on a Codex page, for when Codex's log has not named it:
+    /// every row but the last, which is the "None of the above" or "Other"
+    /// row, or the text field of a question without options.
+    pub fn codex_question(&self, view: CodexQuestionView) -> Option<Question> {
+        let QuestionScreen::Page { question, rows, .. } = self else {
+            return None;
+        };
+        let options = rows[..rows.len().saturating_sub(1)]
+            .iter()
+            .map(|row| QuestionOption {
+                label: row.label.clone(),
+                description: None,
+            })
+            .collect();
+        Some(Question {
+            question: question.clone(),
+            options,
+            allows_other: (view == CodexQuestionView::Sync).then_some(false),
+            ..Default::default()
+        })
+    }
+}
+
+/// Which of Codex's question views is on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexQuestionView {
+    /// `request_user_input`'s page, headed "Question 1/2 (2 unanswered)".
+    Sync,
+    /// `request_user_input_async`'s view, opened from the composer with ⇧←.
+    Async,
+}
+
+/// Which Codex question view is on screen. Its footer must be the last
+/// line Codex drew: an answered view is replaced by a summary, so a footer
+/// higher up is not a live question.
+pub fn codex_question_view(screen_content: &str) -> Option<CodexQuestionView> {
+    let stripped = strip_ansi_codes(screen_content);
+    let lines: Vec<&str> = stripped.lines().collect();
+    codex_view_footer(&lines).map(|(view, _)| view)
+}
+
+fn codex_view_footer(lines: &[&str]) -> Option<(CodexQuestionView, usize)> {
+    let footer = lines.iter().rposition(|line| !line.trim().is_empty())?;
+    let text = lines[footer].trim();
+    if text.starts_with("enter submit") {
+        return Some((CodexQuestionView::Async, footer));
+    }
+    if !text.contains("enter to submit answer") && !text.contains("enter to submit all") {
+        return None;
+    }
+    let has_header = lines[..footer]
+        .iter()
+        .rev()
+        .take(40)
+        .any(|line| codex_sync_page(line).is_some());
+    has_header.then_some((CodexQuestionView::Sync, footer))
+}
+
+/// Whether Codex shows async questions waiting under the composer:
+///
+/// ```text
+/// • Queued follow-up inputs
+///   ? 2 questions · 12s
+///     ⇧← to answer
+/// ```
+pub fn codex_questions_waiting(screen_content: &str) -> bool {
+    let stripped = strip_ansi_codes(screen_content);
+    let recent: Vec<&str> = stripped
+        .lines()
+        .rev()
+        .filter(|line| !line.trim().is_empty())
+        .take(12)
+        .collect();
+    recent.windows(2).any(|pair| {
+        let (hint, count) = (pair[0].trim(), pair[1].trim());
+        hint == "⇧← to answer" && count.starts_with("? ") && count.contains("question")
+    })
+}
+
+/// 0-based page from the sync view's "Question 2/3 (1 unanswered)" header.
+fn codex_sync_page(line: &str) -> Option<usize> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"^Question (\d+)/\d+\b").unwrap());
+    let n: usize = re.captures(line.trim())?[1].parse().ok()?;
+    n.checked_sub(1)
+}
+
+/// A numbered Codex row: `› 1. Thin               Crispy`. The sync view
+/// puts a description after a run of spaces; keep only the label.
+fn parse_codex_row(line: &str) -> Option<ScreenRow> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"^\s*(›)?\s*(\d+)\.\s+(.*)$").unwrap());
+    let caps = re.captures(line)?;
+    let text = caps[3].trim();
+    let label = text.split_once("  ").map_or(text, |(label, _)| label);
+    Some(ScreenRow {
+        number: caps[2].parse().ok()?,
+        checked: None,
+        label: label.trim().to_string(),
+        cursor: caps.get(1).is_some(),
+    })
+}
+
+/// Parse whichever Codex question view is on screen.
+fn parse_codex(screen_content: &str) -> Option<QuestionScreen> {
+    let stripped = strip_ansi_codes(screen_content);
+    let lines: Vec<&str> = stripped.lines().collect();
+    let (view, footer) = codex_view_footer(&lines)?;
+    match view {
+        CodexQuestionView::Sync => parse_codex_sync(&lines[..footer]),
+        CodexQuestionView::Async => parse_codex_async(&lines[..footer]),
+    }
+}
+
+/// The sync page: header, question, then rows. A notes line (`› text`
+/// without a number) may follow the rows.
+fn parse_codex_sync(lines: &[&str]) -> Option<QuestionScreen> {
+    let header = lines
+        .iter()
+        .rposition(|line| codex_sync_page(line).is_some())?;
+    let page_index = codex_sync_page(lines[header]);
+    let mut question_lines = Vec::new();
+    let mut rows = Vec::new();
+    for line in &lines[header + 1..] {
+        if let Some(row) = parse_codex_row(line) {
+            rows.push(row);
+        } else if rows.is_empty() && !line.trim().is_empty() {
+            question_lines.push(line.trim());
+        }
+    }
+    if rows.is_empty() {
+        return None;
+    }
+    Some(QuestionScreen::Page {
+        question: question_lines.join(" "),
+        rows,
+        submit_row: None,
+        page_index,
+    })
+}
+
+/// The async view, read upward from its footer: the rows (or the text
+/// field of a question without options), then the question, which may sit
+/// under an "N of M" counter.
+fn parse_codex_async(lines: &[&str]) -> Option<QuestionScreen> {
+    fn block_above<'a>(lines: &[&'a str], end: &mut usize) -> Vec<&'a str> {
+        while *end > 0 && lines[*end - 1].trim().is_empty() {
+            *end -= 1;
+        }
+        let mut block = Vec::new();
+        while *end > 0 && !lines[*end - 1].trim().is_empty() {
+            *end -= 1;
+            block.push(lines[*end].trim());
+        }
+        block.reverse();
+        block
+    }
+
+    let mut end = lines.len();
+    let answer = block_above(lines, &mut end);
+    let mut rows: Vec<ScreenRow> = answer.iter().filter_map(|l| parse_codex_row(l)).collect();
+    if rows.is_empty() {
+        // A question without options: the whole block is its text field.
+        rows.push(ScreenRow {
+            number: 1,
+            checked: None,
+            label: answer.join(" "),
+            cursor: true,
+        });
+    }
+
+    // The question is the end of the block above, after any "N of M"
+    // counter or "• Queued follow-up inputs" heading.
+    let is_counter = |line: &str| {
+        line.split_once(" of ")
+            .is_some_and(|(n, m)| n.parse::<u32>().is_ok() && m.parse::<u32>().is_ok())
+    };
+    let block = block_above(lines, &mut end);
+    let start = block
+        .iter()
+        .rposition(|line| is_counter(line) || line.starts_with('•'))
+        .map_or(0, |heading| heading + 1);
+    let question = &block[start..];
+    if question.is_empty() {
+        return None;
+    }
+    Some(QuestionScreen::Page {
+        question: question.join(" "),
+        rows,
+        submit_row: None,
+        // Answered questions leave the view, so its counter counts only
+        // the ones left. Match the question by its text instead.
+        page_index: None,
+    })
 }
 
 fn parse_claude(screen_content: &str) -> Option<QuestionScreen> {
@@ -670,6 +906,178 @@ Ready to submit your answers?
 ┃
 ┃  ↑/↓ navigate · y copy                                  Enter:edit
 ";
+
+    /// The last page of a two-question `request_user_input` call.
+    const CODEX_SYNC_LAST: &str = "\
+  Question 2/2 (1 unanswered)
+  Which cheese?
+
+  › 1. Mozzarella         Classic
+    2. Cheddar            Sharp
+    3. None of the above  Optionally, add details in notes (tab)
+
+  tab to add notes | enter to submit all | ←/→ to navigate questions | esc to interrupt
+";
+
+    /// Notes open on the first page.
+    const CODEX_SYNC_NOTES: &str = "\
+  Question 1/2 (2 unanswered)
+  Which crust?
+
+    1. Thin               Crispy
+    2. Thick              Doughy
+  › 3. None of the above  Optionally, add details in notes (tab)
+
+  › gluten free please
+
+  tab or esc to clear notes | enter to submit answer
+";
+
+    /// `request_user_input_async` questions opened with ⇧←.
+    const CODEX_ASYNC: &str = "\
+• Working (22s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+
+• Queued follow-up inputs
+
+  1 of 2
+  Which pizza size?
+
+  › 1. Small
+    2. Medium
+    3. Large
+    4. Other
+
+  enter submit   ⌃] skip   ⇧→ main prompt   ⇧← next question
+
+
+";
+
+    /// An async question without options.
+    const CODEX_ASYNC_TEXT: &str = "\
+• Queued follow-up inputs
+
+  2 of 2
+
+  Any delivery notes?
+
+  Type your answer
+
+  enter submit   ⌃] skip   ⇧→ prev question
+";
+
+    fn codex_page(screen: &str) -> (String, Vec<ScreenRow>, Option<usize>) {
+        let QuestionScreen::Page {
+            question,
+            rows,
+            page_index,
+            ..
+        } = QuestionScreen::parse(screen).expect("codex question")
+        else {
+            panic!("expected a page");
+        };
+        (question, rows, page_index)
+    }
+
+    #[test]
+    fn parses_codex_sync_pages() {
+        assert_eq!(
+            codex_question_view(CODEX_SYNC_LAST),
+            Some(CodexQuestionView::Sync)
+        );
+        let (question, rows, page_index) = codex_page(CODEX_SYNC_LAST);
+        assert_eq!(question, "Which cheese?");
+        assert_eq!(page_index, Some(1));
+        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["Mozzarella", "Cheddar", "None of the above"]);
+        assert!(rows[0].cursor && !rows[1].cursor);
+        assert!(rows[2].is_placeholder());
+
+        // The notes line is not a row, and its › is not the row cursor.
+        let (question, rows, page_index) = codex_page(CODEX_SYNC_NOTES);
+        assert_eq!(question, "Which crust?");
+        assert_eq!(page_index, Some(0));
+        assert_eq!(rows.len(), 3);
+        assert!(rows[2].cursor && !rows[0].cursor);
+    }
+
+    #[test]
+    fn parses_codex_async_pages() {
+        assert_eq!(
+            codex_question_view(CODEX_ASYNC),
+            Some(CodexQuestionView::Async)
+        );
+        let (question, rows, page_index) = codex_page(CODEX_ASYNC);
+        assert_eq!(question, "Which pizza size?");
+        assert_eq!(page_index, None, "the counter skips answered questions");
+        assert_eq!(rows.len(), 4);
+        assert!(rows[0].cursor);
+        assert!(rows[3].is_placeholder());
+
+        let typed = CODEX_ASYNC
+            .replace("  › 1. Small", "    1. Small")
+            .replace("    4. Other", "  › 4. extra large");
+        let (_, rows, _) = codex_page(&typed);
+        assert_eq!(rows[3].label, "extra large");
+        assert!(rows[3].cursor && !rows[3].is_placeholder());
+
+        let (question, rows, _) = codex_page(CODEX_ASYNC_TEXT);
+        assert_eq!(question, "Any delivery notes?");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].cursor && rows[0].is_placeholder());
+        let (_, rows, _) =
+            codex_page(&CODEX_ASYNC_TEXT.replace("Type your answer", "ring the bell"));
+        assert_eq!(rows[0].label, "ring the bell");
+    }
+
+    #[test]
+    fn reads_the_question_from_a_codex_page_without_a_log_entry() {
+        let page = QuestionScreen::parse(CODEX_ASYNC).unwrap();
+        let question = page.codex_question(CodexQuestionView::Async).unwrap();
+        assert_eq!(question.question, "Which pizza size?");
+        let labels: Vec<&str> = question.options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, ["Small", "Medium", "Large"]);
+        assert_eq!(question.allows_other, None);
+
+        let page = QuestionScreen::parse(CODEX_SYNC_LAST).unwrap();
+        let question = page.codex_question(CodexQuestionView::Sync).unwrap();
+        assert_eq!(question.options.len(), 2);
+        assert_eq!(question.allows_other, Some(false));
+    }
+
+    #[test]
+    fn sees_codex_questions_waiting_under_the_composer() {
+        let waiting = "\
+• Working (21s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+
+• Queued follow-up inputs
+  ? 2 questions · 12s
+    ⇧← to answer
+
+› Ask Codex to do anything
+
+  GPT-6-Astra high · ~/scratch · ← for agents
+";
+        assert!(codex_questions_waiting(waiting));
+        assert_eq!(codex_question_view(waiting), None);
+        assert_eq!(QuestionScreen::parse(waiting), None);
+        assert!(!codex_questions_waiting("› Ask Codex to do anything\n"));
+    }
+
+    #[test]
+    fn ignores_answered_codex_questions() {
+        let answered = "\
+  Question 1/1 (1 unanswered)
+• Questions 2/2 answered
+  • Which cheese?
+    answer: Cheddar
+
+• Working (5s • esc to interrupt)
+
+› Ask Codex to do anything
+";
+        assert_eq!(codex_question_view(answered), None);
+        assert_eq!(QuestionScreen::parse(answered), None);
+    }
 
     #[test]
     fn parses_grok_single_question_without_page_counter() {

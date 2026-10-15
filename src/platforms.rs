@@ -122,6 +122,14 @@ pub struct Question {
     /// Whether multiple options can be selected
     #[serde(default, rename = "multiSelect")]
     pub multi_select: bool,
+    /// Whether a typed answer is possible. `None` means yes. Codex's
+    /// `request_user_input` has no typed answer, only notes on a row.
+    #[serde(
+        default,
+        rename = "allowsOther",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub allows_other: Option<bool>,
 }
 
 /// Active prompt awaiting user response
@@ -295,6 +303,11 @@ pub trait Platform {
 
     /// Native OSC title, used to identify automatically reopened conversations.
     fn note_terminal_title(&self, _title: &str) {}
+
+    /// The user skipped this question in the terminal. Codex writes nothing
+    /// to its log when ctrl+] skips an async question, but stops showing
+    /// it. Default: ignored.
+    fn note_question_skipped(&self, _question: &str) {}
 
     /// Load current stats from the platform's data source
     fn load_stats(&self, cwd: &str) -> Result<PlatformStats>;

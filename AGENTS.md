@@ -108,7 +108,7 @@ The application uses a **scroll region approach** to layer UI:
 - **config.rs**: `~/.crabigator/config.toml` loading/saving (platform, IDE, terminal preferences).
 - **terminal/**: Terminal handling - `pty.rs` manages the PTY via `portable-pty`, `input.rs` forwards keyboard input, `escape.rs` centralizes all ANSI escape sequences (add new sequences here rather than inline), `osc.rs`/`dsr.rs` handle terminal queries, `redraw.rs` manages repaints.
 - **git/**: Git state tracking via `git status --porcelain` and `git diff`.
-- **parsers/**: Language-specific diff parsers (Rust, TypeScript, Python, Swift, Objective-C, generic) that extract semantic information (functions, classes, nested scopes) from git diffs. `scope_walker.rs` attributes changes to nested scopes; `summary.rs` builds the changes summary; `permission_prompt.rs`, `question_prompt.rs` (Claude's AskUserQuestion pages: checkboxes, custom text, cursor row, and the "Review your answers" page, mirrored to the dashboard) `suggestion.rs` and `agent_panel.rs` (the subagent list under Claude's prompt footer: when it grows, crabigator repaints with a one-row resize nudge, since Ghostty can keep stale rows) parse assistant screen content.
+- **parsers/**: Language-specific diff parsers (Rust, TypeScript, Python, Swift, Objective-C, generic) that extract semantic information (functions, classes, nested scopes) from git diffs. `scope_walker.rs` attributes changes to nested scopes; `summary.rs` builds the changes summary; `permission_prompt.rs`, `question_prompt.rs` (Claude's AskUserQuestion pages: checkboxes, custom text, cursor row, and the "Review your answers" page, mirrored to the dashboard; also Grok's question card and Codex's question views, including async questions waiting behind "⇧← to answer", which a remote answer opens first) `suggestion.rs` and `agent_panel.rs` (the subagent list under Claude's prompt footer: when it grows, crabigator repaints with a one-row resize nudge, since Ghostty can keep stale rows) parse assistant screen content.
 - **platforms/**: Platform abstraction layer:
   - `claude_code/`: Claude Code hooks (`stats_hook.py`, `hook_script.rs`) and transcript parsing (writes to `~/.claude/crabigator/`)
   - `codex_cli/`: Codex CLI session log and transcript parsing (reads `~/.codex/sessions`)
@@ -142,7 +142,7 @@ This keeps module declarations visible at the top level rather than buried in su
 
 ### Input Handling
 
-- All keyboard input forwards directly to the PTY, except ctrl+] while the flow column (or its `flow off ⌃]` label) shows: it cycles through Random, each named scene, then Off. The choice is saved as `[flow] scene` and `[flow] enabled`, so new sessions start the same way (the byte, 0x1d, reads as ctrl+5 without the kitty protocol)
+- All keyboard input forwards directly to the PTY, except ctrl+] while the flow column (or its `flow off ⌃]` label) shows: it cycles through Random, each named scene, then Off. The choice is saved as `[flow] scene` and `[flow] enabled`, so new sessions start the same way (the byte, 0x1d, reads as ctrl+5 without the kitty protocol). When Codex's async questions are open, ctrl+] goes to Codex instead, where it skips a question
 - Option/Alt key combinations are properly encoded for word navigation (Option+Left/Right) and word deletion (Option+Backspace/Delete)
 - When the assistant CLI exits, Crabigator exits automatically
 

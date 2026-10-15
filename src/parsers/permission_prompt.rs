@@ -7,6 +7,8 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use super::question_prompt::{codex_question_view, codex_questions_waiting, CodexQuestionView};
+
 /// A question menu that Codex renders without a matching log event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexQuestionPrompt {
@@ -14,6 +16,10 @@ pub enum CodexQuestionPrompt {
     ExitPlan,
     /// Codex is showing a `request_user_input` question.
     Question,
+    /// Codex is showing its `request_user_input_async` questions.
+    AsyncQuestion,
+    /// Async questions wait behind the composer's "⇧← to answer" hint.
+    QuestionsWaiting,
 }
 
 /// Detect Codex question menus from the current terminal viewport.
@@ -32,15 +38,11 @@ pub fn detect_codex_question_prompt(screen_content: &str) -> Option<CodexQuestio
         return Some(CodexQuestionPrompt::ExitPlan);
     }
 
-    let shows_question_count = recent.lines().any(|line| {
-        let line = line.trim();
-        line.starts_with("Question ") && line.contains("unanswered")
-    });
-    if shows_question_count && recent.contains("enter to submit answer") {
-        return Some(CodexQuestionPrompt::Question);
+    match codex_question_view(&stripped) {
+        Some(CodexQuestionView::Sync) => Some(CodexQuestionPrompt::Question),
+        Some(CodexQuestionView::Async) => Some(CodexQuestionPrompt::AsyncQuestion),
+        None => codex_questions_waiting(&stripped).then_some(CodexQuestionPrompt::QuestionsWaiting),
     }
-
-    None
 }
 
 /// Check if the screen shows an interrupted/cancelled state
@@ -668,6 +670,60 @@ ctrl-g to edit
         assert_eq!(
             detect_codex_question_prompt(screen),
             Some(CodexQuestionPrompt::Question)
+        );
+    }
+
+    #[test]
+    fn detects_the_last_page_of_a_codex_question() {
+        let screen = r#"
+  Question 2/2 (1 unanswered)
+  Which cheese?
+
+  › 1. Mozzarella         Classic
+    2. Cheddar            Sharp
+    3. None of the above  Optionally, add details in notes (tab)
+
+  tab to add notes | enter to submit all | ←/→ to navigate questions | esc to interrupt
+"#;
+        assert_eq!(
+            detect_codex_question_prompt(screen),
+            Some(CodexQuestionPrompt::Question)
+        );
+    }
+
+    #[test]
+    fn detects_codex_async_questions_open_or_waiting() {
+        let open = r#"
+• Queued follow-up inputs
+
+  Which pizza sauce?
+
+  › 1. Tomato
+    2. Pesto
+    3. White
+    4. Other
+
+  enter submit   ⌃] skip   ⇧→ main prompt
+"#;
+        assert_eq!(
+            detect_codex_question_prompt(open),
+            Some(CodexQuestionPrompt::AsyncQuestion)
+        );
+
+        let waiting = r#"
+• Working (14s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+
+• Queued follow-up inputs
+  ? 1 question · 20s
+    ⇧← to answer
+
+› Ask Codex to do anything
+
+  GPT-6-Astra high · ~/scratch · Test request user input · ← for agents
+"#;
+        assert_eq!(
+            detect_codex_question_prompt(waiting),
+            Some(CodexQuestionPrompt::QuestionsWaiting)
         );
     }
 

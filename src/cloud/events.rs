@@ -982,7 +982,7 @@ impl SessionEventBuilder {
                             })
                             .collect(),
                         multi_select: q.multi_select,
-                        allows_other: true, // AskUserQuestion always allows "Other"
+                        allows_other: q.allows_other.unwrap_or(true),
                     })
                     .collect();
                 let page = QuestionPageState::from_screen(questions, question_screen);
@@ -1115,6 +1115,7 @@ mod question_page_tests {
                 header: Some("Crust".to_string()),
                 options: vec![option("Thin"), option("Thick"), option("Stuffed")],
                 multi_select: false,
+                allows_other: None,
             },
             Question {
                 question: "Which toppings do you want on the pizza?".to_string(),
@@ -1126,6 +1127,7 @@ mod question_page_tests {
                     option("Olives"),
                 ],
                 multi_select: true,
+                allows_other: None,
             },
         ]
     }
@@ -1222,6 +1224,7 @@ pizza?
             header: None,
             options: vec![option("Red"), option("Blue"), option("Green")],
             multi_select: false,
+            allows_other: None,
         }];
         let page = QuestionPageState::from_screen(&questions, Some(&screen));
         assert_eq!(page.current_question, Some(0));
@@ -1239,6 +1242,59 @@ pizza?
         assert_eq!(page.current_question, Some(1));
         assert_eq!(page.checked, vec![1, 3, 5]);
         assert_eq!(page.custom_text.as_deref(), Some("extra garlic"));
+    }
+
+    /// Codex's async view counts only the questions left, so a question is
+    /// found by its text; typed text replaces the "Other" row's label.
+    #[test]
+    fn mirrors_a_codex_async_page() {
+        let option = |label: &str| QuestionOption {
+            label: label.to_string(),
+            description: None,
+        };
+        let questions = vec![
+            Question {
+                question: "Which pizza size?".to_string(),
+                options: vec![option("Small"), option("Medium"), option("Large")],
+                ..Default::default()
+            },
+            Question {
+                question: "Any delivery notes?".to_string(),
+                ..Default::default()
+            },
+        ];
+        let size = "• Queued follow-up inputs\n\n  1 of 2\n  Which pizza size?\n\n    1. Small\n    2. Medium\n    3. Large\n  › 4. extra large\n\n  enter submit   ⌃] skip   ⇧→ main prompt   ⇧← next question\n";
+        let page = QuestionPageState::from_screen(&questions, QuestionScreen::parse(size).as_ref());
+        assert_eq!(page.current_question, Some(0));
+        assert_eq!(page.cursor_row, Some(4));
+        assert_eq!(page.custom_text.as_deref(), Some("extra large"));
+
+        // The first answer is on screen before its reply reaches the log.
+        let notes = "• Queued follow-up inputs\n\n  Any delivery notes?\n\n  Type your answer\n\n  enter submit   ⌃] skip   ⇧→ main prompt\n";
+        let page =
+            QuestionPageState::from_screen(&questions, QuestionScreen::parse(notes).as_ref());
+        assert_eq!(page.current_question, Some(1));
+        assert_eq!(page.cursor_row, Some(1));
+        assert_eq!(page.custom_text, None);
+    }
+
+    #[test]
+    fn hides_the_typed_answer_when_a_question_has_none() {
+        let event = SessionEventBuilder::prompt(
+            Some(&crate::platforms::ActivePrompt::Question {
+                questions: vec![Question {
+                    question: "Which crust?".to_string(),
+                    options: questions()[0].options.clone(),
+                    allows_other: Some(false),
+                    ..Default::default()
+                }],
+            }),
+            None,
+            None,
+            None,
+        );
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"allows_other\":false"), "{json}");
     }
 
     #[test]

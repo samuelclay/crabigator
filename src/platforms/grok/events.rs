@@ -382,6 +382,7 @@ impl EventState {
                     },
                 ],
                 multi_select: false,
+                allows_other: None,
             };
             self.set_question(
                 call_id,
@@ -492,6 +493,7 @@ fn parse_questions(update: &Value) -> Option<Vec<Question>> {
                     .or_else(|| q.get("multi_select"))
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                allows_other: None,
             })
         })
         .collect();

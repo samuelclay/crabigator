@@ -691,6 +691,11 @@ impl Platform for CodexPlatform {
         state.last_user_input = Some(SystemTime::now());
     }
 
+    fn note_question_skipped(&self, question: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        log_parser::skip_async_question(&mut state, question);
+    }
+
     fn note_terminal_title(&self, title: &str) {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.terminal_title.as_deref() != Some(title) {

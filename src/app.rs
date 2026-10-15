@@ -16,7 +16,9 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::interval;
 
 use crate::capture::{screen_to_string, CaptureConfig, CaptureManager, ScrollbackUpdate};
-use crate::cloud::{CloudClient, PairingSnapshot, PairingStatusResponse, SessionEventBuilder};
+use crate::cloud::{
+    CloudClient, KeyStep, PairingSnapshot, PairingStatusResponse, SessionEventBuilder,
+};
 use crate::config::Config;
 use crate::flow::FlowColumn;
 use crate::git::GitState;
@@ -84,6 +86,8 @@ fn cloud_key_bytes(key: &str) -> Option<&'static [u8]> {
         "escape" | "esc" => Some(b"\x1b"),
         "up" => Some(b"\x1b[A"),
         "option_up" | "alt_up" => Some(b"\x1b[1;3A"),
+        "shift_left" => Some(escape::key::SHIFT_LEFT),
+        "shift_right" => Some(escape::key::SHIFT_RIGHT),
         "down" => Some(b"\x1b[B"),
         "right" => Some(b"\x1b[C"),
         "left" => Some(b"\x1b[D"),
@@ -118,6 +122,46 @@ fn encode_remote_answer(text: &str, platform: PlatformKind) -> Vec<u8> {
         .concat(),
         PlatformKind::Claude | PlatformKind::Opencode => text.into_bytes(),
     }
+}
+
+/// How long Codex takes to open its waiting async questions after Shift+Left.
+const CODEX_QUESTIONS_OPEN_DELAY: Duration = Duration::from_millis(150);
+
+/// A remote answer that is only an option number, such as a `choose_option`
+/// call. Codex's question views pick an option with its digit key, but take
+/// a paste as typed text: the "Other" answer, or a note on the current row.
+fn codex_option_digit(text: &str) -> Option<u8> {
+    match text.trim().as_bytes() {
+        [digit @ b'1'..=b'9'] => Some(*digit),
+        _ => None,
+    }
+}
+
+/// Whether a remote key sequence answers a question rather than types into
+/// the terminal. Prompt panels send several steps or named keys; terminal
+/// keyboards and the PR board send each keystroke as one text step.
+fn answers_question(steps: &[KeyStep]) -> bool {
+    steps.len() > 1 || matches!(steps.first(), Some(KeyStep::Key { .. }))
+}
+
+/// Prompt panels answer a question that is not on screen as if its view
+/// opened on the first row: `down` n times, then `enter`, picks row n + 1.
+/// Codex reopens its async questions on the row the cursor last sat on,
+/// and its arrows wrap, so send the row's digit instead. A digit picks its
+/// row from anywhere, or moves onto the "Other" row for typing.
+fn codex_waiting_question_steps(steps: Vec<KeyStep>) -> Vec<KeyStep> {
+    let is_key = |step: &KeyStep, name: &str| matches!(step, KeyStep::Key { key } if key == name);
+    let downs = steps.iter().take_while(|step| is_key(step, "down")).count();
+    let picks = steps.get(downs).is_some_and(|step| is_key(step, "enter"));
+    if (downs == 0 && !picks) || downs >= 9 {
+        return steps;
+    }
+    let digit = KeyStep::Text {
+        text: (downs + 1).to_string(),
+    };
+    std::iter::once(digit)
+        .chain(steps.into_iter().skip(downs + usize::from(picks)))
+        .collect()
 }
 
 /// Result from background git refresh
@@ -239,8 +283,9 @@ pub struct App {
     cloud_stats_sent: bool,
     /// Whether we've sent a prompt event (to track clearing)
     last_cloud_prompt_sent: bool,
-    /// Whether the last prompt sent to cloud had active_prompt data (vs null/clearing)
-    last_cloud_active_prompt_was_some: bool,
+    /// The active prompt last sent to the cloud. Codex's async questions
+    /// change while the session stays in the question state.
+    last_cloud_active_prompt: Option<crate::platforms::ActivePrompt>,
     /// Number of options in last sent exit plan prompt (for re-sending when options appear)
     last_exit_plan_option_count: usize,
     /// Retry counter for exit plan prompt parsing (limits fallback sends)
@@ -248,6 +293,10 @@ pub struct App {
     /// The AskUserQuestion page last sent to the cloud, so page changes,
     /// checkbox toggles and the review page reach the dashboard once each
     last_question_screen: Option<crate::parsers::QuestionScreen>,
+    /// The Codex question menu on screen at the last capture. Remote
+    /// answers open waiting async questions first, and ctrl+] reaches
+    /// Codex's "skip" while its async questions are open.
+    codex_question_prompt: Option<crate::parsers::CodexQuestionPrompt>,
     /// Pairing state for mobile device linking
     pairing_state: PairingState,
     /// Automatic per-turn recap state
@@ -457,10 +506,11 @@ impl App {
             last_cloud_pr_slack_threads: Vec::new(),
             cloud_stats_sent: false,
             last_cloud_prompt_sent: false,
-            last_cloud_active_prompt_was_some: false,
+            last_cloud_active_prompt: None,
             last_exit_plan_option_count: 0,
             last_exit_plan_retry_count: 0,
             last_question_screen: None,
+            codex_question_prompt: None,
             pairing_state,
             recap_manager,
             pr_tracker,
@@ -1857,27 +1907,43 @@ impl App {
 
             // Codex's plan approval menu is terminal-only: no function call is
             // written to the rollout. Detect it from the current viewport. The
-            // request_user_input match is a fallback for log timing or schema
+            // question matches are a fallback for log timing or schema
             // changes; structured log data still wins when it is available.
             let codex_prompt = if self.platform.kind() == crate::platforms::PlatformKind::Codex {
                 crate::parsers::detect_codex_question_prompt(&screen)
             } else {
                 None
             };
+            self.codex_question_prompt = codex_prompt;
+            let screen_question_prompt = |view| {
+                let question =
+                    crate::parsers::QuestionScreen::parse(&screen)?.codex_question(view)?;
+                Some(crate::platforms::ActivePrompt::Question {
+                    questions: vec![question],
+                })
+            };
             let (screen_question, screen_active_prompt) = match codex_prompt {
                 Some(crate::parsers::CodexQuestionPrompt::ExitPlan) => {
                     (true, Some(crate::platforms::ActivePrompt::ExitPlan))
                 }
-                Some(crate::parsers::CodexQuestionPrompt::Question) => (true, None),
+                Some(crate::parsers::CodexQuestionPrompt::Question) => (
+                    true,
+                    screen_question_prompt(crate::parsers::CodexQuestionView::Sync),
+                ),
+                Some(crate::parsers::CodexQuestionPrompt::AsyncQuestion) => (
+                    true,
+                    screen_question_prompt(crate::parsers::CodexQuestionView::Async),
+                ),
+                Some(crate::parsers::CodexQuestionPrompt::QuestionsWaiting) => (true, None),
                 None => (false, None),
             };
             let screen_prompt_changed = self
                 .session_stats
                 .set_screen_question(screen_question, screen_active_prompt);
 
-            // Claude's AskUserQuestion dialog and Grok's question card turn
-            // pages and tick checkboxes without a hook event, so mirror the
-            // page on screen to the dashboard as it changes.
+            // Claude's AskUserQuestion dialog, Grok's question card and Codex's
+            // question views turn pages and move the cursor without a log
+            // event, so mirror the page on screen to the dashboard as it changes.
             let question_screen_changed = self.question_screen_open()
                 && crate::parsers::QuestionScreen::parse(&screen) != self.last_question_screen;
 
@@ -2158,9 +2224,8 @@ impl App {
         // 1. Prompt changes (catches rapid question→thinking→question cycles)
         // 2. Cloud state drift (catches screen override resurrection)
         if new_last_updated != old_last_updated && old_effective_state == new_effective_state {
-            // Check if active_prompt presence changed
-            let prompt_is_some = self.session_stats.active_prompt().is_some();
-            if prompt_is_some != self.last_cloud_active_prompt_was_some {
+            // Check if the active prompt changed
+            if self.session_stats.active_prompt() != self.last_cloud_active_prompt.as_ref() {
                 self.send_cloud_prompt_event();
             }
 
@@ -2243,6 +2308,23 @@ impl App {
         // protocol.
         let is_next_scene = key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5'));
+        // Codex's async question view uses ctrl+] to skip a question. Codex
+        // logs nothing for a skip, so name the skipped question here.
+        if is_next_scene
+            && self.codex_question_prompt
+                == Some(crate::parsers::CodexQuestionPrompt::AsyncQuestion)
+        {
+            let screen = screen_to_string(self.platform_pty.screen());
+            if let Some(crate::parsers::QuestionScreen::Page { question, .. }) =
+                crate::parsers::QuestionScreen::parse(&screen)
+            {
+                self.platform.note_question_skipped(&question);
+            }
+            self.platform.note_user_input();
+            self.platform_pty
+                .write(&[escape::key::CTRL_RIGHT_BRACKET])?;
+            return Ok(());
+        }
         if is_next_scene && self.flow.takes_key() {
             let scene = self.flow.next_scene();
             let _ = save_flow_selection(self.flow.is_on(), self.flow.selection());
@@ -2674,11 +2756,14 @@ impl App {
     }
 
     /// Whether the assistant is showing a question dialog we can read from
-    /// the screen (Claude's AskUserQuestion pages or Grok's question card).
+    /// the screen (Claude's AskUserQuestion pages, Grok's question card, or
+    /// Codex's question views).
     fn question_screen_open(&self) -> bool {
         matches!(
             self.platform.kind(),
-            crate::platforms::PlatformKind::Claude | crate::platforms::PlatformKind::Grok
+            crate::platforms::PlatformKind::Claude
+                | crate::platforms::PlatformKind::Grok
+                | crate::platforms::PlatformKind::Codex
         ) && matches!(
             self.session_stats.active_prompt(),
             Some(crate::platforms::ActivePrompt::Question { .. })
@@ -2798,10 +2883,6 @@ impl App {
             client.send_event(event);
         }
 
-        // Track whether we sent a prompt (for clearing later)
-        self.last_cloud_prompt_sent = active_prompt.is_some();
-        self.last_cloud_active_prompt_was_some = active_prompt.is_some();
-
         // Reset exit plan counters when leaving exit plan state
         if !matches!(
             active_prompt.as_ref(),
@@ -2810,6 +2891,10 @@ impl App {
             self.last_exit_plan_option_count = 0;
             self.last_exit_plan_retry_count = 0;
         }
+
+        // Track whether we sent a prompt (for clearing later)
+        self.last_cloud_prompt_sent = active_prompt.is_some();
+        self.last_cloud_active_prompt = active_prompt;
     }
 
     /// Send full scrollback and screen to cloud after (re)connection
@@ -2855,9 +2940,36 @@ impl App {
     fn check_cloud_commands(&mut self) -> Result<()> {
         let platform_kind = self.platform.kind();
         let ghostty_window_id = self.mirror_publisher.ghostty_window_id();
+        use crate::parsers::CodexQuestionPrompt;
+        // Codex keeps async questions under the composer until Shift+Left
+        // opens them. A remote answer to one opens them first. Codex's
+        // question views pick an option with its digit key.
+        let codex_question = self.codex_question_prompt;
+        let picks_by_digit = matches!(
+            codex_question,
+            Some(
+                CodexQuestionPrompt::Question
+                    | CodexQuestionPrompt::AsyncQuestion
+                    | CodexQuestionPrompt::QuestionsWaiting
+            )
+        );
+        let mut questions_waiting = codex_question == Some(CodexQuestionPrompt::QuestionsWaiting);
+        let open_questions = |pty: &mut PlatformPty, waiting: &mut bool| -> Result<()> {
+            if std::mem::take(waiting) {
+                pty.write(escape::key::SHIFT_LEFT)?;
+                std::thread::sleep(CODEX_QUESTIONS_OPEN_DELAY);
+            }
+            Ok(())
+        };
         if let Some(ref mut client) = self.cloud_client {
             // Handle incoming text answers
             while let Some(answer) = client.try_recv_answer() {
+                if let Some(digit) = codex_option_digit(&answer).filter(|_| picks_by_digit) {
+                    self.platform.note_user_input();
+                    open_questions(&mut self.platform_pty, &mut questions_waiting)?;
+                    self.platform_pty.write(&[digit])?;
+                    continue;
+                }
                 let bytes = encode_remote_answer(&answer, platform_kind);
                 if bytes.is_empty() {
                     continue;
@@ -2888,8 +3000,12 @@ impl App {
             }
 
             // Handle incoming key sequences (for Tab instructions)
-            while let Some(steps) = client.try_recv_key_sequence() {
+            while let Some(mut steps) = client.try_recv_key_sequence() {
                 self.platform.note_user_input();
+                if questions_waiting && answers_question(&steps) {
+                    open_questions(&mut self.platform_pty, &mut questions_waiting)?;
+                    steps = codex_waiting_question_steps(steps);
+                }
                 for step in steps {
                     match step {
                         crate::cloud::KeyStep::Key { key } => {
@@ -2909,6 +3025,10 @@ impl App {
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 }
             }
+        }
+        // Another Shift+Left before the next capture would skip a question.
+        if codex_question == Some(CodexQuestionPrompt::QuestionsWaiting) && !questions_waiting {
+            self.codex_question_prompt = Some(CodexQuestionPrompt::AsyncQuestion);
         }
         Ok(())
     }
@@ -3127,6 +3247,83 @@ mod tests {
         assert_eq!(cloud_key_bytes("option_up"), Some(&b"\x1b[1;3A"[..]));
         assert_eq!(cloud_key_bytes("alt_up"), Some(&b"\x1b[1;3A"[..]));
         assert_eq!(cloud_key_bytes("up"), Some(&b"\x1b[A"[..]));
+        assert_eq!(cloud_key_bytes("shift_left"), Some(&b"\x1b[1;2D"[..]));
         assert_eq!(cloud_key_bytes("not_a_key"), None);
+    }
+
+    fn key(name: &str) -> KeyStep {
+        KeyStep::Key {
+            key: name.to_string(),
+        }
+    }
+
+    fn text(value: &str) -> KeyStep {
+        KeyStep::Text {
+            text: value.to_string(),
+        }
+    }
+
+    fn step_names(steps: &[KeyStep]) -> Vec<String> {
+        steps
+            .iter()
+            .map(|step| match step {
+                KeyStep::Key { key } => format!("key:{key}"),
+                KeyStep::Text { text } => format!("text:{text}"),
+                KeyStep::Delay { ms } => format!("delay:{ms}"),
+            })
+            .collect()
+    }
+
+    /// Codex reopens its async questions on the last cursor row and wraps
+    /// its arrows, so a panel's moves from row 1 become the row's digit.
+    #[test]
+    fn answers_waiting_codex_questions_by_row_digit() {
+        let pick_third = codex_waiting_question_steps(vec![key("down"), key("down"), key("enter")]);
+        assert_eq!(step_names(&pick_third), ["text:3"]);
+        assert_eq!(
+            step_names(&codex_waiting_question_steps(vec![key("enter")])),
+            ["text:1"]
+        );
+
+        // The dashboard's typed answer: down to the Other row, then type.
+        let other = codex_waiting_question_steps(vec![
+            key("down"),
+            key("down"),
+            key("down"),
+            text("extra large"),
+            key("enter"),
+        ]);
+        assert_eq!(
+            step_names(&other),
+            ["text:4", "text:extra large", "key:enter"]
+        );
+
+        // The phone app already sends the Other row's digit.
+        let phone = vec![text("4"), text("extra large"), key("enter")];
+        assert_eq!(
+            step_names(&codex_waiting_question_steps(phone.clone())),
+            step_names(&phone)
+        );
+    }
+
+    #[test]
+    fn tells_question_answers_from_typing() {
+        assert!(answers_question(&[key("enter")]));
+        assert!(answers_question(&[
+            text("4"),
+            text("extra large"),
+            key("enter")
+        ]));
+        // Terminal keyboards and the PR board send one keystroke at a time.
+        assert!(!answers_question(&[text("2")]));
+        assert!(!answers_question(&[text("\x1b[1;2D")]));
+    }
+
+    #[test]
+    fn reads_bare_option_numbers_for_codex() {
+        assert_eq!(codex_option_digit(" 2\n"), Some(b'2'));
+        assert_eq!(codex_option_digit("0"), None);
+        assert_eq!(codex_option_digit("12"), None);
+        assert_eq!(codex_option_digit("2 more things"), None);
     }
 }
