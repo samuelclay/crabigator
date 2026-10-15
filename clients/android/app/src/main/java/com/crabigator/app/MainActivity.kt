@@ -214,8 +214,11 @@ class MainActivity : ComponentActivity() {
     var code by rememberSaveable { mutableStateOf("") }; var server by rememberSaveable { mutableStateOf(model.credentials.origin) }; var advanced by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(28.dp), contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Image(painterResource(R.drawable.ic_crabigator), contentDescription = "Crabigator", modifier = Modifier.size(64.dp))
-            Text("Crabigator", fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
+            // The crab is drawn at twice the wordmark's cell size, as in the brand lockup.
+            Column(Modifier.semantics(mergeDescendants = true) { heading() }, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Image(painterResource(R.drawable.ic_crabigator), contentDescription = "Crabigator", modifier = Modifier.size(64.dp))
+                Image(painterResource(R.drawable.ic_wordmark), contentDescription = null, modifier = Modifier.size(width = 293.dp, height = 30.67.dp))
+            }
             Surface(shape = RoundedCornerShape(16.dp), color = Panel) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("crabigator pair", fontFamily = FontFamily.Monospace, color = Mint, fontSize = 18.sp) } }
             OutlinedTextField(code, { code = it.uppercase().take(11) }, label = { Text("Pairing code") }, placeholder = { Text("ABC-DEF-GHI") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp))
             if (s.error != null) Text(s.error, color = MaterialTheme.colorScheme.error)

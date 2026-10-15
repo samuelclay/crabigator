@@ -339,6 +339,13 @@ export const promptJs = `
             return steps;
         }
 
+        // Claude's text row puts the caret at the start of its text when
+        // the arrows reach it, so jump to the end (Ctrl+E) before deleting
+        function clearTextSteps(existing) {
+            if (!existing) return [];
+            return [{ type: 'text', text: '\\u0005' }, ...backspaceSteps(existing)];
+        }
+
         // Digits type into the free-text row while the cursor sits on it,
         // so step off it before pressing one. Claude moves up; Grok leaves
         // edit mode with Escape. Records the move so later steps know
@@ -416,7 +423,7 @@ export const promptJs = `
                     steps.push(...moveSteps(cursor, textRow));
                     cursor = textRow;
                     if (existing !== text) {
-                        steps.push(...backspaceSteps(existing));
+                        steps.push(...clearTextSteps(existing));
                         steps.push({ type: 'text', text });
                         steps.push({ type: 'delay', ms: 50 });
                     } else if (!checked.has(textRow)) {
@@ -600,9 +607,15 @@ export const promptJs = `
                 steps.push({ type: 'text', text: 'z' });
                 steps.push(...backspaceSteps(prompt.custom_text));
             } else if (screenDriven) {
-                // The row's digit moves the cursor onto it; typing there fills it in
-                if (prompt.cursor_row !== textRow) steps.push({ type: 'text', text: String(textRow) });
-                steps.push(...backspaceSteps(prompt.custom_text));
+                // The row's digit moves the cursor onto an empty row, but on
+                // a row that holds text it sends that text, so walk there
+                if (prompt.custom_text) {
+                    const cursor = typeof prompt.cursor_row === 'number' ? prompt.cursor_row : 1;
+                    steps.push(...moveSteps(cursor, textRow));
+                } else if (prompt.cursor_row !== textRow) {
+                    steps.push({ type: 'text', text: String(textRow) });
+                }
+                steps.push(...clearTextSteps(prompt.custom_text));
             } else {
                 steps.push(...moveSteps(1, textRow));
             }

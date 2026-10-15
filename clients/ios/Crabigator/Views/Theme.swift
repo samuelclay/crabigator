@@ -144,6 +144,23 @@ extension View {
     func sessionTitleAlignment() -> some View { modifier(SessionTitleAlignment()) }
 }
 
+/// The crab above the pixel wordmark, as in the brand lockup. Each wordmark cell is
+/// a whole number of device pixels, and each crab cell is twice that, so both stay sharp.
+struct BrandHeader: View {
+    @Environment(\.displayScale) private var scale
+    var body: some View {
+        ViewThatFits(in: .horizontal) { lockup(pixels: 4); lockup(pixels: 3); lockup(pixels: 2); lockup(pixels: 1) }
+            .accessibilityElement(children: .ignore).accessibilityLabel("Crabigator").accessibilityAddTraits(.isHeader)
+    }
+    private func lockup(pixels: CGFloat) -> some View {
+        let cell = pixels / scale
+        return VStack(alignment: .leading, spacing: 12 * cell) {
+            Image("Crabigator").interpolation(.none).resizable().frame(width: 48 * cell, height: 48 * cell)
+            Image("Wordmark").interpolation(.none).resizable().frame(width: 220 * cell, height: 23 * cell)
+        }
+    }
+}
+
 /// A growing multi-line text box. Return on a hardware keyboard calls `onReturn`;
 /// Shift+Return and the on-screen keyboard's Return still add a line. SwiftUI's
 /// vertical TextField consumes a hardware Return before `onKeyPress` sees it.

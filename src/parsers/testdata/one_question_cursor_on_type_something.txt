@@ -1,0 +1,19 @@
+[38;5;246;48;5;237m❯ [38;5;231mCall AskUserQuestion immediately with exactly one question. header: Crust, multiSelect false, question: Which crust?,[39m [0m
+[48;5;237m  [38;5;231moptions: Thin (Crispy), Thick (Doughy), Stuffed (Cheese inside). After I answer, reply with only the exact answer [39m    [0m
+[48;5;237m  [38;5;231mlabel you received and nothing else. Do nothing else first.[39m                                                           [0m
+[38;5;246m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[38;5;16;48;5;153m ☐ Crust [0m
+[0m
+[38;5;231;1mWhich crust?[0m
+[0m
+  [38;5;246m1.[m Thin[0m
+[2C   [38;5;246mCrispy[0m
+ [C[38;5;246m2.[m Thick[0m
+[5C[38;5;246mDoughy[0m
+ [C[38;5;246m3.[C[mStuffed[0m
+[5C[38;5;246mCheese[Cinside[0m
+[38;5;153m❯[C[38;5;246m4.[C[39;2mType something.[0m
+[38;5;246m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[2C5.[CChat[Cabout[Cthis[0m
+[0m
+[38;5;246mEnter[Cto[Cselect[C·[C↑/↓[Cto[Cnavigate[C·[Cctrl+g[Cto edit in VS Code · Esc to cancel[0m

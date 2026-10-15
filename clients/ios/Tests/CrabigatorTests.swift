@@ -1,6 +1,7 @@
 import XCTest
 import UIKit
 import SwiftUI
+import UserNotifications
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
@@ -205,6 +206,18 @@ final class CrabigatorTests: XCTestCase {
         XCTAssertThrowsError(try PromptActions.action(prompt, option: 9))
         XCTAssertThrowsError(try PromptActions.action(["prompt_type": "text", "state": "permission"], text: "yes"))
     }
+    func testCustomAnswerReplacesTextAlreadyOnTheRow() throws {
+        let q: JSON = ["question": "Which crust?", "allows_other": true, "options": [["label": "Thin"], ["label": "Thick"], ["label": "Stuffed"]]]
+        let prompt: JSON = ["prompt_type": "question", "questions": [q], "current_question": 0, "cursor_row": 2]
+        func steps(_ p: JSON) throws -> [String] { try PromptActions.action(p, text: "extra crispy").body.array("steps").map { $0.text("key", $0.text("text", $0.text("type"))) } }
+        XCTAssertEqual(try steps(prompt), ["4", "extra crispy", "delay", "enter"])
+        // Pressing 4 would send "extra" at once, so walk there and delete it from its end.
+        var typed = prompt; typed["custom_text"] = "extra"
+        let replace = ["\u{5}"] + Array(repeating: "backspace", count: 5) + ["extra crispy", "delay", "enter"]
+        XCTAssertEqual(try steps(typed), ["down", "down"] + replace)
+        typed["cursor_row"] = 4
+        XCTAssertEqual(try steps(typed), replace)
+    }
     func testReviewAndPermissionNeverUseGenericFreeText() throws {
         let review: JSON = ["prompt_type": "question", "review": [:]]
         XCTAssertEqual(try PromptActions.action(review, option: 0).body.array("steps").first?.text("text"), "1")
@@ -257,5 +270,54 @@ final class CrabigatorTests: XCTestCase {
         XCTAssertEqual(content.userInfo["revision"] as? Int, 42)
         XCTAssertEqual(content.categoryIdentifier, "CRABIGATOR_PROMPT_0_0")
         XCTAssertEqual(content.threadIdentifier, "session")
+    }
+    func testNotificationBodyListsEveryChoiceAfterTheQuestion() {
+        let labels = ["Thin", "Thick", "Stuffed", "Deep dish", "Gluten free", "Cauliflower"]
+        let snapshot: JSON = ["prompt_revision": 3, "prompt": ["prompt_type": "question", "questions": [["question": "Which pizza crust?", "options": labels.map { ["label": $0] }]]]]
+        XCTAssertEqual(NotificationContent.content(snapshot, id: "s").body, "Which pizza crust?\n" + labels.joined(separator: " · "))
+    }
+    func testChoiceButtonsUseLabelsAndAnswerOnlyTheirOwnPrompt() throws {
+        let labels = (1...12).map { "Option \($0)" }
+        let prompt: JSON = ["prompt_type": "question", "questions": [["question": "Pick", "options": labels.map { ["label": $0] }, "allows_other": true]]]
+        let actions = NotificationContent.actions(prompt, id: "session", revision: 7)
+        XCTAssertEqual(actions.map(\.title), Array(labels.prefix(NotificationContent.actionLimit - 1)) + ["Reply"])
+        for (index, action) in actions.dropLast().enumerated() {
+            XCTAssertEqual(NotificationContent.choice(action.identifier, id: "session"), .init(option: index, revision: 7))
+            XCTAssertNil(NotificationContent.choice(action.identifier, id: "other"), "A reused category must not answer another session")
+        }
+        XCTAssertEqual(NotificationContent.choice(try XCTUnwrap(actions.last).identifier, id: "session"), .init(option: nil, revision: 7))
+        XCTAssertEqual(NotificationContent.choice("option_2", id: "session"), .init(option: 2, revision: nil))
+        XCTAssertNil(NotificationContent.choice(UNNotificationDefaultActionIdentifier, id: "session"))
+        var multi = prompt; multi["questions"] = [["question": "Pick", "options": [["label": "A"]], "multi_select": true, "allows_other": false]]
+        // One tap would only tick a box, and iOS only expands a notification with a regular button.
+        XCTAssertEqual(NotificationContent.actions(multi, id: "session", revision: 7).map(\.title), ["Open session"])
+        multi["questions"] = [["question": "Pick", "options": [["label": "A"]], "multi_select": true, "allows_other": true]]
+        XCTAssertEqual(NotificationContent.actions(multi, id: "session", revision: 7).map(\.title), ["Reply", "Open session"])
+    }
+    func testCategorySlotsAreNeverSharedBetweenSessions() {
+        var claims: [Int: NotificationContent.Claim] = [:]
+        let a = NotificationContent.claim("a", shown: [:], claims: claims, now: 100); claims = a.claims
+        let b = NotificationContent.claim("b", shown: [:], claims: claims, now: 101); claims = b.claims
+        XCTAssertNotEqual(a.slot, b.slot, "A slot claimed but not yet shown stays reserved")
+        XCTAssertEqual(NotificationContent.claim("a", shown: [b.slot!: "b"], claims: claims, now: 102).slot, a.slot)
+        let shown = Dictionary(uniqueKeysWithValues: (0..<NotificationContent.slotCount).map { ($0, "busy\($0)") })
+        XCTAssertNil(NotificationContent.claim("c", shown: shown, claims: [:], now: 103).slot)
+        XCTAssertEqual(NotificationContent.claim("c", shown: [:], claims: claims, now: 100 + NotificationContent.claimLifetime + 2).slot, 0, "Unshown claims expire")
+    }
+    func testContentExtensionListsEveryPromptCategory() throws {
+        let plugin = try XCTUnwrap(Bundle.main.builtInPlugInsURL?.appendingPathComponent("NotificationContentExtension.appex"))
+        let info = try XCTUnwrap(Bundle(url: plugin)?.infoDictionary?["NSExtension"] as? [String: Any])
+        let categories = (info["NSExtensionAttributes"] as? [String: Any])?["UNNotificationExtensionCategory"] as? [String]
+        XCTAssertEqual(Set(categories ?? []), Set(NotificationContent.extensionCategories))
+    }
+    func testMultiSelectSubmitTicksEveryChangedBoxThenSubmits() throws {
+        let q: JSON = ["question": "Toppings", "multi_select": true, "options": [["label": "A"], ["label": "B"], ["label": "C"]]]
+        let prompt: JSON = ["prompt_type": "question", "questions": [q], "cursor_row": 1, "checked": [2]]
+        let steps = try PromptActions.action(prompt, submit: true, toggling: [0, 1]).body.array("steps")
+        XCTAssertEqual(steps.map { $0.text("key", $0.text("text")) }, ["1", "2", "down", "down", "down", "down", "enter"])
+        var grok = prompt; grok["ui"] = "grok_card"
+        XCTAssertEqual(try PromptActions.action(grok, submit: true, toggling: [2]).body.array("steps").map { $0.text("key") }, ["down", "down", "space", "enter"])
+        var single = q; single["multi_select"] = false
+        XCTAssertThrowsError(try PromptActions.action(["prompt_type": "question", "questions": [single]], submit: true, toggling: [0]))
     }
 }

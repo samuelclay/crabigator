@@ -35,6 +35,24 @@
 //!   2. Cancel
 //! ```
 //!
+//! A call with one single-select question has no tab strip, only its
+//! header under the divider. Picking a row answers it, so it has no review
+//! page either:
+//!
+//! ```text
+//! ────────────────────────────────
+//!  ☐ Crust
+//! Which crust?
+//!   1. Thin
+//!      Crispy
+//! ❯ 2. Thick
+//!      Doughy
+//!   3. Type something.
+//! ────────────────────────────────
+//!   4. Chat about this
+//! Enter to select · ↑/↓ to navigate · Esc to cancel
+//! ```
+//!
 //! Grok's question card is parsed from the same `parse` entry. It uses radio
 //! `(○)`/`(●)`, checkboxes `[ ]`/`[x]`, a `z` free-text row, and a `[N/M]`
 //! footer instead of Claude's tab strip.
@@ -129,7 +147,9 @@ pub enum QuestionScreen {
         /// `Some(cursor_on_it)` when the page has a Submit (or Next) row,
         /// which multi-select pages show below "Type something".
         submit_row: Option<bool>,
-        /// 0-based page from Grok's `[N/M]` footer. Claude has no page numbers.
+        /// 0-based page from Grok's `[N/M]` footer and Codex's "Question
+        /// N/M" header, or 0 on Claude's one-question dialog. Claude's
+        /// tab strip has no page numbers.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         page_index: Option<usize>,
     },
@@ -148,9 +168,24 @@ fn is_tab_header(line: &str) -> bool {
     trimmed.starts_with('←') && trimmed.contains("✔ Submit")
 }
 
+/// The one-question dialog's header: a single `☐ Crust` chip right under
+/// the divider. A todo list also draws `☐` lines, so the divider matters.
+fn is_single_question_header(lines: &[&str], idx: usize) -> bool {
+    let trimmed = lines[idx].trim();
+    let is_chip = trimmed
+        .strip_prefix(['☐', '☒'])
+        .is_some_and(|label| label.starts_with(' ') && !label.trim().is_empty());
+    is_chip && !trimmed.contains('←') && idx > 0 && is_divider(lines[idx - 1])
+}
+
 fn is_divider(line: &str) -> bool {
     let trimmed = line.trim();
     !trimmed.is_empty() && trimmed.chars().all(|c| c == '─' || c == '━')
+}
+
+/// The dialog's key hints, its last line.
+fn is_footer(line: &str) -> bool {
+    line.trim().starts_with("Enter to select")
 }
 
 impl QuestionScreen {
@@ -362,13 +397,28 @@ fn parse_claude(screen_content: &str) -> Option<QuestionScreen> {
     let stripped = strip_ansi_codes(screen_content);
     let lines: Vec<&str> = stripped.lines().collect();
 
-    // The dialog is the last tab strip on screen; earlier ones are scrollback.
-    let header_idx = lines.iter().rposition(|line| is_tab_header(line))?;
+    // The dialog is the last header on screen; earlier ones are scrollback.
+    let (header_idx, single_question) = (0..lines.len()).rev().find_map(|i| {
+        if is_tab_header(lines[i]) {
+            Some((i, false))
+        } else {
+            is_single_question_header(&lines, i).then_some((i, true))
+        }
+    })?;
     let body: Vec<&str> = lines[header_idx + 1..]
         .iter()
         .take_while(|line| !line.trim().starts_with('━'))
         .copied()
         .collect();
+
+    if single_question {
+        // Without the tab strip, only the key hints below set the dialog
+        // apart from other `☐` lines.
+        if !body.iter().any(|line| is_footer(line)) {
+            return None;
+        }
+        return parse_page(&body, Some(0));
+    }
 
     if body.iter().any(|line| line.trim() == "Review your answers") {
         return Some(QuestionScreen::Review {
@@ -376,7 +426,7 @@ fn parse_claude(screen_content: &str) -> Option<QuestionScreen> {
         });
     }
 
-    parse_page(&body)
+    parse_page(&body, None)
 }
 
 /// Read the review page: `● question` lines, each followed by `→ answer`.
@@ -417,7 +467,7 @@ fn parse_review_answers(body: &[&str]) -> Vec<ReviewAnswer> {
     answers
 }
 
-fn parse_page(body: &[&str]) -> Option<QuestionScreen> {
+fn parse_page(body: &[&str], page_index: Option<usize>) -> Option<QuestionScreen> {
     let mut question_lines: Vec<&str> = Vec::new();
     let mut rows: Vec<ScreenRow> = Vec::new();
     let mut submit_row: Option<bool> = None;
@@ -425,7 +475,7 @@ fn parse_page(body: &[&str]) -> Option<QuestionScreen> {
     for line in body {
         let trimmed = line.trim();
         // The rows end at the divider above "Chat about this" and the footer.
-        if is_divider(line) || trimmed.starts_with("Enter to select") {
+        if is_divider(line) || is_footer(line) {
             break;
         }
         if let Some(caps) = row_regex().captures(line) {
@@ -460,7 +510,7 @@ fn parse_page(body: &[&str]) -> Option<QuestionScreen> {
         question: question_lines.join(" "),
         rows,
         submit_row,
-        page_index: None,
+        page_index,
     })
 }
 
@@ -753,6 +803,58 @@ Ready to submit your answers?
         assert_eq!(rows[3].label, "Type something.");
         assert!(rows[3].is_placeholder());
         assert_eq!(submit_row, None);
+    }
+
+    /// Real screens of a one-question dialog (Claude Code 2.1.301), with
+    /// the terminal's escape codes, after Down moved the cursor.
+    const ONE_QUESTION_ON_THIN: &str = include_str!("testdata/one_question_cursor_on_thin.txt");
+    const ONE_QUESTION_ON_THICK: &str = include_str!("testdata/one_question_cursor_on_thick.txt");
+    const ONE_QUESTION_ON_TYPE_SOMETHING: &str =
+        include_str!("testdata/one_question_cursor_on_type_something.txt");
+
+    #[test]
+    fn follows_the_cursor_on_a_one_question_dialog() {
+        for (screen, cursor_index) in [
+            (ONE_QUESTION_ON_THIN, 0),
+            (ONE_QUESTION_ON_THICK, 1),
+            (ONE_QUESTION_ON_TYPE_SOMETHING, 3),
+        ] {
+            let Some(QuestionScreen::Page {
+                question,
+                rows,
+                submit_row,
+                page_index,
+            }) = QuestionScreen::parse(screen)
+            else {
+                panic!(
+                    "expected a page with the cursor on row {}",
+                    cursor_index + 1
+                );
+            };
+            assert_eq!(question, "Which crust?");
+            assert_eq!(page_index, Some(0), "one question is always page 0");
+            assert_eq!(submit_row, None);
+            let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+            assert_eq!(labels, ["Thin", "Thick", "Stuffed", "Type something."]);
+            assert!(rows.iter().all(|r| r.checked.is_none()));
+            assert!(rows[3].is_placeholder());
+            let cursors: Vec<usize> = (0..rows.len()).filter(|&i| rows[i].cursor).collect();
+            assert_eq!(cursors, [cursor_index]);
+        }
+    }
+
+    #[test]
+    fn needs_the_key_hints_to_read_a_lone_header() {
+        // A todo list draws `☐` lines too, and a permission menu numbers its rows.
+        let todo = "\
+────────────────────────────────────────
+ ☐ Write the parser
+  1. Yes
+  2. No
+";
+        assert_eq!(QuestionScreen::parse(todo), None);
+        let without_divider = ONE_QUESTION_ON_THICK.replacen('─', "x", 1);
+        assert_eq!(QuestionScreen::parse(&without_divider), None);
     }
 
     #[test]

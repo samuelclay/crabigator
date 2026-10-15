@@ -7,7 +7,8 @@ import UserNotifications
     private var generation = 0
     private var dirty = Set<String>()
     private var tasks: [String: Task<Void, Never>] = [:]
-    func installCategories() async { UNUserNotificationCenter.current().setNotificationCategories(NotificationContent.categories()) }
+    // Keeps the per-prompt categories that delivered notifications still use.
+    func installCategories() async { await NotificationContent.register() }
     func requestPermission() async {
         do { _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]); UIApplication.shared.registerForRemoteNotifications(); await register() }
         catch { Credentials.defaults.set(error.localizedDescription, forKey: "pushError") }
@@ -69,7 +70,7 @@ import UserNotifications
         do {
             let snap = try await api.snapshot(id)
             guard epoch == generation, !Task.isCancelled else { return }
-            guard snap.bool("attention_pending"), snap.bool("desktop_connected") else { await NotificationContent.remove(id: id); return }
+            guard NotificationContent.answerable(snap) else { await NotificationContent.remove(id: id); return }
             let revision = snap.int("prompt_revision")
             let delivered = await UNUserNotificationCenter.current().deliveredNotifications()
             guard epoch == generation, !Task.isCancelled else { return }
@@ -84,16 +85,10 @@ import UserNotifications
     }
     func respond(_ response: UNNotificationResponse, id: String) async {
         let epoch = generation
+        guard let choice = NotificationContent.choice(response.actionIdentifier, id: id),
+              let revision = choice.revision ?? response.notification.request.content.userInfo["revision"] as? Int else { await reconcile(id: id); return }
         do {
-            let snap = try await api.snapshot(id)
-            guard epoch == generation else { return }
-            guard let revision = response.notification.request.content.userInfo["revision"] as? Int,
-                  snap.bool("attention_pending"), snap.bool("desktop_connected"), snap.int("prompt_revision") == revision else { await reconcile(id: id); return }
-            let prompt = snap["prompt"] as? JSON ?? ["prompt_type": "text", "state": snap.text("state")]
-            let text = (response as? UNTextInputNotificationResponse)?.userText
-            let option = response.actionIdentifier.hasPrefix("option_") ? Int(response.actionIdentifier.dropFirst(7)) : nil
-            let action = try PromptActions.action(prompt, option: option, text: text)
-            try await api.action(id, action, revision: revision)
+            try await PromptAnswer.send(id, revision: revision, option: choice.option, text: (response as? UNTextInputNotificationResponse)?.userText)
             guard epoch == generation else { return }
             await NotificationContent.remove(id: id); await reconcile(id: id)
         } catch {

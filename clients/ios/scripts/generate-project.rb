@@ -1,6 +1,19 @@
 #!/usr/bin/env ruby
 require 'xcodeproj'
 require 'fileutils'
+require 'digest'
+
+# Number objects in creation order instead of at random, so running this
+# script again produces the same project file.
+class Xcodeproj::Project
+  def generate_available_uuid_list(count = 100)
+    @uuid_seed ||= 0
+    new_uuids = (0..count).map { Digest::MD5.hexdigest("crabigator-#{@uuid_seed += 1}")[0, 24].upcase }
+    uniques = new_uuids - (@generated_uuids + uuids)
+    @generated_uuids += uniques
+    @available_uuids += uniques
+  end
+end
 root = File.expand_path('..', __dir__)
 project = Xcodeproj::Project.new(File.join(root, 'Crabigator.xcodeproj'))
 app = project.new_target(:application, 'Crabigator', :ios, '17.0')
@@ -8,7 +21,7 @@ extension = project.new_target(:app_extension, 'NotificationService', :ios, '17.
 tests = project.new_target(:unit_test_bundle, 'CrabigatorTests', :ios, '17.0')
 ui_tests = project.new_target(:ui_test_bundle, 'CrabigatorUITests', :ios, '17.0')
 shared = Dir[File.join(root, 'Crabigator/Shared/*.swift')]
-[app, extension, tests, ui_tests].each do |target|
+apply_base = lambda do |target|
   target.build_configurations.each do |config|
     config.build_settings.merge!({
       'SWIFT_VERSION' => '5.0', 'TARGETED_DEVICE_FAMILY' => '1,2',
@@ -22,6 +35,7 @@ shared = Dir[File.join(root, 'Crabigator/Shared/*.swift')]
     })
   end
 end
+[app, extension, tests, ui_tests].each(&apply_base)
 sources = Dir[File.join(root, 'Crabigator/**/*.swift')]
 references = {}
 (sources + Dir[File.join(root, 'NotificationService/*.swift')] + Dir[File.join(root, 'Tests/*.swift')] + Dir[File.join(root, 'UITests/*.swift')]).each do |file|
@@ -42,13 +56,6 @@ app.build_configurations.each do |c|
   c.build_settings['INFOPLIST_FILE'] = 'Crabigator/Resources/Info.plist'
   c.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Crabigator/Crabigator.entitlements'
 end
-extension.build_configurations.each do |c|
-  c.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'com.newsblur.crabigator.NotificationService'
-  c.build_settings['INFOPLIST_FILE'] = 'NotificationService/Info.plist'
-  c.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'NotificationService/NotificationService.entitlements'
-  c.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
-  c.build_settings['SKIP_INSTALL'] = 'YES'
-end
 [tests, ui_tests].each do |t|
   t.add_dependency(app)
   t.build_configurations.each do |c|
@@ -65,6 +72,26 @@ app.add_dependency(extension)
 phase = app.new_copy_files_build_phase('Embed App Extensions')
 phase.dst_subfolder_spec = '13'
 phase.add_file_reference(extension.product_reference).settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
+# The expanded notification view. It draws with the app's theme colors.
+content = project.new_target(:app_extension, 'NotificationContentExtension', :ios, '17.0')
+apply_base.call(content)
+content_files = Dir[File.join(root, 'NotificationContentExtension/*.swift')]
+content_files.each { |file| references[file] = project.main_group.new_file(file.delete_prefix(root + '/')) }
+theme = %w[Crabigator/Views/Theme.swift Crabigator/Terminal/TerminalText.swift].map { |f| File.join(root, f) }
+content.add_file_references((shared + theme + content_files).map { |f| references[f] })
+# iOS looks up the extension's context class here at launch; nothing in the code links it on its own.
+content.add_system_framework('UserNotificationsUI')
+[extension, content].each do |t|
+  t.build_configurations.each do |c|
+    c.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = "com.newsblur.crabigator.#{t.name}"
+    c.build_settings['INFOPLIST_FILE'] = "#{t.name}/Info.plist"
+    c.build_settings['CODE_SIGN_ENTITLEMENTS'] = "#{t.name}/#{t.name}.entitlements"
+    c.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
+    c.build_settings['SKIP_INSTALL'] = 'YES'
+  end
+end
+app.add_dependency(content)
+phase.add_file_reference(content.product_reference).settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
 project.root_object.attributes['TargetAttributes'] = { app.uuid => {'SystemCapabilities' => {'com.apple.Push' => {'enabled' => 1}, 'com.apple.ApplicationGroups.iOS' => {'enabled' => 1}}} }
 project.save
 scheme = Xcodeproj::XCScheme.new

@@ -30,7 +30,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     weak var model: SessionModel?
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
-        Task { @MainActor in await Notifications.shared.installCategories(); UIApplication.shared.registerForRemoteNotifications() }
+        Task { @MainActor in
+            await Notifications.shared.installCategories(); UIApplication.shared.registerForRemoteNotifications()
+            #if DEBUG
+            // Posts a prompt notification from a snapshot, or from a live session's
+            // current one, through the service extension's code, for device checks.
+            let env = ProcessInfo.processInfo.environment
+            var snapshot = env["CRABIGATOR_TEST_NOTIFICATION"].flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? JSON }
+            if let id = env["CRABIGATOR_TEST_NOTIFICATION_SESSION"] { snapshot = try? await API.shared.snapshot(id); snapshot?["id"] = id }
+            if let snapshot {
+                let id = snapshot.text("id", "fixture"), content = NotificationContent.content(snapshot, id: id)
+                await NotificationContent.install(content, prompt: NotificationContent.prompt(snapshot), id: id)
+                try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false)))
+            }
+            #endif
+        }
         return true
     }
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
@@ -52,7 +66,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         Task { @MainActor in
             defer { completionHandler() }
             guard let id = response.notification.request.content.userInfo["session_id"] as? String else { return }
-            if response.actionIdentifier == UNNotificationDefaultActionIdentifier { await model?.open(id); return }
+            if [UNNotificationDefaultActionIdentifier, NotificationContent.open].contains(response.actionIdentifier) { await model?.open(id); return }
             if response.actionIdentifier == UNNotificationDismissActionIdentifier { return }
             await Notifications.shared.respond(response, id: id)
         }
@@ -68,7 +82,7 @@ struct RootView: View {
         VStack(spacing: 0) {
             if let error = model.error { HStack { Text(error).font(.caption); Spacer(); Button("Dismiss") { model.error = nil } }.padding(10).background(Crab.red.opacity(0.25)) }
             if !model.paired {
-                ScrollView { VStack(alignment: .leading, spacing: 24) { Image("Crabigator").resizable().frame(width: 64, height: 64); Text("Crabigator").font(.largeTitle.weight(.semibold)); PairingFields(model: model) }.frame(maxWidth: 430).padding(28).frame(maxWidth: .infinity) }.defaultScrollAnchor(.center)
+                ScrollView { VStack(alignment: .leading, spacing: 24) { BrandHeader(); PairingFields(model: model) }.frame(maxWidth: 430).padding(28).frame(maxWidth: .infinity) }.defaultScrollAnchor(.center)
             } else {
                 GeometryReader { geometry in
                     let wide = geometry.size.width >= 720, width = wide ? geometry.size.width - 361 : geometry.size.width
