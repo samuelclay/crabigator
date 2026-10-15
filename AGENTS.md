@@ -142,7 +142,7 @@ This keeps module declarations visible at the top level rather than buried in su
 
 ### Input Handling
 
-- All keyboard input forwards directly to the PTY, except ctrl+] while the flow column (or its `flow off ⌃]` label) shows: it opens a keyboard picker for scenes, on/off, fade, manual level, time and hue. The picker consumes local keys and paste while open; Esc cancels its draft, Enter saves (on the scene row, Enter opens the scene list). Choices are saved in `[flow]`, so new sessions start the same way (the byte, 0x1d, reads as ctrl+5 without the kitty protocol)
+- All keyboard input forwards directly to the PTY, except ctrl+] while the flow column (or its off label) shows: it cycles Random → enabled scenes → Settings → Off → Random. Settings is a scrollable scene checklist: Space/Enter toggles a scene, unchecked scenes are excluded from Random and cycling, and the controls below edit on/off, fade, manual level, time and hue. Enter on Save applies the draft; End jumps to Save; Esc cancels; ctrl+] discards it and continues to Off. With no enabled scenes, Settings and Off remain reachable. The picker consumes local keys/paste. Preferences persist in `[flow]`; byte 0x1d reads as ctrl+5 without kitty.
 - Option/Alt key combinations are properly encoded for word navigation (Option+Left/Right) and word deletion (Option+Backspace/Delete)
 - When the assistant CLI exits, Crabigator exits automatically
 

@@ -2232,6 +2232,21 @@ impl App {
         Ok(())
     }
 
+    fn cycle_flow(&mut self) -> Result<()> {
+        if let Some(preferences) = self.flow.cycle_preferences() {
+            match save_flow_preferences(&preferences) {
+                Ok(preferences) => self.flow.apply_preferences(preferences),
+                Err(_) => {
+                    self.flow.open_picker();
+                    self.flow.picker_save_failed();
+                }
+            }
+        }
+        self.mirror_publisher.set_flow_scene(self.flow.scene());
+        self.last_status_bar_hash = None;
+        self.draw_status_bar()
+    }
+
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
         use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -2244,10 +2259,10 @@ impl App {
             && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5'));
         if self.flow.picker_open() {
             if flow_shortcut {
-                self.flow.close_picker();
+                return self.cycle_flow();
             } else if let Some(preferences) = self.flow.picker_key(key) {
                 match save_flow_preferences(&preferences) {
-                    Ok(()) => self.flow.apply_preferences(preferences),
+                    Ok(preferences) => self.flow.apply_preferences(preferences),
                     Err(_) => self.flow.picker_save_failed(),
                 }
             }
@@ -2257,10 +2272,7 @@ impl App {
             return Ok(());
         }
         if flow_shortcut && self.flow.takes_key() {
-            self.flow.open_picker();
-            self.last_status_bar_hash = None;
-            self.draw_status_bar()?;
-            return Ok(());
+            return self.cycle_flow();
         }
 
         self.platform.note_user_input();
@@ -3070,10 +3082,13 @@ impl TermSignals {
 
 /// Save the flow choice, so new sessions start the same way.
 /// A config that doesn't parse is left alone.
-fn save_flow_preferences(preferences: &crate::config::FlowPreferences) -> Result<()> {
+fn save_flow_preferences(
+    preferences: &crate::config::FlowPreferences,
+) -> Result<crate::config::FlowPreferences> {
     let mut config = Config::load()?;
-    config.flow = preferences.clone();
-    config.save()
+    config.flow = FlowColumn::normalize_preferences(preferences.clone());
+    config.save()?;
+    Ok(config.flow)
 }
 
 /// Alias a session path under one of the session's other identifiers, so a

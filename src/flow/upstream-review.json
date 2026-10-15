@@ -117,7 +117,7 @@
       ],
       "summary": "Adapt scene and settings selection to the terminal column",
       "status": "ported",
-      "reason": "User explicitly chose Ctrl+] opening the picker and manual activity, day/night and color controls. Preserve saved defaults/current-session application instead of importing plugin store/config reload semantics. User also explicitly selected recoloring for all four new scenes; natural retains their original colors.",
+      "reason": "User chose manual activity, day/night and color controls, plus recoloring for all four new scenes. After trying the picker toggle, the user requested Ctrl+] scene cycling and a checklist excluding unchecked scenes from both Random and cycling. Settings is included in the cycle; saved preferences retain current-session and future-session application.",
       "evidence": [
         "src/flow/picker.rs",
         "src/flow.rs",
@@ -129,7 +129,8 @@
       "verification": [
         "Real tmux 15x4 picker, scene list with all 4 new scenes, draft editing/cancel, local keys/paste intercepted, forwarding resumes, no alternate screen/mouse capture.",
         "Settings serialization roundtrip and off-picker/manual-wait tests.",
-        "All four new scenes render changed session/named colors at 15x4, 24x8 and 40x12; natural matches raw cells, waiting bypasses recoloring, and land/signals/combat colors retain their roles."
+        "All four new scenes render changed session/named colors at 15x4, 24x8 and 40x12; natural matches raw cells, waiting bypasses recoloring, and land/signals/combat colors retain their roles.",
+        "Checklist and cycling regressions cover all fourteen scenes, exclusions, disabled current/Random choices, empty checklist recovery, draft save/cancel, and 15x4 scrolling."
       ]
     },
     {

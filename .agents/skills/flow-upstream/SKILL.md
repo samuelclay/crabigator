@@ -31,7 +31,7 @@ Use these dispositions:
 - **Defer**: useful but outside this batch; record the reason and when to revisit.
 - **Needs decision**: product behavior, visual preference, or scope is unclear.
 
-Existing exclusions normally cover sound playback, Claude/pi/opencode plugin installation and panes, and the `/flow` command grammar. Crabigator now has its own Ctrl+] scene/settings picker; inspect upstream settings and waiting fixes for equivalent Rust behavior. They do not exclude shared scene or activity changes just because those shipped in the same commit. Preserve Crabigator's small column, session hue accents, Random claims, saved named scenes, the Ctrl+] picker, fade and manual level/time/hue preferences, and per-assistant event sources. The picker replaces the old immediate-cycle shortcut by the user's choice.
+Existing exclusions normally cover sound playback, Claude/pi/opencode plugin installation and panes, and the `/flow` command grammar. Crabigator has a Settings checklist in its Ctrl+] cycle; inspect upstream settings and waiting fixes for equivalent Rust behavior. They do not exclude shared scene or activity changes just because those shipped in the same commit. Preserve Crabigator's small column, session hue accents, Random claims, saved named scenes, Ctrl+] cycling, scene exclusions, fade and manual level/time/hue preferences, and per-assistant event sources. The user restored Ctrl+] cycling after trying the picker toggle: cycle Random, enabled scenes, Settings, Off. The Settings checklist excludes unchecked scenes from both Random and cycling; keep draft save/cancel behavior and allow all scenes to be unchecked without trapping the user outside Settings.
 
 ## Interview about the uncertain choices
 

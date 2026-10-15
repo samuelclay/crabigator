@@ -19,7 +19,7 @@ use super::WidgetArea;
 /// separator above it.
 #[derive(Clone, Copy, Debug)]
 pub enum FlowView<'a> {
-    /// The frame's rows, under the scene's name and the key that opens settings.
+    /// The frame's rows, under the scene's name and the key that cycles scenes.
     Scene {
         rows: &'a [String],
         scene: &'a str,
@@ -29,7 +29,7 @@ pub enum FlowView<'a> {
     Off,
 }
 
-/// The key that opens the picker, as the label shows it.
+/// The key that cycles scenes, Settings and Off, as the label shows it.
 pub const NEXT_SCENE_KEY: &str = "⌃]";
 
 /// The label over the column: ` surf  ⌃] `, with `⤨ ` before the scene name

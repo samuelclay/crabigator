@@ -64,6 +64,9 @@ pub struct FlowPreferences {
     /// scene follows the work as flow's plugin does by default.
     #[serde(default)]
     pub fade: bool,
+    /// Scenes excluded from Random and shortcut cycling. Missing means all scenes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_scenes: Vec<String>,
     /// None follows activity; 0..10 holds a manual level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub level: Option<u8>,
@@ -81,6 +84,7 @@ impl Default for FlowPreferences {
             scene: default_flow_scene(),
             enabled: true,
             fade: false,
+            disabled_scenes: Vec::new(),
             level: None,
             night: None,
             color: default_flow_color(),
@@ -311,6 +315,11 @@ mod tests {
         assert_eq!(back.flow.level, Some(7));
         assert_eq!(back.flow.night, Some(true));
         assert_eq!(back.flow.color, "violet");
+        let mut config = config;
+        config.flow.disabled_scenes = vec!["doom".into(), "doom3d".into()];
+        let saved = toml::to_string(&config).unwrap();
+        let back: Config = toml::from_str(&saved).unwrap();
+        assert_eq!(back.flow.disabled_scenes, ["doom", "doom3d"]);
     }
 
     #[test]
