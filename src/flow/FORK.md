@@ -15,17 +15,21 @@ flow keeps evolving. This log records which upstream commit the port matches, so
 
 ## How to carry an upstream change over
 
+Use the repository skill [flow-upstream](../../.agents/skills/flow-upstream/SKILL.md) for recurring reviews and selective ports. It inventories the upstream delta, reuses recorded decisions, asks about unclear product choices, and verifies selected Rust ports. Review progress and deferred decisions live in `src/flow/upstream-review.json` when a review is recorded; they do not advance this log's port baseline.
+
 1. Update the flow checkout and list what's new since the commit above:
    ```sh
-   git -C ../flow fetch && git -C ../flow log --oneline e70a702..origin/main -- hooks/
+   git -C ../flow fetch upstream
+   git -C ../flow log --oneline e70a702..upstream/main
    ```
+   `origin` is the custom fork; `upstream` must be `robdmac/flow`. Inspect all changed paths, then the relevant patches. Keep the custom TypeScript fork maintained separately; pin the exact reference revision used for a Rust port.
 2. For each commit, decide whether it applies (see *What isn't ported* below), then port the change into the matching Rust file (see the map).
-3. Re-record the reference frames from the updated checkout, and run the tests. Every scene must match.
+3. Re-record the selected scenes' reference frames from a pinned checkout that includes their retained custom behavior, and run the tests. Every scene must match its recorded reference.
    ```sh
-   make flow-reference FLOW_DIR=../flow
+   make flow-reference FLOW_DIR=/absolute/pinned/flow SCENES=surf,ski
    cargo test flow::
    ```
-   A scene whose frames no longer match means the port is behind (or wrong). Never edit the JSON by hand.
+   For a complete port, omit `SCENES` to record every scene. Do not replace untouched scenes' fixtures with a revision that has not been ported. A scene whose frames no longer match means the port is behind (or wrong). Never edit the JSON by hand. Record the reference SHA for each batch.
 4. Add a row to the log below. Move *Synced to* forward once every commit up to it is ported or marked not applicable.
 
 ## Map

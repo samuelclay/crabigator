@@ -1,0 +1,4 @@
+interface:
+  display_name: "Flow Upstream"
+  short_description: "Review and port upstream Flow changes into Rust"
+  default_prompt: "Use $flow-upstream to review new Flow changes, ask me about unclear choices, and port the selected changes into Crabigator."

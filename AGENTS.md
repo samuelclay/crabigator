@@ -435,6 +435,8 @@ Nothing on the startup path may wait on the network. Cloud registration, the pai
 
 ## Code Quality
 
+For recurring Flow upstream reviews and Rust ports, use [flow-upstream](.agents/skills/flow-upstream/SKILL.md). It builds on `src/flow/FORK.md`, records porting decisions, and interviews the user about ambiguous changes.
+
 After completing code changes, use the code-simplifier agent to clean up the code:
 
 ```
