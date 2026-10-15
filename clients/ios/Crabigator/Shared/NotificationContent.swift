@@ -193,11 +193,12 @@ final class SerialWork {
     private let lock = NSLock()
     private var last: Task<Void, Never>?
     func run(_ work: @escaping () async -> Void) async {
-        lock.lock()
-        let previous = last
-        let task = Task { await previous?.value; await work() }
-        last = task
-        lock.unlock()
+        let task = lock.withLock {
+            let previous = last
+            let task = Task { await previous?.value; await work() }
+            last = task
+            return task
+        }
         await task.value
     }
 }
