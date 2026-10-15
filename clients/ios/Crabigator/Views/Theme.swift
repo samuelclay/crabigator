@@ -143,3 +143,86 @@ private struct SessionTitleAlignment: ViewModifier {
 extension View {
     func sessionTitleAlignment() -> some View { modifier(SessionTitleAlignment()) }
 }
+
+/// A growing multi-line text box. Return on a hardware keyboard calls `onReturn`;
+/// Shift+Return and the on-screen keyboard's Return still add a line. SwiftUI's
+/// vertical TextField consumes a hardware Return before `onKeyPress` sees it.
+struct MessageField: View {
+    var placeholder: String
+    @Binding var text: String
+    @Binding var focused: Bool
+    var maxLines = 6
+    var onReturn: () -> Void
+    var body: some View {
+        ReturnTextField(placeholder: placeholder, text: $text, focused: $focused, maxLines: maxLines, onReturn: onReturn)
+            .overlay(alignment: .topLeading) { if text.isEmpty { Text(placeholder).foregroundStyle(Color(uiColor: .placeholderText)).allowsHitTesting(false).accessibilityHidden(true) } }
+    }
+}
+private struct ReturnTextField: UIViewRepresentable {
+    var placeholder: String
+    @Binding var text: String
+    @Binding var focused: Bool
+    var maxLines: Int
+    var onReturn: () -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> ReturnTextView {
+        let view = ReturnTextView()
+        view.delegate = context.coordinator
+        view.font = .preferredFont(forTextStyle: .body); view.adjustsFontForContentSizeCategory = true
+        view.backgroundColor = .clear; view.textColor = .label
+        view.textContainerInset = .zero; view.textContainer.lineFragmentPadding = 0
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.accessibilityLabel = placeholder; view.accessibilityIdentifier = placeholder
+        return view
+    }
+    func updateUIView(_ view: ReturnTextView, context: Context) {
+        context.coordinator.parent = self
+        view.onReturn = onReturn
+        if view.text != text { view.text = text }
+        if focused != view.isFirstResponder {
+            DispatchQueue.main.async { _ = focused ? view.becomeFirstResponder() : view.resignFirstResponder() }
+        }
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView view: ReturnTextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
+        // Beyond its line limit or the offered height (a landscape keyboard leaves little), it scrolls.
+        let line = ceil(view.font?.lineHeight ?? 22), limit = line * CGFloat(maxLines)
+        let height = ceil(view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+        return CGSize(width: width, height: max(line, min(height, limit, proposal.height ?? .infinity)))
+    }
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: ReturnTextField
+        init(_ parent: ReturnTextField) { self.parent = parent }
+        func textViewDidChange(_ view: UITextView) { parent.text = view.text; view.invalidateIntrinsicContentSize() }
+        func textViewDidBeginEditing(_ view: UITextView) { if !parent.focused { parent.focused = true } }
+        func textViewDidEndEditing(_ view: UITextView) { if parent.focused { parent.focused = false } }
+    }
+}
+final class ReturnTextView: UITextView {
+    var onReturn: (() -> Void)?
+    /// The Return press taken for sending. Only its own release is withheld: the
+    /// text system must see every other press end, or Shift can stay held.
+    private var taken: UIPress?
+    // Only presses carry the key; a UIKeyCommand for Return never fires in a text view.
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if let press = presses.first, presses.count == 1, onReturn != nil, let key = press.key,
+           [.keyboardReturnOrEnter, .keypadEnter].contains(key.keyCode),
+           key.modifierFlags.isDisjoint(with: [.shift, .alternate, .command, .control]) {
+            taken = press; onReturn?()
+        } else { super.pressesBegan(presses, with: event) }
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = release(presses); if !rest.isEmpty { super.pressesEnded(rest, with: event) }
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = release(presses); if !rest.isEmpty { super.pressesCancelled(rest, with: event) }
+    }
+    override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let rest = presses.filter { $0 !== taken }; if !rest.isEmpty { super.pressesChanged(rest, with: event) }
+    }
+    private func release(_ presses: Set<UIPress>) -> Set<UIPress> {
+        guard let taken, presses.contains(taken) else { return presses }
+        self.taken = nil
+        return presses.filter { $0 !== taken }
+    }
+}

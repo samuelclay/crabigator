@@ -7,9 +7,10 @@ struct SessionComposer: View {
     @State private var draft = ""
     @State private var keys = false
     @StateObject private var voice = VoiceRecorder()
-    @FocusState private var focused: Bool
+    @State private var focused = false
     @Environment(\.scenePhase) private var phase
     var enabled: Bool { active && stream.connected && !stream.sending && !voice.processing }
+    var blank: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var body: some View {
         VStack(spacing: 0) {
             Divider()
@@ -36,8 +37,8 @@ struct SessionComposer: View {
                     IconButton(icon: "mic", label: "Record voice", enabled: enabled) { focused = false; keys = false; Task { await voice.start() } }
                     IconButton(icon: "keyboard", label: "Terminal keys", selected: keys) { focused = false; keys.toggle() }
                         .popover(isPresented: $keys, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) { TerminalKeyboard(codex: stream.selected?.platform == "codex", enabled: enabled) { bytes in stream.send(TerminalAction(route: "key-sequence", body: ["steps": [["type": "text", "text": bytes]]])) }.nativePopover() }
-                    TextField("Message", text: $draft, axis: .vertical).lineLimit(1...6).focused($focused).padding(.horizontal, 12).padding(.vertical, 11).frame(minHeight: 44).overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.2))).accessibilityIdentifier("Message")
-                    if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { IconButton(icon: "arrow.up", label: "Send", selected: true, enabled: enabled) { send() }.transition(.opacity.combined(with: .scale)) }
+                    MessageField(placeholder: "Message", text: $draft, focused: $focused) { if enabled && !blank { send() } }.padding(.horizontal, 12).padding(.vertical, 11).frame(minHeight: 44).overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.2)))
+                    if !blank { IconButton(icon: "arrow.up", label: "Send", selected: true, enabled: enabled) { send() }.transition(.opacity.combined(with: .scale)) }
                 }
             }.padding(8)
         }.background(Crab.ink).animation(.easeInOut(duration: 0.18), value: draft.isEmpty)
