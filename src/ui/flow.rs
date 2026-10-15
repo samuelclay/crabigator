@@ -32,15 +32,15 @@ pub enum FlowView<'a> {
 /// The key that rotates the scene, as the label shows it.
 pub const NEXT_SCENE_KEY: &str = "⌃]";
 
-/// The label over the column: ` surf ⌃] `, with `⤨` after the scene name
-/// for Random; just the key when the name won't fit, or ` flow off ⌃] `.
+/// The label over the column: ` surf  ⌃] `, with `⤨ ` before the scene name
+/// for Random; just the key when the name won't fit, or ` flow off  ⌃] `.
 pub fn flow_label(view: FlowView, width: u16) -> String {
     let (scene, random) = match view {
         FlowView::Scene { scene, random, .. } => (scene, random),
         FlowView::Off => ("flow off", false),
     };
-    let marker = if random { "⤨" } else { "" };
-    let full = format!(" {scene}{marker} {NEXT_SCENE_KEY} ");
+    let marker = if random { "⤨ " } else { "" };
+    let full = format!(" {marker}{scene}  {NEXT_SCENE_KEY} ");
     if full.chars().count() + 1 <= usize::from(width) {
         full
     } else {
@@ -181,11 +181,11 @@ mod tests {
             scene,
             random,
         };
-        assert_eq!(flow_label(scene("surf", false), 18), " surf ⌃] ");
-        assert_eq!(flow_label(scene("engine", true), 15), " engine⤨ ⌃] ");
-        assert_eq!(flow_label(scene("starship", true), 15), " starship⤨ ⌃] ");
+        assert_eq!(flow_label(scene("surf", false), 18), " surf  ⌃] ");
+        assert_eq!(flow_label(scene("engine", true), 15), " ⤨ engine  ⌃] ");
+        assert_eq!(flow_label(scene("starship", true), 17), " ⤨ starship  ⌃] ");
         assert_eq!(flow_label(scene("starship", false), 12), " ⌃] ");
-        assert_eq!(flow_label(FlowView::Off, 15), " flow off ⌃] ");
+        assert_eq!(flow_label(FlowView::Off, 15), " flow off  ⌃] ");
     }
 
     #[test]
