@@ -33,3 +33,6 @@ workers/crabigator-api/.dev.vars
 
 # NPM vendor binaries (populated by CI)
 npm/vendor/
+
+# Local feature worktrees
+/.worktrees/

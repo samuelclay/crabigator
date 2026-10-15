@@ -449,6 +449,12 @@ The code simplifier will:
 - Simplify overly complex patterns
 - Preserve all functionality
 
+## Checkout and Worktrees
+
+Prefer working in `~/projects/crabigator` so the user can run and try the changes there. A feature branch in that checkout is fine. Preserve existing edits and reconcile overlapping changes instead of leaving the finished work only in a separate checkout.
+
+When isolation is necessary, create worktrees under this repository's `.worktrees/` directory (for example, `.worktrees/flow-upstream`), never as sibling project directories. `.worktrees/` is gitignored. At handoff, state where the runnable changes are and how to try them.
+
 ## Commit Practices
 
 Commit messages follow the ISO 24495-1 plain language rules above: plain-words imperative subject, most important information first, body explains why.
