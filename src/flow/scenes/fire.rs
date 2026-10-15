@@ -12,10 +12,12 @@
 use std::sync::OnceLock;
 
 use crate::flow::cells::{Cells, Rng};
+use crate::flow::crew::{failed, Crew, Mate};
 use crate::flow::js::{fround, i32_of, round};
 use crate::flow::palette::SceneHue;
-use crate::flow::pixels::{mix, BRAILLE};
+use crate::flow::pixels::{hash1, lower_block, mix, ramp_at, smooth, BRAILLE};
 use crate::flow::scene::{Dials, Scene, SceneDef, Tint};
+use crate::flow::waiting::{breath, ease_wait, wait_tone};
 
 pub const DEF: SceneDef = SceneDef {
     name: "fire",
@@ -237,8 +239,9 @@ pub struct AsciiFire {
     pub h: usize,
     pub cells: Vec<u8>,
     pub strength: f64,
-    /// Extra % of the base row lit (subagents widen the fire).
-    pub coverage_boost: f64,
+    gain: Vec<f32>,
+    cover: Vec<f32>,
+    shut: Vec<u8>,
     pub peak: u32,
     t: f64,
     // One burner per column (Float32Array / Uint16Array in flow).
@@ -257,7 +260,9 @@ impl AsciiFire {
             h: 0,
             cells: Vec::new(),
             strength: 8.0,
-            coverage_boost: 0.0,
+            gain: Vec::new(),
+            cover: Vec::new(),
+            shut: Vec::new(),
             peak: 1,
             t: 0.0,
             rank: Vec::new(),
@@ -290,6 +295,9 @@ impl AsciiFire {
         self.level = vec![0.0; w];
         self.rate = vec![0.0; w];
         self.life = vec![0; w];
+        self.gain = vec![1.0; w];
+        self.cover = vec![-1.0; w];
+        self.shut = vec![0; w];
         for x in 0..w {
             self.reroll(x);
             // Stagger first lives so the burners never re-roll in lockstep.
@@ -310,11 +318,13 @@ impl AsciiFire {
             return;
         }
         let (peak, base_seed) = params(self.strength);
-        let seed_pct = if peak == 0 {
-            0.0
-        } else {
-            (f64::from(base_seed) + self.coverage_boost).min(100.0)
-        };
+        let seed_pct = if peak == 0 { 0.0 } else { f64::from(base_seed) };
+        if peak > 0 && peak < self.peak {
+            let k = f64::from(peak) / f64::from(self.peak);
+            for c in &mut self.cells {
+                *c = round(f64::from(*c) * k) as u8;
+            }
+        }
         self.peak = peak.max(1);
         if peak == 0 {
             self.cells.fill(0);
@@ -330,7 +340,12 @@ impl AsciiFire {
             } else {
                 self.life[x] -= 1;
             }
-            let is_lit = f64::from(self.rank[x]) * 100.0 < seed_pct;
+            let is_lit = f64::from(self.rank[x]) * 100.0
+                < if self.cover[x] < 0.0 {
+                    seed_pct
+                } else {
+                    f64::from(self.cover[x])
+                };
             let goal = if is_lit {
                 f64::from(self.target[x])
             } else {
@@ -349,7 +364,16 @@ impl AsciiFire {
             }
             let v = (peak_f - self.base_dip(x, span) - f64::from(self.rng.int() % 3))
                 .max((peak_f / 2.0).floor());
-            self.cells[bottom + x] = round(v * f64::from(self.level[x])).max(1.0) as u8;
+            let g = if self.shut[x] != 0 {
+                0.0
+            } else {
+                f64::from(self.gain[x])
+            };
+            self.cells[bottom + x] = if g <= 0.0 {
+                0
+            } else {
+                round(v * f64::from(self.level[x]) * g).max(1.0) as u8
+            };
         }
         // Propagate upward with random cooling and wind drift; rising into a
         // headroom row cools harder, so only the tallest get there.
@@ -384,8 +408,11 @@ impl AsciiFire {
                     } + extra;
                     let nx = x as i64 + (1 - i64::from(self.rng.int() % 3));
                     if nx >= 0 && (nx as usize) < w {
-                        self.cells[(y - 1) * w + nx as usize] =
-                            u32::from(p).saturating_sub(cool) as u8;
+                        self.cells[(y - 1) * w + nx as usize] = if self.shut[nx as usize] != 0 {
+                            0
+                        } else {
+                            u32::from(p).saturating_sub(cool) as u8
+                        };
                     }
                 }
             }
@@ -415,6 +442,12 @@ const FAINTEST: f64 = 0.1;
 
 pub struct Ember {
     dials: Dials,
+    crew: Crew,
+    owner: Vec<i8>,
+    flame_at: Vec<f32>,
+    span: [f32; 12],
+    puffed: std::collections::HashSet<String>,
+    k_wait: f64,
     core: AsciiFire,
     rng: Rng,
     /// The heat softened: blurred over five columns, eased across frames.
@@ -433,6 +466,12 @@ impl Ember {
     pub fn new(seed: f64) -> Self {
         Self {
             dials: Dials::default(),
+            crew: Crew::new(6, 30.0, 48.0),
+            owner: Vec::new(),
+            flame_at: Vec::new(),
+            span: [0.0; 12],
+            puffed: Default::default(),
+            k_wait: 0.0,
             core: AsciiFire::new(seed),
             rng: Rng::new(f64::from(i32_of(seed) ^ 0x27d4_eb2f)),
             soft: Vec::new(),
@@ -467,6 +506,8 @@ impl Scene for Ember {
         self.spark = vec![0.0; n];
         self.smoke = vec![0.0; n];
         self.sparks.clear();
+        self.owner = vec![-1; columns];
+        self.flame_at = vec![1.0; columns];
     }
 
     fn step(&mut self) {
@@ -475,9 +516,13 @@ impl Scene for Ember {
             return;
         }
         self.core.strength = self.dials.strength;
-        self.core.coverage_boost = self.dials.coverage_boost;
+        self.crew.room = self.crew_room();
+        self.crew
+            .update(&self.dials.agents, self.dials.coverage_boost);
+        self.layout();
         self.core.step();
         self.t += 1.0;
+        self.k_wait = ease_wait(self.k_wait, self.dials.waiting);
         let peak = f64::from(self.core.peak.max(1));
         let cells = &self.core.cells;
         for y in 0..h {
@@ -579,7 +624,18 @@ impl Scene for Ember {
             let r = f64::from(self.core.cells[i]) / peak;
             if r >= FAINTEST {
                 let smooth = ((r + f64::from(self.soft[i])) * 0.55).min(1.0);
-                let fg = mix(color_for(s, r, tint), heat_color(s, smooth, tint), 0.5);
+                let owner = self.owner[i % w];
+                let mate = if owner >= 0 {
+                    self.crew.in_slot(owner as usize)
+                } else {
+                    None
+                };
+                let ramp = if self.k_wait > 0.5 { s.max(5.0) } else { s };
+                let fg = if failed(mate) {
+                    heat_color(s, r.min(0.98) * SMOKE_TIPS, Tint::Smoke)
+                } else {
+                    mix(color_for(ramp, r, tint), heat_color(s, smooth, tint), 0.5)
+                };
                 self.out.set_fg(i, glyph_for(r), fg);
             } else if self.bits[i] != 0 {
                 let fg = if self.spark[i] > 0.0 {
@@ -596,7 +652,237 @@ impl Scene for Ember {
                 self.out.blank(i);
             }
         }
+        if self.k_wait > 0.0 && s > 0.0 {
+            self.draw_coals();
+        }
+        if s > 0.0 {
+            self.draw_crew();
+        }
+        wait_tone(&mut self.out, self.k_wait, self.t, 0.0, None);
         &self.out
+    }
+}
+
+const COALS: [u32; 6] = [0x3a0a04, 0x781806, 0xb8320c, 0xe85a18, 0xff8c2a, 0xffbe58];
+const PULSE: [u32; 6] = [0x4a1206, 0x9a2a0a, 0xe85a18, 0xffa83a, 0xffd878, 0xfff2c0];
+const SHY: f64 = 4.999 / 5.0;
+impl Ember {
+    fn crew_size(&self) -> (f64, f64) {
+        let w = self.columns as f64;
+        if self.rows > 8 {
+            (round(w * 0.2).max(3.0), 2.0)
+        } else {
+            (round((w * 0.07).clamp(6.0, 14.0)), 3.0)
+        }
+    }
+    fn crew_room(&self) -> usize {
+        if self.rows > 8 {
+            if self.columns >= 20 {
+                2
+            } else if self.columns >= 13 {
+                1
+            } else {
+                0
+            }
+        } else {
+            let (f, g) = self.crew_size();
+            ((self.columns as f64 * 0.6 / (f + g)).floor() as usize).min(6)
+        }
+    }
+    fn flame(m: &Mate) -> f64 {
+        smooth(if failed(Some(m)) {
+            ((m.p - 0.75) / 0.25).clamp(0.0, 1.0)
+        } else {
+            ((m.p - 0.35) / 0.65).clamp(0.0, 1.0)
+        })
+    }
+    fn layout(&mut self) {
+        let w = self.columns;
+        self.owner.fill(-1);
+        self.flame_at.fill(1.0);
+        let (fire, gap) = self.crew_size();
+        let mut left = 0.0;
+        let mut right = 0.0;
+        for slot in 0..6 {
+            let Some(m) = self.crew.in_slot(slot).cloned() else {
+                continue;
+            };
+            let o = smooth((m.p * 2.0).clamp(0.0, 1.0));
+            let g = gap * o;
+            let f = fire * o;
+            let (a, b, ga) = if slot % 2 == 0 {
+                let b = w as f64 - right;
+                let a = b - f;
+                right += g + f;
+                (a, b, a - g)
+            } else {
+                let a = left;
+                let b = left + f;
+                left += g + f;
+                (a, b, b)
+            };
+            self.span[slot * 2] = a as f32;
+            self.span[slot * 2 + 1] = b as f32;
+            let lit = Self::flame(&m);
+            for x in 0..w {
+                let c = x as f64 + 0.5;
+                if c >= a && c < b {
+                    self.owner[x] = slot as i8;
+                    self.flame_at[x] = lit as f32;
+                } else if c >= ga && c < ga + g {
+                    self.owner[x] = -2;
+                    self.flame_at[x] = 0.0;
+                }
+            }
+            if !m.leaving
+                && lit > 0.0
+                && lit < 0.9
+                && self.dials.strength > 0.0
+                && self.rng.f() < 0.3
+            {
+                self.sparks.push(Spark {
+                    x: (a + self.rng.f() * (b - a)) * 2.0,
+                    y: (self.rows - 1) as f64 * 4.0 + 2.0,
+                    vy: 0.25 + 0.2 * self.rng.f(),
+                    heat: 0.75 + 0.2 * self.rng.f(),
+                    cool: 0.03 + 0.02 * self.rng.f(),
+                    phase: self.rng.f() * PHASE_SPAN,
+                });
+            }
+            if m.leaving
+                && !self.puffed.contains(&m.id)
+                && (!m.ok || lit < 0.15)
+                && self.dials.strength > 0.0
+            {
+                self.puffed.insert(m.id.clone());
+                self.puff(a, b, if m.ok { 6 } else { 12 });
+            }
+        }
+        self.puffed
+            .retain(|id| self.crew.mates.iter().any(|m| &m.id == id));
+        let dense = (params(self.dials.strength).1 + 40).min(100) as f64;
+        for x in 0..w {
+            match self.owner[x] {
+                -1 => {
+                    self.core.gain[x] = 1.0;
+                    self.core.cover[x] = -1.0;
+                    self.core.shut[x] = 0;
+                }
+                -2 => {
+                    self.core.gain[x] = 0.0;
+                    self.core.cover[x] = 0.0;
+                    self.core.shut[x] = 1;
+                }
+                o => {
+                    let m = self.crew.in_slot(o as usize).unwrap();
+                    let lit = f64::from(self.flame_at[x]);
+                    self.core.gain[x] = (lit * (0.35 + (0.75 - 0.35) * m.busy)) as f32;
+                    self.core.cover[x] = (dense * lit * (0.75 + 0.25 * m.busy)) as f32;
+                    self.core.shut[x] = 0;
+                }
+            }
+        }
+    }
+    fn puff(&mut self, a: f64, b: f64, n: usize) {
+        let h = self.rows as f64;
+        let reach = if self.rows > 8 {
+            round(h * 0.25).max(2.0)
+        } else {
+            2.0
+        };
+        for _ in 0..n {
+            self.sparks.push(Spark {
+                x: (a + self.rng.f() * (b - a).max(1.0)) * 2.0,
+                y: (h - 1.0 - self.rng.f() * reach) * 4.0 + 3.0,
+                vy: 0.12 + 0.14 * self.rng.f(),
+                heat: SMOKE_AT * (0.8 + 0.18 * self.rng.f()),
+                cool: 0.016 + 0.012 * self.rng.f(),
+                phase: self.rng.f() * PHASE_SPAN,
+            });
+        }
+    }
+    fn draw_coals(&mut self) {
+        let w = self.columns;
+        let h = self.rows;
+        let b = breath(self.t);
+        let peak = f64::from(self.core.peak.max(1));
+        let tall = h > 8;
+        for x in 0..w {
+            let xf = x as f64;
+            if hash1(xf * 31.0 + 7.0) >= self.k_wait {
+                continue;
+            }
+            let o = self.owner[x];
+            if self.flame_at[x] < 0.3
+                || (o >= 0 && self.crew.in_slot(o as usize).is_some_and(|m| m.waiting))
+            {
+                continue;
+            }
+            let i = (h - 1) * w + x;
+            if f64::from(self.core.cells[i]) / peak >= 0.6 {
+                continue;
+            }
+            let own = 0.45
+                + 0.4 * hash1(xf * 131.0 + 3.0)
+                + 0.15 * hash1(xf * 977.0 + f64::from(i32_of(self.t) >> 3));
+            let heat = own * (0.4 + 0.6 * b);
+            let fg = ramp_at(&COALS, (round(heat.min(1.0) * 20.0) / 20.0) * SHY);
+            self.out.set_fg(
+                i,
+                if tall {
+                    0x2588
+                } else {
+                    lower_block(4.0 + (hash1(xf * 17.0 + 1.0) * 5.0).floor())
+                },
+                fg,
+            );
+            if tall
+                && hash1(xf * 53.0 + 11.0) < 0.7
+                && f64::from(self.core.cells[i - w]) / peak < 0.45
+            {
+                self.out.set_fg(
+                    i - w,
+                    lower_block(1.0 + (hash1(xf * 59.0 + 5.0) * 4.0).floor()),
+                    mix(COALS[0], fg, 0.75),
+                );
+            }
+        }
+    }
+    fn draw_crew(&mut self) {
+        let w = self.columns;
+        let h = self.rows;
+        let tall = h > 8;
+        for m in &self.crew.mates {
+            let x0 = round(f64::from(self.span[m.slot * 2])).max(0.0) as usize;
+            let x1 = (round(f64::from(self.span[m.slot * 2 + 1])) as usize).min(w);
+            if m.waiting && !m.leaving {
+                let k = Self::flame(m);
+                let pulse = 0.5 - 0.5 * ((self.t % 14.0 / 14.0) * 2.0 * std::f64::consts::PI).cos();
+                for x in x0..x1 {
+                    let own =
+                        0.8 + 0.2 * hash1(x as f64 * 131.0 + 3.0 + f64::from(i32_of(self.t) >> 2));
+                    let fg = ramp_at(
+                        &PULSE,
+                        (round((own * k * (0.45 + 0.55 * pulse)).clamp(0.0, 1.0) * 15.0) / 15.0)
+                            * SHY,
+                    );
+                    let i = (h - 1) * w + x;
+                    self.out.set_fg(
+                        i,
+                        if tall {
+                            0x2588
+                        } else {
+                            lower_block(3.0 + round(pulse * 5.0))
+                        },
+                        fg,
+                    );
+                    if tall && pulse > 0.25 {
+                        self.out
+                            .set_fg(i - w, lower_block(1.0 + round(pulse * 6.0)), fg);
+                    }
+                }
+            }
+        }
     }
 }
 

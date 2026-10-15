@@ -22,9 +22,11 @@
 
 use crate::flow::cells::{Cells, Rng};
 use crate::flow::js::{i32_of, round};
+use crate::flow::night::ease_night;
 use crate::flow::palette::SceneHue;
 use crate::flow::pixels::{clamp, clamp01, hash1, mix, BRAILLE};
 use crate::flow::scene::{Dials, Scene, SceneDef, Tint};
+use crate::flow::waiting::{ease_wait, wait_tone, SEPIA_AMOUNT};
 
 pub const DEF: SceneDef = SceneDef {
     name: "bubbles",
@@ -192,6 +194,7 @@ pub struct Bubbles {
     k_cold: f64,
     /// Night, eased; -1 until the first step, which starts it as asked.
     k_night: f64,
+    k_wait: f64,
 
     bubbles: Vec<Bubble>,
     streams: Vec<Stream>,
@@ -218,6 +221,7 @@ impl Bubbles {
             k_murk: 0.0,
             k_cold: 0.0,
             k_night: -1.0,
+            k_wait: 0.0,
             bubbles: Vec::new(),
             streams: Vec::new(),
             drops: Vec::new(),
@@ -238,7 +242,7 @@ impl Bubbles {
 
     /// Rise speed now: a tall spine's column is deeper, so bubbles cross it a bit quicker.
     fn rise(&self) -> f64 {
-        self.at(&RISE) * (self.h() / 20.0).max(1.0).powf(0.35)
+        self.at(&RISE) * (self.h() / 20.0).max(1.0).powf(0.35) * (1.0 - 0.4 * self.k_wait)
     }
 
     /// The level's table value, read between whole levels.
@@ -537,10 +541,8 @@ impl Scene for Bubbles {
             0.05,
         );
         self.k_cold += clamp(on(self.dials.tint == Tint::Blue) - self.k_cold, -0.04, 0.04);
-        if self.k_night < 0.0 {
-            self.k_night = on(self.dials.night);
-        }
-        self.k_night += clamp(on(self.dials.night) - self.k_night, -0.04, 0.04);
+        self.k_wait = ease_wait(self.k_wait, self.dials.waiting);
+        self.k_night = ease_night(self.k_night, self.dials.night);
         if self.fresh {
             // Begin mid-fizz, not with an empty glass: run the column full once.
             self.fresh = false;
@@ -706,6 +708,7 @@ impl Scene for Bubbles {
             };
             self.out.set(i, 0x2800 | u32::from(bits), fg, bg);
         }
+        wait_tone(&mut self.out, self.k_wait, self.t, SEPIA_AMOUNT, None);
         &self.out
     }
 }

@@ -180,6 +180,26 @@ pub struct PermissionDetails {
     pub suggestions: Vec<PermissionSuggestion>,
 }
 
+/// One native child agent's current activity for Flow companions.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlatformAgent {
+    pub id: String,
+    pub state: PlatformAgentState,
+    pub ok: bool,
+    pub kind: String,
+    pub task: String,
+    pub ms: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlatformAgentState {
+    Working,
+    Idle,
+    Waiting,
+    Done,
+}
+
 /// Statistics collected from a platform's hook system
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PlatformStats {
@@ -191,6 +211,9 @@ pub struct PlatformStats {
     pub completions: u32,
     /// Number of subagent task completions
     pub subagent_messages: u32,
+    /// Native child agents, in the order their current runs started.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flow_agents: Vec<PlatformAgent>,
     /// Number of context compressions
     pub compressions: u32,
     /// Tool usage counts by tool name

@@ -3,11 +3,12 @@
 //! pace; the skiers weave toward and away from you, their tracks trailing
 //! across the slope's face.
 
+use crate::flow::crew::{finished, resting};
 use crate::flow::js::{i32_of, max, min, round};
 use crate::flow::night::moon_pixel;
 use crate::flow::pixels::{clamp, hash_murmur as hash, mix};
 
-use super::{noise, Ski, View, B_CARVE, B_DOWN, B_SKI, B_STAND, B_TUCK, POLE, SPEED, TRK};
+use super::{noise, Ski, View, B_CARVE, B_DOWN, B_SKI, B_STAND, B_TUCK, B_WAVE, POLE, SPEED, TRK};
 
 impl Ski {
     pub(super) fn draw_band(&mut self) {
@@ -131,12 +132,12 @@ impl Ski {
         self.draw_kicker(kick2 - cam);
 
         // Tracks across the face, then the skiers (back to front by depth), then the snow they throw.
-        let n = self.extras();
-        for i in 0..=n {
+        let on = self.on_slope();
+        for &i in &on {
             self.band_track(i, face_h);
         }
         self.draw_particles(View::Band { cam });
-        let mut order: Vec<usize> = (0..=n).collect();
+        let mut order = on;
         order.sort_by(|&a, &b| {
             let (a, b) = (self.skiers[a].lat, self.skiers[b].lat);
             a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal)
@@ -210,9 +211,11 @@ impl Ski {
             self.sprite(&B_DOWN, x, fy, kit, 0.0);
             return;
         }
-        let fast = self.v > SPEED[8] * 0.92;
-        let standing = self.v < 0.12 || (hero && self.fall == 2);
-        let mut spr = if standing {
+        let fast = self.v > SPEED[8] * 0.92 || finished(self.mate_of(i));
+        let standing = self.v < 0.12 || (hero && self.fall == 2) || resting(self.mate_of(i));
+        let mut spr = if self.waving(self.mate_of(i)) {
+            &B_WAVE
+        } else if standing {
             &B_STAND
         } else if fast {
             &B_TUCK

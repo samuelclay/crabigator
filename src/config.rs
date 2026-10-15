@@ -55,8 +55,8 @@ pub struct FlowPreferences {
     /// A named scene, or "random" to choose one for each session.
     #[serde(default = "default_flow_scene")]
     pub scene: String,
-    /// Whether the flow column shows. Missing means it does. ctrl+] saves
-    /// it: off after the last scene, and on again.
+    /// Whether the Flow column shows. Missing means it does. The Ctrl+]
+    /// picker saves this choice and keeps its shortcut available while off.
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// Whether each change of state (a turn starting or ending, a permission
@@ -64,6 +64,15 @@ pub struct FlowPreferences {
     /// scene follows the work as flow's plugin does by default.
     #[serde(default)]
     pub fade: bool,
+    /// None follows activity; 0..10 holds a manual level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<u8>,
+    /// None follows the local clock; true is night, false is day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub night: Option<bool>,
+    /// Session mark, natural colors, or a named hue.
+    #[serde(default = "default_flow_color")]
+    pub color: String,
 }
 
 impl Default for FlowPreferences {
@@ -72,8 +81,15 @@ impl Default for FlowPreferences {
             scene: default_flow_scene(),
             enabled: true,
             fade: false,
+            level: None,
+            night: None,
+            color: default_flow_color(),
         }
     }
+}
+
+fn default_flow_color() -> String {
+    "session".to_string()
 }
 
 fn default_flow_scene() -> String {
@@ -286,6 +302,15 @@ mod tests {
         let saved = toml::to_string(&config).unwrap();
         let back: Config = toml::from_str(&saved).unwrap();
         assert!(!back.flow.enabled && back.flow.fade);
+        let config: Config = toml::from_str(
+            "[flow]\nscene = \"train\"\nlevel = 7\nnight = true\ncolor = \"violet\"\n",
+        )
+        .unwrap();
+        let saved = toml::to_string(&config).unwrap();
+        let back: Config = toml::from_str(&saved).unwrap();
+        assert_eq!(back.flow.level, Some(7));
+        assert_eq!(back.flow.night, Some(true));
+        assert_eq!(back.flow.color, "violet");
     }
 
     #[test]

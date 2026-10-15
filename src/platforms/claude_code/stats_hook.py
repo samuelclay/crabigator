@@ -103,6 +103,8 @@ def activity_entry(event: str, data: dict) -> dict:
     """One activity log line: the event and a few small fields about it, never
     a tool's input or the streamed text itself."""
     entry = {"ts": round(time.time(), 3), "ev": event}
+    if data.get("is_interrupt"):
+        entry["interrupt"] = True
     if data.get("agent_id"):
         entry["agent"] = data["agent_id"]
     effort = data.get("effort")
@@ -112,6 +114,12 @@ def activity_entry(event: str, data: dict) -> dict:
         entry["tool"] = data["tool_name"]
     if data.get("tool_use_id"):
         entry["id"] = data["tool_use_id"]
+
+    if event in ("PreToolUse", "PermissionRequest") and isinstance(data.get("tool_input"), dict):
+        # PermissionRequest may omit tool_use_id. Match concurrent calls without
+        # retaining their commands, paths, or question contents in the log.
+        encoded = json.dumps(data["tool_input"], sort_keys=True, separators=(",", ":")).encode()
+        entry["fingerprint"] = hashlib.sha256(encoded).hexdigest()
 
     if event == "PreToolUse":
         lines = lines_written(data.get("tool_name", ""), data.get("tool_input"))

@@ -217,6 +217,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn new_scene_hues_keep_land_signals_and_combat_colors_distinct() {
+        for name in ["train", "earthrise"] {
+            let def = crate::flow::scene::scene_def(name).unwrap();
+            let mut palette = Palette::toward(def.hue, Some(305.0));
+            assert_ne!(palette.color(0x3f88d6), 0x3f88d6, "{name} blue changes");
+            for color in [0x6fae4c, 0xff3030, 0x808080, 0xffffff, DEFAULT_COLOR] {
+                assert_eq!(palette.color(color), color, "{name} preserves {color:06x}");
+            }
+        }
+        for name in ["doom", "doom3d"] {
+            let def = crate::flow::scene::scene_def(name).unwrap();
+            let mut palette = Palette::toward(def.hue, Some(305.0));
+            assert_ne!(palette.color(0x70563a), 0x70563a, "{name} wall changes");
+            for color in [
+                0x6a0808,
+                0xd82818,
+                0x2048a8,
+                0x36a01c,
+                0x808080,
+                DEFAULT_COLOR,
+            ] {
+                assert_eq!(palette.color(color), color, "{name} preserves {color:06x}");
+            }
+        }
+    }
+
+    #[test]
     fn oklab_round_trips_and_a_turn_lands_on_the_hue() {
         for c in [0xff6a00, 0x3355ff, 0x22aa55, 0x9b30ff, 0xd04020] {
             let [l, a, b] = oklab(c);

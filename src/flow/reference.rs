@@ -23,12 +23,14 @@ struct Case {
     frames: Vec<String>,
 }
 
-#[derive(Deserialize, Default, Clone, Copy)]
+#[derive(Deserialize, Default, Clone)]
 struct Dials {
     level: Option<f64>,
     tint: Option<TintName>,
     night: Option<bool>,
     coverage: Option<f64>,
+    waiting: Option<bool>,
+    agents: Option<Vec<super::agents::AgentDial>>,
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -49,6 +51,8 @@ pub fn check(json: &str, max_mismatch: f64) {
     for (case_index, case) in reference.cases.iter().enumerate() {
         let mut scene = (def.make)(case.seed);
         let (mut level, mut tint, mut night, mut coverage) = (8.0, Tint::Normal, false, 0.0);
+        let mut waiting = false;
+        let mut agents = Vec::new();
         let last = *case.snaps.iter().max().unwrap();
         let mut frames = case.frames.iter();
         for n in 1..=last {
@@ -57,6 +61,10 @@ pub fn check(json: &str, max_mismatch: f64) {
                     level = d.level.unwrap_or(level);
                     night = d.night.unwrap_or(night);
                     coverage = d.coverage.unwrap_or(coverage);
+                    waiting = d.waiting.unwrap_or(waiting);
+                    if let Some(list) = &d.agents {
+                        agents.clone_from(list);
+                    }
                     tint = match d.tint {
                         Some(TintName::Normal) => Tint::Normal,
                         Some(TintName::Smoke) => Tint::Smoke,
@@ -67,6 +75,8 @@ pub fn check(json: &str, max_mismatch: f64) {
             }
             let dials = scene.dials();
             dials.strength = level;
+            dials.waiting = waiting;
+            dials.agents.clone_from(&agents);
             dials.tint = tint;
             dials.night = night;
             dials.coverage_boost = coverage;

@@ -17,9 +17,8 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 
 use super::activity::Activity;
+use super::agents::{AgentDial, AgentState};
 
-/// The tools flow hears as reading (flow's `READ_TOOLS`).
-const READ_TOOLS: &[&str] = &["Read", "Grep", "Glob", "LSP", "WebFetch", "WebSearch"];
 /// A subagent or a tool call silent this long is gone (its stop was missed:
 /// the session was interrupted, or the hook didn't run).
 const SILENT: Duration = Duration::from_secs(600);
@@ -43,6 +42,10 @@ struct Line {
     /// Characters of streamed text.
     chars: Option<f64>,
     source: Option<String>,
+    fingerprint: Option<String>,
+    agent_type: Option<String>,
+    error: Option<serde_json::Value>,
+    reason: Option<String>,
 }
 
 /// A tool call started and not yet finished.
@@ -52,6 +55,16 @@ struct Call {
     since: Instant,
     /// The person was asked to allow it: its finishing is a change of state too.
     asked: bool,
+    fingerprint: Option<String>,
+}
+
+struct Agent {
+    id: String,
+    kind: String,
+    started: Instant,
+    seen: Instant,
+    ended: Option<Instant>,
+    ok: bool,
 }
 
 /// The activity log, read as it grows, and what it says is going on.
@@ -62,7 +75,8 @@ pub struct HookFeed {
     partial: Vec<u8>,
     calls: HashMap<String, Call>,
     /// Running subagents, and when each last said anything.
-    agents: HashMap<String, Instant>,
+    agents: Vec<Agent>,
+    elicitations: HashMap<Option<String>, (u32, Instant)>,
     /// The log has said something: it, not the stats, tells the work.
     pub live: bool,
     /// The main loop's events have told the effort: the screen's banner is no
@@ -82,7 +96,8 @@ impl HookFeed {
             offset,
             partial: Vec::new(),
             calls: HashMap::new(),
-            agents: HashMap::new(),
+            agents: Vec::new(),
+            elicitations: HashMap::new(),
             live: false,
             knows_effort: false,
             streamed_at: None,
@@ -98,12 +113,55 @@ impl HookFeed {
                 self.hear(&line, activity, now);
             }
         }
-        self.agents
-            .retain(|_, seen| now.duration_since(*seen) < SILENT);
+        self.agents.retain(|a| {
+            a.ended.map_or(now.duration_since(a.seen) < SILENT, |end| {
+                now.duration_since(end) < Duration::from_secs(6)
+            })
+        });
         self.calls
             .retain(|_, call| now.duration_since(call.since) < SILENT);
-        activity.running_agents = self.agents.len() as u32;
+        self.elicitations
+            .retain(|_, (_, since)| now.duration_since(*since) < SILENT);
+        activity.running_agents = self.agents.iter().filter(|a| a.ended.is_none()).count() as u32;
         activity.tools_in_flight = self.calls.len() as u32;
+        let waiting = self.calls.values().any(|c| c.asked) || !self.elicitations.is_empty();
+        if activity.hook_waiting != waiting {
+            activity.changed();
+        }
+        activity.hook_waiting = waiting;
+        activity.agents = self
+            .agents
+            .iter()
+            .map(|a| {
+                let (has_call, asked) = self
+                    .calls
+                    .values()
+                    .filter(|c| c.agent.as_deref() == Some(&a.id))
+                    .fold((false, false), |(_, asked), c| (true, asked || c.asked));
+                let state = if a.ended.is_some() {
+                    AgentState::Done
+                } else if asked || self.elicitations.contains_key(&Some(a.id.clone())) {
+                    AgentState::Waiting
+                } else if has_call || now.duration_since(a.seen) < Duration::from_secs(20) {
+                    AgentState::Working
+                } else {
+                    AgentState::Idle
+                };
+                AgentDial {
+                    id: a.id.clone(),
+                    state,
+                    ok: a.ok,
+                    task: String::new(),
+                    kind: a.kind.clone(),
+                    ms: a
+                        .ended
+                        .unwrap_or(now)
+                        .duration_since(a.started)
+                        .as_secs_f64()
+                        * 1000.0,
+                }
+            })
+            .collect();
     }
 
     /// Pass over what the log says until now, and forget the calls and
@@ -113,11 +171,13 @@ impl HookFeed {
         self.partial.clear();
         self.calls.clear();
         self.agents.clear();
+        self.elicitations.clear();
     }
 
     /// The main turn is over (however crabigator heard it): its calls are done.
     pub fn turn_ended(&mut self) {
         self.calls.retain(|_, call| call.agent.is_some());
+        self.elicitations.remove(&None);
     }
 
     /// The whole lines appended since the last read.
@@ -129,6 +189,9 @@ impl HookFeed {
             // Replaced: start over.
             self.offset = 0;
             self.partial.clear();
+            self.calls.clear();
+            self.agents.clear();
+            self.elicitations.clear();
         }
         if len == self.offset {
             return Vec::new();
@@ -157,9 +220,48 @@ impl HookFeed {
 
     fn hear(&mut self, line: &Line, activity: &mut Activity, now: Instant) {
         let is_subagent = line.agent.is_some();
-        if let Some(agent) = &line.agent {
-            if let Some(seen) = self.agents.get_mut(agent) {
-                *seen = now;
+        if let Some(id) = &line.agent {
+            let active_event = matches!(
+                line.ev.as_str(),
+                "SubagentStart"
+                    | "PreToolUse"
+                    | "PostToolUse"
+                    | "PostToolUseFailure"
+                    | "PermissionDenied"
+                    | "PostToolBatch"
+                    | "MessageDisplay"
+                    | "PermissionRequest"
+                    | "Elicitation"
+                    | "ElicitationResult"
+            );
+            if active_event {
+                if let Some(a) = self.agents.iter_mut().find(|a| &a.id == id) {
+                    a.seen = now;
+                    // Completion hooks and async display events can arrive after
+                    // Stop. Only fresh work starts another run under this id.
+                    if a.ended.is_some()
+                        && matches!(
+                            line.ev.as_str(),
+                            "SubagentStart" | "PreToolUse" | "PostToolBatch"
+                        )
+                    {
+                        a.ended = None;
+                        a.started = now;
+                        a.ok = true;
+                    }
+                    if let Some(kind) = &line.agent_type {
+                        a.kind.clone_from(kind);
+                    }
+                } else {
+                    self.agents.push(Agent {
+                        id: id.clone(),
+                        kind: line.agent_type.clone().unwrap_or_default(),
+                        started: now,
+                        seen: now,
+                        ended: None,
+                        ok: true,
+                    });
+                }
             }
         }
         // Only the main loop's effort sets the floor (flow's `modelStep`).
@@ -169,13 +271,13 @@ impl HookFeed {
         }
         let tool = line.tool.as_deref().unwrap_or_default();
         match line.ev.as_str() {
-            "UserPromptSubmit" => {
+            "UserPromptSubmit" if !is_subagent => {
                 self.turn_ended();
                 activity.turn_started();
                 activity.changed();
                 activity.model_step(false);
             }
-            "Stop" | "StopFailure" => {
+            "Stop" | "StopFailure" if !is_subagent => {
                 self.turn_ended();
                 activity.turn_ended();
                 activity.changed();
@@ -183,7 +285,11 @@ impl HookFeed {
                     activity.failed();
                 }
             }
-            "SessionStart" if line.source.as_deref() != Some("compact") => self.turn_ended(),
+            "SessionStart" if !is_subagent && line.source.as_deref() != Some("compact") => {
+                self.calls.clear();
+                self.agents.clear();
+                self.elicitations.clear();
+            }
             // After each batch of tool calls, the next model request.
             "PostToolBatch" => activity.model_step(is_subagent),
             "PreToolUse" => {
@@ -193,7 +299,7 @@ impl HookFeed {
                     activity.ran_command(is_subagent);
                 } else if tool == "Agent" {
                     activity.spawned_agent();
-                } else if READ_TOOLS.contains(&tool) {
+                } else {
                     activity.read(is_subagent);
                 }
                 if let Some(id) = &line.id {
@@ -203,7 +309,8 @@ impl HookFeed {
                             tool: tool.to_string(),
                             agent: line.agent.clone(),
                             since: now,
-                            asked: false,
+                            asked: matches!(tool, "AskUserQuestion" | "ExitPlanMode"),
+                            fingerprint: line.fingerprint.clone(),
                         },
                     );
                 }
@@ -217,32 +324,66 @@ impl HookFeed {
                     activity.failed();
                 }
             }
-            // The person asked (a command to allow, an MCP server's question),
-            // and their answer: each a change of state. The request names no
-            // call, so it is the main loop's newest call of that tool.
-            "PermissionRequest" if !is_subagent => {
+            // Correlate a shown prompt with its call. Never guess between
+            // concurrent calls of the same tool: an older producer may lack ids.
+            "PermissionRequest" => {
                 activity.changed();
-                if let Some(call) = self
-                    .calls
-                    .values_mut()
-                    .filter(|call| call.agent.is_none() && call.tool == tool)
-                    .max_by_key(|call| call.since)
-                {
-                    call.asked = true;
+                let matched = if let Some(id) = &line.id {
+                    self.calls.contains_key(id).then(|| id.clone())
+                } else {
+                    let mut candidates = self.calls.iter().filter(|(_, c)| {
+                        c.agent == line.agent
+                            && c.tool == tool
+                            && (line.fingerprint.is_none() || c.fingerprint == line.fingerprint)
+                    });
+                    let first = candidates.next().map(|(id, _)| id.clone());
+                    if candidates.next().is_none() {
+                        first
+                    } else {
+                        None
+                    }
+                };
+                if let Some(id) = matched {
+                    self.calls.get_mut(&id).unwrap().asked = true;
                 }
             }
-            "Elicitation" | "ElicitationResult" if !is_subagent => activity.changed(),
-            "SubagentStart" => {
-                if let Some(agent) = &line.agent {
-                    self.agents.insert(agent.clone(), now);
-                    activity.model_step(true);
-                }
+            "Elicitation" => {
+                let entry = self
+                    .elicitations
+                    .entry(line.agent.clone())
+                    .or_insert((0, now));
+                entry.0 += 1;
+                entry.1 = now;
+                activity.changed();
             }
-            "SubagentStop" => {
-                if let Some(agent) = &line.agent {
-                    self.agents.remove(agent);
-                    self.calls
-                        .retain(|_, call| call.agent.as_ref() != Some(agent));
+            "ElicitationResult" => {
+                if let Some(entry) = self.elicitations.get_mut(&line.agent) {
+                    entry.0 = entry.0.saturating_sub(1);
+                    if entry.0 == 0 {
+                        self.elicitations.remove(&line.agent);
+                    }
+                }
+                activity.changed();
+            }
+            "SubagentStart" => activity.model_step(true),
+            "SubagentStop" | "Stop" | "StopFailure" if is_subagent => {
+                if let Some(id) = &line.agent {
+                    if let Some(a) = self.agents.iter_mut().find(|a| &a.id == id) {
+                        a.ended.get_or_insert(now);
+                        a.ok = a.ok
+                            && line.ev != "StopFailure"
+                            && !line.interrupt
+                            && line
+                                .error
+                                .as_ref()
+                                .is_none_or(|e| e.is_null() || e == false || e == "")
+                            && !matches!(
+                                line.reason.as_deref(),
+                                Some("error" | "interrupted" | "cancelled" | "stopped")
+                            );
+                    }
+                    self.calls.retain(|_, c| c.agent.as_ref() != Some(id));
+                    self.elicitations.remove(&line.agent);
                 }
             }
             "PostCompact" => {
@@ -362,10 +503,10 @@ mod tests {
         assert_eq!(after.tools_in_flight, 1);
         let done = ear.hear(r#"{"ev":"PostToolUse","tool":"Write","id":"t1"}"#);
         assert_eq!(done.tools_in_flight, 0);
-        // Tools that don't read, write or run add nothing (flow's mapping).
+        // Other tools add the same small spark as a read.
         let before = done.heat;
         let task = ear.hear(r#"{"ev":"PreToolUse","tool":"TaskCreate","id":"t2"}"#);
-        assert_eq!(task.heat, before);
+        assert_eq!(task.heat, (before + 0.5).min(5.0));
         // The turn ends: whatever it left in flight is done.
         let stopped = ear.hear(r#"{"ev":"Stop"}"#);
         assert_eq!(stopped.tools_in_flight, 0);
@@ -429,5 +570,62 @@ mod tests {
         let compacted = ear.hear(r#"{"ev":"PostCompact","trigger":"auto"}"#);
         assert_eq!(compacted.heat, 0.0);
         assert_eq!(compacted.tint(), Tint::Smoke);
+    }
+
+    #[test]
+    fn companions_keep_identity_wait_for_their_own_calls_and_leave_after_completion() {
+        let mut ear = Ear::new();
+        ear.hear(r#"{"ev":"UserPromptSubmit"}"#);
+        ear.hear(r#"{"ev":"SubagentStart","agent":"a","agent_type":"Explore"}"#);
+        ear.hear(r#"{"ev":"SubagentStart","agent":"b"}"#);
+        ear.hear(r#"{"ev":"PreToolUse","tool":"Bash","id":"x","agent":"a","fingerprint":"one"}"#);
+        ear.hear(r#"{"ev":"PreToolUse","tool":"Bash","id":"y","agent":"a","fingerprint":"two"}"#);
+        ear.hear(r#"{"ev":"PermissionRequest","tool":"Bash","agent":"a","fingerprint":"one"}"#);
+        assert!(ear.activity.waiting());
+        assert_eq!(ear.activity.agents[0].state, AgentState::Waiting);
+        assert_eq!(ear.activity.agents[1].state, AgentState::Working);
+        ear.hear(r#"{"ev":"PostToolUse","tool":"Bash","id":"y","agent":"a"}"#);
+        assert!(
+            ear.activity.waiting(),
+            "another call cannot answer this prompt"
+        );
+        ear.hear(r#"{"ev":"PostToolUse","tool":"Bash","id":"x","agent":"a"}"#);
+        assert!(!ear.activity.waiting());
+        ear.now += Duration::from_secs(21);
+        ear.feed.poll(&mut ear.activity, ear.now);
+        assert_eq!(ear.activity.agents[0].state, AgentState::Idle);
+        ear.hear(r#"{"ev":"StopFailure","agent":"a","error":"failed"}"#);
+        assert!(
+            ear.activity.is_turn_active,
+            "a subagent cannot end the main turn"
+        );
+        assert_eq!(ear.activity.agents[0].state, AgentState::Done);
+        assert!(!ear.activity.agents[0].ok);
+        ear.hear(r#"{"ev":"SubagentStop","agent":"a"}"#);
+        ear.hear(r#"{"ev":"PostToolUseFailure","tool":"Bash","id":"x","agent":"a"}"#);
+        assert_eq!(ear.activity.agents[0].state, AgentState::Done);
+        assert!(
+            !ear.activity.agents[0].ok,
+            "late completion must not revive or erase failure"
+        );
+        assert_eq!(ear.activity.agents[0].kind, "Explore");
+        assert_eq!(ear.activity.running_agents, 1);
+        ear.now += Duration::from_secs(6);
+        ear.feed.poll(&mut ear.activity, ear.now);
+        assert_eq!(ear.activity.agents.len(), 1);
+        assert_eq!(ear.activity.agents[0].id, "b");
+    }
+
+    #[test]
+    fn questions_and_elicitations_remain_waiting_until_all_are_answered() {
+        let mut ear = Ear::new();
+        ear.hear(r#"{"ev":"PreToolUse","tool":"AskUserQuestion","id":"q"}"#);
+        ear.hear(r#"{"ev":"Elicitation","agent":"a"}"#);
+        ear.hear(r#"{"ev":"Elicitation","agent":"a"}"#);
+        ear.hear(r#"{"ev":"ElicitationResult","agent":"a"}"#);
+        ear.hear(r#"{"ev":"PostToolUse","tool":"AskUserQuestion","id":"q"}"#);
+        assert!(ear.activity.waiting());
+        ear.hear(r#"{"ev":"ElicitationResult","agent":"a"}"#);
+        assert!(!ear.activity.waiting());
     }
 }

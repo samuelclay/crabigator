@@ -13,10 +13,11 @@
 //! At 1 the stars barely move, a slow rock comes by now and then and the
 //! shield is faint. As the level climbs the stars stretch into streaks and
 //! the rocks come thicker and faster; by 10 the stars blur past, the plume
-//! burns long and impacts keep the shield lit. Subagents light more of the
-//! habitat windows; smoke dims the engine to gray, coughs puffs out behind
-//! it, and leaves the shield flickering weakly; a nearly-full context turns
-//! the shield and the stars a deep, hard-glowing cyan.
+//! burns long and impacts keep the shield lit. Subagents launch individual
+//! probes that work alongside the ship, rest, signal a question and return
+//! home. Smoke dims the engine and weakens the shield; a nearly-full context
+//! turns the shield and stars blue. Waiting brings the ship to a stop.
+//! Between stretches of open space, a sun or nebula passes behind the ship.
 //!
 //! Everything is placed in a flight frame (a = along the direction of
 //! travel, c = across it, both in braille dots: square, two a cell across and
@@ -28,6 +29,9 @@
 //! plays no sound, so that (and the `heard` mark it keeps on a rock) is left
 //! out: it never changed what is drawn.
 
+use crate::flow::crew::{beckon, ease_to, resting, Crew, Mate};
+use crate::flow::pixels::{grey, noise2, smooth};
+use crate::flow::waiting::{ease_wait, wait_tone, SEPIA_AMOUNT};
 use std::f64::consts::PI;
 
 use crate::flow::cells::{is_tall, Cells, Rng, DEFAULT_COLOR};
@@ -83,7 +87,7 @@ const EMBER: [u32; 5] = [0xfff2c0, 0xffc04a, 0xff7a22, 0xc0401a, 0x6a2410];
 const ROCK: [u32; 3] = [0xa8a091, 0xc4baa9, 0xe0d7c6];
 const HOT: u32 = 0xff9a50;
 const STAR: [u32; 3] = [0x6a7488, 0xa8b2c4, 0xeef2fa];
-const CYAN: [u32; 3] = [0x2a7ea0, 0x40b8dc, 0xb0f0ff];
+const CYAN: [u32; 3] = [0x1c4f9c, 0x2d7fe0, 0x86c4ff];
 
 /// Rock radii in dots, smallest first.
 const ROCK_R: [f64; 3] = [2.2, 3.8, 6.2];
@@ -104,7 +108,9 @@ const TAU: f64 = PI * 2.0;
 #[allow(clippy::approx_constant)]
 const PHASES: f64 = 6.283;
 /// The ship and its shield, scaled from their original size.
-const SHIP_SCALE: f64 = 0.9;
+const SHIP_SCALE: f64 = 0.65;
+const SHIELD_SCALE: f64 = 0.9;
+const SHRINK: f64 = SHIP_SCALE / SHIELD_SCALE;
 
 /// A star: `u` along the direction of travel, `v` across it, both in cells.
 #[derive(Clone, Copy, Debug)]
@@ -191,6 +197,30 @@ impl Geo {
 
 pub struct Colony {
     dials: Dials,
+    crew: Crew,
+    k_wait: f64,
+    probe_px: Vec<u32>,
+    probe_keep: Vec<i8>,
+    probe_cells: Vec<usize>,
+    lamps: Vec<i32>,
+    bay_glow: f64,
+    bay_color: u32,
+    voyage: Rng,
+    passage: Passage,
+    passage_at: f64,
+    passage_len: f64,
+    gap_left: f64,
+    pick: usize,
+    across: f64,
+    size: f64,
+    nebula_seed: f64,
+    drift: f64,
+    back_glyph: Vec<u32>,
+    back_fg: Vec<u32>,
+    back_bg: Vec<u32>,
+    back_hide: Vec<u8>,
+    back_on: bool,
+    sun_light: f64,
     columns: usize,
     rows: usize,
     out: Cells,
@@ -223,8 +253,34 @@ pub struct Colony {
 
 impl Colony {
     pub fn new(seed: f64) -> Self {
+        let mut voyage = Rng::new(seed % 100_000.0 * 7919.0 + 17.0);
+        let gap_left = round(400.0 + voyage.f() * 600.0);
         Self {
             dials: Dials::default(),
+            crew: Crew::new(4, 34.0, 36.0),
+            k_wait: 0.0,
+            probe_px: Vec::new(),
+            probe_keep: Vec::new(),
+            probe_cells: Vec::new(),
+            lamps: Vec::new(),
+            bay_glow: 0.0,
+            bay_color: 0,
+            voyage,
+            passage: Passage::Stars,
+            passage_at: 0.0,
+            passage_len: 1.0,
+            gap_left,
+            pick: 0,
+            across: 0.5,
+            size: 1.0,
+            nebula_seed: 0.0,
+            drift: 0.0,
+            back_glyph: Vec::new(),
+            back_fg: Vec::new(),
+            back_bg: Vec::new(),
+            back_hide: Vec::new(),
+            back_on: false,
+            sun_light: 0.0,
             columns: 0,
             rows: 0,
             out: Cells::new(0, 0),
@@ -270,7 +326,7 @@ impl Colony {
         // The shield holds its place; the ship stands well back from it, small
         // against it (the shield spans the whole frame across).
         let vertex = round(len_a * (if v { 0.52 } else { 0.45 })) + (if v { 7.0 } else { 8.0 });
-        let nose = vertex - round((if v { 18.0 } else { 22.0 }) * SHIP_SCALE);
+        let nose = vertex - round((if v { 18.0 } else { 22.0 }) * SHIELD_SCALE);
         let ls = round(
             SHIP_SCALE
                 * if v {
@@ -281,8 +337,8 @@ impl Colony {
         );
         let engine = round((if v { 5.0 } else { 4.0 }) * SHIP_SCALE);
         let h0 = engine + round(ls * 0.1);
-        let b0 = ls - round(ls * 0.11).max(6.0);
-        let h1 = b0 - round(ls * 0.07).max(4.0);
+        let b0 = ls - round(ls * 0.11).max(round(6.0 * SHRINK));
+        let h1 = b0 - round(ls * 0.07).max(round(4.0 * SHRINK));
         let radius = SHIP_SCALE
             * if v {
                 (len_c * 0.19).min(8.0)
@@ -290,7 +346,7 @@ impl Colony {
                 len_c * 0.22
             };
         // The shield spans a fixed width beside the ship, however wide the frame.
-        let sw = (len_c / 2.0).min(radius * 2.6);
+        let sw = (len_c / 2.0).min(radius / SHIP_SCALE * SHIELD_SCALE * 2.6);
         Geo {
             len_a,
             len_c,
@@ -302,11 +358,11 @@ impl Colony {
             h1,
             b0,
             radius,
-            hw: (if v { 2.5 } else { 2.0 }) * SHIP_SCALE,
+            hw: ((if v { 2.5 } else { 2.0 }) * SHIP_SCALE).max(2.0),
             vertex,
             sw,
             // How far the arc bends back at its ends: about 2 rows in the spine, 2-3 cells in the band.
-            rc: (sw * sw) / (2.0 * (if v { 9.0 } else { 6.0 }) * SHIP_SCALE),
+            rc: (sw * sw) / (2.0 * (if v { 9.0 } else { 6.0 }) * SHIELD_SCALE),
         }
     }
 
@@ -314,7 +370,7 @@ impl Colony {
     fn speed(&self) -> f64 {
         let l = clamp(self.level, 0.0, 10.0);
         let i = l.floor().min(9.0) as usize;
-        SPEED[i] + (SPEED[i + 1] - SPEED[i]) * (l - i as f64)
+        (SPEED[i] + (SPEED[i + 1] - SPEED[i]) * (l - i as f64)) * (1.0 - self.k_wait)
     }
 
     /// How fast the rocks drift in (dots per frame): their own drift plus the ship's speed.
@@ -332,7 +388,7 @@ impl Colony {
         let rate = if l < 0.5 {
             0.0
         } else {
-            0.0022 * (0.075_f64 / 0.0022).powf((l - 1.0) / 9.0)
+            0.0009 * (0.028_f64 / 0.0009).powf((l - 1.0) / 9.0)
         };
         if self.rng.f() < rate {
             let pick = self.rng.f();
@@ -455,7 +511,7 @@ impl Colony {
             STAR
         };
         let base = ramp[layer];
-        let k = fade.clamp(0.15, 1.0);
+        let k = round(fade.clamp(0.15, 1.0) * 8.0) / 8.0;
         let ch = |sh: u32| round(f64::from((base >> sh) & 255) * k) as u32;
         (ch(16) << 16) | (ch(8) << 8) | ch(0)
     }
@@ -778,7 +834,14 @@ impl Colony {
         if s >= geo.h0 && s < geo.h1 {
             // Hubs at both ends of the habitat, where the blades meet the spine.
             if (s < geo.h0 + 2.0 || s >= geo.h1 - 2.0) && ad < geo.radius * 0.4 {
-                return (K_HULL, HUB);
+                return (
+                    K_HULL,
+                    if s < geo.h0 + 2.0 && self.bay_glow > 0.05 {
+                        mix(HUB, self.bay_color, (self.bay_glow * 3.0).ceil() / 3.0)
+                    } else {
+                        HUB
+                    },
+                );
             }
             let twist = (TAU * 0.55) / (geo.h1 - geo.h0);
             let (mut best_z, mut best_k, mut best_y) = (-2.0, -1.0, 0.0);
@@ -898,25 +961,7 @@ impl Colony {
                     for p in 0..4 {
                         q[p] = if kinds[p] != K_NONE { colors[p] } else { 0 };
                     }
-                    fit_quad(&q, &mut self.fit, NEAR, keep);
-                    let f = self.fit;
-                    if f.spread == 0 {
-                        out.set_fg(cell, 0x2588, q[0]);
-                        continue;
-                    }
-                    let (mut mask, mut fg, mut bg) = (f.mask, f.fg, f.bg);
-                    if fg == 0 {
-                        // The empty pixels are the background: the hull is the glyph.
-                        mask ^= 15;
-                        fg = bg;
-                        bg = 0;
-                    }
-                    out.set(
-                        cell,
-                        QUAD[mask as usize],
-                        fg,
-                        if bg == 0 { DEFAULT_COLOR } else { bg },
-                    );
+                    self.put_quad(out, cell, &q, keep);
                 } else if spine {
                     // An open truss: two rails and a zigzag between them.
                     let mut bits = 0;
@@ -992,6 +1037,8 @@ impl Colony {
         // The narrow spine gets shorter trails, or they fill the column.
         let max_trail = along * (if vertical { 0.25 } else { 0.6 });
 
+        self.draw_backdrop();
+        let hide = self.back_on && self.passage == Passage::Sun;
         // Stars, far layers first; a fast star smears into a trail behind it.
         let streak = g(if vertical { '│' } else { '─' });
         for (layer, depth) in LAYERS.iter().enumerate() {
@@ -1008,15 +1055,21 @@ impl Colony {
                 } else {
                     streak
                 };
-                out.set_fg(at(head, s.v), glyph, self.star_color(layer, twinkle));
+                let cell = at(head, s.v);
+                if !hide || self.back_hide[cell] == 0 {
+                    out.set_fg(cell, glyph, self.star_color(layer, twinkle));
+                }
                 let mut k = 1.0;
                 while k <= trail.floor() {
                     let u = (head - dir * k + along) % along; // the trail lies behind the star's travel
-                    out.set_fg(
-                        at(u, s.v),
-                        streak,
-                        self.star_color(layer, (1.0 - k / (trail + 1.0)) * 0.8),
-                    );
+                    let ti = at(u, s.v);
+                    if !hide || self.back_hide[ti] == 0 {
+                        out.set_fg(
+                            ti,
+                            streak,
+                            self.star_color(layer, (1.0 - k / (trail + 1.0)) * 0.8),
+                        );
+                    }
                     k += 1.0;
                 }
             }
@@ -1063,7 +1116,11 @@ impl Colony {
             }
         }
         self.draw_flashes(out);
+        self.lamps.fill(-1);
+        self.draw_probes(out);
         self.draw_ship(out, level);
+        self.apply_backdrop(out);
+        wait_tone(out, self.k_wait, self.t, SEPIA_AMOUNT, Some(&self.lamps));
     }
 }
 
@@ -1087,11 +1144,24 @@ impl Scene for Colony {
         self.puff = vec![0; n];
         self.puff_color = vec![0; n];
         self.solid = vec![0; n];
+        self.probe_px = vec![0; n * 4];
+        self.probe_keep = vec![-1; n];
+        self.probe_cells.clear();
+        self.lamps = vec![-1; n];
+        self.back_glyph = vec![0; n];
+        self.back_fg = vec![0; n];
+        self.back_bg = vec![0; n];
+        self.back_hide = vec![0; n];
         self.rocks.clear();
         self.embers.clear();
         self.smoke.clear();
         self.hits.clear();
         self.geo = self.layout();
+        self.crew.room = 4;
+        for m in &mut self.crew.mates {
+            m.x = f64::NAN;
+            m.y = f64::NAN;
+        }
         // u runs along the direction of travel, v across it; both in cells.
         let vertical = self.is_vertical();
         let along = (if vertical { rows } else { columns }) as f64;
@@ -1113,6 +1183,7 @@ impl Scene for Colony {
 
     fn step(&mut self) {
         self.t += 1.0;
+        self.k_wait = ease_wait(self.k_wait, self.dials.waiting);
         let want = clamp(self.dials.strength, 0.0, 10.0);
         if self.level.is_nan() {
             self.level = want;
@@ -1125,6 +1196,8 @@ impl Scene for Colony {
         let speed = self.speed();
         let vertical = self.is_vertical();
         let along = (if vertical { self.rows } else { self.columns }) as f64;
+        self.crew
+            .update(&self.dials.agents, self.dials.coverage_boost);
         // Stars stream past the ship: leftward in the band (it flies right),
         // downward in the spine (it flies up).
         let dir = if vertical { 1.0 } else { -1.0 };
@@ -1137,6 +1210,7 @@ impl Scene for Colony {
                 s.u -= along;
             }
         }
+        self.step_voyage(speed);
         if self.columns == 0 || self.rows == 0 {
             return;
         }
@@ -1148,6 +1222,7 @@ impl Scene for Colony {
         self.hits.retain(|hit| hit.age < RIPPLE);
         self.step_rocks();
         self.step_motes();
+        self.step_probes();
     }
 
     fn grid(&mut self) -> &Cells {
@@ -1163,5 +1238,482 @@ mod tests {
     #[test]
     fn frames_match_flow() {
         crate::flow::reference::check(include_str!("../testdata/avalon.json"), 0.0);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Passage {
+    Stars,
+    Sun,
+    Nebula,
+}
+const SUNS: [[u32; 3]; 3] = [
+    [0xd0782a, 0xffc860, 0xfff6dc],
+    [0xb85020, 0xff9a40, 0xffe2b0],
+    [0x8c2414, 0xf06a3a, 0xffc8a0],
+];
+const NEBULAE: [[u32; 2]; 3] = [
+    [0x4a1c6a, 0x6a1c48],
+    [0x0e4a58, 0x1c2c70],
+    [0x5a1810, 0x5a3a12],
+];
+const PROBE_HULL: [u32; 4] = [0xf0903c, 0x36c4b0, 0xa47cff, 0xb4dc4c];
+const PROBE_DRIVE: [u32; 4] = [0xffd27a, 0x8cf2ff, 0xf0b4ff, 0xe6ff8c];
+impl Colony {
+    fn step_voyage(&mut self, speed: f64) {
+        let l = self.level.clamp(0.0, 10.0);
+        let pace = if l < 0.5 {
+            0.0
+        } else {
+            (0.35 + 0.65 * (l / 6.0).clamp(0.0, 1.0)) * (1.0 - self.k_wait)
+        };
+        self.drift += speed * 0.15;
+        if self.passage == Passage::Stars {
+            self.gap_left -= pace;
+            if self.gap_left <= 0.0 {
+                let passage = if self.voyage.f() < 0.45 {
+                    Passage::Sun
+                } else {
+                    Passage::Nebula
+                };
+                let draw = self.voyage.int() as f64;
+                self.voyage_to(passage, 0.0, draw);
+            }
+            return;
+        }
+        self.passage_at += pace / self.passage_len;
+        if self.passage_at >= 1.0 {
+            let draw = self.voyage.int() as f64;
+            self.voyage_to(Passage::Stars, 0.0, draw);
+        }
+    }
+    fn voyage_to(&mut self, passage: Passage, at: f64, draw: f64) {
+        let u = |k: f64| hash(draw * 31.0 + k);
+        self.passage = passage;
+        self.passage_at = at.clamp(0.0, 1.0);
+        if passage == Passage::Stars {
+            self.gap_left = round(1600.0 + self.voyage.f() * 2400.0);
+            return;
+        }
+        self.pick = (u(1.0) * 3.0).floor() as usize;
+        self.passage_len = if passage == Passage::Sun {
+            round(1300.0 + u(2.0) * 600.0)
+        } else {
+            round(1700.0 + u(2.0) * 1100.0)
+        };
+        self.across = 0.12 + u(3.0) * 0.76;
+        self.size = 0.8 + u(4.0) * 0.45;
+        self.nebula_seed = (u(5.0) * 10_000.0).floor();
+    }
+    fn passage_k(&self) -> f64 {
+        if self.passage == Passage::Stars {
+            0.0
+        } else {
+            smooth((self.passage_at / 0.25).clamp(0.0, 1.0))
+                * smooth(((1.0 - self.passage_at) / 0.25).clamp(0.0, 1.0))
+        }
+    }
+    fn back_tint(&self, c: u32, v: f64) -> u32 {
+        match self.dials.tint {
+            Tint::Smoke => mix(grey(c, 1.0), mix(0, 0x9c9ca0, v * 2.5), 0.55),
+            Tint::Blue => mix(c, mix(0, 0x2858d0, v * 2.5), 0.65),
+            Tint::Normal => c,
+        }
+    }
+    fn draw_backdrop(&mut self) {
+        let k = self.passage_k();
+        self.sun_light = 0.0;
+        self.back_on = k > 0.02;
+        if !self.back_on {
+            return;
+        }
+        self.back_glyph.fill(0);
+        self.back_fg.fill(DEFAULT_COLOR);
+        self.back_bg.fill(DEFAULT_COLOR);
+        self.back_hide.fill(0);
+        if self.passage == Passage::Sun {
+            self.draw_sun(k);
+        } else {
+            self.draw_nebula(k);
+        }
+    }
+    fn sun_color(&self, v: f64) -> u32 {
+        let ramp = SUNS[self.pick];
+        let x = round(v.clamp(0.0, 1.0) * 16.0) / 16.0;
+        if x <= 0.0 {
+            return 0;
+        }
+        let c = if x < 0.6 {
+            mix(0, ramp[0], x / 0.6)
+        } else if x < 0.8 {
+            mix(ramp[0], ramp[1], (x - 0.6) / 0.2)
+        } else {
+            mix(ramp[1], ramp[2], (x - 0.8) / 0.2)
+        };
+        self.back_tint(c, x)
+    }
+    fn draw_sun(&mut self, k: f64) {
+        let geo = self.geo;
+        let v = self.is_vertical();
+        let w = self.columns;
+        let h = self.rows;
+        let rc = self.size
+            * if v {
+                (geo.len_c * 0.22).min(10.0)
+            } else {
+                geo.len_c * 0.5
+            };
+        let ro = rc * 2.8;
+        let sa = geo.len_a + ro - self.passage_at * (geo.len_a + 2.0 * ro);
+        let sc = self.across * geo.len_c;
+        let x = if v { sc } else { sa };
+        let y = if v { h as f64 * 4.0 - sa } else { sc };
+        let c0 = ((x - ro) / 2.0).floor().max(0.0) as i32;
+        let c1 = ((x + ro) / 2.0).floor().min(w as f64 - 1.0) as i32;
+        let r0 = ((y - ro) / 4.0).floor().max(0.0) as i32;
+        let r1 = ((y + ro) / 4.0).floor().min(h as f64 - 1.0) as i32;
+        for row in r0..=r1 {
+            for col in c0..=c1 {
+                let mut core = 0;
+                let mut q = [0; 4];
+                for (p, q) in q.iter_mut().enumerate() {
+                    let dx = col as f64 * 2.0 + (p & 1) as f64 + 0.5 - x;
+                    let dy = row as f64 * 4.0 + if p & 2 != 0 { 3.0 } else { 1.0 } - y;
+                    let d = (dx * dx + dy * dy).sqrt();
+                    let light = if d < rc {
+                        core += 1;
+                        0.8 + 0.2 * (1.0 - (d / rc) * (d / rc))
+                    } else if d < ro {
+                        let g = (ro - d) / (ro - rc);
+                        0.62 * g * g
+                    } else {
+                        0.0
+                    };
+                    *q = self.sun_color(light * k);
+                }
+                let cell = row as usize * w + col as usize;
+                if core == 4 {
+                    self.back_hide[cell] = 1;
+                }
+                fit_quad(&q, &mut self.fit, NEAR, -1);
+                let f = self.fit;
+                if f.spread == 0 {
+                    self.back_bg[cell] = if q[0] == 0 { DEFAULT_COLOR } else { q[0] };
+                    continue;
+                }
+                self.back_glyph[cell] = QUAD[f.mask as usize];
+                self.back_fg[cell] = if f.fg == 0 { DEFAULT_COLOR } else { f.fg };
+                self.back_bg[cell] = if f.bg == 0 { DEFAULT_COLOR } else { f.bg };
+                if f.fg == 0 {
+                    self.back_glyph[cell] = QUAD[(f.mask ^ 15) as usize];
+                    self.back_fg[cell] = f.bg;
+                    self.back_bg[cell] = DEFAULT_COLOR;
+                }
+            }
+        }
+        let ship = (geo.stern + geo.nose) / 2.0;
+        let near = (1.0 - hypot(sa - ship, sc - geo.c0) / (ro * 2.2)).clamp(0.0, 1.0);
+        self.sun_light = round(k * near * 4.0) / 4.0;
+    }
+    fn draw_nebula(&mut self, k: f64) {
+        let v = self.is_vertical();
+        let [ca, cb] = NEBULAE[self.pick];
+        let seed = self.nebula_seed;
+        for row in 0..self.rows {
+            for col in 0..self.columns {
+                let x = if v {
+                    col as f64
+                } else {
+                    col as f64 + self.drift
+                };
+                let y = if v {
+                    row as f64 * 2.0 - self.drift
+                } else {
+                    row as f64 * 2.0
+                };
+                let n = 0.65 * noise2(x / 11.0, y / 7.0, seed)
+                    + 0.35 * noise2(x / 4.5, y / 3.0, seed + 1.0);
+                let dense = ((n - 0.28) / 0.5).clamp(0.0, 1.0);
+                let light = round(smooth(dense) * k * 16.0) / 16.0;
+                if light <= 0.0 {
+                    continue;
+                }
+                let hue = round(noise2(x / 15.0, y / 9.0, seed + 2.0) * 3.0) / 3.0;
+                self.back_bg[row * self.columns + col] =
+                    self.back_tint(mix(0, mix(ca, cb, hue), light), light);
+            }
+        }
+    }
+    fn apply_backdrop(&self, out: &mut Cells) {
+        if !self.back_on {
+            return;
+        }
+        for i in 0..self.columns * self.rows {
+            if out.background(i) != DEFAULT_COLOR {
+                continue;
+            }
+            let cp = out.code_point(i);
+            if cp == 0x20 && self.back_glyph[i] != 0 {
+                out.set(i, self.back_glyph[i], self.back_fg[i], self.back_bg[i]);
+            } else if self.back_bg[i] != DEFAULT_COLOR {
+                out.set(i, cp, out.foreground(i), self.back_bg[i]);
+            }
+        }
+    }
+    fn station(&self, m: &Mate) -> (f64, f64) {
+        let g = self.geo;
+        let v = self.is_vertical();
+        let side = if m.slot & 1 != 0 { 1.0 } else { -1.0 };
+        let a = if m.slot < 2 {
+            g.nose + if v { 2.0 } else { 3.0 }
+        } else {
+            g.stern + (g.nose - g.stern) * if v { 0.32 } else { 0.4 }
+        };
+        let c = if v {
+            g.c0 + side * (g.radius + 5.0)
+        } else if side < 0.0 {
+            2.0
+        } else {
+            g.len_c - 2.0
+        };
+        let rest = 1.0 - m.busy;
+        (
+            a - (if v { 14.0 } else { 12.0 }) * rest,
+            (c + if v { side * 2.0 * rest } else { 0.0 }).clamp(2.0, g.len_c - 2.0),
+        )
+    }
+    fn step_probes(&mut self) {
+        self.bay_glow = 0.0;
+        for i in 0..self.crew.mates.len() {
+            let (sa, sc) = self.station(&self.crew.mates[i]);
+            let m = &mut self.crew.mates[i];
+            m.x = ease_to(m.x, sa, 0.05);
+            m.y = ease_to(m.y, sc, 0.05);
+            if !m.leaving && 1.0 - m.p > self.bay_glow {
+                self.bay_glow = 1.0 - m.p;
+                self.bay_color = PROBE_DRIVE[m.slot % 4];
+            }
+        }
+    }
+    fn put_quad(&mut self, out: &mut Cells, cell: usize, q: &[u32; 4], keep: i32) {
+        fit_quad(q, &mut self.fit, NEAR, keep);
+        let f = self.fit;
+        if f.spread == 0 {
+            out.set_fg(
+                cell,
+                0x2588,
+                if self.sun_light > 0.0 {
+                    mix(q[0], SUNS[self.pick][1], self.sun_light * 0.3)
+                } else {
+                    q[0]
+                },
+            );
+            return;
+        }
+        let (mut mask, mut fg, mut bg) = (f.mask, f.fg, f.bg);
+        if self.sun_light > 0.0 {
+            let warm = SUNS[self.pick][1];
+            if fg != 0 {
+                fg = mix(fg, warm, self.sun_light * 0.3);
+            }
+            if bg != 0 {
+                bg = mix(bg, warm, self.sun_light * 0.3);
+            }
+        }
+        if fg == 0 {
+            mask ^= 15;
+            fg = bg;
+            bg = 0;
+        }
+        out.set(
+            cell,
+            QUAD[mask as usize],
+            fg,
+            if bg == 0 { DEFAULT_COLOR } else { bg },
+        );
+    }
+    fn draw_probes(&mut self, out: &mut Cells) {
+        let g = self.geo;
+        let t = self.t;
+        let bay_a = g.stern + g.h0 + 1.0;
+        for i in 0..self.crew.mates.len() {
+            let m = self.crew.mates[i].clone();
+            if m.x.is_nan() {
+                continue;
+            }
+            let side = if m.slot & 1 != 0 { 1.0 } else { -1.0 };
+            let away = 1.0 - m.here;
+            let phase = m.seed * TAU;
+            let mut a = m.x
+                + (t * 0.08 + phase).sin() * 0.7 * m.busy
+                + (t * 0.025 + phase).sin() * 1.5 * (1.0 - m.busy);
+            let mut c = m.y;
+            let mut turn = 0;
+            let mut drive = m.busy;
+            let mut dead = false;
+            if !m.leaving {
+                if away > 0.0 {
+                    a = bay_a + (a - bay_a) * smooth(((m.p - 0.35) / 0.65).clamp(0.0, 1.0));
+                    c = g.c0 + (c - g.c0) * smooth((m.p / 0.55).clamp(0.0, 1.0));
+                    drive = drive.max(0.6);
+                }
+            } else if m.ok {
+                turn = 2;
+                drive = 1.0;
+                a -= away * away * (a + 18.0);
+            } else {
+                dead = true;
+                drive = 0.0;
+                turn = ((i32_of(t + m.slot as f64 * 3.0) >> 2) & 3) as usize;
+                a -= away * 18.0;
+                c += away
+                    * if side < 0.0 {
+                        -(c + 12.0)
+                    } else {
+                        g.len_c + 12.0 - c
+                    };
+            }
+            self.stamp_probe(&m, a, c, turn, drive, dead);
+        }
+        for k in 0..self.probe_cells.len() {
+            let cell = self.probe_cells[k];
+            let mut q = [0; 4];
+            for (p, q) in q.iter_mut().enumerate() {
+                *q = self.probe_px[cell * 4 + p];
+                self.probe_px[cell * 4 + p] = 0;
+            }
+            self.put_quad(out, cell, &q, i32::from(self.probe_keep[cell]));
+            self.probe_keep[cell] = -1;
+        }
+        self.probe_cells.clear();
+    }
+    fn stamp_probe(&mut self, m: &Mate, a: f64, c: f64, turn: usize, drive: f64, dead: bool) {
+        let v = self.is_vertical();
+        let x0 = round(if v { c } else { a });
+        let y0 = round((if v { self.rows as f64 * 4.0 - a } else { c }) / 2.0);
+        let mut ux = if v { 0.0 } else { 1.0 };
+        let mut uy = if v { -1.0 } else { 0.0 };
+        for _ in 0..turn {
+            let tx = ux;
+            ux = -uy;
+            uy = tx;
+        }
+        let bx = -uy;
+        let by = ux;
+        let slot = m.slot % 4;
+        let smoke = self.dials.tint == Tint::Smoke;
+        let flick = hash(self.seed_base + self.t * 7.0 + slot as f64 * 131.0);
+        let lit = !dead && !(smoke && flick < 0.3) && drive > 0.3;
+        let glow = if smoke {
+            PLUME_SMOKE[0]
+        } else {
+            PROBE_DRIVE[slot]
+        };
+        let hull = if dead { 0x4a4d52 } else { PROBE_HULL[slot] };
+        let quiet = resting(Some(m));
+        let beacon = quiet && m.waiting && beckon(m, self.t);
+        let running = quiet && !m.waiting && (self.t + slot as f64 * 9.0) % 30.0 < 3.0;
+        let sprite: &[&[u8]] = if v {
+            &[b".NN.", b"HLLH", b"HHHH", b".ZZ."]
+        } else {
+            &[b".....", b"ZHLLN"]
+        };
+        let mut noses = 0;
+        for (r, row) in sprite.iter().enumerate() {
+            for (col, &kind) in row.iter().enumerate() {
+                if kind == b'.' {
+                    continue;
+                }
+                let i = if v { 1.0 - r as f64 } else { col as f64 - 2.0 };
+                let j = if v { col as f64 - 2.0 } else { r as f64 - 1.0 };
+                let x = x0 + i * ux + j * bx;
+                let y = y0 + i * uy + j * by;
+                if kind == b'Z' {
+                    self.probe_pixel(
+                        x,
+                        y,
+                        if lit {
+                            mix(glow, 0xffffff, 0.6)
+                        } else {
+                            0x4e545c
+                        },
+                        false,
+                        false,
+                    );
+                    if !lit {
+                        continue;
+                    }
+                    let len = if m.leaving {
+                        3 + usize::from(flick > 0.5)
+                    } else if drive > 0.8 {
+                        2 + usize::from(flick > 0.6)
+                    } else {
+                        1 + usize::from(flick > 0.7)
+                    };
+                    for d in 1..=len {
+                        if d == len && len > 2 && j == 0.0 {
+                            continue;
+                        }
+                        self.probe_pixel(
+                            x - d as f64 * ux,
+                            y - d as f64 * uy,
+                            if d == 1 {
+                                glow
+                            } else {
+                                mix(glow, 0, ((d - 1) as f64 * 0.35).min(0.8))
+                            },
+                            false,
+                            false,
+                        );
+                    }
+                } else if kind == b'H' {
+                    self.probe_pixel(x, y, hull, false, false);
+                } else if kind == b'L' {
+                    self.probe_pixel(
+                        x,
+                        y,
+                        if dead { hull } else { mix(hull, 0xffffff, 0.3) },
+                        false,
+                        false,
+                    );
+                } else if beacon {
+                    self.probe_pixel(x, y, 0xffb020, true, true);
+                } else if running && {
+                    let was = noses;
+                    noses += 1;
+                    was == 0
+                } {
+                    self.probe_pixel(x, y, 0xffffff, true, false);
+                } else {
+                    self.probe_pixel(
+                        x,
+                        y,
+                        if dead { hull } else { mix(hull, 0xffffff, 0.6) },
+                        false,
+                        false,
+                    );
+                }
+            }
+        }
+    }
+    fn probe_pixel(&mut self, x: f64, y: f64, color: u32, keep: bool, lamp: bool) {
+        if x < 0.0 || y < 0.0 || x >= (self.columns * 2) as f64 || y >= (self.rows * 2) as f64 {
+            return;
+        }
+        let x = x as usize;
+        let y = y as usize;
+        let cell = (y >> 1) * self.columns + (x >> 1);
+        let k = cell * 4;
+        if self.probe_px[k..k + 4].iter().all(|&c| c == 0) {
+            self.probe_cells.push(cell);
+        }
+        let p = ((y & 1) << 1) | (x & 1);
+        self.probe_px[k + p] = color;
+        if keep {
+            self.probe_keep[cell] = p as i8;
+        }
+        if lamp {
+            self.lamps[cell] = color as i32;
+        }
     }
 }

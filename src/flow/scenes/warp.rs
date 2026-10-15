@@ -14,6 +14,7 @@ use crate::flow::palette::SceneHue;
 use crate::flow::pixels::BRAILLE;
 use crate::flow::scene::{Dials, Scene, SceneDef, Tint};
 use crate::flow::scenes::fire::params;
+use crate::flow::waiting::{ease_wait, wait_tone, SEPIA_AMOUNT};
 
 pub const DEF: SceneDef = SceneDef {
     name: "warp",
@@ -56,10 +57,11 @@ fn star_color(b: f64, tint: Tint, warp: f64) -> u32 {
     // Far stars sit blue-gray; near ones bleach to white. Warp adds blue.
     let mut r = 70.0 + v * 185.0;
     let mut g = 80.0 + v * 175.0;
-    let bl = 120.0 + v * 135.0;
+    let mut bl = 120.0 + v * 135.0;
     if tint == Tint::Blue {
-        r *= 0.55;
-        g = (g * 1.05).min(255.0);
+        r = 12.0 + v * 30.0;
+        g = 32.0 + v * 74.0;
+        bl = 140.0 + v * 100.0;
     }
     r -= warp * 40.0 * (1.0 - v);
     g -= warp * 15.0 * (1.0 - v);
@@ -79,6 +81,7 @@ pub struct Starfield {
     bright: Vec<f32>,
     rng: Rng,
     t: f64,
+    k_wait: f64,
 }
 
 impl Starfield {
@@ -93,6 +96,7 @@ impl Starfield {
             bright: Vec::new(),
             rng: Rng::new(seed),
             t: 0.0,
+            k_wait: 0.0,
         }
     }
 
@@ -187,15 +191,19 @@ impl Scene for Starfield {
 
     fn step(&mut self) {
         self.t += 1.0;
+        self.k_wait = ease_wait(self.k_wait, self.dials.waiting);
         let want = self.wanted();
         while (self.stars.len() as f64) < want {
             let star = self.spawn(true);
             self.stars.push(star);
         }
-        if self.stars.len() as f64 > want {
-            self.stars.truncate(want as usize);
+        if want == 0.0 {
+            self.stars.clear();
+        } else if self.stars.len() as f64 > want && self.k_wait == 0.0 {
+            self.stars
+                .truncate((want as usize).max(self.stars.len().saturating_sub(2)));
         }
-        let speed = SPEED[self.level()];
+        let speed = SPEED[self.level()] * (1.0 - self.k_wait);
         for i in 0..self.stars.len() {
             self.stars[i].z -= speed;
             let s = self.stars[i];
@@ -227,7 +235,8 @@ impl Scene for Starfield {
             } else {
                 1.0
             };
-            let b = (1.0 - s.z) * twinkle;
+            let near = 1.0 - s.z;
+            let b = (near + (1.0 - near) * 0.6 * self.k_wait) * twinkle;
             self.plot(head.0, head.1, b);
             if trail > 0.0 {
                 // A streak back along the star's path, fading toward its tail.
@@ -256,6 +265,7 @@ impl Scene for Starfield {
                 self.out.set_fg(i, 0x2800 | u32::from(self.bits[i]), fg);
             }
         }
+        wait_tone(&mut self.out, self.k_wait, self.t, SEPIA_AMOUNT, None);
         &self.out
     }
 }

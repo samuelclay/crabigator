@@ -35,13 +35,16 @@ mod spine;
 use std::f64::consts::PI;
 
 use crate::flow::cells::{is_tall, Cells, Rng, DEFAULT_COLOR};
+use crate::flow::crew::{beckon, finished, resting, Crew, Mate};
 use crate::flow::js::{hypot, i32_of, max, min, round};
+use crate::flow::night::ease_night;
 use crate::flow::night::{moon_cover, moon_radius, MOON, NIGHT_HORIZON, NIGHT_ZENITH, STAR};
 use crate::flow::palette::{tint_to, SceneHue};
 use crate::flow::pixels::{
     clamp, fit_quad, hash_murmur as hash, mix, QuadFit, BRAILLE, NEAR, QUAD,
 };
 use crate::flow::scene::{Dials, Scene, SceneDef, Tint};
+use crate::flow::waiting::{ease_wait, wait_tone, SEPIA_AMOUNT};
 
 pub const DEF: SceneDef = SceneDef {
     name: "ski",
@@ -371,6 +374,10 @@ const B_STAND: Sprite = Sprite {
     ax: 2,
     rows: &["..HH...", "..RRR..", ".pRR.p.", ".pPP.p.", "SSSSSSS"],
 };
+const B_WAVE: Sprite = Sprite {
+    ax: 2,
+    rows: &["..HH.p.", "..RRRp.", ".pRR.p.", ".pPP...", "SSSSSSS"],
+};
 const B_SKI: Sprite = Sprite {
     ax: 2,
     rows: &["..HH...", "..RRR..", ".pRR...", "p.PP...", "SSSSSSS"],
@@ -411,6 +418,7 @@ const ANCHORS: [f64; 5] = [0.28, 0.52, 0.12, 0.7, 0.86];
 const SPINE_ANCHORS: [f64; 5] = [0.3, 0.62, 0.14, 0.82, 0.47];
 
 struct Skier {
+    owner: String,
     kit: Kit,
     /// Phase offset of their turns.
     off: f64,
@@ -458,6 +466,8 @@ enum View {
 
 pub struct Ski {
     dials: Dials,
+    crew: Crew,
+    k_wait: f64,
     // The light, eased toward the dials (-1 until the first frame): night, overcast, dusk.
     k_night: f64,
     k_grey: f64,
@@ -518,6 +528,7 @@ impl Ski {
             .iter()
             .zip(OFFS)
             .map(|(&kit, off)| Skier {
+                owner: String::new(),
                 kit,
                 off,
                 track: vec![0.0; TRK * 2],
@@ -531,6 +542,8 @@ impl Ski {
             .collect();
         Self {
             dials: Dials::default(),
+            crew: Crew::new(4, 24.0, 36.0),
+            k_wait: 0.0,
             k_night: -1.0,
             k_grey: 0.0,
             k_dusk: 0.0,
@@ -622,7 +635,7 @@ impl Ski {
             self.k_grey = g;
             self.k_dusk = b;
         }
-        self.k_night = approach(self.k_night, n, 0.04);
+        self.k_night = ease_night(self.k_night, self.dials.night);
         self.k_grey = approach(self.k_grey, g, 0.05);
         self.k_dusk = approach(self.k_dusk, b, 0.05);
         let (kn, kg, kd) = (self.k_night, self.k_grey, self.k_dusk);
@@ -633,38 +646,83 @@ impl Ski {
             .zip(&DUSK, |a, b| mix(a, b, kd));
     }
 
-    /// The company: one more skier per 15 of coverage, up to four.
-    fn extras(&self) -> usize {
-        let boost = self.dials.coverage_boost;
-        if boost <= 0.0 {
-            0
+    fn on_slope(&self) -> Vec<usize> {
+        std::iter::once(0)
+            .chain(self.crew.mates.iter().map(|m| m.slot + 1))
+            .collect()
+    }
+    fn mate_of(&self, i: usize) -> Option<&Mate> {
+        if i == 0 {
+            None
         } else {
-            min((KITS.len() - 1) as f64, (boost / 15.0).ceil()) as usize
+            self.crew.in_slot(i - 1)
         }
+    }
+    fn away(m: &Mate) -> f64 {
+        if finished(Some(m)) {
+            1.0 - m.here
+        } else {
+            m.here - 1.0
+        }
+    }
+    fn waving(&self, m: Option<&Mate>) -> bool {
+        m.is_some_and(|m| resting(Some(m)) && m.waiting && beckon(m, f64::from(self.t)))
     }
 
     // ------------------------------------------------------------ motion
 
     /// Each skier's feet this frame (layout coords), their tracks, and their spray.
     fn place(&mut self) {
-        let n = self.extras();
         let tall = self.tall;
-        for (i, spine_anchor) in SPINE_ANCHORS.into_iter().enumerate().take(n + 1) {
-            let lat = if i == 0 && self.fall != 0 {
+        for i in self.on_slope() {
+            let m = self.mate_of(i).cloned();
+            if let Some(m) = &m {
+                if self.skiers[i].owner != m.id {
+                    self.skiers[i].owner = m.id.clone();
+                    self.skiers[i].len = 0;
+                    self.skiers[i].last_d = -1e9;
+                }
+            }
+            let mut lat = if i == 0 && self.fall != 0 {
                 self.skiers[i].lat
             } else {
                 self.amp * (self.phi + self.skiers[i].off).sin()
             };
+            if let Some(m) = &m {
+                lat += ((if m.slot & 1 != 0 { -0.6 } else { 0.6 }) * self.amp.max(0.3) - lat)
+                    * (1.0 - m.busy);
+            }
             // (Each turn's edge change is heard in flow: crabigator plays no sound.)
             let (fx, fy) = if tall {
-                let half = self.room();
-                (
-                    self.pw as f64 / 2.0 + lat * half,
-                    self.d * SPINE + round(self.ph as f64 * (spine_anchor - SPINE_ANCHORS[0])),
-                )
+                let mut fx = self.pw as f64 / 2.0 + lat * self.room();
+                let off = m
+                    .as_ref()
+                    .map_or(0.0, |m| Self::away(m) * self.ph as f64 * 0.8);
+                let mut fy =
+                    self.d * SPINE + round(self.ph as f64 * (SPINE_ANCHORS[i] - SPINE_ANCHORS[0]));
+                if let Some(m) = &m {
+                    let floor = 4.0 + 2.0 * m.slot as f64;
+                    let aside = ((floor - fy) / 10.0).clamp(0.0, 1.0);
+                    fy = fy.max(floor);
+                    fx += (self.skiers[0].fx + (if m.slot & 1 != 0 { -1.0 } else { 1.0 }) * 8.0
+                        - fx)
+                        * aside;
+                }
+                (fx, fy + round(off))
             } else {
-                // y is resolved against the ground at draw time.
-                (self.d + self.anchor_x(i), 0.0)
+                let mut sx = self.anchor_x(i);
+                if let Some(m) = &m {
+                    sx -= (1.0 - m.busy) * self.pw as f64 * 0.04;
+                    let a = Self::away(m);
+                    if a != 0.0 {
+                        sx += a * if a > 0.0 {
+                            self.pw as f64 + 14.0 - sx
+                        } else {
+                            sx + 14.0
+                        };
+                    }
+                }
+                (self.d + sx, 0.0)
             };
             let (d, v) = (self.d, self.v);
             // Tracks: a point per half pixel travelled.
@@ -681,7 +739,7 @@ impl Ski {
                 s.head = (s.head + 1) % TRK;
                 s.len = TRK.min(s.len + 1);
             }
-            if on_ground {
+            if on_ground && m.as_ref().is_none_or(|m| m.busy > 0.5) {
                 self.spray(i, if i == 0 { 1.0 } else { 0.55 });
             }
         }
@@ -1200,7 +1258,10 @@ impl Scene for Ski {
             return;
         }
         self.ease();
+        self.crew
+            .update(&self.dials.agents, self.dials.coverage_boost);
         self.t += 1;
+        self.k_wait = ease_wait(self.k_wait, self.dials.waiting);
         let l = self.level();
         if l == 0 {
             return;
@@ -1220,11 +1281,22 @@ impl Scene for Ski {
             self.fall = 0;
         }
 
-        let vt = if self.fall != 0 { 0.0 } else { SPEED[l] };
+        let vt = if self.fall != 0 || self.dials.waiting {
+            0.0
+        } else {
+            SPEED[l]
+        };
         if self.fall == 1 {
             self.v *= 0.86;
         } else {
-            self.v += (vt - self.v) * if vt > self.v { 0.022 } else { 0.04 };
+            self.v += (vt - self.v)
+                * if vt > self.v {
+                    0.022
+                } else if self.dials.waiting {
+                    0.07
+                } else {
+                    0.04
+                };
         }
         if self.v < 0.004 {
             self.v = if vt > 0.0 { self.v } else { 0.0 };
@@ -1311,6 +1383,13 @@ impl Scene for Ski {
         }
         self.draw_flakes();
         self.composite();
+        wait_tone(
+            &mut self.out,
+            self.k_wait,
+            f64::from(self.t),
+            SEPIA_AMOUNT,
+            None,
+        );
         &self.out
     }
 }

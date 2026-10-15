@@ -13,9 +13,11 @@
 use super::cells::{Cells, DEFAULT_COLOR};
 use super::clouds::{layered, snap};
 use super::js::{i32_of, round};
+use super::night::ease_night;
 use super::night::{MOON, MOON_ACROSS, MOON_ROW, NIGHT_HORIZON, NIGHT_ZENITH, STAR, STAR_DIM};
 use super::pixels::{g, hash, lower_block, mix};
 use super::scene::Dials;
+use super::waiting::{ease_wait, wait_tone, SEPIA_AMOUNT};
 
 /// How much taller the atmosphere is than the cloud painter's own scale.
 pub const SCALE: f64 = 2.0;
@@ -111,6 +113,9 @@ pub struct SkyWorld {
     pub dials: Dials,
     /// How far night has fallen, 0..1, eased toward `night` (-1 before the first step).
     pub k_night: f64,
+    pub k_wait: f64,
+    pub goal: f64,
+    pub lamps: Vec<i32>,
     pub columns: usize,
     pub rows: usize,
     pub out: Cells,
@@ -125,6 +130,9 @@ impl SkyWorld {
         Self {
             dials: Dials::default(),
             k_night: -1.0,
+            k_wait: 0.0,
+            goal: -1.0,
+            lamps: Vec::new(),
             columns: 0,
             rows: 0,
             out: Cells::new(0, 0),
@@ -141,6 +149,7 @@ impl SkyWorld {
         self.columns = columns;
         self.rows = rows;
         self.out = Cells::new(columns, rows);
+        self.lamps = vec![-1; columns * rows];
     }
 
     /// The altitude this level aims for.
@@ -151,14 +160,8 @@ impl SkyWorld {
     /// The first half of a step: the clock, and night falling or lifting.
     pub fn tick(&mut self) {
         self.t += 1.0;
-        let k = if self.dials.night { 1.0 } else { 0.0 };
-        if self.k_night < 0.0 {
-            self.k_night = k;
-        }
-        self.k_night += (k - self.k_night) * 0.05;
-        if (k - self.k_night).abs() < 0.01 {
-            self.k_night = k;
-        }
+        self.k_night = ease_night(self.k_night, self.dials.night);
+        self.k_wait = ease_wait(self.k_wait, self.dials.waiting);
     }
 
     /// How dark it is this frame, 0 day .. 1 night.
@@ -176,10 +179,12 @@ impl SkyWorld {
 
     /// Move the altitude one frame toward its target.
     pub fn advance(&mut self) {
-        let target = self.target();
-        self.alt += (target - self.alt) * CLIMB;
-        if (target - self.alt).abs() < 0.01 {
-            self.alt = target;
+        if !self.dials.waiting || self.goal < 0.0 {
+            self.goal = self.target();
+        }
+        self.alt += (self.goal - self.alt) * CLIMB * (1.0 - self.k_wait);
+        if (self.goal - self.alt).abs() < 0.01 {
+            self.alt = self.goal;
         }
     }
 
@@ -312,6 +317,7 @@ pub trait SkyScene {
             }
             return &self.world().out;
         }
+        self.world_mut().lamps.fill(-1);
         let scroll = self.scroll();
         let mut out = std::mem::take(&mut self.world_mut().out);
         let mut row_bg = Vec::with_capacity(h);
@@ -346,6 +352,14 @@ pub trait SkyScene {
         let top = self.vehicle_top();
         let mut out = std::mem::take(&mut self.world_mut().out);
         self.draw_vehicle(&mut out, top);
+        let world = self.world();
+        wait_tone(
+            &mut out,
+            world.k_wait,
+            world.t,
+            SEPIA_AMOUNT,
+            Some(&world.lamps),
+        );
         self.world_mut().out = out;
         &self.world().out
     }

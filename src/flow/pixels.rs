@@ -174,3 +174,50 @@ pub fn fit_quad(q: &[u32; 4], fit: &mut QuadFit, near: i32, keep: i32) {
     fit.fg = group_color(q, mask, 1, sj, near);
     fit.bg = group_color(q, mask, 0, si, near);
 }
+
+/// Shared easing and colour ramps from Flow.
+pub fn smooth(k: f64) -> f64 {
+    k * k * (3.0 - 2.0 * k)
+}
+pub fn smoothstep(a: f64, b: f64, v: f64) -> f64 {
+    smooth(clamp01((v - a) / (b - a)))
+}
+pub fn approach(v: f64, goal: f64, k: f64) -> f64 {
+    let n = v + (goal - v) * k;
+    if (goal - n).abs() < 0.01 {
+        goal
+    } else {
+        n
+    }
+}
+pub fn ramp_at(stops: &[u32], k: f64) -> u32 {
+    let x = clamp01(k) * (stops.len() - 1) as f64;
+    let i = (x.floor() as usize).min(stops.len() - 2);
+    mix(stops[i], stops[i + 1], x - i as f64)
+}
+pub fn noise1(x: f64, seed: f64) -> f64 {
+    let i = x.floor();
+    let f = x - i;
+    let a = hash1(i * 7919.0 + seed);
+    let b = hash1((i + 1.0) * 7919.0 + seed);
+    a + (b - a) * f * f * (3.0 - 2.0 * f)
+}
+pub fn noise2(x: f64, y: f64, seed: f64) -> f64 {
+    let i = x.floor();
+    let j = y.floor();
+    let fx = smooth(x - i);
+    let fy = smooth(y - j);
+    let a = hash(i, j, seed);
+    let b = hash(i + 1.0, j, seed);
+    let c = hash(i, j + 1.0, seed);
+    let d = hash(i + 1.0, j + 1.0, seed);
+    a + (b - a) * fx + (c - a + (a - b - c + d) * fx) * fy
+}
+pub fn luma(c: u32) -> f64 {
+    ((c >> 16) & 255) as f64 * 0.3 + ((c >> 8) & 255) as f64 * 0.59 + (c & 255) as f64 * 0.11
+}
+pub fn grey(c: u32, k: f64) -> u32 {
+    let l = luma(c) as u32;
+    mix(c, (l << 16) | (l << 8) | l, k)
+}
+pub const BITS: [u32; 16] = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4];

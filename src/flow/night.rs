@@ -41,3 +41,13 @@ pub fn moon_cover(x: f64, y: f64, mx: f64, my: f64, r: f64) -> f64 {
         r + 0.5 - d
     }
 }
+
+pub const NIGHT_EASE: f64 = 0.05;
+pub fn ease_night(k: f64, night: bool) -> f64 {
+    let n = if night { 1.0 } else { 0.0 };
+    if k < 0.0 {
+        n
+    } else {
+        super::pixels::approach(k, n, NIGHT_EASE)
+    }
+}
