@@ -3,7 +3,6 @@ export const inputCss = `
 /* Input area */
 .input-area {
     padding: 10px 12px;
-    border-top: 1px solid var(--border-dim);
     display: flex;
     align-items: flex-end;
     gap: 10px;
@@ -14,7 +13,7 @@ export const inputCss = `
     flex: 1;
     min-width: 0;
     background: var(--bg-abyss);
-    border: 1px solid var(--border-dim);
+    border: 1px solid transparent;
     border-radius: 8px;
     padding: 9px 14px;
     color: var(--text-bright);

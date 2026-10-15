@@ -53,7 +53,7 @@ export const layoutCss = `
 .container[data-grouping="project"][data-layout="3"] .session-card,
 .container[data-grouping="project"][data-layout="4"] .session-card,
 .container[data-grouping="project"][data-layout="fit"] .session-card {
-    border: 1px solid var(--border-dim);
+    border: none;
     border-radius: 8px;
     margin-bottom: 16px;
     break-inside: avoid;
@@ -90,12 +90,10 @@ export const layoutCss = `
     align-items: center;
     gap: 14px;
     padding: 12px 14px;
-    background: var(--bg-deep);
+    background: transparent;
     cursor: pointer;
     user-select: none;
     transition: all 0.2s;
-    border-top: 1px solid var(--border-dim);
-    border-bottom: 1px solid var(--border-dim);
     margin: 0;
     position: relative;
 }
@@ -121,9 +119,9 @@ export const layoutCss = `
     color: var(--text-dim);
     font-size: 10px;
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    background: var(--bg-surface);
+    background: transparent;
     border-radius: 4px;
-    border: 1px solid var(--border-dim);
+    border: 1px solid transparent;
 }
 .project-group.collapsed .project-collapse-icon {
     transform: rotate(-90deg);
@@ -151,15 +149,15 @@ export const layoutCss = `
     color: var(--text-dim);
     font-size: 10px;
     flex-shrink: 0;
-    background: var(--bg-surface);
+    background: transparent;
     padding: 3px 10px;
     border-radius: 10px;
-    border: 1px solid var(--border-dim);
+    border: 1px solid transparent;
 }
 .project-add-btn {
     font-family: 'JetBrains Mono', monospace;
     background: transparent;
-    border: 1px solid var(--border-dim);
+    border: 1px solid transparent;
     border-radius: 6px;
     color: var(--text-dim);
     font-size: 14px;
@@ -176,7 +174,6 @@ export const layoutCss = `
 .project-add-btn:hover {
     background: var(--bg-surface);
     color: var(--accent-green);
-    border-color: var(--accent-green);
 }
 .spawn-menu {
     display: none;
@@ -296,12 +293,10 @@ export const layoutCss = `
     align-items: center;
     gap: 14px;
     padding: 10px 14px;
-    background: var(--bg-deep);
+    background: transparent;
     cursor: pointer;
     user-select: none;
     transition: all 0.2s;
-    border-top: 1px solid var(--border-dim);
-    border-bottom: 1px solid var(--border-dim);
     position: relative;
 }
 .device-separator:hover {
@@ -335,10 +330,10 @@ export const layoutCss = `
     color: var(--text-dim);
     font-size: 9px;
     flex-shrink: 0;
-    background: var(--bg-surface);
+    background: transparent;
     padding: 2px 8px;
     border-radius: 10px;
-    border: 1px solid var(--border-dim);
+    border: 1px solid transparent;
 }
 .device-sessions {
     display: grid;
@@ -353,14 +348,6 @@ export const layoutCss = `
 .device-group.collapsed .device-sessions {
     grid-template-rows: 0fr;
 }
-/* Nested project separators inside device groups get subtler styling */
-.device-group .project-separator {
-    border-top: none;
-}
-.device-group .project-group:first-child .project-separator {
-    border-top: none;
-}
-
 /* Mobile adjustments for project groups */
 @media (max-width: 768px) {
     .project-separator {
@@ -381,7 +368,7 @@ export const layoutCss = `
     .container[data-grouping="project"] .session-card {
         margin-bottom: 8px;
         border-radius: 8px;
-        border: 1px solid var(--border-dim);
+        border: none;
     }
     .container[data-grouping="project"] .session-header {
         border-radius: 7px 7px 0 0;

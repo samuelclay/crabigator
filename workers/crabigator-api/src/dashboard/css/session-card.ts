@@ -3,7 +3,6 @@ export const sessionCardCss = `
 /* Session cards */
 .session-card {
     background: var(--bg-deep);
-    border: 1px solid var(--border-dim);
     border-radius: 8px;
     overflow: visible;
     position: relative;
@@ -11,13 +10,10 @@ export const sessionCardCss = `
     margin-bottom: 16px;
     max-width: 100%;
     scroll-margin-top: calc(var(--header-height, 67px) + 12px);
-    transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
-.session-card:hover { border-color: var(--border-glow); }
 
 .session-header {
     padding: 10px 14px;
-    border-bottom: 1px solid var(--border-dim);
     display: flex;
     align-items: center;
     gap: 12px;

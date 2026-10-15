@@ -18,8 +18,7 @@ body.hide-section-prs .session-prs { display: none !important; }
     column-gap: 10px;
     row-gap: 4px;
     padding: 10px 16px 12px;
-    background: var(--bg-deep);
-    border-top: 1px solid rgba(34, 211, 238, 0.18);
+    background: var(--bg-card);
     cursor: pointer;
     position: relative;
     transition: background 0.15s ease;
@@ -27,19 +26,11 @@ body.hide-section-prs .session-prs { display: none !important; }
     overflow: hidden;
 }
 .session-recap:hover {
-    background: var(--bg-deep);
+    background: var(--bg-surface);
 }
 .session-recap.expanded {
     max-height: none;
     overflow: visible;
-}
-.session-recap::before {
-    content: '';
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    width: 2px;
-    background: var(--border-dim);
-    opacity: 0.85;
 }
 .session-recap.empty,
 .session-recap.disabled,
@@ -136,25 +127,10 @@ body.hide-section-prs .session-prs { display: none !important; }
 .session-recap-meta .rd-add { color: var(--accent-green); }
 .session-recap-meta .rd-del { color: var(--accent-red); }
 
-/* Distinct status accents pick up the appropriate left rail and label color. */
-.session-recap.failed::before {
-    background: var(--bg-deep);
-}
-.session-recap.failed {
-    background: var(--bg-deep);
-}
-.session-recap.updating::before {
-    background: var(--bg-deep);
-}
-.session-recap.missing-key::before {
-    background: var(--bg-deep);
-}
-
 /* Recap history sits directly under the recap card, outside Git/Changes collapse. */
 .session-recap-history {
     padding: 12px 16px 14px;
-    background: var(--bg-deep);
-    border-top: 1px solid rgba(34, 211, 238, 0.14);
+    background: var(--bg-card);
     font-family: var(--font-ui);
     font-size: 11px;
 }
@@ -232,20 +208,11 @@ body.hide-section-prs .session-prs { display: none !important; }
    this session, linked to GitHub, with branch + live diff stats. */
 .session-prs {
     padding: 10px 16px 12px;
-    background: var(--bg-deep);
-    border-top: 1px solid rgba(163, 113, 247, 0.20);
+    background: var(--bg-card);
     position: relative;
     display: flex;
     flex-direction: column;
     gap: 6px;
-}
-.session-prs::before {
-    content: '';
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    width: 2px;
-    background: var(--border-dim);
-    opacity: 0.85;
 }
 /* Header is its own full-width tap target. The padding/negative-margin pair
    grows the touch area into the surrounding whitespace without moving

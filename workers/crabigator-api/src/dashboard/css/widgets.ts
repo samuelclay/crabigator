@@ -1,9 +1,6 @@
 // Widgets panel, tooltips, grid, git files, changes list
 export const widgetsCss = `
-/* Widgets panel */
-.widgets-panel {
-    border-top: 1px solid var(--border-dim);
-}
+/* Widgets share the session footer surface. */
 .widgets-header {
     display: flex;
     flex-direction: column;
@@ -12,7 +9,6 @@ export const widgetsCss = `
     cursor: pointer;
     user-select: none;
     gap: 6px;
-    border-bottom: 1px solid var(--border-dim);
     transition: background 0.2s;
     font-family: 'JetBrains Mono', monospace;
     font-size: 10px;

@@ -3,7 +3,7 @@ export const headerCss = `
 /* Header */
 .header {
     background: var(--bg-abyss);
-    border-bottom: 1px solid var(--border-dim);
+    border-bottom: 1px solid rgba(255,255,255,.05);
     padding: 14px 24px;
     display: flex;
     align-items: center;
@@ -80,7 +80,7 @@ export const headerCss = `
     font-family: var(--font-ui);
     min-height: 34px;
     padding: 7px 11px;
-    border: 1px solid var(--border-dim);
+    border: 1px solid transparent;
     border-radius: 6px;
     background: transparent;
     color: var(--text-mid);
@@ -94,7 +94,7 @@ export const headerCss = `
 .header .sessions-btn.active, .header .pr-board-btn.active,
 .header .style-btn.active, .header .settings-btn.active {
     color: var(--accent-peach);
-    border-color: #8a6f59;
+    border-color: transparent;
     background: #2b302f;
 }
 .header .sessions-count { color: inherit; }
