@@ -42,11 +42,19 @@ class PromptActionsTest {
     }
     @Test fun customReplyReplacesExistingTextAndSubmits() {
         val steps = PromptActions.action(prompt(",\"custom_text\":\"abc\""), text = "new").body.getJSONArray("steps")
-        assertEquals(6, steps.length())
-        assertEquals("backspace", steps.getJSONObject(2).getString("key"))
-        assertEquals("new", steps.getJSONObject(3).getString("text"))
-        assertEquals(50, steps.getJSONObject(4).getInt("ms"))
-        assertEquals("enter", steps.getJSONObject(5).getString("key"))
+        assertEquals(7, steps.length())
+        assertEquals("\u0005", steps.getJSONObject(0).getString("text"))
+        assertEquals("backspace", steps.getJSONObject(3).getString("key"))
+        assertEquals("new", steps.getJSONObject(4).getString("text"))
+        assertEquals(50, steps.getJSONObject(5).getInt("ms"))
+        assertEquals("enter", steps.getJSONObject(6).getString("key"))
+    }
+    @Test fun customReplyWalksOntoATextRowThatHoldsText() {
+        // Pressing 3 would send "abc" at once, so walk down and delete it from its end.
+        val p = prompt(",\"custom_text\":\"abc\"").put("cursor_row", 1)
+        val steps = PromptActions.action(p, text = "new").body.getJSONArray("steps")
+        val names = (0 until steps.length()).map { steps.getJSONObject(it).let { s -> s.optString("key", s.optString("text", s.getString("type"))) } }
+        assertEquals(listOf("down", "down", "\u0005", "backspace", "backspace", "backspace", "new", "delay", "enter"), names)
     }
     @Test fun customReplyUsesTheTextRowShortcut() {
         val p = prompt().apply { remove("cursor_row") }

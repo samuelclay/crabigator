@@ -54,12 +54,16 @@ object PromptActions {
         } else if (text != null || submit) {
             if (!text.isNullOrBlank()) {
                 require(q.optBoolean("allows_other", true)) { "This question requires one of its choices." }
+                val existing = prompt.text("custom_text")
                 if (grok) type("z")
-                else if (!q.optBoolean("multi_select")) {
+                // The row's number moves onto an empty text row but sends the text already on it.
+                else if (!q.optBoolean("multi_select") && existing.isEmpty()) {
                     if (cursor != count + 1) type((count + 1).toString())
                     cursor = count + 1
                 } else move(count + 1)
-                repeat(prompt.text("custom_text").length.coerceAtMost(2000)) { key("backspace") }
+                // Arrows leave the caret at the start of the text; Ctrl+E jumps to its end to delete it.
+                if (!grok && existing.isNotEmpty()) type("\u0005")
+                repeat(existing.length.coerceAtMost(2000)) { key("backspace") }
                 type(text)
                 steps.put(JSONObject().put("type", "delay").put("ms", 50))
                 if (grok && q.optBoolean("multi_select")) key("escape")
