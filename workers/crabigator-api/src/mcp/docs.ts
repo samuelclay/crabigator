@@ -51,10 +51,7 @@ export function mcpLandingSectionHtml(): string {
             <div class="mcp-intro-copy">
                 <h2 class="section-title">Let another agent drive your sessions</h2>
                 <p class="section-subtitle">
-                    Point Claude, Cursor, Grok, or any MCP client at your live Crabigator sessions.
-                    Sign in with GitHub or Google. The agent can list sessions, read screens,
-                    answer prompts, and manage PRs. Clients that support MCP events can subscribe
-                    to session activity, such as a state change.
+                    Connect your MCP client to read sessions, answer prompts, and manage pull requests.
                 </p>
                 ${mcpConnectHtml()}
                 <a href="${MCP_TOOLS_PATH}" class="btn-primary" data-track="mcp_tools" data-label="landing">

@@ -158,6 +158,20 @@ router.get('/assets/icon-bolt.svg', async () => {
     });
 });
 
+// Real device screenshots for the home page.
+import { homeImages } from './assets/home-images';
+import { homeBrandAssets } from './assets/home-brand';
+
+for (const image of [...homeImages.map(image => ({ ...image, contentType: 'image/webp' })), ...homeBrandAssets]) {
+    router.get(image.path, async () => new Response(
+        Uint8Array.from(atob(image.base64), c => c.charCodeAt(0)),
+        { headers: {
+            'Content-Type': image.contentType,
+            'Cache-Control': 'public, max-age=31536000, immutable',
+        } },
+    ));
+}
+
 // Open Graph preview images
 import { ogLandingBase64, ogDashboardBase64 } from './assets/og-images';
 
