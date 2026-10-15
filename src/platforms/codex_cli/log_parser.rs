@@ -52,6 +52,7 @@ impl MessageCounters {
 
 /// Internal state for tracking a Codex session
 pub struct CodexState {
+    pub flow_roster: super::companions::ChildRoster,
     pub session_path: Option<PathBuf>,
     pub session_offset: u64,
     pub last_scan: Option<SystemTime>,
@@ -89,6 +90,7 @@ pub struct CodexState {
 impl Default for CodexState {
     fn default() -> Self {
         Self {
+            flow_roster: super::companions::ChildRoster::default(),
             session_path: None,
             session_offset: 0,
             last_scan: None,
@@ -488,6 +490,7 @@ pub fn set_last_updated(state: &mut CodexState) {
 
 /// Reset state for a new session
 pub fn reset_state(state: &mut CodexState, path: PathBuf, session_started_at: Option<SystemTime>) {
+    state.flow_roster = super::companions::ChildRoster::default();
     state.session_path = Some(path);
     state.session_offset = 0;
     state.session_started_at = session_started_at;

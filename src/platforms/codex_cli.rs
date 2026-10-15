@@ -2,6 +2,7 @@
 //!
 //! Reads Codex session logs under ~/.codex/sessions and derives session stats.
 
+mod companions;
 mod cwd;
 mod log_parser;
 pub mod transcript;
@@ -759,6 +760,16 @@ impl Platform for CodexPlatform {
                 }
             }
         }
+
+        let parent_id = state.stats.native_session_id.clone().unwrap_or_default();
+        let now = SystemTime::now();
+        let agents = state
+            .flow_roster
+            .refresh(&self.sessions_dir, &session_path, &parent_id, now);
+        if !agents.is_empty() || !state.stats.flow_agents.is_empty() {
+            state.stats.last_updated = Some(log_parser::now_unix());
+        }
+        state.stats.flow_agents = agents;
 
         Ok(state.stats.clone())
     }
