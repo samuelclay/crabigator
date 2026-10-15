@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "622661AD2DD129E2D19978AA"
+               BlueprintIdentifier = "DBA59A3A8470C721A4FE48CD"
                BuildableName = "Crabigator.app"
                BlueprintName = "Crabigator"
                ReferencedContainer = "container:Crabigator.xcodeproj">
@@ -30,7 +30,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "622661AD2DD129E2D19978AA"
+            BlueprintIdentifier = "DBA59A3A8470C721A4FE48CD"
             BuildableName = "Crabigator.app"
             BlueprintName = "Crabigator"
             ReferencedContainer = "container:Crabigator.xcodeproj">
@@ -41,7 +41,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "721D6C2D29CFCBFF5765CD89"
+               BlueprintIdentifier = "1533FD61632B8666EE6FA52F"
                BuildableName = "CrabigatorTests.xctest"
                BlueprintName = "CrabigatorTests"
                ReferencedContainer = "container:Crabigator.xcodeproj">
@@ -51,7 +51,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "2345DF1A0CF6CC7367E8C88D"
+               BlueprintIdentifier = "60E5F6DA02EE7938F8BEDEB1"
                BuildableName = "CrabigatorUITests.xctest"
                BlueprintName = "CrabigatorUITests"
                ReferencedContainer = "container:Crabigator.xcodeproj">
@@ -73,7 +73,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "622661AD2DD129E2D19978AA"
+            BlueprintIdentifier = "DBA59A3A8470C721A4FE48CD"
             BuildableName = "Crabigator.app"
             BlueprintName = "Crabigator"
             ReferencedContainer = "container:Crabigator.xcodeproj">
@@ -90,7 +90,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "622661AD2DD129E2D19978AA"
+            BlueprintIdentifier = "DBA59A3A8470C721A4FE48CD"
             BuildableName = "Crabigator.app"
             BlueprintName = "Crabigator"
             ReferencedContainer = "container:Crabigator.xcodeproj">

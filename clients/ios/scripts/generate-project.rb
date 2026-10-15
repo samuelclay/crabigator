@@ -1,6 +1,19 @@
 #!/usr/bin/env ruby
 require 'xcodeproj'
 require 'fileutils'
+require 'digest'
+
+# Number objects in creation order instead of at random, so running this
+# script again produces the same project file.
+class Xcodeproj::Project
+  def generate_available_uuid_list(count = 100)
+    @uuid_seed ||= 0
+    new_uuids = (0..count).map { Digest::MD5.hexdigest("crabigator-#{@uuid_seed += 1}")[0, 24].upcase }
+    uniques = new_uuids - (@generated_uuids + uuids)
+    @generated_uuids += uniques
+    @available_uuids += uniques
+  end
+end
 root = File.expand_path('..', __dir__)
 project = Xcodeproj::Project.new(File.join(root, 'Crabigator.xcodeproj'))
 app = project.new_target(:application, 'Crabigator', :ios, '17.0')
