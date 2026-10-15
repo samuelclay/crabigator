@@ -3,6 +3,23 @@
 The updated native app is installed and paired on ClayPad Mini. The October 13 checks below verify its live terminal, board navigation and real APNs delivery. Earlier checks on ClayPad Air, ClayPhone SE 3 and simulators remain recorded below.
 
 
+## Rich prompt notifications — October 15
+
+Checked on ClayPhone SE 3 (iOS 27) with real APNs notifications from throwaway Claude Code and Codex sessions, through opt-in UI tests in `UITests/NotificationTests.swift`. All 25 unit tests passed on the phone.
+
+- The banner shows the question, then every choice on one line, for example "Which pizza crust?" then "Thin · Thick · Stuffed · Deep dish · Cauliflower".
+- The service extension's per-prompt category carries the real labels on first delivery: the delivered notification used `CRABIGATOR_PROMPT_SLOT_1` with Thin, Thick, Stuffed, Deep dish and Reply, each tied to its session and revision. Two other sessions' notifications held separate slots at the same time.
+- With sixteen choices registered, iOS showed ten buttons. The expanded view still listed all sixteen.
+- Tapping a choice in the expanded view sent exactly that answer: Stuffed; Thick, Medium and Submit answers for a two-question prompt; Cheese and Olives with Submit for a multi-select question, then its review page; Deep dish for a five-choice Codex question. The view showed progress, moved to the next question in place, and closed when the session moved on.
+- The Thick button and Reply ("Neapolitan please") each reached the session as sent.
+- A prompt answered in the terminal while its expanded view was open could not be answered again: the tap sent nothing and the view said the request had ended.
+
+Device findings now handled in the code: the extension must link UserNotificationsUI explicitly; its extension context is empty while the view loads; iOS keeps the first content size it sees; and iOS only expands a notification that has a regular button, so prompts without choice buttons get Open session. Twice in about 25 expansions, iOS showed its plain banner instead of the extension, still with the real-label buttons.
+
+Not verified: answering from the view while the phone is locked, Apple Watch, and the iPad. Failed device tests made Xcode save a 50–280 MB sysdiagnose on the phone each time, which filled it; the runs above use `-collect-test-diagnostics never`.
+
+Outside this change: single-question Claude dialogs reach the phone without the terminal's cursor row, so an answer can pick the wrong row if the cursor was moved in the terminal (a desktop fix is in progress). Three test sessions, each running 45 to 70 minutes, stopped receiving input from the cloud while still sending their prompts; the server accepted answers that never reached the terminal.
+
 ## Mobile parity and ClayPad Mini
 
 On October 13, the signed Debug build and notification extension installed on ClayPad Mini (iPad mini A17 Pro, listed by Xcode as “Samuel’s iPad”). Thirteen unit tests and five live UI tests passed across two runs. They covered terminal reading, scrollback, Follow, Style, QWERTY, slow prompt metadata, the loading Reconnect button, fullscreen boards, restart restoration, and a real Apple notification. The delayed-metadata check displayed terminal output in 1.84 seconds while the prompt request was held for 15 seconds.
