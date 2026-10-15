@@ -296,7 +296,8 @@ impl FlowColumn {
         }
         Some(FlowView::Scene {
             rows: self.frame.as_deref()?,
-            scene: self.selection(),
+            scene: self.def.name,
+            random: self.random,
         })
     }
 
@@ -539,7 +540,8 @@ mod tests {
         assert!(matches!(
             flow.view(),
             Some(FlowView::Scene {
-                scene: "random",
+                scene: "avalon",
+                random: true,
                 ..
             })
         ));

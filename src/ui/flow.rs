@@ -20,7 +20,11 @@ use super::WidgetArea;
 #[derive(Clone, Copy, Debug)]
 pub enum FlowView<'a> {
     /// The frame's rows, under the scene's name and the key that rotates it.
-    Scene { rows: &'a [String], scene: &'a str },
+    Scene {
+        rows: &'a [String],
+        scene: &'a str,
+        random: bool,
+    },
     /// Off: no column, only the label naming the key that turns it on.
     Off,
 }
@@ -28,15 +32,16 @@ pub enum FlowView<'a> {
 /// The key that rotates the scene, as the label shows it.
 pub const NEXT_SCENE_KEY: &str = "⌃]";
 
-/// The label over the column: ` surf ⌃] `, or just the key when the name
-/// won't fit; ` flow off ⌃] ` when it's off.
+/// The label over the column: ` surf ⌃] `, with `⤨` after the scene name
+/// for Random; just the key when the name won't fit, or ` flow off ⌃] `.
 pub fn flow_label(view: FlowView, width: u16) -> String {
-    let scene = match view {
-        FlowView::Scene { scene, .. } => scene,
-        FlowView::Off => "flow off",
+    let (scene, random) = match view {
+        FlowView::Scene { scene, random, .. } => (scene, random),
+        FlowView::Off => ("flow off", false),
     };
-    let full = format!(" {scene} {NEXT_SCENE_KEY} ");
-    if full.chars().count() + 2 <= usize::from(width) {
+    let marker = if random { "⤨" } else { "" };
+    let full = format!(" {scene}{marker} {NEXT_SCENE_KEY} ");
+    if full.chars().count() + 1 <= usize::from(width) {
         full
     } else {
         format!(" {NEXT_SCENE_KEY} ")
@@ -171,9 +176,15 @@ mod tests {
 
     #[test]
     fn the_label_names_the_scene_and_the_key_or_just_the_key() {
-        let scene = |scene| FlowView::Scene { rows: &[], scene };
-        assert_eq!(flow_label(scene("surf"), 18), " surf ⌃] ");
-        assert_eq!(flow_label(scene("starship"), 12), " ⌃] ");
+        let scene = |scene, random| FlowView::Scene {
+            rows: &[],
+            scene,
+            random,
+        };
+        assert_eq!(flow_label(scene("surf", false), 18), " surf ⌃] ");
+        assert_eq!(flow_label(scene("engine", true), 15), " engine⤨ ⌃] ");
+        assert_eq!(flow_label(scene("starship", true), 15), " starship⤨ ⌃] ");
+        assert_eq!(flow_label(scene("starship", false), 12), " ⌃] ");
         assert_eq!(flow_label(FlowView::Off, 15), " flow off ⌃] ");
     }
 

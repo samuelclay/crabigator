@@ -896,6 +896,7 @@ mod tests {
         let (parser, layout) = draw_with_flow(FlowView::Scene {
             rows: &rows,
             scene: "surf",
+            random: false,
         });
         let total_cols = layout.total_cols;
         let screen = parser.screen();
