@@ -16,7 +16,7 @@ If several runtimes have an iPhone 17e, use its simulator ID instead of its name
 
 Run `crabigator pair` on a paired computer, then enter its code in the app. The Server control supports a compatible HTTPS deployment. Pairing credentials live in a device-only shared Keychain entry; neither credentials nor prompts are included in notification transport payloads.
 
-The checked-in project is ready to open without extra packages. To regenerate it after adding source files, install the Ruby `xcodeproj` gem and run `ruby clients/ios/scripts/generate-project.rb`. Both apps' icons come from one 32×32 pixel crab in `clients/scripts/render-icon.swift`. Edit the grid there, then run `swift clients/scripts/render-icon.swift` to redraw the iOS PNGs and the Android vectors.
+The checked-in project is ready to open without extra packages. To regenerate it after adding source files, install the Ruby `xcodeproj` gem and run `ruby clients/ios/scripts/generate-project.rb`. The icons, logo and wordmark come from the pixel grids in `scripts/render-brand.swift`. Edit a grid there, then run `swift scripts/render-brand.swift` to redraw both apps' images, the dashboard's SVGs and `assets/brand/`.
 
 ## Apple notifications
 
