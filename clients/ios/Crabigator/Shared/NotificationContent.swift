@@ -13,11 +13,11 @@ enum NotificationContent {
     static let actionLimit = 10
     /// Longer requests do not fit a notification; they must be reviewed in the app.
     static let detailLimit = 2000
-    static var extensionCategories: [String] {
-        (0...3).flatMap { count in [0, 1].map { "\(category)_\(count)_\($0)" } } + (0..<slotCount).map { slotPrefix + String($0) }
-    }
+    static var extensionCategories: [String] { categories().map(\.identifier) + (0..<slotCount).map { slotPrefix + String($0) } }
 
     static func prompt(_ snapshot: JSON) -> JSON { snapshot["prompt"] as? JSON ?? ["prompt_type": "text", "state": snapshot.text("state")] }
+    /// A prompt is waiting and its desktop can still receive the answer.
+    static func answerable(_ snapshot: JSON) -> Bool { snapshot.bool("attention_pending") && snapshot.bool("desktop_connected") }
     static func content(_ snapshot: JSON, id: String) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = snapshot.text("title", "Crabigator")
@@ -38,7 +38,7 @@ enum NotificationContent {
     static func body(_ prompt: JSON) -> String {
         let details = PromptActions.details(prompt)
         let labels = PromptActions.options(prompt).map { $0.text("label") }.filter { !$0.isEmpty }
-        return ([PromptActions.title(prompt)] + (details.isEmpty ? [] : [String(details.prefix(detailLimit))]) + (labels.isEmpty ? [] : [labels.joined(separator: " · ")])).joined(separator: "\n")
+        return ([PromptActions.title(prompt)] + [String(details.prefix(detailLimit)), labels.joined(separator: " · ")].filter { !$0.isEmpty }).joined(separator: "\n")
     }
     static func quickAnswers(_ prompt: JSON) -> Bool { PromptActions.details(prompt).count <= detailLimit }
 
@@ -52,9 +52,9 @@ enum NotificationContent {
         // A tap on one checkbox would only tick it. The expanded view has Submit.
         let multi = prompt["review"] == nil && PromptActions.question(prompt)?.bool("multi_select") == true
         var actions: [UNNotificationAction] = multi ? [] : PromptActions.options(prompt).prefix(actionLimit - (reply ? 1 : 0)).enumerated().map {
-            UNNotificationAction(identifier: "option_\($0.offset)" + token, title: $0.element.text("label", "Choice \($0.offset + 1)"), options: [.authenticationRequired])
+            optionAction("option_\($0.offset)" + token, $0.element.text("label", "Choice \($0.offset + 1)"))
         }
-        if reply { actions.append(UNTextInputNotificationAction(identifier: "reply" + token, title: "Reply", options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Your answer")) }
+        if reply { actions.append(replyAction("reply" + token)) }
         return actions
     }
     struct Choice: Equatable {
@@ -87,14 +87,20 @@ enum NotificationContent {
     static func categories() -> Set<UNNotificationCategory> {
         var result = Set<UNNotificationCategory>()
         for count in 0...3 { for freeText in [false, true] {
-            var actions: [UNNotificationAction] = (0..<count).map { UNNotificationAction(identifier: "option_\($0)", title: "Choose \($0 + 1)", options: [.authenticationRequired]) }
-            if freeText { actions.append(UNTextInputNotificationAction(identifier: "reply", title: "Reply", options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Your answer")) }
+            var actions: [UNNotificationAction] = (0..<count).map { optionAction("option_\($0)", "Choose \($0 + 1)") }
+            if freeText { actions.append(replyAction("reply")) }
             result.insert(category("\(category)_\(count)_\(freeText ? 1 : 0)", actions))
         } }
         return result
     }
     private static func category(_ identifier: String, _ actions: [UNNotificationAction]) -> UNNotificationCategory {
         UNNotificationCategory(identifier: identifier, actions: actions, intentIdentifiers: [], hiddenPreviewsBodyPlaceholder: "A session needs your attention", options: [.customDismissAction])
+    }
+    private static func optionAction(_ identifier: String, _ title: String) -> UNNotificationAction {
+        UNNotificationAction(identifier: identifier, title: title, options: [.authenticationRequired])
+    }
+    private static func replyAction(_ identifier: String) -> UNNotificationAction {
+        UNTextInputNotificationAction(identifier: identifier, title: "Reply", options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Your answer")
     }
     static func slot(_ category: String) -> Int? {
         guard category.hasPrefix(slotPrefix), let slot = Int(category.dropFirst(slotPrefix.count)), (0..<slotCount).contains(slot) else { return nil }
@@ -119,7 +125,7 @@ enum NotificationContent {
     }
 
     /// Gives `content` a category whose buttons use this prompt's real labels.
-    /// Keeps the generic category when every slot is busy or registration fails.
+    /// Keeps the generic category when every slot is busy.
     static func install(_ content: UNMutableNotificationContent, prompt: JSON, id: String) async {
         await serial.run {
             let center = UNUserNotificationCenter.current()
@@ -166,7 +172,7 @@ enum PromptAnswer {
     /// disconnected prompt throws 409 before anything reaches the terminal.
     static func send(_ id: String, revision: Int, option: Int? = nil, text: String? = nil, submit: Bool = false, toggling: [Int] = []) async throws {
         let snap = try await API.shared.snapshot(id)
-        guard snap.bool("attention_pending"), snap.bool("desktop_connected"), snap.int("prompt_revision") == revision else {
+        guard NotificationContent.answerable(snap), snap.int("prompt_revision") == revision else {
             throw APIError(status: 409, message: "This question has changed or was already answered.")
         }
         let action = try PromptActions.action(NotificationContent.prompt(snap), option: option, text: text, submit: submit, toggling: toggling)

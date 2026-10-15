@@ -22,8 +22,9 @@ import UserNotificationsUI
 
     /// False when this extension cannot read the pairing credential; the app answers instead.
     var canAnswer: Bool { !API.shared.credentials.connection().token.isEmpty }
-    var busy: Bool { if case .sending = status { return true }; if case .sent = status { return true }; return false }
+    var busy: Bool { switch status { case .sending, .sent: return true; default: return false } }
     var open: Bool { status != .resolved && !busy }
+    var canSubmit: Bool { open && !selected.isEmpty }
     var current: Int { prompt.int("current_question") }
 
     func show(_ notification: UNNotification) {
@@ -37,29 +38,29 @@ import UserNotificationsUI
     }
 
     func tap(question: Int? = nil, option: Int) {
-        let options = PromptActions.options(prompt)
-        guard open, options.indices.contains(option), question == nil || question == current else { return }
+        guard open, let label = label(option), question == nil || question == current else { return }
         if question != nil, PromptActions.question(prompt)?.bool("multi_select") == true {
             if !selected.insert(option).inserted { selected.remove(option) }
             changed(); return
         }
-        answer(options[option].text("label"), option: option)
+        answer(label, option: option)
     }
     func submit() {
-        let count = PromptActions.question(prompt)?.array("options").count ?? 0
-        let checked = Set((prompt["checked"] as? [Int] ?? []).filter { (1...max(1, count)).contains($0) }.map { $0 - 1 })
-        let labels = selected.sorted().map { PromptActions.options(prompt)[$0].text("label") }
-        answer(labels.joined(separator: ", "), submit: true, toggling: selected.symmetricDifference(checked).sorted())
+        answer(selected.sorted().compactMap(label).joined(separator: ", "), submit: true, toggling: selected.symmetricDifference(Self.checked(prompt)).sorted())
     }
     /// An action button under the view. iOS has already asked for authentication.
     func respond(to response: UNNotificationResponse) {
         guard let choice = NotificationContent.choice(response.actionIdentifier, id: id) else { return }
         let text = (response as? UNTextInputNotificationResponse)?.userText
         let revision = choice.revision ?? response.notification.request.content.userInfo["revision"] as? Int ?? -1
-        let label = text ?? choice.option.flatMap { PromptActions.options(prompt).indices.contains($0) ? PromptActions.options(prompt)[$0].text("label") : nil } ?? "your answer"
-        answer(label, option: choice.option, text: text, revision: revision, authenticated: true)
+        answer(text ?? choice.option.flatMap(label) ?? "your answer", option: choice.option, text: text, revision: revision, authenticated: true)
     }
     func openSession() { context?.performNotificationDefaultAction() }
+
+    private func label(_ option: Int) -> String? {
+        let options = PromptActions.options(prompt)
+        return options.indices.contains(option) ? options[option].text("label") : nil
+    }
 
     private func answer(_ label: String, option: Int? = nil, text: String? = nil, submit: Bool = false, toggling: [Int] = [], revision: Int? = nil, authenticated: Bool = false) {
         guard !busy else { return }
@@ -89,7 +90,7 @@ import UserNotificationsUI
             guard revision == sent else { return }
             guard let snap = try? await API.shared.snapshot(id), revision == sent else { continue }
             if snap.int("prompt_revision") == sent { continue }
-            if snap.bool("attention_pending") && snap.bool("desktop_connected") {
+            if NotificationContent.answerable(snap) {
                 adopt(NotificationContent.prompt(snap), revision: snap.int("prompt_revision"))
                 return
             }
@@ -100,7 +101,7 @@ import UserNotificationsUI
     }
     private func refresh() async {
         guard let snap = try? await API.shared.snapshot(id) else { return }
-        if snap.bool("attention_pending") && snap.bool("desktop_connected") {
+        if NotificationContent.answerable(snap) {
             adopt(NotificationContent.prompt(snap), revision: snap.int("prompt_revision"))
         } else if !busy {
             status = .resolved; context?.notificationActions = []; changed()
@@ -109,15 +110,18 @@ import UserNotificationsUI
     private func adopt(_ next: JSON, revision: Int) {
         guard revision != self.revision || prompt.isEmpty else { return }
         func questions(_ p: JSON) -> [String] { p.array("questions").map { $0.text("question") } }
-        if questions(next) != questions(prompt) { answered = [:] }
-        if questions(next) != questions(prompt) || next.int("current_question") != current || next["review"] != nil {
-            let count = PromptActions.question(next)?.array("options").count ?? 0
-            selected = Set((next["checked"] as? [Int] ?? []).filter { (1...max(1, count)).contains($0) }.map { $0 - 1 })
-        }
+        let sameQuestions = questions(next) == questions(prompt)
+        if !sameQuestions { answered = [:] }
+        if !sameQuestions || next.int("current_question") != current || next["review"] != nil { selected = Self.checked(next) }
         prompt = next; self.revision = revision
         if case .sending = status {} else { status = .ready }
         context?.notificationActions = NotificationContent.actions(next, id: id, revision: revision)
         changed()
+    }
+    /// The terminal's ticked rows, which count from 1, as option indices.
+    private static func checked(_ p: JSON) -> Set<Int> {
+        let count = PromptActions.question(p)?.array("options").count ?? 0
+        return Set((p["checked"] as? [Int] ?? []).filter { (1...max(1, count)).contains($0) }.map { $0 - 1 })
     }
 
     /// Readable only while the device is unlocked, unlike the pairing credential.
@@ -177,7 +181,7 @@ struct PromptCardContent: View {
                 Button { model.submit() } label: {
                     Text("Submit").font(.system(size: 15, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 10)
                         .foregroundStyle(Crab.ink).background(Crab.orange, in: RoundedRectangle(cornerRadius: 10))
-                }.buttonStyle(.plain).disabled(!model.open || model.selected.isEmpty).opacity(model.open && !model.selected.isEmpty ? 1 : 0.45)
+                }.buttonStyle(.plain).disabled(!model.canSubmit).opacity(model.canSubmit ? 1 : 0.45)
                     .accessibilityIdentifier("Submit choices")
             }
         }.opacity(current || index < model.current ? 1 : 0.6)

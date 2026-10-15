@@ -12,7 +12,7 @@ final class NotificationService: UNNotificationServiceExtension {
             do {
                 let snapshot = try await API.shared.snapshot(id)
                 await NotificationContent.remove(id: id)
-                if snapshot.bool("attention_pending") && snapshot.bool("desktop_connected") {
+                if NotificationContent.answerable(snapshot) {
                     let content = NotificationContent.content(snapshot, id: id)
                     await NotificationContent.install(content, prompt: NotificationContent.prompt(snapshot), id: id)
                     finish(content)

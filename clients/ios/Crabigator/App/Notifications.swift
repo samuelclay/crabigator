@@ -70,7 +70,7 @@ import UserNotifications
         do {
             let snap = try await api.snapshot(id)
             guard epoch == generation, !Task.isCancelled else { return }
-            guard snap.bool("attention_pending"), snap.bool("desktop_connected") else { await NotificationContent.remove(id: id); return }
+            guard NotificationContent.answerable(snap) else { await NotificationContent.remove(id: id); return }
             let revision = snap.int("prompt_revision")
             let delivered = await UNUserNotificationCenter.current().deliveredNotifications()
             guard epoch == generation, !Task.isCancelled else { return }

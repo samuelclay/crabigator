@@ -56,13 +56,6 @@ app.build_configurations.each do |c|
   c.build_settings['INFOPLIST_FILE'] = 'Crabigator/Resources/Info.plist'
   c.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Crabigator/Crabigator.entitlements'
 end
-extension.build_configurations.each do |c|
-  c.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'com.newsblur.crabigator.NotificationService'
-  c.build_settings['INFOPLIST_FILE'] = 'NotificationService/Info.plist'
-  c.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'NotificationService/NotificationService.entitlements'
-  c.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
-  c.build_settings['SKIP_INSTALL'] = 'YES'
-end
 [tests, ui_tests].each do |t|
   t.add_dependency(app)
   t.build_configurations.each do |c|
@@ -88,12 +81,14 @@ theme = %w[Crabigator/Views/Theme.swift Crabigator/Terminal/TerminalText.swift].
 content.add_file_references((shared + theme + content_files).map { |f| references[f] })
 # iOS looks up the extension's context class here at launch; nothing in the code links it on its own.
 content.add_system_framework('UserNotificationsUI')
-content.build_configurations.each do |c|
-  c.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'com.newsblur.crabigator.NotificationContentExtension'
-  c.build_settings['INFOPLIST_FILE'] = 'NotificationContentExtension/Info.plist'
-  c.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'NotificationContentExtension/NotificationContentExtension.entitlements'
-  c.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
-  c.build_settings['SKIP_INSTALL'] = 'YES'
+[extension, content].each do |t|
+  t.build_configurations.each do |c|
+    c.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = "com.newsblur.crabigator.#{t.name}"
+    c.build_settings['INFOPLIST_FILE'] = "#{t.name}/Info.plist"
+    c.build_settings['CODE_SIGN_ENTITLEMENTS'] = "#{t.name}/#{t.name}.entitlements"
+    c.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
+    c.build_settings['SKIP_INSTALL'] = 'YES'
+  end
 end
 app.add_dependency(content)
 phase.add_file_reference(content.product_reference).settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy'] }
