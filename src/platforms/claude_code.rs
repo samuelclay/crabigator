@@ -678,6 +678,21 @@ assert stats()['tools'] == {'Bash': 1} and stats()['state'] == 'thinking'
     }
 
     #[test]
+    fn permission_fingerprints_match_calls_without_retaining_inputs() {
+        run_hook_script(
+            r#"
+run({'hook_event_name': 'PreToolUse', 'tool_name': 'Bash', 'tool_use_id': 'a', 'tool_input': {'command': 'echo private', 'timeout': 10}})
+run({'hook_event_name': 'PermissionRequest', 'tool_name': 'Bash', 'tool_input': {'timeout': 10, 'command': 'echo private'}})
+run({'hook_event_name': 'PreToolUse', 'tool_name': 'Bash', 'tool_use_id': 'b', 'tool_input': {'command': 'echo different'}})
+lines = activity()
+assert lines[0]['fingerprint'] == lines[1]['fingerprint']
+assert lines[0]['fingerprint'] != lines[2]['fingerprint']
+assert 'private' not in json.dumps(lines) and 'tool_input' not in json.dumps(lines)
+"#,
+        );
+    }
+
+    #[test]
     fn a_background_agent_never_restarts_a_finished_turn() {
         run_hook_script(
             r#"

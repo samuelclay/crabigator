@@ -19,7 +19,7 @@ use super::WidgetArea;
 /// separator above it.
 #[derive(Clone, Copy, Debug)]
 pub enum FlowView<'a> {
-    /// The frame's rows, under the scene's name and the key that rotates it.
+    /// The frame's rows, under the scene's name and the key that cycles scenes.
     Scene {
         rows: &'a [String],
         scene: &'a str,
@@ -29,7 +29,7 @@ pub enum FlowView<'a> {
     Off,
 }
 
-/// The key that rotates the scene, as the label shows it.
+/// The key that cycles scenes, Settings and Off, as the label shows it.
 pub const NEXT_SCENE_KEY: &str = "⌃]";
 
 /// The label over the column: ` surf  ⌃] `, with `⤨ ` before the scene name
@@ -41,7 +41,7 @@ pub fn flow_label(view: FlowView, width: u16) -> String {
     };
     let marker = if random { "⤨ " } else { "" };
     let full = format!(" {marker}{scene}  {NEXT_SCENE_KEY} ");
-    if full.chars().count() + 1 <= usize::from(width) {
+    if full.chars().count() < usize::from(width) {
         full
     } else {
         format!(" {NEXT_SCENE_KEY} ")

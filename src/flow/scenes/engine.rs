@@ -38,10 +38,12 @@ mod layout;
 use std::f64::consts::{PI, TAU};
 
 use crate::flow::cells::{Cells, Rng};
+use crate::flow::crew::Crew;
 use crate::flow::js::{round, u32_of};
 use crate::flow::palette::SceneHue;
 use crate::flow::pixels::{clamp01, mix};
 use crate::flow::scene::{Dials, Scene, SceneDef, Tint};
+use crate::flow::waiting::{breath, ease_wait};
 
 pub const DEF: SceneDef = SceneDef {
     name: "engine",
@@ -80,6 +82,7 @@ mod c {
     pub const FACE: u32 = 0xe6dcc0;
     pub const NEEDLE: u32 = 0x2b211a;
     pub const NEEDLE_HOT: u32 = 0xc0301c;
+    pub const LAMP_FAIL: u32 = 0xff4a2a;
     pub const LAMP_ON: u32 = 0xffb43a;
     pub const LAMP_LOW: u32 = 0x6a4818;
     pub const LAMP_BLUE: u32 = 0x8cc4ff;
@@ -303,6 +306,8 @@ fn level_of(strength: f64) -> f64 {
 
 pub struct Engine {
     dials: Dials,
+    crew: Crew,
+    k_wait: f64,
     columns: usize,
     rows: usize,
     out: Cells,
@@ -379,6 +384,8 @@ impl Engine {
     pub fn new(seed: f64) -> Self {
         Self {
             dials: Dials::default(),
+            crew: Crew::new(6, 24.0, 36.0),
+            k_wait: 0.0,
             columns: 0,
             rows: 0,
             out: Cells::new(0, 0),
@@ -445,6 +452,11 @@ impl Engine {
 
     fn advance(&mut self) {
         self.t += 1.0;
+        self.crew.room = self.lamp_room();
+        self.crew
+            .update(&self.dials.agents, self.dials.coverage_boost);
+        let was = breath(self.t - 1.0);
+        self.k_wait = ease_wait(self.k_wait, self.dials.waiting);
         let level = level_of(self.dials.strength);
         let smoke = self.dials.tint == Tint::Smoke;
         let boost = self.dials.coverage_boost;
@@ -456,7 +468,7 @@ impl Engine {
             self.sputter -= 1.0;
         }
         let stumble = if self.sputter > 0.0 { 0.45 } else { 1.0 };
-        let target = SPEED[level as usize] * stumble;
+        let target = SPEED[level as usize] * stumble * (1.0 - self.k_wait);
         self.omega += (target - self.omega) * 0.045;
         if (target - self.omega).abs() < 0.0005 {
             self.omega = target;
@@ -511,6 +523,11 @@ impl Engine {
         let leak = if level == 1.0 { 0.06 } else { 0.03 };
         if level > 0.0 && level <= 3.0 && self.rng.f() < leak {
             self.wisp(self.valve_x, self.valve_y);
+        }
+        if level > 0.0 && self.k_wait > 0.5 && was < 0.6 && breath(self.t) >= 0.6 {
+            for _ in 0..3 {
+                self.wisp(self.valve_x, self.valve_y);
+            }
         }
         if level >= 7.0 && self.rng.f() < (level - 6.0) * 0.15 && !smoke {
             self.chimney_spark(level);

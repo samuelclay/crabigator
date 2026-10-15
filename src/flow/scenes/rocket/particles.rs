@@ -100,7 +100,7 @@ impl LaunchSite {
         self.parts.age();
         let s = self.spec();
         let (a, cx, _) = self.nozzle();
-        let tall = self.tall;
+        let tall = self.big();
         let scale = if tall { 1.0 } else { 0.6 };
         let tint = self.world.dials.tint;
         let smoky = tint == Tint::Smoke;

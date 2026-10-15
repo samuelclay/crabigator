@@ -16,26 +16,33 @@
 //! the work as it happens (`hooks`); other assistants' stats tell it a
 //! refresh later (`feed`).
 //!
-//! ctrl+] steps through Random, every named scene, then off. The choice is
+//! ctrl+] cycles enabled scenes, Settings and Off. The choice is
 //! saved in `[flow]`, so new sessions start the same way; the
 //! separator keeps a label naming the key that turns it back on.
 
 mod activity;
+mod agents;
 mod ansi;
 mod cells;
 mod claim;
 mod clouds;
+mod crew;
 mod feed;
 mod hooks;
 mod js;
 mod night;
 mod palette;
+mod picker;
+mod pixel_scene;
 mod pixels;
+#[cfg(test)]
+mod preview;
 #[cfg(test)]
 mod reference;
 mod scene;
 mod scenes;
 mod sky;
+mod waiting;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -85,15 +92,17 @@ pub struct FlowColumn {
     def: &'static SceneDef,
     /// The scene this session uses when Random is selected.
     random_scene: &'static SceneDef,
+    session_id: Option<String>,
     random: bool,
-    /// Turned off (ctrl+], or `[flow] enabled = false`): no column, no frames.
+    /// Turned off in the picker or config: only the shortcut label remains.
     off: bool,
     scene: Box<dyn Scene>,
     palette: Palette,
     turned: Cells,
     activity: Activity,
     /// Each change of state relights the scene (`[flow] fade`).
-    fade: bool,
+    preferences: FlowPreferences,
+    picker: Option<picker::Picker>,
     feed: ActivityFeed,
     /// Claude Code's activity log (`None`: other assistants).
     hooks: Option<HookFeed>,
@@ -121,9 +130,17 @@ impl FlowColumn {
         hook_log: Option<PathBuf>,
         preferences: &FlowPreferences,
     ) -> Self {
-        let name = claim::assign_scene(session_id, mark);
-        let random_scene = scene::scene_def(&name).unwrap_or(&scene::scenes()[0]);
-        let chosen = scene::scene_def(&preferences.scene);
+        let name = claim::assign_scene(session_id, mark, &preferences.disabled_scenes);
+        let random_scene = name
+            .as_deref()
+            .and_then(scene::scene_def)
+            .unwrap_or(&scene::scenes()[0]);
+        let chosen = scene::scene_def(&preferences.scene).filter(|def| {
+            !preferences
+                .disabled_scenes
+                .iter()
+                .any(|name| name == def.name)
+        });
         let def = chosen.unwrap_or(random_scene);
         if chosen.is_some() {
             crate::session_mark::publish_stub(session_id, mark, Some(def.name));
@@ -132,16 +149,18 @@ impl FlowColumn {
             palette::hue_of(&[(u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)])
         });
         let seed = f64::from(claim::scene_seed(session_id));
-        Self {
+        let mut column = Self {
             def,
             random_scene,
+            session_id: Some(session_id.to_string()),
             random: chosen.is_none(),
-            off: !preferences.enabled,
+            off: !preferences.enabled || name.is_none(),
             scene: (def.make)(seed),
             palette: palette_for(def, target),
             turned: Cells::new(0, 0),
             activity: Activity::default(),
-            fade: preferences.fade,
+            preferences: preferences.clone(),
+            picker: None,
             feed: ActivityFeed::default(),
             hooks: hook_log.map(HookFeed::open),
             geometry: None,
@@ -151,6 +170,149 @@ impl FlowColumn {
             state: None,
             seed,
             target,
+        };
+        column.palette = palette_for(def, column.color_target());
+        column
+    }
+
+    /// The event loop still ticks while editing an off column.
+    pub fn should_tick(&self) -> bool {
+        !self.off || self.picker.is_some()
+    }
+
+    pub fn picker_open(&self) -> bool {
+        self.picker.is_some()
+    }
+
+    pub fn open_picker(&mut self) {
+        self.picker = Some(picker::Picker::new(self.preferences()));
+        self.tick();
+    }
+
+    /// Next shortcut choice: Random, enabled scenes, Settings, Off.
+    /// Settings is transient; scene/off changes are applied only after saving.
+    pub fn cycle_preferences(&mut self) -> Option<FlowPreferences> {
+        let mut prefs = self.preferences();
+        let allowed: Vec<_> = scene::scenes()
+            .iter()
+            .filter(|def| !prefs.disabled_scenes.iter().any(|name| name == def.name))
+            .collect();
+        if self.picker_open() {
+            prefs.enabled = false;
+        } else if allowed.is_empty() {
+            self.open_picker();
+            return None;
+        } else if self.off {
+            prefs.enabled = true;
+            prefs.scene = "random".into();
+        } else if self.random {
+            prefs.scene = allowed[0].name.into();
+        } else if let Some(next) = allowed
+            .iter()
+            .position(|def| def.name == self.def.name)
+            .and_then(|at| allowed.get(at + 1))
+        {
+            prefs.scene = next.name.into();
+        } else {
+            self.open_picker();
+            return None;
+        }
+        Some(prefs)
+    }
+
+    pub fn picker_key(&mut self, key: crossterm::event::KeyEvent) -> Option<FlowPreferences> {
+        let action = self.picker.as_mut()?.key(key);
+        match action {
+            picker::Action::Save(prefs) => return Some(prefs),
+            picker::Action::Cancel => self.close_picker(),
+            picker::Action::Edit => {
+                self.tick();
+            }
+        }
+        None
+    }
+
+    pub fn picker_save_failed(&mut self) {
+        if let Some(picker) = &mut self.picker {
+            picker.error = true;
+        }
+        self.tick();
+    }
+
+    pub fn close_picker(&mut self) {
+        self.picker = None;
+        self.frame = None;
+        if self.off {
+            self.drawn = None;
+        } else {
+            self.tick();
+        }
+    }
+
+    /// Canonical settings are persisted and applied together.
+    pub fn normalize_preferences(mut prefs: FlowPreferences) -> FlowPreferences {
+        prefs.level = prefs.level.map(|n| n.min(10));
+        let allowed = |def: &SceneDef| !prefs.disabled_scenes.iter().any(|name| name == def.name);
+        if !scene::scenes().iter().any(allowed) {
+            prefs.enabled = false;
+        }
+        if scene::scene_def(&prefs.scene).is_some_and(|def| !allowed(def)) {
+            prefs.scene = "random".into();
+        }
+        prefs
+    }
+
+    pub fn apply_preferences(&mut self, prefs: FlowPreferences) {
+        let prefs = Self::normalize_preferences(prefs);
+        let allowed = |def: &SceneDef| !prefs.disabled_scenes.iter().any(|name| name == def.name);
+        if !allowed(self.random_scene) {
+            let name = match &self.session_id {
+                Some(id) => claim::reclaim_scene(id, &prefs.disabled_scenes),
+                None => claim::claim_scene(&self.seed.to_string(), &[], &prefs.disabled_scenes),
+            };
+            if let Some(def) = name.as_deref().and_then(scene::scene_def) {
+                self.random_scene = def;
+            }
+        }
+
+        if self.off && prefs.enabled {
+            if let Some(hooks) = &mut self.hooks {
+                hooks.skip_ahead();
+            }
+        }
+        self.off = !prefs.enabled;
+        self.random = scene::scene_def(&prefs.scene).is_none();
+        let def = scene::scene_def(&prefs.scene).unwrap_or(self.random_scene);
+        self.preferences = prefs;
+        self.picker = None;
+        self.frame = None;
+        self.palette = palette_for(def, self.color_target());
+        if self.def.name != def.name {
+            self.show(def);
+        } else {
+            self.tick();
+        }
+        if self.off {
+            self.drawn = None;
+        }
+    }
+
+    pub fn preferences(&self) -> FlowPreferences {
+        FlowPreferences {
+            scene: self.selection().into(),
+            enabled: !self.off,
+            ..self.preferences.clone()
+        }
+    }
+
+    fn color_target(&self) -> Option<f64> {
+        match self.preferences.color.as_str() {
+            "natural" => None,
+            "session" => self.target,
+            name => picker::COLORS
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map_or(self.target, |(_, hue)| *hue),
         }
     }
 
@@ -173,50 +335,17 @@ impl FlowColumn {
         }
     }
 
-    /// Rotate through Random, each named scene in order, then off.
-    /// Answers the actual scene showing (`None`: off) for the session mirror.
-    pub fn next_scene(&mut self) -> Option<&'static str> {
-        if self.off {
-            self.off = false;
-            // What the hooks said while off is old news.
-            if let Some(hooks) = self.hooks.as_mut() {
-                hooks.skip_ahead();
-            }
-            self.random = true;
-            self.show(self.random_scene);
-            return self.scene();
-        }
-        let all = scene::scenes();
-        if self.random {
-            self.random = false;
-            self.show(&all[0]);
-            return self.scene();
-        }
-        let at = all
-            .iter()
-            .position(|def| def.name == self.def.name)
-            .unwrap_or(0);
-        if let Some(next) = all.get(at + 1) {
-            self.show(next);
-        } else {
-            self.off = true;
-            self.frame = None;
-            self.drawn = None;
-        }
-        self.scene()
-    }
-
     /// Show `def` in the session's colour, stepped once so it shows at once.
     fn show(&mut self, def: &'static SceneDef) {
         self.def = def;
         self.scene = (def.make)(self.seed);
-        self.palette = palette_for(def, self.target);
+        self.palette = palette_for(def, self.color_target());
         self.tick();
     }
 
     /// How long until the next frame: calm scenes step slower.
     pub fn pace(&mut self) -> Duration {
-        let dials = *self.scene.dials();
+        let dials = self.scene.dials();
         if dials.strength <= 1.0 && dials.tint == Tint::Normal {
             CALM
         } else {
@@ -234,24 +363,45 @@ impl FlowColumn {
         let elapsed = now.duration_since(self.last_tick).as_secs_f64() * 1000.0;
         self.last_tick = now;
         self.activity.tick(elapsed / FRAME_MS);
-        let Some(rect) = self.geometry.filter(|_| !self.off) else {
+        let Some(rect) = self.geometry.filter(|_| !self.off || self.picker.is_some()) else {
             return FlowChange::default();
         };
-        let night = is_night(chrono::Local::now().hour());
+        if let Some(picker) = &self.picker {
+            let rows = picker.rows(usize::from(rect.width), usize::from(rect.rows));
+            let changed = self.frame.as_ref() != Some(&rows);
+            let column_toggled = self.frame.is_none();
+            self.frame = Some(rows);
+            return FlowChange {
+                new_frame: changed,
+                column_toggled,
+            };
+        }
+        let night = self
+            .preferences
+            .night
+            .unwrap_or_else(|| is_night(chrono::Local::now().hour()));
         let level = self.level();
+        let waiting = self.preferences.level.is_none() && self.activity.waiting();
+        let target = self.color_target();
         let dials = self.scene.dials();
         dials.strength = level;
+        dials.waiting = waiting;
+        dials.agents.clone_from(&self.activity.agents);
         dials.coverage_boost = self.activity.coverage_boost();
-        dials.tint = self.activity.tint();
+        dials.tint = if self.preferences.level.is_none() {
+            self.activity.tint()
+        } else {
+            Tint::Normal
+        };
         dials.night = night;
-        dials.accent = if self.def.figure { self.target } else { None };
+        dials.accent = if self.def.figure { target } else { None };
         let tint = dials.tint;
         self.scene
             .ensure(usize::from(rect.width), usize::from(rect.rows));
         self.scene.step();
         let grid = self.scene.grid();
         // The context-full tint must read as blue: no palette then.
-        let rows = if self.palette.is_natural() || tint == Tint::Blue {
+        let rows = if self.palette.is_natural() || tint == Tint::Blue || waiting {
             ansi::grid_to_ansi(grid)
         } else {
             self.palette.apply(grid, &mut self.turned);
@@ -271,7 +421,10 @@ impl FlowColumn {
     /// The scene's level: what the work calls for (flow's `strength`), or
     /// with fade, also lit by how recently the state changed.
     fn level(&self) -> f64 {
-        if self.fade {
+        if let Some(level) = self.preferences.level {
+            return f64::from(level.min(10));
+        }
+        if self.preferences.fade {
             self.activity.strength_faded(IDLE_GLOW)
         } else {
             self.activity.strength(IDLE_GLOW)
@@ -291,6 +444,13 @@ impl FlowColumn {
     /// What the status bar shows: the frame and its scene; off, the label
     /// that tells how to turn it on, where the column would have room.
     pub fn view(&self) -> Option<FlowView<'_>> {
+        if self.picker.is_some() {
+            return Some(FlowView::Scene {
+                rows: self.frame.as_deref()?,
+                scene: "settings",
+                random: false,
+            });
+        }
         if self.off {
             return self.geometry.map(|_| FlowView::Off);
         }
@@ -359,6 +519,37 @@ impl FlowColumn {
         if self.hooks.as_ref().is_some_and(|hooks| hooks.live) {
             return;
         }
+        use crate::platforms::PlatformAgentState;
+        self.activity.agents = stats
+            .flow_agents
+            .iter()
+            .map(|agent| agents::AgentDial {
+                id: agent.id.clone(),
+                state: match agent.state {
+                    PlatformAgentState::Working => agents::AgentState::Working,
+                    PlatformAgentState::Idle => agents::AgentState::Idle,
+                    PlatformAgentState::Waiting => agents::AgentState::Waiting,
+                    PlatformAgentState::Done => agents::AgentState::Done,
+                },
+                ok: agent.ok,
+                task: agent.task.clone(),
+                kind: agent.kind.clone(),
+                ms: agent.ms,
+            })
+            .collect();
+        self.activity.running_agents = stats
+            .flow_agents
+            .iter()
+            .filter(|a| a.state != PlatformAgentState::Done)
+            .count() as u32;
+        let waiting = stats
+            .flow_agents
+            .iter()
+            .any(|a| a.state == PlatformAgentState::Waiting);
+        if self.activity.agent_waiting != waiting {
+            self.activity.changed();
+        }
+        self.activity.agent_waiting = waiting;
         for heard in self.feed.observe(stats) {
             match heard {
                 Heard::Tool(name) => hear_tool(&mut self.activity, &name),
@@ -378,9 +569,11 @@ impl FlowColumn {
         if previous == Some(state) {
             return;
         }
+        self.activity.screen_waiting =
+            matches!(state, SessionState::Permission | SessionState::Question);
         if state == SessionState::Thinking {
             self.activity.turn_started();
-        } else {
+        } else if !self.activity.screen_waiting {
             self.activity.turn_ended();
             if let Some(hooks) = self.hooks.as_mut() {
                 hooks.turn_ended();
@@ -451,13 +644,18 @@ mod tests {
         FlowColumn {
             def,
             random_scene: def,
+            session_id: None,
             random: false,
             off: false,
             scene: (def.make)(7.0),
             palette: Palette::natural(),
             turned: Cells::new(0, 0),
             activity: Activity::default(),
-            fade: true,
+            preferences: FlowPreferences {
+                fade: true,
+                ..FlowPreferences::default()
+            },
+            picker: None,
             feed: ActivityFeed::default(),
             hooks: None,
             geometry: None,
@@ -480,6 +678,54 @@ mod tests {
     }
 
     #[test]
+    fn a_wait_holds_the_turn_clock_and_manual_settings_override_activity() {
+        let mut flow = column("fire");
+        flow.set_geometry(Some(rect(24, 8)));
+        flow.sync_state(SessionState::Thinking);
+        flow.activity.tick(400.0);
+        let before = flow.activity.turn_frames;
+        flow.sync_state(SessionState::Permission);
+        flow.activity.tick(800.0);
+        assert_eq!(flow.activity.turn_frames, before);
+        assert!(flow.level() <= 2.0);
+        flow.sync_state(SessionState::Thinking);
+        assert_eq!(flow.activity.turn_frames, before);
+        assert!(flow.level() > 2.0);
+        flow.sync_state(SessionState::Question);
+        flow.apply_preferences(FlowPreferences {
+            scene: "fire".into(),
+            level: Some(7),
+            night: Some(true),
+            color: "violet".into(),
+            ..FlowPreferences::default()
+        });
+        assert_eq!(flow.level(), 7.0);
+        let dials = flow.scene.dials();
+        assert!(dials.night && !dials.waiting);
+        assert_eq!(dials.tint, Tint::Normal);
+        assert_eq!(flow.color_target(), Some(305.0));
+    }
+
+    #[test]
+    fn opening_an_off_picker_is_visible_and_cancel_restores_off() {
+        let mut flow = column("fire");
+        flow.off = true;
+        flow.set_geometry(Some(rect(15, 4)));
+        flow.open_picker();
+        assert!(flow.should_tick() && flow.has_frame() && flow.picker_open());
+        assert!(matches!(
+            flow.view(),
+            Some(FlowView::Scene {
+                scene: "settings",
+                ..
+            })
+        ));
+        flow.close_picker();
+        assert!(!flow.should_tick() && !flow.has_frame());
+        assert!(matches!(flow.view(), Some(FlowView::Off)));
+    }
+
+    #[test]
     fn frames_come_once_there_is_room_and_rows_fit_the_column() {
         let mut flow = column("fire");
         assert_eq!(flow.tick(), FlowChange::default());
@@ -492,6 +738,33 @@ mod tests {
         for row in rows {
             assert_eq!(crate::ui::utils::strip_ansi_len(row), 18);
         }
+    }
+
+    #[test]
+    fn codex_startup_spinner_does_not_relight_fade_but_a_real_turn_does() {
+        use crate::hooks::SessionStats;
+        use crate::platforms::PlatformKind;
+        let mut flow = column("doom3d");
+        let mut stats = SessionStats::new();
+        flow.sync_state(stats.effective_state());
+        for spinning in [true, true, false, true, false] {
+            stats.set_title_spinner(spinning, PlatformKind::Codex);
+            assert_eq!(stats.effective_state(), SessionState::Ready);
+            flow.sync_state(stats.effective_state());
+            flow.hear_output(1000); // startup repainting is not streamed work
+            flow.activity.tick(10.0);
+            assert_eq!(flow.level(), IDLE_GLOW);
+            assert!(!flow.activity.is_turn_active);
+        }
+        // task_started arrives in the rollout even without another title update.
+        stats.platform_stats.state = SessionState::Thinking;
+        flow.sync_state(stats.effective_state());
+        assert_eq!(flow.level(), 10.0);
+        assert!(flow.activity.is_turn_active);
+        stats.platform_stats.state = SessionState::Complete;
+        flow.sync_state(stats.effective_state());
+        assert_eq!(flow.level(), 10.0, "real completion still relights fade");
+        assert!(!flow.activity.is_turn_active);
     }
 
     #[test]
@@ -512,7 +785,7 @@ mod tests {
     #[test]
     fn without_fade_the_scene_follows_the_work_as_flow_does() {
         let mut flow = column("fire");
-        flow.fade = false;
+        flow.preferences.fade = false;
         flow.sync_state(SessionState::Ready);
         flow.sync_state(SessionState::Thinking);
         // A turn starting sits at its effort floor, not relit to 10.
@@ -525,48 +798,123 @@ mod tests {
         flow.activity.tools_in_flight = 1;
         flow.activity.tick(1.0);
         assert_eq!(flow.level(), 3.0);
-        flow.fade = true;
+        flow.preferences.fade = true;
         assert_eq!(flow.level(), 10.0);
     }
 
+    fn advance(flow: &mut FlowColumn) {
+        if let Some(prefs) = flow.cycle_preferences() {
+            flow.apply_preferences(prefs);
+        }
+    }
+
     #[test]
-    fn the_next_scene_cycles_random_named_scenes_and_off() {
-        let mut flow = column("avalon");
-        flow.random = true;
-        flow.set_geometry(Some(rect(18, 6)));
-        flow.tick();
-        assert_eq!(flow.selection(), "random");
-        assert_eq!(flow.scene(), Some("avalon"));
-        assert!(matches!(
-            flow.view(),
-            Some(FlowView::Scene {
-                scene: "avalon",
-                random: true,
-                ..
-            })
-        ));
+    fn shortcut_visits_all_scenes_settings_off_then_random() {
+        let mut flow = column("doom3d");
+        flow.set_geometry(Some(rect(15, 4)));
+        flow.apply_preferences(FlowPreferences::default());
         for def in scene::scenes() {
-            assert_eq!(flow.next_scene(), Some(def.name));
+            advance(&mut flow);
+            assert_eq!(flow.selection(), def.name);
+            assert!(!flow.picker_open());
+        }
+        advance(&mut flow);
+        assert!(flow.picker_open());
+        advance(&mut flow);
+        assert!(!flow.picker_open() && !flow.is_on());
+        advance(&mut flow);
+        assert_eq!(flow.selection(), "random");
+        assert_eq!(flow.scene(), Some("doom3d"));
+    }
+
+    #[test]
+    fn saved_exclusions_match_the_effective_scene_and_off_state() {
+        let prefs = FlowColumn::normalize_preferences(FlowPreferences {
+            scene: "doom3d".into(),
+            disabled_scenes: vec!["doom3d".into()],
+            ..FlowPreferences::default()
+        });
+        let saved = toml::to_string(&prefs).unwrap();
+        let mut restored: FlowPreferences = toml::from_str(&saved).unwrap();
+        assert_eq!(restored.scene, "random");
+        restored.disabled_scenes = claim::scene_names().to_vec();
+        let prefs = FlowColumn::normalize_preferences(restored);
+        let restored: FlowPreferences = toml::from_str(&toml::to_string(&prefs).unwrap()).unwrap();
+        assert!(!restored.enabled);
+    }
+
+    #[test]
+    fn exclusions_replace_disabled_choices_and_skip_them_in_the_cycle() {
+        let mut flow = column("doom3d");
+        flow.set_geometry(Some(rect(15, 4)));
+        let disabled_scenes = scene::scenes()
+            .iter()
+            .filter(|def| def.name != "train")
+            .map(|def| def.name.to_string())
+            .collect();
+        flow.apply_preferences(FlowPreferences {
+            scene: "doom3d".into(),
+            disabled_scenes,
+            ..FlowPreferences::default()
+        });
+        assert_eq!(flow.selection(), "random");
+        assert_eq!(flow.scene(), Some("train"));
+        advance(&mut flow);
+        assert_eq!(flow.selection(), "train");
+        advance(&mut flow);
+        assert!(flow.picker_open());
+        advance(&mut flow);
+        advance(&mut flow);
+        assert_eq!(flow.scene(), Some("train"));
+        assert_eq!(flow.selection(), "random");
+        let mut prefs = flow.preferences();
+        prefs.disabled_scenes.push("train".into());
+        flow.apply_preferences(prefs);
+        assert!(!flow.is_on());
+        advance(&mut flow);
+        assert!(flow.picker_open(), "all unchecked still reaches settings");
+        advance(&mut flow);
+        assert!(!flow.is_on());
+        let mut prefs = flow.preferences();
+        prefs.disabled_scenes.retain(|name| name != "earthrise");
+        prefs.enabled = true;
+        flow.apply_preferences(prefs);
+        assert_eq!(flow.scene(), Some("earthrise"));
+    }
+
+    #[test]
+    fn settings_select_every_scene_random_and_off() {
+        let mut flow = column("avalon");
+        flow.set_geometry(Some(rect(18, 6)));
+        for def in scene::scenes() {
+            flow.apply_preferences(FlowPreferences {
+                scene: def.name.into(),
+                ..FlowPreferences::default()
+            });
+            assert_eq!(flow.scene(), Some(def.name));
             assert_eq!(flow.selection(), def.name);
             assert!(flow.has_frame());
         }
-        // Off keeps the key available even though the column is hidden.
-        flow.set_drawn(Some(rect(18, 6)));
-        assert_eq!(flow.next_scene(), None);
+        flow.apply_preferences(FlowPreferences {
+            enabled: false,
+            ..FlowPreferences::default()
+        });
         assert!(!flow.has_frame() && flow.drawn_rect().is_none());
         assert!(matches!(flow.view(), Some(FlowView::Off)));
         assert!(flow.takes_key());
-        assert_eq!(flow.tick(), FlowChange::default());
-        assert_eq!(flow.next_scene(), Some("avalon"));
+        flow.apply_preferences(FlowPreferences::default());
+        assert_eq!(flow.scene(), Some("avalon"));
         assert_eq!(flow.selection(), "random");
-        assert!(flow.has_frame());
     }
 
     #[test]
     fn a_saved_scene_starts_new_sessions_on_that_scene() {
         let mut flow = column("avalon");
         flow.random = true;
-        flow.next_scene(); // Random -> Fire, even when Random drew Avalon.
+        flow.apply_preferences(FlowPreferences {
+            scene: "fire".into(),
+            ..FlowPreferences::default()
+        });
         let preferences = FlowPreferences {
             scene: flow.selection().to_string(),
             ..FlowPreferences::default()
@@ -616,6 +964,67 @@ mod tests {
         fire.set_geometry(Some(rect(24, 8)));
         fire.tick();
         assert_eq!(fire.scene.dials().accent, None);
+    }
+
+    #[test]
+    fn new_scene_session_and_explicit_colors_change_frames_and_natural_is_exact() {
+        for name in ["train", "earthrise", "doom", "doom3d"] {
+            for (width, rows) in [(15, 4), (24, 8), (40, 12)] {
+                let render = |color: &str, target: f64| {
+                    let mut flow = column(name);
+                    flow.target = Some(target);
+                    flow.apply_preferences(FlowPreferences {
+                        scene: name.into(),
+                        color: color.into(),
+                        level: Some(6),
+                        night: Some(false),
+                        fade: false,
+                        ..FlowPreferences::default()
+                    });
+                    flow.set_geometry(Some(rect(width, rows)));
+                    for _ in 0..60 {
+                        flow.tick();
+                    }
+                    let raw = flow.scene.grid().clone();
+                    (flow.frame.unwrap(), raw)
+                };
+                let (natural, raw) = render("natural", 305.0);
+                let (session, session_raw) = render("session", 305.0);
+                let (explicit, explicit_raw) = render("violet", 70.0);
+                assert_eq!(natural, ansi::grid_to_ansi(&raw), "natural {name}");
+                assert_eq!(raw.words, session_raw.words, "simulation {name}");
+                assert_eq!(raw.words, explicit_raw.words, "simulation {name}");
+                assert_eq!(session, explicit, "explicit overrides session {name}");
+                assert_ne!(natural, session, "visible recoloring {name} {width}x{rows}");
+            }
+        }
+    }
+
+    #[test]
+    fn new_scene_palettes_preserve_waiting_frames() {
+        for name in ["train", "earthrise", "doom", "doom3d"] {
+            let mut flow = column(name);
+            flow.target = Some(305.0);
+            flow.apply_preferences(FlowPreferences {
+                scene: name.into(),
+                color: "violet".into(),
+                night: Some(false),
+                fade: false,
+                ..FlowPreferences::default()
+            });
+            flow.activity.screen_waiting = true;
+            flow.set_geometry(Some(rect(24, 8)));
+            for _ in 0..90 {
+                flow.tick();
+            }
+            assert!(!flow.palette.is_natural(), "{name} has a selected palette");
+            assert!(flow.scene.dials().waiting);
+            assert_eq!(
+                flow.frame.as_ref().unwrap(),
+                &ansi::grid_to_ansi(flow.scene.grid()),
+                "{name} keeps the scene's breathing sepia and signal lamps"
+            );
+        }
     }
 
     /// Every scene in a hue, printed here to look at:

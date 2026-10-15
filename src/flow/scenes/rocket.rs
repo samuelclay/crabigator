@@ -47,7 +47,12 @@
 //! `SkyWorld`, told which rocket it is, implementing `SkyScene` for the
 //! sky's scenery. flow's sound (`sounds`, `ambience`) is left out.
 
+mod companions;
 mod draw;
+use crate::flow::crew::{failed, finished, Crew, Mate};
+use crate::flow::pixels::{dist, noise1};
+use crate::flow::waiting::{wait_tone, SEPIA_AMOUNT};
+use companions::Host;
 mod particles;
 mod sprites;
 
@@ -243,6 +248,21 @@ struct Flight {
 /// A launch site: the sky world, the rocket on its pad (or flying, or
 /// coming home), and on the way home perhaps a second site on a split screen.
 pub struct LaunchSite {
+    host: Option<Host>,
+    mate: Option<Mate>,
+    minis: Vec<LaunchSite>,
+    crew: Crew,
+    slot: usize,
+    lag: usize,
+    alpha: f64,
+    log: [i8; 32],
+    log_at: usize,
+    site_room: usize,
+    split_off: f64,
+    mini_twin_slot: Option<usize>,
+    lamp_cell: [usize; 3],
+    lamp_color: [u32; 3],
+    n_lamps: usize,
     world: SkyWorld,
     rocket: Rocket,
     /// The level being acted out: it walks toward the asked-for level a stage at a time.
@@ -364,6 +384,21 @@ pub struct LaunchSite {
 impl LaunchSite {
     fn new(rocket: Rocket, seed: f64) -> Self {
         Self {
+            host: None,
+            mate: None,
+            minis: vec![],
+            crew: Crew::new(3, 24.0, 36.0),
+            slot: 0,
+            lag: 0,
+            alpha: 1.0,
+            log: [0; 32],
+            log_at: 0,
+            site_room: 0,
+            split_off: 0.0,
+            mini_twin_slot: None,
+            lamp_cell: [0; 3],
+            lamp_color: [0; 3],
+            n_lamps: 0,
             world: SkyWorld::new(seed),
             rocket,
             staged: -1.0,
@@ -450,7 +485,14 @@ impl LaunchSite {
 
     /// The rocket's layout on this grid (set by `geo`).
     fn spec(&self) -> &'static Spec {
-        &self.rocket.specs()[usize::from(self.tall)]
+        &(if self.host.is_some() {
+            match self.rocket {
+                Rocket::Falcon => sprites::mini_falcon_specs(),
+                Rocket::Starship => sprites::mini_starship_specs(),
+            }
+        } else {
+            self.rocket.specs()
+        })[usize::from(self.tall)]
     }
 
     fn look(&self) -> &'static Look {
@@ -477,13 +519,21 @@ impl LaunchSite {
         let ox0 = -s.body_l;
         let tx0 = ceil_even(ox0 + s.fly.wf());
         let pw = self.columns() * 2.0;
-        let mut body = if self.tall {
+        let mut body = if let Some(h) = &self.host {
+            h.site_x[self.slot]
+        } else if self.tall {
             2.0 * round((pw / 2.0 - (ox0 + tx0 + s.tower_w) / 2.0) / 2.0)
         } else {
             2.0 * (self.columns() * 0.42).floor()
         };
-        body = (-ox0 + 2.0).max(body.min(pw - tx0 - s.tower_w - 2.0));
-        self.body_px = ceil_even(body);
+        if self.host.is_none() {
+            body = (-ox0 + 2.0).max(body.min(pw - tx0 - s.tower_w - 2.0));
+        }
+        self.body_px = if self.host.is_some() {
+            body
+        } else {
+            ceil_even(body)
+        };
         self.ox = self.body_px + ox0;
         self.tx = self.body_px + tx0;
         self.pad_l = ((self.ox - 2.0) / 2.0).floor();
@@ -493,11 +543,24 @@ impl LaunchSite {
         // pad is out of sight.
         self.lz = if self.booster_only && self.look().catches {
             0.0
+        } else if let Some(h) = &self.host {
+            h.lz + if self.look().catches {
+                self.sea_off(h) - (self.body_px - h.body_px)
+            } else {
+                0.0
+            }
         } else {
             -2.0 * ((pw - self.ox + 4.0) / 2.0).ceil()
         };
         if self.state == State::Rest {
             self.world.alt = s.mount / 2.0;
+        }
+        if self.host.is_some() {
+            return;
+        }
+        self.site_room = 0;
+        while self.site_room < 3 && self.site_x(self.site_room).is_finite() {
+            self.site_room += 1;
         }
     }
 
@@ -505,12 +568,20 @@ impl LaunchSite {
     /// so the pixels and the cells move together. With the split screen
     /// open, this side's view sits centred in the right-hand part.
     fn view_x(&self) -> f64 {
+        if let Some(h) = &self.host {
+            return h.view_x;
+        }
         2.0 * round((self.view - if self.split_tall { 0.0 } else { self.split_w }) / 2.0)
     }
 
     /// Where the Ship or Dragon comes down in the sea, along the ground from
     /// the mount (pixels): past Falcon's landing zone.
     fn sea_x(&self) -> f64 {
+        if let Some(h) = &self.host {
+            if !self.look().catches {
+                return h.sea_x + self.sea_off(h) - (self.body_px - h.body_px);
+            }
+        }
         if self.look().catches {
             self.lz
         } else {
@@ -521,6 +592,9 @@ impl LaunchSite {
     /// The sea: everything left of this column (cells), halfway out from the
     /// land (the pad, or Falcon's landing zone) to where it comes down.
     fn shore(&self) -> f64 {
+        if let Some(h) = &self.host {
+            return h.shore;
+        }
         if self.lz == 0.0 || self.booster_only {
             return -1e9;
         }
@@ -617,10 +691,10 @@ impl LaunchSite {
         let o = self.orbit;
         let cx = self.ox + pos_x + sp.wf() / 2.0;
         let cy = self.base - self.apx() - sp.hf() + 1.0 + sp.hf() / 2.0;
-        if o <= 0.0 && turned && (self.flop > 0.0 || self.lean != 0.0) {
+        if o <= 0.0 && turned && (self.flop > 0.0 || self.lean != 0.0 || self.tumble() != 0.0) {
             // Belly-first, tiles down, nose toward the sea (or Dragon leaning into
             // its entry): turned about the middle of what's flying.
-            let th = -(PI / 2.0) * self.flop + self.lean;
+            let th = -(PI / 2.0) * self.flop + self.lean + self.tumble();
             let (r0, r1) = self.part_rows(self.part);
             let off = sp.hf() / 2.0 - (r0 + r1) / 2.0;
             let sn = th.sin();
@@ -631,27 +705,13 @@ impl LaunchSite {
             return (cx, cy, 0.0, 1.0);
         }
         let k = o * o * (3.0 - 2.0 * o);
-        let (pw, ph) = (self.pw as f64, self.ph as f64);
-        // In orbit it sits mid-grid, tilted toward its travel; in the spine the
-        // camera pulls back so the whole tilted stack fits the narrow pane.
-        let ocx = pw / 2.0 + if self.tall { 0.0 } else { -2.0 };
-        let ocy =
-            (ph - if self.split_tall {
-                2.0 * self.split_w
-            } else {
-                0.0
-            }) * if self.tall { 0.42 } else { 0.36 };
-        // Shrunk just enough for the tilted stack to fit the pane's width (its right-hand part, split).
-        let room = pw
-            - if self.split_tall {
-                0.0
-            } else {
-                2.0 * self.split_w
-            };
+        let (ocx, ocy, full) = if self.host.is_some() {
+            self.station()
+        } else {
+            self.orbit_frame()
+        };
         let sc = if self.tall {
-            1.0 - k
-                * (1.0
-                    - 0.85_f64.min((room - 7.0) / (2.0 * sp.hf() * 0.3_f64.max(self.tilt.sin()))))
+            1.0 - k * (1.0 - full)
         } else {
             1.0
         };
@@ -664,7 +724,7 @@ impl LaunchSite {
         (
             cx + (ocx - 2.0 * off * sn * sc - cx) * k,
             cy + (ocy + off * cs * sc - cy) * k,
-            self.tilt,
+            self.tilt + self.tumble(),
             sc,
         )
     }
@@ -871,6 +931,9 @@ impl LaunchSite {
             self.arm_y += clamp(arm_goal - self.arm_y, -0.6, 0.6);
         }
 
+        if self.host.is_some() {
+            thr_goal = self.formation(thr_goal, homeward);
+        }
         self.thr += (thr_goal - self.thr) * 0.35;
         if self.thr < 0.02 && thr_goal == 0.0 {
             self.thr = 0.0;
@@ -906,19 +969,28 @@ impl LaunchSite {
         // Headroom above the nose, but never so much the rest of it drops out of the bottom.
         let headroom = round(HEADROOM * visible * 2.0)
             .min((2.0 * visible - (s.fly.hf() - self.part_rows(self.part).0) - 6.0).max(0.0));
-        let cam_goal = if self.tall && flying && (!homeward || self.world.alt - goal > 25.0) {
-            headroom
+        let split = self.split_tall && self.split_w > 0.0;
+        let (r0, r1) = self.part_rows(self.part);
+        let centred = round(visible - (r1 - r0 + self.chute_room()) / 2.0).max(0.0);
+        let cam_goal = if self.tall && flying {
+            if split {
+                centred
+            } else if !homeward || self.world.alt - goal > 25.0 {
+                headroom
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
         self.cam_p += clamp(cam_goal - self.cam_p, -0.6, 0.6);
-        // Fold away a tile once the real world below the layer is off the grid.
-        if flying && !homeward {
+        self.step_split_view();
+        // A hosted rocket folds along with its world.
+        if flying && !homeward && self.host.is_none() {
             let a = self.layer - TILE / 2.0;
             while self.scroll() - 1.0 - a >= 2.0 * TILE + 1.0 {
-                self.world.alt -= TILE;
+                self.shift(-TILE);
                 self.wraps += 1.0;
-                self.parts.shift(-2.0 * TILE);
             }
         }
         // The stars stream past: down as it climbs, and down-and-back along its tilt in orbit.
@@ -1297,7 +1369,7 @@ impl LaunchSite {
     fn settle(&mut self, lv: f64, layer: f64, catch_alt: f64) {
         self.state = State::Fly;
         self.fly_time = 120.0;
-        self.world.alt = catch_alt + 200.0;
+        self.world.alt = self.host.as_ref().map_or(catch_alt + 200.0, |h| h.alt);
         self.v = SPEED[lv as usize];
         self.thr = 1.0;
         self.layer = layer;
@@ -1347,7 +1419,7 @@ impl LaunchSite {
         } else {
             (self.columns() / 2.0).floor() >= 9.0
         };
-        if room {
+        if room || self.host.is_some() {
             self.twin_due = true;
         } else {
             self.booster_home = true;
@@ -1375,10 +1447,12 @@ impl LaunchSite {
 
     /// Falling through the folded sky: unfold a tile whenever the real world below would come into view.
     fn unfold(&mut self) {
+        if self.host.is_some() {
+            return;
+        }
         let a = self.layer - TILE / 2.0;
         while self.scroll() - 1.0 - a < TILE + 1.0 {
-            self.world.alt += TILE;
-            self.parts.shift(2.0 * TILE);
+            self.shift(TILE);
         }
     }
 
@@ -1393,25 +1467,12 @@ impl LaunchSite {
         };
         let h = if self.split_tall { rows / 2 } else { rows };
         let mut t = Box::new(self.twin());
-        t.booster_only = true;
         t.world.dials.night = self.world.dials.night;
         t.world.dials.tint = self.world.dials.tint;
         t.world.dials.accent = self.world.dials.accent;
         t.world.dials.strength = 1.0;
         Scene::ensure(t.as_mut(), w, h);
-        t.geo();
-        t.fresh = false;
-        t.part = Part::Booster;
-        t.returning = true;
-        t.state = State::Fly;
-        t.fly_time = 120.0;
-        // It falls back down through the sky a layer a second, from where it separated.
-        t.staged = 7.0;
-        t.since_stage = 0.0;
-        t.layer = LAYER[7];
-        t.world.alt = t.layer + TILE;
-        t.v = -0.6;
-        t.service = 0.0;
+        t.homeward();
         self.twin_site = Some(t);
         self.twin_w = w as f64;
         self.twin_h = h as f64;
@@ -1420,9 +1481,31 @@ impl LaunchSite {
 
     /// Step the split screen's booster, and open or close the panel around it.
     fn step_twin(&mut self) {
+        if self.host.is_some() {
+            return;
+        }
         if self.twin_due && self.ghost.is_none() {
             self.twin_due = false;
             self.open_twin();
+        }
+        for r in &mut self.minis {
+            if !r.twin_due || r.ghost.is_some() {
+                continue;
+            }
+            r.twin_due = false;
+            if let Some(t) = self
+                .twin_site
+                .as_mut()
+                .filter(|t| t.state == State::Fly && t.site_x(r.slot).is_finite())
+            {
+                let i = t.add_mini(None, r.slot, r.world.t + 3.0);
+                t.minis[i].homeward();
+                r.mini_twin_slot = Some(i);
+            } else if !self.twin_due {
+                r.booster_home = true;
+            } else {
+                r.twin_due = true;
+            }
         }
         let Some(t) = self.twin_site.as_mut() else {
             return;
@@ -1431,12 +1514,21 @@ impl LaunchSite {
         t.world.dials.tint = self.world.dials.tint;
         t.world.dials.accent = self.world.dials.accent;
         t.world.dials.strength = 1.0;
-        Scene::step(t.as_mut());
-        // Down: on the mount in the arms, or on its legs at the landing zone.
+        t.step();
         if t.state == State::Rest || t.state == State::Landed {
             self.twin_done += 1.0;
         }
-        // In over a second; once the booster's been down a moment, out again.
+        if matches!(t.state, State::Release | State::Rest) {
+            self.booster_home = true;
+        }
+        for r in &mut self.minis {
+            if r.mini_twin_slot
+                .and_then(|i| t.minis.get(i))
+                .is_some_and(|b| matches!(b.state, State::Release | State::Rest))
+            {
+                r.booster_home = true;
+            }
+        }
         let open = self.twin_done < 20.0;
         let full = if self.split_tall {
             self.twin_h
@@ -1448,6 +1540,11 @@ impl LaunchSite {
             self.split_w = 0.0;
             self.twin_site = None;
             self.booster_home = true;
+            for r in &mut self.minis {
+                if r.mini_twin_slot.take().is_some() {
+                    r.booster_home = true;
+                }
+            }
         }
     }
 
@@ -1576,6 +1673,7 @@ impl LaunchSite {
         self.world.draw_moon();
         let mut out = std::mem::take(&mut self.world.out);
         self.draw_site(&mut out);
+        self.shift_split_view(&mut out);
         self.draw_split(&mut out);
         self.world.out = out;
     }
@@ -1705,6 +1803,9 @@ impl SkyScene for LaunchSite {
 
     /// The world scrolls just enough to keep the rocket's nose on the grid.
     fn scroll(&self) -> f64 {
+        if let Some(h) = &self.host {
+            return h.scroll;
+        }
         self.scroll_exact().ceil().max(0.0)
     }
 
@@ -1768,10 +1869,17 @@ impl Scene for LaunchSite {
             self.twin_site = None;
             self.twin_due = false;
             self.split_w = 0.0;
+            self.split_off = 0.0;
             self.booster_home = true;
         }
         self.pw = columns * 2;
         self.ph = rows * 2;
+        for r in &mut self.minis {
+            r.ensure(columns, rows);
+        }
+        if self.host.is_some() {
+            return;
+        }
         self.pc = vec![0; self.pw * self.ph];
         self.pa = vec![0.0; self.pw * self.ph];
         self.touched = vec![0; columns * rows];
@@ -1783,10 +1891,13 @@ impl Scene for LaunchSite {
     fn step(&mut self) {
         let asked = clamp(round(self.world.dials.strength), 0.0, 10.0);
         self.since_stage += 1.0;
-        if asked == 0.0 || self.staged < 0.0 {
+        if self.host.is_some() {
+            self.staged = asked;
+        } else if asked == 0.0 || self.staged < 0.0 {
             // Off is instant; a fresh start (a reload, the first frame) resumes as asked.
             self.staged = asked;
             self.descending = false;
+            self.log.fill(asked as i8);
         } else if self.since_stage >= STAGE_FRAMES {
             // A mission only climbs: a dip in the work holds it where it is. Asked
             // all the way back to 1 it comes home, a level a second, all the way,
@@ -1795,14 +1906,21 @@ impl Scene for LaunchSite {
                 self.staged -= 1.0;
                 self.since_stage = 0.0;
                 self.descending = self.staged > 1.0;
-            } else if asked > self.staged {
+            } else if asked > self.staged && !self.world.dials.waiting {
                 self.staged += 1.0;
                 self.since_stage = 0.0;
             }
         }
+        self.log_at = (self.log_at + 1) & 31;
+        self.log[self.log_at] = self.staged as i8;
         self.world.dials.strength = self.staged;
         self.world.tick();
         self.advance_flight();
+        self.geo();
+        self.crew.room = self.site_room;
+        self.crew
+            .update(&self.world.dials.agents, self.world.dials.coverage_boost);
+        self.step_minis();
     }
 
     /// Drawn at the acted-out level too, even on a frame drawn without a step.
@@ -1810,7 +1928,33 @@ impl Scene for LaunchSite {
         if self.staged >= 0.0 && self.world.dials.strength > 0.0 {
             self.world.dials.strength = self.staged;
         }
+        self.n_lamps = 0;
         self.draw_frame();
+        for n in 0..self.n_lamps {
+            let i = self.lamp_cell[n];
+            let c = self.lamp_color[n];
+            let fg = self.world.out.foreground(i);
+            let bg = self.world.out.background(i);
+            self.world.lamps[i] = if dist(fg, c) <= dist(bg, c) {
+                fg as i32
+            } else {
+                bg as i32
+            };
+        }
+        wait_tone(
+            &mut self.world.out,
+            self.world.k_wait,
+            self.world.t,
+            SEPIA_AMOUNT,
+            if self.n_lamps > 0 {
+                Some(&self.world.lamps)
+            } else {
+                None
+            },
+        );
+        for n in 0..self.n_lamps {
+            self.world.lamps[self.lamp_cell[n]] = -1;
+        }
         &self.world.out
     }
 }

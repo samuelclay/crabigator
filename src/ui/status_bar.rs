@@ -907,7 +907,7 @@ mod tests {
         let separator: String = (flow.col..total_cols)
             .map(|c| screen.cell(31, c).unwrap().contents())
             .collect();
-        assert!(separator.contains("surf ⌃]"), "{separator}");
+        assert!(separator.contains("surf  ⌃]"), "{separator}");
         for r in 32..40u16 {
             assert_eq!(
                 screen.cell(r, flow.col - 1).unwrap().contents(),
@@ -931,7 +931,7 @@ mod tests {
         let separator: String = (0..layout.total_cols)
             .map(|c| screen.cell(31, c).unwrap().contents())
             .collect();
-        assert!(separator.ends_with("━ flow off ⌃] ━"), "{separator}");
+        assert!(separator.ends_with("━ flow off  ⌃] ━"), "{separator}");
         // No third separator: the widgets take the whole width again.
         let flow = flow_column_rect(&layout).unwrap();
         for r in 32..40u16 {

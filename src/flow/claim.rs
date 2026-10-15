@@ -22,37 +22,70 @@ pub fn scene_names() -> &'static [String] {
     NAMES.get_or_init(|| scenes().iter().map(|def| def.name.to_string()).collect())
 }
 
-/// The preferred scene for a seed, walked forward past the taken ones. When
-/// every scene is taken, the preferred one.
-pub fn claim_scene(seed: &str, taken: &[String]) -> String {
+/// The preferred allowed scene for a seed, walked forward past the taken
+/// ones. When every allowed scene is taken, reuse the preferred allowed one.
+pub fn claim_scene(seed: &str, taken: &[String], disabled: &[String]) -> Option<String> {
     let names = scene_names();
+    if names.is_empty() {
+        return None;
+    }
     let preferred = ((fnv1a64(seed.as_bytes()) >> 32) as usize) % names.len();
     let taken: HashSet<&str> = taken.iter().map(String::as_str).collect();
-    (0..names.len())
+    let mut allowed = (0..names.len())
         .map(|offset| &names[(preferred + offset) % names.len()])
-        .find(|name| !taken.contains(name.as_str()))
-        .unwrap_or(&names[preferred])
-        .clone()
+        .filter(|name| !disabled.contains(name));
+    let first = allowed.next()?;
+    if !taken.contains(first.as_str()) {
+        return Some(first.clone());
+    }
+    Some(
+        allowed
+            .find(|name| !taken.contains(name.as_str()))
+            .unwrap_or(first)
+            .clone(),
+    )
 }
 
-/// This session's scene: the one it already claimed, or a fresh claim that
-/// no live session has, published at once (with the mark) so sessions
-/// starting at the same moment see it.
-pub fn assign_scene(session_id: &str, mark: SessionMark) -> String {
-    if let Some(scene) = stored_scene(session_id) {
-        return scene;
+/// Keep this session's claim while it is allowed, or publish a fresh claim
+/// with its mark so sessions starting together can choose different scenes.
+/// With every scene disabled, publish no scene.
+pub fn assign_scene(session_id: &str, mark: SessionMark, disabled: &[String]) -> Option<String> {
+    if let Some(scene) = stored_scene(session_id, disabled) {
+        return Some(scene);
     }
-    let mut scene = claim_scene(session_id, &live_taken_scenes(session_id));
-    publish_stub(session_id, mark, Some(&scene));
+    let mut scene = claim_scene(
+        session_id,
+        &live_taken_scenes(session_id, disabled),
+        disabled,
+    );
+    publish_stub(session_id, mark, scene.as_deref());
     // Another session may have claimed the same scene a moment ago: claim
-    // again past it, while there are scenes left.
-    let taken = live_taken_scenes(session_id);
+    // again past it, while there are allowed scenes left.
+    let taken = live_taken_scenes(session_id, disabled);
     let distinct: HashSet<&str> = taken.iter().map(String::as_str).collect();
-    if distinct.contains(scene.as_str()) && distinct.len() < scene_names().len() {
-        scene = claim_scene(session_id, &taken);
-        publish_stub(session_id, mark, Some(&scene));
+    let allowed_count = scene_names()
+        .iter()
+        .filter(|name| !disabled.contains(name))
+        .count();
+    if scene
+        .as_ref()
+        .is_some_and(|scene| distinct.contains(scene.as_str()))
+        && distinct.len() < allowed_count
+    {
+        scene = claim_scene(session_id, &taken, disabled);
+        publish_stub(session_id, mark, scene.as_deref());
     }
     scene
+}
+
+/// Replace a live session's disabled claim without overwriting its full mirror.
+/// The regular mirror publisher will announce the new scene.
+pub fn reclaim_scene(session_id: &str, disabled: &[String]) -> Option<String> {
+    claim_scene(
+        session_id,
+        &live_taken_scenes(session_id, disabled),
+        disabled,
+    )
 }
 
 /// The colour to turn the scene to: whichever of the mark's colours is more
@@ -72,22 +105,22 @@ pub fn scene_seed(session_id: &str) -> u32 {
     (fnv1a64(session_id.as_bytes()) >> 16) as u32
 }
 
-fn is_scene(name: &str) -> bool {
-    scene_names().iter().any(|known| known == name)
+fn mirror_scene<'a>(data: &'a serde_json::Value, disabled: &[String]) -> Option<&'a str> {
+    let scene = data.get("flow_scene")?.as_str()?;
+    (scene_names().iter().any(|known| known == scene) && !disabled.iter().any(|name| name == scene))
+        .then_some(scene)
 }
 
-fn stored_scene(session_id: &str) -> Option<String> {
+fn stored_scene(session_id: &str, disabled: &[String]) -> Option<String> {
     let data: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(inspect_path(session_id)).ok()?).ok()?;
-    let scene = data.get("flow_scene")?.as_str()?;
-    is_scene(scene).then(|| scene.to_string())
+    mirror_scene(&data, disabled).map(str::to_owned)
 }
 
-fn live_taken_scenes(session_id: &str) -> Vec<String> {
+fn live_taken_scenes(session_id: &str, disabled: &[String]) -> Vec<String> {
     live_session_mirrors(session_id)
         .iter()
-        .filter_map(|data| data.get("flow_scene")?.as_str())
-        .filter(|scene| is_scene(scene))
+        .filter_map(|data| mirror_scene(data, disabled))
         .map(str::to_string)
         .collect()
 }
@@ -104,19 +137,67 @@ mod tests {
 
     #[test]
     fn a_seed_prefers_the_same_scene_every_time() {
-        assert_eq!(claim_scene("session-a", &[]), claim_scene("session-a", &[]));
+        assert_eq!(
+            claim_scene("session-a", &[], &[]),
+            claim_scene("session-a", &[], &[])
+        );
     }
 
     #[test]
     fn taken_scenes_are_skipped_until_every_scene_is_in_use() {
         let mut taken: Vec<String> = Vec::new();
         for index in 0..scene_names().len() {
-            let scene = claim_scene(&format!("session-{index}"), &taken);
+            let scene = claim_scene(&format!("session-{index}"), &taken, &[]).unwrap();
             assert!(!taken.contains(&scene), "{scene} claimed twice");
             taken.push(scene);
         }
-        let preferred = claim_scene("one-too-many", &[]);
-        assert_eq!(claim_scene("one-too-many", &taken), preferred);
+        let preferred = claim_scene("one-too-many", &[], &[]);
+        assert_eq!(claim_scene("one-too-many", &taken, &[]), preferred);
+    }
+
+    #[test]
+    fn disabled_scenes_never_claim_slots_even_after_allowed_scenes_are_taken() {
+        let disabled = vec!["fire".to_string(), "warp".to_string()];
+        let mut taken = disabled.clone();
+        taken.push("unknown-scene".to_string());
+        for index in 0..scene_names().len() - disabled.len() {
+            let scene = claim_scene(&format!("session-{index}"), &taken, &disabled).unwrap();
+            assert!(!taken.contains(&scene), "{scene} claimed twice");
+            taken.push(scene);
+        }
+        let preferred = claim_scene("overflow", &[], &disabled);
+        assert_eq!(claim_scene("overflow", &taken, &disabled), preferred);
+    }
+
+    #[test]
+    fn one_allowed_scene_is_always_selected_and_all_disabled_returns_none() {
+        let disabled: Vec<_> = scene_names()
+            .iter()
+            .filter(|name| *name != "train")
+            .cloned()
+            .collect();
+        for seed in ["session-a", "session-b", "session-c"] {
+            assert_eq!(claim_scene(seed, &[], &disabled).as_deref(), Some("train"));
+            assert_eq!(
+                claim_scene(seed, scene_names(), &disabled).as_deref(),
+                Some("train")
+            );
+            assert_eq!(claim_scene(seed, &[], scene_names()), None);
+        }
+    }
+
+    #[test]
+    fn a_disabled_cached_scene_is_rejected_and_a_new_allowed_scene_can_be_claimed() {
+        let cached = serde_json::json!({"flow_scene": "fire"});
+        assert_eq!(mirror_scene(&cached, &[]), Some("fire"));
+        let disabled = vec!["fire".to_string()];
+        assert_eq!(mirror_scene(&cached, &disabled), None);
+        let replacement = claim_scene("session-a", &[], &disabled).unwrap();
+        assert_ne!(replacement, "fire");
+        assert_eq!(
+            mirror_scene(&serde_json::json!({"flow_scene":"unknown"}), &[]),
+            None
+        );
     }
 
     #[test]

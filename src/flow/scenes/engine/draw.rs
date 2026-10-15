@@ -2,6 +2,8 @@
 //! moving parts as braille dots, steam as a dithered density field, then
 //! all of it folded into cells.
 
+use crate::flow::crew::{beckon, failed};
+use crate::flow::waiting::{wait_tone, SEPIA_AMOUNT};
 use std::f64::consts::{PI, TAU};
 
 use super::{
@@ -134,6 +136,7 @@ impl Engine {
             let g = self.gauges[i];
             self.draw_gauge(&g);
         }
+        wait_tone(&mut self.out, self.k_wait, self.t, SEPIA_AMOUNT, None);
     }
 
     /// The line shaft: a twisted stripe that races along it as it turns.
@@ -987,42 +990,69 @@ impl Engine {
         }
     }
 
-    /// The bed plate along the floor, with a lamp lit for each bit of subagent load.
+    fn bed_span(&self) -> (f64, f64) {
+        (
+            if self.vertical {
+                0.0
+            } else {
+                (self.cx + self.radius).ceil() + 1.0
+            },
+            (self.columns * 2) as f64 - 1.0,
+        )
+    }
+
+    pub(super) fn lamp_room(&self) -> usize {
+        let (x0, x1) = self.bed_span();
+        let lamps = if self.vertical { 1.0 } else { 3.0 };
+        (((x1 - x0) / (lamps * 4.0)).floor() - 1.0)
+            .clamp(0.0, if self.vertical { 3.0 } else { 6.0 }) as usize
+    }
+
     fn draw_bed(&mut self) {
-        let wd = (self.columns * 2) as f64;
         let qy = (self.rows * 2) as f64 - 1.0;
-        let mut x0 = 0.0;
-        let x1 = wd - 1.0;
-        if !self.vertical {
-            x0 = (self.cx + self.radius).ceil() + 1.0;
-        }
+        let (x0, x1) = self.bed_span();
         self.qrect(x0, qy, x1, qy, c::IRON_DK);
-        let (most, per) = if self.vertical {
-            (4.0, 12.0)
-        } else {
-            (16.0, 4.0)
-        };
-        let lit = round(self.dials.coverage_boost / per).min(most);
-        if lit <= 0.0 {
+        let groups = self.lamp_room();
+        let lamps = if self.vertical { 1 } else { 3 };
+        if groups == 0 {
             return;
         }
-        let step = f64::from(i32_of(((x1 - x0) / (lit + 1.0)).floor()) & !1).max(4.0);
-        let lamp = match self.dials.tint {
+        let step = (x1 - x0) / (groups + 1) as f64;
+        let on = match self.dials.tint {
             Tint::Smoke => c::LAMP_LOW,
             Tint::Blue => c::LAMP_BLUE,
             Tint::Normal => c::LAMP_ON,
         };
-        let mut k = 0.0;
-        while k < lit {
-            let x = f64::from(i32_of(x0 + step * (k + 1.0)) & !1);
-            if x + 1.0 > x1 {
-                break;
+        for i in 0..self.crew.mates.len() {
+            let m = self.crew.mates[i].clone();
+            if m.slot >= groups {
+                continue;
             }
-            let blink = (f64::from(i32_of(self.t) >> 3) + k * 5.0) % 13.0 == 0.0;
-            let color = if blink { c::BRASS_DK } else { lamp };
-            self.q(x, qy, color);
-            self.q(x + 1.0, qy, color);
-            k += 1.0;
+            let mid = f64::from(i32_of(round(x0 + step * (m.slot + 1) as f64)) & !1)
+                - (lamps - 1) as f64 * 2.0;
+            for k in 0..lamps {
+                let lit = if m.leaving {
+                    m.here
+                } else if m.waiting {
+                    if beckon(&m, self.t) {
+                        1.0
+                    } else {
+                        0.15
+                    }
+                } else {
+                    let run = if lamps == 1 {
+                        ((i32_of(self.t) >> 1) + m.slot as i32) % 4 != 0
+                    } else {
+                        ((i32_of(self.t) >> 2) + m.slot as i32) % lamps == k
+                    };
+                    m.here * (0.35 + 0.65 * m.busy * if run { 1.0 } else { 0.45 })
+                };
+                let color = if failed(Some(&m)) { c::LAMP_FAIL } else { on };
+                let x = mid + k as f64 * 4.0;
+                let color = mix(c::BRASS_DK, color, round(lit * 4.0) / 4.0);
+                self.q(x, qy, color);
+                self.q(x + 1.0, qy, color);
+            }
         }
     }
 

@@ -7,11 +7,13 @@
 use std::f64::consts::PI;
 
 use crate::flow::cells::{Cells, DEFAULT_COLOR};
+use crate::flow::crew::resting;
 use crate::flow::js::{i32_of, round};
 use crate::flow::palette::{lightness, tint_to};
-use crate::flow::pixels::{fit_quad, hash, lower_block, mix, QUAD};
+use crate::flow::pixels::{fit_quad, hash, lower_block, mix, ramp_at, QUAD};
 use crate::flow::scene::Tint;
 use crate::flow::sky::SkyScene;
+use crate::flow::waiting::breath;
 
 use super::particles::PMAX;
 use super::sprites::{ramp_color, Ramp, Sprite, BLUE, SMOKE};
@@ -40,7 +42,7 @@ impl LaunchSite {
     fn plume_len(&mut self) -> f64 {
         let p = self.part;
         // (No plume from the Ship while it's still turning upright.)
-        if self.thr <= 0.0 || p == Part::Dragon || p == Part::Capsule || self.flop > 0.3 {
+        if self.thr <= 0.0 || p == Part::Dragon || p == Part::Capsule || self.flop > 0.06 {
             return 0.0;
         }
         let mut len = self.spec().plume
@@ -62,10 +64,18 @@ impl LaunchSite {
 
     /// Paint a pixel by its grid-pixel position (row py from the top).
     fn paint_p(&mut self, x: f64, py: f64, color: u32, a: f64) {
+        let a = if self.host.is_some() {
+            a * self.alpha
+        } else {
+            a
+        };
+        self.paint_raw(x, py, color, a);
+    }
+    fn paint_raw(&mut self, x: f64, py: f64, color: u32, a: f64) {
         // World pixels (whole ones: a fraction would index nothing), seen from where the camera is along the ground.
         let x = x.floor() - self.view_x();
         let (pw, ph) = (self.pw as f64, self.ph as f64);
-        if x < 0.0 || x >= pw || py < 0.0 || py >= ph || a <= 0.03 {
+        if !(x >= 0.0 && x < pw && py >= 0.0 && py < ph) || a <= 0.03 {
             return;
         }
         let k = (py * pw + x) as usize;
@@ -92,13 +102,22 @@ impl LaunchSite {
     pub(super) fn draw_site(&mut self, out: &mut Cells) {
         self.geo();
         self.base = 2.0 * (self.scroll() + self.rows() - 2.0) + 1.0;
+        if self.host.is_some() {
+            if !self.body_px.is_finite() {
+                return;
+            }
+            self.alpha = self.mate.as_ref().map_or(1.0, |m| m.here);
+            self.draw_decks();
+        } else {
+            self.draw_earth(out);
+            self.draw_minis(out);
+        }
         if !self.site_hidden() {
             self.draw_tower();
             self.draw_mount();
         }
-        self.draw_earth(out);
         self.draw_particles();
-        if self.orbit > 0.02 {
+        if self.orbit > 0.02 || self.tumble() != 0.0 {
             self.draw_tilted_plume();
         } else {
             self.draw_plume();
@@ -110,7 +129,11 @@ impl LaunchSite {
         if !self.site_hidden() {
             self.draw_lights();
         }
-        self.composite(out);
+        if self.host.is_some() {
+            self.draw_beacon();
+        } else {
+            self.composite(out);
+        }
     }
 
     fn draw_tower(&mut self) {
@@ -135,7 +158,7 @@ impl LaunchSite {
                     self.paint(x0 + x, y, col, 1.0);
                     x += 1.0;
                 }
-            } else {
+            } else if tw > 2.0 {
                 self.paint(x0 + 1.0 + (y % (tw - 2.0)), y, col, 0.85);
             }
             y += 1.0;
@@ -253,36 +276,94 @@ impl LaunchSite {
         }
         let s = self.spec();
         let ramp = self.ramp();
-        let (a0, cx, wk) = self.nozzle();
-        // Thin air lets the plume balloon out.
-        let spread = 0.08 + 0.45_f64.min(self.world.alt / 180.0);
-        let t = self.world.t;
-        let mut d = 0.0;
-        while d < len {
-            let y = a0 - 1.0 - d;
-            let half = (s.body_w / 2.0) * wk + d * spread;
-            if y < 0.0 {
-                self.deflect(cx, half, len - d, ramp);
-                break;
-            }
-            let k = d / len;
-            // Shock diamonds in the core.
-            let diamond = if self.tall && d % 5.0 == 2.0 && k < 0.6 {
-                0.15
-            } else {
-                0.0
-            };
-            let xb = (cx + half).floor();
-            let mut x = (cx - half).ceil();
-            while x <= xb {
-                let edge = (x - cx).abs() / (half + 0.5);
-                let n = hash(x, d + t * 7.0, 47.0) - 0.5;
+        let (a, cx, wk) = self.nozzle();
+        let spread = self.plume_spread();
+        let half = s.body_w / 2.0 * wk;
+        self.flame(
+            cx + 0.5,
+            2.0 * (self.base - a + 1.0),
+            0.0,
+            2.0 * len,
+            half,
+            spread,
+            ramp,
+            2.4,
+            1.0,
+            self.big(),
+            0.0,
+            self.base,
+        );
+        if len > a {
+            self.deflect(cx, half + a * spread * 2.0, len - a, ramp);
+        }
+    }
+    fn plume_spread(&self) -> f64 {
+        if self.orbit > 0.02 {
+            0.12
+        } else {
+            (0.08 + 0.45_f64.min(self.world.alt / 180.0)) / 2.0
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn flame(
+        &mut self,
+        tx: f64,
+        ty: f64,
+        th: f64,
+        l: f64,
+        half0: f64,
+        spread: f64,
+        ramp: &Ramp,
+        body: f64,
+        alpha: f64,
+        diamonds: bool,
+        salt: f64,
+        floor: f64,
+    ) {
+        if l < 1.0 {
+            return;
+        }
+        let sn = th.sin();
+        let cs = th.cos();
+        let hm = half0 + l * spread + 1.0;
+        let ex = tx - sn * l;
+        let ey = ty + cs * l;
+        let x0 = (tx.min(ex) - hm).floor() as i32;
+        let x1 = (tx.max(ex) + hm).ceil() as i32;
+        let y0 = ((ty.min(ey) - hm) / 2.0).floor().max(0.0) as i32;
+        let y1 = (self.ph as f64 - 1.0)
+            .min(floor)
+            .min(((ty.max(ey) + hm) / 2.0).ceil()) as i32;
+        let t7 = self.world.t * 7.0 + salt;
+        for py in y0..=y1 {
+            let uy = (py as f64 + 0.5) * 2.0 - ty;
+            for px in x0..=x1 {
+                let ux = px as f64 + 0.5 - tx;
+                let d = -ux * sn + uy * cs;
+                if d < 0.0 || d >= l {
+                    continue;
+                }
+                let e = (ux * cs + uy * sn).abs();
+                let half = half0 + d * spread;
+                if e > half {
+                    continue;
+                }
+                let k = d / l;
+                let edge = e / (half + 0.5);
+                let n = hash(px as f64, py as f64 + t7, 47.0) - 0.5;
+                let diamond = if diamonds && i32_of(d / 2.0) % 5 == 2 && k < 0.6 {
+                    0.15
+                } else {
+                    0.0
+                };
                 let heat = 1.0 - 0.85 * k - 0.45 * edge * edge + diamond + n * 0.15;
-                let a = ((1.0 - k) * 2.4 - edge * 0.35 + n * 0.4).min(1.0);
-                self.paint(x, y, ramp_color(ramp, heat), a);
-                x += 1.0;
+                self.paint_p(
+                    px as f64,
+                    py as f64,
+                    ramp_at(ramp, heat),
+                    ((1.0 - k) * body - edge * 0.35 + n * 0.4).min(1.0) * alpha,
+                );
             }
-            d += 1.0;
         }
     }
 
@@ -350,7 +431,8 @@ impl LaunchSite {
         let top = self.apx() + s.fly.hf() - 1.0;
         let cx = self.ox + self.pos + s.body_l + s.body_w / 2.0 - 0.5;
         let mains = self.chute == 2.0;
-        let tall = self.tall;
+        let tall = self.big();
+        let tiny = !self.tall && self.host.is_some();
         let size = if mains {
             if tall {
                 9.0
@@ -363,7 +445,7 @@ impl LaunchSite {
             2.0
         };
         let rise = round(size * (0.5 + 0.5 * k));
-        let spread: &[f64] = if mains {
+        let spread: &[f64] = if mains && !tiny {
             if tall {
                 &[-6.0, -2.0, 2.0, 6.0]
             } else {
@@ -383,7 +465,7 @@ impl LaunchSite {
         } else {
             1.0
         };
-        let half = round(width * k).max(1.0);
+        let half = if tiny { 0.0 } else { round(width * k).max(1.0) };
         let riser = 0xc2c7cf;
         for &off in spread {
             let x = round(cx + off * k);
@@ -593,31 +675,25 @@ impl LaunchSite {
         let aft = 2.0 * self.part_rows(self.part).1 - sp.hf();
         let tx = cx - aft * sn * sc;
         let ty = cy * 2.0 + aft * cs * sc;
-        let l = len * 2.0 * sc;
         let wk = self.nozzle().2;
-        let fade = if self.world.dials.tint == Tint::Normal {
-            0.55
-        } else {
-            0.85
-        };
-        let t = self.world.t;
-        let mut d = 0.5;
-        while d < l {
-            let k = d / l;
-            let half = (s.body_w / 2.0) * wk * sc + d * 0.12;
-            let mut e = -half;
-            while e <= half {
-                let x = (tx - sn * d + cs * e).floor();
-                let y = ((ty + cs * d + sn * e) / 2.0).floor();
-                let edge = e.abs() / (half + 0.5);
-                let n = hash(x, y + t * 7.0, 47.0) - 0.5;
-                let heat = 1.0 - 0.85 * k - 0.45 * edge * edge + n * 0.15;
-                let a = ((1.0 - k) * 1.6 - edge * 0.4 + n * 0.3).min(1.0) * fade;
-                self.paint_p(x, y, ramp_color(ramp, heat), a);
-                e += 0.75;
-            }
-            d += 1.0;
-        }
+        self.flame(
+            tx,
+            ty,
+            th,
+            len * 2.0 * sc,
+            s.body_w / 2.0 * wk * sc,
+            self.plume_spread(),
+            ramp,
+            1.6,
+            if self.world.dials.tint == Tint::Normal {
+                0.55
+            } else {
+                0.85
+            },
+            false,
+            0.0,
+            f64::INFINITY,
+        );
     }
 
     /// Earth below the orbit: a curved limb of ocean and cloud sliding back.
@@ -682,7 +758,7 @@ impl LaunchSite {
         // Mechazilla's chopsticks reach well past the booster.
         let tip = self.body_px + self.arm_x
             - 1.0
-            - if self.look().mechazilla && self.tall {
+            - if self.look().mechazilla && self.big() {
                 2.0
             } else {
                 0.0
@@ -699,7 +775,7 @@ impl LaunchSite {
             }
             t += 1.0;
         }
-        if self.reach >= 1.0 && self.tall {
+        if self.reach >= 1.0 && self.big() {
             // The pincers' tips closing round the far side.
             self.paint(tip, ay - 1.0, col, 1.0);
             self.paint(tip, ay + s.arm_thick, col, 1.0);
@@ -748,6 +824,19 @@ impl LaunchSite {
                 }
                 y += if self.tall { 6.0 } else { 3.0 };
                 k += 1.0;
+            }
+        }
+        if self.world.k_wait > 0.0 {
+            let (mut y, mut k) = (2.0, 0);
+            while y < top - 1.0 {
+                self.paint(
+                    self.tx + if k & 1 != 0 { 0.0 } else { s.tower_w - 1.0 },
+                    y,
+                    LIGHT_AMBER,
+                    self.world.k_wait * (0.25 + 0.75 * breath(t)),
+                );
+                y += if self.tall { 6.0 } else { 3.0 };
+                k += 1;
             }
         }
         // A light per few subagents, blinking out of step.
@@ -802,7 +891,17 @@ impl LaunchSite {
                 self.pa[k] = 0.0;
             }
             // The two colours that best fit them, each the plain average of its pixels.
-            fit_quad(&q, &mut self.fit, i32::MAX, -1);
+            let mut keep = -1;
+            for l in 0..self.n_lamps {
+                if self.lamp_cell[l] == cell {
+                    for (p, &c) in q.iter().enumerate() {
+                        if c == self.lamp_color[l] {
+                            keep = p as i32;
+                        }
+                    }
+                }
+            }
+            fit_quad(&q, &mut self.fit, i32::MAX, keep);
             if self.fit.spread == 0 {
                 out.set(cell, 0x20, DEFAULT_COLOR, q[0]);
             } else {
@@ -842,4 +941,69 @@ fn livery(c: u32, hue: f64) -> u32 {
         memo.insert(key, out);
         out
     })
+}
+
+impl LaunchSite {
+    fn draw_decks(&mut self) {
+        let s = self.spec();
+        if !self.site_hidden() {
+            self.deck(self.ox - 1.0, self.tx + s.tower_w);
+        }
+        if !self.look().catches {
+            self.deck(self.ox + self.lz - 1.0, self.ox + self.lz + s.land.wf());
+        }
+    }
+    fn deck(&mut self, x0: f64, x1: f64) {
+        for x in (i32_of(x0) & !1)..=(i32_of(x1) | 1) {
+            self.paint(x as f64, -1.0, super::PAD.fg, 1.0);
+            self.paint(x as f64, -2.0, super::PAD.bg.unwrap(), 1.0);
+        }
+    }
+    fn draw_beacon(&mut self) {
+        let Some(m) = self.mate.as_ref() else {
+            return;
+        };
+        if !resting(Some(m)) {
+            return;
+        }
+        let on = if m.waiting {
+            (i32_of(self.world.t) >> 2) & 1 == 0
+        } else {
+            self.world.t % 21.0 < 3.0
+        };
+        if !on {
+            return;
+        }
+        let waiting = m.waiting;
+        let s = self.spec();
+        let sp = &s.fly;
+        let r0 = self.part_rows(self.part).0;
+        let (cx, cy, th, sc) = self.pose(sp, self.pos, true);
+        let sn = th.sin();
+        let cs = th.cos();
+        let col = s.body_l + s.body_w / 2.0;
+        let row = r0 - 0.5;
+        let x =
+            (cx + (col - sp.wf() / 2.0) * sc * cs - 2.0 * (row - sp.hf() / 2.0) * sc * sn).floor();
+        let y = (cy
+            + ((col - sp.wf() / 2.0) * sc * sn + 2.0 * (row - sp.hf() / 2.0) * sc * cs) / 2.0)
+            .floor();
+        if waiting {
+            self.lamp_p(x, y, LIGHT_AMBER);
+        } else {
+            self.paint_p(x, y, 0xffffff, 1.0);
+        }
+    }
+    fn lamp_p(&mut self, x: f64, py: f64, color: u32) {
+        self.paint_raw(x, py, color, 1.0);
+        let gx = x - self.view_x();
+        if gx < 0.0 || gx >= self.pw as f64 || py < 0.0 || py >= self.ph as f64 || self.n_lamps >= 3
+        {
+            return;
+        }
+        self.lamp_cell[self.n_lamps] =
+            (i32_of(py) >> 1) as usize * self.world.columns + (i32_of(gx) >> 1) as usize;
+        self.lamp_color[self.n_lamps] = color;
+        self.n_lamps += 1;
+    }
 }

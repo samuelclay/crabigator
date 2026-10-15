@@ -6,6 +6,7 @@
 //! session state, stats, permissions, and the model, and writes a normalized
 //! transcript log that feeds scrollback, recaps, and PR tracking.
 
+mod agents;
 mod events;
 mod sse;
 pub mod transcript;
@@ -119,7 +120,8 @@ impl Platform for OpencodePlatform {
 
     fn load_stats(&self, _cwd: &str) -> Result<PlatformStats> {
         self.start_listener();
-        let state = self.shared.lock().unwrap_or_else(|p| p.into_inner());
+        let mut state = self.shared.lock().unwrap_or_else(|p| p.into_inner());
+        state.refresh_agents();
         let mut stats = state.stats.clone();
         stats.transcript_path = Some(self.transcript_path.to_string_lossy().to_string());
         stats.native_session_id = state.main_session.clone();

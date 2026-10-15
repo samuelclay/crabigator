@@ -25,13 +25,16 @@
 use std::f64::consts::PI;
 
 use crate::flow::cells::{is_tall, Cells, Rng};
+use crate::flow::crew::{beckon, Crew, Mate};
 use crate::flow::js::{hypot, i32_of, round};
+use crate::flow::night::ease_night;
 use crate::flow::night::{moon_pixel, moon_radius, MOON, NIGHT_HORIZON, NIGHT_ZENITH, STAR};
 use crate::flow::palette::{tint_to, SceneHue};
 use crate::flow::pixels::{
     clamp, clamp01, fit_quad, g, hash1 as hash, mix, QuadFit, BRAILLE, NEAR, QUAD,
 };
 use crate::flow::scene::{Dials, Scene, SceneDef, Tint};
+use crate::flow::waiting::{ease_wait, wait_tone, SEPIA_AMOUNT};
 
 pub const DEF: SceneDef = SceneDef {
     name: "surf",
@@ -167,6 +170,8 @@ enum Pose {
     Paddle,
     Ride,
     Crouch,
+    WaveUp,
+    WaveOut,
 }
 
 impl Pose {
@@ -175,6 +180,10 @@ impl Pose {
     /// small cut (the band) and a large one (the spine).
     fn rows(self, large: bool) -> &'static [&'static str] {
         match (self, large) {
+            (Pose::WaveUp, false) => &[" whh  ", "  ww  ", "  ww  "],
+            (Pose::WaveUp, true) => &["w hh  ", "w hh  ", "wwwww ", " wwww ", "  ww  "],
+            (Pose::WaveOut, false) => &["  hh  ", " www  ", "  ww  "],
+            (Pose::WaveOut, true) => &["  hh  ", "  hh  ", "wwwww ", " wwww ", "  ww  "],
             (Pose::Sit, false) => &["  hh  ", "  ww  ", "  ww  "],
             (Pose::Sit, true) => &["  hh  ", "  hh  ", " wwww ", " wwww ", "  ww  "],
             (Pose::Paddle, false) => &["wwwwhh"],
@@ -280,6 +289,20 @@ struct Cloud {
 
 pub struct Surf {
     dials: Dials,
+    crew: Crew,
+    k_wait: f64,
+    head: Vec<u8>,
+    facing: [f32; 5],
+    ride_goal: [u8; 5],
+    ride_k: [f32; 5],
+    ride_ph: [f32; 5],
+    ride_u: [f32; 5],
+    ride_du: [f32; 5],
+    follow: [i8; 5],
+    lane_c: f64,
+    lane_h: f64,
+    arc: [f32; 24],
+    arc_len: f64,
     /// The frame the next wave comes in on (flow hears it).
     next_wave: f64,
     columns: usize,
@@ -360,6 +383,20 @@ impl Surf {
         let seed = seed % 100_000.0;
         Self {
             dials: Dials::default(),
+            crew: Crew::new(5, 24.0, 36.0),
+            k_wait: 0.0,
+            head: Vec::new(),
+            facing: [0.0; 5],
+            ride_goal: [0; 5],
+            ride_k: [0.0; 5],
+            ride_ph: [0.0; 5],
+            ride_u: [0.0; 5],
+            ride_du: [0.0; 5],
+            follow: [0; 5],
+            lane_c: 0.0,
+            lane_h: 0.0,
+            arc: [0.0; 24],
+            arc_len: 1.0,
             next_wave: 0.0,
             columns: 0,
             rows: 0,
@@ -556,7 +593,7 @@ impl Surf {
     fn pose(&self) -> Pose {
         if self.recover > 0.0 {
             Pose::Paddle
-        } else if self.s < 1.7 {
+        } else if self.s < 1.7 || (self.dials.waiting && self.s < 2.7) {
             Pose::Sit
         } else if self.s < 2.7 {
             Pose::Paddle
@@ -752,6 +789,7 @@ impl Surf {
                     c = mix(c, k, band_night);
                 }
                 // Water.
+                let mut hooded = false;
                 let mut wet = clamp01(yf + 1.0 - surf);
                 let mut in_tube = false;
                 let mut lip = false;
@@ -777,14 +815,19 @@ impl Surf {
                         }
                     } else if yc >= hood {
                         wet = 1.0;
+                        hooded = yc < surf;
                     }
                 } else if yc >= hood && yc < surf {
                     wet = clamp01(yf + 1.0 - hood);
+                    hooded = true;
                 }
                 if lip {
                     // The lip: lit through, pale green-blue; frothing at the tip.
                     let dyc = (yc - ey) / ry;
                     c = mix(p[FACE_LIP], p[FOAM], clamp01(0.25 + dyc * 0.5) * 0.7);
+                    if self.k_grey > 0.0 {
+                        c = mix(c, 0x5d6466, 0.6 * self.k_grey);
+                    }
                     if band_night > 0.01 {
                         c = mix(c, mix(BAND_SEA, MOON_RIM, 0.45), 0.7 * band_night);
                     }
@@ -800,6 +843,9 @@ impl Surf {
                         mix(p[SEA_TOP], p[FACE_LIP], 0.5),
                         lit * 0.8,
                     );
+                    if self.k_grey > 0.0 {
+                        c = mix(c, 0x5d6466, 0.6 * self.k_grey);
+                    }
                     if band_night > 0.01 {
                         c = mix(c, mix(BAND_SEA, p[SEA_DEEP], 0.3), 0.7 * band_night);
                     }
@@ -825,7 +871,11 @@ impl Surf {
                                 clamp01(hf).powf(1.25),
                             );
                             let ramp = if vertical { (wf * 0.45).max(4.0) } else { 5.0 };
-                            let fk = clamp01((xc - cx) / ramp + 0.35);
+                            let fk = if hooded {
+                                0.0
+                            } else {
+                                clamp01((xc - cx) / ramp + 0.35)
+                            };
                             wc = mix(back_c, face_c, fk);
                             // The barrel's shadow fades out ahead of it rather than stopping on a line.
                             if curl > 0.0 {
@@ -848,7 +898,7 @@ impl Surf {
                         );
                         wc = mix(wc, even, 0.85 * band_night);
                     }
-                    let depth = yc - surf;
+                    let depth = if hooded { yc - hood } else { yc - surf };
                     if depth < 1.0 {
                         let k = if hump > 0.4 && hf > 0.5 {
                             0.18 + 0.4 * clamp01(hf - 0.5)
@@ -1005,7 +1055,7 @@ impl Surf {
 
     fn sprite(&mut self, pose: Pose, large: bool, x: f64, y: f64, facing: f64, suit: u32) {
         let rows = pose.rows(large);
-        let width = rows.iter().map(|r| r.len()).max().unwrap_or(0) as f64;
+        let width = rows[0].len() as f64;
         // Snapped so the head fills whole cells: three colors never share one.
         let x0 = 2.0 * round((x - width / 2.0) / 2.0);
         let yb = y.floor();
@@ -1022,6 +1072,14 @@ impl Surf {
                     x0 + width - 1.0 - c
                 };
                 self.put(pxl, py, if ch == b'h' { SKIN } else { suit });
+                if ch == b'h'
+                    && pxl >= 0.0
+                    && py >= 0.0
+                    && pxl < self.pw as f64
+                    && py < self.ph as f64
+                {
+                    self.head[py as usize * self.pw + pxl as usize] = 1;
+                }
             }
         }
     }
@@ -1047,96 +1105,27 @@ impl Surf {
             return;
         }
         let pose = self.pose();
-        let x = self.surfer_x();
-        let surf = self.surface_at(x);
-        let lim = if self.vertical { 0.7 } else { 0.12 };
-        let slope = clamp(
-            (self.surface_at(x + 1.0) - self.surface_at(x - 1.0)) / 2.0,
-            -lim,
-            lim,
-        );
+        let facing = if matches!(pose, Pose::Sit | Pose::Paddle) {
+            1.0
+        } else {
+            self.carve_facing(self.du)
+        };
         let bob = if pose == Pose::Sit {
             (self.t * 0.12).sin() * 0.35
         } else {
             0.0
         };
-        let by = f64::from(i32_of((surf - 0.6 + bob).floor()) | 1) + 0.5;
-        let flat = pose == Pose::Sit || pose == Pose::Paddle;
-        let facing = if flat || self.du >= 0.0 || self.s < 5.0 {
-            1.0
-        } else {
-            -1.0
-        };
-        self.board(
-            x,
-            by,
-            if flat { slope * 0.5 } else { slope },
+        self.rider(
+            pose,
+            self.surfer_x(),
+            large,
             half,
             facing,
+            bob,
+            SUIT,
             board,
             stripe,
         );
-        let lean = if !flat && large { -slope * 0.8 } else { 0.0 };
-        self.sprite(pose, large, x + lean, by, facing, SUIT);
-    }
-
-    /// Subagents: more surfers in the line-up.
-    fn paint_extras(&mut self) {
-        let n = round(self.dials.coverage_boost / 12.0).min(5.0);
-        if n == 0.0 {
-            return;
-        }
-        let mut slot = 0.0;
-        let mut i = 0;
-        while (i as f64) < n {
-            let fi = i as f64;
-            let x;
-            let mut pose = Pose::Sit;
-            if !self.vertical && i < self.n_f && self.s >= 3.0 {
-                let u = 0.35 + 0.2 * (self.phase * 0.8 + fi * 2.1).sin();
-                x = f64::from(self.fx[i]) + u * f64::from(self.f_w[i]) * 0.7;
-                pose = Pose::Ride;
-            } else if self.vertical {
-                x = 3.0 + slot * 6.0;
-                slot += 1.0;
-                if x > self.cx - 6.0 {
-                    break;
-                }
-            } else {
-                let pw = self.pw as f64;
-                let mut xx =
-                    self.cx + self.wf * 1.6 + 10.0 + slot * 14.0 + hash(slot * 3.0 + 1.0) * 10.0;
-                if xx > pw - 4.0 {
-                    xx = self.cx - self.wb - 6.0 - (xx - pw) * 1.0;
-                }
-                x = xx;
-                slot += 1.0;
-                if x < 3.0 {
-                    break;
-                }
-                pose = if self.s >= 2.0 {
-                    Pose::Paddle
-                } else {
-                    Pose::Sit
-                };
-            }
-            let surf = self.surface_at(x);
-            let slope = (self.surface_at(x + 1.0) - self.surface_at(x - 1.0)) / 2.0;
-            let bob = if pose == Pose::Sit {
-                (self.t * 0.11 + fi * 1.7).sin() * 0.3
-            } else {
-                0.0
-            };
-            let by = f64::from(i32_of((surf - 0.6 + bob).floor()) | 1) + 0.5;
-            let tilt = if pose == Pose::Ride {
-                slope
-            } else {
-                slope * 0.5
-            };
-            self.board(x, by, tilt, 2.4, 1.0, EXTRA_BOARDS[i], STRIPE);
-            self.sprite(pose, false, x, by, 1.0, EXTRA_SUITS[i]);
-            i += 1;
-        }
     }
 
     /// A nearly-full context: a red warning flag on a buoy.
@@ -1193,7 +1182,17 @@ impl Surf {
                 self.pc[k0 + pw + 1],
             ];
             let f = &mut self.fit;
-            fit_quad(&q, f, NEAR, -1);
+            let indices = [k0, k0 + 1, k0 + pw, k0 + pw + 1];
+            let keep = indices
+                .iter()
+                .position(|&i| self.head[i] != 0)
+                .map_or(-1, |j| j as i32);
+            if keep >= 0 {
+                for &i in &indices {
+                    self.head[i] = 0;
+                }
+            }
+            fit_quad(&q, f, NEAR, keep);
             if f.spread == 0 {
                 self.out.set(cell, 0x20, q[0], q[0]);
                 self.dominant[cell] = q[0];
@@ -1314,6 +1313,7 @@ impl Scene for Surf {
         let n = self.pw * self.ph;
         self.pc = vec![0; n];
         self.water = vec![0; n];
+        self.head = vec![0; n];
         self.dots = vec![0; columns * rows];
         self.dot_color = vec![0; columns * rows];
         self.solid = vec![0; columns * rows];
@@ -1368,6 +1368,9 @@ impl Scene for Surf {
         if self.columns == 0 {
             return;
         }
+        self.crew.room = self.crew_room();
+        self.crew
+            .update(&self.dials.agents, self.dials.coverage_boost);
         let level = self.level();
         // A wave coming in: about every 12 s on a calm sea, every 5.5 s on a big
         // one, never on a beat: each one sets the next at random around that.
@@ -1395,7 +1398,8 @@ impl Scene for Surf {
         self.scroll += self.speed * if self.vertical { 1.4 } else { 1.0 };
         self.k_grey += (on(tint == Tint::Smoke) - self.k_grey) * 0.05;
         self.k_storm += (on(tint == Tint::Blue) - self.k_storm) * 0.05;
-        self.k_night += (on(self.dials.night) - self.k_night) * 0.04;
+        self.k_night = ease_night(self.k_night, self.dials.night);
+        self.k_wait = ease_wait(self.k_wait, self.dials.waiting);
         if level <= 0.0 {
             return;
         }
@@ -1428,7 +1432,14 @@ impl Scene for Surf {
             clamp(0.08 + 0.04 * (s - 3.0), 0.06, 0.36)
         };
         let mid = if in_tube { 0.4 } else { 0.52 };
-        let nu = mid - amp * self.phase.cos();
+        let share = self.update_riders(omega);
+        self.lane(-1);
+        let own = mid - amp * self.phase.cos();
+        let shared = self.u_at(
+            self.lane_c
+                - self.lane_amp().min(amp / (self.face_hi() - self.face_lo())) * self.phase.cos(),
+        );
+        let nu = own + (shared - own) * share;
         let ndu = nu - self.u;
         // Snapping off the top: a fan of spray from the tail.
         let k = if self.vertical { 1.6 } else { 1.0 };
@@ -1516,6 +1527,7 @@ impl Scene for Surf {
             let y = self.surface_at(sx) - 0.3;
             self.particles.emit(x, y, 0.1, -0.25, 5.0, WHITE_WATER);
         }
+        self.place_crew();
         // Sun glints on calm water.
         if s < 4.5 {
             let n = (4.5 - s)
@@ -1587,7 +1599,365 @@ impl Scene for Surf {
         self.composite();
         self.overlay_dots();
         self.overlay_gulls();
+        wait_tone(&mut self.out, self.k_wait, self.t, SEPIA_AMOUNT, None);
         &self.out
+    }
+}
+
+impl Surf {
+    fn carve_facing(&self, du: f64) -> f64 {
+        if du >= 0.0 || self.s < 5.0 {
+            1.0
+        } else {
+            -1.0
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn rider(
+        &mut self,
+        pose: Pose,
+        x: f64,
+        large: bool,
+        half: f64,
+        facing: f64,
+        bob: f64,
+        suit: u32,
+        board: u32,
+        stripe: u32,
+    ) -> f64 {
+        let lim = if self.vertical { 0.7 } else { 0.12 };
+        let slope = ((self.surface_at(x + 1.0) - self.surface_at(x - 1.0)) / 2.0).clamp(-lim, lim);
+        let by = f64::from(i32_of((self.surface_at(x) - 0.6 + bob).floor()) | 1) + 0.5;
+        let standing = matches!(pose, Pose::Ride | Pose::Crouch);
+        self.board(
+            x,
+            by,
+            if standing { slope } else { slope * 0.5 },
+            half,
+            facing,
+            board,
+            stripe,
+        );
+        self.sprite(
+            pose,
+            large,
+            x + if standing && large { -slope * 0.8 } else { 0.0 },
+            by,
+            facing,
+            suit,
+        );
+        by
+    }
+    fn crew_room(&self) -> usize {
+        if !is_tall(self.columns, self.rows) {
+            5
+        } else {
+            (((self.pw as f64 * 0.3 - 7.0) / 5.0).floor() + 1.0).clamp(0.0, 5.0) as usize
+        }
+    }
+    fn lineup(&self, slot: usize) -> f64 {
+        if self.vertical {
+            return 3.0 + slot as f64 * 5.0;
+        }
+        let ahead0 = self.cx + self.wf * 1.6 + 10.0;
+        let ahead = (self.pw as f64 - 4.0 - ahead0).max(0.0);
+        let behind0 = self.cx - self.wb - 6.0;
+        let behind = (behind0 - 3.0).max(0.0);
+        let step = ((ahead + behind) / 5.0).clamp(5.0, 14.0);
+        let d = (slot as f64 + 0.3 + 0.4 * hash(slot as f64 * 3.0 + 1.0)) * step;
+        (if d <= ahead {
+            ahead0 + d
+        } else {
+            behind0 - (d - ahead)
+        })
+        .max(3.0)
+    }
+    fn edge_near(&self, x: f64) -> f64 {
+        if x > self.cx {
+            self.pw as f64 + 8.0
+        } else {
+            -8.0
+        }
+    }
+    fn face_lo(&self) -> f64 {
+        0.1 + 0.1 * self.curl
+    }
+    fn face_hi(&self) -> f64 {
+        0.9 - 0.12 * self.curl
+    }
+    fn ride_gap(&self) -> f64 {
+        if self.vertical {
+            9.0
+        } else {
+            6.5
+        }
+    }
+    fn measure_face(&mut self) {
+        let lo = self.face_lo();
+        let span = self.face_hi() - lo;
+        let mut px = 0.0;
+        let mut py = 0.0;
+        let mut len = 0.0;
+        for i in 0..24 {
+            let x = self.cx + (lo + span * i as f64 / 23.0) * self.wf;
+            let y = self.sea_y - self.main_hump(x);
+            if i > 0 {
+                len += hypot(x - px, y - py);
+            }
+            self.arc[i] = len as f32;
+            px = x;
+            py = y;
+        }
+        self.arc_len = len.max(1.0);
+    }
+    fn u_at(&self, f: f64) -> f64 {
+        let want = f.clamp(0.0, 1.0) * self.arc_len;
+        let mut i = 1;
+        while i < 23 && f64::from(self.arc[i]) < want {
+            i += 1;
+        }
+        let a = f64::from(self.arc[i - 1]);
+        let b = f64::from(self.arc[i]);
+        let t = if b > a {
+            ((want - a) / (b - a)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        self.face_lo() + (self.face_hi() - self.face_lo()) * (i as f64 - 1.0 + t) / 23.0
+    }
+    fn update_riders(&mut self, omega: f64) -> f64 {
+        self.measure_face();
+        let room = if self.s < 4.5 {
+            0.0
+        } else {
+            (self.arc_len / self.ride_gap()).floor() - 1.0
+        }
+        .max(0.0) as usize;
+        let mut given = 0;
+        let mut share = 0.0;
+        for slot in 0..5 {
+            let Some(m) = self.crew.in_slot(slot) else {
+                self.ride_goal[slot] = 0;
+                self.ride_k[slot] = 0.0;
+                continue;
+            };
+            if m.age == 0.0 {
+                self.ride_k[slot] = 0.0;
+                self.ride_ph[slot] = (m.seed * TURN) as f32;
+                self.ride_u[slot] = self.face_hi() as f32;
+            }
+            let wants = !self.dials.waiting && !m.leaving && m.busy >= 0.5 && given < room;
+            if wants {
+                given += 1;
+            }
+            self.ride_goal[slot] = u8::from(wants);
+            let old = f64::from(self.ride_k[slot]);
+            let k = old + ((if wants { 1.0 } else { 0.0 }) - old) * 0.06;
+            self.ride_k[slot] = if k < 0.01 && !wants {
+                0.0
+            } else if k > 0.99 && wants {
+                1.0
+            } else {
+                k as f32
+            };
+            share += f64::from(self.ride_k[slot]);
+        }
+        let mut f = 0;
+        for slot in 0..5 {
+            let free = self.crew.in_slot(slot).is_some_and(|m| {
+                !m.leaving && m.busy >= 0.5 && self.ride_goal[slot] == 0 && self.ride_k[slot] < 0.5
+            });
+            self.follow[slot] = if free && !self.vertical && self.s >= 3.0 && f < self.n_f {
+                f += 1;
+                (f - 1) as i8
+            } else {
+                -1
+            };
+        }
+        for slot in 0..5 {
+            if self.ride_goal[slot] == 0 && self.ride_k[slot] == 0.0 {
+                continue;
+            }
+            let seed = self.crew.in_slot(slot).unwrap().seed;
+            self.lane(slot as i32);
+            self.ride_ph[slot] =
+                (f64::from(self.ride_ph[slot]) + omega * (0.8 + 0.4 * seed)) as f32;
+            let u = self.u_at(
+                self.lane_c
+                    - self.lane_amp()
+                        * (0.55 + 0.45 * hash(seed * 9973.0 + 5.0))
+                        * f64::from(self.ride_ph[slot]).cos(),
+            );
+            self.ride_du[slot] = (u - f64::from(self.ride_u[slot])) as f32;
+            self.ride_u[slot] = u as f32;
+        }
+        share.clamp(0.0, 1.0)
+    }
+    fn lane(&mut self, slot: i32) {
+        let mut before = 0.0;
+        let mut after = 0.0;
+        let mut at = 0.0;
+        for s in 0..5 {
+            let k = f64::from(self.ride_k[s]);
+            if s % 2 != 0 {
+                before += k;
+                if slot >= 0 && slot % 2 != 0 && s as i32 <= slot {
+                    at += k;
+                }
+            } else {
+                after += k;
+                if slot >= 0 && slot % 2 == 0 && (s as i32) < slot {
+                    at += k;
+                }
+            }
+        }
+        let w = if slot < 0 {
+            1.0
+        } else {
+            f64::from(self.ride_k[slot as usize])
+        };
+        let a = if slot < 0 {
+            before
+        } else if slot % 2 != 0 {
+            before - at
+        } else {
+            before + 1.0 + at
+        };
+        let total = 1.0 + before + after;
+        self.lane_c = (a + w / 2.0) / total;
+        self.lane_h = w / 2.0 / total;
+    }
+    fn lane_amp(&self) -> f64 {
+        (self.lane_h - self.ride_gap() / 2.0 / self.arc_len).max(0.0)
+    }
+    fn wave_x(&self, slot: usize) -> f64 {
+        self.cx + f64::from(self.ride_u[slot]) * self.wf
+    }
+    fn on_wave(&self, m: &Mate) -> bool {
+        self.ride_k[m.slot] > 0.5 && (m.x - self.wave_x(m.slot)).abs() < 3.0
+    }
+    fn mate_pose(&self, m: &Mate) -> Pose {
+        if m.leaving || m.here < 1.0 {
+            return Pose::Paddle;
+        }
+        if m.busy < 0.5 {
+            return if m.waiting {
+                if beckon(m, self.t) {
+                    Pose::WaveOut
+                } else {
+                    Pose::WaveUp
+                }
+            } else {
+                Pose::Sit
+            };
+        }
+        if self.on_wave(m) {
+            return if self.curl > 0.55 {
+                Pose::Crouch
+            } else {
+                Pose::Ride
+            };
+        }
+        if self.dials.waiting && self.s < 2.7 {
+            return Pose::Sit;
+        }
+        if (m.x - self.follow_x(m.slot)).abs() < 4.0 {
+            Pose::Ride
+        } else {
+            Pose::Paddle
+        }
+    }
+    fn follow_x(&self, slot: usize) -> f64 {
+        let i = self.follow[slot];
+        if i < 0 {
+            return f64::NAN;
+        }
+        f64::from(self.fx[i as usize])
+            + (0.35 + 0.2 * (self.phase * 0.8 + slot as f64 * 2.1).sin())
+                * f64::from(self.f_w[i as usize])
+                * 0.7
+    }
+    fn place_crew(&mut self) {
+        let k = if self.vertical { 1.6 } else { 1.0 };
+        for i in 0..self.crew.mates.len() {
+            let mut m = self.crew.mates[i].clone();
+            let slot = m.slot;
+            let big = !m.leaving && (self.ride_goal[slot] == 1 || self.ride_k[slot] > 0.5);
+            let mut target = self.lineup(slot);
+            if big {
+                target = self.wave_x(slot);
+            } else if !m.leaving && self.follow[slot] >= 0 {
+                target = self.follow_x(slot);
+            }
+            let mut facing = 1.0;
+            if m.leaving {
+                if m.x.is_nan() {
+                    continue;
+                }
+                let edge = self.edge_near(m.x);
+                m.x += (edge - m.x) / (m.p * 36.0).max(1.0);
+                facing = if edge > m.x { 1.0 } else { -1.0 };
+            } else if m.here < 1.0 {
+                let edge = self.edge_near(target);
+                m.x = edge + (target - edge) * m.here;
+                facing = if edge > target { -1.0 } else { 1.0 };
+            } else if m.x.is_nan() {
+                m.x = target;
+            } else if big && (target - m.x).abs() < 3.0 {
+                m.x = target;
+                facing = if self.ride_k[slot] > 0.5 {
+                    self.carve_facing(f64::from(self.ride_du[slot]))
+                } else {
+                    1.0
+                };
+            } else {
+                let d = target - m.x;
+                let v = (if big { 2.4 } else { 1.2 }) * k;
+                m.x += (d * 0.08).clamp(-v, v);
+                if big {
+                    facing = if d < 0.0 { -1.0 } else { 1.0 };
+                }
+            }
+            self.facing[slot] = facing as f32;
+            if self.mate_pose(&m) == Pose::Paddle
+                && (self.t + slot as f64) % 5.0 == 0.0
+                && m.x > 0.0
+                && m.x < self.pw as f64
+            {
+                let x = m.x + facing * 1.5 + self.rng.f();
+                let y = self.surface_at(m.x) - 0.3;
+                self.particles.emit(x, y, 0.1 * facing, -0.25, 5.0, 1);
+            }
+            self.crew.mates[i] = m;
+        }
+    }
+    fn paint_extras(&mut self) {
+        for i in 0..self.crew.mates.len() {
+            let m = self.crew.mates[i].clone();
+            let x = m.x;
+            if x.is_nan() || x < -4.0 || x > self.pw as f64 + 4.0 {
+                continue;
+            }
+            let pose = self.mate_pose(&m);
+            let sitting = matches!(pose, Pose::Sit | Pose::WaveUp | Pose::WaveOut);
+            let bob = if sitting {
+                (self.t * 0.11 + m.slot as f64 * 1.7).sin() * 0.3
+            } else {
+                0.0
+            };
+            let large = self.vertical && self.ph >= 32 && matches!(pose, Pose::Ride | Pose::Crouch);
+            self.rider(
+                pose,
+                x,
+                large,
+                if large { 4.0 } else { 2.4 },
+                f64::from(self.facing[m.slot]),
+                bob,
+                EXTRA_SUITS[m.slot % 5],
+                EXTRA_BOARDS[m.slot % 5],
+                STRIPE,
+            );
+        }
     }
 }
 

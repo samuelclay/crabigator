@@ -1288,7 +1288,7 @@ impl App {
                 // the column (the whole bar when the column first appears). A
                 // frame that can't paint yet, mid-write, is retried shortly
                 // rather than dropped, so the scene moves evenly.
-                () = &mut flow_sleep, if self.flow.is_on() => {
+                () = &mut flow_sleep, if self.flow.should_tick() => {
                     let now = tokio::time::Instant::now();
                     if flow_unpainted.is_none() {
                         let change = self.flow.tick();
@@ -1399,7 +1399,8 @@ impl App {
                             .chars()
                             .next()
                             .is_some_and(|c| ('\u{2800}'..='\u{28FF}').contains(&c));
-                        self.session_stats.set_title_spinner(has_braille_spinner);
+                        self.session_stats
+                            .set_title_spinner(has_braille_spinner, self.platform.kind());
 
                         // Strip leading progress spinner characters for history
                         let clean_title = t
@@ -2282,6 +2283,9 @@ impl App {
 
     /// Forward a paste the way a local bracketed paste reaches the agent.
     fn inject_bracketed_paste(&mut self, text: &str) -> Result<()> {
+        if self.flow.picker_open() {
+            return Ok(());
+        }
         use crate::terminal::escape::{BRACKETED_PASTE_END, BRACKETED_PASTE_START};
         let mut buf = Vec::with_capacity(
             text.len() + BRACKETED_PASTE_START.len() + BRACKETED_PASTE_END.len(),
@@ -2294,6 +2298,21 @@ impl App {
         Ok(())
     }
 
+    fn cycle_flow(&mut self) -> Result<()> {
+        if let Some(preferences) = self.flow.cycle_preferences() {
+            match save_flow_preferences(&preferences) {
+                Ok(preferences) => self.flow.apply_preferences(preferences),
+                Err(_) => {
+                    self.flow.open_picker();
+                    self.flow.picker_save_failed();
+                }
+            }
+        }
+        self.mirror_publisher.set_flow_scene(self.flow.scene());
+        self.last_status_bar_hash = None;
+        self.draw_status_bar()
+    }
+
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
         use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -2301,16 +2320,26 @@ impl App {
             return Ok(());
         }
 
-        // ctrl+] rotates the flow column's scene, and after the last scene
-        // turns it off, while the column or its off label shows (it never reaches the
-        // assistant then). Every choice is saved for new sessions. The
-        // byte it sends, 0x1d, reads as ctrl+5 without the kitty keyboard
-        // protocol.
-        let is_next_scene = key.modifiers.contains(KeyModifiers::CONTROL)
+        // 0x1d is decoded as ctrl+5 without the kitty keyboard protocol.
+        let flow_shortcut = key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5'));
+        if self.flow.picker_open() {
+            if flow_shortcut {
+                return self.cycle_flow();
+            } else if let Some(preferences) = self.flow.picker_key(key) {
+                match save_flow_preferences(&preferences) {
+                    Ok(preferences) => self.flow.apply_preferences(preferences),
+                    Err(_) => self.flow.picker_save_failed(),
+                }
+            }
+            self.mirror_publisher.set_flow_scene(self.flow.scene());
+            self.last_status_bar_hash = None;
+            self.draw_status_bar()?;
+            return Ok(());
+        }
         // Codex's async question view uses ctrl+] to skip a question. Codex
         // logs nothing for a skip, so name the skipped question here.
-        if is_next_scene
+        if flow_shortcut
             && self.codex_question_prompt
                 == Some(crate::parsers::CodexQuestionPrompt::AsyncQuestion)
         {
@@ -2325,13 +2354,8 @@ impl App {
                 .write(&[escape::key::CTRL_RIGHT_BRACKET])?;
             return Ok(());
         }
-        if is_next_scene && self.flow.takes_key() {
-            let scene = self.flow.next_scene();
-            let _ = save_flow_selection(self.flow.is_on(), self.flow.selection());
-            self.mirror_publisher.set_flow_scene(scene);
-            self.last_status_bar_hash = None;
-            self.draw_status_bar()?;
-            return Ok(());
+        if flow_shortcut && self.flow.takes_key() {
+            return self.cycle_flow();
         }
 
         self.platform.note_user_input();
@@ -3179,11 +3203,13 @@ impl TermSignals {
 
 /// Save the flow choice, so new sessions start the same way.
 /// A config that doesn't parse is left alone.
-fn save_flow_selection(enabled: bool, scene: &str) -> Result<()> {
+fn save_flow_preferences(
+    preferences: &crate::config::FlowPreferences,
+) -> Result<crate::config::FlowPreferences> {
     let mut config = Config::load()?;
-    config.flow.enabled = enabled;
-    config.flow.scene = scene.to_string();
-    config.save()
+    config.flow = FlowColumn::normalize_preferences(preferences.clone());
+    config.save()?;
+    Ok(config.flow)
 }
 
 /// Alias a session path under one of the session's other identifiers, so a

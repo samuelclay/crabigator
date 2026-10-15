@@ -9,3 +9,7 @@ pub mod rocket;
 pub mod ski;
 pub mod surf;
 pub mod warp;
+
+pub mod doom;
+pub mod earthrise;
+pub mod train;

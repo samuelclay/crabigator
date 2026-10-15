@@ -5,6 +5,7 @@
 
 use std::f64::consts::PI;
 
+use crate::flow::crew::{finished, resting};
 use crate::flow::js::{i32_of, max, round};
 use crate::flow::night::moon_pixel;
 use crate::flow::pixels::{clamp, hash_murmur as hash, mix};
@@ -69,8 +70,8 @@ impl Ski {
         }
 
         // Tracks, the scenery lying flat (gates, kickers), shadows; then upright things in depth order.
-        let n = self.extras();
-        for i in 0..=n {
+        let on = self.on_slope();
+        for &i in &on {
             self.spine_track(i, top);
         }
         self.spine_flat(top, ew);
@@ -81,7 +82,7 @@ impl Ski {
         let span = 4.0;
         let s0 = ((top - 4.0) / span).floor();
         let s1 = ((top + hf + 12.0) / span).floor();
-        let mut order: Vec<usize> = (0..=n).collect();
+        let mut order = on;
         order.sort_by(|&a, &b| {
             let (a, b) = (self.skiers[a].fy, self.skiers[b].fy);
             a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal)
@@ -342,8 +343,8 @@ impl Ski {
             }
             return;
         }
-        let standing = self.v < 0.12 || (hero && self.fall == 2);
-        let fast = self.v > SPEED[8] * 0.92;
+        let standing = self.v < 0.12 || (hero && self.fall == 2) || resting(self.mate_of(i));
+        let fast = self.v > SPEED[8] * 0.92 || finished(self.mate_of(i));
         // Heading: across the hill when stopped, else down the fall line swinging with the turns.
         let ph = self.phi + off;
         let lat_v = self.amp * ph.cos() * self.rate * self.room();
@@ -373,10 +374,15 @@ impl Ski {
         }
         // Poles: planted beside them when stopped, trailing behind when skiing.
         if standing {
+            let lift = if self.waving(self.mate_of(i)) {
+                4.0
+            } else {
+                0.0
+            };
             for k in 1..4 {
                 let k = f64::from(k);
                 self.put(x - 2.0, y - k, POLE);
-                self.put(x + 2.0, y - k, POLE);
+                self.put(x + 2.0, y - k - lift, POLE);
             }
         } else if !fast {
             for side in [-1.0, 1.0] {

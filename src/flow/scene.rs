@@ -1,6 +1,7 @@
 //! What every scene is driven by, whatever it draws (flow's `Scene`
 //! interface in `hooks/styles.ts`), and the list of scenes.
 
+use super::agents::AgentDial;
 use super::cells::Cells;
 use super::palette::SceneHue;
 
@@ -15,10 +16,12 @@ pub enum Tint {
 }
 
 /// The dials a scene reads each frame.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Dials {
     /// 0 draws nothing; 1 is calm idle; 10 is the busiest.
     pub strength: f64,
+    pub waiting: bool,
+    pub agents: Vec<AgentDial>,
     /// Above 0 while subagents run: more company in the scene.
     pub coverage_boost: f64,
     pub tint: Tint,
@@ -34,6 +37,8 @@ impl Default for Dials {
     fn default() -> Self {
         Self {
             strength: 8.0,
+            waiting: false,
+            agents: Vec::new(),
             coverage_boost: 0.0,
             tint: Tint::Normal,
             night: false,
@@ -69,7 +74,7 @@ pub fn scenes() -> &'static [SceneDef] {
     &SCENES
 }
 
-static SCENES: [SceneDef; 10] = [
+static SCENES: [SceneDef; 14] = [
     super::scenes::fire::DEF,
     super::scenes::warp::DEF,
     super::scenes::avalon::DEF,
@@ -80,6 +85,10 @@ static SCENES: [SceneDef; 10] = [
     super::scenes::surf::DEF,
     super::scenes::ski::DEF,
     super::scenes::bubbles::DEF,
+    super::scenes::train::DEF,
+    super::scenes::earthrise::DEF,
+    super::scenes::doom::DEF,
+    super::scenes::doom::DOOM3D,
 ];
 
 /// A scene by name.

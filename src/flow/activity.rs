@@ -6,6 +6,7 @@
 //! show it; once it ends, a bright scene has just changed and embers have sat a
 //! while.
 
+use super::agents::AgentDial;
 use super::scene::Tint;
 
 /// Per-frame cooling: at 70 ms frames, a burst halves in ~2.4 s.
@@ -35,6 +36,10 @@ const DEFAULT_FLOOR: f64 = 3.0;
 #[derive(Clone, Debug)]
 pub struct Activity {
     pub heat: f64,
+    pub hook_waiting: bool,
+    pub screen_waiting: bool,
+    pub agent_waiting: bool,
+    pub agents: Vec<AgentDial>,
     pub is_turn_active: bool,
     pub running_agents: u32,
     pub tools_in_flight: u32,
@@ -53,6 +58,10 @@ impl Default for Activity {
     fn default() -> Self {
         Self {
             heat: 0.0,
+            hook_waiting: false,
+            screen_waiting: false,
+            agent_waiting: false,
+            agents: Vec::new(),
             is_turn_active: false,
             running_agents: 0,
             tools_in_flight: 0,
@@ -128,6 +137,10 @@ impl Activity {
         self.smoke_frames = COMPACT_SMOKE;
     }
 
+    pub fn waiting(&self) -> bool {
+        self.hook_waiting || self.screen_waiting || self.agent_waiting
+    }
+
     pub fn is_working(&self) -> bool {
         self.is_turn_active || self.running_agents > 0
     }
@@ -161,7 +174,7 @@ impl Activity {
 
     /// Advance `frames` frames (a slow tick covers several) of cooling.
     pub fn tick(&mut self, frames: f64) {
-        if self.is_turn_active {
+        if self.is_turn_active && !self.waiting() {
             self.turn_frames += frames;
         }
         self.since_change_ms = (self.since_change_ms + frames * FRAME_MS).min(FADE_MS);
@@ -184,12 +197,18 @@ impl Activity {
     /// what's still cooling; in a turn, its effort floor, heat, subagents and
     /// a level for every 30 s it has run.
     pub fn strength(&self, idle_floor: f64) -> f64 {
-        if !self.is_working() {
-            return super::js::round(idle_floor + self.heat).clamp(0.0, 10.0);
+        let strength = if !self.is_working() {
+            super::js::round(idle_floor + self.heat).clamp(0.0, 10.0)
+        } else {
+            let base = if self.is_turn_active { self.floor } else { 1.0 };
+            (super::js::round(base + self.heat + self.agent_boost()) + self.turn_boost())
+                .clamp(1.0, 10.0)
+        };
+        if self.waiting() {
+            strength.min(2.0)
+        } else {
+            strength
         }
-        let base = if self.is_turn_active { self.floor } else { 1.0 };
-        (super::js::round(base + self.heat + self.agent_boost()) + self.turn_boost())
-            .clamp(1.0, 10.0)
     }
 
     /// Fade's dial: the base (the effort floor while a turn runs, the idle
@@ -198,10 +217,15 @@ impl Activity {
     /// below the plain auto dial: a long turn climbs; a stale wait sits low.
     pub fn strength_faded(&self, idle_floor: f64) -> f64 {
         let faded = self.faded(idle_floor);
-        if self.is_turn_active {
+        let strength = if self.is_turn_active {
             faded.max(self.strength(idle_floor))
         } else {
             faded
+        };
+        if self.waiting() {
+            strength.min(2.0)
+        } else {
+            strength
         }
     }
 

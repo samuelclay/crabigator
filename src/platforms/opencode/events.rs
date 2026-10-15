@@ -10,6 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::agents::AgentRoster;
+
 use crate::platforms::{
     ActivePrompt, ClaudeMode, HookEvent, PermissionDetails, PlatformStats, SessionState,
 };
@@ -48,6 +50,7 @@ pub struct OpencodeState {
     pub model_names: HashMap<String, String>,
     /// Sessions spawned as subagent children (have a parentID)
     child_sessions: HashSet<String>,
+    agents: AgentRoster,
     /// Message id -> role, so parts can be attributed
     message_roles: HashMap<String, String>,
     /// Assistant text parts buffered until their message completes.
@@ -75,6 +78,12 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
 }
 
 impl OpencodeState {
+    pub(super) fn refresh_agents(&mut self) {
+        self.stats.flow_agents = self
+            .agents
+            .snapshot(self.main_session.as_deref(), now_secs());
+    }
+
     fn is_main(&self, session_id: &str) -> bool {
         self.main_session.as_deref() == Some(session_id)
     }
@@ -171,11 +180,23 @@ pub fn apply_event(state: &mut OpencodeState, event: &Value) -> Vec<TranscriptEn
     let Some(event_type) = event.get("type").and_then(Value::as_str) else {
         return Vec::new();
     };
-    let props = event.get("properties").unwrap_or(&Value::Null);
+    let props = event
+        .get("properties")
+        .or_else(|| event.get("data"))
+        .unwrap_or(&Value::Null);
     let mut entries = Vec::new();
 
+    if matches!(event_type, "session.created" | "session.updated") {
+        on_session_info(state, props);
+    }
+    let child_reply = event_type == "permission.replied" && state.agents.owns_reply(props);
+    state
+        .agents
+        .event(state.main_session.as_deref(), event_type, props, now_secs());
+    state.refresh_agents();
+
     match event_type {
-        "session.created" | "session.updated" => on_session_info(state, props),
+        "session.created" | "session.updated" => {}
         "session.status" => on_session_status(state, props),
         "session.idle" => {
             if state.is_main_event(props) {
@@ -201,7 +222,7 @@ pub fn apply_event(state: &mut OpencodeState, event: &Value) -> Vec<TranscriptEn
         // The wire name is `permission.asked`; older SDK docs call the same
         // payload `permission.updated`, so accept both.
         "permission.asked" | "permission.updated" => on_permission_asked(state, props),
-        "permission.replied" => {
+        "permission.replied" if !child_reply && state.is_main_event(props) => {
             state.clear_permission();
             state.set_state(SessionState::Thinking);
             state.record_history("permission.replied");
@@ -218,10 +239,12 @@ fn session_id(props: &Value) -> Option<&str> {
 }
 
 fn on_session_info(state: &mut OpencodeState, props: &Value) {
-    let Some(info) = props.get("info") else {
-        return;
-    };
-    let Some(id) = info.get("id").and_then(Value::as_str) else {
+    let info = props.get("info").unwrap_or(props);
+    let Some(id) = info
+        .get("id")
+        .or_else(|| info.get("sessionID"))
+        .and_then(Value::as_str)
+    else {
         return;
     };
     if info.get("parentID").and_then(Value::as_str).is_some() {
@@ -996,5 +1019,89 @@ mod tests {
             }),
         );
         assert_eq!(state.stats.mode, ClaudeMode::Plan);
+    }
+
+    #[test]
+    fn child_permissions_publish_companions_without_overwriting_the_main_prompt() {
+        use crate::platforms::PlatformAgentState;
+        let mut state = adopted_state();
+        apply_event(
+            &mut state,
+            &json!({"type":"session.created", "properties":{"info":{
+                "id":"child", "parentID":"ses_1", "title":"Inspect changes"
+            }}}),
+        );
+        apply_event(
+            &mut state,
+            &json!({"type":"permission.asked", "properties":{
+                "id":"main-permission", "sessionID":"ses_1", "permission":"bash"
+            }}),
+        );
+        apply_event(
+            &mut state,
+            &json!({"type":"permission.asked", "properties":{
+                "id":"child-permission", "sessionID":"child", "permission":"write"
+            }}),
+        );
+        assert_eq!(
+            state.stats.flow_agents[0].state,
+            PlatformAgentState::Waiting
+        );
+        assert_eq!(state.stats.permission.as_ref().unwrap().tool, "bash");
+        apply_event(
+            &mut state,
+            &json!({"type":"permission.replied", "properties":{
+                "permissionID":"child-permission"
+            }}),
+        );
+        assert_eq!(
+            state.stats.flow_agents[0].state,
+            PlatformAgentState::Working
+        );
+        assert_eq!(state.stats.state, SessionState::Permission);
+        assert_eq!(state.stats.permission.as_ref().unwrap().tool, "bash");
+        apply_event(
+            &mut state,
+            &json!({"type":"session.idle", "properties":{"sessionID":"child"}}),
+        );
+        assert_eq!(state.stats.flow_agents[0].state, PlatformAgentState::Done);
+        assert!(state.stats.flow_agents[0].ok);
+        assert_eq!(state.stats.state, SessionState::Permission);
+    }
+
+    #[test]
+    fn modern_child_execution_events_are_published_from_data_payloads() {
+        use crate::platforms::PlatformAgentState;
+        let mut state = adopted_state();
+        apply_event(
+            &mut state,
+            &json!({"type":"session.created", "data":{
+                "sessionID":"child", "parentID":"ses_1", "agent":"explore"
+            }}),
+        );
+        apply_event(
+            &mut state,
+            &json!({"type":"form.created", "data":{"form":{
+                "sessionID":"child", "id":"form"
+            }}}),
+        );
+        assert_eq!(
+            state.stats.flow_agents[0].state,
+            PlatformAgentState::Waiting
+        );
+        apply_event(
+            &mut state,
+            &json!({"type":"form.replied", "data":{"id":"form"}}),
+        );
+        assert_eq!(
+            state.stats.flow_agents[0].state,
+            PlatformAgentState::Working
+        );
+        apply_event(
+            &mut state,
+            &json!({"type":"session.execution.failed", "data":{"sessionID":"child"}}),
+        );
+        assert_eq!(state.stats.flow_agents[0].state, PlatformAgentState::Done);
+        assert!(!state.stats.flow_agents[0].ok);
     }
 }

@@ -19,7 +19,7 @@ crabigator --platform grok  # Explicit flag
 
 Other subcommands: `inspect` (view running instances), `prs` (live cross-session PR board; `--once` prints one frame of the live view, including active sessions on the account's other computers; ended history stays on `l` and on the web dashboard's PR board; `/` search also greps each live session's transcript and shows the matched excerpt inline, Tab toggles surrounding context; `↑↓` select a row, including a pull request running on another computer, and Enter toggles a quick look pane that mirrors the session's live screen in the bottom half, including a session streaming from another computer on the account — while open, `↑↓` scroll that session's transcript and `←→` switch sessions, and `f` fullscreens that screen and types into it; the board opens on session view, one block per session with every PR it touches as a sub-row beneath it; `s` flips to PR view, one block per primary PR — its GitHub status inline and every touching session as a sub-row beneath it, sorted by the freshest of session activity and PR events, GitHub's updatedAt included; `w` watches any PR by URL or owner/repo#number — watched PRs live in the cloud like dispositions, show on every board (the open board runs `gh` for them and relays the stats), and can also be added by typing "track PR <url>" in a session; dispositions (promote/demote/dismiss) are scoped: the ✕ on a session's own strip or on a session-view sub-row applies only to that session — or to its worktree directory when the session runs in a linked worktree, so future sessions there inherit it — while the ✕ on a PR-view block or a watched PR still removes the PR group-wide; `r` shows or hides recaps, `a` cycles activity ages and the board opens at 24 hours, `l` toggles live or all sessions, and `o` toggles this computer or this computer plus the account's other computers. A repository heading reads owner/repo · machine under the time bands. The header shows `f` only while a session is selected), `pair` (dashboard auth code), `recap` (enable/disable/status for turn recaps), `key` (save an Anthropic API key for recaps), `install-launcher` (macOS crabigator:// URL handler), `resume`/`continue`.
 
-Preferences live in `~/.crabigator/config.toml` (default platform, `ide` for clickable file links, terminal emulator override, recap settings, `[flow] enabled` for the flow column, `[flow] scene` for the saved scene choice (default `"random"`), and `[flow] fade` to relight its scene at each change of state, and `[pr_board]` view preferences saved by the PR board).
+Preferences live in `~/.crabigator/config.toml` (default platform, `ide` for clickable file links, terminal emulator override, recap settings, `[flow] enabled` for the flow column, `[flow] scene` for the saved scene choice (default `"random"`), `[flow] fade` to relight its scene at each change of state, optional `[flow] level` and `night` overrides, and `[flow] color` (session, natural or a named hue), and `[pr_board]` view preferences saved by the PR board).
 
 ## Ask Questions Liberally
 
@@ -142,7 +142,7 @@ This keeps module declarations visible at the top level rather than buried in su
 
 ### Input Handling
 
-- All keyboard input forwards directly to the PTY, except ctrl+] while the flow column (or its `flow off ⌃]` label) shows: it cycles through Random, each named scene, then Off. The choice is saved as `[flow] scene` and `[flow] enabled`, so new sessions start the same way (the byte, 0x1d, reads as ctrl+5 without the kitty protocol). When Codex's async questions are open, ctrl+] goes to Codex instead, where it skips a question
+- All keyboard input forwards directly to the PTY, except ctrl+] while the flow column (or its off label) shows: it cycles Random → enabled scenes → Settings → Off → Random. Settings is a scrollable scene checklist: Space/Enter toggles a scene, unchecked scenes are excluded from Random and cycling, and the controls below edit on/off, fade, manual level, time and hue. Enter on Save applies the draft; End jumps to Save; Esc cancels; ctrl+] discards it and continues to Off. With no enabled scenes, Settings and Off remain reachable. The picker consumes local keys/paste. Preferences persist in `[flow]`; byte 0x1d reads as ctrl+5 without kitty. When the Flow picker is closed and Codex's async questions are open, ctrl+] goes to Codex instead, where it skips a question
 - Option/Alt key combinations are properly encoded for word navigation (Option+Left/Right) and word deletion (Option+Backspace/Delete)
 - When the assistant CLI exits, Crabigator exits automatically
 
@@ -448,6 +448,12 @@ The code simplifier will:
 - Clean up dead code and redundant logic
 - Simplify overly complex patterns
 - Preserve all functionality
+
+## Checkout and Worktrees
+
+Prefer working in `~/projects/crabigator` so the user can run and try the changes there. A feature branch in that checkout is fine. Preserve existing edits and reconcile overlapping changes instead of leaving the finished work only in a separate checkout.
+
+When isolation is necessary, create worktrees under this repository's `.worktrees/` directory (for example, `.worktrees/flow-upstream`), never as sibling project directories. `.worktrees/` is gitignored. At handoff, state where the runnable changes are and how to try them.
 
 ## Commit Practices
 
