@@ -1,6 +1,6 @@
 # flow fork log
 
-`src/flow/` is a Rust port of the scenes from [flow](https://github.com/robdmac/flow), Rob Macrae's ambient-scene plugin for Claude Code and pi. It is MIT licensed; its license is in `src/flow/LICENSE` and must stay with this code.
+`src/flow/` is a Rust port of the scenes from [flow](https://github.com/robdmac/flow), Rob Macrae's ambient-scene plugin for Claude Code, pi and opencode. It is MIT licensed; its license is in `src/flow/LICENSE` and must stay with this code.
 
 flow keeps evolving. This log records which upstream commit the port matches, so each new upstream commit can be read, judged and carried over. Some commits won't apply, such as Claude Code plugin plumbing, sound or `/flow` settings. Many will: new scenes, changes to how a scene looks or moves, the activity model, palettes.
 
@@ -9,8 +9,8 @@ flow keeps evolving. This log records which upstream commit the port matches, so
 | | |
 |---|---|
 | Upstream | `robdmac/flow` `main` |
-| Synced to | `e70a702` (2026-10-06, "Merge pull request #5 from robdmac/improvements") |
-| Plus | the `crabigator-column` branch of flow: fade, random scenes, colour palettes, embers instead of a blue pilot light, `isTall` for small boxes. Proposed upstream; until it merges, port from that branch's diff too. |
+| Synced to | `b3676b875e9bd37aea132941bf99197453d7f525` (2026-10-15, PR #28) |
+| Plus | the maintained custom Flow fork (`origin`), descended from `crabigator-column`: fade, random scenes, colour palettes, embers instead of a blue pilot light, `isTall` for small boxes. Proposed upstream; until it merges, port from that branch's diff too. |
 | Checked by | `make flow-reference FLOW_DIR=../flow` → `src/flow/testdata/*.json`, matched cell for cell by each scene's `frames_match_flow` test |
 
 ## How to carry an upstream change over
@@ -20,7 +20,7 @@ Use the repository skill [flow-upstream](../../.agents/skills/flow-upstream/SKIL
 1. Update the flow checkout and list what's new since the commit above:
    ```sh
    git -C ../flow fetch upstream
-   git -C ../flow log --oneline e70a702..upstream/main
+   git -C ../flow log --oneline b3676b8..upstream/main
    ```
    `origin` is the custom fork; `upstream` must be `robdmac/flow`. Inspect all changed paths, then the relevant patches. Keep the custom TypeScript fork maintained separately; pin the exact reference revision used for a Rust port.
 2. For each commit, decide whether it applies (see *What isn't ported* below), then port the change into the matching Rust file (see the map).
@@ -54,6 +54,12 @@ Use the repository skill [flow-upstream](../../.agents/skills/flow-upstream/SKIL
 | `hooks/surf.ts` | `src/flow/scenes/surf.rs` |
 | `hooks/ski.ts` | `src/flow/scenes/ski.rs`, `ski/band.rs`, `ski/spine.rs` |
 | `hooks/bubbles.ts` | `src/flow/scenes/bubbles.rs` |
+| `hooks/train.ts` | `src/flow/scenes/train.rs`, `train/{side,above,palette}.rs` |
+| `hooks/earthrise.ts` | `src/flow/scenes/earthrise.rs`, `earthrise/world.rs` |
+| `hooks/doom.ts` | `src/flow/scenes/doom.rs`, `doom/{draw,sprites,world}.rs` (doom and doom3d) |
+| `hooks/crew.ts`, `hooks/agents.ts`, `hooks/waits.ts` | `crew.rs`, `agents.rs`, `hooks.rs`, native platform rosters |
+| `hooks/waiting.ts`, `hooks/pixel-scene.ts` | `waiting.rs`, `pixel_scene.rs` |
+| `hooks/picker.ts` | `picker.rs` (column UI adapted to Crabigator) |
 | `pi/ansi.ts` | `src/flow/ansi.rs` |
 
 ## What isn't ported, and why
@@ -63,27 +69,27 @@ Use the repository skill [flow-upstream](../../.agents/skills/flow-upstream/SKIL
 - **Sound**: `hooks/sound.ts`, `hooks/sound-files.ts`, `sounds/`, and each scene's `sounds`, `ambience()` and `hear(...)` calls. Also the state that only served sound: avalon's `heard` (and its `leadFrames` check), the twin rocket's `boomed`. Where a scene drew random numbers or moved state while building a sound event, the port keeps that (surf's next-wave draw), so the frames stay the same. If upstream ever times something *drawn* by `leadFrames`, port `leadFrames` with it.
 - **What crabigator hears differently**: crabigator isn't a Claude Code plugin, so it hears Claude Code through its hooks instead. The hook appends a line for every hook event to the session's `activity.jsonl`, and `src/flow/hooks.rs` reads it each frame, doing what `register.tsx` does for each event:
   - `PreToolUse` is `tool.call`: the flare by tool (an edit by the lines it writes), and the call in flight until `PostToolUse` or `PostToolUseFailure`. A failed Bash command (not one cut short by Esc) is `failed`.
-  - `PermissionRequest` and `Elicitation` are a `tool.check` that asked; the call finishing is the answer. A permission request names no call, so it marks the main loop's newest call of that tool.
+  - `PermissionRequest` and `Elicitation` report shown permission or elicitation dialogs; the call finishing is the answer. A permission request is matched by call ID or a hash of its arguments (raw input is not retained). An ambiguous request never guesses between concurrent calls of the same tool.
   - `UserPromptSubmit` and `PostToolBatch` stand in for `turn.step` (a model request), and every main-loop event carries the effort. `MessageDisplay` gives the streamed text. It arrives a batch of lines at a time, so `Activity` spreads streamed characters over the following second instead of dropping what a frame can't take. No hook shows thinking, so outside streamed text the assistant's output still stands in (`FlowColumn::hear_output`, about four bytes a character).
-  - `SubagentStart` and `SubagentStop` count running subagents in place of `$.agent.list()`. One silent for ten minutes is dropped, in case its stop was missed. `StopFailure` (an API error) ends the turn with smoke. `PostCompact` is `session.compact`.
+  - `SubagentStart` and per-agent work events maintain stable companion IDs in place of `$.agent.list()`. Twenty seconds without work or a running tool means idle; actual questions/permissions mean waiting. Done agents stay six seconds to animate their departure. A subagent Stop never ends the main turn. One silent for ten minutes is dropped, in case its stop was missed. `StopFailure` (an API error) ends the turn with smoke. `PostCompact` is `session.compact`.
 
-  Other assistants have no such log: their stats stand in. Tool calls are heard when they finish, and the effort comes from Claude Code's banner ("with xhigh effort"). Claude Code's footer ("← 1 agent") can't stand in for running subagents: it counts idle agents too. Context fill (`session.measure`) isn't heard by either path, so the blue tint never shows.
+  Other assistants use native stats and, where supported, individual-agent rosters. Opencode follows observed child-session events; it does not recover children that finished before attachment. Codex reads direct child rollouts while skipping copied ancestor history. It follows correlated question replies, but child permission dialogs have no verified event and are not inferred from escalation arguments. Grok has no verified individual roster here, so no live companions are invented from its completed-task count. Tool calls are heard when they finish, and the effort comes from Claude Code's banner ("with xhigh effort"). Claude Code's footer ("← 1 agent") can't stand in for running subagents: it counts idle agents too. Context fill (`session.measure`) isn't heard by either path, so the blue tint never shows.
 - **Resuming at an altitude**: `SkyWorld.seed` and the rockets' `seed(altitude)` override. A Claude Code reload needed them; the column never reloads. Also `SkyWorld.rowOf`, which nothing calls.
-- **Settings and `/flow`**: `hooks/settings.ts`, `hooks/pick.ts`. In crabigator the choices are fixed:
-  - fade is off unless `[flow] fade = true`, as in flow, where it is off by default;
-  - idle is a glow, never dark;
-  - Random claims a scene per session (`src/flow/claim.rs`) instead of drawing from a shuffle bag; a named scene stays selected for future sessions;
-  - the colour comes from the session mark, not a setting;
-  - day and night follow the clock.
-
-  The settings are `[flow] enabled`, `[flow] scene` (default `"random"`), and `[flow] fade` in `~/.crabigator/config.toml`.
-- **Tools**: `scripts/` (preview, check, sync-manifest, new-scene, make-sounds). `scripts/flow-reference.ts` here plays the part `check` plays there.
-- **`hooks/pixel-scene.ts`**: no scene uses it yet. Port it with the first scene that does.
+- **Settings and `/flow`**: the plugin's command grammar, shared stores and configuration reload machinery are not copied. Crabigator's Ctrl+] picker has scene, on/off, fade, activity level, day/night and color settings. Save applies to the current session and future sessions; Esc discards the draft. It stays inside the existing column. The scene row opens a scrollable list; other rows use left/right to edit and Enter to save. Remote dashboard input continues to target the assistant, while local keys and paste belong to the open picker.
+  - Fade defaults off; idle remains a glow. Random claims one scene per session rather than a shared shuffle bag.
+  - Omitted `level` follows activity; a manual 0–10 value suppresses activity tints and waiting, while companions still show.
+  - Omitted `night` follows the local clock; true/false forces night/day.
+  - `color` defaults to `session`; `natural` or named hues override it on scenes with palette metadata. Train, Earthrise, Doom and Doom3d also support recoloring, by the user's choice; `natural` retains upstream colors.
+  - Settings live in `[flow]` in `~/.crabigator/config.toml`.
+- **Desktop images and hover cards**: no PNG/SVG pipeline, interactive agent marks or task popovers in the terminal column. Earthrise uses its cell renderer. Its extra MIT notice is in `THIRD-PARTY-NOTICES`.
+- **Tools**: upstream preview/check/scene scaffolding and sound builds stay in Flow. Crabigator has `scripts/flow-reference.ts`, `src/flow/preview.rs` and `scripts/flow-preview.py` for its own replay, visual review and timings.
 
 ## crabigator's own additions
 
 Not in flow, so keep them when porting upstream changes:
-- **ctrl+]** cycles through Random, each named scene, and Off (`FlowColumn::next_scene`), saving each choice for future sessions, and the separator above the column names the scene and the key. After the last scene it turns the column off (saved as `[flow] enabled = false`), and the separator reads `flow off ⌃]`.
+- **ctrl+]** opens the scene/settings picker by the user's choice. Its off label remains available to turn it back on. The picker supports the existing 15–40-column, 4–12-row box; it does not enlarge Doom3d's column. User decisions replace the old immediate-cycle shortcut.
+- **New scene palettes**: Train and Earthrise gently recolor blue regions; Doom and Doom3d recolor brown architecture. Land, signal lamps, combat colors and neutral terrain stay recognizable. These Rust-only palette rules preserve upstream colors under `natural` and do not recolor waiting frames.
+- **Train in small boxes**: the custom TypeScript fork's `2e1785c` reduces empty track ahead and companion sway, and accepts a visible cab instead of requiring half a two-car unit. The locomotive and one companion remain readable in short columns; full band/spine layouts retain upstream's geometry.
 - Random scenes are claimed per session (`claim.rs`), and the colour comes from the session mark.
 - **Figures wear the session's hue** (`Dials.accent`, `SceneDef.figure`): the balloon's stripes, the hero skier's hat and jacket, the hero surfer's board, the rockets' white and stainless bodies (a wash), Dragon's trunk and parachute gores. Those scenes keep their frame's own colours (no palette turn), so their skies stay blue. With no accent, every scene draws exactly flow's frames. When porting an upstream change to balloon, ski, surf or rocket, keep the `accent` lines.
 
@@ -104,3 +110,11 @@ flow's scenes are deterministic from a seed, so the port draws the same cells. T
 | `7d6d6cf`…`e70a702` | Everything up to and including PR #5: the ten scenes, the activity model, sky and clouds | Ported: all ten scenes match the reference frames (six runs each: the column's sizes, the 5-row band, a 22×60 spine; day and night; smoke, blue, subagents) |
 | `crabigator-column` (flow branch) | Fade; random scenes and colours; per-scene palettes (`SceneDef.hue`); embers at level 1 and a blue low fire under the context-full tint; `isTall` for boxes up to 12 rows; `CRABIGATOR_FLOW` hides the plugin's band | Ported, except random scenes and colours (crabigator claims scenes per session instead) |
 | `1a10bb9` (flow branch) | Fade: a long turn still climbs (never below plain auto while a turn runs) | Ported |
+| `e70a702..b3676b8` | All fourteen scenes, waiting behavior, individual companions, scene/settings picker and rendering fixes | Ported or explicitly excluded above; all 124 commits have a disposition in the ledger, including 21 inspected merges |
+| `2e1785c` (custom Flow fork) | Keep Train's locomotive and companions visible in short columns | Ported and matched against this revision's frames |
+
+The reference is custom merge `b8a606fb1f1f8d22b315b25647c8824591bec8f7`, which includes upstream `b3676b875e9bd37aea132941bf99197453d7f525` and the retained custom patches. Train uses `2e1785c3f63399d5b1fcde132d1ce22ffc3afa82`. `upstream-review.json` records complete SHAs, dispositions and verification. Native adapters are deliberate integrations with Crabigator's event sources.
+
+Verification includes exact reference frames for all fourteen scenes, long Avalon and rocket missions, real terminal picker navigation/cancellation and input ownership at 15×4, native companion lifecycle tests, a live Codex child-roster probe, and Rust visual previews across 15×4, 24×8 and 40×12. The TypeScript fork passes its 201 plugin tests, strict validation and scene check.
+
+Final Rust validation: 707 tests passed, zero failed, nine manual tests ignored; release build and Clippy passed. Clippy reports existing warnings outside this port. Formatting passes for all changed Rust files; the full repository formatting check still reports existing formatting in `pr.rs`, `pr_rank.rs` and `prs_board.rs`. The port and native adapters are committed in `daf6f7f` and `04a5770`.

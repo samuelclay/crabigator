@@ -1,0 +1,278 @@
+{
+  "version": 1,
+  "reviewed_through": "b3676b875e9bd37aea132941bf99197453d7f525",
+  "decisions": [
+    {
+      "id": "scene-port",
+      "commits": [
+        "62b82190167dc480b51171651251cf9ceca2363f",
+        "04747818535147e47c1b0a854accd6274486fbd2",
+        "08517f1ef2ff93e3606e62d649bbccf785fff262",
+        "5a94657bedc277cf5984c6d17040c29f3972d3dd",
+        "eb1190a3f648d33f3e3272ace65a5eecff16e772",
+        "079d433a31e6ca4a889be6172260bb0b059d5683",
+        "4f4853ba6bb20e60600ff545cb35001b341d494c",
+        "7612c9ecb2632a587eb730cc8deb4af45b00828d",
+        "32062fdeaddeb5b365ad6b9facf39ad2ed8c2f85",
+        "ff5aba1758d7462c9d3afb1938f274d30eeab89d",
+        "4039ba118e92dc5b21b292452140c404fc12aa6c",
+        "83e14190af99b81a8eed9003ea5d33852114f4ee",
+        "132f376433b7a87cffbf4eab40d9e4f8b0a15904",
+        "9ff6b7e42528534c0ab451f1581ac4cf6c401e73",
+        "5b00e4c4eecd6a0488bbde1ea2df45ea5a011ca0",
+        "b6c3fcdfa8de6c6fb567120efa22f45fffb8cff6",
+        "d133541bbf5bcdcf17bcbbf9362d95b23d340359",
+        "2f124e1a756ef5a5b39807185b1e43a2ac7612df",
+        "7e8e6ad85a5963949ea1c7be58fd45f7780ba99f",
+        "efcbb369175c0d8c736aef73c99502b035d13c72",
+        "5802dd092ff19452fb30f7fc47ab2bce1f9641a7",
+        "0ee288c9914bd6a790be56ad25913c157e9b91ff",
+        "4d622f4fe10c18b451fa4cb87b33058f63760ab5",
+        "d1ab3c0435024d44d13451d7d35b176ea22f0b4e",
+        "025bbcfd5ae8b1ab10c038826e67bacb5fb17a63",
+        "7710cb9f4c6169d74ac6115aef19d752dec13bae",
+        "53f903035b373bd7642b66c70bdf74be48695e35",
+        "06360e414afc1c65cede0cbb470760ae99d2dcee",
+        "9e44690c204f375efb20fc50d8eecaab8a721e0a",
+        "8e9543a6c64b94225985d26c43110c92d5d41101",
+        "f3be83abfeeb54ac9469a334ddcb9f1d43f59b3d",
+        "44a7d9c037782382a6f6ae8373c03b0b796e3dd0",
+        "d6fe821a0fcb8034230e1cdf9bcea5f1eedf1dfc",
+        "7e64dbb61d02da4631340ba06f8c8ac0a0a7d8c2",
+        "3063481a7e36d7e865d05c9298f05b73076fefe4",
+        "ccac2b2aeb79c31710caa851e8dd2bb24e67249b",
+        "f4646d85198a9b426939fb72779c8dfdd99db736",
+        "e7e7e5304c9a6439d2dc6fab20f1437ba7392ba8",
+        "19c1613be79dff91f7ab4233bf645e0d515d7045",
+        "f7c4841596c9aa426e3ae7a67e78e1b5c8c8fe15",
+        "fad9850ca929a9dde5e4345044be61a748b8c442",
+        "7402c602301b4cf0f795fc9395e7f559122474ee",
+        "1bd16288dc67798462a7c90faa42742847345582",
+        "ffa70626a40209c83daf8ede0719b3da88356e08",
+        "188bcd7fabdf09a02d7ec510add6660c7d19fba1",
+        "9654f3518dd370c1944a41f6df705117459e91c4",
+        "bd0f0be23fe3ded6d9bce1b83f179344b1e7e17f",
+        "393d2deb3adb839300ef9fbecfc691b65adc90f8",
+        "892011589d7838432c1bb0d35e6b717ebbc2b14e",
+        "d7104f2dccd6534947bcae1f1bcb1fd54d0e95d4",
+        "1f094943369af15bbd32b3d7c0424c2d8912d80f",
+        "4877ce3f28e84ae4982bc949fa06ef5ff2ce8a0b",
+        "a2cd68bcd865c3fc61513d0b3794dd857613ee49",
+        "7f5d55584f56a595a4e52950b87afd6cfa54507b",
+        "c03f683f0eb92637a497ddf5fd67a7f161f268ff"
+      ],
+      "summary": "Port all fourteen scenes and shared waiting/companion rendering",
+      "status": "ported",
+      "reason": "User selected all four new scenes in the existing column. Full final source translated, including sound-related timing/RNG; no sound playback, desktop pictures or hover cards. Existing accents and custom fork layouts retained. Train small-box adaptation also maintained in TypeScript.",
+      "evidence": [
+        "src/flow/scene.rs",
+        "src/flow/scenes/",
+        "src/flow/crew.rs",
+        "src/flow/waiting.rs",
+        "src/flow/pixel_scene.rs",
+        "src/flow/THIRD-PARTY-NOTICES"
+      ],
+      "reference_sha": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+      "rust_commit": "daf6f7f27ff43d9edc3130613a46f6cd729ea29b",
+      "verification": [
+        "All 14 scene fixtures pass with zero cell differences; 10 cases each, 18 Avalon and 14 each rocket.",
+        "Rust preview: 420 frames across 15x4, 24x8, 40x12; new scenes below 0.23 ms p95 in sampled release run.",
+        "Full cargo test: 707 passed, 0 failed, 9 manual tests ignored; cargo build --release passed.",
+        "cargo clippy --all-targets passed with warnings only in unchanged PR-board/budget/change-display code; rustfmt check passed for all 53 changed Rust files.",
+        "Independent correctness and simplification reviews passed; violet and cyan previews inspected alongside natural/waiting/companions."
+      ]
+    },
+    {
+      "id": "activity-waits",
+      "commits": [
+        "1c1f54aa52f2269a23f48860d401a1bfad853045",
+        "145ef8c04e98763b42ff4ba12d987645107b0a92",
+        "131e642d7ff79cc1f950002d056c5484e760b17e",
+        "c0abdd862c3ff6f56bd4d71bd6a3f25b574e4aeb",
+        "b05a9f93308726c31528e5d58a4fd819393340ef"
+      ],
+      "summary": "Track real per-call waits and pause activity time while waiting",
+      "status": "ported",
+      "reason": "Claude hooks correlate shown dialogs by call ID or input fingerprint. Any tool sparks activity. Screen permission/question state covers other assistants; individual agents keep stable states and completion outcomes.",
+      "evidence": [
+        "src/flow/activity.rs",
+        "src/flow/hooks.rs",
+        "src/platforms/claude_code/stats_hook.py"
+      ],
+      "reference_sha": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+      "rust_commit": "daf6f7f27ff43d9edc3130613a46f6cd729ea29b",
+      "verification": [
+        "Hook tests cover concurrent same-tool calls, nested elicitations, idle/done timing and main/subagent separation."
+      ]
+    },
+    {
+      "id": "settings-picker",
+      "commits": [
+        "7e6d6f2f556443e02fc2830dd061e88759ff0a59",
+        "a30d7c025420efd877ae370282749b6d74bf414f",
+        "5b0e407aa89cc39327f27c15d3ba868548c328ee",
+        "5f817cb2ba83ba100594c2b6e168f1f0abd1d762",
+        "82a885b68461c358aef760636c9c291d72774932",
+        "b542be04e24e0f363f764fc2d05438d813978854"
+      ],
+      "summary": "Adapt scene and settings selection to the terminal column",
+      "status": "ported",
+      "reason": "User explicitly chose Ctrl+] opening the picker and manual activity, day/night and color controls. Preserve saved defaults/current-session application instead of importing plugin store/config reload semantics. User also explicitly selected recoloring for all four new scenes; natural retains their original colors.",
+      "evidence": [
+        "src/flow/picker.rs",
+        "src/flow.rs",
+        "src/config.rs",
+        "src/app.rs"
+      ],
+      "reference_sha": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+      "rust_commit": "daf6f7f27ff43d9edc3130613a46f6cd729ea29b",
+      "verification": [
+        "Real tmux 15x4 picker, scene list with all 4 new scenes, draft editing/cancel, local keys/paste intercepted, forwarding resumes, no alternate screen/mouse capture.",
+        "Settings serialization roundtrip and off-picker/manual-wait tests.",
+        "All four new scenes render changed session/named colors at 15x4, 24x8 and 40x12; natural matches raw cells, waiting bypasses recoloring, and land/signals/combat colors retain their roles."
+      ]
+    },
+    {
+      "id": "native-companions",
+      "commits": [
+        "2eafca9b0b582359151012498d5a7ca7f3d41d30",
+        "db6dc9b5d8f890db77ec5c7d5e27b6e13bd1f029",
+        "b72dadd709f0c5d9f7a354d07b4768d1918a500f",
+        "6c34545fac333a85386cf5ebca584333fdd71f69"
+      ],
+      "summary": "Feed native opencode and Codex children into companion dials",
+      "status": "ported",
+      "reason": "User explicitly selected native companion tracking where supported. Adapt supported native rosters within the companion port. Opencode follows parentID and actual request IDs, tools, completion, deletion and nested cleanup; Codex reads direct-child rollouts, skips copied parent history, and follows lifecycle plus synchronous/asynchronous question replies. Plugin panels, audio, hover cards, model-variant floor and version nags are excluded. Grok has no verified native child schema in the inspected logs and stays without individual companions. The original ports still use their existing platform effort sources.",
+      "evidence": [
+        "src/platforms/opencode/agents.rs",
+        "src/platforms/opencode/events.rs",
+        "src/platforms/codex_cli/companions.rs",
+        "src/flow.rs"
+      ],
+      "reference_sha": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+      "rust_commit": "04a5770fb392731bfe079e743dca2a2b78cb738a",
+      "verification": [
+        "25 opencode tests passed including nested-origin cleanup.",
+        "35 Codex tests passed including 8 new roster regressions; review checked copied history, async question acknowledgment, bounded reads and dormant cursors.",
+        "Read-only live Codex probe identified four direct children, displaying two working agents and hiding two completed beyond their departure period."
+      ]
+    },
+    {
+      "id": "host-only",
+      "commits": [
+        "8595a928fa0f3ab372d5feec68c9bbdbe5376db3",
+        "592cd3e7803f9729078cdee5bce68b6b40912fd8",
+        "c8a567a868ff6fb7f0444ffe7016eab64c38818b",
+        "980f068a2fb02655ab1e4956068cf5ccd8546401",
+        "499a3d90e034d5f59aa718e5095fce1004788126",
+        "b59132473c4c39390ae03ef51fa8081107f2460c",
+        "4fd700ffd18b91807f735b7a3077f0693ad2a6b8",
+        "3363dc1ee2485451b962e2733e8b42fe5521367c",
+        "ec336458da8f72423eea2d93cd05f18b56258684",
+        "8439bbe169fc9fd4b8ccddd78b5c46949737e152",
+        "90415f00d06ae6433148a337431196c31633854b",
+        "2bb83c7cdc0fe84e137508febd480d4a7d115fe5",
+        "3ef32f92b42c871691cc9a384312d93c9267a181",
+        "6dc2fbdadcc7c9814a871b8d020639f90e3dd0d6",
+        "315a8a54eb27d758d33947e9439eaee169b1fe07",
+        "0d97ddda0547aabea10d6a1d34ba6fbf71b32115",
+        "5d0cf67c02f8774ac7061ea5af9cf3b88fbd2bcd",
+        "41982e1054532aa02a4388f0f9c3ee2570996be2",
+        "cbe8755e1d69a4664fc63b056dbff7bc6dd02093",
+        "69d98c0dead1dbbc6dbe35c457902f9816139832",
+        "0d7d40997a0bb8b702e0e23df25ef565366e8cf1",
+        "5e27abac6f364f38ddf8032679c08c8754f0fc8f",
+        "30f7ce00b46bee9f72256997b2cbd1ab1c3f8bf7",
+        "7c08d1aa2487aa11ee55c7295a9d5bde1c070c4c",
+        "45343eca3096401079235fe87773147820975ea5",
+        "9524ca5075eec08f7422d2c830bd0f63b48f2019",
+        "4a29cbc29206044dc43331571ba913d6ffbf52f2",
+        "111657b3770afdc592b1bcc1f7d8234707c5a634",
+        "408c69b8932407ef3ea57cd0ff69588f09e9e652",
+        "aa23c5723d8040dbb9ec56a8a68e49ae75792be2",
+        "46a6fc2fa3f466c66be29bbf8d3d404e334b2a77"
+      ],
+      "summary": "Keep plugin distribution, sound playback and host-specific APIs outside the Rust column",
+      "status": "skipped",
+      "reason": "Inspected upstream changes in their host context. Plugin manifests/lints/version checks, /flow tips and parser replies, sound assets/player/mixing, desktop SVG/PNG, pi image caches, TypeScript toolchain and directory documentation have no direct Rust column counterpart. Cells/Raster encoding remains terminal-native. Render-once-per-frame and per-session ownership already exist in FlowColumn.",
+      "evidence": [
+        "src/flow/FORK.md",
+        "src/flow.rs",
+        "src/flow/ansi.rs"
+      ],
+      "reference_sha": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+      "rust_commit": null,
+      "verification": []
+    },
+    {
+      "id": "merge-review",
+      "commits": [
+        "02a7bfdad26d85348f03557e9d021c55ce386328",
+        "2e8a63ead1e1a4d4d7fac7a93e21ddc7f38c0d3c",
+        "05ba1c6d45cd76b31221b139dd35647bc709e473",
+        "4ebb0f29d6096644094690466330b17cac04b2e9",
+        "7c9dc511a2b1f5cbfa60b7d8adb870830bfb23cd",
+        "c15b8dd6cfda17768eb7e3870ceae8923fb941f0",
+        "274e9ed52b0defb124bb7b3d4191955e2115a3dc",
+        "8911d6d144777fa654f37c58626aa39440cd3e10",
+        "dbf4585bf1264d8f05a6fdf9aeaba555f7dc260d",
+        "184f3e635daa90e444fd01e1ff7114baa48067a5",
+        "441f8351989d379bc5260b8c2c333f93a44ca18d",
+        "101afd497a81df191dfd89a4a7b55ef395ea2bcd",
+        "37fb77c6ad2bf81550fa14bc886bbd2f04b9783d",
+        "af67d408f7638bb4d6acb58ac38838a33db54699",
+        "2586b15d52e298a21c8812c772d35c84fb813320",
+        "9e1dc0fdb0e5d7f2a32b44efe4cd6336f378ff66",
+        "428333e592178249093dd788fdf5c80bc258d227",
+        "512222d4b10d94b114f72a0b0952347fcda6d94f",
+        "cdb5163e8de13e8949233831e0d89ad304e40e33",
+        "36d810be9fa584c074174b4f205902c4e725fc28",
+        "b3676b875e9bd37aea132941bf99197453d7f525"
+      ],
+      "summary": "Review merge resolutions in the upstream ancestry",
+      "status": "already-present",
+      "reason": "git log --merges --cc --patch e70a702..b3676b8 has 21 merge headers and no combined resolution hunks. Feature commits are covered by the other decisions.",
+      "evidence": [
+        "src/flow/upstream-review.json"
+      ],
+      "reference_sha": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+      "rust_commit": null,
+      "verification": [
+        "All 124 commits assigned exactly once; 103 non-merge, 21 merge."
+      ]
+    },
+    {
+      "id": "render-cache-existing",
+      "commits": [
+        "3c117c83e8b8a918bcce1d567b56473aa51a2b85",
+        "02bffd82ac584c72155e1fc9b43b4dcb0fd452cb"
+      ],
+      "summary": "Keep bounded color caches and render only on animation steps",
+      "status": "already-present",
+      "reason": "Palette::color clears memo at MEMO; FlowColumn::tick builds cached frame rows, and UI repaint reads them without stepping or rerendering scenes.",
+      "evidence": [
+        "src/flow/palette.rs: Palette::color",
+        "src/flow.rs: FlowColumn::tick"
+      ],
+      "verification": [
+        "Current Rust implementation inspected against the upstream adapter fixes."
+      ]
+    }
+  ],
+  "scene_references": {
+    "fire": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "warp": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "avalon": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "balloon": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "engine": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "falcon": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "starship": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "surf": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "ski": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "bubbles": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "train": "2e1785c3f63399d5b1fcde132d1ce22ffc3afa82",
+    "earthrise": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "doom": "b8a606fb1f1f8d22b315b25647c8824591bec8f7",
+    "doom3d": "b8a606fb1f1f8d22b315b25647c8824591bec8f7"
+  }
+}
