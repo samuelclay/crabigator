@@ -874,6 +874,7 @@ impl App {
         let startup_nudge = tokio::time::sleep(Duration::from_millis(600));
         tokio::pin!(startup_nudge);
         let mut startup_nudged = false;
+        let mut focus_repaint_pending = false;
         // Startup-trace markers; pre-set when profiling is off so the
         // per-chunk prompt scan never runs.
         let mut profiled_first_pty_write = !crate::cli::profiling_enabled();
@@ -977,6 +978,13 @@ impl App {
                             // detection only fires on bracketed paste content.
                             self.inject_bracketed_paste(&text)?;
                         }
+                        Ok(Event::FocusGained) => {
+                            self.platform_pty.write(escape::FOCUS_GAINED)?;
+                            focus_repaint_pending = true;
+                        }
+                        Ok(Event::FocusLost) => {
+                            self.platform_pty.write(escape::FOCUS_LOST)?;
+                        }
                         Ok(Event::Mouse(mouse)) => {
                             self.last_mouse_event = Some(mouse);
                             // Full-screen TUIs enable mouse tracking; without
@@ -985,7 +993,6 @@ impl App {
                                 forward_mouse_to_pty(mouse, &mut self.platform_pty, self.pty_rows)?;
                             }
                         }
-                        Ok(_) => {}
                         Err(e) => {
                             // Log error but continue - terminal events shouldn't crash the app
                             eprintln!("Terminal event error: {}", e);
@@ -1137,8 +1144,10 @@ impl App {
                 _ = full_refresh_interval.tick() => {
                     // Force redraw by clearing the hash
                     self.last_status_bar_hash = None;
-                    self.draw_status_bar()?;
-                    last_status_draw = Instant::now();
+                    if self.can_draw_status(last_pty_output) {
+                        self.draw_status_bar()?;
+                        last_status_draw = Instant::now();
+                    }
                 }
 
                 // Cloud reconnect timer
@@ -1324,6 +1333,14 @@ impl App {
                 _ = term_signals.recv() => {
                     self.running = false;
                 }
+            }
+
+            // Focus can arrive between chunks of a Codex frame. Wait for a
+            // complete update before repairing the host from our screen copy.
+            if focus_repaint_pending && self.output_boundary.at_rest() && self.pty_rx.is_empty() {
+                self.repaint_terminal()?;
+                focus_repaint_pending = false;
+                last_status_draw = Instant::now();
             }
 
             // Each change of the session's state relights the flow scene,
@@ -1811,6 +1828,31 @@ impl App {
         // cursor back would cancel: wait for the next write instead.
         let (_, col) = self.platform_pty.screen().cursor_position();
         self.output_boundary.at_rest() && col + 1 < self.total_cols
+    }
+
+    /// Repair stale host rows when returning to a tab, without resizing the
+    /// child or adding the widgets to terminal history.
+    fn repaint_terminal(&mut self) -> Result<()> {
+        let (cols, rows) = crossterm::terminal::size()?;
+        if (cols, rows) != (self.total_cols, self.total_rows) {
+            self.handle_resize(cols, rows)?;
+        }
+        self.maybe_apply_dynamic_layout(self.recap_manager.enabled_toast_visible())?;
+        let mut stdout = stdout();
+        write!(stdout, "{}", escape::SYNC_BEGIN)?;
+        stdout.write_all(
+            &self
+                .scroll_region_filter
+                .repaint(self.platform_pty.screen()),
+        )?;
+        self.last_status_bar_hash = None;
+        self.draw_status_bar()?;
+        // Widget drawing moves the cursor. Restore pending wrap as well as
+        // position so the child's next character still lands in the right row.
+        stdout.write_all(&self.platform_pty.screen().cursor_state_formatted())?;
+        stdout.write_all(&self.platform_pty.screen().attributes_formatted())?;
+        stdout.flush()?;
+        Ok(())
     }
 
     /// Repaint just the flow column with its latest frame, between full

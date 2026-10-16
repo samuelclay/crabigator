@@ -13,6 +13,8 @@
 //! Parameterized sequences like `\x1b[3;15r` (sub-regions) pass through unchanged
 //! unless their bottom would reach into Crabigator's widget area.
 
+use super::escape;
+
 /// Parse state for scroll region sequence detection
 #[derive(Clone, Copy, Debug)]
 enum ParseState {
@@ -44,6 +46,7 @@ pub struct ScrollRegionFilter {
     pty_rows: u16,
     pending: Vec<u8>,
     strip_alt_screen: bool,
+    region: (u16, u16),
 }
 
 impl ScrollRegionFilter {
@@ -53,6 +56,7 @@ impl ScrollRegionFilter {
             pty_rows,
             pending: Vec::with_capacity(16),
             strip_alt_screen: false,
+            region: (1, pty_rows),
         }
     }
 
@@ -65,6 +69,29 @@ impl ScrollRegionFilter {
     /// Update the PTY rows (call on terminal resize)
     pub fn set_pty_rows(&mut self, pty_rows: u16) {
         self.pty_rows = pty_rows;
+        self.region = (1, pty_rows);
+    }
+
+    /// Repaint the child's visible screen without replaying its scrollback.
+    /// Temporarily use the whole PTY area so wrapped rows cannot scroll a
+    /// smaller child region. Restore that region and cursor before it resumes.
+    pub fn repaint(&self, screen: &vt100::Screen) -> Vec<u8> {
+        let mut output = self.scroll_region_sequence(1, self.pty_rows);
+        // A whole-screen erase can push the old screen (widgets included)
+        // into tmux scrollback. Erase lines instead, then draw from blank.
+        output.extend_from_slice(escape::RESET.as_bytes());
+        for row in 1..=self.pty_rows {
+            output.extend_from_slice(escape::cursor_to(row, 1).as_bytes());
+            output.extend_from_slice(escape::CLEAR_LINE.as_bytes());
+        }
+        output.extend_from_slice(escape::CURSOR_HOME.as_bytes());
+        let (rows, cols) = screen.size();
+        let blank = vt100::Parser::new(rows, cols, 0);
+        output.extend(screen.contents_diff(blank.screen()));
+        output.extend(self.scroll_region_sequence(self.region.0, self.region.1));
+        output.extend(screen.cursor_state_formatted());
+        output.extend(screen.attributes_formatted());
+        output
     }
 
     /// Generate the child's full-height scroll region in host-terminal coordinates.
@@ -93,6 +120,13 @@ impl ScrollRegionFilter {
     }
 
     fn translate_region(&mut self, output: &mut Vec<u8>, top: u16, bottom: u16) {
+        let region = (
+            top.max(1).min(self.pty_rows),
+            bottom.max(top).min(self.pty_rows),
+        );
+        if region.0 < region.1 {
+            self.region = region;
+        }
         output.extend_from_slice(&self.scroll_region_sequence(top, bottom));
         self.pending.clear();
         self.state = ParseState::Idle;
@@ -195,6 +229,9 @@ impl ScrollRegionFilter {
                             needs_redraw = true;
                             self.translate_region(&mut output, p1, p2);
                         } else {
+                            if p1.max(1) < p2 {
+                                self.region = (p1.max(1), p2);
+                            }
                             self.flush_pending(&mut output);
                         }
                     } else if byte.is_ascii_digit() {
@@ -217,6 +254,63 @@ impl ScrollRegionFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repaint_repairs_host_rows_and_preserves_child_scrolling() {
+        let mut filter = ScrollRegionFilter::new(8);
+        let mut child = vt100::Parser::new(8, 20, 100);
+        let mut host = vt100::Parser::new(12, 20, 100);
+        let output = filter.scan(b"\x1b[1;8r\x1b[1;1Hhistory\r\n\x1b[32mgreen\x1b[0m\x1b[7;1Hcomposer\x1b[2;6r\x1b[6;1Hlast").output;
+        child.process(&output);
+        host.process(&output);
+        host.process(b"\x1b[9;1Hwidget\x1b[r\x1b[12;1H\r\n\r\n\r\n\r\n");
+        assert!(host.screen().contents().contains("widget"));
+        host.screen_mut().drain_scrollback_formatted();
+
+        host.process(&filter.repaint(child.screen()));
+        assert!(!host.screen().contents().contains("widget"));
+        assert!(host.screen_mut().drain_scrollback_formatted().is_empty());
+        // A later child scroll must still use its smaller region, and must
+        // leave the freshly drawn widget and the composer in place.
+        host.process(b"\x1b[9;1Hwidget");
+        host.process(&child.screen().cursor_state_formatted());
+        let next = b"\r\nnext";
+        child.process(next);
+        host.process(next);
+        for row in 0..8 {
+            for col in 0..20 {
+                assert_eq!(host.screen().cell(row, col), child.screen().cell(row, col));
+            }
+        }
+        assert_eq!(
+            host.screen().cursor_position(),
+            child.screen().cursor_position()
+        );
+        assert!(host.screen().contents().contains("widget"));
+    }
+
+    #[test]
+    fn repaint_preserves_pending_wrap_and_style() {
+        let mut filter = ScrollRegionFilter::new(4);
+        let mut child = vt100::Parser::new(4, 10, 0);
+        let mut host = vt100::Parser::new(6, 10, 0);
+        child.process(
+            &filter
+                .scan(b"\x1b[1;4r\x1b[1;1H\x1b[32mabcdefghij1234567890")
+                .output,
+        );
+        host.process(&filter.repaint(child.screen()));
+        child.process(b"x");
+        host.process(b"x");
+        assert_eq!(host.screen().contents(), child.screen().contents());
+        assert_eq!(host.screen().cell(2, 0), child.screen().cell(2, 0));
+        assert_eq!(host.screen().row_wrapped(0), child.screen().row_wrapped(0));
+        assert_eq!(host.screen().row_wrapped(1), child.screen().row_wrapped(1));
+        assert_eq!(
+            host.screen().cursor_position(),
+            child.screen().cursor_position()
+        );
+    }
 
     #[test]
     fn test_no_params_reset() {

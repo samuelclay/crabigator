@@ -20,6 +20,10 @@ pub const CURSOR_HIDE: &str = "\x1b[?25l";
 /// Show the terminal cursor (DECTCEM set)
 pub const CURSOR_SHOW: &str = "\x1b[?25h";
 
+/// Focus reports forwarded from the host terminal to the assistant.
+pub const FOCUS_GAINED: &[u8] = b"\x1b[I";
+pub const FOCUS_LOST: &[u8] = b"\x1b[O";
+
 /// Move cursor to specific row and column (1-indexed)
 #[inline]
 pub fn cursor_to(row: u16, col: u16) -> String {
