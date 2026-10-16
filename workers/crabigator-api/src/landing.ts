@@ -5,6 +5,7 @@ import { desktopCaptureHtml, phoneCaptureHtml } from './landing/desktop-capture'
 import { tabletPreviewHtml, webPreviewHtml } from './landing/product-previews';
 import { productPreviewsCss } from './landing/product-previews-css';
 import { homeCss } from './landing/home-css';
+import { heroStreamCss, heroStreamJs } from './landing/hero-stream';
 import { mcpCss } from './landing/mcp-css';
 import { landingJs } from './landing/js';
 import { analyticsJs } from './landing/analytics';
@@ -39,7 +40,7 @@ export const landingHtml = `<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
-    <style>${mcpCss}${homeCss}${productPreviewsCss}</style>
+    <style>${mcpCss}${homeCss}${productPreviewsCss}${heroStreamCss}</style>
 </head>
 <body>
     <header class="site-header">
@@ -78,7 +79,7 @@ export const landingHtml = `<!DOCTYPE html>
                         <div class="phone-home"><span></span></div>
                     </div>
                 </div>
-                <figcaption><span>On your desktop</span><span class="connection-line" aria-hidden="true"></span><span>On your phone</span></figcaption>
+                <figcaption><span>On your desktop</span><span class="connection-line" aria-hidden="true"><span class="stream-packet"></span></span><span>On your phone</span><button class="hero-stream-toggle" type="button" aria-label="Pause terminal animation" hidden>Ⅱ</button></figcaption>
             </figure>
         </section>
 
@@ -159,7 +160,7 @@ export const landingHtml = `<!DOCTYPE html>
     </footer>
     <p id="copy-status" class="sr-only" role="status"></p>
     <script>${analyticsJs}</script>
-    <script>${landingJs}</script>
+    <script>${landingJs}${heroStreamJs}</script>
 </body>
 </html>`;
 

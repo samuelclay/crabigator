@@ -73,8 +73,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .phone-home span { width: 34%; height: 1.2cqw; border-radius: 3px; background: #edf1f4; }
 .hero-phone { position: absolute; width: 25%; min-width: 200px; right: -8px; top: 110px; }
 .hero-screens figcaption { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 20px; color: var(--muted); font-size: 12px; }
-.connection-line { flex: 1; height: 1px; background: #52616b; position: relative; }
-.connection-line::after { content: ''; position: absolute; width: 6px; height: 6px; border-radius: 50%; background: #a7cfb6; right: 0; top: -2.5px; }
 .providers { display: flex; justify-content: center; flex-wrap: wrap; gap: 24px 40px; max-width: 1296px; margin: 0 auto; padding: 35px 24px 80px; font-size: 14px; color: var(--muted); }
 .providers span { display: flex; align-items: center; gap: 8px; }
 .providers svg { width: 18px; height: 18px; fill: currentColor; }
