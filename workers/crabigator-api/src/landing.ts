@@ -1,7 +1,9 @@
 // Landing page HTML served at /
-import { tabletImagePath, notificationImagePath, webImagePath } from './assets/home-images';
+import { notificationImagePath } from './assets/home-images';
 import { faviconPath, faviconIcoPath, touchIconPath } from './assets/home-brand';
 import { desktopCaptureHtml, phoneCaptureHtml } from './landing/desktop-capture';
+import { tabletPreviewHtml, webPreviewHtml } from './landing/product-previews';
+import { productPreviewsCss } from './landing/product-previews-css';
 import { homeCss } from './landing/home-css';
 import { mcpCss } from './landing/mcp-css';
 import { landingJs } from './landing/js';
@@ -37,7 +39,7 @@ export const landingHtml = `<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
-    <style>${mcpCss}${homeCss}</style>
+    <style>${mcpCss}${homeCss}${productPreviewsCss}</style>
 </head>
 <body>
     <header class="site-header">
@@ -90,7 +92,7 @@ export const landingHtml = `<!DOCTYPE html>
                 <div><p>Native apps for your phone and tablet. Read the live terminal, scroll back, and type or speak your next instruction.</p><p class="availability">iOS and Android apps in development.</p></div>
             </div>
             <figure class="tablet-preview">
-                <div class="tablet-frame"><img src="${tabletImagePath}" width="2266" height="1488" loading="lazy" alt="Native Crabigator iPad app showing the new crab logo and a live Claude Code session beside other Crabigator sessions"></div>
+                ${tabletPreviewHtml}
                 <figcaption>Crabigator on iPad</figcaption>
             </figure>
         </section>
@@ -110,7 +112,7 @@ export const landingHtml = `<!DOCTYPE html>
                 <div><p>The web dashboard puts sessions, pull requests, and terminal controls in one place. Use it from any device, without installing an app.</p><a class="text-link" href="/dashboard" data-track="dashboard_cta" data-label="web_section">Open web dashboard</a></div>
             </div>
             <figure class="web-preview">
-                <div class="browser-frame"><div class="browser-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>drinkcrabigator.com/dashboard</span></div><img src="${webImagePath}" width="1440" height="610" loading="lazy" alt="Crabigator web dashboard showing the same Claude Code terminal session"></div>
+                ${webPreviewHtml}
                 <figcaption>Web dashboard</figcaption>
             </figure>
         </section>

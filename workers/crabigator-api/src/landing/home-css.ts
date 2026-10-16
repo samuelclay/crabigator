@@ -86,7 +86,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .availability { font-size: 12px; margin-top: 18px; }
 .native { padding-top: 45px; }
 .tablet-frame { padding: 12px; border: 2px solid #52616b; border-radius: 30px; background: #070b0e; box-shadow: 0 20px 70px #0003; }
-.tablet-frame img { display: block; width: 100%; height: auto; border-radius: 16px; }
 .tablet-preview figcaption, .web-preview figcaption { margin-top: 18px; color: var(--muted); font-size: 12px; }
 .notifications { display: grid; grid-template-columns: 1fr 1fr; gap: 100px; align-items: center; }
 .notification-copy > p { max-width: 310px; margin-top: 26px; }
@@ -98,7 +97,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .browser-frame { border: 1px solid #52616b; border-radius: 10px; overflow: hidden; background: #0d1117; box-shadow: 0 20px 70px #0003; }
 .browser-bar { gap: 30px; }
 .browser-bar > span:last-child { border-radius: 4px; padding: 4px 20px; background: #17222b; color: #a3b0ba; font-size: 11px; }
-.browser-frame > img { display: block; width: 100%; height: auto; }
 /* The existing MCP controls share the home page palette. */
 .mcp-section { border: 0; overflow: visible; }
 .mcp-section::before { content: none; }
@@ -189,7 +187,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .story-heading { display: block; margin-bottom: 28px; }
     .story-heading > div { margin-top: 22px; max-width: 420px; }
     .tablet-frame { padding: 5px; border-radius: 12px; }
-    .tablet-frame img { border-radius: 6px; }
     .notifications, .ownership, .install { grid-template-columns: 1fr; gap: 32px; }
     .notification-preview { padding: 24px; }
     .notification-copy > p { max-width: 400px; }
