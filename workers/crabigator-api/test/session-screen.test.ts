@@ -1,5 +1,6 @@
-import { env, evictDurableObject } from 'cloudflare:test';
+import { env, evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { expect, it } from 'vitest';
+import { SessionDO } from '../src/durable-objects/SessionDO';
 import type { CloudToDesktopMessage, SessionEvent } from '../src/types/session';
 
 it('reconnects an older desktop that cannot refresh its missing screen', async () => {
@@ -150,4 +151,27 @@ it('recovers an idle screen after hibernation and retries until the desktop repl
         for (const viewer of viewers) viewer.close();
         desktop.close();
     }
+});
+
+it('sends input to the newest desktop socket after a wake, not one still closing', async () => {
+    const stub = env.SESSION.get(env.SESSION.idFromName('stale-desktop-socket'));
+    const connect = async () => (await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } })).webSocket!;
+    // The first socket is never accepted, so it never answers the server's
+    // close, like a desktop that slept or changed networks and reconnected.
+    const stale = await connect();
+    const live = await connect();
+    live.accept();
+    const received: CloudToDesktopMessage[] = [];
+    live.addEventListener('message', event => { received.push(JSON.parse(String(event.data))); });
+    try {
+        // A wake builds a new instance over the same sockets and storage.
+        const status = await runInDurableObject(stub, async (_instance, state) => {
+            const woken = new SessionDO(state, env);
+            await state.blockConcurrencyWhile(async () => {});
+            const response = await woken.fetch(new Request('https://internal/answer', { method: 'POST', body: JSON.stringify({ text: 'hello' }) }));
+            return response.status;
+        });
+        expect(status).toBe(200);
+        await expect.poll(() => received).toContainEqual({ type: 'answer', text: 'hello' });
+    } finally { live.close(); }
 });

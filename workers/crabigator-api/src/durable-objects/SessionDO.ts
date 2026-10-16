@@ -29,6 +29,22 @@ const NAMED_KEY_BYTES: Record<string, string> = {
     alt_up: '\x1b[1;3A',
 };
 
+/** Stored on each desktop socket; it survives hibernation. */
+interface DesktopAttachment {
+    connectedAt?: number;
+    /** When the cloud last asked an older desktop to resend its screen. */
+    screenRequestedAt?: number;
+}
+
+function desktopAttachment(ws: WebSocket): DesktopAttachment {
+    return (ws.deserializeAttachment() ?? {}) as DesktopAttachment;
+}
+
+function setScreenRequestedAt(ws: WebSocket, at: number | undefined): void {
+    const { connectedAt } = desktopAttachment(ws);
+    ws.serializeAttachment(at === undefined ? { connectedAt } : { connectedAt, screenRequestedAt: at });
+}
+
 function desktopKeyMessage(key: string): CloudToDesktopMessage {
     const bytes = NAMED_KEY_BYTES[key];
     if (bytes) {
@@ -287,10 +303,7 @@ export class SessionDO implements DurableObject {
             }
 
             // Restore desktop WebSocket reference after hibernation wake-up
-            const existingDesktopWs = state.getWebSockets('desktop');
-            if (existingDesktopWs.length > 0) {
-                this.desktopWs = existingDesktopWs[0];
-            }
+            this.desktopWs = this.liveDesktopSocket();
         });
     }
 
@@ -349,6 +362,36 @@ export class SessionDO implements DurableObject {
     }
 
     /**
+     * The desktop's live socket: the newest one still open. A desktop that
+     * reconnects after sleep or a network change can leave its old socket
+     * listed for minutes, because nothing answers the close. Taking the first
+     * listed socket after a wake sent input to that dead socket while the
+     * desktop kept streaming on its new one.
+     */
+    private liveDesktopSocket(except?: WebSocket): WebSocket | null {
+        let live: WebSocket | null = null;
+        for (const ws of this.state.getWebSockets('desktop')) {
+            if (ws === except || ws.readyState !== WebSocket.OPEN) continue;
+            if (!live || (desktopAttachment(ws).connectedAt ?? 0) > (desktopAttachment(live).connectedAt ?? 0)) live = ws;
+        }
+        return live;
+    }
+
+    /** Send to the desktop, moving to its newest open socket if this one fails. */
+    private sendToDesktop(message: CloudToDesktopMessage): void {
+        const payload = JSON.stringify(message);
+        try {
+            if (!this.desktopWs) throw new Error('Desktop not connected');
+            this.desktopWs.send(payload);
+        } catch (error) {
+            const replacement = this.liveDesktopSocket(this.desktopWs ?? undefined);
+            if (!replacement) throw error;
+            this.desktopWs = replacement;
+            replacement.send(payload);
+        }
+    }
+
+    /**
      * Handle WebSocket connection from desktop crabigator
      */
     private async handleDesktopWebSocket(request: Request): Promise<Response> {
@@ -358,10 +401,11 @@ export class SessionDO implements DurableObject {
             return new Response('Expected WebSocket', { status: 426 });
         }
 
-        // Close existing connection if any
-        if (this.desktopWs) {
+        // Close every earlier desktop socket, not just the one in memory. A
+        // socket left open could outlive this connection and take its input.
+        for (const old of this.state.getWebSockets('desktop')) {
             try {
-                this.desktopWs.close(1000, 'New connection');
+                old.close(1000, 'New connection');
             } catch {
                 // Ignore errors closing old connection
             }
@@ -408,6 +452,7 @@ export class SessionDO implements DurableObject {
 
         // Use Hibernation API - DO can sleep between messages, reducing billed duration
         this.state.acceptWebSocket(server, ['desktop']);
+        server.serializeAttachment({ connectedAt: Date.now() } satisfies DesktopAttachment);
         this.desktopWs = server;
         this.broadcastDesktopStatus(true);
         if (this.hasActiveViewers() || this.state.getWebSockets('viewer').length > 0) {
@@ -847,8 +892,8 @@ export class SessionDO implements DurableObject {
             case 'screen':
                 // Ephemeral state - no storage write
                 this.ephemeralState.lastScreen = event.content;
-                if (this.desktopWs?.deserializeAttachment()?.screenRequestedAt !== undefined) {
-                    this.desktopWs.serializeAttachment(null);
+                if (this.desktopWs && desktopAttachment(this.desktopWs).screenRequestedAt !== undefined) {
+                    setScreenRequestedAt(this.desktopWs, undefined);
                 }
                 break;
             case 'title':
@@ -1324,7 +1369,7 @@ export class SessionDO implements DurableObject {
         };
 
         try {
-            this.desktopWs.send(JSON.stringify(message));
+            this.sendToDesktop(message);
             await this.consumePromptRevision(body.expected_prompt_revision);
         } catch (error) {
             console.error('Error sending to desktop:', error);
@@ -1379,7 +1424,7 @@ export class SessionDO implements DurableObject {
         const message = desktopKeyMessage(body.key);
 
         try {
-            this.desktopWs.send(JSON.stringify(message));
+            this.sendToDesktop(message);
             await this.consumePromptRevision(body.expected_prompt_revision);
         } catch (error) {
             console.error('Error sending key to desktop:', error);
@@ -1437,7 +1482,7 @@ export class SessionDO implements DurableObject {
         };
 
         try {
-            this.desktopWs.send(JSON.stringify(message));
+            this.sendToDesktop(message);
             await this.consumePromptRevision(body.expected_prompt_revision);
         } catch (error) {
             console.error('Error sending key sequence to desktop:', error);
@@ -1493,7 +1538,7 @@ export class SessionDO implements DurableObject {
         };
 
         try {
-            this.desktopWs.send(JSON.stringify(message));
+            this.sendToDesktop(message);
         } catch (error) {
             console.error('Error sending spawn to desktop:', error);
             return new Response(
@@ -1633,7 +1678,7 @@ export class SessionDO implements DurableObject {
         let delivered = false;
         if (this.desktopWs) {
             try {
-                this.desktopWs.send(JSON.stringify(message));
+                this.sendToDesktop(message);
                 delivered = true;
             } catch {
                 // Connection may have failed, ignore
@@ -1662,9 +1707,9 @@ export class SessionDO implements DurableObject {
         // reconnecting makes them replay their current screen without terminal input.
         // The attachment survives hibernation, unlike ordinary instance fields.
         if (active && this.ephemeralState.lastScreen === null) {
-            const requestedAt = this.desktopWs.deserializeAttachment()?.screenRequestedAt as number | undefined;
+            const requestedAt = desktopAttachment(this.desktopWs).screenRequestedAt;
             if (requestedAt === undefined) {
-                this.desktopWs.serializeAttachment({ screenRequestedAt: Date.now() });
+                setScreenRequestedAt(this.desktopWs, Date.now());
             } else if (Date.now() - requestedAt >= 10_000) {
                 this.desktopWs.close(1012, 'Refresh missing terminal screen');
                 return;
@@ -1683,7 +1728,7 @@ export class SessionDO implements DurableObject {
         };
 
         try {
-            this.desktopWs.send(JSON.stringify(message));
+            this.sendToDesktop(message);
         } catch {
             // Connection may have failed, ignore
         }
@@ -1697,6 +1742,8 @@ export class SessionDO implements DurableObject {
         if (!this.state.getTags(ws).includes('desktop')) {
             return;
         }
+        // The open socket the desktop is talking on is the live one.
+        if (ws.readyState === WebSocket.OPEN) this.desktopWs = ws;
 
         try {
             const data = JSON.parse(message as string) as SessionEvent;
@@ -1714,6 +1761,12 @@ export class SessionDO implements DurableObject {
             return;
         }
         if (this.desktopWs && this.desktopWs !== ws) {
+            return;
+        }
+        // A newer connection may still be open; keep using it.
+        const replacement = this.liveDesktopSocket(ws);
+        if (replacement) {
+            this.desktopWs = replacement;
             return;
         }
 
@@ -1736,6 +1789,12 @@ export class SessionDO implements DurableObject {
             return;
         }
         if (this.desktopWs && this.desktopWs !== ws) {
+            return;
+        }
+        // A newer connection may still be open; keep using it.
+        const replacement = this.liveDesktopSocket(ws);
+        if (replacement) {
+            this.desktopWs = replacement;
             return;
         }
 
