@@ -6,6 +6,7 @@
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
 use super::question_prompt::{codex_question_view, codex_questions_waiting, CodexQuestionView};
 
@@ -118,7 +119,9 @@ impl PermissionPrompt {
         let stripped = strip_ansi_codes(screen_content);
 
         // Look for numbered options pattern
-        let option_re = Regex::new(r"(?m)^[\s›❯>]*(\d+)\.\s+(.+)$").ok()?;
+        static OPTION_RE: OnceLock<Regex> = OnceLock::new();
+        let option_re =
+            OPTION_RE.get_or_init(|| Regex::new(r"(?m)^[\s›❯>]*(\d+)\.\s+(.+)$").unwrap());
 
         // Find the question line and its position
         // "Do you want to" - standard permission prompts
@@ -261,10 +264,14 @@ impl PermissionPrompt {
 
 /// Strip ANSI escape codes from text
 pub(super) fn strip_ansi_codes(text: &str) -> String {
+    // Question parsing calls this for every screen row on the input loop.
+    // Compiling the patterns for each row can stall input and PTY output.
+    static CUF_RE: OnceLock<Regex> = OnceLock::new();
+    static ANSI_RE: OnceLock<Regex> = OnceLock::new();
     // First, replace cursor-forward sequences (CUF) with spaces.
     // The vt100 crate emits ESC[C (1 space) or ESC[nC (n spaces) for empty cells
     // instead of literal space characters. Without this, words run together.
-    let cuf_re = Regex::new(r"\x1b\[(\d*)C").unwrap();
+    let cuf_re = CUF_RE.get_or_init(|| Regex::new(r"\x1b\[(\d*)C").unwrap());
     let with_spaces = cuf_re.replace_all(text, |caps: &regex::Captures| {
         let n: usize = caps
             .get(1)
@@ -273,7 +280,7 @@ pub(super) fn strip_ansi_codes(text: &str) -> String {
         " ".repeat(n)
     });
     // Then strip remaining ANSI escape sequences (SGR and others)
-    let ansi_re = Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap();
+    let ansi_re = ANSI_RE.get_or_init(|| Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap());
     ansi_re.replace_all(&with_spaces, "").to_string()
 }
 
