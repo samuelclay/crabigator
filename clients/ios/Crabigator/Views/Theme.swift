@@ -161,8 +161,7 @@ struct BrandHeader: View {
     }
 }
 
-/// A growing multi-line text box. Return on a hardware keyboard calls `onReturn`;
-/// Shift+Return and the on-screen keyboard's Return still add a line. SwiftUI's
+/// A growing multi-line text box. Return sends; hardware Shift+Return adds a line. SwiftUI's
 /// vertical TextField consumes a hardware Return before `onKeyPress` sees it.
 struct MessageField: View {
     var placeholder: String
@@ -217,15 +216,27 @@ private struct ReturnTextField: UIViewRepresentable {
 }
 final class ReturnTextView: UITextView {
     var onReturn: (() -> Void)?
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        returnKeyType = .send
+        enablesReturnKeyAutomatically = true
+    }
+    required init?(coder: NSCoder) { super.init(coder: coder) }
+    override func insertText(_ text: String) {
+        if text == "\n", markedTextRange == nil, let onReturn {
+            onReturn()
+        } else { super.insertText(text) }
+    }
     /// The Return press taken for sending. Only its own release is withheld: the
     /// text system must see every other press end, or Shift can stay held.
     private var taken: UIPress?
     // Only presses carry the key; a UIKeyCommand for Return never fires in a text view.
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if let press = presses.first, presses.count == 1, onReturn != nil, let key = press.key,
+        if let press = presses.first, presses.count == 1, onReturn != nil, markedTextRange == nil, let key = press.key,
            [.keyboardReturnOrEnter, .keypadEnter].contains(key.keyCode),
-           key.modifierFlags.isDisjoint(with: [.shift, .alternate, .command, .control]) {
-            taken = press; onReturn?()
+           key.modifierFlags.isDisjoint(with: [.alternate, .command, .control]) {
+            taken = press
+            if key.modifierFlags.contains(.shift) { super.insertText("\n") } else { onReturn?() }
         } else { super.pressesBegan(presses, with: event) }
     }
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {

@@ -301,6 +301,19 @@ final class CrabigatorTests: XCTestCase {
         XCTAssertNil(NotificationContent.claim("c", shown: shown, claims: [:], now: 103).slot)
         XCTAssertEqual(NotificationContent.claim("c", shown: [:], claims: claims, now: 100 + NotificationContent.claimLifetime + 2).slot, 0, "Unshown claims expire")
     }
+    @MainActor func testPhoneReturnSendsOnceAndPastedLinesStayIntact() {
+        let view = ReturnTextView()
+        var sends = 0
+        view.onReturn = { sends += 1 }
+        XCTAssertEqual(view.returnKeyType, .send)
+        view.insertText("Hello")
+        view.insertText("\n")
+        XCTAssertEqual(sends, 1)
+        XCTAssertEqual(view.text, "Hello")
+        view.insertText(" first\nsecond")
+        XCTAssertEqual(view.text, "Hello first\nsecond")
+        XCTAssertEqual(sends, 1)
+    }
     func testContentExtensionListsEveryPromptCategory() throws {
         let plugin = try XCTUnwrap(Bundle.main.builtInPlugInsURL?.appendingPathComponent("NotificationContentExtension.appex"))
         let info = try XCTUnwrap(Bundle(url: plugin)?.infoDictionary?["NSExtension"] as? [String: Any])
