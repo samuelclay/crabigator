@@ -140,7 +140,7 @@ export const sidebarJs = `
                         sidebarActiveSessionId = sessionId;
                         updateSidebarActiveState();
                         const sidebarItem = document.querySelector('.sidebar .session-item[data-session-id="' + sessionId + '"]');
-                        if (sidebarItem) sidebarItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        if (sidebarItem) revealSidebarItem(sidebarItem);
                     }
                     if (sessionId) scheduleRememberViewedSession();
                 });
@@ -382,30 +382,13 @@ export const sidebarJs = `
         }
 
         function scrollSessionCardIntoView(card, smooth) {
-            const scrollEl = document.scrollingElement || document.documentElement;
-            if (!scrollEl || !card) return;
-            const referenceY = typeof getScrollAnchorReferenceY === 'function'
-                ? getScrollAnchorReferenceY()
-                : 79;
+            if (!card) return;
+            const boardBody = card.closest('#prb-body');
+            const scrollEl = boardBody || document.scrollingElement || document.documentElement;
+            if (!scrollEl) return;
+            const referenceY = Math.max(getScrollAnchorReferenceY(), boardBody ? boardBody.getBoundingClientRect().top + 12 : 0);
             const top = Math.max(0, scrollEl.scrollTop + card.getBoundingClientRect().top - referenceY);
-            if (!smooth) {
-                const root = document.documentElement;
-                const previous = root.style.scrollBehavior;
-                root.style.scrollBehavior = 'auto';
-                scrollEl.scrollTop = top;
-                root.style.scrollBehavior = previous;
-                return;
-            }
-            scrollEl.scrollTo({ top, behavior: 'smooth' });
-        }
-
-        function sessionCardNeedsRescroll(card) {
-            const referenceY = typeof getScrollAnchorReferenceY === 'function'
-                ? getScrollAnchorReferenceY()
-                : 79;
-            const rect = card.getBoundingClientRect();
-            if (rect.bottom < referenceY + 24 || rect.top > window.innerHeight - 24) return true;
-            return Math.abs(rect.top - referenceY) > 80;
+            scrollEl.scrollTo({ top, behavior: smooth ? 'smooth' : 'instant' });
         }
 
         function highlightScrolledSession(card, sessionId) {
@@ -429,20 +412,9 @@ export const sidebarJs = `
                 highlightScrolledSession(card, sessionId);
             }
 
-            // Cards below the fold can still be mounting widgets/screen data as
-            // scrolling starts, which shoves the target off-center. Re-check
-            // after layout settles and jump if we missed.
-            const resettle = () => {
-                const next = expandSessionCardForScroll(sessionId);
-                if (!next) return;
-                if (!card || sessionCardNeedsRescroll(next)) {
-                    scrollSessionCardIntoView(next, false);
-                }
-                if (!card) highlightScrolledSession(next, sessionId);
-                rememberViewedSession();
-            };
-            setTimeout(resettle, 60);
-            setTimeout(resettle, 280);
+            // One explicit navigation. Late screen/widget data must not pull
+            // the viewport back after the user starts reading or swiping.
+            rememberViewedSession();
         }
 
         function updateSidebarActiveState() {
@@ -695,6 +667,17 @@ export const sidebarJs = `
             if (render(html)) updateSidebarActiveState();
         }
 
+        // scrollIntoView also scrolls ancestors, including the page. Sidebar
+        // selection changes must only move the sidebar's own scroll container.
+        function revealSidebarItem(item) {
+            const container = document.getElementById('sidebar-content');
+            if (!container || !container.getClientRects().length) return;
+            const bounds = container.getBoundingClientRect();
+            const rect = item.getBoundingClientRect();
+            if (rect.top < bounds.top) container.scrollTop += rect.top - bounds.top;
+            else if (rect.bottom > bounds.bottom) container.scrollTop += rect.bottom - bounds.bottom;
+        }
+
         function initSidebarScrollSpy() {
             let scrollSpyTimer = null;
             let scrollSpyEnabled = true;
@@ -751,7 +734,7 @@ export const sidebarJs = `
                     // Scroll the sidebar item into view if needed
                     const sidebarItem = document.querySelector('.sidebar .session-item[data-session-id="' + bestId + '"]');
                     if (sidebarItem) {
-                        sidebarItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        revealSidebarItem(sidebarItem);
                     }
                 }
             }

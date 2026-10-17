@@ -154,7 +154,6 @@ export const sseJs = `
             const now = Date.now();
             if (now - lastDashboardResumeAt < 400) return;
             lastDashboardResumeAt = now;
-            restoreViewedSessionAfterLoad = true;
             streamRetryCount = 0;
             console.log('Resuming dashboard connections');
             connectSessionListStream();

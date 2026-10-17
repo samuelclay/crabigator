@@ -29,7 +29,8 @@ export const baseCss = `
 html {
     overflow-x: hidden;
     width: 100%;
-    scroll-behavior: smooth;
+    /* Live output must not move the page through browser scroll anchoring. */
+    overflow-anchor: none;
     scroll-padding-top: calc(var(--header-height, 67px) + 12px);
     touch-action: pan-x pan-y;
 }

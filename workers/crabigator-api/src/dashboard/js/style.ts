@@ -287,37 +287,37 @@ export const styleJs = `
         }
 
         function capturePageScrollAnchor() {
-            const scrollEl = document.scrollingElement || document.documentElement;
+            const scrollEl = (prBoardVisible && document.getElementById('prb-body'))
+                || document.scrollingElement || document.documentElement;
             const fallbackTop = scrollEl ? scrollEl.scrollTop : 0;
             const fallbackLeft = scrollEl ? scrollEl.scrollLeft : 0;
-            const referenceY = getScrollAnchorReferenceY();
-            const cards = Array.from(document.querySelectorAll('.session-card[id^="session-"]'));
+            const referenceY = Math.max(getScrollAnchorReferenceY(), scrollEl.getBoundingClientRect().top + 12);
+            const cards = Array.from(scrollEl.querySelectorAll('.session-card[id^="session-"], .prb-row[data-key]'));
             let best = null;
             let bestDistance = Number.POSITIVE_INFINITY;
 
             for (const card of cards) {
                 const rect = card.getBoundingClientRect();
-                if (rect.bottom <= referenceY) {
+                if (!rect.height || rect.bottom <= referenceY) {
                     continue;
                 }
 
                 const intersectsReference = rect.top <= referenceY && rect.bottom >= referenceY;
                 const distance = intersectsReference ? 0 : Math.abs(rect.top - referenceY);
-                if (distance < bestDistance) {
+                if (distance <= bestDistance) {
                     bestDistance = distance;
                     best = {
-                        sessionId: card.id.replace('session-', ''),
+                        sessionId: card.id.startsWith('session-') ? card.id.slice(8) : null,
+                        selector: card.id ? '#' + CSS.escape(card.id) : '.prb-row[data-key="' + CSS.escape(card.dataset.key) + '"]',
                         offsetFromCardTop: referenceY - rect.top,
                     };
-                }
-
-                if (intersectsReference) {
-                    break;
                 }
             }
 
             return {
+                scrollEl,
                 sessionId: best?.sessionId || null,
+                selector: best?.selector || null,
                 offsetFromCardTop: best?.offsetFromCardTop || 0,
                 fallbackTop,
                 fallbackLeft,
@@ -326,28 +326,26 @@ export const styleJs = `
         }
 
         function restorePageScrollAnchor(anchor) {
-            const scrollEl = document.scrollingElement || document.documentElement;
-            if (!scrollEl || !anchor) return;
+            const scrollEl = anchor?.scrollEl;
+            if (!scrollEl || !scrollEl.isConnected) return;
 
-            const restorePageScroll = () => {
-                const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
-                let targetTop = anchor.fallbackTop;
-
-                if (anchor.sessionId) {
-                    const card = document.getElementById('session-' + anchor.sessionId);
-                    if (card) {
-                        const cardTop = card.getBoundingClientRect().top + scrollEl.scrollTop;
-                        targetTop = cardTop + anchor.offsetFromCardTop - anchor.referenceY;
-                    }
-                }
-
-                scrollEl.scrollTop = Math.min(Math.max(0, targetTop), maxScrollTop);
-                scrollEl.scrollLeft = anchor.fallbackLeft;
-            };
-
-            restorePageScroll();
-            requestAnimationFrame(restorePageScroll);
-            requestAnimationFrame(() => requestAnimationFrame(restorePageScroll));
+            const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+            let targetTop = anchor.fallbackTop;
+            const card = anchor.selector && document.querySelector(anchor.selector);
+            if (card) {
+                const cardTop = card.getBoundingClientRect().top + scrollEl.scrollTop;
+                targetTop = cardTop + anchor.offsetFromCardTop - anchor.referenceY;
+            }
+            // Restore once, before paint. Deferred restores fight the next touch
+            // gesture, and smooth scrolling turns background updates into motion.
+            targetTop = Math.min(Math.max(0, targetTop), maxScrollTop);
+            // Even a no-op scrollTo can cancel an ongoing touch scroll.
+            if (Math.abs(scrollEl.scrollTop - targetTop) < 0.5 && scrollEl.scrollLeft === anchor.fallbackLeft) return;
+            scrollEl.scrollTo({
+                top: targetTop,
+                left: anchor.fallbackLeft,
+                behavior: 'instant',
+            });
         }
 
         function capturePageScrollRestorer() {
@@ -366,7 +364,6 @@ export const styleJs = `
         }
 
         const LAST_VIEWED_KEY = 'crabigator-last-viewed';
-        let restoreViewedSessionAfterLoad = true;
         let rememberViewedSessionTimer = null;
 
         function rememberViewedSession() {
@@ -394,42 +391,6 @@ export const styleJs = `
                 rememberViewedSessionTimer = null;
                 rememberViewedSession();
             }, 250);
-        }
-
-        function readLastViewedSession() {
-            try {
-                const data = JSON.parse(localStorage.getItem(LAST_VIEWED_KEY) || 'null');
-                return data?.sessionId ? data : null;
-            } catch {
-                return null;
-            }
-        }
-
-        function restoreLastViewedSession() {
-            const last = readLastViewedSession();
-            if (!last || isFocusedMode()) {
-                restoreViewedSessionAfterLoad = false;
-                return;
-            }
-
-            const card = document.getElementById('session-' + last.sessionId);
-            if (!card) {
-                if (!sessionsAreStillLoading()) restoreViewedSessionAfterLoad = false;
-                return;
-            }
-
-            restoreViewedSessionAfterLoad = false;
-            if (typeof window.suppressScrollSpy === 'function') window.suppressScrollSpy();
-            expandSessionCardForScroll(last.sessionId);
-            restorePageScrollAnchor({
-                sessionId: last.sessionId,
-                offsetFromCardTop: last.offsetFromCardTop || 0,
-                fallbackTop: 0,
-                fallbackLeft: 0,
-                referenceY: getScrollAnchorReferenceY(),
-            });
-            sidebarActiveSessionId = last.sessionId;
-            updateSidebarActiveState();
         }
 
         function rerenderSessions() {
@@ -662,19 +623,13 @@ export const styleJs = `
         }
 
         function scrollToSpawnedSession(sessionId) {
-            // Adding the card restores the previous scroll position, including
-            // on the next two frames. Move to the new session after that.
+            // Navigate only for a session the user explicitly asked to start.
             const go = () => {
                 if (typeof scrollToSession === 'function') scrollToSession(sessionId);
                 const item = document.querySelector('.sidebar .session-item[data-session-id="' + sessionId + '"]');
-                if (item) item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                if (item) revealSidebarItem(item);
             };
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(go);
-                });
-            });
-            setTimeout(go, 600);
+            requestAnimationFrame(go);
         }
 
         function spawnSessionFromMenu(btn, platform) {

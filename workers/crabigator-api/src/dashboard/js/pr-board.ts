@@ -1520,6 +1520,10 @@ export const prBoardJs = `
         function renderPrBoardBody() {
             // Leave the composer and keyboard in place while someone is typing.
             if (document.activeElement?.closest('#pr-board-view .session-card')) return;
+            preservePageScroll(renderPrBoardContents);
+        }
+
+        function renderPrBoardContents() {
             parkBoardTerminals();
             const body = document.getElementById('prb-body');
             if (!body) return;

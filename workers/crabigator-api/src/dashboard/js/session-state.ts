@@ -256,7 +256,7 @@ export const sessionStateJs = `
                 sidebarActiveSessionId = sessionId;
                 updateSidebarActiveState();
                 const sidebarItem = document.querySelector('.sidebar .session-item[data-session-id="' + sessionId + '"]');
-                if (sidebarItem) sidebarItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                if (sidebarItem) revealSidebarItem(sidebarItem);
             }
 
             // Render buffered scrollback now that scroll is active
