@@ -11,7 +11,7 @@ final class NotificationTests: XCTestCase {
         // The view's rows share these labels; menu buttons are the ones that are not rows.
         let shown = labels.filter { springboard.buttons.matching(NSPredicate(format: "label == %@ AND NOT (identifier BEGINSWITH 'Choice ')", $0)).firstMatch.exists }
         note("Action buttons shown: \(shown.count) of \(labels.count): \(shown.joined(separator: ", "))\n\n" + springboard.debugDescription)
-        XCTAssertEqual(shown, Array(labels.prefix(10)), "The menu shows the first ten choices, named by their labels")
+        XCTAssertTrue(shown.isEmpty, "The expanded card must not repeat its choices as system actions")
         XCTAssertTrue(springboard.buttons["Choice Pick P"].exists, "The expanded view still lists every choice")
     }
 

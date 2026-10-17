@@ -135,7 +135,8 @@ import UserNotificationsUI
         if !sameQuestions || next.int("current_question") != current || next["review"] != nil { selected = Self.checked(next) }
         prompt = next; self.revision = revision
         if case .sending = status {} else { status = .ready }
-        context()?.notificationActions = NotificationContent.actions(next, id: id, revision: revision)
+        // The custom card already provides every choice and a text field.
+        context()?.notificationActions = []
         changed()
     }
     /// The terminal's ticked rows, which count from 1, as option indices.

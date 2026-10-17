@@ -28,6 +28,7 @@ final class NotificationViewController: UIViewController, UNNotificationContentE
         fit()
     }
     func didReceive(_ notification: UNNotification) {
+        extensionContext?.notificationActions = []
         model.show(notification)
         loaded = true
         fit()

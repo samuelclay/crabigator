@@ -2,6 +2,8 @@ package com.crabigator.app
 
 import android.app.*
 import android.content.*
+import android.view.View
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
@@ -72,16 +74,47 @@ object Notifications {
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return
         val open = PendingIntent.getActivity(context, id.hashCode(), Intent(context, MainActivity::class.java).putExtra("session_id", id).setData(android.net.Uri.parse("crabigator://session/$id")), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val details = PromptActions.details(prompt)
+        // Question tool input repeats the choices already offered as actions.
+        val details = if (prompt.text("prompt_type") == "question") "" else PromptActions.details(prompt)
         val text = listOf(PromptActions.title(prompt), details.take(2000) + if (details.length > 2000) "…" else "").filter { it.isNotBlank() }.joinToString("\n")
-        val builder = builder(context).setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text)).setContentIntent(open).setOnlyAlertOnce(true).setAutoCancel(false).setCategory(NotificationCompat.CATEGORY_MESSAGE).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setTimeoutAfter(3600000).setExtras(android.os.Bundle().apply { putString("session_id", id); putLong("revision", revision) })
+        val builder = builder(context).setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text)).setContentIntent(open).setOnlyAlertOnce(true).setAutoCancel(false).setAllowSystemGeneratedContextualActions(false).setCategory(NotificationCompat.CATEGORY_MESSAGE).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setTimeoutAfter(3600000).setExtras(android.os.Bundle().apply { putString("session_id", id); putLong("revision", revision) })
         fun pending(action: String, option: Int = -1, mutable: Boolean = false): PendingIntent {
             val intent = Intent(context, ReplyReceiver::class.java).setAction(action).setData(android.net.Uri.parse("crabigator://reply/$id/$revision/$option")).putExtra("session_id", id).putExtra("revision", revision).putExtra("option", option)
             return PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE)
         }
         val q = PromptActions.question(prompt)
         val freeText = (q != null && !prompt.has("review") && q.optBoolean("allows_other", true)) || (prompt.text("prompt_type") == "text" && prompt.text("state") == "question")
-        (if (details.length > 2000) emptyList() else PromptActions.options(prompt)).take(if (freeText) 2 else 3).forEachIndexed { i, option -> builder.addAction(NotificationCompat.Action.Builder(0, option.text("label"), pending("choose", i)).setAuthenticationRequired(true).build()) }
+        val options = PromptActions.options(prompt)
+        if (details.isBlank() && options.isNotEmpty()) {
+            val multi = q?.optBoolean("multi_select") == true && !prompt.has("review")
+            val checked = prompt.optJSONArray("checked")
+            val card = RemoteViews(context.packageName, R.layout.notification_prompt)
+            card.setTextViewText(R.id.notification_question, text)
+            card.removeAllViews(R.id.notification_choices)
+            options.take(4).forEachIndexed { index, option ->
+                val selected = (0 until (checked?.length() ?: 0)).any { checked!!.optInt(it) == index + 1 }
+                val label = (if (multi) if (selected) "☑ " else "☐ " else "") + option.text("label")
+                val description = option.text("description")
+                val row = RemoteViews(context.packageName, R.layout.notification_choice)
+                row.setTextViewText(R.id.notification_choice_label, label)
+                row.setTextViewText(R.id.notification_choice_description, description)
+                row.setViewVisibility(R.id.notification_choice_description, if (description.isBlank()) View.GONE else View.VISIBLE)
+                row.setContentDescription(R.id.notification_choice, listOf(label, description).filter { it.isNotBlank() }.joinToString(". "))
+                row.setOnClickPendingIntent(R.id.notification_choice, pending("choose", index))
+                card.addView(R.id.notification_choices, row)
+            }
+            card.setOnClickPendingIntent(R.id.notification_open, open)
+            if (options.size > 4) card.setTextViewText(R.id.notification_open, "${options.size - 4} more choices · Open session")
+            if (multi) {
+                card.setViewVisibility(R.id.notification_submit, View.VISIBLE)
+                card.setOnClickPendingIntent(R.id.notification_submit, pending("submit"))
+            }
+            builder.setStyle(NotificationCompat.DecoratedCustomViewStyle()).setCustomBigContentView(card)
+        }
+        // Permission requests retain the full command above their native actions.
+        if (details.isNotBlank() && details.length <= 2000) options.take(if (freeText) 2 else 3).forEachIndexed { i, option ->
+            builder.addAction(NotificationCompat.Action.Builder(0, option.text("label"), pending("choose", i)).setAuthenticationRequired(true).build())
+        }
         if (freeText) builder.addAction(NotificationCompat.Action.Builder(0, "Reply", pending("reply", mutable = true)).addRemoteInput(RemoteInput.Builder("answer").setLabel("Your answer").build()).setAllowGeneratedReplies(false).setAuthenticationRequired(true).build())
         manager.notify(id, 1, builder.build())
     }
@@ -99,13 +132,18 @@ class PushService : FirebaseMessagingService() {
 class ReplyReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val id = intent.getStringExtra("session_id") ?: return
+        // Custom RemoteViews clicks lack Action.setAuthenticationRequired.
+        if (context.getSystemService(KeyguardManager::class.java).isDeviceLocked) {
+            Notifications.failed(context, id, "Unlock your device and open the session to answer.")
+            return
+        }
         val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence("answer")?.toString()
         if (intent.action == "reply" && text.isNullOrBlank()) {
             Notifications.failed(context, id)
             return
         }
         val data = try {
-            workDataOf("session_id" to id, "revision" to intent.getLongExtra("revision", -1), "option" to intent.getIntExtra("option", -1), "answer" to text)
+            workDataOf("session_id" to id, "revision" to intent.getLongExtra("revision", -1), "option" to intent.getIntExtra("option", -1), "answer" to text, "submit" to (intent.action == "submit"))
         } catch (_: IllegalStateException) {
             Notifications.failed(context, id, "Reply is too long. Open the session to send it.")
             return
@@ -158,9 +196,11 @@ class ReplyWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             val revision = inputData.getLong("revision", -1)
             val prompt = snap.optJSONObject("prompt") ?: JSONObject().put("prompt_type", "text").put("state", snap.text("state"))
             if (!snap.optBoolean("attention_pending", snap.optJSONObject("prompt") != null) || snap.optLong("prompt_revision") != revision) { Notifications.sync(applicationContext, id, api); return Result.success() }
-            val action = PromptActions.action(prompt, option = inputData.getInt("option", -1).takeIf { it >= 0 }, text = inputData.getString("answer"))
+            val action = PromptActions.action(prompt, option = inputData.getInt("option", -1).takeIf { it >= 0 }, text = inputData.getString("answer"), submit = inputData.getBoolean("submit", false))
             api.action(id, action.route, action.body, revision)
-            Notifications.answered(applicationContext, id, api)
+            if (PromptActions.question(prompt)?.optBoolean("multi_select") == true && inputData.getInt("option", -1) >= 0) {
+                Notifications.sync(applicationContext, id, api)
+            } else Notifications.answered(applicationContext, id, api)
             Result.success()
         } catch (e: Exception) {
             if (e is CancellationException) throw e
