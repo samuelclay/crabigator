@@ -564,6 +564,7 @@ export const styleJs = `
             }
 
                 updateFitLayout();
+                if (prBoardVisible) mountBoardTerminals();
                 if (typeof scheduleSidebarUpdate === 'function') {
                     scheduleSidebarUpdate();
                 }

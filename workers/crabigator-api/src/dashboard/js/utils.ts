@@ -18,7 +18,7 @@ export const utilsJs = `
         }
 
         function focusOnSession(sessionId) {
-            setSessionFocus(sessionId);
+            scrollToSession(sessionId);
         }
 
         function updateFilterIndicator() {

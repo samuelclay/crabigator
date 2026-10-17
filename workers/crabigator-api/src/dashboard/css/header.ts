@@ -137,7 +137,7 @@ export const headerCss = `
         width: 14px;
         height: 14px;
     }
-    /* Icon-only PR board button, matching its style/settings neighbors */
+    /* Keep the two view labels legible on phones. */
     .header .pr-board-btn {
         width: 32px;
         height: 32px;
@@ -145,7 +145,7 @@ export const headerCss = `
         justify-content: center;
         flex: 0 0 32px;
         gap: 0;
-        font-size: 0;
+        font-size: 11px;
     }
     .header .pr-board-btn .pr-board-btn-icon {
         font-size: 13px;

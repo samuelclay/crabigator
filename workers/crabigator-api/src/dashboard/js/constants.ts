@@ -10,7 +10,8 @@ export const constantsJs = `
         const sessions = new Map(); // sessionId -> { eventSocket, state, element, git, changes, stats }
         let allSessions = []; // All sessions from API (for popover)
         let allProjects = []; // All known projects from API (for history)
-        let currentLayout = localStorage.getItem('crabigator-layout') || 'fit';
+        let currentLayout = '1';
+        const expandedSessions = new Set();
 
         function escapeHtml(text) {
             const div = document.createElement('div');

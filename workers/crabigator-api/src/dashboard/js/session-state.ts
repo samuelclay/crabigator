@@ -15,6 +15,14 @@ export const sessionStateJs = `
                     cwdEl.textContent = session.cwd;
                 }
             }
+            if (card.classList.contains('session-row')) {
+                card.querySelector('.title').textContent = session.title || session.cwd?.split('/').pop() || 'Session';
+                card.querySelector('.cwd').textContent = [session.device_name, session.branch, session.cwd?.split('/').pop()].filter(Boolean).join(' · ');
+                card.querySelector('.session-row-recap').textContent = session.recap?.headline || '';
+                const stats = session.stats || {};
+                card.querySelector('.session-row-stats').textContent = [stats.work_seconds != null ? formatDuration(stats.work_seconds) : '', stats.prompts != null ? stats.prompts + ' prompts' : ''].filter(Boolean).join(' · ');
+                paintSessionTitleMark(session.id);
+            }
             setSessionPlatform(session.id, session.platform);
             if (sessionData) {
                 if (session.state) sessionData.state = session.state;
@@ -72,57 +80,27 @@ export const sessionStateJs = `
             }
         }
 
-        // Collapse state persistence
-        function getCollapsedSessions() {
-            try {
-                return JSON.parse(localStorage.getItem('collapsedSessions') || '{}');
-            } catch { return {}; }
-        }
-
-        function setCollapsedSession(sessionId, collapsed) {
-            const state = getCollapsedSessions();
-            if (collapsed) {
-                state[sessionId] = true;
-            } else {
-                delete state[sessionId];
-            }
-            localStorage.setItem('collapsedSessions', JSON.stringify(state));
-        }
-
-        function isSessionCollapsed(sessionId) {
-            return getCollapsedSessions()[sessionId] === true;
-        }
-
+        // Only expanded sessions own terminal DOM, buffers and a live connection.
         function toggleCollapse(sessionId) {
-            const card = document.getElementById('session-' + sessionId);
-            const btn = document.getElementById('collapse-btn-' + sessionId);
-            if (!card || !btn) return;
-
-            const isCollapsed = card.classList.contains('collapsed');
-            if (isCollapsed) {
-                card.classList.remove('collapsed');
-                btn.classList.remove('collapsed');
-                setCollapsedSession(sessionId, false);
-            } else {
-                card.classList.add('collapsed');
-                btn.classList.add('collapsed');
-                setCollapsedSession(sessionId, true);
-                // Update summary when collapsing
-                const sessionData = sessions.get(sessionId);
-                if (sessionData) {
-                    updateSessionSummary(sessionId, sessionData);
-                }
-            }
-            updateFitLayout();
+            setSessionExpanded(sessionId, !expandedSessions.has(sessionId));
         }
 
-        function applyCollapsedState(sessionId) {
-            if (isSessionCollapsed(sessionId)) {
-                const card = document.getElementById('session-' + sessionId);
-                const btn = document.getElementById('collapse-btn-' + sessionId);
-                if (card) card.classList.add('collapsed');
-                if (btn) btn.classList.add('collapsed');
+        function setSessionExpanded(sessionId, expanded) {
+            if (expandedSessions.has(sessionId) === expanded) return;
+            const data = sessions.get(sessionId);
+            const session = allSessions.find(s => s.id === sessionId);
+            if (!data || !session) return;
+            const oldCard = data.element;
+            closeSessionSocket(data);
+            if (activeTerminalId === sessionId) activeTerminalId = null;
+            if (expanded) expandedSessions.add(sessionId);
+            else expandedSessions.delete(sessionId);
+            createSessionCard(session, false, oldCard, expanded);
+            if (!expanded && prBoardVisible) {
+                document.getElementById('sessions').appendChild(sessions.get(sessionId).element);
             }
+            if (expanded) connectToSession(sessionId);
+            if (prBoardVisible) mountBoardTerminals();
         }
 
         // Widgets collapse state persistence

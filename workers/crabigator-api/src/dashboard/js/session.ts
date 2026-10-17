@@ -123,6 +123,7 @@ export const sessionJs = `
                             if (session.stats) meta.stats = session.stats;
                         }
                         closeSessionSocket(session);
+                        session.element.remove();
                         sessions.delete(id);
                         if (activeTerminalId === id) activeTerminalId = null;
                         const card = document.getElementById('session-' + id);
@@ -219,10 +220,11 @@ export const sessionJs = `
 
                 // Store all sessions for sidebar and visibility-limit accounting
                 allSessions = data.sessions;
+                await loadPrBoard();
                 claimMarksFor(allSessions);
 
                 // Filter the main content to the focused session if specified.
-                const filteredSessions = getRenderableSessions(data.sessions);
+                const filteredSessions = getRenderableSessions(allSessions);
                 if (isFocusedMode()) {
                     applyFocusMode();
                 }
@@ -305,6 +307,7 @@ export const sessionJs = `
                 for (const [id, session] of sessions) {
                     if (!filteredSessions.find(s => s.id === id)) {
                         closeSessionSocket(session);
+                        session.element.remove();
                         sessions.delete(id);
                         if (activeTerminalId === id) activeTerminalId = null;
                     }
@@ -336,8 +339,6 @@ export const sessionJs = `
                 restorePagePosition();
                 if (spawnedId && typeof scrollToSpawnedSession === 'function') {
                     scrollToSpawnedSession(spawnedId);
-                } else if (restoreViewedSessionAfterLoad) {
-                    restoreLastViewedSession();
                 }
             } catch (err) {
                 sessionsLoadInFlight = false;
@@ -360,18 +361,19 @@ export const sessionJs = `
             }
         }
 
-        function createSessionCard(session, insertAtTop = false) {
+        function createSessionCard(session, insertAtTop = false, replaceCard = null, expanded = expandedSessions.has(session.id) || sessionMatchesFocus(session)) {
             const container = document.getElementById('sessions');
             const card = document.createElement('div');
-            card.className = 'session-card';
+            if (expanded) expandedSessions.add(session.id);
+            card.className = 'session-card' + (expanded ? '' : ' session-row');
             card.id = 'session-' + session.id;
             const startedAt = formatStartedAt(session.started_at);
-            card.innerHTML = \`
+            card.innerHTML = expanded ? \`
                 <div class="session-header">
                     <div class="session-info">
                         <span class="title-row"><span id="title-mark-\${session.id}"></span><span class="title" id="title-\${session.id}"></span></span>
                         <span class="generated-title" id="generated-title-\${session.id}"></span>
-                        <span class="cwd">\${session.cwd}</span>
+                        <span class="cwd">\${escapeHtml(session.cwd)}</span>
                         <span class="branch" id="branch-\${session.id}" style="color:#7ee787; font-size:11px;"></span>
                     </div>
                     <div class="session-actions">
@@ -381,7 +383,7 @@ export const sessionJs = `
                         <button class="collapse-btn" id="collapse-btn-\${session.id}" onclick="toggleCollapse('\${session.id}')" title="Collapse/expand">▼</button>
                     </div>
                 </div>
-                <div class="session-summary" id="summary-\${session.id}"
+                <div class="session-summary" id="summary-\${session.id}">
                     <span class="summary-item"><span class="label">Stats:</span> <span class="value" id="summary-stats-\${session.id}">—</span></span>
                     <span class="summary-item"><span class="label">Git:</span> <span class="value" id="summary-git-\${session.id}">—</span></span>
                     <span class="summary-item"><span class="label">Changes:</span> <span class="value" id="summary-changes-\${session.id}">—</span></span>
@@ -397,7 +399,7 @@ export const sessionJs = `
                     </div>
                     <div class="info-popover-row">
                         <span class="info-popover-label">Directory</span>
-                        <span class="info-popover-value copyable" onclick="copyToClipboard('\${session.cwd}')" title="Click to copy">\${session.cwd}</span>
+                        <span class="info-popover-value copyable" onclick="copyToClipboard('\${session.cwd}')" title="Click to copy">\${escapeHtml(session.cwd)}</span>
                     </div>
                     <div class="info-popover-row" id="info-model-\${session.id}" style="display:none">
                         <span class="info-popover-label">Model</span>
@@ -536,9 +538,18 @@ export const sessionJs = `
                         </div>
                     </div>
                 </div>
-            \`;
+            \` : '';
+            if (!expanded) {
+                card.innerHTML = '<button class="session-row-button" aria-expanded="false">'
+                    + '<span class="session-info"><span class="title-row"><span id="title-mark-' + session.id + '"></span><span class="title" id="title-' + session.id + '"></span></span>'
+                    + '<span class="cwd"></span><span class="session-row-recap"></span></span>'
+                    + '<span class="session-row-meta"><span class="state"></span><span class="session-row-stats"></span></span><span class="session-row-chevron">›</span></button>';
+                card.querySelector('button').onclick = () => toggleCollapse(session.id);
+            }
             // Insert card into the correct location based on grouping mode
-            if (getMainGroupingMode() === 'project') {
+            if (replaceCard) {
+                replaceCard.replaceWith(card);
+            } else if (getMainGroupingMode() === 'project') {
                 // Find or create project group for this cwd
                 let group = container.querySelector(\`.project-group[data-project="\${CSS.escape(session.cwd)}"]\`);
                 if (!group) {
@@ -573,12 +584,12 @@ export const sessionJs = `
                 // inside a linked worktree, else its own session id.
                 prScope: session.pr_scope || ('session:' + session.id),
                 state: session.state,
-                title: null,
+                title: session.title || null,
                 generatedTitle: null,
                 prs: [],
                 git: null,
                 changes: null,
-                stats: null,
+                stats: session.stats || null,
                 permission: null,
                 pinned: true,
                 lastScrollTop: 0,
@@ -595,10 +606,11 @@ export const sessionJs = `
                 scrollbackRendered: 0,     // How many lines currently rendered
             });
             setSessionPlatform(session.id, session.platform);
-            applyCollapsedState(session.id);
+            updateSessionHeader(session);
+            if (expanded) updateSessionTitleHierarchy(session.id);
             applyWidgetsCollapsedState(session.id);
             applySessionCardStatsVisibility(card);
-            restoreInput(session.id);
+            if (expanded) restoreInput(session.id);
             updateFitLayout();
 
             // Set up scroll tracking for pin/unpin behavior

@@ -82,7 +82,12 @@ export const eventsJs = `
         }
 
         function closeSessionSocket(session) {
-            if (session?.sessionId) cancelSessionReconnect(session.sessionId);
+            if (session?.sessionId) {
+                cancelSessionReconnect(session.sessionId);
+                clearTimeout(screenUpdateTimers.get(session.sessionId));
+                screenUpdateTimers.delete(session.sessionId);
+                pendingScreenUpdates.delete(session.sessionId);
+            }
             const ws = session?.eventSocket;
             if (!ws) return;
             session.eventSocket = null;
@@ -106,6 +111,7 @@ export const eventsJs = `
         }
 
         function connectToSession(sessionId) {
+            if (!expandedSessions.has(sessionId) || !sessions.has(sessionId)) return;
             closeSessionSocket(sessions.get(sessionId));
             console.log('Connecting WebSocket for session:', sessionId);
             const eventSocket = new WebSocket(getWebSocketUrl('/sessions/' + sessionId + '/events'));

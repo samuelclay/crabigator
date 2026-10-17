@@ -36,7 +36,7 @@ export const viewerActivityJs = `
 
             // Send heartbeat to all connected sessions
             for (const [sessionId] of sessions) {
-                sendViewerHeartbeat(sessionId);
+                if (expandedSessions.has(sessionId)) sendViewerHeartbeat(sessionId);
             }
         }
 

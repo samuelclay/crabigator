@@ -93,6 +93,11 @@ export const prBoardJs = `
             if (board) board.hidden = !prBoardVisible;
             if (sessionsEl) sessionsEl.style.display = prBoardVisible ? 'none' : '';
             if (btn) btn.classList.toggle('active', prBoardVisible);
+            document.getElementById('session-list-btn')?.classList.toggle('active', !prBoardVisible);
+            if (!prBoardVisible) {
+                parkBoardTerminals();
+                rerenderSessions();
+            }
             if (prBoardVisible) {
                 if (board && !board.dataset.shell) {
                     board.dataset.shell = '1';
@@ -106,12 +111,40 @@ export const prBoardJs = `
                 }
                 renderPrBoard();
                 loadPrBoard();
-                prBoardTimer = setInterval(loadPrBoard, 15000);
+
                 prBoardThrobTimer = setInterval(prbTickThrobber, 100);
             } else {
                 prbClosePeek();
-                if (prBoardTimer) { clearInterval(prBoardTimer); prBoardTimer = null; }
+
                 if (prBoardThrobTimer) { clearInterval(prBoardThrobTimer); prBoardThrobTimer = null; }
+            }
+        }
+
+        function parkBoardTerminals() {
+            const list = document.getElementById('sessions');
+            for (const [, data] of sessions) {
+                if (data.element.closest('#pr-board-view')) list.appendChild(data.element);
+            }
+        }
+
+        function mountBoardTerminals() {
+            if (!prBoardVisible) return;
+            const board = document.getElementById('pr-board-view');
+            const mounted = new Set();
+            for (const item of prBoardRendered) {
+                const row = board.querySelector('[data-key="' + CSS.escape(item.key) + '"]');
+                if (!row) continue;
+                for (const session of prbRowSessions(item)) {
+                    const id = session.session_id;
+                    if (!expandedSessions.has(id) || mounted.has(id)) continue;
+                    const card = sessions.get(id)?.element;
+                    if (card) { if (card.parentElement !== row) row.appendChild(card); mounted.add(id); }
+                }
+            }
+            // Keep opened terminals reachable when board filters hide their rows.
+            for (const id of expandedSessions) {
+                const card = sessions.get(id)?.element;
+                if (card && !mounted.has(id) && card.parentElement !== board) board.appendChild(card);
             }
         }
 
@@ -253,7 +286,7 @@ export const prBoardJs = `
 
         // The CLI's keyboard shortcuts, active while the board is open.
         document.addEventListener('keydown', e => {
-            if (!prBoardVisible || e.metaKey || e.ctrlKey || e.altKey) return;
+            if (!prBoardVisible || e.metaKey || e.ctrlKey || e.altKey || e.target?.closest('.session-card')) return;
             const tag = e.target && e.target.tagName;
             const typing = tag === 'INPUT' || tag === 'TEXTAREA'
                 || (e.target && e.target.isContentEditable);
@@ -316,7 +349,7 @@ export const prBoardJs = `
                 const res = await fetch('/api/prs/board',
                     { headers: getAuthHeaders() });
                 if (!res.ok) {
-                    if (body) body.innerHTML = '<div class="prb-empty">Could not load the PR board ('
+                    if (body && !prBoardLoaded) body.innerHTML = '<div class="prb-empty">Could not load the PR board ('
                         + res.status + '). Pair this browser from a session first.</div>';
                     return;
                 }
@@ -330,9 +363,19 @@ export const prBoardJs = `
                     for (const session of entry.sessions || []) boardSessions.push(session);
                 }
                 claimMarksFor(boardSessions);
-                renderPrBoardBody();
+                const metadata = new Map(boardSessions.map(s => [s.session_id, s]));
+                allSessions = allSessions.map(session => {
+                    const detail = metadata.get(session.id);
+                    return detail ? { ...detail, ...session, title: detail.title, recap: detail.recap, branch: detail.branch,
+                        stats: { ...session.stats, ...detail.stats } } : session;
+                });
+                for (const session of allSessions) {
+                    if (sessions.get(session.id)?.element.classList.contains('session-row')) updateSessionHeader(session);
+                }
+                scheduleSidebarUpdate();
+                if (prBoardVisible) renderPrBoardBody();
             } catch (e) {
-                if (body) body.innerHTML = '<div class="prb-empty">Could not load the PR board.</div>';
+                if (body && !prBoardLoaded) body.innerHTML = '<div class="prb-empty">Could not load the PR board.</div>';
             }
         }
 
@@ -1300,18 +1343,14 @@ export const prBoardJs = `
         }
 
         function prbTogglePeek() {
-            if (prBoardPeekOpen) { prbClosePeek(); return; }
             const selectable = prbSelectable();
             if (!selectable.length) return;
-            // A selection that has gone away falls back to the first live row.
             const position = Math.max(0, prbSelectedIndex(selectable));
-            prBoardSelected = prBoardRendered[selectable[position]].key;
-            prBoardPeekOpen = true;
-            prBoardPeekScroll = null;
-            const pane = document.getElementById('prb-peek');
-            if (pane) pane.hidden = false;
+            const item = prBoardRendered[selectable[position]];
+            prBoardSelected = item.key;
+            const session = prbPeekSession(item);
+            if (session) toggleCollapse(session.session_id);
             prbPaintSelection();
-            prbSyncPeekStream();
         }
         function prbClosePeek() {
             prBoardPeekOpen = false;
@@ -1479,6 +1518,9 @@ export const prBoardJs = `
         // ── The board itself ───────────────────────────────────────────
 
         function renderPrBoardBody() {
+            // Leave the composer and keyboard in place while someone is typing.
+            if (document.activeElement?.closest('#pr-board-view .session-card')) return;
+            parkBoardTerminals();
             const body = document.getElementById('prb-body');
             if (!body) return;
             const now = Math.floor(Date.now() / 1000);
@@ -1637,6 +1679,7 @@ export const prBoardJs = `
                     : '<span class="prb-throb" style="color:' + PRB_C.green + '">⠋</span> Loading live sessions…')
                     + '</div>';
                 prBoardRendered = [];
+                mountBoardTerminals();
                 if (prBoardPeekOpen) prbSyncPeekStream();
                 return;
             }
@@ -1700,9 +1743,23 @@ export const prBoardJs = `
                 }
             }
             body.innerHTML = html;
+            mountBoardTerminals();
+            for (const item of prBoardRendered) {
+                if (!['session', 'sessview'].includes(item.kind)) continue;
+                const label = body.querySelector('[data-key="' + CSS.escape(item.key) + '"] > .prb-l1 > .prb-l1-left');
+                const id = item.session?.session_id;
+                if (!label || !sessions.has(id)) continue;
+                label.setAttribute('role', 'button');
+                label.setAttribute('tabindex', '0');
+                label.setAttribute('aria-label', 'Toggle terminal: ' + prbSessionTitle(item.session));
+                label.setAttribute('aria-expanded', String(expandedSessions.has(id)));
+                label.onclick = e => { if (!e.target.closest('a')) { e.stopPropagation(); toggleCollapse(id); label.setAttribute('aria-expanded', String(expandedSessions.has(id))); } };
+                label.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); label.click(); } };
+            }
             prbApplyCooldowns();
 
             body.querySelectorAll('[data-act]').forEach(el => {
+                if (el.closest('.session-card')) return;
                 const item = prBoardRendered[Number(el.dataset.idx)];
                 if (!item) return;
                 el.onclick = ev => {
@@ -1711,8 +1768,7 @@ export const prBoardJs = `
                     if (el.dataset.act === 'peek') {
                         prBoardSelected = item.key;
                         prBoardPeekIdx = Number(el.dataset.sidx || 0);
-                        if (prBoardPeekOpen) { prbPaintSelection(); prBoardPeekScroll = null; prbSyncPeekStream(); }
-                        else prbTogglePeek();
+                        prbTogglePeek();
                         return;
                     }
                     if (item.kind === 'session') return;

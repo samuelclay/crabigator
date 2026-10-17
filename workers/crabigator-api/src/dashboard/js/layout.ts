@@ -1,76 +1,12 @@
-// Dashboard JavaScript - layout
+// Session rows and expanded terminals share one reading column.
 export const layoutJs = `
-        function setLayout(layout) {
-            currentLayout = layout;
-            localStorage.setItem('crabigator-layout', layout);
+        function setLayout() {
+            currentLayout = '1';
             const container = document.getElementById('sessions');
-
-            // Update button states
-            document.querySelectorAll('.style-option[data-layout]').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.layout === layout);
-            });
-
-            if (isFocusedMode()) {
-                applyFocusMode();
-                return;
-            }
-
-            container.dataset.layout = layout;
-
-            // For 'fit' mode, calculate columns based on available width
-            if (layout === 'fit') {
-                const count = sessions.size || 1;
-                // Account for sidebar width when calculating available space
-                let availableWidth = window.innerWidth - 32;
-                if (sidebarPinned) {
-                    availableWidth -= sidebarWidth;
-                }
-                const containerWidth = container.offsetWidth || availableWidth;
-                const minCardWidth = 550;  // Minimum card width before adding another column
-                const maxCols = Math.min(Math.max(Math.floor(containerWidth / minCardWidth), 1), 4);
-                // Don't use more columns than we have sessions
-                const cols = Math.min(maxCols, count);
-                container.style.columnCount = cols;
-                // Update per-group fit columns for project grouping mode
-                if (typeof updateAllProjectFitColumns === 'function') {
-                    updateAllProjectFitColumns();
-                }
-            } else {
-                container.style.columnCount = '';
-            }
-
-            // After layout change, scroll pinned sessions to bottom
-            requestAnimationFrame(() => {
-                for (const [id, sessionData] of sessions) {
-                    if (sessionData.pinned) {
-                        const terminal = document.getElementById('terminal-' + id);
-                        if (terminal) {
-                            terminal.scrollTop = terminal.scrollHeight;
-                            sessionData.lastScrollTop = terminal.scrollTop;
-                        }
-                    }
-                }
-            });
+            container.dataset.layout = '1';
+            container.style.columnCount = '';
+            if (isFocusedMode()) applyFocusMode();
         }
 
-        // Recalculate fit layout when session count changes
-        function updateFitLayout() {
-            if (isFocusedMode()) {
-                applyFocusMode();
-                return;
-            }
-            if (currentLayout === 'fit') {
-                setLayout('fit');
-            }
-        }
-
-        // Recalculate fit layout on window resize
-        let resizeTimeout;
-        window.addEventListener('resize', () => {
-            if (currentLayout === 'fit') {
-                clearTimeout(resizeTimeout);
-                resizeTimeout = setTimeout(() => setLayout('fit'), 100);
-            }
-        });
-
+        function updateFitLayout() { setLayout(); }
 `;

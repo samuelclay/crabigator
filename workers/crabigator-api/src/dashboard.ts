@@ -46,6 +46,7 @@ export const dashboardHtml = `<!DOCTYPE html>
             <button class="filter-clear" onclick="clearSessionFilter()" title="Show all sessions">✕</button>
         </div>
         <div class="sessions-container">
+            <button class="pr-board-btn active" id="session-list-btn" onclick="if (prBoardVisible) togglePrBoard()" title="Session list">List</button>
             <button class="pr-board-btn" id="pr-board-btn" onclick="togglePrBoard()" title="Cross-session PR board">
                 <span class="pr-board-btn-icon">⑆</span> PRs
             </button>
@@ -63,16 +64,6 @@ export const dashboardHtml = `<!DOCTYPE html>
                 <span class="header-control-label">Style</span>
             </button>
             <div class="style-popover" id="style-popover">
-                <div class="style-section">
-                    <div class="style-section-label">Columns</div>
-                    <div class="style-options">
-                        <button class="style-option active" data-layout="1" onclick="setLayout('1')">1</button>
-                        <button class="style-option" data-layout="2" onclick="setLayout('2')">2</button>
-                        <button class="style-option" data-layout="3" onclick="setLayout('3')">3</button>
-                        <button class="style-option" data-layout="4" onclick="setLayout('4')">4</button>
-                        <button class="style-option" data-layout="fit" onclick="setLayout('fit')">Fit</button>
-                    </div>
-                </div>
                 <div class="style-section">
                     <div class="style-section-label">Text size</div>
                     <div class="font-size-control">

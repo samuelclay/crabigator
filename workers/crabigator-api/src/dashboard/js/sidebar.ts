@@ -341,6 +341,7 @@ export const sidebarJs = `
         }
 
         function expandSessionCardForScroll(sessionId) {
+            setSessionExpanded(sessionId, true);
             const card = document.getElementById('session-' + sessionId);
             if (!card) return null;
 
