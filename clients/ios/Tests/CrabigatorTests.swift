@@ -5,37 +5,23 @@ import UserNotifications
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
-    @MainActor func testEmptyOrHiddenWidgetsGiveTheirSpaceBackToTerminal() {
-        let model = SessionModel(), stream = SessionStream()
-        let originalPreferences = model.preferences
-        defer { model.preferences = originalPreferences }
-        model.preferences = Preferences()
-        model.preferences.widgets = true
-        model.preferences.toggle("stats")
-        stream.selected = session("layout", prompt: 0)
-        let detail = SessionDetail(model: model, stream: stream, wide: true, active: true, close: {})
-        XCTAssertEqual(detail.terminalHeight(800), 800)
-        stream.details["git"] = ["branch": "main"]
-        XCTAssertEqual(detail.widgetSections.map(\.title), ["Git status"])
-        XCTAssertEqual(detail.terminalHeight(800), 520)
-        model.preferences.toggle("git")
-        XCTAssertEqual(detail.terminalHeight(800), 800)
-        model.preferences.terminalHeight = 700
-        XCTAssertEqual(detail.terminalHeight(800), 700)
-        model.preferences.toggle("git")
-        XCTAssertEqual(detail.terminalHeight(800), 520)
-        model.preferences.widgets = false
-        XCTAssertEqual(detail.terminalHeight(800), 700)
-    }
-    func testModulesStartVisibleAndKeepTheRecapWhileARefreshIsPending() throws {
+    func testModulesKeepTheLastRecapAndStructuredDiffsWhileRefreshing() throws {
         var prefs = Preferences()
         XCTAssertTrue(prefs.widgets)
         prefs.widgets = false
         XCTAssertFalse(try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs)).widgets)
-        let selected = Session(["id": "modules", "state": "thinking", "recap": ["headline": "Previous turn"]])
-        let sections = sessionWidgetSections(session: selected, details: ["recap": ["status": "waiting"], "stats": ["prompts": 3, "tools": 9]], prefs: Preferences(), prs: [])
-        XCTAssertTrue(sections.first(where: { $0.title == "Status" })!.rows.contains { $0.text.contains("9 tools") })
-        XCTAssertEqual(sections.first(where: { $0.title == "Recap" })?.rows.first?.text, "Previous turn")
+        let selected = Session(["id": "modules", "state": "thinking", "recap": ["headline": "Roster recap"]])
+        let data = SessionModuleData(session: selected, details: [
+            "recap": ["status": "waiting"],
+            "recap_history": ["history": [["headline": "Previous turn", "bullets": ["Keep this detail"]]]],
+            "git": ["branch": "main", "files": [["path": "Session.swift", "status": "M", "additions": 12, "deletions": 3]]],
+            "stats": ["prompts": 3, "tools": 9]])
+        XCTAssertEqual(data.recap, "Previous turn")
+        XCTAssertEqual(data.bullets, ["Keep this detail"])
+        XCTAssertEqual(data.files.first?.name, "Session.swift")
+        XCTAssertEqual(data.files.first?.additions, 12)
+        XCTAssertEqual(data.stats.int("tools"), 9)
+        XCTAssertEqual(SessionModuleData(session: selected, details: [:]).recap, "Roster recap")
     }
     func session(_ id: String, prompt: Int, machine: String = "Mac", state: String = "complete") -> Session {
         Session(["session_id": id, "title": id, "device_name": machine, "prompts_changed_at": prompt, "state": state, "active": true])

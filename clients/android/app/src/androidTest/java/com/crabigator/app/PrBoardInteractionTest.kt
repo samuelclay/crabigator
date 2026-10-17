@@ -118,7 +118,7 @@ class PrBoardInteractionTest {
         }
     }
 
-    @Test fun detailHeaderOpensEachExplicitPrLink() {
+    @Test fun sessionModuleOpensEachExplicitPrLink() {
         val urls = mutableListOf<String>()
         val second = pr.copy(key = "owner/repo#124", number = 124, url = "https://github.com/owner/repo/pull/124")
         val prs = sessionPullRequests(AppState(selected = session, prs = listOf(pr, second, pr)))
@@ -126,10 +126,11 @@ class PrBoardInteractionTest {
         compose.setContent {
             CompositionLocalProvider(LocalUriHandler provides object : UriHandler {
                 override fun openUri(uri: String) { urls.add(uri) }
-            }) { MaterialTheme { SessionPrLinks(prs, Modifier.widthIn(max = 96.dp)) } }
+            }) { MaterialTheme { SessionModules(session, SessionModuleData(session, emptyMap()), UiPreferences(), prs, Modifier.width(320.dp)) } }
         }
-        compose.onNodeWithText("#123").performClick()
-        compose.onNodeWithText("#124").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Pull requests").performClick()
+        compose.onNodeWithContentDescription("Open ${pr.repo}#123 on GitHub: ${pr.title}, open").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Open ${second.repo}#124 on GitHub: ${second.title}, open").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(listOf(pr.url, second.url), urls) }
         val updated = AppState(selected = session, prs = prs, details = mapOf("prs" to JSONObject("""{"prs":[
             {"number":125,"owner":"owner","repo":"repo","url":"https://github.com/owner/repo/pull/125"},

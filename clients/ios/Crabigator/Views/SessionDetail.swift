@@ -13,10 +13,8 @@ struct SessionDetail: View {
         if let live = stream.details["prs"] { return live.array("prs").filter { !$0.bool("dismissed") }.map(PullRequest.init) }
         return model.prs.filter { $0.sessions.contains { $0.id == stream.selected?.id } }
     }
-    var widgetSections: [SessionWidgetSection] {
-        sessionWidgetSections(session: stream.selected, details: stream.details, prefs: model.preferences, prs: prs)
-    }
-    var showsWidgets: Bool { model.preferences.widgets && !widgetSections.isEmpty }
+    @State private var modulesHeight: CGFloat = 140
+    var showsWidgets: Bool { model.preferences.widgets }
     var body: some View {
         GeometryReader { geometry in
             if let session = stream.selected {
@@ -27,23 +25,11 @@ struct SessionDetail: View {
                             Text(session.title).font(.system(size: 15, weight: .medium)).foregroundStyle(Crab.title).lineLimit(2).accessibilityIdentifier("Selected session \(session.id)")
                             Text(stream.connected ? "\(session.machine) · Live" : session.active ? "Reconnecting…" : "\(session.machine) · Ended").font(.system(size: 11)).foregroundStyle(stream.connected ? Crab.mint : Crab.muted).lineLimit(1)
                         }.frame(maxWidth: .infinity, alignment: .leading)
-                        if !prs.isEmpty {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) { ForEach(prs) { pr in if let url = URL(string: pr.url), url.scheme == "https" { Link("#" + String(pr.number), destination: url).font(.system(size: 12)).foregroundStyle(Crab.purple).padding(.horizontal, 10).frame(minHeight: 44).overlay(RoundedRectangle(cornerRadius: 8).stroke(Crab.purple.opacity(0.3))).accessibilityLabel("Open \(pr.repo)#\(pr.number) on GitHub") } } }
-                            }.frame(maxWidth: max(60, min(240, geometry.size.width - 288))).padding(.horizontal, 8)
-                        }
+                        IconButton(icon: "square.grid.2x2", label: model.preferences.widgets ? "Hide session modules" : "Show session modules", selected: model.preferences.widgets) { model.preferences.widgets.toggle() }
                         IconButton(icon: "arrow.down.to.line", label: pinned ? "Stop following output" : "Follow latest output", selected: pinned) { pinned.toggle() }
                         IconButton(icon: "textformat.size", label: "Style") { style = true }.popover(isPresented: $style, arrowEdge: .top) { StyleMenu(model: model).nativePopover() }
                     }.padding(.horizontal, 4).padding(.vertical, 8)
                     Divider()
-                    Button { model.preferences.widgets.toggle() } label: {
-                        HStack {
-                            Image(systemName: "square.grid.2x2")
-                            Text("Status · Git · Changes · PRs · Recap").font(.system(size: 11))
-                            Spacer()
-                            Image(systemName: model.preferences.widgets ? "chevron.down" : "chevron.right")
-                        }.foregroundStyle(Crab.muted).padding(.horizontal, 12).frame(minHeight: 44)
-                    }.accessibilityLabel(model.preferences.widgets ? "Hide session modules" : "Show session modules")
                     if let error = stream.error { HStack { Text(error).font(.caption).foregroundStyle(Crab.red); Spacer(); IconButton(icon: "xmark", label: "Dismiss session error") { stream.error = nil } }.padding(.leading, 12) }
                     GeometryReader { area in
                         VStack(spacing: 0) {
@@ -73,7 +59,11 @@ struct SessionDetail: View {
                                     } : nil).id(session.id)
                                 }
                             }.frame(height: terminalHeight(area.size.height)).frame(maxWidth: .infinity).background(Color(uiColor: TerminalText.rgb(0x0B0F14)))
-                            if showsWidgets { SessionWidgets(sections: widgetSections).frame(maxHeight: .infinity) }
+                            if showsWidgets {
+                                SessionModules(session: session, data: SessionModuleData(session: session, details: stream.details), prefs: model.preferences, prs: prs)
+                                    .id(session.id).frame(height: min(modulesHeight, area.size.height * 0.45))
+                                    .onPreferenceChange(ModuleContentHeight.self) { modulesHeight = $0 }
+                            }
                             else if model.preferences.terminalHeight > 0 { Spacer(minLength: 0) }
                         }
                     }
@@ -85,62 +75,7 @@ struct SessionDetail: View {
         }.background(Crab.ink)
     }
     func terminalHeight(_ available: CGFloat) -> CGFloat {
-        let maxHeight = showsWidgets ? available * 0.65 : available
+        let maxHeight = max(0, available - (showsWidgets ? min(modulesHeight, available * 0.45) : 0))
         return model.preferences.terminalHeight == 0 ? maxHeight : min(CGFloat(model.preferences.terminalHeight), maxHeight)
-    }
-}
-struct SessionWidgetSection {
-    struct Row {
-        var text: String
-        var url: URL? = nil
-    }
-    var title: String
-    var rows: [Row]
-}
-func sessionWidgetSections(session: Session?, details: [String: JSON], prefs: Preferences, prs: [PullRequest]) -> [SessionWidgetSection] {
-    var sections: [SessionWidgetSection] = []
-    func append(_ key: String, _ title: String, _ rows: [String]) {
-        if prefs.visible(key) && !rows.isEmpty {
-            sections.append(SessionWidgetSection(title: title, rows: rows.map { .init(text: $0) }))
-        }
-    }
-    let stats = details["stats"] ?? [:]
-    var status = [session?.state.capitalized ?? "Connecting"]
-    if !stats.text("model").isEmpty { status.append(stats.text("model")) }
-    if !stats.isEmpty {
-        status.append("\(durationText(stats.int("work_seconds"))) session · \(durationText(stats.int("thinking_seconds"))) thinking")
-        status.append("\(stats.int("prompts")) prompts · \(stats.int("completions")) completions · \(stats.int("tools")) tools · \(stats.int("compressions")) compactions")
-    }
-    append("stats", "Status", status)
-    let recap = details["recap"]?.object("latest").text("headline", session?.recap ?? "") ?? session?.recap ?? ""
-    let bullets = details["recap"]?.object("latest")["bullets"] as? [String] ?? []
-    append("recap", "Recap", (recap.isEmpty ? [] : [recap]) + bullets)
-    if prefs.visible("prs") {
-        let links: [SessionWidgetSection.Row] = prs.compactMap { pr in
-            guard let url = URL(string: pr.url), url.scheme == "https" else { return nil }
-            return .init(text: "#\(pr.number) \(pr.title)", url: url)
-        }
-        if !links.isEmpty { sections.append(SessionWidgetSection(title: "Pull requests", rows: links)) }
-    }
-    let git = details["git"] ?? [:], branch = git.text("branch", session?.branch ?? "")
-    append("git", "Git status", (branch.isEmpty ? [] : ["⎇ " + branch]) + git.array("files").map { "\($0.text("status")) \($0.text("path"))  +\($0.int("additions")) −\($0.int("deletions"))" })
-    append("commits", "Commits", (details["commit_history"]?.array("history") ?? git.array("recent_commits")).map { "\($0.text("short_hash")) \($0.text("subject"))" })
-    append("changes", "Changes", (details["changes"]?.array("by_language") ?? []).flatMap { $0.array("changes") }.map { "\($0.text("name"))  +\($0.int("additions")) −\($0.int("deletions"))" })
-    return sections
-}
-struct SessionWidgets: View {
-    var sections: [SessionWidgetSection]
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
-                    Text(section.title).foregroundStyle(Crab.title)
-                    ForEach(Array(section.rows.enumerated()), id: \.offset) { _, row in
-                        if let url = row.url { Link(row.text, destination: url) }
-                        else { Text(row.text) }
-                    }
-                }
-            }.font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(16).textSelection(.enabled)
-        }.background(Crab.panel)
     }
 }

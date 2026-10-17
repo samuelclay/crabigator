@@ -144,7 +144,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
                         "desktop_status" -> s.copy(connected = event.optBoolean("connected"))
                         "prompt" -> s.copy(prompt = event.optJSONObject("prompt"), revision = null)
                         "state" -> s.copy(selected = s.selected?.copy(state = event.text("state")), revision = null, prompt = if (event.text("state") in listOf("question", "permission")) s.prompt else null)
-                        "git", "changes", "recap", "prs", "commit_history", "stats" -> s.copy(details = s.details + (event.text("type") to event))
+                        "git", "changes", "recap", "recap_history", "prs", "commit_history", "stats" -> s.copy(details = s.details + (event.text("type") to event))
                         else -> s
                     } }
                     if (event.text("type") in listOf("prompt", "state")) { refreshPrompt(id); Notifications.reconcile(getApplication(), id) }

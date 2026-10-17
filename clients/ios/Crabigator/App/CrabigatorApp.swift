@@ -20,6 +20,8 @@ import UserNotifications
         #if DEBUG
         if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_MOMENTUM"] == "1" {
             TerminalMomentumFixture()
+        } else if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_MODULES"] == "1" {
+            SessionModulesFixture()
         } else { RootView(model: model) }
         #else
         RootView(model: model)

@@ -129,7 +129,7 @@ import OSLog
         case "desktop_status": connected = e.bool("connected")
         case "prompt": prompt = e["prompt"] as? JSON; revision = nil
         case "state": selected?.state = e.text("state"); revision = nil; if !["question", "permission"].contains(e.text("state")) { prompt = nil }
-        case "git", "changes", "recap", "prs", "commit_history", "stats": details[e.text("type")] = e
+        case "git", "changes", "recap", "recap_history", "prs", "commit_history", "stats": details[e.text("type")] = e
         default: break
         }
         if ["prompt", "state"].contains(e.text("type")) { schedulePromptRefresh(reconcile: true) }
