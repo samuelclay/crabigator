@@ -27,6 +27,8 @@ final class NotificationViewController: UIViewController, UNNotificationContentE
         super.viewDidLayoutSubviews()
         fit()
     }
+    override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); model.startWatching() }
+    override func viewDidDisappear(_ animated: Bool) { super.viewDidDisappear(animated); model.stopWatching() }
     func didReceive(_ notification: UNNotification) {
         extensionContext?.notificationActions = []
         model.show(notification)

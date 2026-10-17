@@ -14,7 +14,7 @@ final class NotificationService: UNNotificationServiceExtension {
                 await NotificationContent.remove(id: id)
                 if NotificationContent.answerable(snapshot) {
                     let content = NotificationContent.content(snapshot, id: id)
-                    await NotificationContent.install(content, prompt: NotificationContent.prompt(snapshot), id: id)
+                    await NotificationContent.register()
                     finish(content)
                 } else {
                     // iOS does not let a service extension suppress an alert already in transit.

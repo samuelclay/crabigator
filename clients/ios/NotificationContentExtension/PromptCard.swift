@@ -19,7 +19,7 @@ import UserNotificationsUI
     private(set) var revision = -1
     /// The revision of the last answer sent from this view, and whether it is being watched.
     private var lastSent: Int?
-    private var watching = false
+    private var watching: Task<Void, Never>?
     /// The extension context, read when needed; it is not set yet when the view loads.
     var context: () -> NSExtensionContext? = { nil }
     var changed: () -> Void = {}
@@ -33,12 +33,28 @@ import UserNotificationsUI
 
     func show(_ notification: UNNotification) {
         let content = notification.request.content, info = content.userInfo
+        stopWatching()
+        if id != info["session_id"] as? String {
+            prompt = [:]; revision = -1; selected = []; answered = [:]; lastSent = nil
+        }
         id = info["session_id"] as? String ?? ""
+        status = .ready
         title = content.title; body = content.body
         if let text = info["prompt"] as? String, let prompt = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? JSON {
             adopt(prompt, revision: info["revision"] as? Int ?? 0)
         } else { changed() }
-        Task { await refresh(); await watch() }
+        startWatching()
+    }
+    func startWatching() {
+        guard watching == nil, !id.isEmpty else { return }
+        watching = Task { await refresh(); if status != .resolved && !Task.isCancelled { await watch() } }
+    }
+    func stopWatching() { watching?.cancel(); watching = nil }
+    func reply(_ text: String) {
+        guard open, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let toggling = PromptActions.question(prompt)?.bool("multi_select") == true
+            ? selected.symmetricDifference(Self.checked(prompt)).sorted() : []
+        answer(text, text: text, toggling: toggling)
     }
 
     func tap(question: Int? = nil, option: Int) {
@@ -76,16 +92,19 @@ import UserNotificationsUI
         Task {
             do {
                 try await PromptAnswer.send(id, revision: revision, option: option, text: text, submit: submit, toggling: toggling)
+                guard self.id == id else { return }
                 // A newer notification may already show what came next.
                 lastSent = revision
                 guard self.revision == revision else { status = .ready; changed(); return }
                 if let question { answered[question] = label }
                 status = .sent(label); changed()
             } catch {
+                guard self.id == id else { return }
                 // Show the prompt as it is now, and say that the tap sent nothing.
                 let stale = (error as? APIError)?.status == 409
                 status = .failed(error.localizedDescription)
                 if stale { await refresh() }
+                guard self.id == id else { return }
                 if status != .resolved { status = .failed(stale ? "The question changed, so nothing was sent." : error.localizedDescription) }
                 changed()
             }
@@ -94,36 +113,42 @@ import UserNotificationsUI
     /// Follows the session while the view is open: shows each newer prompt, such as
     /// the next question, and closes once the session has moved past this view's answer.
     private func watch() async {
-        guard !watching else { return }
-        watching = true
         var quiet = 0
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
             if case .sending = status { continue }
             guard let snap = try? await API.shared.snapshot(id) else { continue }
+            guard !Task.isCancelled else { return }
             if NotificationContent.answerable(snap) {
                 quiet = 0
                 adopt(NotificationContent.prompt(snap), revision: snap.int("prompt_revision"))
                 continue
             }
             guard let sent = lastSent else {
-                if !busy { status = .resolved; context()?.notificationActions = []; changed() }
-                continue
+                break
             }
             // An answered prompt keeps its revision until the terminal moves on, if it ever does.
             quiet += 1
             if snap.int("prompt_revision") > sent || quiet >= 5 { break }
         }
+        guard !Task.isCancelled else { return }
+        await resolve()
+    }
+    private func resolve() async {
+        status = .resolved; context()?.notificationActions = []; changed()
         // Close first: removing the notification under an open view can bring back an older copy.
         context()?.dismissNotificationContentExtension()
         await NotificationContent.remove(id: id)
     }
     private func refresh() async {
+        let id = self.id
         guard let snap = try? await API.shared.snapshot(id) else { return }
+        guard !Task.isCancelled, self.id == id else { return }
         if NotificationContent.answerable(snap) {
             adopt(NotificationContent.prompt(snap), revision: snap.int("prompt_revision"))
         } else if !busy {
-            status = .resolved; context()?.notificationActions = []; changed()
+            await resolve()
         }
     }
     private func adopt(_ next: JSON, revision: Int) {
@@ -172,6 +197,15 @@ struct PromptCard: View {
 
 struct PromptCardContent: View {
     @ObservedObject var model: PromptCardModel
+    @State private var reply = ""
+    @State private var focused = false
+    private var replyIdentity: Data? {
+        let prompt = model.prompt
+        let identity: JSON = ["session": model.id, "type": prompt.text("prompt_type"),
+            "page": model.current, "question": PromptActions.question(prompt) ?? [:],
+            "review": prompt["review"] != nil]
+        return try? JSONSerialization.data(withJSONObject: identity, options: [.sortedKeys])
+    }
     var body: some View {
         let p = model.prompt, questions = p.array("questions")
         VStack(alignment: .leading, spacing: 14) {
@@ -183,9 +217,16 @@ struct PromptCardContent: View {
             } else {
                 request(p)
             }
+            if PromptActions.allowsText(p) && model.open {
+                MessageField(placeholder: "Your answer", text: $reply, focused: $focused, maxLines: 4) { model.reply(reply) }
+                    .padding(10).background(Crab.panel, in: RoundedRectangle(cornerRadius: 8))
+                Button("Send answer") { model.reply(reply) }
+                    .disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
             footer
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: replyIdentity) { _, _ in reply = ""; focused = false }
     }
 
     private func question(_ index: Int, _ q: JSON, total: Int) -> some View {
@@ -255,7 +296,7 @@ struct PromptCardContent: View {
         switch model.status {
         case .ready:
             if model.prompt.text("prompt_type") == "text" {
-                Text(PromptActions.allowsText(model.prompt) ? "Use Reply to answer." : "Open the session to answer.").font(.system(size: 12)).foregroundStyle(Crab.muted)
+                if !PromptActions.allowsText(model.prompt) { Text("Open the session to answer.").font(.system(size: 12)).foregroundStyle(Crab.muted) }
             }
         case .sending(let label):
             HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Sending “\(label)”…") }.font(.system(size: 13)).foregroundStyle(Crab.muted)

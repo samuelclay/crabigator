@@ -4,16 +4,13 @@ import UserNotifications
 /// Shared by the app and both notification extensions. Answers always re-fetch state.
 enum NotificationContent {
     static let category = "CRABIGATOR_PROMPT"
-    /// Per-prompt categories carry the prompt's real choice labels. The content
-    /// extension's Info.plist must list every one, since it cannot match a pattern.
-    static let slotPrefix = "CRABIGATOR_PROMPT_SLOT_"
-    static let slotCount = 24
-    /// iOS 27 shows at most ten actions under an expanded notification
-    /// (measured on iPhone SE with sixteen registered).
-    static let actionLimit = 10
-    /// Longer requests do not fit a notification; they must be reviewed in the app.
+    /// Keep old identifiers registered so already-delivered notifications also
+    /// lose their system buttons when the app updates.
+    static var extensionCategories: [String] {
+        [category] + (0...3).flatMap { count in ["\(category)_\(count)_0", "\(category)_\(count)_1"] }
+            + (0..<24).map { "CRABIGATOR_PROMPT_SLOT_" + String($0) }
+    }
     static let detailLimit = 2000
-    static var extensionCategories: [String] { categories().map(\.identifier) + (0..<slotCount).map { slotPrefix + String($0) } }
 
     static func prompt(_ snapshot: JSON) -> JSON { snapshot["prompt"] as? JSON ?? ["prompt_type": "text", "state": snapshot.text("state")] }
     /// A prompt is waiting and its desktop can still receive the answer.
@@ -24,7 +21,7 @@ enum NotificationContent {
         let prompt = prompt(snapshot), questions = prompt.array("questions")
         if questions.count > 1 && prompt["review"] == nil { content.subtitle = "Question \(prompt.int("current_question") + 1) of \(questions.count)" }
         content.body = body(prompt)
-        content.categoryIdentifier = categoryID(prompt)
+        content.categoryIdentifier = category
         content.threadIdentifier = id
         var info: [String: Any] = ["session_id": id, "revision": snapshot.int("prompt_revision")]
         // The content extension draws this copy at once; it never leaves the device.
@@ -44,27 +41,8 @@ enum NotificationContent {
 
     // MARK: Actions
 
-    /// Buttons named after the prompt's choices. Each identifier carries the
-    /// session and revision it was made for, so a button can never answer another prompt.
-    static func actions(_ prompt: JSON, id: String, revision: Int) -> [UNNotificationAction] {
-        guard quickAnswers(prompt) else { return [openAction] }
-        let token = "@\(revision)@\(id)", reply = PromptActions.allowsText(prompt)
-        // A tap on one checkbox would only tick it. The expanded view has Submit.
-        let multi = prompt["review"] == nil && PromptActions.question(prompt)?.bool("multi_select") == true
-        var actions: [UNNotificationAction] = multi ? [] : PromptActions.options(prompt).prefix(actionLimit - (reply ? 1 : 0)).enumerated().map {
-            optionAction("option_\($0.offset)" + token, $0.element.text("label", "Choice \($0.offset + 1)"))
-        }
-        if reply { actions.append(replyAction("reply" + token)) }
-        return withOpen(actions)
-    }
-    /// Opens the session in the app, like tapping the notification.
+    /// Retained for actions on notifications delivered by older app versions.
     static let open = "open"
-    private static let openAction = UNNotificationAction(identifier: open, title: "Open session", options: [.foreground])
-    /// A long press only expands a notification that has a regular button;
-    /// one with only Reply opens the reply field instead.
-    private static func withOpen(_ actions: [UNNotificationAction]) -> [UNNotificationAction] {
-        actions.contains { !($0 is UNTextInputNotificationAction) } ? actions : actions + [openAction]
-    }
     struct Choice: Equatable {
         var option: Int?
         var revision: Int?
@@ -86,86 +64,19 @@ enum NotificationContent {
 
     // MARK: Categories
 
-    /// Generic fallback categories, used when no per-prompt slot is free.
-    static func categoryID(_ prompt: JSON) -> String {
-        let freeText = PromptActions.allowsText(prompt)
-        let count = quickAnswers(prompt) ? min(freeText ? 2 : 3, PromptActions.options(prompt).count) : 0
-        return "\(category)_\(count)_\(freeText ? 1 : 0)"
-    }
+    /// All interaction lives in the expanded card, including typed answers.
+    /// Register no system actions, so they cannot appear before the card loads.
     static func categories() -> Set<UNNotificationCategory> {
-        var result = Set<UNNotificationCategory>()
-        for count in 0...3 { for freeText in [false, true] {
-            var actions: [UNNotificationAction] = (0..<count).map { optionAction("option_\($0)", "Choose \($0 + 1)") }
-            if freeText { actions.append(replyAction("reply")) }
-            result.insert(category("\(category)_\(count)_\(freeText ? 1 : 0)", withOpen(actions)))
-        } }
-        return result
+        Set(extensionCategories.map {
+            UNNotificationCategory(identifier: $0, actions: [], intentIdentifiers: [],
+                hiddenPreviewsBodyPlaceholder: "A session needs your attention", options: [.customDismissAction])
+        })
     }
-    private static func category(_ identifier: String, _ actions: [UNNotificationAction]) -> UNNotificationCategory {
-        UNNotificationCategory(identifier: identifier, actions: actions, intentIdentifiers: [], hiddenPreviewsBodyPlaceholder: "A session needs your attention", options: [.customDismissAction])
-    }
-    private static func optionAction(_ identifier: String, _ title: String) -> UNNotificationAction {
-        UNNotificationAction(identifier: identifier, title: title, options: [.authenticationRequired])
-    }
-    private static func replyAction(_ identifier: String) -> UNNotificationAction {
-        UNTextInputNotificationAction(identifier: identifier, title: "Reply", options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Your answer")
-    }
-    static func slot(_ category: String) -> Int? {
-        guard category.hasPrefix(slotPrefix), let slot = Int(category.dropFirst(slotPrefix.count)), (0..<slotCount).contains(slot) else { return nil }
-        return slot
-    }
-
-    struct Claim: Codable, Equatable {
-        var session: String
-        var time: TimeInterval
-    }
-    /// How long a claimed slot stays reserved before its notification appears.
-    static let claimLifetime: TimeInterval = 120
-    /// Picks a slot that no other session's notification shows or has just claimed.
-    /// `shown` maps slots on screen to their sessions. Returns nil when all are busy.
-    static func claim(_ session: String, shown: [Int: String], claims: [Int: Claim], now: TimeInterval) -> (slot: Int?, claims: [Int: Claim]) {
-        let own = shown.first { $0.value == session }?.key ?? claims.first { $0.value.session == session }?.key
-        var others = claims.filter { $0.value.session != session && now - $0.value.time < claimLifetime }
-        func free(_ slot: Int) -> Bool { (shown[slot] ?? session) == session && others[slot] == nil }
-        guard let slot = own.flatMap({ free($0) ? $0 : nil }) ?? (0..<slotCount).first(where: free) else { return (nil, others) }
-        others[slot] = Claim(session: session, time: now)
-        return (slot, others)
-    }
-
-    /// Gives `content` a category whose buttons use this prompt's real labels.
-    /// Keeps the generic category when every slot is busy.
-    static func install(_ content: UNMutableNotificationContent, prompt: JSON, id: String) async {
-        await serial.run {
-            let center = UNUserNotificationCenter.current()
-            var shown: [Int: String] = [:]
-            for note in await center.deliveredNotifications() {
-                if let slot = slot(note.request.content.categoryIdentifier) { shown[slot] = note.request.content.userInfo["session_id"] as? String ?? "" }
-            }
-            let key = "notificationSlots", saved = Credentials.defaults.data(forKey: key).flatMap { try? JSONDecoder().decode([Int: Claim].self, from: $0) } ?? [:]
-            let result = claim(id, shown: shown, claims: saved, now: Date().timeIntervalSince1970)
-            if let data = try? JSONEncoder().encode(result.claims) { Credentials.defaults.set(data, forKey: key) }
-            guard let slot = result.slot else { return }
-            let identifier = slotPrefix + String(slot), revision = content.userInfo["revision"] as? Int ?? 0
-            await register(category(identifier, actions(prompt, id: id, revision: revision)), keeping: Set(shown.keys).union(result.claims.keys))
-            content.categoryIdentifier = identifier
-        }
-    }
-    /// Replaces the generic categories and adds `adding`. Slot categories outside
-    /// `keeping` are pruned; nil keeps them all.
-    static func register(_ adding: UNNotificationCategory? = nil, keeping: Set<Int>? = nil) async {
+    static func register() async {
         let center = UNUserNotificationCenter.current()
-        var result: [String: UNNotificationCategory] = [:]
-        for existing in await center.notificationCategories() {
-            if let slot = slot(existing.identifier), keeping?.contains(slot) ?? true { result[existing.identifier] = existing }
-        }
-        for fixed in categories() { result[fixed.identifier] = fixed }
-        if let adding { result[adding.identifier] = adding }
-        center.setNotificationCategories(Set(result.values))
-        // Registration is asynchronous. Reading it back waits until it is saved,
-        // so the notification appears with its new buttons rather than the old ones.
+        center.setNotificationCategories(categories())
         _ = await center.notificationCategories()
     }
-    private static let serial = SerialWork()
 
     static func remove(id: String) async {
         let center = UNUserNotificationCenter.current()
@@ -185,20 +96,5 @@ enum PromptAnswer {
         }
         let action = try PromptActions.action(NotificationContent.prompt(snap), option: option, text: text, submit: submit, toggling: toggling)
         try await API.shared.action(id, action, revision: revision)
-    }
-}
-
-/// Runs async work one piece at a time, in the order it was started.
-final class SerialWork {
-    private let lock = NSLock()
-    private var last: Task<Void, Never>?
-    func run(_ work: @escaping () async -> Void) async {
-        let task = lock.withLock {
-            let previous = last
-            let task = Task { await previous?.value; await work() }
-            last = task
-            return task
-        }
-        await task.value
     }
 }

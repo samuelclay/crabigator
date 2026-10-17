@@ -26,6 +26,7 @@
 		<dict>
 			<key>UNNotificationExtensionCategory</key>
 			<array>
+				<string>CRABIGATOR_PROMPT</string>
 				<string>CRABIGATOR_PROMPT_0_0</string>
 				<string>CRABIGATOR_PROMPT_0_1</string>
 				<string>CRABIGATOR_PROMPT_1_0</string>

@@ -42,7 +42,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             if let id = env["CRABIGATOR_TEST_NOTIFICATION_SESSION"] { snapshot = try? await API.shared.snapshot(id); snapshot?["id"] = id }
             if let snapshot {
                 let id = snapshot.text("id", "fixture"), content = NotificationContent.content(snapshot, id: id)
-                await NotificationContent.install(content, prompt: NotificationContent.prompt(snapshot), id: id)
+                await NotificationContent.register()
                 try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false)))
             }
             #endif

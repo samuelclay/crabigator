@@ -265,7 +265,7 @@ final class CrabigatorTests: XCTestCase {
         let content = NotificationContent.content(["title": "Session", "state": "permission", "prompt_revision": 42], id: "session")
         XCTAssertNil(content.sound)
         XCTAssertEqual(content.userInfo["revision"] as? Int, 42)
-        XCTAssertEqual(content.categoryIdentifier, "CRABIGATOR_PROMPT_0_0")
+        XCTAssertEqual(content.categoryIdentifier, NotificationContent.category)
         XCTAssertEqual(content.threadIdentifier, "session")
     }
     func testNotificationBodyListsEveryChoiceAfterTheQuestion() {
@@ -273,33 +273,13 @@ final class CrabigatorTests: XCTestCase {
         let snapshot: JSON = ["prompt_revision": 3, "prompt": ["prompt_type": "question", "questions": [["question": "Which pizza crust?", "options": labels.map { ["label": $0] }]]]]
         XCTAssertEqual(NotificationContent.content(snapshot, id: "s").body, "Which pizza crust?\n" + labels.joined(separator: " · "))
     }
-    func testChoiceButtonsUseLabelsAndAnswerOnlyTheirOwnPrompt() throws {
-        let labels = (1...12).map { "Option \($0)" }
-        let prompt: JSON = ["prompt_type": "question", "questions": [["question": "Pick", "options": labels.map { ["label": $0] }, "allows_other": true]]]
-        let actions = NotificationContent.actions(prompt, id: "session", revision: 7)
-        XCTAssertEqual(actions.map(\.title), Array(labels.prefix(NotificationContent.actionLimit - 1)) + ["Reply"])
-        for (index, action) in actions.dropLast().enumerated() {
-            XCTAssertEqual(NotificationContent.choice(action.identifier, id: "session"), .init(option: index, revision: 7))
-            XCTAssertNil(NotificationContent.choice(action.identifier, id: "other"), "A reused category must not answer another session")
-        }
-        XCTAssertEqual(NotificationContent.choice(try XCTUnwrap(actions.last).identifier, id: "session"), .init(option: nil, revision: 7))
-        XCTAssertEqual(NotificationContent.choice("option_2", id: "session"), .init(option: 2, revision: nil))
-        XCTAssertNil(NotificationContent.choice(UNNotificationDefaultActionIdentifier, id: "session"))
-        var multi = prompt; multi["questions"] = [["question": "Pick", "options": [["label": "A"]], "multi_select": true, "allows_other": false]]
-        // One tap would only tick a box, and iOS only expands a notification with a regular button.
-        XCTAssertEqual(NotificationContent.actions(multi, id: "session", revision: 7).map(\.title), ["Open session"])
-        multi["questions"] = [["question": "Pick", "options": [["label": "A"]], "multi_select": true, "allows_other": true]]
-        XCTAssertEqual(NotificationContent.actions(multi, id: "session", revision: 7).map(\.title), ["Reply", "Open session"])
-    }
-    func testCategorySlotsAreNeverSharedBetweenSessions() {
-        var claims: [Int: NotificationContent.Claim] = [:]
-        let a = NotificationContent.claim("a", shown: [:], claims: claims, now: 100); claims = a.claims
-        let b = NotificationContent.claim("b", shown: [:], claims: claims, now: 101); claims = b.claims
-        XCTAssertNotEqual(a.slot, b.slot, "A slot claimed but not yet shown stays reserved")
-        XCTAssertEqual(NotificationContent.claim("a", shown: [b.slot!: "b"], claims: claims, now: 102).slot, a.slot)
-        let shown = Dictionary(uniqueKeysWithValues: (0..<NotificationContent.slotCount).map { ($0, "busy\($0)") })
-        XCTAssertNil(NotificationContent.claim("c", shown: shown, claims: [:], now: 103).slot)
-        XCTAssertEqual(NotificationContent.claim("c", shown: [:], claims: claims, now: 100 + NotificationContent.claimLifetime + 2).slot, 0, "Unshown claims expire")
+    func testNotificationCategoriesRemoveDuplicateActionsIncludingOldNotifications() {
+        let categories = NotificationContent.categories()
+        XCTAssertTrue(categories.contains { $0.identifier == "CRABIGATOR_PROMPT_SLOT_0" })
+        XCTAssertTrue(categories.contains { $0.identifier == "CRABIGATOR_PROMPT_3_1" })
+        XCTAssertTrue(categories.allSatisfy { $0.actions.isEmpty })
+        XCTAssertEqual(NotificationContent.choice("option_2@7@session", id: "session"), .init(option: 2, revision: 7))
+        XCTAssertNil(NotificationContent.choice("option_2@7@session", id: "other"))
     }
     @MainActor func testPhoneReturnSendsOnceAndPastedLinesStayIntact() {
         let view = ReturnTextView()

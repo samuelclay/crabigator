@@ -132,7 +132,7 @@ import OSLog
         case "git", "changes", "recap", "recap_history", "prs", "commit_history", "stats": details[e.text("type")] = e
         default: break
         }
-        if ["prompt", "state"].contains(e.text("type")) { schedulePromptRefresh(reconcile: true) }
+        if ["prompt", "state", "desktop_status"].contains(e.text("type")) { schedulePromptRefresh(reconcile: true) }
     }
     private func schedulePromptRefresh(reconcile: Bool = false) {
         promptTask?.cancel()
@@ -154,7 +154,8 @@ import OSLog
             #endif
             let snap = try await api.snapshot(id)
             guard !Task.isCancelled, request == snapshotRequest, epoch == generation, id == selected?.id else { return }
-            prompt = snap["prompt"] as? JSON; revision = snap["prompt_revision"] as? Int; connected = snap.bool("desktop_connected")
+            prompt = NotificationContent.answerable(snap) ? snap["prompt"] as? JSON : nil
+            revision = snap["prompt_revision"] as? Int; connected = snap.bool("desktop_connected")
         } catch { /* Screen streaming still works with servers without the mobile snapshot route. */ }
     }
     func send(_ action: TerminalAction, guarded: Bool = false, expectedRevision: Int? = nil, onSent: @escaping () -> Void = {}) {
@@ -197,7 +198,14 @@ import OSLog
     func start() {
         foreground = true; stream.foreground = true
         guard paired, polling == nil else { return }
-        polling = Task { while !Task.isCancelled { await refresh(); try? await Task.sleep(for: .seconds(12)) } }
+        polling = Task {
+            while !Task.isCancelled {
+                await refresh()
+                await stream.refreshPrompt()
+                await Notifications.shared.reconcile()
+                try? await Task.sleep(for: .seconds(12))
+            }
+        }
         stream.start(); Task { await Notifications.shared.register(); await Notifications.shared.reconcile() }
     }
     func stop() { foreground = false; stream.foreground = false; epoch += 1; polling?.cancel(); polling = nil; stream.stop() }

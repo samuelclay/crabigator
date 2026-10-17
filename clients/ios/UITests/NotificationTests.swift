@@ -5,7 +5,37 @@ import XCTest
 final class NotificationTests: XCTestCase {
     private let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
 
-    func testButtonsUseLabelsUpToTheLimitWhileTheViewListsEveryChoice() throws {
+    func testPhoneSendAndRemoteResolution() throws {
+        guard let id = ProcessInfo.processInfo.environment["CRABIGATOR_SEND_TEST_SESSION"] else {
+            throw XCTSkip("Requires a dedicated live test session; sends a read-only question request.")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertTrue(app.buttons["PR board"].waitForExistence(timeout: 25) || app.buttons["Back to list"].exists)
+        if app.buttons["Back to list"].exists { app.buttons["Back to list"].tap() }
+        app.buttons["Search"].tap()
+        let search = app.textFields["Search sessions"]
+        search.tap(); search.typeText("notification test")
+        let row = app.buttons["Session " + id]
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.tap()
+        let field = app.textViews["Message"]
+        XCTAssertTrue(field.waitForExistence(timeout: 15)); field.tap()
+        field.typeText("Ask me one more question with AskUserQuestion: Is the phone keyboard working? Choices Yes and No. Do not inspect files or run commands.")
+        let send = app.keyboards.buttons["Send"]
+        XCTAssertTrue(send.exists)
+        capture("Phone keyboard Send")
+        send.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == ''"), object: field)], timeout: 10), .completed)
+        let choice = app.buttons["Prompt option 1"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 60))
+        capture("Waiting for laptop answer")
+        // The test driver answers this dedicated session through tmux.
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: choice)], timeout: 30), .completed)
+        capture("Question resolved in app")
+    }
+
+    func testOnlyTheGraphicShowsChoices() throws {
         let labels = (0..<16).map { "Pick \(UnicodeScalar(65 + $0)!)" }
         try expandFixture(question(labels))
         // The view's rows share these labels; menu buttons are the ones that are not rows.
@@ -18,7 +48,7 @@ final class NotificationTests: XCTestCase {
     func testMultiSelectViewTicksBoxesWithoutAnswering() throws {
         try expandFixture(question(["Cheese", "Pepperoni", "Mushroom", "Olives"], multi: true))
         XCTAssertEqual(springboard.buttons.matching(NSPredicate(format: "label == 'Cheese'")).count, 1, "One tap would only tick a box, so only the row has this label")
-        XCTAssertTrue(springboard.buttons["Open session"].exists, "iOS only expands a notification that has a regular button")
+        XCTAssertTrue(springboard.buttons["Open session"].exists, "The card keeps a way to open the session")
         springboard.buttons["Choice Cheese"].tap()
         springboard.buttons["Choice Olives"].tap()
         XCTAssertTrue(springboard.buttons["Submit choices"].exists)
@@ -35,17 +65,20 @@ final class NotificationTests: XCTestCase {
         if let session = env["CRABIGATOR_TEST_NOTIFICATION_SESSION"] { post(["CRABIGATOR_TEST_NOTIFICATION_SESSION": session]) }
         expand(springboard.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'NotificationShortLookView' AND label CONTAINS %@", title)).firstMatch, wait: 120)
         note(springboard.debugDescription)
+        if env["CRABIGATOR_TEST_EXPECT_RESOLVED"] == "1" {
+            XCTAssertTrue(springboard.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'Choice '")).firstMatch.exists)
+        }
         if let seconds = env["CRABIGATOR_TEST_PAUSE"].flatMap(Double.init) {
             // Time to change the prompt from the terminal, so the answer below is stale.
             Thread.sleep(forTimeInterval: seconds)
             capture("Before answering")
         }
         if let text = env["CRABIGATOR_TEST_REPLY"] {
-            springboard.buttons["Reply"].firstMatch.tap()
-            let field = springboard.textViews.firstMatch
+            let field = springboard.textViews["Your answer"]
             XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.tap()
             field.typeText(text)
-            springboard.buttons["Send"].firstMatch.tap()
+            springboard.keyboards.buttons["Send"].tap()
             Thread.sleep(forTimeInterval: 3)
             capture("After replying")
         }
@@ -68,12 +101,16 @@ final class NotificationTests: XCTestCase {
             Thread.sleep(forTimeInterval: 1)
             capture("After submitting")
         }
-        if env["CRABIGATOR_TEST_EXPECT_STALE"] == "1" {
+        if env["CRABIGATOR_TEST_EXPECT_RESOLVED"] == "1" {
+            let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: springboard.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'Choice '")).firstMatch)
+            XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 15), .completed, "An answer from the laptop must close the card too")
+            capture("Resolved from laptop")
+        } else if env["CRABIGATOR_TEST_EXPECT_STALE"] == "1" {
             // The prompt changed after the view opened: nothing may be sent.
             let refused = springboard.staticTexts.matching(NSPredicate(format: "label IN %@", ["The question changed, so nothing was sent.", "This request was answered or has ended."])).firstMatch
             XCTAssertTrue(refused.waitForExistence(timeout: 10))
             capture("Stale answer refused")
-        } else if env["CRABIGATOR_TEST_TAP_CHOICE"] != nil {
+        } else if env["CRABIGATOR_TEST_TAP_CHOICE"] != nil || env["CRABIGATOR_TEST_REPLY"] != nil {
             let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: springboard.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'Choice '")).firstMatch)
             XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 15), .completed, "The view closes once the prompt is done")
             capture("Closed")

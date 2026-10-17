@@ -7,7 +7,7 @@ import UserNotifications
     private var generation = 0
     private var dirty = Set<String>()
     private var tasks: [String: Task<Void, Never>] = [:]
-    // Keeps the per-prompt categories that delivered notifications still use.
+    // Also replaces legacy categories to remove their duplicate system actions.
     func installCategories() async { await NotificationContent.register() }
     func requestPermission() async {
         do { _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]); UIApplication.shared.registerForRemoteNotifications(); await register() }
