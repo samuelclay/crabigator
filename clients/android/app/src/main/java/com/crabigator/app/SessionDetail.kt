@@ -51,6 +51,9 @@ import org.json.JSONObject
             }
         }
         HorizontalDivider(color = Color(0xFF303A46))
+        TextButton(onClick = { model.style { it.copy(widgets = !it.widgets) } }, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)) {
+            Text((if (p.widgets) "▾ " else "▸ ") + "Status · Git · Changes · PRs · Recap", fontSize = 11.sp)
+        }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val availableHeight = maxHeight
             val terminalLimit = if (p.widgets && sections.isNotEmpty()) maxHeight * .65f else maxHeight
@@ -108,12 +111,24 @@ internal fun sessionPullRequests(s: AppState): List<PullRequest> {
     }
 }
 
-private fun sessionWidgetSections(s: AppState, p: UiPreferences): List<Pair<String, List<Pair<String, String?>>>> {
+internal fun sessionWidgetSections(s: AppState, p: UiPreferences): List<Pair<String, List<Pair<String, String?>>>> {
     val session = s.selected ?: return emptyList()
     return buildList {
+        if (p.visible("stats")) {
+            val stats = s.details["stats"]
+            val rows = mutableListOf(session.state.replaceFirstChar { it.uppercase() })
+            if (stats != null) {
+                stats.text("model").takeIf { it.isNotBlank() }?.let(rows::add)
+                rows.add("${sessionDuration(stats.optLong("work_seconds"))} session · ${sessionDuration(stats.optLong("thinking_seconds"))} thinking")
+                rows.add("${stats.optInt("prompts")} prompts · ${stats.optInt("completions")} completions · ${stats.optInt("tools")} tools · ${stats.optInt("compressions")} compactions")
+            }
+            add("Status" to rows.map { it to null })
+        }
         if (p.visible("recap")) {
             val recap = s.details["recap"]?.optJSONObject("latest")?.text("headline") ?: session.recap
-            if (recap.isNotBlank()) add("Recap" to listOf(recap to null))
+            val bullets = s.details["recap"]?.optJSONObject("latest")?.optJSONArray("bullets")
+            val rows = listOf(recap).filter { it.isNotBlank() } + (0 until (bullets?.length() ?: 0)).map { bullets!!.getString(it) }
+            if (rows.isNotEmpty()) add("Recap" to rows.map { it to null })
         }
         if (p.visible("prs")) {
             val prs = sessionPullRequests(s).map { "#${it.number} ${it.title}" to it.url.takeIf { url -> url.startsWith("https://") } }

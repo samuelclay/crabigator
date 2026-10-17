@@ -27,7 +27,7 @@ data class UiPreferences(
     val wrap: Boolean = true,
     val columns: Int = 0,
     val terminalHeight: Int = 0,
-    val widgets: Boolean = false,
+    val widgets: Boolean = true,
     val grouping: String = "all",
     val order: String = "recent",
     val density: String = "comfortable",
@@ -54,7 +54,7 @@ class PreferenceStore(context: Context) {
         return UiPreferences(
             j.optInt("fontSize", 13).coerceIn(9, 24), j.optInt("lineSpacing", 145).coerceIn(110, 180),
             j.optBoolean("wrap", true), j.optInt("columns", 0).coerceIn(0, 4),
-            j.optInt("terminalHeight").coerceIn(0, 700), j.optBoolean("widgets"),
+            j.optInt("terminalHeight").coerceIn(0, 700), j.optBoolean("modulesExpanded", true),
             j.text("grouping", "all"), j.text("order", "recent"), j.text("density", "comfortable"),
             j.optBoolean("sidebarRight"), j.optJSONArray("hidden")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: setOf("tools", "compactions"),
             j.optBoolean("showEnded"), j.optInt("boardFontSize", 14).coerceIn(10, 24),
@@ -65,7 +65,7 @@ class PreferenceStore(context: Context) {
     fun save(p: UiPreferences) {
         val j = JSONObject().put("boardFontSize", p.boardFontSize).put("fontSize", p.fontSize).put("lineSpacing", p.lineSpacing).put("wrap", p.wrap)
             .put("columns", p.columns).put("terminalHeight", p.terminalHeight)
-            .put("widgets", p.widgets).put("grouping", p.grouping).put("order", p.order).put("density", p.density)
+            .put("modulesExpanded", p.widgets).put("grouping", p.grouping).put("order", p.order).put("density", p.density)
             .put("boardAgeHours", p.boardAgeHours).put("boardComputer", p.boardComputer)
             .put("boardRecaps", p.boardRecaps).put("boardGrouping", p.boardGrouping)
             .put("showEnded", p.showEnded).put("sidebarRight", p.sidebarRight).put("hidden", org.json.JSONArray(p.hidden.toList()))

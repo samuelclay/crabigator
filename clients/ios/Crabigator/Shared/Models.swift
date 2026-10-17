@@ -130,7 +130,13 @@ struct Preferences: Codable, Equatable {
         set { boardFontSize = newValue }
     }
     var fontSize = 13, lineSpacing = 145, columns = 0, terminalHeight = 0
-    var wrap = true, widgets = false, sidebarRight = false, showEnded = false
+    // Older builds hid modules by default. Start the visible module panel once on upgrade.
+    private var modulesExpanded: Bool?
+    var widgets: Bool {
+        get { modulesExpanded ?? true }
+        set { modulesExpanded = newValue }
+    }
+    var wrap = true, sidebarRight = false, showEnded = false
     var grouping = "all", order = "recent", density = "comfortable"
     var hidden: Set<String> = ["tools", "compactions"]
     func includesActivity(_ timestamp: Int, now: Int) -> Bool {

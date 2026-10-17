@@ -169,7 +169,7 @@ private val Cyan = CrabColors.Cyan
                     }
                     MenuSection("Widgets below the terminal") {
                         Choices(listOf("Expanded", "Collapsed"), if (p.widgets) 0 else 1) { n -> update { it.copy(widgets = n == 0) } }
-                        listOf("recap" to "Recap", "prs" to "Pull requests", "commits" to "Commits", "git" to "Git status", "changes" to "Changes").forEach { (key, label) -> CheckRow(label, p.visible(key)) { update { it.toggle(key) } } }
+                        listOf("stats" to "Status", "recap" to "Recap", "prs" to "Pull requests", "commits" to "Commits", "git" to "Git status", "changes" to "Changes").forEach { (key, label) -> CheckRow(label, p.visible(key)) { update { it.toggle(key) } } }
                     }
                 } else {
                     MenuSection("Text and spacing") {

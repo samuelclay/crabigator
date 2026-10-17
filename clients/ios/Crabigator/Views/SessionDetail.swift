@@ -36,6 +36,14 @@ struct SessionDetail: View {
                         IconButton(icon: "textformat.size", label: "Style") { style = true }.popover(isPresented: $style, arrowEdge: .top) { StyleMenu(model: model).nativePopover() }
                     }.padding(.horizontal, 4).padding(.vertical, 8)
                     Divider()
+                    Button { model.preferences.widgets.toggle() } label: {
+                        HStack {
+                            Image(systemName: "square.grid.2x2")
+                            Text("Status · Git · Changes · PRs · Recap").font(.system(size: 11))
+                            Spacer()
+                            Image(systemName: model.preferences.widgets ? "chevron.down" : "chevron.right")
+                        }.foregroundStyle(Crab.muted).padding(.horizontal, 12).frame(minHeight: 44)
+                    }.accessibilityLabel(model.preferences.widgets ? "Hide session modules" : "Show session modules")
                     if let error = stream.error { HStack { Text(error).font(.caption).foregroundStyle(Crab.red); Spacer(); IconButton(icon: "xmark", label: "Dismiss session error") { stream.error = nil } }.padding(.leading, 12) }
                     GeometryReader { area in
                         VStack(spacing: 0) {
@@ -96,8 +104,17 @@ func sessionWidgetSections(session: Session?, details: [String: JSON], prefs: Pr
             sections.append(SessionWidgetSection(title: title, rows: rows.map { .init(text: $0) }))
         }
     }
-    let recap = details["recap"]?.object("latest").text("headline") ?? session?.recap ?? ""
-    append("recap", "Recap", recap.isEmpty ? [] : [recap])
+    let stats = details["stats"] ?? [:]
+    var status = [session?.state.capitalized ?? "Connecting"]
+    if !stats.text("model").isEmpty { status.append(stats.text("model")) }
+    if !stats.isEmpty {
+        status.append("\(durationText(stats.int("work_seconds"))) session · \(durationText(stats.int("thinking_seconds"))) thinking")
+        status.append("\(stats.int("prompts")) prompts · \(stats.int("completions")) completions · \(stats.int("tools")) tools · \(stats.int("compressions")) compactions")
+    }
+    append("stats", "Status", status)
+    let recap = details["recap"]?.object("latest").text("headline", session?.recap ?? "") ?? session?.recap ?? ""
+    let bullets = details["recap"]?.object("latest")["bullets"] as? [String] ?? []
+    append("recap", "Recap", (recap.isEmpty ? [] : [recap]) + bullets)
     if prefs.visible("prs") {
         let links: [SessionWidgetSection.Row] = prs.compactMap { pr in
             guard let url = URL(string: pr.url), url.scheme == "https" else { return nil }
