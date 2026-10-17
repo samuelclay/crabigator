@@ -25,8 +25,10 @@ body.hide-section-prs .session-prs { display: none !important; }
     max-height: 92px;
     overflow: hidden;
 }
+@media (hover: hover) and (pointer: fine) {
 .session-recap:hover {
     background: var(--bg-surface);
+}
 }
 .session-recap.expanded {
     max-height: none;
@@ -230,7 +232,9 @@ body.hide-section-prs .session-prs { display: none !important; }
     margin: -6px 0;
     -webkit-tap-highlight-color: transparent;
 }
+@media (hover: hover) and (pointer: fine) {
 .session-prs .pr-list-title:hover { color: #d6bffb; }
+}
 .session-prs .pr-list-chevron {
     display: inline-block;
     width: 12px;
@@ -262,7 +266,9 @@ body.hide-section-prs .session-prs { display: none !important; }
     opacity: 0.7;
     border-left-color: rgba(110, 118, 129, 0.55);
 }
+@media (hover: hover) and (pointer: fine) {
 .session-prs .pr-row.pr-secondary:hover { opacity: 1; }
+}
 .session-prs .pr-row-top {
     display: flex;
     align-items: center;
@@ -290,7 +296,9 @@ body.hide-section-prs .session-prs { display: none !important; }
 }
 .session-prs .pr-primary-toggle.primary { color: #c4a7f7; }
 .session-prs .pr-primary-toggle.secondary { color: #6e7681; }
+@media (hover: hover) and (pointer: fine) {
 .session-prs .pr-primary-toggle:hover { color: #d6bffb; }
+}
 /* Promote/demote (↑/↓) flips primary and secondary; dismiss (✕) removes the
    PR from every list in the group. */
 .session-prs .pr-flip, .session-prs .pr-dismiss {
@@ -300,8 +308,12 @@ body.hide-section-prs .session-prs { display: none !important; }
     cursor: pointer;
     user-select: none;
 }
+@media (hover: hover) and (pointer: fine) {
 .session-prs .pr-flip:hover { opacity: 1; color: #d6bffb; }
+}
+@media (hover: hover) and (pointer: fine) {
 .session-prs .pr-dismiss:hover { opacity: 1; color: #f85149; }
+}
 .session-prs .pr-link {
     font-family: var(--font-ui);
     font-size: 12px;
@@ -312,9 +324,11 @@ body.hide-section-prs .session-prs { display: none !important; }
 }
 /* Secondary rows recede so primaries read first. */
 .session-prs .pr-row:has(.pr-primary-toggle.secondary) .pr-link { color: #8b949e; }
+@media (hover: hover) and (pointer: fine) {
 .session-prs .pr-link:hover {
     text-decoration: underline;
     color: #d6bffb;
+}
 }
 .session-prs .pr-diff {
     font-family: var(--font-ui);
@@ -325,7 +339,11 @@ body.hide-section-prs .session-prs { display: none !important; }
 }
 /* Diff and CI badges are links when GitHub gave us somewhere to go; the
    underline stays on hover so the row reads as a table at rest. */
-a.pr-diff:hover, a.pr-ci:hover, a.pr-comments:hover { text-decoration: underline; }
+@media (hover: hover) and (pointer: fine) {
+a.pr-diff:hover,
+a.pr-ci:hover,
+a.pr-comments:hover { text-decoration: underline; }
+}
 .session-prs .pr-diff .rd-add { color: var(--accent-green); }
 .session-prs .pr-diff .rd-del { color: var(--accent-red); }
 .session-prs .pr-diff .pr-files { color: var(--text-dim); margin-left: 4px; }

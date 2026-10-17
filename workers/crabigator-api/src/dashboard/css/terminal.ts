@@ -89,7 +89,9 @@ export const terminalCss = `
     text-underline-offset: 2px;
     cursor: pointer;
 }
+@media (hover: hover) and (pointer: fine) {
 .terminal .terminal-link:hover {
     color: var(--accent-cyan);
+}
 }
 `;

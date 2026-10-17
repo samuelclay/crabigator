@@ -35,7 +35,7 @@ html {
 }
 
 /* Prevent double-tap zoom on interactive elements */
-button, input, textarea, select, .style-option, .style-popover {
+button, a, [role="button"], [onclick], input, textarea, select, .style-option, .style-popover {
     touch-action: manipulation;
 }
 
@@ -44,7 +44,9 @@ button, input, textarea, select, .style-option, .style-popover {
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-abyss); }
 ::-webkit-scrollbar-thumb { background: #526574; border-radius: 3px; }
+@media (hover: hover) and (pointer: fine) {
 ::-webkit-scrollbar-thumb:hover { background: #718696; }
+}
 button, input, textarea, select { font-family: var(--font-ui); }
 a { color: var(--accent-cyan); }
 :focus-visible { outline: 2px solid var(--accent-peach); outline-offset: 3px; }

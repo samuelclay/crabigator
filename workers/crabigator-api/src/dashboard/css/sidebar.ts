@@ -141,10 +141,12 @@ export const sidebarCss = `
 .sidebar.popover-mode .sidebar-close-btn { display: none; }
 .sidebar:not(.popover-mode) .sidebar-pin-btn { display: none; }
 .sidebar:not(.popover-mode) .sidebar-close-btn { display: flex; }
+@media (hover: hover) and (pointer: fine) {
 .sidebar-settings-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     background: rgba(34, 211, 238, 0.05);
+}
 }
 .sidebar-settings-btn.active {
     border-color: var(--accent-cyan);
@@ -152,15 +154,19 @@ export const sidebarCss = `
     background: rgba(34, 211, 238, 0.1);
     box-shadow: none;
 }
+@media (hover: hover) and (pointer: fine) {
 .sidebar-pin-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     background: rgba(34, 211, 238, 0.05);
 }
+}
+@media (hover: hover) and (pointer: fine) {
 .sidebar-close-btn:hover {
     border-color: var(--accent-red);
     color: var(--accent-red);
     background: rgba(248, 113, 113, 0.05);
+}
 }
 
 /* Sidebar settings popover */
@@ -207,8 +213,10 @@ export const sidebarCss = `
     border-radius: 4px;
     transition: background 0.15s;
 }
+@media (hover: hover) and (pointer: fine) {
 .sidebar-checkbox:hover {
     background: var(--bg-surface);
+}
 }
 .sidebar-checkbox input[type="checkbox"] {
     appearance: none;
@@ -281,10 +289,15 @@ export const sidebarCss = `
     z-index: 20;
     transition: background 0.2s;
 }
-.sidebar-resize-handle:hover,
 .sidebar-resize-handle.active {
     background: var(--accent-cyan);
     opacity: 0.4;
+}
+@media (hover: hover) and (pointer: fine) {
+.sidebar-resize-handle:hover {
+    background: var(--accent-cyan);
+    opacity: 0.4;
+}
 }
 .dashboard-layout[data-sidebar-position="right"] .sidebar-resize-handle {
     right: auto;

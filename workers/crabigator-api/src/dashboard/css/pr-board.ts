@@ -17,7 +17,9 @@ export const prBoardCss = `
     padding: 5px 10px;
     cursor: pointer;
 }
+@media (hover: hover) and (pointer: fine) {
 .pr-board-btn:hover { color: var(--text-primary, #c9d1d9); border-color: #8b949e; }
+}
 .pr-board-btn.active { color: #c4a7f7; border-color: #a371f7; }
 .pr-board-btn-icon { color: #a371f7; }
 
@@ -49,7 +51,9 @@ export const prBoardCss = `
 }
 .prb-hdr { color: var(--text-bright); font-family: var(--font-ui); font-weight: 600; font-size: 16px; white-space: nowrap; }
 .prb-ctl { color: var(--text-dim); cursor: pointer; user-select: none; white-space: nowrap; }
+@media (hover: hover) and (pointer: fine) {
 .prb-ctl:hover { color: var(--text-mid); }
+}
 .prb-ctl.active { color: var(--accent-yellow); }
 .prb-ctl u { text-underline-offset: 2px; }
 .prb-keys { color: var(--text-dim); white-space: nowrap; }
@@ -106,10 +110,14 @@ export const prBoardCss = `
     padding: 2px 4px;
     border-radius: 4px;
 }
+@media (hover: hover) and (pointer: fine) {
 .prb-row:hover { background: rgba(255, 255, 255, 0.035); }
+}
 /* Rows whose sessions have all ended dim like the CLI's stale rows. */
 .prb-row.prb-stale { opacity: 0.55; }
+@media (hover: hover) and (pointer: fine) {
 .prb-row.prb-stale:hover { opacity: 0.8; }
+}
 
 /* Every line inside a row rides the same three columns */
 .prb-l1, .prb-l2, .prb-dl, .prb-sub {
@@ -123,7 +131,9 @@ export const prBoardCss = `
 /* A watch no session claims renders full purple, like a primary. */
 .prb-star.primary, .prb-star.watched { color: var(--accent-purple); }
 .prb-star.secondary { color: var(--text-dim); }
+@media (hover: hover) and (pointer: fine) {
 .prb-star:hover { color: #d6bffb; }
+}
 .prb-diamond { color: var(--accent-purple); flex-shrink: 0; }
 /* A session without a PR carries its title in the same blue as the session
    sub-rows beneath a PR, so every session title reads alike. */
@@ -143,7 +153,9 @@ export const prBoardCss = `
     white-space: nowrap;
     min-width: 0;
 }
+@media (hover: hover) and (pointer: fine) {
 a.prb-ident:hover { text-decoration: underline; }
+}
 /* The PR's handle is bold and underlined so it stands out and reads as the link it is. */
 .prb-num { font-weight: 700; text-decoration: underline; }
 .prb-branch {
@@ -157,7 +169,10 @@ a.prb-ident:hover { text-decoration: underline; }
 /* PR view's stats columns; both open the PR's Files-changed tab. */
 .prb-diff { grid-column: 3; white-space: nowrap; text-decoration: none; }
 .prb-files { grid-column: 4; white-space: nowrap; color: var(--text-dim); text-decoration: none; }
-a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
+@media (hover: hover) and (pointer: fine) {
+a.prb-diff:hover,
+a.prb-files:hover { text-decoration: underline; }
+}
 /* States that wait on the user: chevrons on a filled background. */
 .prb-badge { color: #000; font-weight: 700; border-radius: 3px; padding: 0 1px; }
 .prb-ask { background: #ff8700; }
@@ -169,10 +184,14 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
 /* The activity cell of a live session (or its PR-view sub-row title) opens
    the quick look pane. */
 .prb-peek-open { cursor: pointer; border-radius: 3px; }
+@media (hover: hover) and (pointer: fine) {
 .prb-peek-open:hover { background: rgba(0, 215, 255, 0.12); }
+}
 /* The selection band: the ↑↓ cursor, matching the CLI's highlighted row. */
 .prb-row.prb-sel { background: rgba(0, 215, 255, 0.14); }
+@media (hover: hover) and (pointer: fine) {
 .prb-row.prb-sel:hover { background: rgba(0, 215, 255, 0.18); }
+}
 /* The GitHub status cluster, anchored against the right edge. */
 .prb-status {
     grid-column: -2;
@@ -183,11 +202,18 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
     gap: 8px;
 }
 .prb-status a, .prb-a { text-decoration: none; }
-.prb-status a:hover, .prb-a:hover { text-decoration: underline; }
+@media (hover: hover) and (pointer: fine) {
+.prb-status a:hover,
+.prb-a:hover { text-decoration: underline; }
+}
 /* Promote/demote (↑/↓) and dismiss (✕) actions at the right edge. */
 .prb-flip, .prb-x { color: var(--text-dim); cursor: pointer; }
+@media (hover: hover) and (pointer: fine) {
 .prb-flip:hover { opacity: 1; color: #d6bffb; }
+}
+@media (hover: hover) and (pointer: fine) {
 .prb-x:hover { opacity: 1; color: var(--accent-red); }
+}
 
 /* Metadata row: the PR header's branch, indented under its title */
 .prb-l2-left { display: flex; align-items: baseline; gap: 10px; min-width: 0; padding-left: 19px; }
@@ -200,7 +226,9 @@ a.prb-diff:hover, a.prb-files:hover { text-decoration: underline; }
 .prb-dl-text { color: var(--text-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .prb-dl-right { grid-column: 2 / -1; justify-self: end; white-space: nowrap; display: inline-flex; gap: 10px; }
 .prb-slack { color: var(--accent-cyan); text-decoration: none; }
+@media (hover: hover) and (pointer: fine) {
 .prb-slack:hover { text-decoration: underline; }
+}
 
 /* PR view (p): session sub-rows beneath each primary PR's header */
 .prb-sub-left { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding-left: 19px; }

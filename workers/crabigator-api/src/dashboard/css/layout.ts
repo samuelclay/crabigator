@@ -97,8 +97,10 @@ export const layoutCss = `
     margin: 0;
     position: relative;
 }
+@media (hover: hover) and (pointer: fine) {
 .project-separator:hover {
     background: var(--bg-deep);
+}
 }
 .project-separator:active {
     background: var(--bg-deep);
@@ -171,9 +173,11 @@ export const layoutCss = `
     flex-shrink: 0;
     margin-left: auto;
 }
+@media (hover: hover) and (pointer: fine) {
 .project-add-btn:hover {
     background: var(--bg-surface);
     color: var(--accent-green);
+}
 }
 .spawn-menu {
     display: none;
@@ -203,9 +207,11 @@ export const layoutCss = `
     cursor: pointer;
     font-size: 11px;
 }
+@media (hover: hover) and (pointer: fine) {
 .spawn-menu button:hover {
     background: var(--bg-surface);
     color: var(--accent-cyan);
+}
 }
 .project-close-btn {
     font-family: 'JetBrains Mono', monospace;
@@ -223,16 +229,20 @@ export const layoutCss = `
     transition: all 0.2s;
     flex-shrink: 0;
 }
+@media (hover: hover) and (pointer: fine) {
 .project-close-btn:hover {
     background: var(--bg-surface);
     color: var(--accent-red, #f85149);
     border-color: var(--accent-red, #f85149);
 }
+}
 .project-group.empty {
     opacity: 0.6;
 }
+@media (hover: hover) and (pointer: fine) {
 .project-group.empty:hover {
     opacity: 0.85;
+}
 }
 
 /* Animated sessions container */
@@ -299,8 +309,10 @@ export const layoutCss = `
     transition: all 0.2s;
     position: relative;
 }
+@media (hover: hover) and (pointer: fine) {
 .device-separator:hover {
     background: var(--bg-deep);
+}
 }
 .device-separator-content {
     display: flex;
@@ -424,7 +436,9 @@ export const layoutCss = `
 /* The roster stays inexpensive; only opened rows contain a terminal. */
 .session-row { border: 1px solid #26313d; border-radius: 10px; margin-bottom: 8px; }
 .session-row-button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 76px; padding: 14px 16px; background: transparent; border: 0; color: #c9d1d9; text-align: left; cursor: pointer; font: inherit; }
+@media (hover: hover) and (pointer: fine) {
 .session-row-button:hover { background: #18212c; }
+}
 .session-row-button:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
 .session-row .session-info { flex: 1; min-width: 0; }
 .session-row .title { font-size: 14px; font-weight: 500; white-space: normal; overflow-wrap: anywhere; }

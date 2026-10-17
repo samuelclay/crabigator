@@ -17,10 +17,12 @@ export const popoversCss = `
     text-transform: none;
     letter-spacing: 0;
 }
+@media (hover: hover) and (pointer: fine) {
 .style-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     background: rgba(34, 211, 238, 0.05);
+}
 }
 .style-btn.active {
     border-color: var(--accent-cyan);
@@ -80,9 +82,11 @@ export const popoversCss = `
     transition: all 0.2s;
 }
 .style-option:last-child { border-right: none; }
+@media (hover: hover) and (pointer: fine) {
 .style-option:hover {
     background: var(--bg-card);
     color: var(--text-mid);
+}
 }
 .style-option.active {
     background: var(--accent-peach);
@@ -109,10 +113,12 @@ export const popoversCss = `
     justify-content: center;
     transition: all 0.2s;
 }
+@media (hover: hover) and (pointer: fine) {
 .font-size-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     background: rgba(34, 211, 238, 0.05);
+}
 }
 .font-size-btn:active {
     background: var(--accent-peach);
@@ -157,10 +163,12 @@ export const popoversCss = `
     text-transform: none;
     letter-spacing: 0;
 }
+@media (hover: hover) and (pointer: fine) {
 .settings-btn:hover {
     border-color: var(--accent-magenta);
     color: var(--accent-magenta);
     background: rgba(232, 121, 249, 0.05);
+}
 }
 .settings-btn.active {
     border-color: var(--accent-magenta);
@@ -225,9 +233,11 @@ export const popoversCss = `
     text-transform: none;
     letter-spacing: 0;
 }
+@media (hover: hover) and (pointer: fine) {
 .settings-action-btn:hover {
     transform: none;
     box-shadow: none;
+}
 }
 .settings-action-btn:disabled {
     opacity: 0.5;
@@ -249,10 +259,12 @@ export const popoversCss = `
     text-transform: none;
     letter-spacing: 0;
 }
+@media (hover: hover) and (pointer: fine) {
 .settings-danger-btn:hover {
     background: rgba(248, 113, 113, 0.1);
     border-color: var(--accent-red);
     box-shadow: 0 0 15px rgba(248, 113, 113, 0.2);
+}
 }
 
 /* Sessions popover container: PR board button + sessions button in a row */
@@ -280,7 +292,7 @@ export const popoversCss = `
     user-select: none;
     -webkit-user-select: none;
 }
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
     .sessions-btn:hover {
         border-color: var(--accent-cyan);
         color: var(--accent-cyan);
@@ -388,16 +400,20 @@ export const popoversCss = `
 .session-item:last-child {
     border-bottom: none;
 }
+@media (hover: hover) and (pointer: fine) {
 .session-item:hover {
     background: var(--bg-surface);
+}
 }
 .session-item.focused {
     background: rgba(74, 222, 128, 0.08);
     border-left: 2px solid var(--accent-green);
     padding-left: 10px;
 }
+@media (hover: hover) and (pointer: fine) {
 .session-item.focused:hover {
     background: rgba(74, 222, 128, 0.12);
+}
 }
 .session-item-row {
     display: flex;
@@ -531,8 +547,10 @@ export const popoversCss = `
     text-decoration: none;
     transition: all 0.2s;
 }
+@media (hover: hover) and (pointer: fine) {
 .invite-link a:hover {
     color: var(--accent-magenta);
     text-decoration: none;
+}
 }
 `;

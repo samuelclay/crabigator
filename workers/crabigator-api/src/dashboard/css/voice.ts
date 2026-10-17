@@ -25,11 +25,13 @@ export const voiceCss = `
     height: 18px;
     fill: currentColor;
 }
+@media (hover: hover) and (pointer: fine) {
 .input-area .voice-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     box-shadow: none;
     transform: none;
+}
 }
 
 /* Cancel button - replaces voice+keyboard during recording */
@@ -57,11 +59,13 @@ export const voiceCss = `
     height: 16px;
     fill: currentColor;
 }
+@media (hover: hover) and (pointer: fine) {
 .input-area .voice-cancel-btn:hover {
     border-color: #f97316;
     color: #f97316;
     box-shadow: 0 0 12px rgba(249, 115, 22, 0.3);
     transform: none;
+}
 }
 .input-area .voice-cancel-btn:disabled {
     opacity: 0.4;
@@ -101,11 +105,13 @@ export const voiceCss = `
     height: 14px;
     fill: currentColor;
 }
+@media (hover: hover) and (pointer: fine) {
 .input-area .voice-edit-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     box-shadow: none;
     transform: none;
+}
 }
 .input-area .voice-edit-btn:disabled {
     opacity: 0.4;
@@ -132,9 +138,11 @@ export const voiceCss = `
     transition: box-shadow 0.2s;
     white-space: nowrap;
 }
+@media (hover: hover) and (pointer: fine) {
 .input-area .voice-send-btn:hover {
     box-shadow: none;
     transform: none;
+}
 }
 .input-area .voice-send-btn:disabled {
     background: var(--bg-surface);

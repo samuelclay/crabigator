@@ -66,10 +66,12 @@ export const promptCss = `
     cursor: pointer;
     transition: all 0.2s;
 }
+@media (hover: hover) and (pointer: fine) {
 .prompt-option:hover {
     background: var(--bg-card);
     border-color: var(--accent-cyan);
     box-shadow: none;
+}
 }
 .prompt-option.selected {
     border-color: var(--accent-cyan);
@@ -127,9 +129,11 @@ export const promptCss = `
     letter-spacing: 0;
     transition: all 0.2s;
 }
+@media (hover: hover) and (pointer: fine) {
 .prompt-other button:hover {
     transform: translateY(-1px);
     box-shadow: none;
+}
 }
 
 /* Multi-select pages: each option is a checkbox */
@@ -248,9 +252,11 @@ export const promptCss = `
     transition: all 0.2s;
     white-space: nowrap;
 }
+@media (hover: hover) and (pointer: fine) {
 .prompt-tab-send:hover {
     transform: translateY(-1px);
     box-shadow: none;
+}
 }
 @media (max-width: 768px) {
     .prompt-option-row {

@@ -47,9 +47,11 @@ export const inputCss = `
     letter-spacing: 0;
     transition: transform 0.2s, box-shadow 0.2s;
 }
+@media (hover: hover) and (pointer: fine) {
 .input-area button:hover {
     transform: none;
     box-shadow: none;
+}
 }
 .input-area button:disabled {
     background: var(--bg-surface);
@@ -87,11 +89,13 @@ export const inputCss = `
     height: 18px;
     fill: currentColor;
 }
+@media (hover: hover) and (pointer: fine) {
 .input-area .keyboard-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     box-shadow: none;
     transform: none;
+}
 }
 
 /* Keyboard shortcuts popover */
@@ -173,11 +177,13 @@ export const inputCss = `
     touch-action: manipulation;
     text-align: left;
 }
+@media (hover: hover) and (pointer: fine) {
 .keyboard-popover .key-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--text-bright);
     transform: none;
     box-shadow: none;
+}
 }
 .keyboard-popover .key-btn:active {
     background: var(--bg-abyss);
@@ -249,9 +255,11 @@ export const inputCss = `
     text-transform: none;
     letter-spacing: 0;
 }
+@media (hover: hover) and (pointer: fine) {
 .refresh-btn:hover {
     border-color: var(--accent-cyan);
     color: var(--accent-cyan);
     background: rgba(34, 211, 238, 0.05);
+}
 }
 `;

@@ -94,9 +94,11 @@ body:has(.pairing-gate) .dashboard-layout { padding-inline: 0; }
     text-transform: none;
     letter-spacing: 0;
 }
+@media (hover: hover) and (pointer: fine) {
 .pairing-form button:hover {
     transform: none;
     box-shadow: none;
+}
 }
 .pairing-form button:disabled {
     background: var(--bg-surface);
@@ -149,9 +151,11 @@ body:has(.pairing-gate) .dashboard-layout { padding-inline: 0; }
     text-decoration: none;
     transition: all 0.2s;
 }
+@media (hover: hover) and (pointer: fine) {
 .social-btn:hover {
     border-color: var(--accent-cyan);
     box-shadow: none;
+}
 }
 .pairing-divider {
     display: flex;
@@ -250,9 +254,11 @@ body:has(.pairing-gate) .dashboard-layout { padding-inline: 0; }
     align-items: center;
     justify-content: center;
 }
+@media (hover: hover) and (pointer: fine) {
 .install-copy-btn:hover {
     color: var(--accent-cyan);
     background: rgba(34, 211, 238, 0.1);
+}
 }
 .install-hint {
     color: var(--text-dim);
@@ -273,8 +279,10 @@ body:has(.pairing-gate) .dashboard-layout { padding-inline: 0; }
     text-decoration: none;
     transition: all 0.2s;
 }
+@media (hover: hover) and (pointer: fine) {
 .install-link:hover {
     color: var(--accent-cyan);
     text-decoration: underline;
+}
 }
 `;

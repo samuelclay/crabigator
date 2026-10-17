@@ -14,7 +14,9 @@ export const widgetsCss = `
     font-size: 10px;
     overflow: visible;
 }
+@media (hover: hover) and (pointer: fine) {
 .widgets-header:hover { background: var(--bg-surface); }
+}
 .widgets-header .collapse-btn {
     padding: 2px 6px;
     font-size: 10px;
@@ -88,6 +90,7 @@ export const widgetsCss = `
 [data-tooltip] {
     position: relative;
 }
+@media (hover: hover) and (pointer: fine) {
 [data-tooltip]::after {
     content: attr(data-tooltip);
     position: absolute;
@@ -111,6 +114,7 @@ export const widgetsCss = `
 [data-tooltip]:hover::after {
     opacity: 1;
     transition-delay: 0.5s;
+}
 }
 
 /* Widgets content grid - now only Git and Changes */
@@ -226,7 +230,9 @@ export const widgetsCss = `
     color: inherit;
     text-decoration: none;
 }
+@media (hover: hover) and (pointer: fine) {
 .changes-pr-ident:hover { text-decoration: underline; }
+}
 .changes-pr-num { font-weight: 700; text-decoration: underline; }
 .changes-session-titles .session-mark {
     font-weight: 500;
@@ -289,8 +295,10 @@ body.hide-section-git .widgets-content { grid-template-columns: 1fr; }
     margin-top: -2px;
     padding-left: 10px;
 }
+@media (hover: hover) and (pointer: fine) {
 .slack-thread:hover,
 .slack-thread-text:hover { text-decoration: underline; }
+}
 
 /* Stack widgets for multi-column layouts */
 .container[data-layout="2"] .widgets-content,

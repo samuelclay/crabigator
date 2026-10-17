@@ -69,9 +69,11 @@ export const headerCss = `
     align-items: center;
     justify-content: center;
 }
+@media (hover: hover) and (pointer: fine) {
 .filter-clear:hover {
     background: rgba(251, 191, 36, 0.2);
     color: var(--text-bright);
+}
 }
 
 /* One compact control language for navigation and utility actions. */
@@ -99,8 +101,13 @@ export const headerCss = `
 }
 .header .sessions-count { color: inherit; }
 .header .pr-board-btn-icon { color: inherit; }
-.header .refresh-btn:hover, .header .style-btn:hover, .header .settings-btn:hover,
-.header .sessions-btn:hover, .header .pr-board-btn:hover { background: var(--bg-surface); color: var(--text-bright); }
+@media (hover: hover) and (pointer: fine) {
+.header .refresh-btn:hover,
+.header .style-btn:hover,
+.header .settings-btn:hover,
+.header .sessions-btn:hover,
+.header .pr-board-btn:hover { background: var(--bg-surface); color: var(--text-bright); }
+}
 .header .status { flex: 0 1 auto; max-width: 170px; font: 11px var(--font-ui); }
 
 @media (max-width: 768px) {

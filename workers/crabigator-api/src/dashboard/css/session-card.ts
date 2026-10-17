@@ -138,10 +138,12 @@ export const sessionCardCss = `
     border-radius: 4px;
     transition: all 0.2s;
 }
+@media (hover: hover) and (pointer: fine) {
 .info-btn:hover {
     background: var(--bg-surface);
     color: var(--accent-cyan);
     border-color: var(--border-dim);
+}
 }
 .info-popover {
     display: none;
@@ -186,8 +188,10 @@ export const sessionCardCss = `
     cursor: pointer;
     transition: color 0.2s;
 }
+@media (hover: hover) and (pointer: fine) {
 .info-popover-value.copyable:hover {
     color: var(--accent-cyan);
+}
 }
 .info-popover-actions {
     margin-top: 14px;
@@ -215,10 +219,12 @@ export const sessionCardCss = `
     letter-spacing: 0;
     transition: all 0.2s;
 }
+@media (hover: hover) and (pointer: fine) {
 .focus-session-btn:hover {
     background: var(--bg-surface);
     box-shadow: none;
     transform: translateY(-1px);
+}
 }
 .focus-session-btn:active {
     transform: translateY(0);
@@ -257,10 +263,12 @@ export const sessionCardCss = `
     text-transform: none;
     letter-spacing: 0;
 }
+@media (hover: hover) and (pointer: fine) {
 .pin-btn:hover {
     background: rgba(251, 191, 36, 0.1);
     border-style: solid;
     box-shadow: 0 0 15px rgba(251, 191, 36, 0.2);
+}
 }
 
 /* Collapse button */
@@ -275,9 +283,11 @@ export const sessionCardCss = `
     border-radius: 4px;
     transition: all 0.2s;
 }
+@media (hover: hover) and (pointer: fine) {
 .collapse-btn:hover {
     background: var(--bg-surface);
     color: var(--text-mid);
+}
 }
 .collapse-btn.collapsed { transform: rotate(-90deg); }
 

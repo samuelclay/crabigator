@@ -13,9 +13,11 @@ export const subscriptionCss = `
     cursor: pointer;
     transition: all 0.15s ease;
 }
+@media (hover: hover) and (pointer: fine) {
 .manage-subscription-link:hover {
     color: var(--text-primary);
     text-decoration: underline;
+}
 }
 .manage-subscription-link:disabled {
     opacity: 0.6;
