@@ -5,6 +5,7 @@ struct SessionDetail: View {
     @ObservedObject var stream: SessionStream
     var wide: Bool, active: Bool
     var close: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pinned = true
     @State private var style = false
     @State private var drag: CGFloat = 0
@@ -25,7 +26,9 @@ struct SessionDetail: View {
                             Text(session.title).font(.system(size: 15, weight: .medium)).foregroundStyle(Crab.title).lineLimit(2).accessibilityIdentifier("Selected session \(session.id)")
                             Text(stream.connected ? "\(session.machine) · Live" : session.active ? "Reconnecting…" : "\(session.machine) · Ended").font(.system(size: 11)).foregroundStyle(stream.connected ? Crab.mint : Crab.muted).lineLimit(1)
                         }.frame(maxWidth: .infinity, alignment: .leading)
-                        IconButton(icon: "square.grid.2x2", label: model.preferences.widgets ? "Hide session modules" : "Show session modules", selected: model.preferences.widgets) { model.preferences.widgets.toggle() }
+                        IconButton(icon: "square.grid.2x2", label: model.preferences.widgets ? "Hide session modules" : "Show session modules", selected: model.preferences.widgets) {
+                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { model.preferences.widgets.toggle() }
+                        }
                         IconButton(icon: "arrow.down.to.line", label: pinned ? "Stop following output" : "Follow latest output", selected: pinned) { pinned.toggle() }
                         IconButton(icon: "textformat.size", label: "Style") { style = true }.popover(isPresented: $style, arrowEdge: .top) { StyleMenu(model: model).nativePopover() }
                     }.padding(.horizontal, 4).padding(.vertical, 8)
@@ -62,7 +65,11 @@ struct SessionDetail: View {
                             if showsWidgets {
                                 SessionModules(session: session, data: SessionModuleData(session: session, details: stream.details), prefs: model.preferences, prs: prs)
                                     .id(session.id).frame(height: min(modulesHeight, area.size.height * 0.45))
-                                    .onPreferenceChange(ModuleContentHeight.self) { modulesHeight = $0 }
+                                    .onPreferenceChange(ModuleContentHeight.self) { height in
+                                        guard showsWidgets, height != modulesHeight else { return }
+                                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { modulesHeight = height }
+                                    }
+                                    .transition(.opacity)
                             }
                             else if model.preferences.terminalHeight > 0 { Spacer(minLength: 0) }
                         }

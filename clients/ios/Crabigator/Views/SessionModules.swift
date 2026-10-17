@@ -36,6 +36,7 @@ struct ModuleContentHeight: PreferenceKey {
 /// A compact footer. Only the opened sections consume more than a single row.
 struct SessionModules: View {
     var session: Session, data: SessionModuleData, prefs: Preferences, prs: [PullRequest]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded: Set<String> = []
     private let line = Color.white.opacity(0.07)
     var body: some View {
@@ -107,17 +108,22 @@ struct SessionModules: View {
     }
     private func section<Content: View>(_ key: String, title: String, summary: String, suffix: String = "", color: Color, @ViewBuilder content: () -> Content) -> some View {
         VStack(spacing: 0) {
-            Button { if expanded.contains(key) { expanded.remove(key) } else { expanded.insert(key) } } label: {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+                    if expanded.contains(key) { expanded.remove(key) } else { expanded.insert(key) }
+                }
+            } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: expanded.contains(key) ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold)).frame(width: 10)
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).frame(width: 10)
+                        .rotationEffect(.degrees(expanded.contains(key) ? 90 : 0))
                     Text(title).font(.system(size: 11, weight: .semibold)).fixedSize()
                     Text(summary).font(.system(size: 12)).foregroundStyle(Crab.muted).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                     if !suffix.isEmpty { Text(suffix).font(.system(size: 10)).foregroundStyle(Crab.muted).lineLimit(1).fixedSize() }
                 }.foregroundStyle(color).padding(.horizontal, 10).frame(minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain).accessibilityLabel(title).accessibilityValue(expanded.contains(key) ? "Expanded" : "Collapsed").accessibilityIdentifier("module-" + key)
-            if expanded.contains(key) { content() }
+            if expanded.contains(key) { content().transition(.opacity) }
             Rectangle().fill(line).frame(height: 0.5)
-        }
+        }.clipped()
     }
     private func detailText(_ text: String) -> some View { Text(text).font(.system(size: 12)).foregroundStyle(Crab.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.bottom, 10) }
     private func changeRows(_ rows: [ModuleChange]) -> some View {
@@ -194,6 +200,7 @@ struct SessionModulesFixture: View {
             "recap": ["latest": ["headline": "Added localization and language selection", "bullets": ["Translated the app into 21 languages.", "Added native language selection on each platform."]]],
             "git": ["branch": "codex/localization", "files": [["path": "Settings/LanguagePicker.swift", "status": "M", "additions": 42, "deletions": 8]]],
             "changes": ["by_language": [["changes": [["name": "LanguagePicker", "kind": "struct", "additions": 42, "deletions": 8]]]]],
+            "commit_history": ["history": [["short_hash": "abc1234", "subject": "Add language selection"]]],
             "prs": ["prs": [
                 ["owner": "samuelclay", "repo": "turntouch-ios", "number": 15, "title": "Add 21-language localization and iOS language selection", "url": "https://github.com/samuelclay/turntouch-ios/pull/15", "state": "OPEN", "primary": true, "branch": "codex/localization-21-languages", "additions": 41683, "deletions": 738, "checks_total": 3, "mergeable": "MERGEABLE"],
                 ["owner": "samuelclay", "repo": "turntouch-android", "number": 1, "title": "Add 21-language localization and Android language selection", "url": "https://github.com/samuelclay/turntouch-android/pull/1", "state": "MERGED", "primary": true, "branch": "codex/localization-21-languages", "additions": 20920, "deletions": 299]
