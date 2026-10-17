@@ -419,3 +419,43 @@ it('spawns only on the selected desktop and rejects another account or invalid i
         for (const socket of desktops) socket.close();
     }
 });
+
+it('resolves connected panels after an answer and never replays the consumed prompt', async () => {
+    const stub = testEnv.SESSION.get(testEnv.SESSION.idFromName('mobile-panel-resolution'));
+    const desktop = (await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } })).webSocket!;
+    desktop.accept();
+    const events: unknown[] = [];
+    const connectViewer = async () => {
+        const viewer = (await stub.fetch('https://internal/events', { headers: { Upgrade: 'websocket' } })).webSocket!;
+        viewer.addEventListener('message', event => { events.push(JSON.parse(String(event.data))); });
+        viewer.accept();
+        return viewer;
+    };
+    const snapshot = async () => (await stub.fetch('https://internal/snapshot')).json<{ prompt_revision: number; attention_pending: boolean }>();
+    let viewer = await connectViewer();
+    const prompt = { prompt_type: 'question', questions: [{ question: 'Where?', options: [{ label: 'Here', value: '1' }] }] };
+    try {
+        desktop.send(JSON.stringify({ type: 'state', state: 'question' }));
+        desktop.send(JSON.stringify({ type: 'prompt', prompt }));
+        await expect.poll(() => events).toContainEqual({ type: 'prompt', prompt });
+        events.length = 0;
+        const reply = await stub.fetch('https://internal/answer', { method: 'POST',
+            body: JSON.stringify({ text: 'Here', expected_prompt_revision: (await snapshot()).prompt_revision }) });
+        expect(reply.status).toBe(200);
+        await reply.text();
+        await expect.poll(() => events).toContainEqual({ type: 'prompt', prompt: null });
+        viewer.close(); events.length = 0;
+        viewer = await connectViewer();
+        // A later screen frame fences the initial event replay on this socket.
+        desktop.send(JSON.stringify({ type: 'screen', content: 'Answer accepted' }));
+        await expect.poll(() => events).toContainEqual({ type: 'screen', content: 'Answer accepted' });
+        expect(events).not.toContainEqual({ type: 'prompt', prompt });
+        // A new question answered locally must clear the same connected panel.
+        desktop.send(JSON.stringify({ type: 'prompt', prompt: { ...prompt, current_question: 1 } }));
+        await expect.poll(async () => (await snapshot()).attention_pending).toBe(true);
+        events.length = 0;
+        desktop.send(JSON.stringify({ type: 'prompt', prompt: null }));
+        await expect.poll(() => events).toContainEqual({ type: 'prompt', prompt: null });
+        expect((await snapshot()).attention_pending).toBe(false);
+    } finally { viewer.close(); desktop.close(); }
+});

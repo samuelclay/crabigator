@@ -1253,10 +1253,8 @@ export class SessionDO implements DurableObject {
             this.sendViewerEvent(viewer, this.ephemeralState.lastStats);
         }
 
-        // Send current prompt if any (persistent - for interactive dashboard)
-        // Only send if session is in interactive state (permission/question)
-        const isInteractiveState = this.persistentState.state === 'permission' || this.persistentState.state === 'question';
-        if (this.persistentState.currentPrompt && isInteractiveState) {
+        // Never replay a consumed prompt while the desktop is still repainting.
+        if (this.persistentState.currentPrompt && this.hasPendingAttention()) {
             const promptEvent: SessionEvent = {
                 type: 'prompt',
                 prompt: this.persistentState.currentPrompt,
@@ -1324,6 +1322,9 @@ export class SessionDO implements DurableObject {
         // cannot both reach the terminal. A changed prompt opens a new revision.
         this.persistentState.answeredRevision = revision;
         this.persistentState.unstructuredAttentionBlocked = true;
+        // Connected phones must resolve their panels even if the desktop takes
+        // time to repaint. Push also clears notifications on background devices.
+        this.broadcast({ type: 'prompt', prompt: null });
         await this.state.storage.put('persistentState', this.persistentState);
         this.notifyMobileAttention();
     }
