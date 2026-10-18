@@ -16,17 +16,26 @@ import UserNotifications
                 }
         }
     }
+    private var rootView: some View {
+        let connection = Credentials.shared.connection()
+        // A new account gets new view state, including Conductor's conversation and draft.
+        return RootView(model: model).id(model.paired ? connection.origin + "|" + connection.token : "unpaired")
+    }
     @ViewBuilder private var content: some View {
         #if DEBUG
-        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_LINKS"] == "1" {
+        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_CONDUCTOR"] == "1" {
+            ConductorFixture(model: model)
+        } else if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_VOICE"] == "1" {
+            VoiceComposerFixture()
+        } else if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_LINKS"] == "1" {
             TerminalLinksFixture()
         } else if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_MOMENTUM"] == "1" {
             TerminalMomentumFixture()
         } else if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_MODULES"] == "1" {
             SessionModulesFixture()
-        } else { RootView(model: model) }
+        } else { rootView }
         #else
-        RootView(model: model)
+        rootView
         #endif
     }
 }
@@ -77,11 +86,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 }
 struct RootView: View {
+    @StateObject private var conductor: ConductorModel
     @ObservedObject var model: SessionModel
     @State private var outgoing: SessionStream?
     @State private var pageOffset: CGFloat = 0
     @State private var outgoingOffset: CGFloat = 0
     @State private var navigation = 0
+    init(model: SessionModel, conductor: ConductorModel? = nil) {
+        self.model = model
+        _conductor = StateObject(wrappedValue: conductor ?? ConductorModel())
+    }
     var body: some View {
         VStack(spacing: 0) {
             if let error = model.error { HStack { Text(error).font(.caption); Spacer(); Button("Dismiss") { model.error = nil } }.padding(10).background(Crab.red.opacity(0.25)) }
@@ -107,6 +121,10 @@ struct RootView: View {
                 }
             }
         }.background(Crab.ink).foregroundStyle(Color(uiColor: TerminalText.rgb(0xE9EEF4)))
+            .opacity(model.paired && model.navigation.conductor ? 0 : 1)
+            .allowsHitTesting(!(model.paired && model.navigation.conductor))
+            .accessibilityHidden(model.paired && model.navigation.conductor)
+            .overlay { if model.paired && model.navigation.conductor { ConductorView(model: model, conductor: conductor) } }
     }
     @ViewBuilder func detail(wide: Bool, width: CGFloat) -> some View {
         ZStack {

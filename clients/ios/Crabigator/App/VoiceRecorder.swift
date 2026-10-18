@@ -10,8 +10,30 @@ import SwiftUI
     private var recorder: AVAudioRecorder?, timer: Task<Void, Never>?, transcription: Task<Void, Never>?
     private var file: URL?, generation = 0
     var timedOut: (() -> Void)?
+    // A small noise floor keeps silence calm; speech gets a larger visual range.
+    static func displayLevel(power: Float) -> CGFloat {
+        min(1, max(0, CGFloat(pow(10, Double(power) / 40) - 0.018) * 2.4))
+    }
+    #if DEBUG
+    private var preview: Bool { ProcessInfo.processInfo.environment["CRABIGATOR_TEST_VOICE"] == "1" }
+    #endif
     func start() async {
         generation += 1; let epoch = generation
+        #if DEBUG
+        if preview {
+            recording = true; error = nil; seconds = 0; levels = Array(repeating: 0, count: 32)
+            timer = Task {
+                let powers: [Float] = [-65, -58, -40, -32, -26, -20, -24, -29, -35, -48, -62, -55, -36, -23, -18, -30]
+                var sample = 0
+                while !Task.isCancelled && recording {
+                    levels = Array(levels.dropFirst()) + [Self.displayLevel(power: powers[sample % powers.count])]
+                    sample += 1; seconds = sample / 20
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+            }
+            return
+        }
+        #endif
         let granted = await AVAudioApplication.requestRecordPermission()
         guard epoch == generation else { return }
         guard granted else { error = "Microphone access is off."; return }
@@ -27,7 +49,7 @@ import SwiftUI
                 let start = Date()
                 while !Task.isCancelled && recording {
                     recorder?.updateMeters(); let power = recorder?.averagePower(forChannel: 0) ?? -80
-                    levels = Array(levels.dropFirst()) + [min(1, CGFloat(pow(10, power / 40)))]
+                    levels = Array(levels.dropFirst()) + [Self.displayLevel(power: power)]
                     seconds = Int(Date().timeIntervalSince(start))
                     if seconds >= 120 { timedOut?(); break }
                     try? await Task.sleep(for: .milliseconds(50))
@@ -36,6 +58,18 @@ import SwiftUI
         } catch { self.error = error.localizedDescription; cancel() }
     }
     func finish(_ completion: @escaping (String) -> Void) {
+        #if DEBUG
+        if preview && recording {
+            recording = false; processing = true; timer?.cancel()
+            let epoch = generation
+            transcription = Task {
+                try? await Task.sleep(for: .milliseconds(800))
+                guard !Task.isCancelled, epoch == generation else { return }
+                completion("Sample voice transcript"); processing = false
+            }
+            return
+        }
+        #endif
         guard recording, let url = file else { return }
         recorder?.stop(); recorder = nil; recording = false; processing = true; timer?.cancel()
         try? AVAudioSession.sharedInstance().setActive(false)

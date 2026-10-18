@@ -9,42 +9,66 @@ struct SessionComposer: View {
     @StateObject private var voice = VoiceRecorder()
     @State private var focused = false
     @Environment(\.scenePhase) private var phase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var voiceVisible: Bool { voice.recording || voice.processing }
+    private var composerAnimation: Animation { reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.4, dampingFraction: 0.86) }
+    private var controlTransition: AnyTransition { reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.8)).combined(with: .move(edge: .trailing)) }
+    private var contentTransition: AnyTransition { reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)) }
     var enabled: Bool { active && stream.connected && !stream.sending && !voice.processing }
     var blank: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var body: some View {
         VStack(spacing: 0) {
             Divider()
-            if let error = voice.error { HStack { Text(error).font(.caption).foregroundStyle(Crab.red); Spacer(); IconButton(icon: "xmark", label: "Dismiss recording error") { voice.error = nil } }.padding(.leading, 12) }
+            if let error = voice.error {
+                HStack { Text(error).font(.caption).foregroundStyle(Crab.red); Spacer(); IconButton(icon: "xmark", label: "Dismiss recording error") { voice.error = nil } }
+                    .padding(.leading, 12).transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+            }
             HStack(alignment: .bottom, spacing: 4) {
-                if voice.recording || voice.processing {
-                    IconButton(icon: "xmark", label: "Cancel recording") { voice.cancel() }
-                    VStack(spacing: 4) {
-                        if voice.processing { ProgressView("Transcribing…").font(.caption).frame(maxWidth: .infinity) }
-                        else {
-                            Canvas { context, size in
-                                for (i, level) in voice.levels.enumerated() {
-                                    let step = size.width / CGFloat(voice.levels.count), h = max(2, level * size.height)
-                                    let rect = CGRect(x: (CGFloat(i) + 0.25) * step, y: (size.height - h) / 2, width: step * 0.5, height: h)
-                                    context.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(Crab.orange))
-                                }
-                            }.frame(height: 26).accessibilityLabel("Microphone waveform")
-                            Text("\(voice.seconds / 60):\(String(format: "%02d", voice.seconds % 60)) / 2:00").font(.system(size: 11)).foregroundStyle(Crab.muted)
-                        }
-                    }.frame(minHeight: 44)
-                    IconButton(icon: "pencil", label: "Edit recording", enabled: voice.recording) { finish(send: false) }
-                    IconButton(icon: "arrow.up", label: "Send recording", selected: true, enabled: voice.recording && stream.connected) { finish(send: true) }
-                } else {
-                    IconButton(icon: "mic", label: "Record voice", enabled: enabled) { focused = false; keys = false; Task { await voice.start() } }
+                // Keep the leading button in place as the microphone becomes Cancel.
+                IconButton(icon: voiceVisible ? "xmark" : "mic", label: voiceVisible ? "Cancel recording" : "Record voice", selected: voiceVisible, enabled: voiceVisible || enabled) {
+                    if voiceVisible { voice.cancel() }
+                    else { focused = false; keys = false; Task { await voice.start() } }
+                }.contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
+                if !voiceVisible {
                     IconButton(icon: "keyboard", label: "Terminal keys", selected: keys) { focused = false; keys.toggle() }
                         .popover(isPresented: $keys, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) { TerminalKeyboard(codex: stream.selected?.platform == "codex", enabled: enabled) { bytes in stream.send(TerminalAction(route: "key-sequence", body: ["steps": [["type": "text", "text": bytes]]])) }.nativePopover() }
-                    MessageField(placeholder: "Message", text: $draft, focused: $focused) { if enabled && !blank { send() } }.padding(.horizontal, 12).padding(.vertical, 11).frame(minHeight: 44).overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.2)))
-                    if !blank { IconButton(icon: "arrow.up", label: "Send", selected: true, enabled: enabled) { send() }.transition(.opacity.combined(with: .scale)) }
+                        .transition(controlTransition)
+                }
+                ZStack {
+                    if voiceVisible {
+                        VStack(spacing: 4) {
+                            ZStack {
+                                if voice.processing { ProgressView().tint(Crab.orange).transition(.opacity) }
+                                else { MicrophoneWaveform(levels: voice.levels).transition(.opacity) }
+                            }.frame(height: 40)
+                            Text(voice.processing ? "Transcribing…" : "\(voice.seconds / 60):\(String(format: "%02d", voice.seconds % 60)) / 2:00")
+                                .font(.system(size: 11, design: .monospaced)).foregroundStyle(Crab.muted).contentTransition(.numericText())
+                        }.padding(.horizontal, 10).padding(.vertical, 8).transition(contentTransition)
+                    } else {
+                        MessageField(placeholder: "Message", text: $draft, focused: $focused) { if enabled && !blank { send() } }
+                            .padding(.horizontal, 12).padding(.vertical, 11).frame(minHeight: 44).transition(contentTransition)
+                    }
+                }.frame(maxWidth: .infinity)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Crab.orange.opacity(voiceVisible ? 0.07 : 0)))
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(voiceVisible ? Crab.orange.opacity(0.4) : Color.white.opacity(0.2)))
+                if voiceVisible {
+                    IconButton(icon: "pencil", label: "Edit recording", enabled: voice.recording) { finish(send: false) }.transition(controlTransition)
+                }
+                if voiceVisible || !blank {
+                    IconButton(icon: "arrow.up", label: voiceVisible ? "Send recording" : "Send", selected: true, enabled: voiceVisible ? voice.recording && stream.connected : enabled) {
+                        if voiceVisible { finish(send: true) } else { send() }
+                    }.transition(controlTransition)
                 }
             }.padding(8)
-        }.background(Crab.ink).animation(.easeInOut(duration: 0.18), value: draft.isEmpty)
+        }.background(Crab.ink)
+            .animation(composerAnimation, value: voiceVisible)
+            .animation(composerAnimation, value: voice.processing)
+            .animation(composerAnimation, value: voice.error)
+            .animation(composerAnimation, value: blank)
             .onAppear { draft = model.drafts[sessionID] ?? ""; voice.timedOut = { finish(send: false) } }
             .onChange(of: draft) { _, value in model.drafts[sessionID] = value }
             .onChange(of: active) { _, value in if !value { voice.cancel(); focused = false; keys = false } }
+            .onChange(of: model.navigation.conductor) { _, value in if value { voice.cancel(); focused = false; keys = false } }
             .onChange(of: phase) { _, value in if value != .active { voice.cancel() } }
             .onDisappear { voice.cancel() }
     }
@@ -60,6 +84,21 @@ struct SessionComposer: View {
         stream.send(TerminalAction(route: "answer", body: ["text": text])) { if draft == text { draft = "" } }
     }
 }
+/// Real microphone energy, with enough height and contrast to read at a glance.
+private struct MicrophoneWaveform: View {
+    let levels: [CGFloat]
+    var body: some View {
+        Canvas { context, size in
+            let step = size.width / CGFloat(max(1, levels.count))
+            for (i, level) in levels.enumerated() {
+                let height = max(3, level * size.height)
+                let rect = CGRect(x: (CGFloat(i) + 0.18) * step, y: (size.height - height) / 2, width: step * 0.64, height: height)
+                context.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(Crab.orange))
+            }
+        }.accessibilityLabel("Microphone waveform")
+    }
+}
+
 struct TerminalKeyboard: View {
     var codex: Bool, enabled: Bool
     var send: (String) -> Void

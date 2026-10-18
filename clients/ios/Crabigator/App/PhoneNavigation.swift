@@ -29,6 +29,7 @@ struct PhoneNavigation: UIViewControllerRepresentable {
     func updateUIViewController(_ navigation: UINavigationController, context: Context) {
         context.coordinator.board?.rootView = boardView
         context.coordinator.synchronize()
+        navigation.view.accessibilityElementsHidden = model.navigation.conductor
     }
     private var boardView: AnyView {
         AnyView(BoardView(model: model, listMode: $listMode, expanded: $expanded, wide: false) { session, order in

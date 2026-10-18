@@ -199,6 +199,9 @@ import OSLog
     var drafts: [String: String] = [:]
     var origin: String { api.credentials.connection().origin }
     func start() {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_CONDUCTOR_ROSTER"] == "1" { return }
+        #endif
         foreground = true; stream.foreground = true
         guard paired, polling == nil else { return }
         polling = Task {
@@ -248,6 +251,7 @@ import OSLog
     }
     func open(_ id: String) async {
         guard paired else { return }
+        navigation.conductor = false
         restoreSelection = false; selectionEpoch += 1
         let request = selectionEpoch
         await refresh()

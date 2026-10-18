@@ -91,6 +91,8 @@ func ageText(_ timestamp: Int, now: Int) -> String {
 }
 
 struct NavigationState: Codable, Equatable {
+    private var savedConductor: Bool?
+    var conductor: Bool { get { savedConductor ?? false } set { savedConductor = newValue } }
     var listMode = true
     var expanded = true
     var selectedID: String?

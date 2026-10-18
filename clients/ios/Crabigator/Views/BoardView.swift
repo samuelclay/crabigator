@@ -55,24 +55,7 @@ struct BoardView: View {
                     expanded: expanded).nativePopover() }
         }.padding(.horizontal, 8).padding(.vertical, floatingToolbar ? 2 : 6)
     }
-    var footer: some View {
-        HStack(spacing: 4) {
-            segment("List", icon: "list.bullet", isList: true)
-            segment("PR board", icon: "rectangle.split.3x1", isList: false)
-        }.padding(5).background(.ultraThinMaterial, in: Capsule()).overlay(Capsule().strokeBorder(Color.white.opacity(0.12))).shadow(color: .black.opacity(0.3), radius: 10, y: 4)
-    }
-    func segment(_ label: String, icon: String, isList: Bool) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.36)) {
-                if listMode == isList && wide { expanded.toggle() } else { listMode = isList }
-            }
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: icon); Text(label).boardFont(13, weight: .medium)
-                if wide && listMode == isList { Image(systemName: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").boardFont(10) }
-            }.padding(.horizontal, 14).frame(height: 40).background(listMode == isList ? Crab.orange.opacity(0.18) : .clear, in: Capsule()).foregroundStyle(listMode == isList ? Crab.orange : Crab.muted)
-        }.buttonStyle(.plain).accessibilityIdentifier(label).accessibilityValue(listMode == isList ? (wide ? (expanded ? "Selected, full width" : "Selected, sidebar") : "Selected") : "")
-    }
+    var footer: some View { BrowserModeControl(model: model, wide: wide) }
     func sections(_ list: Bool, includeAge: Bool = true) -> [RosterSection] {
         var preferences = model.preferences
         if !includeAge { preferences.boardAgeHours = 0 }
