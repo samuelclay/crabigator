@@ -21,14 +21,20 @@ const TEXT_MODE_ITALIC: u8 = 0b0000_0100;
 const TEXT_MODE_UNDERLINE: u8 = 0b0000_1000;
 const TEXT_MODE_INVERSE: u8 = 0b0001_0000;
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub struct Attrs {
     pub fgcolor: Color,
     pub bgcolor: Color,
     pub mode: u8,
+    pub hyperlink: Option<std::sync::Arc<String>>,
 }
 
 impl Attrs {
+    pub fn reset_sgr(&mut self) {
+        self.fgcolor = Color::Default;
+        self.bgcolor = Color::Default;
+        self.mode = 0;
+    }
     pub fn bold(&self) -> bool {
         self.mode & TEXT_MODE_BOLD != 0
     }
@@ -92,7 +98,18 @@ impl Attrs {
     }
 
     pub fn write_escape_code_diff(&self, contents: &mut Vec<u8>, other: &Self) {
-        if self != other && self == &Self::default() {
+        if self.hyperlink != other.hyperlink {
+            contents.extend_from_slice(b"\x1b]8;;");
+            if let Some(url) = &self.hyperlink {
+                contents.extend_from_slice(url.as_bytes());
+            }
+            contents.extend_from_slice(b"\x1b\\");
+        }
+        if self != other
+            && self.fgcolor == Color::Default
+            && self.bgcolor == Color::Default
+            && self.mode == 0
+        {
             crate::term::ClearAttrs.write_buf(contents);
             return;
         }

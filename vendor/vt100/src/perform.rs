@@ -171,6 +171,11 @@ impl<CB: crate::callbacks::Callbacks> vte::Perform for WrappedScreen<CB> {
 
     fn osc_dispatch(&mut self, params: &[&[u8]], _bel_terminated: bool) {
         match params {
+            [b"8", _, rest @ ..] if !rest.is_empty() => {
+                // URLs may contain semicolons, which vte splits into OSC parameters.
+                let uri = rest.join(&b';');
+                self.screen.set_hyperlink(&uri);
+            }
             [b"0", s] => {
                 self.callbacks.set_window_icon_name(&mut self.screen, s);
                 self.callbacks.set_window_title(&mut self.screen, s);

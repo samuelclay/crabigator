@@ -488,6 +488,52 @@ mod tests {
     use super::cursor_record;
 
     #[test]
+    fn hyperlinks_survive_capture_history_and_screen_repaints() {
+        let mut capture = capture(40, 2);
+        let open = "\x1b]8;;https://example.com/pr;a=1\x1b\\";
+        let close = "\x1b]8;;\x1b\\";
+        // OSC can arrive in pieces; SGR reset must not end a hyperlink.
+        for byte in format!("{open}\x1b[34;4mRead\x1b[0m PR{close} plain").bytes() {
+            capture.capture_output(&[byte]).unwrap();
+        }
+        let screen = super::screen_to_string(capture.capture_parser.screen());
+        assert!(screen.contains(open));
+        assert!(screen.contains(&format!("PR{close}")));
+        capture.capture_output(b"\r\nsecond\r\nthird").unwrap();
+        let history = capture.update_scrollback().unwrap().unwrap().diff;
+        assert!(history.contains(open));
+        assert!(history.contains(&format!("PR{close}")));
+        assert!(!super::screen_to_string(capture.capture_parser.screen()).contains(open));
+        capture.capture_output(format!("\r{open}old{close}\r\x1b[2Knew").as_bytes()).unwrap();
+        assert!(!super::screen_to_string(capture.capture_parser.screen()).contains(open));
+        capture.cleanup();
+    }
+
+    #[test]
+    fn hyperlink_snapshots_and_diffs_round_trip_wrapped_rows() {
+        let mut original = vt100::Parser::new(4, 10, 10);
+        original.process(b"\x1b]8;;https://example.com/one\x07abcdefghijklmnop\x1b[0mqrst\x1b]8;;\x07 plain");
+        let mut restored = vt100::Parser::new(4, 10, 10);
+        restored.process(&original.screen().contents_formatted());
+        assert_eq!(super::screen_to_string(restored.screen()), super::screen_to_string(original.screen()));
+        let previous = original.screen().clone();
+        // Changing only the destination must still update cells in a screen diff.
+        original.process(b"\x1b[H\x1b]8;;https://example.com/two\x07abcd\x1b]8;;\x07\x1b[2;1H\x1b[K");
+        restored.process(&original.screen().contents_diff(&previous));
+        assert_eq!(super::screen_to_string(restored.screen()), super::screen_to_string(original.screen()));
+        // A full redraw must clear a destination left open by earlier output.
+        let mut plain = vt100::Parser::new(4, 10, 0);
+        plain.process(b"plain");
+        restored.process(b"\x1b]8;;https://old.example\x07");
+        restored.process(&plain.screen().contents_formatted());
+        assert_eq!(super::screen_to_string(restored.screen()), super::screen_to_string(plain.screen()));
+        restored.process(b"\x1b]8;;https://old.example\x07");
+        restored.process(&plain.screen().attributes_formatted());
+        restored.process(b" text");
+        assert!(!super::screen_to_string(restored.screen()).contains("old.example"));
+    }
+
+    #[test]
     fn cursor_record_follows_the_visible_cell() {
         let mut parser = vt100::Parser::new(5, 20, 0);
         parser.process(b"hi");

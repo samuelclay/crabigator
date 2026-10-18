@@ -279,7 +279,11 @@ impl Screen {
             // visible_rows can never return enough rows to overflow here
             let i = i.try_into().unwrap();
             let mut contents = vec![];
-            row.write_contents_formatted(&mut contents, start, width, i, wrapping, None, None);
+            let (_, attrs) =
+                row.write_contents_formatted(&mut contents, start, width, i, wrapping, None, None);
+            if attrs.hyperlink.is_some() {
+                crate::term::ClearHyperlink.write_buf(&mut contents);
+            }
             if start == 0 && width == self.grid.size().cols {
                 wrapping = row.wrapped();
             }
@@ -310,7 +314,7 @@ impl Screen {
         }
         let prev_attrs = self
             .grid()
-            .write_contents_diff(contents, prev.grid(), prev.attrs);
+            .write_contents_diff(contents, prev.grid(), prev.attrs.clone());
         self.attrs.write_escape_code_diff(contents, &prev_attrs);
     }
 
@@ -439,6 +443,7 @@ impl Screen {
     }
 
     fn write_attributes_formatted(&self, contents: &mut Vec<u8>) {
+        crate::term::ClearHyperlink.write_buf(contents);
         crate::term::ClearAttrs.write_buf(contents);
         self.attrs
             .write_escape_code_diff(contents, &crate::attrs::Attrs::default());
@@ -622,12 +627,12 @@ impl Screen {
 
     fn save_cursor(&mut self) {
         self.grid_mut().save_cursor();
-        self.saved_attrs = self.attrs;
+        self.saved_attrs = self.attrs.clone();
     }
 
     fn restore_cursor(&mut self) {
         self.grid_mut().restore_cursor();
-        self.attrs = self.saved_attrs;
+        self.attrs = self.saved_attrs.clone();
     }
 
     fn set_mode(&mut self, mode: u8) {
@@ -667,7 +672,7 @@ impl Screen {
     pub(crate) fn text(&mut self, c: char) {
         let pos = self.grid().pos();
         let size = self.grid().size();
-        let attrs = self.attrs;
+        let attrs = self.attrs.clone();
 
         let width = c.width();
         if width.is_none() && (u32::from(c)) < 256 {
@@ -803,7 +808,7 @@ impl Screen {
                     // wide continuation character, so it must have the first
                     // half of the wide character before it.
                     .unwrap();
-                prev_cell.clear(attrs);
+                prev_cell.clear(attrs.clone());
             }
 
             if self
@@ -830,7 +835,7 @@ impl Screen {
                     // wide character, so it must have the second half of the
                     // wide character after it.
                     .unwrap();
-                next_cell.set(' ', attrs);
+                next_cell.set(' ', attrs.clone());
             }
 
             let cell = self
@@ -841,7 +846,7 @@ impl Screen {
                 // called col_wrap() immediately before this, which ensures
                 // that self.grid().pos().col has a valid value.
                 .unwrap();
-            cell.set(c, attrs);
+            cell.set(c, attrs.clone());
             self.grid_mut().col_inc(1);
             if width > 1 {
                 let pos = self.grid().pos();
@@ -876,7 +881,7 @@ impl Screen {
                         // wide, and so it must have the second half of the
                         // wide character after it.
                         .unwrap();
-                    next_next_cell.clear(attrs);
+                    next_next_cell.clear(attrs.clone());
                     if next_next_pos.col == size.cols - 1 {
                         self.grid_mut()
                             .drawing_row_mut(pos.row)
@@ -1016,7 +1021,7 @@ impl Screen {
 
     // CSI J
     pub(crate) fn ed(&mut self, mode: u16, mut unhandled: impl FnMut(&mut Self)) {
-        let attrs = self.attrs;
+        let attrs = self.attrs.clone();
         match mode {
             0 => self.grid_mut().erase_all_forward(attrs),
             1 => self.grid_mut().erase_all_backward(attrs),
@@ -1038,7 +1043,7 @@ impl Screen {
 
     // CSI K
     pub(crate) fn el(&mut self, mode: u16, mut unhandled: impl FnMut(&mut Self)) {
-        let attrs = self.attrs;
+        let attrs = self.attrs.clone();
         match mode {
             0 => self.grid_mut().erase_row_forward(attrs),
             1 => self.grid_mut().erase_row_backward(attrs),
@@ -1079,7 +1084,7 @@ impl Screen {
 
     // CSI X
     pub(crate) fn ech(&mut self, count: u16) {
-        let attrs = self.attrs;
+        let attrs = self.attrs.clone();
         self.grid_mut().erase_cells(count, attrs);
     }
 
@@ -1157,13 +1162,23 @@ impl Screen {
         }
     }
 
+    // OSC 8
+    pub(crate) fn set_hyperlink(&mut self, uri: &[u8]) {
+        self.attrs.hyperlink = std::str::from_utf8(uri)
+            .ok()
+            .filter(|url| {
+                !url.is_empty() && url.len() <= 8192 && !url.chars().any(char::is_control)
+            })
+            .map(|url| std::sync::Arc::new(url.to_owned()));
+    }
+
     // CSI m
     pub(crate) fn sgr(&mut self, params: &vte::Params, mut unhandled: impl FnMut(&mut Self)) {
         // XXX really i want to just be able to pass in a default Params
         // instance with a 0 in it, but vte doesn't allow creating new Params
         // instances
         if params.is_empty() {
-            self.attrs = crate::attrs::Attrs::default();
+            self.attrs.reset_sgr();
             return;
         }
 
@@ -1200,7 +1215,7 @@ impl Screen {
 
         loop {
             match next_param!() {
-                [0] => self.attrs = crate::attrs::Attrs::default(),
+                [0] => self.attrs.reset_sgr(),
                 [1] => self.attrs.set_bold(),
                 [2] => self.attrs.set_dim(),
                 [3] => self.attrs.set_italic(true),

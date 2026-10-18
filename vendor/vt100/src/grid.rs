@@ -222,6 +222,7 @@ impl Grid {
     }
 
     pub fn write_contents_formatted(&self, contents: &mut Vec<u8>) -> crate::attrs::Attrs {
+        crate::term::ClearHyperlink.write_buf(contents);
         crate::term::ClearAttrs.write_buf(contents);
         crate::term::ClearScreen.write_buf(contents);
 
@@ -246,7 +247,7 @@ impl Grid {
             wrapping = row.wrapped();
         }
 
-        self.write_cursor_position_formatted(contents, Some(prev_pos), Some(prev_attrs));
+        self.write_cursor_position_formatted(contents, Some(prev_pos), Some(prev_attrs.clone()));
 
         prev_attrs
     }
@@ -281,7 +282,7 @@ impl Grid {
             prev_wrapping = prev_row.wrapped();
         }
 
-        self.write_cursor_position_formatted(contents, Some(prev_pos), Some(prev_attrs));
+        self.write_cursor_position_formatted(contents, Some(prev_pos), Some(prev_attrs.clone()));
 
         prev_attrs
     }
@@ -426,14 +427,14 @@ impl Grid {
 
     pub fn erase_all(&mut self, attrs: crate::attrs::Attrs) {
         for row in self.drawing_rows_mut() {
-            row.clear(attrs);
+            row.clear(attrs.clone());
         }
     }
 
     pub fn erase_all_forward(&mut self, attrs: crate::attrs::Attrs) {
         let pos = self.pos;
         for row in self.drawing_rows_mut().skip(usize::from(pos.row) + 1) {
-            row.clear(attrs);
+            row.clear(attrs.clone());
         }
 
         self.erase_row_forward(attrs);
@@ -442,7 +443,7 @@ impl Grid {
     pub fn erase_all_backward(&mut self, attrs: crate::attrs::Attrs) {
         let pos = self.pos;
         for row in self.drawing_rows_mut().take(usize::from(pos.row)) {
-            row.clear(attrs);
+            row.clear(attrs.clone());
         }
 
         self.erase_row_backward(attrs);
@@ -457,7 +458,7 @@ impl Grid {
         let pos = self.pos;
         let row = self.current_row_mut();
         for col in pos.col..size.cols {
-            row.erase(col, attrs);
+            row.erase(col, attrs.clone());
         }
     }
 
@@ -466,7 +467,7 @@ impl Grid {
         let pos = self.pos;
         let row = self.current_row_mut();
         for col in 0..=pos.col.min(size.cols - 1) {
-            row.erase(col, attrs);
+            row.erase(col, attrs.clone());
         }
     }
 
@@ -509,7 +510,7 @@ impl Grid {
         let pos = self.pos;
         let row = self.current_row_mut();
         for col in pos.col..((pos.col.saturating_add(count)).min(size.cols)) {
-            row.erase(col, attrs);
+            row.erase(col, attrs.clone());
         }
     }
 

@@ -79,6 +79,7 @@ impl ScrollRegionFilter {
         let mut output = self.scroll_region_sequence(1, self.pty_rows);
         // A whole-screen erase can push the old screen (widgets included)
         // into tmux scrollback. Erase lines instead, then draw from blank.
+        output.extend_from_slice(escape::HYPERLINK_END.as_bytes());
         output.extend_from_slice(escape::RESET.as_bytes());
         for row in 1..=self.pty_rows {
             output.extend_from_slice(escape::cursor_to(row, 1).as_bytes());

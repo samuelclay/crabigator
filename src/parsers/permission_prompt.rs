@@ -280,7 +280,7 @@ pub(super) fn strip_ansi_codes(text: &str) -> String {
         " ".repeat(n)
     });
     // Then strip remaining ANSI escape sequences (SGR and others)
-    let ansi_re = ANSI_RE.get_or_init(|| Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap());
+    let ansi_re = ANSI_RE.get_or_init(|| Regex::new(r"\x1b(?:\[[0-9;]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\))").unwrap());
     ansi_re.replace_all(&with_spaces, "").to_string()
 }
 
@@ -338,6 +338,7 @@ Esc to cancel
         let with_ansi = "\x1b[38;2;255;255;255m❯\x1b[m 1. Yes";
         let stripped = strip_ansi_codes(with_ansi);
         assert_eq!(stripped, "❯ 1. Yes");
+        assert_eq!(strip_ansi_codes("\x1b]8;;https://example.com/permission\x1b\\❯ 1. Yes\x1b]8;;\x07"), "❯ 1. Yes");
     }
 
     #[test]

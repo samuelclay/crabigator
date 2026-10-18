@@ -98,6 +98,15 @@ impl BufWrite for MoveTo {
 #[must_use = "this struct does nothing unless you call write_buf"]
 pub struct ClearAttrs;
 
+#[derive(Default, Debug)]
+pub struct ClearHyperlink;
+
+impl BufWrite for ClearHyperlink {
+    fn write_buf(&self, buf: &mut Vec<u8>) {
+        buf.extend_from_slice(b"\x1b]8;;\x1b\\");
+    }
+}
+
 impl BufWrite for ClearAttrs {
     fn write_buf(&self, buf: &mut Vec<u8>) {
         buf.extend_from_slice(b"\x1b[m");

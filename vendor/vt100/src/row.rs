@@ -24,7 +24,7 @@ impl Row {
 
     pub fn clear(&mut self, attrs: crate::attrs::Attrs) {
         for cell in &mut self.cells {
-            cell.clear(attrs);
+            cell.clear(attrs.clone());
         }
         self.wrapped = false;
     }
@@ -66,7 +66,7 @@ impl Row {
         self.wrapped = false;
         let last_cell = &mut self.cells[usize::from(len) - 1];
         if last_cell.is_wide() {
-            last_cell.clear(*last_cell.attrs());
+            last_cell.clear(last_cell.attrs().clone());
         }
     }
 
@@ -92,7 +92,7 @@ impl Row {
         } else {
             return;
         };
-        other.clear(*other.attrs());
+        other.clear(other.attrs().clone());
     }
 
     // History is a sequence of independent display rows. Emit spaces and SGR
@@ -112,12 +112,15 @@ impl Row {
                 continue;
             }
             cell.attrs().write_escape_code_diff(contents, &attrs);
-            attrs = *cell.attrs();
+            attrs = cell.attrs().clone();
             if cell.has_contents() {
                 contents.extend_from_slice(cell.contents().as_bytes());
             } else {
                 contents.push(b' ');
             }
+        }
+        if attrs.hyperlink.is_some() {
+            crate::term::ClearHyperlink.write_buf(contents);
         }
         contents.extend_from_slice(b"\x1b[0m\n");
     }
@@ -185,7 +188,7 @@ impl Row {
             let default_attrs = default_cell.attrs();
             if &prev_attrs != default_attrs {
                 default_attrs.write_escape_code_diff(contents, &prev_attrs);
-                prev_attrs = *default_attrs;
+                prev_attrs = default_attrs.clone();
             }
             contents.push(b' ');
             crate::term::Backspace.write_buf(contents);
@@ -226,7 +229,7 @@ impl Row {
                     prev_pos = new_pos;
                     if &prev_attrs != attrs {
                         attrs.write_escape_code_diff(contents, &prev_attrs);
-                        prev_attrs = *attrs;
+                        prev_attrs = attrs.clone();
                     }
                     crate::term::EraseChar::new(pos.col - prev_col).write_buf(contents);
                     erase = None;
@@ -249,7 +252,7 @@ impl Row {
 
                     if &prev_attrs != attrs {
                         attrs.write_escape_code_diff(contents, &prev_attrs);
-                        prev_attrs = *attrs;
+                        prev_attrs = attrs.clone();
                     }
 
                     prev_pos.col += if cell.is_wide() { 2 } else { 1 };
@@ -275,7 +278,7 @@ impl Row {
             prev_pos = new_pos;
             if &prev_attrs != attrs {
                 attrs.write_escape_code_diff(contents, &prev_attrs);
-                prev_attrs = *attrs;
+                prev_attrs = attrs.clone();
             }
             crate::term::ClearRowForward.write_buf(contents);
         }
@@ -311,7 +314,7 @@ impl Row {
             let first_cell_attrs = first_cell.attrs();
             if &prev_attrs != first_cell_attrs {
                 first_cell_attrs.write_escape_code_diff(contents, &prev_attrs);
-                prev_attrs = *first_cell_attrs;
+                prev_attrs = first_cell_attrs.clone();
             }
             let mut cell_contents = prev_first_cell.contents();
             let need_erase = if cell_contents.is_empty() {
@@ -365,7 +368,7 @@ impl Row {
                     prev_pos = new_pos;
                     if &prev_attrs != attrs {
                         attrs.write_escape_code_diff(contents, &prev_attrs);
-                        prev_attrs = *attrs;
+                        prev_attrs = attrs.clone();
                     }
                     crate::term::EraseChar::new(pos.col - prev_col).write_buf(contents);
                     erase = None;
@@ -388,7 +391,7 @@ impl Row {
 
                     if &prev_attrs != attrs {
                         attrs.write_escape_code_diff(contents, &prev_attrs);
-                        prev_attrs = *attrs;
+                        prev_attrs = attrs.clone();
                     }
 
                     prev_pos.col += if cell.is_wide() { 2 } else { 1 };
@@ -413,7 +416,7 @@ impl Row {
             prev_pos = new_pos;
             if &prev_attrs != attrs {
                 attrs.write_escape_code_diff(contents, &prev_attrs);
-                prev_attrs = *attrs;
+                prev_attrs = attrs.clone();
             }
             crate::term::ClearRowForward.write_buf(contents);
         }
@@ -445,7 +448,7 @@ impl Row {
                 let attrs = end_cell.attrs();
                 if &prev_attrs != attrs {
                     attrs.write_escape_code_diff(contents, &prev_attrs);
-                    prev_attrs = *attrs;
+                    prev_attrs = attrs.clone();
                 }
                 contents.extend(end_cell.contents().as_bytes());
                 prev_pos.col += if end_cell.is_wide() { 2 } else { 1 };

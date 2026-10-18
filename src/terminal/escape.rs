@@ -8,6 +8,9 @@
 /// Move cursor to home position (top-left)
 pub const CURSOR_HOME: &str = "\x1b[H";
 
+/// End an OSC 8 hyperlink; SGR reset does not end hyperlinks.
+pub const HYPERLINK_END: &str = "\x1b]8;;\x1b\\";
+
 /// Save current cursor position
 pub const CURSOR_SAVE: &str = "\x1b[s";
 

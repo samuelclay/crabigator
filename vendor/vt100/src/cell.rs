@@ -1,6 +1,6 @@
 use unicode_width::UnicodeWidthChar as _;
 
-// chosen to make the size of the cell struct 32 bytes
+// Leave room for combining characters as well as shared hyperlink attributes.
 const CONTENT_BYTES: usize = 22;
 
 const IS_WIDE: u8 = 0b1000_0000;
@@ -14,7 +14,7 @@ pub struct Cell {
     len: u8,
     attrs: crate::attrs::Attrs,
 }
-const _: () = assert!(std::mem::size_of::<Cell>() == 32);
+const _: () = assert!(std::mem::size_of::<Cell>() == 48);
 
 impl PartialEq<Self> for Cell {
     fn eq(&self, other: &Self) -> bool {
@@ -76,6 +76,7 @@ impl Cell {
     pub(crate) fn clear(&mut self, attrs: crate::attrs::Attrs) {
         self.len = 0;
         self.attrs = attrs;
+        self.attrs.hyperlink = None;
     }
 
     /// Returns the text contents of the cell.
