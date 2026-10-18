@@ -8,6 +8,7 @@ import OSLog
     @Published var screenLoaded = false
     @Published var historyLoaded = false
     @Published var connected = false
+    @Published var desktopStatusKnown = false
     @Published var sending = false
     @Published var prompt: JSON?
     @Published var revision: Int?
@@ -34,7 +35,7 @@ import OSLog
         generation += 1; snapshotRequest += 1; task?.cancel(); task = nil; heartbeat?.cancel(); heartbeat = nil
         promptTask?.cancel(); promptTask = nil
         terminalTask?.cancel(); terminalTask = nil; screenWatchdog?.cancel(); screenWatchdog = nil
-        socket?.cancel(with: .goingAway, reason: nil); socket = nil; connected = false; revision = nil
+        socket?.cancel(with: .goingAway, reason: nil); socket = nil; connected = false; desktopStatusKnown = false; revision = nil
     }
     func start() {
         #if DEBUG
@@ -89,7 +90,7 @@ import OSLog
                     log.error("Terminal socket failed for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     screenWatchdog?.cancel(); screenWatchdog = nil
                     snapshotRequest += 1; promptTask?.cancel(); promptTask = nil
-                    connected = false; revision = nil; heartbeat?.cancel(); socket?.cancel(with: .goingAway, reason: nil)
+                    connected = false; desktopStatusKnown = false; revision = nil; heartbeat?.cancel(); socket?.cancel(with: .goingAway, reason: nil)
                     try? await Task.sleep(for: .seconds(3))
                 }
             }
@@ -117,7 +118,7 @@ import OSLog
             try? await Task.sleep(for: .seconds(2))
         }
     }
-    private func receive(_ e: JSON) {
+    func receive(_ e: JSON) {
         switch e.text("type") {
         case "screen":
             if !socketScreenReceived { log.info("Received terminal screen for \(self.selected?.id ?? "", privacy: .public)") }
@@ -126,7 +127,9 @@ import OSLog
             screen = e.text("content"); screenLoaded = true
         case "scrollback_history": historyRevision += 1; socketHistoryReceived = true; history = String(e.text("content").suffix(250000)); historyLoaded = true
         case "scrollback": historyRevision += 1; socketHistoryReceived = true; history = String((history + e.text("diff")).suffix(250000)); historyLoaded = true
-        case "desktop_status": connected = e.bool("connected")
+        case "desktop_status":
+            connected = e.bool("connected"); desktopStatusKnown = true
+            if !connected { prompt = nil }
         case "prompt": prompt = e["prompt"] as? JSON; revision = nil
         case "state": selected?.state = e.text("state"); revision = nil; if !["question", "permission"].contains(e.text("state")) { prompt = nil }
         case "git", "changes", "recap", "recap_history", "prs", "commit_history", "stats": details[e.text("type")] = e
@@ -155,7 +158,7 @@ import OSLog
             let snap = try await api.snapshot(id)
             guard !Task.isCancelled, request == snapshotRequest, epoch == generation, id == selected?.id else { return }
             prompt = NotificationContent.answerable(snap) ? snap["prompt"] as? JSON : nil
-            revision = snap["prompt_revision"] as? Int; connected = snap.bool("desktop_connected")
+            revision = snap["prompt_revision"] as? Int; connected = snap.bool("desktop_connected"); desktopStatusKnown = true
         } catch { /* Screen streaming still works with servers without the mobile snapshot route. */ }
     }
     func send(_ action: TerminalAction, guarded: Bool = false, expectedRevision: Int? = nil, onSent: @escaping () -> Void = {}) {

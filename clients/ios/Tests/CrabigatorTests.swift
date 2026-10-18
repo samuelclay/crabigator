@@ -5,6 +5,21 @@ import UserNotifications
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
+    @MainActor func testDisconnectedDesktopStopsWaitingAndClearsItsQuestion() {
+        let stream = SessionStream()
+        XCTAssertFalse(stream.desktopStatusKnown)
+        stream.prompt = ["prompt_type": "question"]
+        stream.receive(["type": "desktop_status", "connected": false])
+        XCTAssertTrue(stream.desktopStatusKnown)
+        XCTAssertFalse(stream.connected)
+        XCTAssertNil(stream.prompt)
+        XCTAssertFalse(stream.screenLoaded, "Disconnected must be shown even without a terminal frame")
+        stream.receive(["type": "desktop_status", "connected": true])
+        XCTAssertTrue(stream.connected)
+        stream.stop()
+        XCTAssertFalse(stream.desktopStatusKnown, "A new connection must not reuse stale presence")
+    }
+
     func testModulesKeepTheLastRecapAndStructuredDiffsWhileRefreshing() throws {
         var prefs = Preferences()
         XCTAssertTrue(prefs.widgets)

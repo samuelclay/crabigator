@@ -11,7 +11,7 @@ import org.json.JSONObject
 
 enum class RosterStatus { Loading, Ready, Failed }
 
-data class AppState(val paired: Boolean = false, val sessions: List<Session> = emptyList(), val prs: List<PullRequest> = emptyList(), val loading: Boolean = false, val rosterStatus: RosterStatus = RosterStatus.Loading, val error: String? = null, val selected: Session? = null, val screen: String = "", val history: String = "", val historyLoaded: Boolean = false, val screenLoaded: Boolean = false, val details: Map<String, JSONObject> = emptyMap(), val prompt: JSONObject? = null, val revision: Long? = null, val connected: Boolean = false, val sending: Boolean = false, val pageDirection: Int = 1, val navigationId: Long = 0)
+data class AppState(val paired: Boolean = false, val sessions: List<Session> = emptyList(), val prs: List<PullRequest> = emptyList(), val loading: Boolean = false, val rosterStatus: RosterStatus = RosterStatus.Loading, val error: String? = null, val selected: Session? = null, val screen: String = "", val history: String = "", val historyLoaded: Boolean = false, val screenLoaded: Boolean = false, val details: Map<String, JSONObject> = emptyMap(), val prompt: JSONObject? = null, val revision: Long? = null, val connected: Boolean = false, val desktopStatusKnown: Boolean = false, val sending: Boolean = false, val pageDirection: Int = 1, val navigationId: Long = 0)
 class SessionModel(app: Application) : AndroidViewModel(app) {
     private val preferenceStore = PreferenceStore(app)
     val preferences = MutableStateFlow(preferenceStore.load())
@@ -48,7 +48,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
     private fun disconnect() {
         connectionEpoch++; snapshotRequest++
         heartbeat?.cancel(); reconnect?.cancel(); socket?.cancel(); socket = null
-        state.update { it.copy(connected = false, revision = null) }
+        state.update { it.copy(connected = false, desktopStatusKnown = false, revision = null) }
     }
     fun stop() { foreground = false; rosterEpoch++; polling?.cancel(); polling = null; disconnect() }
     fun pair(code: String, origin: String) = viewModelScope.launch {
@@ -141,7 +141,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
                         "screen" -> s.copy(screen = event.text("content"), screenLoaded = true)
                         "scrollback_history" -> s.copy(history = event.text("content").takeLast(250000), historyLoaded = true)
                         "scrollback" -> s.copy(history = (s.history + event.text("diff")).takeLast(250000), historyLoaded = true)
-                        "desktop_status" -> s.copy(connected = event.optBoolean("connected"))
+                        "desktop_status" -> s.copy(connected = event.optBoolean("connected"), desktopStatusKnown = true, prompt = if (event.optBoolean("connected")) s.prompt else null)
                         "prompt" -> s.copy(prompt = event.optJSONObject("prompt"), revision = null)
                         "state" -> s.copy(selected = s.selected?.copy(state = event.text("state")), revision = null, prompt = if (event.text("state") in listOf("question", "permission")) s.prompt else null)
                         "git", "changes", "recap", "recap_history", "prs", "commit_history", "stats" -> s.copy(details = s.details + (event.text("type") to event))
@@ -160,7 +160,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
     }
     private fun retry(ws: WebSocket, id: String) {
         if (socket !== ws || !foreground || state.value.selected?.id != id) return
-        state.update { it.copy(connected = false) }
+        state.update { it.copy(connected = false, desktopStatusKnown = false) }
         reconnect?.cancel()
         reconnect = viewModelScope.launch { delay(3000); if (foreground && state.value.selected?.id == id) connect(id) }
     }
@@ -169,7 +169,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
         val requestId = ++snapshotRequest
         val epoch = connectionEpoch
         try { val snap = api.snapshot(id); if (state.value.selected?.id == id && requestId == snapshotRequest && connectionEpoch == epoch) state.update {
-            it.copy(prompt = snap.optJSONObject("prompt"), revision = snap.optLong("prompt_revision"), connected = snap.optBoolean("desktop_connected"))
+            it.copy(prompt = if (snap.optBoolean("desktop_connected")) snap.optJSONObject("prompt") else null, revision = snap.optLong("prompt_revision"), connected = snap.optBoolean("desktop_connected"), desktopStatusKnown = true)
         } }
         catch (e: Exception) { if (e is CancellationException) throw e /* Older servers still stream their prompt over WebSocket. */ }
     }

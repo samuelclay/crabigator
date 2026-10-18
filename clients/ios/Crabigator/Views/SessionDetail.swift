@@ -24,7 +24,7 @@ struct SessionDetail: View {
                         IconButton(icon: wide ? "xmark" : "chevron.left", label: wide ? "Close session" : "Back to list", action: close)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(session.title).font(.system(size: 15, weight: .medium)).foregroundStyle(Crab.title).lineLimit(2).accessibilityIdentifier("Selected session \(session.id)")
-                            Text(stream.connected ? "\(session.machine) · Live" : session.active ? "Reconnecting…" : "\(session.machine) · Ended").font(.system(size: 11)).foregroundStyle(stream.connected ? Crab.mint : Crab.muted).lineLimit(1)
+                            Text(stream.connected ? "\(session.machine) · Live" : !session.active ? "\(session.machine) · Ended" : stream.desktopStatusKnown ? "\(session.machine) · Disconnected" : "Connecting…").font(.system(size: 11)).foregroundStyle(stream.connected ? Crab.mint : Crab.muted).lineLimit(1)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                         IconButton(icon: "square.grid.2x2", label: model.preferences.widgets ? "Hide session modules" : "Show session modules", selected: model.preferences.widgets) {
                             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { model.preferences.widgets.toggle() }
@@ -42,6 +42,11 @@ struct SessionDetail: View {
                                         Text("No terminal output").font(.system(size: 13)).foregroundStyle(Crab.muted)
                                     } else if !session.active {
                                         Text("Terminal unavailable for this ended session").font(.system(size: 13)).foregroundStyle(Crab.muted)
+                                    } else if stream.desktopStatusKnown && !stream.connected {
+                                        Text("Desktop disconnected. Terminal output will resume when it reconnects.")
+                                            .font(.system(size: 13)).foregroundStyle(Crab.muted)
+                                            .multilineTextAlignment(.center).padding()
+                                            .accessibilityIdentifier("session-disconnected")
                                     } else {
                                         VStack(spacing: 12) {
                                             ProgressView().tint(Crab.orange).accessibilityIdentifier("session-loading")

@@ -35,7 +35,7 @@ import kotlinx.coroutines.delay
                 Control(if (wide) R.drawable.ic_close else R.drawable.ic_back, if (wide) "Close session" else "Back to list", onClick = close)
                 Column(Modifier.weight(1f)) {
                     Text(session.title, color = CrabColors.Title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
-                    Text(if (s.connected) "${session.machine} · Live" else if (!session.active) "${session.machine} · Ended" else "Reconnecting…", fontSize = 11.sp, lineHeight = 15.sp, color = if (s.connected) Mint else Muted)
+                    Text(if (s.connected) "${session.machine} · Live" else if (!session.active) "${session.machine} · Ended" else if (s.desktopStatusKnown) "${session.machine} · Disconnected" else "Connecting…", fontSize = 11.sp, lineHeight = 15.sp, color = if (s.connected) Mint else Muted)
                 }
                 Control(R.drawable.ic_modules, if (p.widgets) "Hide session modules" else "Show session modules", selected = p.widgets) { model.style { it.copy(widgets = !it.widgets) } }
                 Control(R.drawable.ic_follow_output, if (pinned) "Stop following output" else "Follow latest output", selected = pinned) { pinned = !pinned }
@@ -50,7 +50,7 @@ import kotlinx.coroutines.delay
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.then(if (p.terminalHeight == 0) Modifier.weight(1f) else Modifier.height(terminalHeight)).fillMaxWidth().then(swipe).background(Color(0xFF0B0F14))) {
                     if (!hasOutput) {
-                        TerminalPlaceholder(session.active, loaded, loadingSlowly, model::reconnectSession, Modifier.align(Alignment.Center))
+                        TerminalPlaceholder(session.active, loaded, loadingSlowly, model::reconnectSession, Modifier.align(Alignment.Center), disconnected = s.desktopStatusKnown && !s.connected)
                     } else key(session.id) { TerminalViewport(s.history, s.screen, p, pinned) { pinned = it } }
                 }
                 if (p.widgets) SessionModules(session, modules, p, prs, Modifier.heightIn(max = availableHeight * .45f))
@@ -60,11 +60,12 @@ import kotlinx.coroutines.delay
         key(session.id) { SessionComposer(s, model, active) }
     }
 }
-@Composable internal fun TerminalPlaceholder(active: Boolean, loaded: Boolean, loadingSlowly: Boolean, reconnect: () -> Unit, modifier: Modifier = Modifier) {
+@Composable internal fun TerminalPlaceholder(active: Boolean, loaded: Boolean, loadingSlowly: Boolean, reconnect: () -> Unit, modifier: Modifier = Modifier, disconnected: Boolean = false) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when {
             loaded -> Text("No terminal output", color = Muted, fontSize = 13.sp)
             !active -> Text("Terminal unavailable for this ended session", color = Muted, fontSize = 13.sp)
+            disconnected -> Text("Desktop disconnected. Terminal output will resume when it reconnects.", color = Muted, fontSize = 13.sp)
             else -> {
                 CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                 if (loadingSlowly) {
