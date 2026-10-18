@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,7 +75,7 @@ internal val Panel = Color(0xFF1B2129)
 internal val Muted = CrabColors.Gray
 internal val Peach = CrabColors.Orange
 internal val Mint = CrabColors.Green
-private val CrabTheme = darkColorScheme(primary = Peach, onPrimary = Ink, background = Ink, surface = Ink, surfaceContainer = Panel, onSurface = Color(0xFFE9EEF4), secondary = Mint, secondaryContainer = Color(0xFF3D3028), onSecondaryContainer = Peach, outline = Color(0xFF37414E))
+internal val CrabTheme = darkColorScheme(primary = Peach, onPrimary = Ink, background = Ink, surface = Ink, surfaceContainer = Panel, onSurface = Color(0xFFE9EEF4), secondary = Mint, secondaryContainer = Color(0xFF3D3028), onSecondaryContainer = Peach, outline = Color(0xFF37414E))
 
 class MainActivity : ComponentActivity() {
     private val model: SessionModel by viewModels()
@@ -113,9 +114,11 @@ class MainActivity : ComponentActivity() {
     val closeSession: () -> Unit = { closingSession = s.selected?.id }
     val preferences by model.preferences.collectAsStateWithLifecycle()
     if (!s.paired) { Pairing(s, model); return }
-    BackHandler(s.selected != null, onBack = closeSession)
+    BackHandler(s.selected != null && !navigation.conductor, onBack = closeSession)
+    BackHandler(navigation.conductor) { model.navigate { it.copy(conductor = false) } }
+    val conductorState = rememberSaveableStateHolder()
     Box(Modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize().safeDrawingPadding().then(if (menu != null) Modifier.clearAndSetSemantics {} else Modifier)) {
+    Column(Modifier.fillMaxSize().safeDrawingPadding().then(if (menu != null || navigation.conductor) Modifier.clearAndSetSemantics {} else Modifier)) {
         if (s.error != null) Surface(color = Color(0xFF4D2C2C)) { Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) { Text(s.error!!, Modifier.weight(1f), fontSize = 13.sp); TextButton(onClick = model::dismissError) { Text("Dismiss") } } }
         BoxWithConstraints(Modifier.weight(1f)) {
             val wide = maxWidth >= 720.dp
@@ -199,6 +202,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    if (navigation.conductor) conductorState.SaveableStateProvider("conductor") { ConductorView(model, Modifier.fillMaxSize().background(Ink).safeDrawingPadding()) }
     MenuPanel(menu, menuAnchor, model, notifications, { destination ->
         when (destination) {
             "Search" -> { menu = null; boardSearchRequest++ }
@@ -306,7 +310,7 @@ class MainActivity : ComponentActivity() {
                 Control(R.drawable.ic_settings, "Settings", modifier = Modifier.onGloballyPositioned { settingsAnchor = it.boundsInRoot() }) { settings(settingsAnchor) }
             }
         }
-        BoardModeFooter(list, mode, expanded, Modifier.align(Alignment.BottomCenter).padding(12.dp))
+        BoardModeFooter(list, mode, expanded, Modifier.align(Alignment.BottomCenter).padding(12.dp), onConductor = { model.navigate { it.copy(conductor = true) } })
     }
 }
 @Composable internal fun MachineHeader(name: String, count: Int, collapsed: Boolean, modifier: Modifier = Modifier, countNoun: String = "session", toggle: () -> Unit) {

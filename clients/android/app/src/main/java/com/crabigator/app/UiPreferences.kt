@@ -10,14 +10,14 @@ import androidx.compose.animation.core.tween
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-data class NavigationState(val listMode: Boolean = true, val expanded: Boolean = true, val selectedId: String? = null)
+data class NavigationState(val listMode: Boolean = true, val expanded: Boolean = true, val selectedId: String? = null, val conductor: Boolean = false)
 
 class NavigationStore(context: Context) {
     private val storage = context.getSharedPreferences("navigation", Context.MODE_PRIVATE)
-    fun load() = NavigationState(storage.getBoolean("listMode", true), storage.getBoolean("expanded", true), storage.getString("selectedId", null))
+    fun load() = NavigationState(storage.getBoolean("listMode", true), storage.getBoolean("expanded", true), storage.getString("selectedId", null), storage.getBoolean("conductor", false))
     fun save(state: NavigationState) {
         storage.edit().putBoolean("listMode", state.listMode).putBoolean("expanded", state.expanded)
-            .putString("selectedId", state.selectedId).apply()
+            .putString("selectedId", state.selectedId).putBoolean("conductor", state.conductor).apply()
     }
 }
 

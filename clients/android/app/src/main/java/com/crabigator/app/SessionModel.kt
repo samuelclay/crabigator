@@ -108,6 +108,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
     }
     fun open(id: String) = viewModelScope.launch {
         if (!state.value.paired) return@launch
+        navigate { it.copy(conductor = false) }
         restoreSelection = false
         val epoch = selectionEpoch
         refresh()
