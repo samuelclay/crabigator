@@ -1,3 +1,4 @@
+import { disconnectedSessions } from '../session-presence';
 import type { Env } from '../types/env';
 import type { SessionInfo } from '../types/session';
 import { parseStoredSessionMark } from '../session-mark';
@@ -46,55 +47,6 @@ export class SessionListDO implements DurableObject {
                 this.activeSessions = new Map(stored);
             }
         });
-    }
-
-    /**
-     * Validate all sessions by checking if their desktops are still connected.
-     * Removes stale sessions that no longer have active desktop connections
-     * AND have been inactive for more than the grace period.
-     *
-     * The grace period allows desktops to reconnect after deploys break WebSockets.
-     */
-    private async validateSessions(): Promise<void> {
-        const GRACE_PERIOD_MS = 60_000; // 60 seconds
-        const now = Date.now();
-        const stale: string[] = [];
-
-        console.log(`validateSessions: checking ${this.activeSessions.size} sessions`);
-        for (const [id, session] of this.activeSessions) {
-            console.log(`validateSessions: session ${id} state="${session.state}" last_seen=${session.last_seen}`);
-
-            try {
-                const doId = this.env.SESSION.idFromName(id);
-                const stub = this.env.SESSION.get(doId);
-                const resp = await stub.fetch(new Request('https://internal/state'));
-                const state = (await resp.json()) as { desktop_connected?: boolean };
-
-                if (!state.desktop_connected) {
-                    // Only stale if disconnected AND past grace period
-                    const lastSeen = session.last_seen || 0;
-                    if (now - lastSeen > GRACE_PERIOD_MS) {
-                        stale.push(id);
-                    }
-                }
-            } catch {
-                // Can't reach SessionDO - check grace period before removing
-                const lastSeen = session.last_seen || 0;
-                if (now - lastSeen > GRACE_PERIOD_MS) {
-                    stale.push(id);
-                }
-            }
-        }
-
-        if (stale.length > 0) {
-            for (const id of stale) {
-                const session = this.activeSessions.get(id);
-                console.log(`validateSessions: removing stale session ${id.slice(0, 8)} cwd=${session?.cwd} last_seen=${session?.last_seen}`);
-                this.activeSessions.delete(id);
-            }
-            await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
-            console.log(`Cleaned up ${stale.length} stale session(s): ${stale.join(', ')}`);
-        }
     }
 
     /**
@@ -328,16 +280,19 @@ export class SessionListDO implements DurableObject {
             });
         }
 
-        // Validate sessions before returning - removes stale disconnected sessions
-        await this.validateSessions();
         await this.refreshMissingSessionMetadata();
 
         // Always reconcile with D1 to catch sessions that might have reconnected
         // without notifying SessionListDO (e.g., after a deploy or DO migration)
-        // D1 is the source of truth for active sessions - merge into memory
-        const d1Sessions = await this.fetchActiveSessionsFromD1(groupId);
+        // Verify desktop presence before merging D1 records into memory.
+        const storedSessions = await this.fetchActiveSessionsFromD1(groupId);
+        const disconnected = await disconnectedSessions(this.env, storedSessions.map(session => ({
+            id: session.id, lastSeen: session.last_activity_at || session.started_at,
+        })));
+        const d1Sessions = storedSessions.filter(session => !disconnected.has(session.id));
+        for (const id of disconnected) this.activeSessions.delete(id);
         console.log(`handleGetSessions: D1 returned ${d1Sessions.length} sessions, memory has ${this.activeSessions.size} total`);
-        let updated = false;
+        let updated = disconnected.size > 0;
         for (const session of d1Sessions) {
             const existing = this.activeSessions.get(session.id);
             if (!existing) {
@@ -356,8 +311,7 @@ export class SessionListDO implements DurableObject {
             await this.state.storage.put('activeSessions', Array.from(this.activeSessions.entries()));
         }
 
-        // Return D1 sessions directly - they are authoritative for is_active=1
-        // Memory state is used for real-time updates but D1 is source of truth
+        // Return only D1 sessions whose desktops are still connected or reconnecting.
         const sessions = d1Sessions.map(session => this.sanitizeSession(session));
         console.log(`handleGetSessions: returning ${sessions.length} sessions for group ${groupId.slice(0, 8)}`);
 
@@ -475,9 +429,8 @@ export class SessionListDO implements DurableObject {
      * Handle desktop WebSocket disconnect.
      *
      * Don't delete immediately - the disconnect might be temporary (e.g., deploy).
-     * Just update last_seen so validateSessions can clean up truly stale sessions.
-     * Sessions are only removed when validateSessions finds them disconnected
-     * past the grace period, or when explicitly ended via /notify.
+     * Roster reads check desktop presence after the grace period.
+     * The session object marks a persistent disconnect ended and calls /notify.
      */
     private async handleDisconnect(request: Request): Promise<Response> {
         if (request.method !== 'POST') {

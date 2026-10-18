@@ -36,4 +36,15 @@ it('keeps the desktop identity in the dashboard session list', async () => {
         expect(session).not.toHaveProperty('device_id');
         expect(session).not.toHaveProperty('group_id');
     }
+    await testEnv.DB.prepare(`INSERT INTO sessions
+        (id, device_id, client_session_id, cwd, platform, state, last_seen_at)
+        VALUES ('dead-desktop', 'mark-device', 'dead-local', '/tmp/demo', 'codex', 'thinking', 1600)`).run();
+    // Repeated reads used to delete from memory, then re-add the same dead
+    // session from D1 and return it anyway.
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const roster = await (await stub.fetch('https://internal/sessions?group_id=mark-group')).json<any>();
+        expect(roster.sessions.map((s: any) => s.id)).not.toContain('dead-desktop');
+        expect(roster.sessions.map((s: any) => s.id)).toContain('marked');
+    }
+
 });

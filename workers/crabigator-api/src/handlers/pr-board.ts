@@ -1,3 +1,4 @@
+import { disconnectedSessions } from '../session-presence';
 import type { Env } from '../types/env';
 import type { SessionPr } from '../types/session';
 import { jsonResponse } from '../router';
@@ -807,6 +808,13 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
     const markPool = [...sessions];
     for (const entry of prs) {
         markPool.push(...entry.sessions, ...entry.touching);
+    }
+    const candidates = new Map(markPool.filter(session => session.active).map(session => [session.session_id, {
+        id: session.session_id, lastSeen: session.last_seen_at || session.started_at,
+    }]));
+    const disconnected = await disconnectedSessions(env, [...candidates.values()]);
+    for (const session of markPool) {
+        if (disconnected.has(session.session_id)) session.active = false;
     }
     const marks = assignSessionMarks(markPool);
 

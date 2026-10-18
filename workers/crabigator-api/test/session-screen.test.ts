@@ -175,3 +175,41 @@ it('sends input to the newest desktop socket after a wake, not one still closing
         await expect.poll(() => received).toContainEqual({ type: 'answer', text: 'hello' });
     } finally { live.close(); }
 });
+
+
+it('ends a disconnected desktop after the reconnect grace period, including across hibernation', async () => {
+    const { ensureAccountSchema } = await import('./schema');
+    await ensureAccountSchema(env);
+    const id = 'disconnected-cleanup';
+    await env.DB.prepare(`INSERT INTO devices (id, secret_hash, group_id) VALUES ('cleanup-device', 'test', 'cleanup-group')`).run();
+    await env.DB.prepare(`INSERT INTO sessions (id, device_id, client_session_id, cwd, platform, state)
+        VALUES (?, 'cleanup-device', 'cleanup-local', '/tmp/demo', 'codex', 'thinking')`).bind(id).run();
+    const stub = env.SESSION.get(env.SESSION.idFromName(id));
+    const connect = async () => {
+        const response = await stub.fetch(`https://internal/connect?sessionId=${id}&group_id=cleanup-group&device_id=cleanup-device&device_name=Mac`, { headers: { Upgrade: 'websocket' } });
+        const socket = response.webSocket!;
+        socket.accept();
+        return socket;
+    };
+    const desktop = await connect();
+    desktop.close();
+    await expect.poll(async () => (await (await stub.fetch('https://internal/state')).json<any>()).desktop_connected).toBe(false);
+    await runInDurableObject(stub, async (instance: SessionDO, state) => {
+        await instance.alarm();
+        expect(await state.storage.getAlarm()).not.toBeNull();
+    });
+    expect(await env.DB.prepare('SELECT is_active FROM sessions WHERE id = ?').bind(id).first('is_active')).toBe(1);
+    await runInDurableObject(stub, async (_instance, state) => {
+        await state.storage.put('disconnectedAt', Date.now() - 61_000);
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (instance: SessionDO) => { await instance.alarm(); });
+    expect(await env.DB.prepare('SELECT is_active FROM sessions WHERE id = ?').bind(id).first('is_active')).toBe(0);
+    const reconnected = await connect();
+    try {
+        await expect.poll(async () => env.DB.prepare('SELECT is_active FROM sessions WHERE id = ?').bind(id).first('is_active')).toBe(1);
+        await runInDurableObject(stub, async (instance: SessionDO) => { await instance.alarm(); });
+        expect(await env.DB.prepare('SELECT is_active FROM sessions WHERE id = ?').bind(id).first('is_active')).toBe(1);
+        expect((await (await stub.fetch('https://internal/state')).json<any>()).disconnected_at).toBeNull();
+    } finally { reconnected.close(); }
+});

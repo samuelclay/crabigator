@@ -442,6 +442,7 @@ export const prBoardJs = `
         }
 
         function prbSessionState(s) {
+            if (!s.active) return 'ended';
             const st = String(s.state || '').toLowerCase();
             return ['ready', 'thinking', 'permission', 'question', 'complete', 'interrupted'].includes(st)
                 ? st : (s.active ? 'ready' : 'complete');
@@ -449,7 +450,7 @@ export const prBoardJs = `
         // Pick the state that needs the user's attention when a PR represents
         // more than one session.
         function prbAggregateState(sessions) {
-            const rank = { permission: 5, question: 4, thinking: 3, interrupted: 2, ready: 1, complete: 0 };
+            const rank = { permission: 5, question: 4, thinking: 3, interrupted: 2, ready: 1, complete: 0, ended: -1 };
             let best = null;
             for (const s of sessions) {
                 const st = prbSessionState(s);
@@ -462,6 +463,7 @@ export const prBoardJs = `
         // permission prompt — matching the CLI board's badge.
         function prbStateIcon(state) {
             if (state === null) return '';
+            if (state === 'ended') return '<span title="Session disconnected or ended" style="color:' + PRB_C.gray + '">○</span>';
             if (state === 'question') return '<span class="prb-badge prb-ask" title="Asking you a question">»?«</span>';
             if (state === 'permission') return '<span class="prb-badge prb-perm" title="Waiting for permission">»!«</span>';
             if (state === 'thinking') {

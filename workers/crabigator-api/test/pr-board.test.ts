@@ -24,6 +24,10 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
             VALUES (?, 'stats-device', ?, '/project', 'claude', ?, 1000, ?, 1600, ?, 123, 7, 6, 1400, 1500, 9, 2)`)
             .bind(`stats-${active}`, `local-${active}`, active, active ? null : 1600, active ? null : 590).run();
     }
+    const live = await testEnv.SESSION.get(testEnv.SESSION.idFromName('stats-1'))
+        .fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } });
+    const desktop = live.webSocket!;
+    desktop.accept();
     const pr = { owner: 'o', repo: 'r', number: 1, url: 'https://github.com/o/r/pull/1', branch: 'feature', title: 'Work',
         state: 'OPEN', is_draft: false, additions: 1, deletions: 0, changed_files: 1, mergeable: 'MERGEABLE',
         merge_state_status: 'CLEAN', checks_passed: 0, checks_failed: 0, checks_pending: 0, checks_total: 0,
@@ -59,5 +63,28 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
     expect(result.prs[0].pr.primary).toBe(true);
     expect(result.prs[0].sessions[0]).toMatchObject({ session_id: 'stats-0', pr_primary: true });
     expect(result.prs[0].touching[0]).toMatchObject({ session_id: 'stats-1', pr_primary: false });
+
+    // A dead desktop retains its last state in D1 until cleanup. Both the
+    // standalone row and its PR sub-row must stop appearing live meanwhile.
+    desktop.close();
+    const read = async () => (await getPrBoard(new Request(`https://example.com${path}`, { headers: {
+        'X-Device-Id': 'stats-device', 'X-Timestamp': timestamp,
+        'X-Signature': await hmacSign(secret, `GET:${path}:${timestamp}`),
+    } }), testEnv)).json() as Promise<any>;
+    // Existing sessions from before disconnect timestamps were stored.
+    const orphan = testEnv.SESSION.get(testEnv.SESSION.idFromName('stats-orphan'));
+    await testEnv.DB.prepare(`INSERT INTO sessions
+        (id, device_id, client_session_id, cwd, platform, state, last_seen_at)
+        VALUES ('stats-orphan', 'stats-device', 'local-orphan', '/project', 'codex', 'thinking', 1600)`).run();
+    await testEnv.DB.prepare(`INSERT INTO session_prs (session_id, owner, repo, number, url, data, updated_at, is_primary)
+        VALUES ('stats-orphan', 'o', 'r', 1, ?, ?, 3000, 0)`).bind(pr.url, JSON.stringify(secondary)).run();
+    const disconnected = await read();
+    expect(disconnected.prs[0].touching.find((s: any) => s.session_id === 'stats-orphan')).toMatchObject({ active: false });
+    expect(disconnected.sessions.find((s: any) => s.session_id === 'stats-orphan')).toMatchObject({ active: false });
+    const recovered = (await orphan.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } })).webSocket!;
+    recovered.accept();
+    try {
+        expect((await read()).sessions.find((s: any) => s.session_id === 'stats-orphan')).toMatchObject({ active: true });
+    } finally { recovered.close(); }
 
 });

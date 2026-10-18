@@ -74,3 +74,16 @@ for (const gesture of ['wheel', 'touch', 'keyboard', 'scrollbar']) {
         assert.equal(data.pinned, true, 'Elastic overscroll returning to the bottom is not an upward reading gesture');
     });
 }
+
+
+test('ended sessions never show a working spinner or demand an answer', () => {
+    const { state, aggregate, icon } = runInNewContext(functions(embedded('pr-board'),
+        ['prbSessionState', 'prbAggregateState', 'prbStateIcon']) + '\n({state:prbSessionState, aggregate:prbAggregateState, icon:prbStateIcon})',
+        { PRB_C: { gray: '#888' } });
+    for (const oldState of ['thinking', 'question', 'permission']) {
+        const ended = { active: false, state: oldState };
+        assert.equal(state(ended), 'ended');
+        assert.match(icon(state(ended)), /Session disconnected or ended/);
+        assert.equal(aggregate([ended, { active: true, state: 'complete' }]), 'complete');
+    }
+});

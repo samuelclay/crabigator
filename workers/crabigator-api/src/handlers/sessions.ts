@@ -1,3 +1,4 @@
+import { disconnectedSessions } from '../session-presence';
 import type { Env } from '../types/env';
 import type {
     CreateSessionRequest,
@@ -12,9 +13,6 @@ import { jsonResponse } from '../router';
 import { requireAuth, requireDeviceAuth } from '../auth/middleware';
 import { generateUUID } from '../auth/tokens';
 import { parseStoredSessionMark, sessionMarkJson } from '../session-mark';
-
-/** Desktop heartbeats are sent every 2h; wait for multiple misses before culling. */
-const SESSION_HEARTBEAT_TIMEOUT_SECONDS = 6 * 60 * 60;
 
 /**
  * Notify the SessionListDO about session changes for real-time dashboard updates.
@@ -254,68 +252,12 @@ export async function listSessions(
         device_name: string | null;
     }>();
 
-    // Validate active sessions against SessionDO state (cleanup on read)
-    // This catches zombie sessions that D1 thinks are active but aren't
-    const staleSessionIds: string[] = [];
-    const now = Math.floor(Date.now() / 1000);
-    const staleThreshold = now - SESSION_HEARTBEAT_TIMEOUT_SECONDS;
-
-    if (activeOnly && results.results) {
-        const activeSessions = results.results.filter(row => row.is_active === 1);
-
-        // Check each active session's actual state (parallel for performance)
-        const checks = activeSessions.map(async (row) => {
-            try {
-                const doId = env.SESSION.idFromName(row.id);
-                const stub = env.SESSION.get(doId);
-                const resp = await stub.fetch(new Request('https://internal/state'));
-                const state = (await resp.json()) as { desktop_connected?: boolean };
-
-                if (!state.desktop_connected) {
-                    // Desktop disconnected - check if stale
-                    const lastSeen = row.last_seen_at || row.started_at;
-                    if (lastSeen < staleThreshold) {
-                        staleSessionIds.push(row.id);
-                    }
-                }
-            } catch {
-                // Can't reach DO - check last_seen_at threshold
-                const lastSeen = row.last_seen_at || row.started_at;
-                if (lastSeen < staleThreshold) {
-                    staleSessionIds.push(row.id);
-                }
-            }
-        });
-
-        await Promise.all(checks);
-    }
-
-    // Clean up stale sessions in background (fire and forget)
-    if (staleSessionIds.length > 0) {
-        const endedAt = now;
-
-        // Batch update D1
-        const placeholders = staleSessionIds.map(() => '?').join(',');
-        env.DB.prepare(`
-            UPDATE sessions
-            SET is_active = 0, ended_at = ?
-            WHERE id IN (${placeholders}) AND is_active = 1
-        `).bind(endedAt, ...staleSessionIds).run().catch((error) => {
-            console.error('Error cleaning up stale sessions:', error);
-        });
-
-        // Notify SessionListDO (fire and forget)
-        for (const sessionId of staleSessionIds) {
-            notifySessionListChange(env, {
-                type: 'updated',
-                session: { id: sessionId, ended_at: endedAt, is_active: false },
-            });
-        }
-    }
-
+    const staleSessionIds = [...await disconnectedSessions(env, (results.results || [])
+        .filter(row => row.is_active === 1)
+        .map(row => ({ id: row.id, lastSeen: row.last_seen_at || row.started_at })))];
     // Filter out stale sessions from results
     const sessions: SessionInfo[] = (results.results || [])
-        .filter(row => !staleSessionIds.includes(row.id))
+        .filter(row => !activeOnly || !staleSessionIds.includes(row.id))
         .map(row => ({
             id: row.id,
             client_session_id: row.client_session_id,
@@ -325,7 +267,7 @@ export async function listSessions(
             state: row.state,
             started_at: row.started_at,
             ended_at: row.ended_at,
-            is_active: row.is_active === 1,
+            is_active: row.is_active === 1 && !staleSessionIds.includes(row.id),
             device_name: row.device_name || undefined,
             session_mark: parseStoredSessionMark(row.session_mark),
             stats: {

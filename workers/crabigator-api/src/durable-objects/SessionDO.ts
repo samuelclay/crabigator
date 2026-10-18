@@ -1,3 +1,4 @@
+import { SESSION_DISCONNECT_GRACE_MS } from '../session-presence';
 import { notifyMobilePrompt } from '../mobile-push';
 import type {
     SessionEvent,
@@ -195,8 +196,6 @@ function previewRows(lines: string[], matches: number[]): ScrollbackPreviewRow[]
 
 /** Viewer activity timeout - 35s to allow for 5s heartbeat intervals */
 const VIEWER_ACTIVITY_TIMEOUT_MS = 35_000;
-/** Desktop heartbeat cadence is 2h; allow multiple missed beats before culling. */
-const SESSION_HEARTBEAT_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 interface SessionInfo {
     id: string;
@@ -227,6 +226,7 @@ export class SessionDO implements DurableObject {
     private state: DurableObjectState;
     private env: Env;
     private desktopWs: WebSocket | null = null;
+    private disconnectedAt: number | null = null;
     private persistentState: PersistentState;
     private ephemeralState: EphemeralState;
     private sessionInfo: SessionInfo | null = null;
@@ -304,6 +304,7 @@ export class SessionDO implements DurableObject {
 
             // Restore desktop WebSocket reference after hibernation wake-up
             this.desktopWs = this.liveDesktopSocket();
+            this.disconnectedAt = await state.storage.get<number>('disconnectedAt') ?? null;
         });
     }
 
@@ -454,6 +455,9 @@ export class SessionDO implements DurableObject {
         this.state.acceptWebSocket(server, ['desktop']);
         server.serializeAttachment({ connectedAt: Date.now() } satisfies DesktopAttachment);
         this.desktopWs = server;
+        this.disconnectedAt = null;
+        await this.state.storage.delete('disconnectedAt');
+        await this.state.storage.deleteAlarm();
         this.broadcastDesktopStatus(true);
         if (this.hasActiveViewers() || this.state.getWebSockets('viewer').length > 0) {
             this.notifyDesktopViewerStatus(true);
@@ -1596,7 +1600,8 @@ export class SessionDO implements DurableObject {
                 cwd: this.sessionInfo?.cwd || null,
                 platform: this.sessionInfo?.platform || null,
                 started_at: this.sessionInfo?.started_at || null,
-                desktop_connected: this.desktopWs !== null,
+                desktop_connected: this.liveDesktopSocket() !== null,
+                disconnected_at: this.disconnectedAt,
                 state: this.persistentState.state,
                 title: this.persistentState.lastTitle,
                 title_history: this.persistentState.lastTitleHistory,
@@ -1640,7 +1645,8 @@ export class SessionDO implements DurableObject {
                 attention_pending: this.hasPendingAttention(),
                 unstructured_attention_blocked: this.persistentState.unstructuredAttentionBlocked ?? false,
                 attention_prompt_count: this.persistentState.attentionPromptCount ?? null,
-                desktop_connected: this.desktopWs !== null,
+                desktop_connected: this.liveDesktopSocket() !== null,
+                disconnected_at: this.disconnectedAt,
                 viewer_websockets: this.state.getWebSockets('viewer').length,
                 has_active_viewers: this.hasActiveViewers(),
             }),
@@ -1772,14 +1778,15 @@ export class SessionDO implements DurableObject {
         }
 
         this.desktopWs = null;
+        this.disconnectedAt = Date.now();
+        await this.state.storage.put('disconnectedAt', this.disconnectedAt);
         if (this.hasPendingAttention()) this.notifyMobileAttention();
         this.broadcastDesktopStatus(false);
         if (this.sessionInfo) {
             await this.notifySessionList('disconnect', { id: this.sessionInfo.id });
         }
-        // Schedule missed-heartbeat cleanup. Normal wrapper exits end the
-        // session via HTTP; disconnects alone can be transient.
-        await this.state.storage.setAlarm(Date.now() + SESSION_HEARTBEAT_TIMEOUT_MS);
+        // Give the desktop time to reconnect, then end a disconnected session.
+        await this.state.storage.setAlarm(Date.now() + SESSION_DISCONNECT_GRACE_MS);
     }
 
     /**
@@ -1801,28 +1808,30 @@ export class SessionDO implements DurableObject {
 
         console.error('Desktop WebSocket error:', error);
         this.desktopWs = null;
+        this.disconnectedAt = Date.now();
+        await this.state.storage.put('disconnectedAt', this.disconnectedAt);
         if (this.hasPendingAttention()) this.notifyMobileAttention();
         this.broadcastDesktopStatus(false);
         if (this.sessionInfo) {
             await this.notifySessionList('disconnect', { id: this.sessionInfo.id });
         }
-        await this.state.storage.setAlarm(Date.now() + SESSION_HEARTBEAT_TIMEOUT_MS);
+        await this.state.storage.setAlarm(Date.now() + SESSION_DISCONNECT_GRACE_MS);
     }
 
     /**
      * Alarm handler for cleaning up disconnected sessions.
      *
-     * Called after the missed-heartbeat window. If desktop has reconnected
+     * Called after the reconnect grace period. If desktop has reconnected
      * (e.g., after a deploy), do nothing. If the session is still active but
      * has not been seen recently, mark it ended and notify SessionListDO.
      */
     async alarm(): Promise<void> {
         // If desktop reconnected (e.g., after deploy), nothing to clean up
-        if (this.desktopWs !== null) {
+        if (this.liveDesktopSocket() !== null) {
             return;
         }
 
-        // Desktop is still disconnected and has missed the heartbeat window.
+        // Desktop is still disconnected after the reconnect grace period.
         if (!this.sessionInfo) {
             return;
         }
@@ -1830,42 +1839,32 @@ export class SessionDO implements DurableObject {
         const sessionId = this.sessionInfo.id;
         const endedAt = Math.floor(Date.now() / 1000);
 
-        const row = await this.env.DB.prepare(`
-            SELECT started_at, last_seen_at, is_active
-            FROM sessions
-            WHERE id = ?
-        `).bind(sessionId).first<{
-            started_at: number;
-            last_seen_at: number | null;
-            is_active: number;
-        }>();
-
-        if (!row || row.is_active !== 1) {
-            return;
-        }
-
-        const lastSeen = row.last_seen_at || row.started_at;
-        const cleanupAt = (lastSeen * 1000) + SESSION_HEARTBEAT_TIMEOUT_MS;
-        if (Date.now() < cleanupAt) {
-            this.state.storage.setAlarm(cleanupAt);
-            return;
-        }
-
-        // Update D1 to mark session as ended
-        try {
+        // D1 awaits otherwise allow a reconnect to interleave with cleanup.
+        // Keep only the D1 transition inside the gate; roster notification must
+        // stay outside because roster reads call this object's /state endpoint.
+        const ended = await this.state.blockConcurrencyWhile(async () => {
+            if (this.liveDesktopSocket() !== null) return false;
+            const row = await this.env.DB.prepare(`
+                SELECT started_at, last_seen_at, is_active FROM sessions WHERE id = ?
+            `).bind(sessionId).first<{ started_at: number; last_seen_at: number | null; is_active: number }>();
+            if (!row || row.is_active !== 1) return false;
+            const lastSeen = row.last_seen_at || row.started_at;
+            const cleanupAt = (this.disconnectedAt ?? lastSeen * 1000) + SESSION_DISCONNECT_GRACE_MS;
+            if (Date.now() < cleanupAt) {
+                await this.state.storage.setAlarm(cleanupAt);
+                return false;
+            }
             await this.env.DB.prepare(`
-                UPDATE sessions
-                SET is_active = 0, ended_at = ?
-                WHERE id = ? AND is_active = 1
+                UPDATE sessions SET is_active = 0, ended_at = ? WHERE id = ? AND is_active = 1
             `).bind(endedAt, sessionId).run();
-            this.publishMcp(McpEventName.ended, {
-                state: this.persistentState.state,
-                ended_at: new Date(endedAt * 1000).toISOString(),
-                ...(this.sessionInfo.device_name ? { device_name: this.sessionInfo.device_name } : {}),
-            });
-        } catch (error) {
-            console.error('Error updating session in D1:', error);
-        }
+            return true;
+        });
+        if (!ended || this.liveDesktopSocket() !== null) return;
+        this.publishMcp(McpEventName.ended, {
+            state: this.persistentState.state,
+            ended_at: new Date(endedAt * 1000).toISOString(),
+            ...(this.sessionInfo.device_name ? { device_name: this.sessionInfo.device_name } : {}),
+        });
 
         // Notify SessionListDO to remove from active sessions
         try {
