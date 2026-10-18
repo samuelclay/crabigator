@@ -101,6 +101,7 @@ export const inputCss = `
 /* Keyboard shortcuts popover */
 .keyboard-popover {
     display: none;
+    overflow-y: auto;
     position: absolute;
     bottom: calc(100% + 12px);
     left: 0;

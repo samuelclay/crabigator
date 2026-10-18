@@ -102,6 +102,7 @@ export const sidebarJs = `
 
             // Init scroll spy
             initSidebarScrollSpy();
+            initViewedSessionAnchor();
 
             initSessionsPopoverInteractions();
 
@@ -383,6 +384,10 @@ export const sidebarJs = `
 
         function scrollSessionCardIntoView(card, smooth) {
             if (!card) return;
+            viewedSessionId = card.id.slice(8);
+            viewedAnchorPart = 'header';
+            viewedPageAnchor = null;
+            pageScrollRevision++;
             const boardBody = card.closest('#prb-body');
             const scrollEl = boardBody || document.scrollingElement || document.documentElement;
             if (!scrollEl) return;

@@ -283,24 +283,120 @@ export const styleJs = `
             });
         }
 
+        let viewedSessionId = null;
+        let viewedPageAnchor = null;
+        let viewedAnchorPart = 'terminal';
+        let pageScrollRevision = 0;
+        let restoredPageTop = null;
+
+        function pageScrollSurface() {
+            return (prBoardVisible && document.getElementById('prb-body'))
+                || document.scrollingElement || document.documentElement;
+        }
+
+        function selectViewedSession(sessionId, part = 'terminal') {
+            viewedSessionId = sessionId;
+            viewedAnchorPart = part;
+            pageScrollRevision++;
+            restoredPageTop = null;
+            viewedPageAnchor = capturePageScrollAnchor();
+        }
+
+        function restoreViewedSessionPosition() {
+            if (document.body.classList.contains('session-fullscreen-open')) {
+                viewedPageAnchor = null;
+                return;
+            }
+            const surface = pageScrollSurface();
+            const target = viewedPageAnchor?.selector && document.querySelector(viewedPageAnchor.selector);
+            const unavailable = !target?.getBoundingClientRect().height || target.closest('.project-group.collapsed, .device-group.collapsed');
+            if (!viewedPageAnchor || viewedPageAnchor.scrollEl !== surface || unavailable) {
+                if (viewedPageAnchor && unavailable) viewedSessionId = null;
+                viewedPageAnchor = capturePageScrollAnchor();
+                return;
+            }
+            restorePageScrollAnchor(viewedPageAnchor);
+        }
+
+        function noteViewedPageScroll(event) {
+            const surface = pageScrollSurface();
+            if (event.target !== surface && !(event.target === document && surface === document.scrollingElement)) return;
+            if (restoredPageTop !== null && Math.abs(surface.scrollTop - restoredPageTop) < 0.5) return;
+            // A wheel, swipe, scrollbar drag or explicit navigation chooses a
+            // new reading position. Never pull it back to the previous offset.
+            pageScrollRevision++;
+            restoredPageTop = null;
+            viewedPageAnchor = capturePageScrollAnchor();
+        }
+
+        function initViewedSessionAnchor() {
+            const layout = document.getElementById('dashboard-layout');
+            if (!layout) return;
+            let frame = null;
+            let rosterChanged = true;
+            const observed = new Set();
+            const resize = new ResizeObserver(restoreViewedSessionPosition);
+            function observeLayout() {
+                const nodes = new Set(layout.querySelectorAll('.session-card, .session-header, .project-group, .device-group, .prb-row, #prb-body'));
+                for (const node of observed) {
+                    if (!nodes.has(node)) { resize.unobserve(node); observed.delete(node); }
+                }
+                for (const node of nodes) {
+                    if (!observed.has(node)) { resize.observe(node); observed.add(node); }
+                }
+            }
+            const mutations = new MutationObserver(records => {
+                if (records.some(record => [...record.addedNodes, ...record.removedNodes].some(node =>
+                    node.nodeType === 1 && (node.matches('.session-card, .project-group, .device-group, .prb-row, #prb-body')
+                        || node.querySelector('.session-card, .prb-row, #prb-body'))))) rosterChanged = true;
+                if (frame !== null) return;
+                frame = requestAnimationFrame(() => {
+                    frame = null;
+                    if (rosterChanged) { observeLayout(); rosterChanged = false; }
+                    restoreViewedSessionPosition();
+                });
+            });
+            mutations.observe(layout, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'open', 'hidden'] });
+            observeLayout();
+            document.addEventListener('scroll', noteViewedPageScroll, { capture: true, passive: true });
+            function selectFromTarget(event) {
+                const card = event.target.closest?.('.session-card');
+                if (!card || card.classList.contains('session-fullscreen')) return;
+                selectViewedSession(card.id.slice(8), event.target.closest('.session-header') ? 'header' : 'terminal');
+            }
+            // Capture before a click changes the DOM, including keyboard focus.
+            document.addEventListener('pointerdown', selectFromTarget, true);
+            document.addEventListener('focusin', selectFromTarget, true);
+        }
+
         function getScrollAnchorReferenceY() {
             const headerHeight = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--header-height'), 10);
             return (Number.isFinite(headerHeight) ? headerHeight : 67) + 12;
         }
 
         function capturePageScrollAnchor() {
-            const scrollEl = (prBoardVisible && document.getElementById('prb-body'))
-                || document.scrollingElement || document.documentElement;
+            const scrollEl = pageScrollSurface();
             const fallbackTop = scrollEl ? scrollEl.scrollTop : 0;
             const fallbackLeft = scrollEl ? scrollEl.scrollLeft : 0;
             const referenceY = Math.max(getScrollAnchorReferenceY(), scrollEl.getBoundingClientRect().top + 12);
+            const preferred = viewedSessionId && document.getElementById('session-' + viewedSessionId);
+            const bounds = preferred?.getBoundingClientRect();
+            const viewportBottom = scrollEl === document.scrollingElement ? window.innerHeight : scrollEl.getBoundingClientRect().bottom;
+            if (bounds?.height && !preferred.closest('.project-group.collapsed, .device-group.collapsed') && bounds.bottom > referenceY && bounds.top < viewportBottom && scrollEl.contains(preferred)) {
+                const terminal = document.getElementById('terminal-' + viewedSessionId);
+                const target = viewedAnchorPart === 'terminal' && terminal?.getBoundingClientRect().height ? terminal : preferred;
+                return { scrollEl, sessionId: viewedSessionId, selector: '#' + CSS.escape(target.id),
+                    offsetFromCardTop: referenceY - bounds.top,
+                    offsetFromTargetTop: referenceY - target.getBoundingClientRect().top,
+                    fallbackTop, fallbackLeft, referenceY };
+            }
             const cards = Array.from(scrollEl.querySelectorAll('.session-card[id^="session-"], .prb-row[data-key]'));
             let best = null;
             let bestDistance = Number.POSITIVE_INFINITY;
 
             for (const card of cards) {
                 const rect = card.getBoundingClientRect();
-                if (!rect.height || rect.bottom <= referenceY) {
+                if (!rect.height || rect.bottom <= referenceY || card.closest('.project-group.collapsed, .device-group.collapsed')) {
                     continue;
                 }
 
@@ -328,6 +424,7 @@ export const styleJs = `
         }
 
         function restorePageScrollAnchor(anchor) {
+            if (document.body?.classList.contains('session-fullscreen-open')) return;
             const scrollEl = anchor?.scrollEl;
             if (!scrollEl || !scrollEl.isConnected) return;
 
@@ -336,13 +433,14 @@ export const styleJs = `
             const card = anchor.selector && document.querySelector(anchor.selector);
             if (card) {
                 const cardTop = card.getBoundingClientRect().top + scrollEl.scrollTop;
-                targetTop = cardTop + anchor.offsetFromCardTop - anchor.referenceY;
+                targetTop = cardTop + (anchor.offsetFromTargetTop ?? anchor.offsetFromCardTop) - anchor.referenceY;
             }
             // Restore once, before paint. Deferred restores fight the next touch
             // gesture, and smooth scrolling turns background updates into motion.
             targetTop = Math.min(Math.max(0, targetTop), maxScrollTop);
             // Even a no-op scrollTo can cancel an ongoing touch scroll.
             if (Math.abs(scrollEl.scrollTop - targetTop) < 0.5 && scrollEl.scrollLeft === anchor.fallbackLeft) return;
+            restoredPageTop = targetTop;
             scrollEl.scrollTo({
                 top: targetTop,
                 left: anchor.fallbackLeft,
@@ -351,8 +449,11 @@ export const styleJs = `
         }
 
         function capturePageScrollRestorer() {
-            const anchor = capturePageScrollAnchor();
-            return () => restorePageScrollAnchor(anchor);
+            const anchor = viewedPageAnchor?.scrollEl === pageScrollSurface() ? viewedPageAnchor : capturePageScrollAnchor();
+            const revision = pageScrollRevision;
+            return () => {
+                if (revision === pageScrollRevision) restorePageScrollAnchor(anchor);
+            };
         }
 
         function preservePageScroll(callback) {

@@ -27,13 +27,17 @@ export const keyboardJs = `
                 return;
             }
 
-            // Determine positioning: up or down
+            // Fit the menu into the visible space instead of scrolling the
+            // entire dashboard to reveal it.
             const rect = container.getBoundingClientRect();
-            if (rect.top < 400) {
-                popover.classList.add('drop-down');
-            } else {
-                popover.classList.remove('drop-down');
-            }
+            const board = container.closest('#prb-body');
+            const bodyBounds = container.closest('.session-body-inner')?.getBoundingClientRect();
+            const top = Math.max(getScrollAnchorReferenceY(), board?.getBoundingClientRect().top || 0, bodyBounds?.top || 0);
+            const bottom = Math.min(window.innerHeight, board?.getBoundingClientRect().bottom || window.innerHeight, bodyBounds?.bottom || window.innerHeight);
+            const above = Math.max(0, rect.top - top - 12);
+            const below = Math.max(0, bottom - rect.bottom - 12);
+            popover.classList.toggle('drop-down', below > above);
+            popover.style.maxHeight = Math.max(above, below) + 'px';
 
             // Determine alignment: left or right
             if (rect.left > window.innerWidth - 280) {
@@ -44,10 +48,6 @@ export const keyboardJs = `
 
             popover.classList.add('visible');
 
-            // Scroll so the full popover is visible
-            requestAnimationFrame(() => {
-                popover.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            });
         }
 
         const NAMED_KEY_BYTES = {
