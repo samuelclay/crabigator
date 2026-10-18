@@ -46,10 +46,11 @@ export const dashboardHtml = `<!DOCTYPE html>
             <button class="filter-clear" onclick="clearSessionFilter()" title="Show all sessions">✕</button>
         </div>
         <div class="sessions-container">
-            <button class="pr-board-btn active" id="session-list-btn" onclick="if (prBoardVisible) togglePrBoard()" title="Session list">List</button>
+            <button class="pr-board-btn active" id="session-list-btn" onclick="showSessionList()" title="Session list">List</button>
             <button class="pr-board-btn" id="pr-board-btn" onclick="togglePrBoard()" title="Cross-session PR board">
                 <span class="pr-board-btn-icon">⑆</span> PRs
             </button>
+            <button class="pr-board-btn" id="conductor-btn" onclick="showConductor()">Conductor</button>
             <button class="sessions-btn" id="sessions-btn" aria-label="Loading sessions" aria-busy="true" aria-expanded="false" aria-haspopup="true">
                 <span class="sessions-count" id="sessions-count">Loading</span>
                 <span class="sessions-label">sessions</span>
@@ -229,6 +230,7 @@ export const dashboardHtml = `<!DOCTYPE html>
         <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
         <div class="container" id="sessions" data-layout="1" data-grouping="all"></div>
         <div class="pr-board" id="pr-board-view" hidden></div>
+        <section id="conductor-view" hidden aria-label="Conductor"></section>
     </div>
 
     <script>${dashboardJs}</script>

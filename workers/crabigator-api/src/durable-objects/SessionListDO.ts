@@ -1,3 +1,4 @@
+import { handleConductor } from '../conductor';
 import { disconnectedSessions } from '../session-presence';
 import type { Env } from '../types/env';
 import type { SessionInfo } from '../types/session';
@@ -85,6 +86,8 @@ export class SessionListDO implements DurableObject {
 
     async fetch(request: Request): Promise<Response> {
         const url = new URL(request.url);
+
+        if (url.pathname === '/conductor') return this.state.blockConcurrencyWhile(() => handleConductor(request, this.env, this.state.storage));
 
         switch (url.pathname) {
             case '/subscribe':

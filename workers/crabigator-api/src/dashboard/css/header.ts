@@ -144,7 +144,7 @@ export const headerCss = `
         width: 14px;
         height: 14px;
     }
-    /* Keep the two view labels legible on phones. */
+    /* Keep all three view labels legible on phones. */
     .header .pr-board-btn {
         width: 32px;
         height: 32px;
@@ -158,6 +158,7 @@ export const headerCss = `
         font-size: 13px;
         line-height: 1;
     }
+    .header #conductor-btn { width: auto; flex-basis: auto; padding: 0 7px; }
     .header .sessions-container,
     .header .style-container,
     .header .settings-container {
@@ -172,7 +173,7 @@ export const headerCss = `
         letter-spacing: 0;
     }
     .header .sessions-label {
-        display: inline;
+        display: none;
     }
     .filter-indicator {
         flex: 1 1 78px;
@@ -204,6 +205,7 @@ export const headerCss = `
     .header { gap: 4px; padding: 8px; }
     .header .sessions-btn { padding: 0 6px; }
     .header .status { display: none; }
+    .header .refresh-btn { display: none; }
 }
 /* Container */
 .container {

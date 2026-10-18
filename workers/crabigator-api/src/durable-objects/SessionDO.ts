@@ -69,6 +69,7 @@ function expandKeySequenceSteps(steps: KeyStep[]): KeyStep[] {
  * (state transitions, prompt changes, title changes)
  */
 interface PersistentState {
+    conductorCommand?: string;
     sessionId: string;
     state: SessionState;
     currentPrompt: CloudPromptData | null;
@@ -328,6 +329,15 @@ export class SessionDO implements DurableObject {
                 return this.handleDesktopWebSocket(request);
             case '/events':
                 return this.handleViewerWebSocket(request);
+            case '/conductor-input': {
+                if (request.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405 });
+                const body = await request.json() as { task_id: string; text: string };
+                if (!this.persistentState.conductorCommand || !this.liveDesktopSocket()) return Response.json({ error: 'This session needs the new desktop build and an active connection.' }, { status: 409 });
+                if (this.hasPendingAttention() || this.persistentState.currentPrompt) return Response.json({ error: 'This session has a question or permission prompt. Open it to answer first.' }, { status: 409 });
+                if (await this.state.storage.get<string>('draft')) return Response.json({ error: 'This session has an unsent draft.' }, { status: 409 });
+                this.sendToDesktop({ type: 'conductor_input', task_id: body.task_id, text: body.text });
+                return Response.json({ ok: true });
+            }
             case '/answer':
                 return this.handleAnswer(request);
             case '/key':
@@ -407,6 +417,7 @@ export class SessionDO implements DurableObject {
             return new Response('Expected WebSocket', { status: 426 });
         }
 
+        this.persistentState.conductorCommand = undefined;
         // Close every earlier desktop socket, not just the one in memory. A
         // socket left open could outlive this connection and take its input.
         for (const old of this.state.getWebSockets('desktop')) {
@@ -846,6 +857,10 @@ export class SessionDO implements DurableObject {
     private async handleEvent(event: SessionEvent): Promise<void> {
         event = cleanRecapEvent(event);
         if (event.type === 'heartbeat') {
+            if (event.conductor_command && event.conductor_command !== this.persistentState.conductorCommand) {
+                this.persistentState.conductorCommand = event.conductor_command;
+                await this.state.storage.put('persistentState', this.persistentState);
+            }
             if (this.sessionInfo) {
                 await this.notifySessionList('connect', this.sessionInfo);
                 this.updateD1LastSeen(true);
@@ -1606,6 +1621,7 @@ export class SessionDO implements DurableObject {
                 cwd: this.sessionInfo?.cwd || null,
                 platform: this.sessionInfo?.platform || null,
                 started_at: this.sessionInfo?.started_at || null,
+                conductor_command: this.persistentState.conductorCommand || null,
                 desktop_connected: this.liveDesktopSocket() !== null,
                 disconnected_at: this.disconnectedAt,
                 state: this.persistentState.state,

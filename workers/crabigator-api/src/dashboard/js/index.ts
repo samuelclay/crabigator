@@ -1,3 +1,4 @@
+import { conductorJs } from './conductor';
 // Dashboard JavaScript - combined export
 import { constantsJs } from './constants';
 import { scrollbackJs } from './scrollback';
@@ -58,5 +59,6 @@ export const dashboardJs = [
     subscriptionJs,  // Must be after pairingJs (uses getAuthHeaders)
     prBoardJs,  // Must be after pairingJs and changesWidgetJs (uses getAuthHeaders, PR helpers)
     modulesJs,
+    conductorJs,
     initJs
 ].join('\n');

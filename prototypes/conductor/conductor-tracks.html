@@ -1,0 +1,197 @@
+<style>
+#conductor-demo { --cd-bg:light-dark(#f6f7f8,#15191e); --cd-panel:light-dark(#fff,#1b2027); --cd-fg:light-dark(#202731,#e3e8ee); --cd-muted:light-dark(#596572,#a1adbb); --cd-line:light-dark(#ced5dc,#3c4653); --cd-accent:light-dark(#155b72,#89c9d9); --cd-soft:light-dark(#e7f1f4,#253b44); --cd-warn:light-dark(#865710,#e4bb72); color:var(--cd-fg); background:var(--cd-bg); font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; border:1px solid var(--cd-line); border-radius:8px; overflow:hidden; }
+#conductor-demo * { box-sizing:border-box; }
+#conductor-demo button,#conductor-demo select { font:inherit; color:inherit; background:var(--cd-panel); border:1px solid var(--cd-line); border-radius:4px; padding:5px 9px; }
+#conductor-demo button:disabled { opacity:.5; }
+#conductor-demo button[aria-pressed="true"] { background:var(--cd-soft); border-color:var(--cd-accent); }
+#conductor-demo .cd-titlebar,#conductor-demo .cd-toolbar,#conductor-demo .cd-footer { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:10px 14px; }
+#conductor-demo .cd-titlebar { border-bottom:1px solid var(--cd-line); }
+#conductor-demo .cd-muted { color:var(--cd-muted); }
+#conductor-demo .cd-demo { color:var(--cd-warn); font-size:12px; }
+#conductor-demo .cd-conversation { background:var(--cd-panel); padding:16px 18px; border-bottom:1px solid var(--cd-line); }
+#conductor-demo .cd-speaker { color:var(--cd-accent); margin-bottom:5px; }
+#conductor-demo .cd-answer { margin:0 0 12px; max-width:95ch; min-height:42px; }
+#conductor-demo .cd-prompt { margin:12px 0; display:flex; gap:9px; }
+#conductor-demo .cd-compose { display:flex; align-items:center; flex-wrap:wrap; gap:10px; border-top:1px solid var(--cd-line); padding-top:10px; }
+#conductor-demo .cd-compose label { color:var(--cd-accent); }
+#conductor-demo select { flex:1; min-width:0; max-width:100%; }
+#conductor-demo .cd-toolbar { border-bottom:1px solid var(--cd-line); }
+#conductor-demo .cd-buttons { display:flex; gap:6px; flex-wrap:wrap; }
+#conductor-demo .cd-panes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1px; background:var(--cd-line); }
+#conductor-demo .cd-panes.cd-columns { grid-template-columns:repeat(3,minmax(0,1fr)); }
+#conductor-demo .cd-panes.cd-focused { grid-template-columns:1fr; }
+#conductor-demo .cd-panes:not(.cd-columns):not(.cd-focused) .cd-pane:last-child:nth-child(odd) { grid-column:1 / -1; }
+#conductor-demo .cd-pane { background:var(--cd-panel); padding:12px 14px 14px; min-width:0; }
+#conductor-demo .cd-pane-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:4px; }
+#conductor-demo .cd-pane-head button { margin-left:auto; padding:2px 7px; font-size:12px; }
+#conductor-demo .cd-mark { color:var(--cd-accent); }
+#conductor-demo .cd-role { color:var(--cd-muted); font-size:12px; margin-bottom:9px; }
+#conductor-demo .cd-state { display:flex; justify-content:space-between; gap:8px; padding:5px 0 9px; }
+#conductor-demo .cd-state[data-wait="true"] { color:var(--cd-warn); }
+#conductor-demo .cd-rail { display:flex; height:5px; gap:3px; margin-bottom:12px; }
+#conductor-demo .cd-rail span { flex:1; background:var(--cd-line); }
+#conductor-demo .cd-rail span.cd-passed { background:var(--cd-accent); }
+#conductor-demo .cd-events { display:flex; flex-direction:column; gap:7px; }
+#conductor-demo .cd-event { display:grid; grid-template-columns:4ch 1fr; gap:9px; }
+#conductor-demo .cd-event time { color:var(--cd-muted); font-size:12px; }
+#conductor-demo .cd-event small { display:block; color:var(--cd-muted); font-size:12px; }
+#conductor-demo .cd-result { margin-top:12px; padding-top:9px; border-top:1px solid var(--cd-line); }
+#conductor-demo .cd-result div { margin:4px 0; }
+#conductor-demo .cd-question { margin-top:12px; padding:10px; background:var(--cd-bg); border-left:2px solid var(--cd-warn); }
+#conductor-demo .cd-question button { margin-top:8px; }
+#conductor-demo .cd-screen { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0; font:inherit; color:var(--cd-fg); }
+#conductor-demo .cd-parked { padding:9px 14px; color:var(--cd-muted); border-top:1px solid var(--cd-line); }
+#conductor-demo .cd-report { padding:12px 14px; border-top:1px solid var(--cd-line); background:var(--cd-panel); }
+#conductor-demo table { width:100%; border-collapse:collapse; font:inherit; }
+#conductor-demo th,#conductor-demo td { text-align:left; font-weight:400; padding:8px 6px; border-bottom:1px solid var(--cd-line); vertical-align:top; }
+#conductor-demo th { color:var(--cd-muted); font-size:12px; }
+#conductor-demo td small { display:block; color:var(--cd-muted); font-size:12px; }
+#conductor-demo .cd-footer { font-size:12px; color:var(--cd-muted); }
+#conductor-demo .cd-report-label { margin-bottom:8px; color:var(--cd-accent); }
+#conductor-demo .cd-pane [hidden],#conductor-demo [hidden] { display:none; }
+@media(max-width:680px) { #conductor-demo .cd-panes,#conductor-demo .cd-panes.cd-columns { grid-template-columns:1fr; } #conductor-demo .cd-conversation { padding:12px; } #conductor-demo .cd-compose { align-items:stretch; } #conductor-demo .cd-compose label { width:100%; } #conductor-demo table,#conductor-demo tbody,#conductor-demo tr,#conductor-demo td { display:block; } #conductor-demo thead { display:none; } #conductor-demo tr { padding:8px 0; border-bottom:1px solid var(--cd-line); } #conductor-demo td { padding:2px 0; border:0; } #conductor-demo td::before { content:attr(data-label) " "; color:var(--cd-muted); } }
+@media(pointer:coarse) { #conductor-demo button,#conductor-demo select { min-height:44px; } }
+</style>
+<div id="conductor-demo" aria-label="Conductor terminal design">
+  <div class="cd-titlebar"><span>≋ crabigator <span data-name>conductor</span></span><span class="cd-demo">INTERACTIVE SKETCH · FICTIONAL DATA</span></div>
+  <section class="cd-conversation" aria-label="Coordinating conversation">
+    <div class="cd-speaker">you</div>
+    <div class="cd-prompt" data-prompt></div>
+    <div class="cd-speaker" data-name>conductor</div>
+    <p class="cd-answer" data-answer aria-live="polite"></p>
+    <div class="cd-compose"><label for="cd-scenario">❯ Try a request</label><select id="cd-scenario"><option value="apps">Check our three projects’ iOS and Android releases</option><option value="one">Ask NewsBlur how long iOS has been in review</option><option value="all">Ask every session what needs my attention</option></select><button type="button" data-run>Run example</button></div>
+  </section>
+  <div class="cd-toolbar"><span data-progress aria-live="polite"></span><div class="cd-buttons"><button type="button" data-view="activity" aria-pressed="true">Activity</button><button type="button" data-view="screen" aria-pressed="false">Session screen</button><button type="button" data-step>Next moment →</button></div></div>
+  <div class="cd-panes" data-panes></div>
+  <div class="cd-parked" data-parked></div>
+  <section class="cd-report" data-report hidden aria-label="Combined results"></section>
+  <div class="cd-footer"><span data-footer>Typing belongs to Conductor · expand a track to inspect it</span><span>Read-only check · no messages sent</span></div>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('conductor-demo');
+  const find = selector => root.querySelector(selector);
+  const settings = { name: 'Conductor', layout: 'Three across', detail: true };
+  const nameOptions = ['Conductor','Rally','Relay','Switchyard','Quarterdeck','Lookout','Roundtable','Crew','Clutch','Reef','Tidepool'];
+  let state = { scenario: 'apps', step: 0, answered: false, focus: null, view: 'activity' };
+  const sessions = [
+    { id:'news', name:'NewsBlur', mark:'◢█◣', role:'iOS + Android releases', repo:'newsblur', events:[['00s','Request queued','Read store status only.'],['02s','Checking App Store Connect','Reading the candidate version and state history.'],['08s','iOS review started 3h ago','Submission was 1d 4h ago; these are different clocks.'],['18s','Google Play check finished','Production version verified. Two sources attached.']], rows:[['iOS','16.1 · build 301','In review','3h in review · submitted 1d 4h ago'],['Android','16.1 · build 301','Available','Production · checked just now']] },
+    { id:'touch', name:'Turn Touch', mark:'⠶⣿⠶', role:'iOS + Android releases', repo:'turntouch', events:[['00s','Request queued','Read store status only.'],['03s','Checking both store listings','Confirming the public and candidate versions.'],['12s','Google Play production verified','Android 2.4 is available.'],['22s','Two iOS listings match','Consumer app or internal demo? Both listings are visible.'],['31s','Consumer listing confirmed','Review-start time is unavailable; reporting it as unknown.']], rows:[['iOS','2.4 · build 87','In review','Review age unknown · submitted 18h ago'],['Android','2.4 · build 42','Available','Production · checked just now']] },
+    { id:'crab', name:'Crabigator', mark:'▀▄▀', role:'iOS + Android releases', repo:'crabigator', events:[['00s','Request queued','Read store status only.'],['01s','Follow-up delivered','Accepted as a follow-up; the device task continues.'],['11s','Store check started','The device task finished; the follow-up is now running.'],['25s','Both store states verified','iOS is waiting for review. Android is in review.']], rows:[['iOS','1.3 · build 19','Waiting for review','Not yet in review · submitted 6h ago'],['Android','1.3 · build 19','In review','Review age unknown · submitted 9h ago']] },
+    { id:'blog', name:'Cooking Blog', mark:'ᚼᛉᚼ', role:'Recipes + publishing', repo:'brightwaterbog', events:[['00s','Request queued','Check what needs the user’s attention.'],['02s','Reviewing the current task','Reading the latest recipe-import results.'],['09s','Two recipes need photo choices','Ready for your selection; publishing has not started.']], rows:[] }
+  ];
+  const prompts = { apps:'Check iOS and Android release status for NewsBlur, Turn Touch, and Crabigator. Include versions and how long they’ve been in review.', one:'Ask NewsBlur how long its iOS release has been in review.', all:'Ask every session what needs my attention.' };
+  const escape = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const active = () => sessions.filter(session => state.scenario === 'all' || (state.scenario === 'one' ? session.id === 'news' : session.id !== 'blog'));
+  function eventsFor(session) {
+    if (state.scenario !== 'all') return session.events;
+    const updates = {
+      news:[['00s','Request queued','Report anything needing the user’s attention.'],['02s','Checking current work','Reviewing the latest release and issue notes.'],['08s','No decision needed','Store review is still in progress.']],
+      touch:[['00s','Request queued','Report anything needing the user’s attention.'],['03s','Reviewing release notes','Checking unresolved questions.'],['12s','App ownership needs clarification','Two iOS listings are visible.'],['22s','Question ready','Should release checks cover the consumer app or internal demo?'],['31s','Question resolved','Release checks cover the consumer app.']],
+      crab:[['00s','Request queued','Report anything needing the user’s attention.'],['01s','Follow-up delivered','The device task continues without interruption.'],['11s','Checking device task results','Installation finished; reading the outcome.'],['25s','No decision needed','Device check finished. No new release was submitted.']]
+    };
+    return updates[session.id] || session.events;
+  }
+  function trackState(session) {
+    if (state.step === 0) return 'Queued';
+    if (session.id === 'crab' && state.step === 1) return 'Delivered · current turn continues';
+    if (session.id === 'touch' && state.step >= 3 && !state.answered) return 'Needs your answer';
+    if (session.id === 'touch' && state.answered) return 'Answered';
+    if (session.id === 'blog' && state.step >= 2) return 'Answered';
+    if (session.id === 'news' && state.step >= (state.scenario === 'apps' ? 3 : 2)) return 'Answered';
+    if (session.id === 'crab' && state.step >= 4) return 'Answered';
+    return 'Working';
+  }
+  function visibleEvents(session) {
+    const events = eventsFor(session);
+    let count = Math.min(events.length, state.step + 1);
+    if (session.id === 'crab') count = state.step >= 4 ? 4 : state.step >= 2 ? 3 : state.step + 1;
+    if (session.id === 'touch') count = state.answered ? 5 : Math.min(count,4);
+    if (state.scenario === 'one') count = Math.min(count,3);
+    const visible=events.slice(0,count);
+    if(session.id==='touch' && state.answered && state.step===3) visible[visible.length-1]=['22s',...visible[visible.length-1].slice(1)];
+    return visible;
+  }
+  function pane(session) {
+    const status = trackState(session);
+    const done = status === 'Answered';
+    const waiting = status === 'Needs your answer';
+    const events = visibleEvents(session);
+    const shown = settings.detail || state.focus ? events : events.slice(-1);
+    const results = state.scenario === 'one' ? session.rows.slice(0,1) : session.rows;
+    const eventHtml = shown.map(event => `<div class="cd-event"><time>${event[0]}</time><div>${escape(event[1])}${settings.detail || state.focus ? `<small>${escape(event[2])}</small>` : ''}</div></div>`).join('');
+    const screen = `~/projects/${session.repo}  ·  ${session.name}\n\n❯ ${prompts[state.scenario]}\n\n${events.map(event => '• ' + event[1] + '\n  ' + event[2]).join('\n\n')}\n\n${waiting ? '? Consumer iOS app or internal demo?' : done ? '✓ Response complete' : '… ' + status}`;
+    return `<section class="cd-pane" aria-label="${session.name} track"><div class="cd-pane-head"><span class="cd-mark">${session.mark}</span><span>${session.name}</span><button type="button" data-focus="${session.id}" aria-label="${state.focus ? 'Show all tracks' : 'Expand ' + session.name}">${state.focus ? 'All tracks' : 'Expand ↗'}</button></div><div class="cd-role">${state.scenario === 'all' ? session.repo : session.role}</div><div class="cd-state" data-wait="${waiting}"><span>${waiting ? '?' : done ? '✓' : '·'} ${status}</span><span class="cd-muted">${events[events.length-1][0]}</span></div><div class="cd-rail" aria-label="${status}">${Array.from({length:4},(_,i)=>`<span class="${i < (done ? 4 : Math.min(state.step+1,3)) ? 'cd-passed' : ''}"></span>`).join('')}</div>${state.view === 'activity' ? `<div class="cd-events">${eventHtml}</div>` : `<div class="cd-muted">Simulated terminal capture</div><pre class="cd-screen">${escape(screen)}</pre>`}${done && state.scenario !== 'all' ? `<div class="cd-result">${results.map(row=>`<div>${row[0]} ${row[1]}<br><span class="cd-muted">${row[2]}</span></div>`).join('')}</div>` : ''}${waiting ? '<div class="cd-question">Two iOS listings match. Which should release checks cover?<br><button type="button" data-answer-question>Consumer app</button></div>' : ''}</section>`;
+  }
+  function render() {
+    const targets = active();
+    const done = targets.filter(session=>trackState(session)==='Answered');
+    const waiting = targets.some(session=>trackState(session)==='Needs your answer');
+    root.querySelectorAll('[data-name]').forEach(element=>element.textContent=settings.name.toLowerCase());
+    find('[data-prompt]').textContent=prompts[state.scenario];
+    const names=targets.map(session=>session.name).join(', ');
+    let reply=`I’m asking ${names}. Each gets its own track, and I’ll bring their answers together here.`;
+    if (state.step===1) reply=state.scenario==='one' ? 'NewsBlur is checking the store’s state history. I’ll distinguish review time from submission time.' : 'The tracks are running independently. Crabigator received the follow-up immediately; its current device task continues.';
+    if (state.step>=2) reply=state.scenario==='one' ? 'NewsBlur reports 3 hours in review. It was submitted 1 day and 4 hours ago. Those are separate timestamps.' : `${done.length} of ${targets.length} sessions have answered. ${waiting ? 'Turn Touch has a question; the other tracks can continue.' : 'I’m collecting the remaining answers as they arrive.'}`;
+    if(done.length===targets.length && state.scenario==='apps') reply='All three sessions answered. Two apps are available, three are in review, and one is waiting for review. Two review-start times remain unknown; the report keeps those gaps visible.';
+    if(done.length===targets.length && state.scenario==='all') reply='Everyone answered. Cooking Blog needs photo choices for two recipes. The app-listing question is resolved; NewsBlur and Crabigator need no decision from you.';
+    find('[data-answer]').textContent=reply;
+    find('[data-progress]').textContent=`${done.length}/${targets.length} answered${waiting ? ' · 1 question' : ''} · ${['00s','03s','12s','22s','31s'][state.step]} elapsed`;
+    find('[data-step]').disabled=state.step>=4 || (state.scenario==='one' && state.step>=2);
+    find('[data-step]').textContent=state.step>=4 || (state.scenario==='one' && state.step>=2) ? (waiting ? 'Timeline finished' : 'Example complete') : 'Next moment →';
+    const panes=find('[data-panes]');
+    panes.className='cd-panes'+(settings.layout==='Three across' && targets.length===3 ? ' cd-columns' : '')+(state.focus || targets.length===1 ? ' cd-focused' : '');
+    panes.innerHTML=targets.filter(session=>!state.focus || session.id===state.focus).map(pane).join('');
+    const inactive=sessions.filter(session=>!targets.includes(session));
+    find('[data-parked]').textContent=inactive.length ? `Outside this request: ${inactive.map(session=>session.name).join(' · ')}` : 'All four managed sessions are included in this request.';
+    find('[data-footer]').textContent=state.focus ? 'Expanded track · Session screen shows its simulated terminal' : 'Typing belongs to '+settings.name+' · expand a track to inspect it';
+    root.querySelectorAll('[data-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.view===state.view)));
+    const report=find('[data-report]');
+    report.hidden=state.scenario==='all' ? done.length===0 : state.step<2;
+    if (state.scenario==='all') {
+      const findings={news:'No decision needed; release review continues.',touch:'Consumer app selected for release checks.',crab:'Device task finished; no decision needed.',blog:'Choose photos for two recipes.'};
+      report.innerHTML=`<div class="cd-report-label">${done.length===targets.length ? 'Combined answer' : 'Answer so far'} · sample findings</div>`+done.map(session=>`<div>${session.name}: ${findings[session.id]}</div>`).join('');
+    } else {
+      const rows=targets.flatMap(session => (state.scenario==='one' ? session.rows.slice(0,1) : session.rows).map(row=>({session,row,ready:done.includes(session) || (state.step>=2 && ((session.id==='touch' && row[0]==='Android') || (session.id==='news' && row[0]==='iOS')))})));
+      report.innerHTML=`<div class="cd-report-label">${done.length===targets.length ? 'Combined answer' : 'Answer so far'} · fictional store values</div><table><thead><tr><th>App</th><th>Candidate / version</th><th>Store state</th><th>Timing</th></tr></thead><tbody>${rows.map(({session,row,ready})=>`<tr><td data-label="App">${session.name}<small>${row[0]}</small></td><td data-label="Version">${ready ? row[1] : 'Pending'}</td><td data-label="State">${ready ? row[2] : trackState(session)}</td><td data-label="Timing">${ready ? row[3] : 'Not yet verified'}${ready ? `<details><summary>Source + checked time</summary><small>Sample source: ${row[0]==='iOS' ? 'App Store Connect · version history' : 'Google Play Console · production track'}<br>Checked at 10:00 UTC · simulated<br>Reported by ${session.name} · this request</small></details>` : ''}</td></tr>`).join('')}</tbody></table>`;
+    }
+  }
+  function save() {
+    if(window.openai?.setWidgetState) window.openai.setWidgetState({modelContent:{name:settings.name,layout:settings.layout,scenario:state.scenario},privateContent:{...state,settings:{...settings}}}).catch(()=>{});
+  }
+  function restore(saved) {
+    const data=saved?.privateContent;
+    if(!data) return;
+    if(['apps','one','all'].includes(data.scenario)) state.scenario=data.scenario;
+    if(Number.isInteger(data.step)) state.step=Math.max(0,Math.min(4,data.step));
+    state.answered=data.answered===true;
+    state.view=data.view==='screen'?'screen':'activity';
+    state.focus=active().some(session=>session.id===data.focus)?data.focus:null;
+    if(nameOptions.includes(data.settings?.name)) settings.name=data.settings.name;
+    if(['Two by two','Three across'].includes(data.settings?.layout)) settings.layout=data.settings.layout;
+    if(typeof data.settings?.detail==='boolean') settings.detail=data.settings.detail;
+    find('#cd-scenario').value=state.scenario;
+  }
+  root.addEventListener('click',event=>{
+    const button=event.target.closest('button');
+    if(!button) return;
+    if(button.hasAttribute('data-run')) state={scenario:find('#cd-scenario').value,step:0,answered:false,focus:null,view:state.view};
+    else if(button.hasAttribute('data-step')) state.step=Math.min(4,state.step+1);
+    else if(button.hasAttribute('data-answer-question')) state.answered=true;
+    else if(button.dataset.focus) state.focus=state.focus?null:button.dataset.focus;
+    else if(button.dataset.view) state.view=button.dataset.view;
+    render(); save();
+    if(button.hasAttribute('data-answer-question')) find('[data-view="activity"]').focus();
+    else if(button.dataset.focus) find('[data-focus="'+button.dataset.focus+'"]').focus();
+  });
+  restore(window.openai?.widgetState);
+  render();
+  window.addEventListener('openai:set_globals',event=>{if(event.detail?.globals?.widgetState){restore(event.detail.globals.widgetState);render();}});
+  if(globalThis.Tweak) {
+    const tweak=new Tweak({container:root,onChange:()=>{render();save();}});
+    tweak.addSelect(settings,'name',{label:'Working name',options:nameOptions});
+    tweak.addSelect(settings,'layout',{label:'Track layout',options:['Two by two','Three across']});
+    tweak.addToggle(settings,'detail',{label:'Show tool detail'});
+  }
+})();
+</script>

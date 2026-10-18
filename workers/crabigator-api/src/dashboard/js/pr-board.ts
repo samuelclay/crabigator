@@ -86,6 +86,7 @@ export const prBoardJs = `
         const PRB_PREVIEW_MATCHES = 3;
 
         function togglePrBoard() {
+            if (typeof conductorVisible !== 'undefined' && conductorVisible) hideConductor();
             prBoardVisible = !prBoardVisible;
             const board = document.getElementById('pr-board-view');
             const sessionsEl = document.getElementById('sessions');

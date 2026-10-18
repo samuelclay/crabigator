@@ -33,6 +33,7 @@ export interface StateEvent {
  * Liveness-only heartbeat from desktop.
  */
 export interface HeartbeatEvent {
+    conductor_command?: string;
     type: 'heartbeat';
     timestamp: number;      // Unix timestamp (ms)
 }
@@ -504,7 +505,7 @@ export interface PrOverridesChangedMessage {
     type: 'pr_overrides_changed';
 }
 
-export type CloudToDesktopMessage = AnswerMessage | PingMessage | KeyMessage | KeySequenceMessage | ViewerStatusMessage | SpawnMessage | PrOverridesChangedMessage;
+export type CloudToDesktopMessage = { type: 'conductor_input'; task_id: string; text: string } | AnswerMessage | PingMessage | KeyMessage | KeySequenceMessage | ViewerStatusMessage | SpawnMessage | PrOverridesChangedMessage;
 
 /**
  * Session info for listing

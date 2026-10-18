@@ -1,3 +1,4 @@
+import { conductorCss } from './conductor';
 // Dashboard CSS barrel - combines all CSS module fragments
 import { modulesCss } from './modules';
 import { baseCss } from './base';
@@ -35,4 +36,5 @@ export const dashboardCss = [
     voiceCss,
     prBoardCss,
     modulesCss,
+    conductorCss,
 ].join('\n');

@@ -1,3 +1,4 @@
+import { conductorRoute } from './conductor';
 import { spawnOnSessionDesktop, registerPush, mobileSnapshot } from './handlers/mobile';
 import { Router, jsonResponse } from './router';
 import type { Env } from './types/env';
@@ -81,6 +82,9 @@ function withStaffSession(handler: RouteHandler): RouteHandler {
 // ============================================
 // Dashboard (no auth for now)
 // ============================================
+
+router.get('/api/conductor', conductorRoute);
+for (const action of ['message', 'host', 'tool', 'report', 'archive']) router.post('/api/conductor/' + action, conductorRoute);
 
 router.get('/dashboard', async (request, env) => {
     const runtime = getRuntimeConfig(request, env);
