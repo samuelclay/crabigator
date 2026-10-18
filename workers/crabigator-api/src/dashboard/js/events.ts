@@ -1,37 +1,39 @@
 // Dashboard JavaScript - events
 export const eventsJs = `
-        // Coalesce screen updates. Grok's TUI redraws many times a second;
-        // painting every frame stalls typing in the message box.
-        const pendingScreenUpdates = new Map();
-        const screenUpdateTimers = new Map();
+        // Coalesce received history and screen events into one paint, avoiding
+        // intermediate frames with new history alongside the previous screen.
+        const pendingTerminalUpdates = new Map();
+        const terminalUpdateTimers = new Map();
 
         function sessionInputIsFocused(sessionId) {
             const input = document.getElementById('input-' + sessionId);
             return !!(input && document.activeElement === input);
         }
 
-        function applyScreenUpdate(sessionId, content) {
-            const screenEl = document.getElementById('screen-' + sessionId);
-            if (screenEl) screenEl.innerHTML = ansiToHtml(content);
-            const sessionData = sessions.get(sessionId);
-            const terminal = document.getElementById('terminal-' + sessionId);
-            if (sessionData?.pinned && terminal) {
-                terminal.scrollTop = terminal.scrollHeight;
-                sessionData.lastScrollTop = terminal.scrollTop;
+        function scheduleTerminalUpdate(sessionId, event) {
+            let pending = pendingTerminalUpdates.get(sessionId);
+            if (!pending) {
+                pending = { history: null, diffs: [], screen: undefined };
+                pendingTerminalUpdates.set(sessionId, pending);
             }
-        }
-
-        function scheduleScreenUpdate(sessionId, content) {
-            pendingScreenUpdates.set(sessionId, content);
-            if (screenUpdateTimers.has(sessionId)) return;
+            if (event.type === 'screen') pending.screen = event.content;
+            else if (event.type === 'scrollback_history') {
+                pending.history = scrollbackLines(event.content || '');
+                pending.diffs = [];
+            } else if (event.diff) pending.diffs.push(event.diff);
+            if (terminalUpdateTimers.has(sessionId)) return;
             const delay = sessionInputIsFocused(sessionId) ? 250 : 80;
-            screenUpdateTimers.set(sessionId, setTimeout(() => {
-                screenUpdateTimers.delete(sessionId);
-                const latestContent = pendingScreenUpdates.get(sessionId);
-                pendingScreenUpdates.delete(sessionId);
-                if (latestContent !== undefined) {
-                    applyScreenUpdate(sessionId, latestContent);
-                }
+            terminalUpdateTimers.set(sessionId, setTimeout(() => {
+                terminalUpdateTimers.delete(sessionId);
+                pendingTerminalUpdates.delete(sessionId);
+                preserveTerminalScroll(sessionId, () => {
+                    if (pending.history !== null) renderScrollback(sessionId, pending.history);
+                    for (const diff of pending.diffs) appendScrollback(sessionId, diff);
+                    if (pending.screen !== undefined) {
+                        const screen = document.getElementById('screen-' + sessionId);
+                        if (screen) screen.innerHTML = ansiToHtml(pending.screen);
+                    }
+                });
             }, delay));
         }
 
@@ -84,9 +86,9 @@ export const eventsJs = `
         function closeSessionSocket(session) {
             if (session?.sessionId) {
                 cancelSessionReconnect(session.sessionId);
-                clearTimeout(screenUpdateTimers.get(session.sessionId));
-                screenUpdateTimers.delete(session.sessionId);
-                pendingScreenUpdates.delete(session.sessionId);
+                clearTimeout(terminalUpdateTimers.get(session.sessionId));
+                terminalUpdateTimers.delete(session.sessionId);
+                pendingTerminalUpdates.delete(session.sessionId);
             }
             const ws = session?.eventSocket;
             if (!ws) return;
@@ -186,8 +188,6 @@ export const eventsJs = `
         function handleSessionEvent(sessionId, event) {
             const terminal = document.getElementById('terminal-' + sessionId);
             const card = document.getElementById('session-' + sessionId);
-            const scrollbackEl = document.getElementById('scrollback-' + sessionId);
-            const screenEl = document.getElementById('screen-' + sessionId);
             if (!terminal || !card) return;
 
             const sessionData = sessions.get(sessionId);
@@ -202,7 +202,9 @@ export const eventsJs = `
 
             switch (event.type) {
                 case 'screen':
-                    scheduleScreenUpdate(sessionId, event.content);
+                case 'scrollback':
+                case 'scrollback_history':
+                    scheduleTerminalUpdate(sessionId, event);
                     break;
                 case 'state':
                     // Update state badge
@@ -229,16 +231,6 @@ export const eventsJs = `
                         updateSessionSummary(sessionId, sessionData);
                     }
                     scheduleSidebarUpdate();
-                    break;
-                case 'scrollback':
-                    // Append scrollback diff to scrollback section (chunked)
-                    if (event.diff) {
-                        appendScrollback(sessionId, event.diff);
-                    }
-                    break;
-                case 'scrollback_history':
-                    // Full scrollback history for late joiners (chunked - only render last N lines)
-                    renderScrollback(sessionId, scrollbackLines(event.content || ''));
                     break;
                 case 'git':
                     if (sessionData) {

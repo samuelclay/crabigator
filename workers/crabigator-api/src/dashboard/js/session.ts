@@ -421,7 +421,7 @@ export const sessionJs = `
                 </div>
                 <div class="session-body" id="body-\${session.id}">
                     <div class="session-body-inner">
-                        <div class="terminal" id="terminal-\${session.id}" style="height:\${TERMINAL_HEIGHTS[currentHeightIndex]}px">
+                        <div class="terminal" tabindex="0" id="terminal-\${session.id}" style="height:\${TERMINAL_HEIGHTS[currentHeightIndex]}px">
                             <div class="terminal-scrollback" id="scrollback-\${session.id}"></div>
                             <div class="terminal-screen" id="screen-\${session.id}">Connecting...</div>
                         </div>
@@ -613,58 +613,8 @@ export const sessionJs = `
             if (expanded) restoreInput(session.id);
             updateFitLayout();
 
-            // Set up scroll tracking for pin/unpin behavior
-            // Only unpin on explicit scroll UP gesture, re-pin when scrolling down to bottom
             const terminal = document.getElementById('terminal-' + session.id);
-            if (terminal) {
-                terminal.addEventListener('scroll', () => {
-                    const sessionData = sessions.get(session.id);
-                    if (!sessionData) return;
-
-                    // Skip scroll handling during font size changes to preserve pin state
-                    if (isChangingFontSize) return;
-
-                    // Skip pin/unpin logic if this terminal isn't scroll-active
-                    if (activeTerminalId !== session.id) return;
-
-                    const currentScrollTop = terminal.scrollTop;
-                    const prevScrollTop = sessionData.lastScrollTop || 0;
-                    const scrollDelta = currentScrollTop - prevScrollTop;
-                    const scrollingUp = scrollDelta < 0;
-                    const scrollingDown = scrollDelta > 0;
-
-                    // Update last scroll position
-                    sessionData.lastScrollTop = currentScrollTop;
-
-                    const distFromBottom = terminal.scrollHeight - currentScrollTop - terminal.clientHeight;
-                    const atBottom = distFromBottom < 5;
-
-                    // Ignore scroll bounce: small upward movements near the bottom are likely
-                    // elastic bounce, not intentional scrolling. Require scrolling up past
-                    // bounce threshold (50px from bottom) to unpin.
-                    const pastBounceZone = distFromBottom > 50;
-
-                    if (scrollingUp && sessionData.pinned && pastBounceZone) {
-                        // Unpin only on explicit scroll UP past the bounce zone
-                        sessionData.pinned = false;
-                        updatePinButton(session.id, false);
-                    } else if (scrollingDown && atBottom && !sessionData.pinned) {
-                        // Re-pin when scrolling DOWN and reaching bottom
-                        sessionData.pinned = true;
-                        updatePinButton(session.id, true);
-                    }
-
-                    // Load more scrollback when scrolling near the top
-                    if (currentScrollTop < 100 && sessionData.scrollbackBuffer && sessionData.scrollbackRendered < sessionData.scrollbackBuffer.length) {
-                        loadMoreScrollback(session.id);
-                    }
-                });
-
-                // Click to activate terminal scrolling
-                terminal.addEventListener('click', () => {
-                    activateTerminalScroll(session.id);
-                });
-            }
+            if (terminal) bindTerminalScroll(session.id, terminal);
         }
 
 `;

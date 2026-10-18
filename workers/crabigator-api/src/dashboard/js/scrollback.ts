@@ -36,21 +36,29 @@ export const scrollbackJs = `
             const newLines = buffer.slice(startIdx, endIdx);
             const newHtml = scrollbackHtml(newLines);
 
-            // Remember scroll position to maintain view after prepending
-            const prevScrollHeight = terminal.scrollHeight;
+            preserveTerminalScroll(sessionId, () => {
+                scrollbackEl.insertAdjacentHTML('afterbegin', newHtml);
+                scrollbackEl.classList.add('has-content');
+                sessionData.scrollbackRendered = alreadyRendered + linesToLoad;
+            });
+        }
 
-            // Prepend new content
-            scrollbackEl.insertAdjacentHTML('afterbegin', newHtml);
-            scrollbackEl.classList.add('has-content');
-
-            // Update rendered count
-            sessionData.scrollbackRendered = alreadyRendered + linesToLoad;
-
-            // Restore scroll position (content was added above, so scroll down by the added height)
-            const newScrollHeight = terminal.scrollHeight;
-            terminal.scrollTop += (newScrollHeight - prevScrollHeight);
-            sessionData.lastScrollTop = terminal.scrollTop;
-
+        // Find the retained rows when the server trims the start of history.
+        // Prefix matching keeps this linear even for thousands of blank rows.
+        function scrollbackOverlap(previous, next) {
+            if (!next.length) return 0;
+            const prefix = new Array(next.length).fill(0);
+            for (let i = 1, matched = 0; i < next.length; i++) {
+                while (matched && next[i] !== next[matched]) matched = prefix[matched - 1];
+                if (next[i] === next[matched]) matched++;
+                prefix[i] = matched;
+            }
+            let matched = 0;
+            for (const line of previous) {
+                while (matched && (matched === next.length || line !== next[matched])) matched = prefix[matched - 1];
+                if (line === next[matched]) matched++;
+            }
+            return matched;
         }
 
         // Render initial scrollback - buffer only, render lazily on scroll activate
@@ -63,48 +71,50 @@ export const scrollbackJs = `
             const previous = sessionData.scrollbackBuffer;
             if (previous && previous.length === lines.length && previous.every((line, i) => line === lines[i])) return;
 
-            // Store full buffer (rendered lazily when scroll is activated)
-            sessionData.scrollbackBuffer = lines;
-            sessionData.scrollbackRendered = 0;
-            const scrollbackEl = document.getElementById('scrollback-' + sessionId);
-            if (scrollbackEl) {
-                scrollbackEl.innerHTML = '';
-                scrollbackEl.classList.remove('has-content');
-            }
-
-            // If scroll is already active on this terminal, render now
-            if (activeTerminalId === sessionId) {
-                flushScrollback(sessionId);
-            }
+            const rendered = sessionData.scrollbackRendered || 0;
+            const overlap = scrollbackOverlap(previous || [], lines);
+            preserveTerminalScroll(sessionId, () => {
+                sessionData.scrollbackBuffer = lines;
+                const scrollbackEl = document.getElementById('scrollback-' + sessionId);
+                if (!scrollbackEl) return;
+                if (rendered && overlap) {
+                    // Keep overlapping DOM rows, including the row being read.
+                    const removed = Math.max(0, rendered - overlap);
+                    for (let i = 0; i < removed; i++) scrollbackEl.firstElementChild?.remove();
+                    scrollbackEl.insertAdjacentHTML('beforeend', scrollbackHtml(lines.slice(overlap)));
+                    sessionData.scrollbackRendered = rendered - removed + lines.length - overlap;
+                    scrollbackEl.classList.toggle('has-content', sessionData.scrollbackRendered > 0);
+                } else {
+                    sessionData.scrollbackRendered = 0;
+                    scrollbackEl.innerHTML = '';
+                    scrollbackEl.classList.remove('has-content');
+                    if (rendered || activeTerminalId === sessionId) flushScrollback(sessionId, Math.max(rendered, SCROLLBACK_CHUNK_SIZE));
+                }
+            });
         }
 
         // Flush buffered scrollback to the DOM (called on scroll activate)
-        function flushScrollback(sessionId) {
+        function flushScrollback(sessionId, count = SCROLLBACK_CHUNK_SIZE) {
             const sessionData = sessions.get(sessionId);
             if (!sessionData || !sessionData.scrollbackBuffer || sessionData.scrollbackRendered > 0) return;
 
             const scrollbackEl = document.getElementById('scrollback-' + sessionId);
-            const terminal = document.getElementById('terminal-' + sessionId);
             if (!scrollbackEl) return;
 
             const lines = sessionData.scrollbackBuffer;
             if (!lines.length) return;
-            const linesToRender = Math.min(SCROLLBACK_CHUNK_SIZE, lines.length);
+            const linesToRender = Math.min(count, lines.length);
             const startIdx = lines.length - linesToRender;
             const visibleLines = lines.slice(startIdx);
 
-            scrollbackEl.innerHTML = scrollbackHtml(visibleLines);
-            scrollbackEl.classList.add('has-content');
-
-            sessionData.scrollbackRendered = linesToRender;
-
-            if (sessionData.pinned && terminal) {
-                terminal.scrollTop = terminal.scrollHeight;
-                sessionData.lastScrollTop = terminal.scrollTop;
-            }
+            preserveTerminalScroll(sessionId, () => {
+                scrollbackEl.innerHTML = scrollbackHtml(visibleLines);
+                scrollbackEl.classList.add('has-content');
+                sessionData.scrollbackRendered = linesToRender;
+            });
         }
 
-        // Append new scrollback content - buffer only unless scroll is active
+        // Append history; terminals with no displayed history remain lazy.
         function appendScrollback(sessionId, newContent) {
             const sessionData = sessions.get(sessionId);
             if (!sessionData) return;
@@ -114,23 +124,18 @@ export const scrollbackJs = `
             if (!sessionData.scrollbackBuffer) sessionData.scrollbackBuffer = [];
             sessionData.scrollbackBuffer.push(...newLines);
 
-            // Only render to DOM if scroll is active on this terminal
-            if (activeTerminalId !== sessionId) return;
+            // Once history is displayed, keep it current even while another
+            // terminal is active. Unopened history remains lazy.
+            if (activeTerminalId !== sessionId && !sessionData.scrollbackRendered) return;
 
             const scrollbackEl = document.getElementById('scrollback-' + sessionId);
-            const terminal = document.getElementById('terminal-' + sessionId);
             if (!scrollbackEl) return;
 
-            scrollbackEl.insertAdjacentHTML('beforeend', scrollbackHtml(newLines));
-            scrollbackEl.classList.add('has-content');
-
-            sessionData.scrollbackRendered = (sessionData.scrollbackRendered || 0) + newLines.length;
-
-            // Auto-scroll if pinned
-            if (sessionData.pinned && terminal) {
-                terminal.scrollTop = terminal.scrollHeight;
-                sessionData.lastScrollTop = terminal.scrollTop;
-            }
+            preserveTerminalScroll(sessionId, () => {
+                scrollbackEl.insertAdjacentHTML('beforeend', scrollbackHtml(newLines));
+                scrollbackEl.classList.add('has-content');
+                sessionData.scrollbackRendered = (sessionData.scrollbackRendered || 0) + newLines.length;
+            });
         }
 
 `;

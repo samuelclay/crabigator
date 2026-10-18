@@ -1519,12 +1519,30 @@ export const prBoardJs = `
 
         function renderPrBoardBody() {
             // Leave the composer and keyboard in place while someone is typing.
-            if (document.activeElement?.closest('#pr-board-view .session-card')) return;
-            preservePageScroll(renderPrBoardContents);
+            const focused = document.activeElement;
+            if (focused?.closest('#pr-board-view .session-card')
+                && (focused.matches('input, textarea') || focused.isContentEditable)) return;
+            preservePageScroll(() => preserveBoardTerminals(renderPrBoardContents));
+        }
+
+        function preserveBoardTerminals(update) {
+            const positions = Array.from(document.querySelectorAll('#pr-board-view .terminal'))
+                .map(terminal => [terminal, terminal.scrollTop, terminal.scrollLeft]);
+            const focused = document.activeElement?.closest('#pr-board-view .session-card') ? document.activeElement : null;
+            try {
+                update();
+            } finally {
+                // Restore after mounting too: a PR change can move a terminal
+                // to a different row, or keep it open outside a filtered row.
+                for (const [terminal, top, left] of positions) {
+                    if (terminal.scrollTop !== top) terminal.scrollTop = top;
+                    if (terminal.scrollLeft !== left) terminal.scrollLeft = left;
+                }
+                if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+            }
         }
 
         function renderPrBoardContents() {
-            parkBoardTerminals();
             const body = document.getElementById('prb-body');
             if (!body) return;
             const now = Math.floor(Date.now() / 1000);
@@ -1678,10 +1696,10 @@ export const prBoardJs = `
             }
 
             if (!visible.length && !visibleWs.length) {
-                body.innerHTML = '<div class="prb-empty">' + (prBoardLoaded
+                reconcilePrBoard(body, '<div class="prb-empty">' + (prBoardLoaded
                     ? 'No live sessions or tracked PRs.'
                     : '<span class="prb-throb" style="color:' + PRB_C.green + '">⠋</span> Loading live sessions…')
-                    + '</div>';
+                    + '</div>');
                 prBoardRendered = [];
                 mountBoardTerminals();
                 if (prBoardPeekOpen) prbSyncPeekStream();
@@ -1716,7 +1734,7 @@ export const prBoardJs = `
             let html = '';
             for (const bucketIdx of [...buckets.keys()].sort((a, b) => a - b)) {
                 const bucket = PRB_BUCKETS[bucketIdx];
-                html += '<div class="prb-bucket" style="background:' + bucket.bg
+                html += '<div class="prb-bucket" data-board-key="bucket:' + bucketIdx + '" style="background:' + bucket.bg
                     + ';color:' + bucket.text + '">● ' + bucket.label + '</div>';
                 const repos = [...buckets.get(bucketIdx).values()];
                 // PR view keeps sessions without a PR at the end of their
@@ -1731,7 +1749,7 @@ export const prBoardJs = `
                 }
                 repos.sort((a, b) => b.rows[0].activity - a.rows[0].activity);
                 for (const repo of repos) {
-                    html += '<div class="prb-repo">' + escapeHtml(repo.name)
+                    html += '<div class="prb-repo" data-board-key="' + escapeHtml(JSON.stringify([bucketIdx, repo.name, repo.machine])) + '">' + escapeHtml(repo.name)
                         + (repo.machine
                             ? ' <span class="prb-dot">·</span> <span class="prb-machine">'
                                 + escapeHtml(repo.machine) + '</span>'
@@ -1746,7 +1764,7 @@ export const prBoardJs = `
                     }
                 }
             }
-            body.innerHTML = html;
+            reconcilePrBoard(body, html);
             mountBoardTerminals();
             for (const item of prBoardRendered) {
                 if (!['session', 'sessview'].includes(item.kind)) continue;
@@ -1796,5 +1814,43 @@ export const prBoardJs = `
             // A selected row can disappear between refreshes; the pane follows
             // whatever the selection now points at.
             if (prBoardPeekOpen) prbSyncPeekStream();
+        }
+
+        // Keep row and terminal nodes mounted across refreshes. Only changed
+        // metadata is replaced; an unchanged row is not even moved.
+        function reconcilePrBoard(body, html) {
+            const template = document.createElement('template');
+            template.innerHTML = html;
+            const key = element => element.dataset.key || element.dataset.boardKey;
+            const existing = new Map(Array.from(body.children).map(element => [key(element), element]));
+            const retained = new Set();
+            let cursor = body.firstElementChild;
+            for (const fresh of Array.from(template.content.children)) {
+                const row = key(fresh) && existing.get(key(fresh)) || fresh;
+                const metadataHtml = fresh.innerHTML;
+                if (row !== fresh) {
+                    row.className = fresh.className;
+                    row.style.cssText = fresh.style.cssText;
+                    if (row.boardHtml !== metadataHtml) {
+                        for (const child of Array.from(row.childNodes)) {
+                            if (!child.classList?.contains('session-card')) child.remove();
+                        }
+                        row.prepend(...Array.from(fresh.childNodes));
+                    }
+                }
+                row.boardHtml = metadataHtml;
+                retained.add(row);
+                if (row !== cursor) {
+                    if (row.parentElement === body && body.moveBefore) body.moveBefore(row, cursor);
+                    else body.insertBefore(row, cursor);
+                }
+                cursor = row.nextElementSibling;
+            }
+            for (const child of Array.from(body.children)) {
+                if (retained.has(child)) continue;
+                // Filters can remove a row while its terminal is still open.
+                for (const card of child.querySelectorAll('.session-card')) document.getElementById('sessions').appendChild(card);
+                child.remove();
+            }
         }
 `;

@@ -11,7 +11,7 @@ const names = new Set(['connectToSession', 'closeSessionSocket', 'cancelSessionR
 const functions = source.statements.filter(s => ts.isFunctionDeclaration(s) && names.has(s.name?.text)).map(s => s.getText(source)).join('\n');
 
 test('collapsed sessions never connect, and closing cancels queued reconnects and screen paints', () => {
-    const sockets = [], timers = new Map(), pendingScreenUpdates = new Map(), screenUpdateTimers = new Map();
+    const sockets = [], timers = new Map(), pendingTerminalUpdates = new Map(), terminalUpdateTimers = new Map();
     class Socket {
         static OPEN = 1; static CONNECTING = 0;
         readyState = 0;
@@ -20,7 +20,7 @@ test('collapsed sessions never connect, and closing cancels queued reconnects an
     }
     const sessions = new Map(Array.from({ length: 30 }, (_, i) => ['session-' + i, { sessionId: 'session-' + i }]));
     const expandedSessions = new Set();
-    const context = { sessions, expandedSessions, WebSocket: Socket, sessionReconnectTimers: new Map(), pendingScreenUpdates, screenUpdateTimers,
+    const context = { sessions, expandedSessions, WebSocket: Socket, sessionReconnectTimers: new Map(), pendingTerminalUpdates, terminalUpdateTimers,
         document: { visibilityState: 'visible' }, console: { log() {} }, getWebSocketUrl: p => p, isDeploying: false,
         setTimeout: fn => { const id = Symbol(); timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id) };
     const api = runInNewContext(functions + '\n({ connectToSession, closeSessionSocket })', context);
@@ -30,10 +30,10 @@ test('collapsed sessions never connect, and closing cancels queued reconnects an
     assert.equal(sockets.length, 2);
     sockets[0].onclose(); // A dropped connection queued a reconnect just before collapse.
     const paint = context.setTimeout(() => assert.fail('Closed terminal must not paint'));
-    pendingScreenUpdates.set('session-0', 'late output'); screenUpdateTimers.set('session-0', paint);
+    pendingTerminalUpdates.set('session-0', 'late output'); terminalUpdateTimers.set('session-0', paint);
     expandedSessions.delete('session-0'); api.closeSessionSocket(sessions.get('session-0'));
     assert.equal(timers.size, 0);
-    assert.equal(pendingScreenUpdates.size, 0);
+    assert.equal(pendingTerminalUpdates.size, 0);
     for (const id of sessions.keys()) api.connectToSession(id); // tab visibility resume
     assert.equal(sockets.length, 3, 'Only the remaining expanded session reconnects');
     assert.equal(sockets[2].url, '/sessions/session-1/events');

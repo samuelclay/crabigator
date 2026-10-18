@@ -6,6 +6,8 @@ export const terminalCss = `
     padding: 12px;
     overflow-y: hidden;
     overflow-x: hidden;
+    /* Scroll restoration is handled once for each complete terminal update. */
+    overflow-anchor: none;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
     line-height: 1.3;

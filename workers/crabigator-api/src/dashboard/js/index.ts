@@ -1,6 +1,7 @@
 // Dashboard JavaScript - combined export
 import { constantsJs } from './constants';
 import { scrollbackJs } from './scrollback';
+import { terminalJs } from './terminal';
 import { styleJs } from './style';
 import { sessionsPopoverJs } from './sessions-popover';
 import { sidebarJs } from './sidebar';
@@ -30,6 +31,7 @@ import { initJs } from './init';
 export const dashboardJs = [
     constantsJs,
     sessionMarkJs,
+    terminalJs,
     scrollbackJs,
     styleJs,
     sessionsPopoverJs,

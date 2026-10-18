@@ -14,7 +14,8 @@ function viewer() {
         const classes = new Set();
         elements.set(`${name}-test`, {
             innerHTML: '', scrollTop: 0, scrollHeight: 0,
-            classList: { add: key => classes.add(key), remove: key => classes.delete(key) },
+            classList: { add: key => classes.add(key), remove: key => classes.delete(key), toggle: (key, on) => on ? classes.add(key) : classes.delete(key) },
+            get firstElementChild() { return { remove: () => { this.innerHTML = this.innerHTML.replace(/^<div class="line">[\s\S]*?<\/div>/, ''); } }; },
             insertAdjacentHTML(where, html) {
                 this.innerHTML = where === 'afterbegin' ? html + this.innerHTML : this.innerHTML + html;
             },
@@ -24,9 +25,10 @@ function viewer() {
     const context = {
         sessions: new Map([['test', session]]), activeTerminalId: 'test', SCROLLBACK_CHUNK_SIZE: 3,
         document: { getElementById: id => elements.get(id) },
+        preserveTerminalScroll: (_id, update) => update(), // Geometry is covered by the browser suite.
     };
-    const api = runInNewContext(embedded('ansi') + embedded('scrollback') + '\n({scrollbackLines, renderScrollback, appendScrollback, loadMoreScrollback})', context);
-    return { api, session, html: () => elements.get('scrollback-test').innerHTML };
+    const api = runInNewContext(embedded('ansi') + embedded('scrollback') + '\n({scrollbackLines, renderScrollback, appendScrollback, loadMoreScrollback, flushScrollback})', context);
+    return { api, session, context, html: () => elements.get('scrollback-test').innerHTML };
 }
 
 test('live history updates render the same rows as a full snapshot, including blank rows and colors', () => {
@@ -62,4 +64,28 @@ test('an isolated blank terminal row is preserved', () => {
     const v = viewer();
     v.api.appendScrollback('test', '\n');
     assert.equal(v.html(), '<div class="line"></div>');
+});
+
+test('a reconnect with new output retains older loaded rows and handles server trimming', () => {
+    const v = viewer();
+    const rows = ['one', 'two', 'three', 'four', 'five'];
+    v.api.renderScrollback('test', rows);
+    v.api.loadMoreScrollback('test');
+    v.api.renderScrollback('test', [...rows, 'six']);
+    assert.equal(v.session.scrollbackRendered, 6);
+    assert.match(v.html(), /one/);
+    assert.match(v.html(), /six/);
+    v.api.renderScrollback('test', ['three', 'four', 'five', 'six', 'seven']);
+    assert.equal(v.session.scrollbackRendered, 5);
+    assert.equal(v.html(), ['three', 'four', 'five', 'six', 'seven'].map(row => `<div class="line">${row}</div>`).join(''));
+});
+
+test('returning to a terminal includes output received while another terminal was active', () => {
+    const v = viewer();
+    v.api.renderScrollback('test', ['one', 'two', 'three']);
+    v.context.activeTerminalId = 'other';
+    v.api.appendScrollback('test', 'four\nfive\n');
+    v.context.activeTerminalId = 'test';
+    v.api.flushScrollback('test');
+    assert.equal(v.html(), ['one', 'two', 'three', 'four', 'five'].map(row => `<div class="line">${row}</div>`).join(''));
 });
