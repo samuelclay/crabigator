@@ -13,7 +13,7 @@ export const modulesCss = `
 .container .session-header .session-row-recap { margin: 0; max-width: none; font-size: 11px; color: var(--text-mid); }
 .session-header .session-row-recap:empty, .session-header .branch:empty, .session-header .session-row-stats:empty { display: none; }
 .container .session-header .generated-title { font-family: var(--font-ui); max-width: none; color: #8bbcf0; }
-.container .session-header .session-actions { gap: 4px; }
+.container .session-header .session-actions { gap: 4px; min-height: 36px; }
 .container .session-header .collapse-btn { min-width: 28px; min-height: 28px; font-size: 20px; }
 @media (max-width: 720px) {
     .container .session-card .session-header { flex-wrap: wrap; padding: 12px; }

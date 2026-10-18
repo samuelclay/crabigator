@@ -176,11 +176,14 @@ export const modulesJs = `
         }
 
         function toggleSessionFullscreen(sessionId) {
+            // A closing card is still clickable until its animation finishes.
+            // Settle that replacement before promoting its DOM into the top layer.
+            sessionCardTransitions.get(sessionId)?.();
+            const card = document.getElementById('session-' + sessionId);
+            if (!card?.querySelector('.terminal')) return;
             if (fullscreenSessionId === sessionId) { exitSessionFullscreen(); return; }
             if (fullscreenSessionId) exitSessionFullscreen();
             preserveTerminalScroll(sessionId, () => {
-                const card = document.getElementById('session-' + sessionId);
-                if (!card) return;
                 fullscreenReturnFocus = document.activeElement;
                 fullscreenSessionId = sessionId;
                 card.classList.add('session-fullscreen');

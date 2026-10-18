@@ -89,24 +89,72 @@ export const sessionStateJs = `
             setSessionExpanded(sessionId, !expandedSessions.has(sessionId));
         }
 
+        const sessionCardTransitions = new Map();
+
+        function animateSessionCard(card, fromHeight, toHeight, opening, complete = () => {}) {
+            const id = card.id.slice(8);
+            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !card.animate) {
+                complete();
+                return;
+            }
+            const oldOverflow = card.style.overflow;
+            card.style.overflow = 'clip';
+            const duration = opening ? 320 : 190;
+            const height = card.animate([{ height: fromHeight + 'px' }, { height: toHeight + 'px' }],
+                { duration, easing: 'cubic-bezier(.22,1,.36,1)' });
+            const body = card.querySelector('.session-body');
+            const tucked = { opacity: 0, transform: 'translateY(-12px) scale(.99)' };
+            const shown = { opacity: 1, transform: 'translateY(0) scale(1)' };
+            const reveal = body?.animate(opening ? [tucked, shown] : [shown, tucked],
+                { duration, easing: opening ? 'cubic-bezier(.2,1.3,.4,1)' : 'ease-in' });
+            let finished = false;
+            const finish = () => {
+                if (finished) return;
+                finished = true;
+                height.cancel(); reveal?.cancel();
+                card.style.overflow = oldOverflow;
+                sessionCardTransitions.delete(id);
+                complete();
+            };
+            sessionCardTransitions.set(id, finish);
+            height.onfinish = finish;
+        }
+
         function setSessionExpanded(sessionId, expanded) {
+            sessionCardTransitions.get(sessionId)?.();
             if (expandedSessions.has(sessionId) === expanded) return;
             const data = sessions.get(sessionId);
             const session = allSessions.find(s => s.id === sessionId);
             if (!data || !session) return;
             const oldCard = data.element;
             if (fullscreenSessionId === sessionId) exitSessionFullscreen();
+            selectViewedSession(sessionId, 'header');
             data.moduleResize?.disconnect();
             closeSessionSocket(data);
             if (activeTerminalId === sessionId) activeTerminalId = null;
             if (expanded) expandedSessions.add(sessionId);
             else expandedSessions.delete(sessionId);
-            createSessionCard(session, false, oldCard, expanded);
-            if (!expanded && prBoardVisible) {
-                document.getElementById('sessions').appendChild(sessions.get(sessionId).element);
+            const height = oldCard.offsetHeight;
+            function replaceCard() {
+                if (sessions.get(sessionId) !== data || !oldCard.isConnected) return;
+                preservePageScroll(() => {
+                    createSessionCard(session, false, oldCard, expanded);
+                    if (!expanded && prBoardVisible) {
+                        document.getElementById('sessions').appendChild(sessions.get(sessionId).element);
+                    }
+                    if (expanded) connectToSession(sessionId);
+                    if (prBoardVisible) mountBoardTerminals();
+                });
             }
-            if (expanded) connectToSession(sessionId);
-            if (prBoardVisible) mountBoardTerminals();
+            if (expanded) {
+                replaceCard();
+                const card = sessions.get(sessionId).element;
+                animateSessionCard(card, height, card.offsetHeight, true);
+            } else {
+                // Keep the actual terminal visible through the closing motion,
+                // then release its DOM and buffers when the animation finishes.
+                animateSessionCard(oldCard, height, oldCard.querySelector('.session-header').offsetHeight + 2, false, replaceCard);
+            }
         }
 
         // Widgets collapse state persistence
