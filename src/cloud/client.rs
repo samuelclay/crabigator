@@ -808,7 +808,12 @@ impl CloudClient {
         self.ws_handle.as_mut()?.try_recv_key_sequence()
     }
 
-    /// Try to receive a spawn request from cloud (non-blocking)
+    /// Try to receive a Conductor follow-up from cloud (non-blocking).
+    pub fn try_recv_conductor(&mut self) -> Option<(String, String)> {
+        self.ws_handle.as_mut()?.try_recv_conductor()
+    }
+
+    /// Try to receive a spawn request from cloud (non-blocking).
     pub fn try_recv_spawn(&mut self) -> Option<super::websocket::SpawnRequest> {
         self.ws_handle.as_mut()?.try_recv_spawn()
     }

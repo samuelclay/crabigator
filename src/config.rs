@@ -172,6 +172,11 @@ impl Default for Config {
 impl Config {
     /// Get config directory path (~/.crabigator)
     pub fn config_dir() -> PathBuf {
+        if let Some(path) =
+            std::env::var_os("CRABIGATOR_CONFIG_DIR").filter(|path| !path.is_empty())
+        {
+            return PathBuf::from(path);
+        }
         dirs::home_dir()
             .expect("Could not find home directory")
             .join(".crabigator")

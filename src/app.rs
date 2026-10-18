@@ -6,7 +6,7 @@
 //! - We render our status widgets below the scroll region
 //! - PTY output passes through untouched
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::event::{Event, EventStream, MouseEvent};
 use futures_util::StreamExt;
 use std::io::{stdout, Write};
@@ -3031,6 +3031,48 @@ impl App {
             Ok(())
         };
         if let Some(ref mut client) = self.cloud_client {
+            while let Some((task_id, text)) = client.try_recv_conductor() {
+                let mut attempted = false;
+                let result = (|| -> Result<()> {
+                    anyhow::ensure!(
+                        uuid::Uuid::parse_str(&task_id).is_ok()
+                            && text.len() <= 64000
+                            && !text.chars().any(|c| c.is_control() && c != '\n'),
+                        "Invalid Conductor task or terminal control characters"
+                    );
+                    anyhow::ensure!(
+                        self.codex_question_prompt.is_none(),
+                        "Answer the open question before sending a follow-up"
+                    );
+                    let submit = crate::conductor::followup_key(
+                        platform_kind,
+                        self.session_stats.effective_state(),
+                        self.platform_pty.screen(),
+                    )?;
+                    let directory = crate::cloud::CloudEndpoints::load()?
+                        .state_dir()
+                        .join("conductor/delivered");
+                    std::fs::create_dir_all(&directory)?;
+                    // Reserve before writing bytes. A crash in between remains uncertain, never replayed.
+                    attempted = true;
+                    std::fs::OpenOptions::new().write(true).create_new(true).open(directory.join(&task_id))
+                        .context("This task was already delivered or its delivery record could not be saved")?;
+                    // Both supported CLIs need a paste boundary for a long,
+                    // multiline task. Raw keystrokes can lose Claude's prefix.
+                    self.platform_pty.write(&[
+                        escape::BRACKETED_PASTE_START,
+                        text.as_bytes(),
+                        escape::BRACKETED_PASTE_END,
+                    ].concat())?;
+                    std::thread::sleep(REMOTE_ANSWER_SUBMIT_DELAY);
+                    self.platform_pty.write(&[submit])?;
+                    Ok(())
+                })();
+                match result {
+                    Ok(()) => crate::conductor::report_background(task_id, "delivered", "Follow-up submitted without interrupting the current turn. Waiting for the assistant to start it.".into()),
+                    Err(error) => crate::conductor::report_background(task_id, if attempted { "delivery_unknown" } else { "failed" }, error.to_string()),
+                }
+            }
             // Handle incoming text answers
             while let Some(answer) = client.try_recv_answer() {
                 if let Some(digit) = codex_option_digit(&answer).filter(|_| picks_by_digit) {

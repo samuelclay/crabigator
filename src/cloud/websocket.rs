@@ -26,6 +26,7 @@ pub struct CloudWebSocket {
     event_tx: mpsc::Sender<CloudEvent>,
     /// Receiver for incoming answers
     answer_rx: mpsc::Receiver<String>,
+    conductor_rx: mpsc::Receiver<(String, String)>,
     /// Receiver for incoming key commands
     key_rx: mpsc::Receiver<String>,
     /// Receiver for incoming key sequences (multi-step)
@@ -78,10 +79,19 @@ impl CloudWebSocket {
 
         let (mut write, mut read) = ws_stream.split();
 
+        // Advertise capabilities on every connection, including reconnects.
+        // The periodic liveness heartbeat may be hours away.
+        write
+            .send(Message::Text(
+                serde_json::to_string(&super::events::HeartbeatEvent::new())?.into(),
+            ))
+            .await?;
+
         // Channel for outgoing events (desktop -> cloud)
         let (event_tx, mut event_rx) = mpsc::channel::<CloudEvent>(100);
 
         // Channel for incoming answers (cloud -> desktop)
+        let (conductor_tx, conductor_rx) = mpsc::channel(16);
         let (answer_tx, answer_rx) = mpsc::channel::<String>(16);
 
         // Channel for incoming key commands (cloud -> desktop)
@@ -126,6 +136,9 @@ impl CloudWebSocket {
 
                 if let Message::Text(text) = msg {
                     match serde_json::from_str::<CloudToDesktopMessage>(&text) {
+                        Ok(CloudToDesktopMessage::ConductorInput { task_id, text }) => {
+                            let _ = conductor_tx.send((task_id, text)).await;
+                        }
                         Ok(CloudToDesktopMessage::Answer { text }) => {
                             let _ = answer_tx.send(text).await;
                         }
@@ -156,6 +169,7 @@ impl CloudWebSocket {
         Ok(Self {
             event_tx,
             answer_rx,
+            conductor_rx,
             key_rx,
             key_sequence_rx,
             viewer_status_rx,
@@ -170,6 +184,7 @@ impl CloudWebSocket {
 pub struct WebSocketHandle {
     event_tx: mpsc::Sender<CloudEvent>,
     answer_rx: mpsc::Receiver<String>,
+    conductor_rx: mpsc::Receiver<(String, String)>,
     key_rx: mpsc::Receiver<String>,
     key_sequence_rx: mpsc::Receiver<Vec<KeyStep>>,
     viewer_status_rx: mpsc::Receiver<ViewerStatus>,
@@ -183,6 +198,7 @@ impl CloudWebSocket {
         let handle = WebSocketHandle {
             event_tx: self.event_tx,
             answer_rx: self.answer_rx,
+            conductor_rx: self.conductor_rx,
             key_rx: self.key_rx,
             key_sequence_rx: self.key_sequence_rx,
             viewer_status_rx: self.viewer_status_rx,
@@ -194,6 +210,9 @@ impl CloudWebSocket {
 }
 
 impl WebSocketHandle {
+    pub fn try_recv_conductor(&mut self) -> Option<(String, String)> {
+        self.conductor_rx.try_recv().ok()
+    }
     /// Try to send an event (non-blocking)
     pub fn try_send(&self, event: CloudEvent) -> bool {
         self.event_tx.try_send(event).is_ok()

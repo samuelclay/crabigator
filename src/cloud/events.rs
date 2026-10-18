@@ -97,6 +97,8 @@ impl StateEvent {
 /// but the underlying assistant has not produced output for a long time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatEvent {
+    #[serde(default)]
+    pub conductor_command: String,
     #[serde(rename = "type")]
     pub event_type: String,
     /// Unix timestamp (ms)
@@ -106,6 +108,7 @@ pub struct HeartbeatEvent {
 impl HeartbeatEvent {
     pub fn new() -> Self {
         Self {
+            conductor_command: crate::conductor::report_command(),
             event_type: "heartbeat".to_string(),
             timestamp: chrono::Utc::now().timestamp_millis() as u64,
         }
@@ -641,6 +644,8 @@ pub struct ViewerStatus {
 pub enum CloudToDesktopMessage {
     #[serde(rename = "answer")]
     Answer { text: String },
+    #[serde(rename = "conductor_input")]
+    ConductorInput { task_id: String, text: String },
     #[serde(rename = "ping")]
     Ping,
     /// Send a key sequence (e.g., Shift+Tab for mode switching)

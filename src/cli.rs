@@ -14,6 +14,7 @@ use crate::platforms::PlatformKind;
 /// Subcommand to run
 #[derive(Clone, Default)]
 pub enum Command {
+    Conductor(Vec<String>),
     /// Run the main crabigator application
     #[default]
     Run,
@@ -37,7 +38,9 @@ pub enum Command {
     /// Manage automatic turn recaps
     Recap(RecapCommand),
     /// Save an Anthropic API key for recap generation
-    Key { api_key: Option<String> },
+    Key {
+        api_key: Option<String>,
+    },
     /// Configure the Crabigator cloud service
     Cloud(CloudCommand),
     /// Open a new Crabigator session in the user's terminal
@@ -138,6 +141,11 @@ pub fn parse_args() -> Args {
             "resume" | "r" => {
                 iter.next(); // consume the subcommand
                 args.platform_args.push("--resume".to_string());
+            }
+            "conductor" => {
+                iter.next();
+                args.command = Command::Conductor(iter.collect());
+                return args;
             }
             "pair" => {
                 iter.next(); // consume "pair"

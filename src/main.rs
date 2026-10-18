@@ -5,6 +5,7 @@ mod banner;
 mod capture;
 mod cli;
 mod cloud;
+mod conductor;
 mod config;
 mod flow;
 mod git;
@@ -189,6 +190,7 @@ async fn main() -> Result<()> {
 
     // Handle subcommands that don't need the full app setup
     match args.command {
+        Command::Conductor(args) => return conductor::run(args).await,
         Command::Inspect {
             dir_filter,
             watch,
