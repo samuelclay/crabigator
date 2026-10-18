@@ -5,6 +5,19 @@ import UserNotifications
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
+    func testTerminalLinksSurviveColorsAndRejectExecutableSchemes() {
+        let source = "🦀 \u{1b}]8;id=pr;https://example.com/pr;a=1\u{1b}\\Read \u{1b}[1mPR\u{1b}[0m\u{1b}]8;;\u{7} plain\n(https://example.com/a_\u{1b}[34m(b)).\n\u{1b}]8;;javascript:alert(1)\u{7}unsafe\u{1b}]8;;\u{7}"
+        let text = TerminalText.parse(source, size: 13, spacing: 1.45, wrap: true)
+        let ns = text.string as NSString
+        func link(_ word: String) -> String? { (text.attribute(.link, at: ns.range(of: word).location, effectiveRange: nil) as? URL)?.absoluteString }
+        XCTAssertEqual(text.string, "🦀 Read PR plain\n(https://example.com/a_(b)).\nunsafe")
+        XCTAssertEqual(link("Read"), "https://example.com/pr;a=1")
+        XCTAssertEqual(link("PR"), "https://example.com/pr;a=1")
+        XCTAssertNil(link("plain"))
+        XCTAssertEqual(link("https"), "https://example.com/a_(b)")
+        XCTAssertNil(link(")."))
+        XCTAssertNil(link("unsafe"))
+    }
     @MainActor func testDisconnectedDesktopStopsWaitingAndClearsItsQuestion() {
         let stream = SessionStream()
         XCTAssertFalse(stream.desktopStatusKnown)

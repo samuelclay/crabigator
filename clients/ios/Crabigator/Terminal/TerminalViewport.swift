@@ -7,7 +7,9 @@ struct TerminalViewport: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> TerminalScrollView {
         let view = TerminalScrollView()
+        context.coordinator.openURL = context.environment.openURL
         view.text.isEditable = false; view.text.isSelectable = true; view.text.backgroundColor = .clear
+        view.text.linkTextAttributes = [.foregroundColor: TerminalText.rgb(0x82AAFF), .underlineStyle: NSUnderlineStyle.single.rawValue]
         view.text.accessibilityIdentifier = "terminal-output"; view.backgroundColor = TerminalText.rgb(0x0B0F14)
         view.text.textContainerInset = UIEdgeInsets(top: 16, left: 12, bottom: 16, right: 12)
         view.text.delegate = context.coordinator; view.delegate = context.coordinator
@@ -20,10 +22,11 @@ struct TerminalViewport: UIViewRepresentable {
         context.coordinator.view = view
         return view
     }
-    func updateUIView(_ view: TerminalScrollView, context: Context) { context.coordinator.parent = self; context.coordinator.update() }
+    func updateUIView(_ view: TerminalScrollView, context: Context) { context.coordinator.parent = self; context.coordinator.openURL = context.environment.openURL; context.coordinator.update() }
 
     final class Coordinator: NSObject, UITextViewDelegate, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         var parent: TerminalViewport
+        var openURL: OpenURLAction?
         weak var view: TerminalScrollView?
         let queue = DispatchQueue(label: "com.newsblur.crabigator.ansi", qos: .userInitiated)
         var sourceHistory = "", sourceScreen = "", style: Preferences?
@@ -33,6 +36,10 @@ struct TerminalViewport: UIViewRepresentable {
         var rendering = false
         var revision = 0, appliedRevision = 0
         init(_ parent: TerminalViewport) { self.parent = parent }
+        func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
+            guard case let .link(url) = textItem.content else { return defaultAction }
+            return UIAction { [openURL] _ in openURL?(url) }
+        }
         func update() {
             guard let view else { return }
             view.follow = parent.pinned
@@ -180,6 +187,23 @@ private extension NSAttributedString {
 }
 
 #if DEBUG
+struct TerminalLinksFixture: View {
+    @State private var opened = "No link opened"
+    @State private var pinned = true
+    @State private var preferences = Preferences()
+    var body: some View {
+        VStack {
+            TerminalViewport(
+                history: "🦀 \u{1b}]8;id=history;https://example.com/history\u{1b}\\History PR\u{1b}]8;;\u{7}\n",
+                screen: "\u{1b}]8;;https://example.com/docs\u{7}Codex docs\u{1b}]8;;\u{1b}\\\nhttps://example.com/plain",
+                preferences: preferences, pinned: $pinned)
+                .environment(\.openURL, OpenURLAction { url in opened = url.absoluteString; return .handled })
+            Text(opened).accessibilityIdentifier("opened-terminal-link")
+            Button("Toggle wrapping") { preferences.wrap.toggle() }
+        }
+    }
+}
+
 /// Repeatable incoming output for the native momentum regression test. No session input.
 struct TerminalMomentumFixture: View {
     @State private var frame = 0

@@ -18,7 +18,9 @@ import UserNotifications
     }
     @ViewBuilder private var content: some View {
         #if DEBUG
-        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_MOMENTUM"] == "1" {
+        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_LINKS"] == "1" {
+            TerminalLinksFixture()
+        } else if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_MOMENTUM"] == "1" {
             TerminalMomentumFixture()
         } else if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_MODULES"] == "1" {
             SessionModulesFixture()

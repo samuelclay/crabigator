@@ -3,6 +3,23 @@ import UIKit
 
 /// Opt-in live checks. Pair this simulator first; these never send terminal input.
 final class ReadingTests: XCTestCase {
+    func testTerminalLinksOpenFromHistoryAndLiveScreen() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment["CRABIGATOR_TEST_LINKS"] = "1"
+        app.launch()
+        for _ in 0..<2 {
+            for (label, url) in [("History PR", "https://example.com/history"), ("Codex docs", "https://example.com/docs"), ("https://example.com/plain", "https://example.com/plain")] {
+                let link = app.links[label]
+                XCTAssertTrue(link.waitForExistence(timeout: 10))
+                link.tap()
+                let opened = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", url), object: app.staticTexts["opened-terminal-link"])
+                XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 3), .completed)
+            }
+            app.buttons["Toggle wrapping"].tap()
+        }
+        capture("Tappable terminal links")
+    }
     func testCachedTerminalLoadsWithoutAWorkingWebSocket() throws {
         guard ProcessInfo.processInfo.environment["CRABIGATOR_LIVE_UI_TESTS"] == "1" else {
             throw XCTSkip("Requires an already paired device and a server with terminal snapshots.")

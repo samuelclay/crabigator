@@ -2,6 +2,11 @@ import UIKit
 
 /// A complete row-formatted ANSI snapshot; this is not an incremental VT emulator.
 enum TerminalText {
+    static func webURL(_ value: String) -> URL? {
+        guard let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let host = url.host, !host.isEmpty else { return nil }
+        return url
+    }
     static let base: [UInt32] = [0x20242A, 0xEC7777, 0x98C379, 0xE5C07B, 0x82AAFF, 0xC792EA, 0x89DDFF, 0xDEE4EC, 0x697584, 0xFF8B8B, 0xB2E394, 0xFFE09B, 0xA5C6FF, 0xE1B2FF, 0xB4F0FF, 0xFFFFFF]
     static func rgb(_ rgb: UInt32) -> UIColor { UIColor(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1) }
     static func palette(_ n: Int) -> UIColor {
@@ -19,6 +24,7 @@ enum TerminalText {
         let cell = (" " as NSString).size(withAttributes: [.font: font]).width
         let paragraph = NSMutableParagraphStyle(); paragraph.minimumLineHeight = size * spacing; paragraph.maximumLineHeight = size * spacing; paragraph.lineBreakMode = wrap ? .byWordWrapping : .byClipping
         var fg = rgb(0xDDE3ED), bg: UIColor?, bold = false, dim = false, underline = false, inverse = false
+        var link: URL?
         var pending = "", column = 0
         func flush() {
             guard !pending.isEmpty else { return }
@@ -26,6 +32,7 @@ enum TerminalText {
             var attrs: [NSAttributedString.Key: Any] = [.font: bold ? boldFont : font, .foregroundColor: foreground.withAlphaComponent(dim ? 0.5 : 1), .paragraphStyle: paragraph]
             if let background = inverse ? fg : bg { attrs[.backgroundColor] = background }
             if underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+            if let link { attrs[.link] = link }
             let part = NSMutableAttributedString(string: pending, attributes: attrs)
             var offset = 0
             for character in pending {
@@ -84,7 +91,10 @@ enum TerminalText {
                 }
                 if i + 1 < chars.count && chars[i + 1] == "]" {
                     i += 2
+                    let start = i
                     while i < chars.count && chars[i].value != 7 && !(chars[i].value == 27 && i + 1 < chars.count && chars[i + 1] == "\\") { i += 1 }
+                    let parts = String(String.UnicodeScalarView(chars[start..<i])).split(separator: ";", maxSplits: 2, omittingEmptySubsequences: false)
+                    if parts.count == 3 && parts[0] == "8" { flush(); link = webURL(String(parts[2])) }
                     i += i < chars.count && chars[i].value == 27 ? 2 : 1; continue
                 }
                 i += 2; continue
@@ -100,6 +110,20 @@ enum TerminalText {
         flush()
         if wrap, let regex = try? NSRegularExpression(pattern: " +(?=\\n|$)") {
             for match in regex.matches(in: out.string, range: NSRange(location: 0, length: out.length)).reversed() { out.deleteCharacters(in: match.range) }
+        }
+        // Detect after stripping ANSI, so a color change inside a URL does not split it.
+        if let regex = try? NSRegularExpression(pattern: #"https?://[^\s<>"']+"#, options: .caseInsensitive) {
+            for match in regex.matches(in: out.string, range: NSRange(location: 0, length: out.length)) {
+                var value = (out.string as NSString).substring(with: match.range)
+                while let last = value.last, ".,;:!?".contains(last) { value.removeLast() }
+                for (open, close) in [("(", ")"), ("[", "]"), ("{", "}")] {
+                    while value.hasSuffix(close) && value.filter({ String($0) == close }).count > value.filter({ String($0) == open }).count { value.removeLast() }
+                }
+                let range = NSRange(location: match.range.location, length: value.utf16.count)
+                var embedded = false
+                out.enumerateAttribute(.link, in: range) { value, _, _ in if value != nil { embedded = true } }
+                if !embedded, let url = webURL(value) { out.addAttribute(.link, value: url, range: range) }
+            }
         }
         return out
     }

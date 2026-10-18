@@ -2,15 +2,24 @@ package com.crabigator.app
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextGeometricTransform
+import java.net.URI
 
 /** Screen frames are complete, row-formatted snapshots, not an incremental VT stream. */
 object TerminalText {
+    private val linkStyle = TextLinkStyles(SpanStyle(color = Color(0xFF82AAFF), textDecoration = TextDecoration.Underline))
+    private val webAddress = Regex("https?://[^\\s<>\"']+", RegexOption.IGNORE_CASE)
+    private fun webURL(value: String): String? = runCatching {
+        val uri = URI(value)
+        value.takeIf { uri.scheme?.lowercase() in listOf("http", "https") && !uri.rawAuthority.isNullOrEmpty() }
+    }.getOrNull()
     private val statusSymbols = FontFamily(Font(R.font.noto_sans_symbols2))
     /** Screen rows contain padding to the desktop width; wrapping must not wrap that padding. */
     fun trimLineEnds(input: AnnotatedString): AnnotatedString {
@@ -38,6 +47,9 @@ object TerminalText {
     fun parse(input: String, cellWidthEm: Float = .6f): AnnotatedString {
         val out = AnnotatedString.Builder()
         var fg = Color(0xFFDDE3ED); var bg = Color.Unspecified; var bold = false; var dim = false; var underline = false; var inverse = false
+        var link: String? = null
+        var linkStart = 0
+        val embedded = mutableListOf<IntRange>()
         var i = 0; var column = 0
         val pending = StringBuilder()
         fun flush() {
@@ -50,6 +62,12 @@ object TerminalText {
                 if (char in '\u23f4'..'\u23fa' || char in "·✢✳✶✻✽") {
                     out.addStyle(SpanStyle(fontFamily = statusSymbols, textGeometricTransform = TextGeometricTransform(scaleX = cellWidthEm / .6f)), start + index, start + index + 1)
                 }
+            }
+        }
+        fun finishLink() {
+            if (linkStart < out.length) link?.let {
+                out.addLink(LinkAnnotation.Url(it, linkStyle), linkStart, out.length)
+                embedded += linkStart until out.length
             }
         }
         fun append(s: String) { pending.append(s); column += s.length }
@@ -86,7 +104,10 @@ object TerminalText {
                 }
                 if (input.getOrNull(i + 1) == ']') {
                     i += 2
+                    val start = i
                     while (i < input.length && input[i] != '\u0007' && !(input[i] == '\u001b' && input.getOrNull(i+1) == '\\')) i++
+                    val parts = input.substring(start, i).split(';', limit = 3)
+                    if (parts.size == 3 && parts[0] == "8") { flush(); finishLink(); link = webURL(parts[2]); linkStart = out.length }
                     i += if (input.getOrNull(i) == '\u001b') 2 else 1
                     continue
                 }
@@ -100,6 +121,17 @@ object TerminalText {
             }; i++
         }
         flush()
+        finishLink()
+        for (match in webAddress.findAll(out.toAnnotatedString().text)) {
+            var value = match.value.trimEnd('.', ',', ';', ':', '!', '?')
+            for ((open, close) in listOf('(' to ')', '[' to ']', '{' to '}')) {
+                while (value.endsWith(close) && value.count { it == close } > value.count { it == open }) value = value.dropLast(1)
+            }
+            val start = match.range.first; val end = start + value.length
+            if (embedded.none { it.first < end && it.last >= start }) {
+                webURL(value)?.let { out.addLink(LinkAnnotation.Url(it, linkStyle), start, end) }
+            }
+        }
         return out.toAnnotatedString()
     }
 }
