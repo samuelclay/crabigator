@@ -176,8 +176,11 @@ struct SessionSummaryBar: View {
     var toggle: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { time in
+        let now = Int(time.date.timeIntervalSince1970)
         HStack(spacing: 0) {
-            metricStrip
+            IdentityChip(session: session).padding(.leading, 6)
+            metricStrip(now)
             Image(systemName: "chevron.up")
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(Crab.orange)
                 .rotationEffect(.degrees(expanded ? 180 : 0))
@@ -189,33 +192,47 @@ struct SessionSummaryBar: View {
             .overlay(alignment: .top) { Color.white.opacity(0.09).frame(height: 0.5) }
             .contentShape(Rectangle()).onTapGesture(perform: toggle)
             .accessibilityElement(children: .combine).accessibilityAddTraits(.isButton)
-            .accessibilityLabel("Session summary. " + SessionStatus(session: session).label + ". " + metrics.map { $0.label + ": " + $0.value }.joined(separator: ", "))
+            .accessibilityLabel(summaryLabel(now))
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             .accessibilityHint(expanded ? "Hide session modules" : "Show session modules")
             .accessibilityAction { toggle() }.accessibilityIdentifier("session-summary")
+        }
     }
-    private var metrics: [(key: String, symbol: String, value: String, label: String, color: Color)] {
+    private func summaryLabel(_ now: Int) -> String {
+        let descriptions = metrics(now).map { metric in
+            let age = metric.age.isEmpty ? "" : ", " + metric.age
+            return metric.label + ": " + metric.value + age
+        }
+        return "Session summary. " + SessionStatus(session: session).label + ". " + descriptions.joined(separator: ", ")
+    }
+    private func metrics(_ now: Int) -> [(key: String, symbol: String, value: String, label: String, color: Color, age: String)] {
         [
-            ("sessionTime", "◉", durationText(stats["work_seconds"] as? Int ?? session.workSeconds), "Session time", Crab.blue),
-            ("thinkingTime", "◐", durationText(stats["thinking_seconds"] as? Int ?? session.thinkingSeconds), "Thinking time", Crab.mint),
-            ("prompts", "⟩", stats["prompts"].map { String(describing: $0) } ?? "—", "Prompts", Crab.muted),
-            ("completions", "⋖", stats["completions"].map { String(describing: $0) } ?? "—", "Completions", Crab.muted),
-            ("tools", "⚒", stats["tools"].map { String(describing: $0) } ?? session.tools.map(String.init) ?? "—", "Tools", Crab.orange),
-            ("compactions", "⊜", stats["compressions"].map { String(describing: $0) } ?? session.compactions.map(String.init) ?? "—", "Compactions", Crab.purple)
+            ("sessionTime", "◉", durationText(stats["work_seconds"] as? Int ?? session.workSeconds), "Session time", Crab.blue, ""),
+            ("thinkingTime", "◐", durationText(stats["thinking_seconds"] as? Int ?? session.thinkingSeconds), "Thinking time", Crab.mint, ""),
+            ("prompts", "⟩", stats["prompts"].map { String(describing: $0) } ?? "—", "Prompts", Crab.orange, ageText(stats.int("prompts_changed_at", session.promptAt), now: now)),
+            ("completions", "⋖", stats["completions"].map { String(describing: $0) } ?? "—", "Completions", Crab.deepOrange, ageText(stats.int("completions_changed_at", session.completionAt), now: now)),
+            ("tools", "⚒", stats["tools"].map { String(describing: $0) } ?? session.tools.map(String.init) ?? "—", "Tools", Crab.orange, ""),
+            ("compactions", "⊜", stats["compressions"].map { String(describing: $0) } ?? session.compactions.map(String.init) ?? "—", "Compactions", Crab.purple, "")
         ].filter { prefs.visible($0.0) }
     }
-    private var metricStrip: some View {
+    private func metricStrip(_ now: Int) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 14) {
+            HStack(spacing: 10) {
                 SessionStatus(session: session)
-                ForEach(metrics, id: \.key) { metric in
-                    stat(metric.symbol, value: metric.value, label: metric.label, color: metric.color)
+                ForEach(metrics(now), id: \.key) { metric in
+                    stat(metric.symbol, value: metric.value, label: metric.label, color: metric.color, age: metric.age)
                 }
-            }.padding(.horizontal, 12).frame(height: 44)
+            }.padding(.horizontal, 8).frame(height: 44)
         }.frame(height: 44)
     }
-    private func stat(_ symbol: String, value: String, label: String, color: Color) -> some View {
-        HStack(spacing: 4) { Text(symbol).foregroundStyle(color); Text(value).foregroundStyle(.secondary) }.font(.system(size: 11, design: .monospaced)).fixedSize().accessibilityElement(children: .ignore).accessibilityLabel(label + ": " + value)
+    private func stat(_ symbol: String, value: String, label: String, color: Color, age: String) -> some View {
+        VStack(spacing: 1) {
+            HStack(spacing: 4) {
+                Text(symbol).foregroundStyle(color)
+                Text(value).foregroundStyle(age.isEmpty ? color : Crab.title)
+            }
+            if !age.isEmpty { Text(age).foregroundStyle(color) }
+        }.font(.system(size: 11, design: .monospaced)).fixedSize().accessibilityElement(children: .ignore).accessibilityLabel(label + ": " + value + (age.isEmpty ? "" : ", " + age))
     }
 }
 
@@ -261,12 +278,12 @@ struct SessionModulesFixture: View {
     }()
     @StateObject private var stream: SessionStream = {
         let stream = SessionStream()
-        stream.selected = Session(["id": "module-layout", "title": "Internationalize Turn Touch", "device_name": "Studio", "state": "complete", "branch": "codex/localization", "active": true])
+        stream.selected = Session(["id": "module-layout", "title": "Internationalize Turn Touch", "device_name": "Studio", "state": "complete", "branch": "codex/localization", "active": true, "session_mark": ["glyph": "ᛝ", "fg_hex": "#5FD7FF", "bg_hex": "#17333D"]])
         stream.screenLoaded = true; stream.historyLoaded = true; stream.connected = true
         stream.screen = "Added language selection on all three platforms.\n\n  ✓ iOS build passed\n  ✓ Android tests passed\n  ✓ Mac build passed\n\nThe pull requests are ready for review.\n\n› Ask Codex to do anything"
         let now = Int(Date().timeIntervalSince1970)
         stream.details = [
-            "stats": ["work_seconds": 17160, "thinking_seconds": 9120, "prompts": 6, "completions": 4, "tools": 24],
+            "stats": ["work_seconds": 17160, "thinking_seconds": 9120, "prompts": 56, "completions": 26, "prompts_changed_at": now - 180, "completions_changed_at": now - 120, "tools": 24],
             "recap": ["latest": ["headline": "Added localization and language selection", "generated_at": (now - 420) * 1000, "bullets": ["Translated the app into 21 languages.", "Added native language selection on each platform."]]],
             "git": ["branch": "codex/localization", "files": [["path": "Settings/LanguagePicker.swift", "status": "M", "additions": 42, "deletions": 8]]],
             "changes": ["by_language": [["changes": [["name": "LanguagePicker", "kind": "struct", "additions": 42, "deletions": 8]]]]],

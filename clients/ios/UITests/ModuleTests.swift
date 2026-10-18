@@ -43,6 +43,8 @@ final class ModuleTests: XCTestCase {
         XCTAssertTrue(summary.exists)
         XCTAssertTrue(summary.label.contains("Complete"))
         XCTAssertTrue(summary.label.contains("Thinking time: 2h 32m"))
+        XCTAssertTrue(summary.label.contains("Prompts: 56, 3m ago"))
+        XCTAssertTrue(summary.label.contains("Completions: 26, 2m ago"))
         let summaryY = summary.frame.midY
         XCTAssertFalse(app.buttons["Hide session modules"].exists, "The toolbar button was replaced by the summary bar")
         summary.tap()

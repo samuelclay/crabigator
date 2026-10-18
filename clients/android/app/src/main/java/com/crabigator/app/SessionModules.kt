@@ -181,6 +181,11 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
         ModuleDivider()
         Row(Modifier.fillMaxWidth().height(44.dp).clickable(role = Role.Button, onClick = toggle)
             .semantics { contentDescription = "Session summary"; stateDescription = if (expanded) "Expanded" else "Collapsed" }, verticalAlignment = Alignment.CenterVertically) {
+            val foreground = remember(session.color) { runCatching { Color(android.graphics.Color.parseColor(session.color)) }.getOrDefault(CrabColors.Title) }
+            val background = remember(session.background) { runCatching { Color(android.graphics.Color.parseColor(session.background)) }.getOrDefault(Panel) }
+            Box(Modifier.padding(start = 6.dp).width(38.dp).height(25.dp).background(background, RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
+                Text(session.glyph, color = foreground, fontSize = 13.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+            }
             ModuleStats(session, stats, prefs, Modifier.weight(1f))
             Box(Modifier.size(44.dp).background(CrabColors.Orange.copy(alpha = if (expanded) .08f else .03f)), contentAlignment = Alignment.Center) {
                 Icon(painterResource(R.drawable.ic_chevron_down), contentDescription = null, tint = CrabColors.Orange, modifier = Modifier.size(16.dp).rotate(angle))
@@ -189,19 +194,29 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
     }
 }
 @Composable private fun ModuleStats(session: Session, stats: JSONObject, prefs: UiPreferences, modifier: Modifier) {
-    Row(modifier.horizontalScroll(rememberScrollState()).height(44.dp).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+    val now by produceState(System.currentTimeMillis() / 1000) {
+        while (true) { value = System.currentTimeMillis() / 1000; delay(1000) }
+    }
+    fun age(key: String, fallback: Long): String {
+        val timestamp = stats.optLong(key, fallback)
+        return if (timestamp > 0) sessionAge(timestamp, now) else "—"
+    }
+    Row(modifier.horizontalScroll(rememberScrollState()).height(44.dp).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         SessionStatus(session)
         if (prefs.visible("sessionTime")) ModuleStat("◉", sessionDuration(if (stats.has("work_seconds")) stats.optLong("work_seconds") else session.stats.workSeconds), "Session time", CrabColors.Blue)
         if (prefs.visible("thinkingTime")) ModuleStat("◐", sessionDuration(if (stats.has("thinking_seconds")) stats.optLong("thinking_seconds") else session.stats.thinkingSeconds), "Thinking time", CrabColors.Green)
-        if (prefs.visible("prompts")) ModuleStat("⟩", stats.opt("prompts")?.toString() ?: session.stats.prompts?.toString() ?: "—", "Prompts", Muted)
-        if (prefs.visible("completions")) ModuleStat("⋖", stats.opt("completions")?.toString() ?: session.stats.completions?.toString() ?: "—", "Completions", Muted)
+        if (prefs.visible("prompts")) ModuleStat("⟩", stats.opt("prompts")?.toString() ?: session.stats.prompts?.toString() ?: "—", "Prompts", CrabColors.Orange, age("prompts_changed_at", session.stats.promptAt))
+        if (prefs.visible("completions")) ModuleStat("⋖", stats.opt("completions")?.toString() ?: session.stats.completions?.toString() ?: "—", "Completions", CrabColors.DarkOrange, age("completions_changed_at", session.stats.completionAt))
         if (prefs.visible("tools")) ModuleStat("⚒", stats.opt("tools")?.toString() ?: session.stats.tools?.toString() ?: "—", "Tools", CrabColors.Orange)
         if (prefs.visible("compactions")) ModuleStat("⊜", stats.opt("compressions")?.toString() ?: session.stats.compactions?.toString() ?: "—", "Compactions", CrabColors.Purple)
     }
 }
-@Composable private fun ModuleStat(symbol: String, value: String, label: String, color: Color) {
-    Row(Modifier.clearAndSetSemantics { contentDescription = "$label: $value" }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(symbol, color = color, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-        Text(value, color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+@Composable private fun ModuleStat(symbol: String, value: String, label: String, color: Color, age: String = "") {
+    Column(Modifier.clearAndSetSemantics { contentDescription = "$label: $value" + if (age.isBlank()) "" else ", $age" }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(symbol, color = color, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Text(value, color = if (age.isBlank()) color else CrabColors.Title, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        }
+        if (age.isNotBlank()) Text(age, color = color, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
     }
 }
