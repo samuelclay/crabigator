@@ -667,8 +667,27 @@ export const changesWidgetJs = `
             if (widgets) widgets.innerHTML = html;
         }
 
+        function updateSessionHeaderContext(sessionId) {
+            const data = sessions.get(sessionId);
+            const header = data?.element.querySelector('.session-header');
+            if (!header) return;
+            const cwd = header.querySelector('.cwd');
+            cwd.textContent = [data.deviceName, data.cwd?.split('/').pop()].filter(Boolean).join(' · ');
+            cwd.title = data.cwd || '';
+            header.querySelector('.branch').textContent = data.git?.branch || '';
+            const stats = data.stats || {};
+            header.querySelector('.session-row-stats').textContent = [
+                stats.work_seconds != null ? formatDuration(stats.work_seconds) : '',
+                stats.prompts != null ? stats.prompts + ' prompts' : ''
+            ].filter(Boolean).join(' · ');
+            const latest = data.recap?.latest || data.recapHistory?.[data.recapHistory.length - 1];
+            const headline = latest?.headline || '';
+            header.querySelector('.session-row-recap').textContent = /completed the turn without captured transcript output/i.test(headline) ? '' : headline;
+        }
+
         function updateSessionTitleHierarchy(sessionId) {
-            const hierarchy = sessionTitleHierarchy(sessions.get(sessionId));
+            const data = sessions.get(sessionId);
+            const hierarchy = sessionTitleHierarchy(data, data?.cwd?.split('/').pop() || 'Session');
             const titleEl = document.getElementById('title-' + sessionId);
             if (titleEl) {
                 titleEl.textContent = hierarchy.main;
@@ -677,6 +696,7 @@ export const changesWidgetJs = `
             paintSessionTitleMark(sessionId);
             const generatedEl = document.getElementById('generated-title-' + sessionId);
             if (generatedEl) generatedEl.textContent = hierarchy.generated;
+            updateSessionHeaderContext(sessionId);
             const widgetsTitleEl = document.getElementById('widgets-title-' + sessionId);
             if (widgetsTitleEl) {
                 widgetsTitleEl.textContent = hierarchy.main;

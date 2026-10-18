@@ -1,4 +1,25 @@
 export const modulesCss = `
+/* Shared card heading: expansion reveals the terminal, not a different title. */
+.container .session-card:not(.session-fullscreen) { margin-bottom: 12px; border: 1px solid var(--border-dim); border-radius: 10px; }
+.container .session-card .session-header { padding: 12px 14px; gap: 10px; border-radius: 10px 10px 0 0; align-items: flex-start; }
+.container .session-row .session-header { border-radius: 10px; }
+.session-heading-button { background: none; border: 0; padding: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+.session-heading-button:focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 4px; border-radius: 3px; }
+.container .session-header .title-row { align-items: baseline; gap: 8px; }
+.container .session-header .title { font-size: 14px; font-weight: 500; color: var(--text-bright); white-space: normal; overflow-wrap: anywhere; }
+.session-header .session-context { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10px; color: var(--text-dim); }
+.container .session-header .cwd { display: inline; font: inherit; margin: 0; }
+.session-header .branch { color: #7ee787; font: inherit; }
+.container .session-header .session-row-recap { margin: 0; max-width: none; font-size: 11px; color: var(--text-mid); }
+.session-header .session-row-recap:empty, .session-header .branch:empty, .session-header .session-row-stats:empty { display: none; }
+.container .session-header .generated-title { font-family: var(--font-ui); max-width: none; color: #8bbcf0; }
+.container .session-header .session-actions { gap: 4px; }
+.container .session-header .collapse-btn { min-width: 28px; min-height: 28px; font-size: 20px; }
+@media (max-width: 720px) {
+    .container .session-card .session-header { flex-wrap: wrap; padding: 12px; }
+    .session-header .session-info { flex-basis: 100%; }
+    .session-header .session-actions { margin-left: auto; }
+}
 /* A permanent one-line handle, with independently opened modules above it. */
 .has-modules .widgets-panel { display: flex; flex-direction: column; min-height: 0; }
 .has-modules .widgets-header { flex: none; flex-direction: row; align-items: center; padding: 0 0 0 6px; gap: 8px; height: 44px; font-size: 11px; border-top: 1px solid var(--border-dim); }
@@ -35,7 +56,12 @@ export const modulesCss = `
 .module-body .session-recap { cursor: default; }
 .module-body .pr-list-title, .module-body .session-recap-status, .module-body .changes-session-titles, .module-body .commit-history-title { display: none; }
 .module-body .widget-title { margin-bottom: 8px; }
-.module-body .session-recap-history { padding: 6px 0; }
+.module-recap .session-recap, .module-recap .session-recap-history { display: none !important; }
+.module-recap-row { display: flex; align-items: baseline; gap: 8px; padding: 7px 0; font-size: 12px; line-height: 1.4; }
+.module-recap-number { flex: none; color: #22d3ee; font-size: 10px; font-variant-numeric: tabular-nums; }
+.module-recap-headline { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text-mid); }
+.module-recap-row:first-child .module-recap-headline { color: var(--text-bright); }
+.module-body .session-prs .pr-row { padding: 6px 0; background: transparent; border: 0; border-radius: 0; }
 .has-modules .widgets-content.no-changes, .has-modules .widgets-content.no-titles { grid-template-columns: none; }
 .fullscreen-session-btn { background: none; border: 0; color: var(--text-mid); min-width: 36px; min-height: 36px; font-size: 22px; cursor: pointer; }
 .session-fullscreen-open { overflow: hidden; }

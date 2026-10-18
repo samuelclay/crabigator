@@ -1,6 +1,6 @@
 // Dashboard JavaScript - session-state
 export const sessionStateJs = `
-        function updateSessionHeader(session) {
+        function updateSessionHeader(session, refreshMetadata = true) {
             const card = document.getElementById('session-' + session.id);
             if (!card) return;
             const sessionData = sessions.get(session.id);
@@ -15,13 +15,17 @@ export const sessionStateJs = `
                     cwdEl.textContent = session.cwd;
                 }
             }
-            if (card.classList.contains('session-row')) {
-                card.querySelector('.title').textContent = session.title || session.cwd?.split('/').pop() || 'Session';
-                card.querySelector('.cwd').textContent = [session.device_name, session.branch, session.cwd?.split('/').pop()].filter(Boolean).join(' · ');
-                card.querySelector('.session-row-recap').textContent = session.recap?.headline || '';
-                const stats = session.stats || {};
-                card.querySelector('.session-row-stats').textContent = [stats.work_seconds != null ? formatDuration(stats.work_seconds) : '', stats.prompts != null ? stats.prompts + ' prompts' : ''].filter(Boolean).join(' · ');
-                paintSessionTitleMark(session.id);
+            if (sessionData && refreshMetadata) {
+                if (session.title !== undefined && session.title !== sessionData.title) {
+                    sessionData.title = session.title;
+                    sessionData.generatedTitle = null;
+                }
+                if (session.cwd) sessionData.cwd = session.cwd;
+                if (session.device_name !== undefined) sessionData.deviceName = session.device_name;
+                if (session.branch !== undefined) sessionData.git = { ...sessionData.git, branch: session.branch };
+                if (session.stats) sessionData.stats = { ...sessionData.stats, ...session.stats };
+                if (session.recap) sessionData.recap = { ...sessionData.recap, latest: session.recap };
+                updateSessionTitleHierarchy(session.id);
             }
             setSessionPlatform(session.id, session.platform);
             if (sessionData) {
@@ -156,6 +160,7 @@ export const sessionStateJs = `
         }
 
         function updateSessionSummary(sessionId, sessionData) {
+            updateSessionHeaderContext(sessionId);
             // Stats summary
             const statsEl = document.getElementById('summary-stats-' + sessionId);
             if (statsEl) {

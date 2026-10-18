@@ -367,28 +367,34 @@ export const sessionJs = `
             }
         }
 
+        function sessionHeaderHtml(session, expanded) {
+            return \`
+                <div class="session-header">
+                    <button class="session-info session-heading-button" onclick="toggleCollapse('\${session.id}')" aria-expanded="\${expanded}">
+                        <span class="title-row"><span id="title-mark-\${session.id}"></span><span class="title" id="title-\${session.id}"></span></span>
+                        <span class="generated-title" id="generated-title-\${session.id}"></span>
+                        <span class="session-context"><span class="cwd"></span><span class="branch" id="branch-\${session.id}"></span><span class="session-row-stats"></span></span>
+                        <span class="session-row-recap"></span>
+                    </button>
+                    <div class="session-actions">
+                        \${expanded ? \`<button class="info-btn" id="info-btn-\${session.id}" onclick="toggleInfoPopover('\${session.id}')" title="Session info">ⓘ</button>
+                        <span class="pin-indicator pinned" id="pin-\${session.id}" title="Auto-scroll enabled">⇣</span>\` : ''}
+                        <span class="state \${session.state}" id="state-\${session.id}">\${session.state}</span>
+                        <button class="collapse-btn" id="collapse-btn-\${session.id}" onclick="toggleCollapse('\${session.id}')" title="\${expanded ? 'Collapse session' : 'Expand session'}" aria-expanded="\${expanded}">\${expanded ? '⌄' : '›'}</button>
+                    </div>
+                </div>
+            \`;
+        }
+
         function createSessionCard(session, insertAtTop = false, replaceCard = null, expanded = expandedSessions.has(session.id) || sessionMatchesFocus(session)) {
             const container = document.getElementById('sessions');
+            const previous = sessions.get(session.id);
             const card = document.createElement('div');
             if (expanded) expandedSessions.add(session.id);
             card.className = 'session-card' + (expanded ? '' : ' session-row');
             card.id = 'session-' + session.id;
             const startedAt = formatStartedAt(session.started_at);
-            card.innerHTML = expanded ? \`
-                <div class="session-header">
-                    <div class="session-info">
-                        <span class="title-row"><span id="title-mark-\${session.id}"></span><span class="title" id="title-\${session.id}"></span></span>
-                        <span class="generated-title" id="generated-title-\${session.id}"></span>
-                        <span class="cwd">\${escapeHtml(session.cwd)}</span>
-                        <span class="branch" id="branch-\${session.id}" style="color:#7ee787; font-size:11px;"></span>
-                    </div>
-                    <div class="session-actions">
-                        <button class="info-btn" id="info-btn-\${session.id}" onclick="toggleInfoPopover('\${session.id}')" title="Session info">ⓘ</button>
-                        <span class="pin-indicator pinned" id="pin-\${session.id}" title="Auto-scroll enabled">⇣</span>
-                        <span class="state \${session.state}" id="state-\${session.id}">\${session.state}</span>
-                        <button class="collapse-btn" id="collapse-btn-\${session.id}" onclick="toggleCollapse('\${session.id}')" title="Collapse/expand">▼</button>
-                    </div>
-                </div>
+            card.innerHTML = sessionHeaderHtml(session, expanded) + (expanded ? \`
                 <div class="session-summary" id="summary-\${session.id}">
                     <span class="summary-item"><span class="label">Stats:</span> <span class="value" id="summary-stats-\${session.id}">—</span></span>
                     <span class="summary-item"><span class="label">Git:</span> <span class="value" id="summary-git-\${session.id}">—</span></span>
@@ -544,14 +550,7 @@ export const sessionJs = `
                         </div>
                     </div>
                 </div>
-            \` : '';
-            if (!expanded) {
-                card.innerHTML = '<button class="session-row-button" aria-expanded="false">'
-                    + '<span class="session-info"><span class="title-row"><span id="title-mark-' + session.id + '"></span><span class="title" id="title-' + session.id + '"></span></span>'
-                    + '<span class="cwd"></span><span class="session-row-recap"></span></span>'
-                    + '<span class="session-row-meta"><span class="state"></span><span class="session-row-stats"></span></span><span class="session-row-chevron">›</span></button>';
-                card.querySelector('button').onclick = () => toggleCollapse(session.id);
-            }
+            \` : '');
             // Insert card into the correct location based on grouping mode
             if (replaceCard) {
                 replaceCard.replaceWith(card);
@@ -590,12 +589,12 @@ export const sessionJs = `
                 // inside a linked worktree, else its own session id.
                 prScope: session.pr_scope || ('session:' + session.id),
                 state: session.state,
-                title: session.title || null,
-                generatedTitle: null,
-                prs: [],
-                git: null,
+                title: previous ? previous.title : (session.title || null),
+                generatedTitle: previous?.generatedTitle || null,
+                prs: previous?.prs || session.prs || [],
+                git: previous?.git || (session.branch ? { branch: session.branch } : null),
                 changes: null,
-                stats: session.stats || null,
+                stats: previous?.stats || session.stats || null,
                 permission: null,
                 pinned: true,
                 lastScrollTop: 0,
@@ -604,7 +603,8 @@ export const sessionJs = `
                 platform: null,
                 deviceName: session.device_name || null,
                 lastActivityAt: getSessionActivityTime(session),
-                recapHistory: [],
+                recap: previous?.recap || (session.recap ? { latest: session.recap } : null),
+                recapHistory: previous?.recapHistory || [],
                 slackThreads: [],
                 commitHistory: [],
                 // Scrollback chunking: store full buffer, render only visible portion
@@ -612,8 +612,8 @@ export const sessionJs = `
                 scrollbackRendered: 0,     // How many lines currently rendered
             });
             setSessionPlatform(session.id, session.platform);
-            updateSessionHeader(session);
-            if (expanded) updateSessionTitleHierarchy(session.id);
+            updateSessionHeader(session, !previous);
+            updateSessionTitleHierarchy(session.id);
             if (expanded) initSessionModules(session.id);
             applyWidgetsCollapsedState(session.id);
             applySessionCardStatsVisibility(card);

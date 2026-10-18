@@ -56,6 +56,11 @@ export const modulesJs = `
                 section.addEventListener('toggle', () => {
                     if (section.open) saved.add(key); else saved.delete(key);
                 });
+                if (key === 'recap') {
+                    const list = document.createElement('div');
+                    list.className = 'module-recaps';
+                    body.appendChild(list);
+                }
                 drawer.appendChild(section);
             });
             const recap = document.getElementById('recap-' + sessionId);
@@ -104,14 +109,38 @@ export const modulesJs = `
             updateRecencyElement(section.querySelector('.module-age'), timestamp);
         }
 
+        function moduleRecapEntries(data) {
+            // The roster sends a short latest recap without its prompt number.
+            // Match that to history by timestamp; full updates also match by turn.
+            const entries = [];
+            [...(data.recapHistory || []), data.recap?.latest].forEach(entry => {
+                if (!entry?.headline?.trim() || /completed the turn without captured transcript output/i.test(entry.headline)) return;
+                const index = entries.findIndex(previous =>
+                    (entry.prompt_count != null && previous.prompt_count === entry.prompt_count)
+                    || (entry.generated_at && previous.generated_at === entry.generated_at));
+                if (index < 0) entries.push(entry);
+                else entries[index] = { ...entries[index], ...entry };
+            });
+            return entries.sort((a, b) => b.generated_at - a.generated_at);
+        }
+
         function refreshSessionModules(sessionId) {
             const data = sessions.get(sessionId);
+            updateSessionHeaderContext(sessionId);
             if (!data?.element.classList.contains('has-modules')) return;
-            const history = data.recapHistory || [];
-            const latest = data.recap?.latest || history[history.length - 1];
-            const headline = latest?.headline || '';
-            const meaningful = headline && !/completed the turn without captured transcript output/i.test(headline);
-            moduleSummary(sessionId, 'recap', visibleSections.recap && meaningful, headline, (latest?.generated_at || 0) / 1000);
+            const entries = moduleRecapEntries(data);
+            const latest = entries[0];
+            moduleSummary(sessionId, 'recap', visibleSections.recap && entries.length, latest?.headline, (latest?.generated_at || 0) / 1000);
+            const recapList = data.element.querySelector('.module-recaps');
+            const recapsHtml = entries.map(entry => {
+                const timestamp = Number(entry.generated_at || 0) / 1000;
+                return '<div class="module-recap-row"><span class="module-recap-number">'
+                    + (entry.prompt_count != null ? '#' + escapeHtml(String(entry.prompt_count)) : '')
+                    + '</span><span class="module-recap-headline">' + escapeHtml(entry.headline)
+                    + '</span><span class="module-age" data-recency-timestamp="' + timestamp + '">'
+                    + escapeHtml(formatElapsed(timestamp)) + '</span></div>';
+            }).join('');
+            if (recapList && recapList.innerHTML !== recapsHtml) recapList.innerHTML = recapsHtml;
             const prs = (data.prs || []).filter(pr => prDisposition(pr, data) !== 'dismissed');
             moduleSummary(sessionId, 'prs', visibleSections.prs && prs.length, prs.length + ' PR' + (prs.length === 1 ? '' : 's'),
                 Math.max(0, ...prs.map(pr => pr.updated_at || pr.refreshed_at || 0)) / 1000);

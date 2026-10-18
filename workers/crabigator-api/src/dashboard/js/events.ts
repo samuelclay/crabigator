@@ -324,7 +324,7 @@ export const eventsJs = `
                                 allSessions.splice(allIdx, 1);
                                 updateSessionsCount();
                             }
-                            const cwd = card.querySelector('.cwd')?.textContent;
+                            const cwd = session?.cwd;
                             card.remove();
                             // Update project group count if in grouped mode
                             if (groupingMode === 'project' && cwd) {
