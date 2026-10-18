@@ -8,6 +8,17 @@ const source = readFileSync(new URL('../src/dashboard/js/ansi.ts', import.meta.u
 const script = runInNewContext(source.replace(/^export /m, '') + '\nansiJs');
 const ansiToHtml = runInNewContext(script + '\nansiToHtml');
 
+test('embedded links survive SGR changes and newlines without leaking OSC controls', () => {
+    const html = ansiToHtml('\x1b]8;id=pr;https://example.com/a;b=1&c=2\x1b\\Read \x1b[1mPR\x1b[0m\nnext\x1b]8;;\x07 plain');
+    assert.match(html, /href="https:\/\/example.com\/a;b=1&amp;c=2"/);
+    assert.match(html, />PR<\/a><\/span>/);
+    assert.match(html, />next<\/a> plain/);
+    assert.equal((html.match(/<a /g) || []).length, (html.match(/<\/a>/g) || []).length);
+    assert.ok(!html.includes('\x1b'));
+    assert.equal(ansiToHtml('\x1b]8;;javascript:alert(1)\x07unsafe\x1b]8;;\x07'), '<div class="line">unsafe</div>');
+    assert.equal(ansiToHtml('\x1b]0;window title\x07plain'), '<div class="line">plain</div>');
+});
+
 test('Codex dim status and bold shortcut switch intensity without leaking styles', () => {
     assert.equal(ansiToHtml('\x1b[2mWorking (\x1b[1mesc\x1b[2m to interrupt)\x1b[22m normal'),
         '<div class="line"><span style="opacity:0.5">Working (</span><span style="font-weight:bold">esc</span><span style="opacity:0.5"> to interrupt)</span> normal</div>');

@@ -11,7 +11,7 @@ export const ansiJs = `
                 let end = line.length;
                 let ansiSuffix = '';
                 while (end > 0) {
-                    const match = line.slice(0, end).match(/\\x1b\\[[0-9;?]*[A-Za-z]$/);
+                    const match = line.slice(0, end).match(/\\x1b(?:\\[[0-9;?]*[A-Za-z]|\\][^\\x07\\x1b]*(?:\\x07|\\x1b\\\\))$/);
                     if (!match) break;
                     ansiSuffix = match[0] + ansiSuffix;
                     end -= match[0].length;
@@ -78,6 +78,10 @@ export const ansiJs = `
             let inSpan = false;
             let i = 0;
             let currentStyle = '';
+            let link = null;
+            function openLink() {
+                return '<a class="terminal-link" href="' + escapeHtml(link) + '" target="_blank" rel="noopener noreferrer">';
+            }
             let state = {
                 fg: null,
                 bg: null,
@@ -123,6 +127,7 @@ export const ansiJs = `
             function applyStyle() {
                 const nextStyle = buildStyle();
                 if (nextStyle === currentStyle) return;
+                if (link) result += '</a>';
                 if (inSpan) {
                     result += '</span>';
                     inSpan = false;
@@ -132,6 +137,7 @@ export const ansiJs = `
                     inSpan = true;
                 }
                 currentStyle = nextStyle;
+                if (link) result += openLink();
             }
 
             function escapeHtml(value) {
@@ -160,6 +166,18 @@ export const ansiJs = `
             }
 
             while (i < text.length) {
+                if (text.charCodeAt(i) === 27 && text[i + 1] === ']') {
+                    let end = i + 2;
+                    while (end < text.length && text.charCodeAt(end) !== 7 && !(text.charCodeAt(end) === 27 && text[end + 1] === '\\\\')) end++;
+                    const osc = text.slice(i + 2, end).match(/^8;[^;]*;(.*)$/);
+                    if (osc) {
+                        if (link) result += '</a>';
+                        link = /^https?:\\/\\/[^\\s]+$/i.test(osc[1]) ? osc[1] : null;
+                        if (link) result += openLink();
+                    }
+                    i = end + (text.charCodeAt(end) === 27 ? 2 : 1);
+                    continue;
+                }
                 // Check for ESC character (char code 27)
                 if (text.charCodeAt(i) === 27 && text[i + 1] === '[') {
                     // Parse CSI sequence: ESC [ params command
@@ -218,6 +236,7 @@ export const ansiJs = `
                 // Track newlines in the content
                 if (text[i] === '\\n' || text[i] === '\\r') {
                     if (text[i] === '\\n') {
+                        if (link) result += '</a>';
                         // Close span before newline to prevent background color bleeding
                         if (inSpan) {
                             result += '</span>';
@@ -227,13 +246,14 @@ export const ansiJs = `
                         if (inSpan) {
                             result += '<span style="' + currentStyle + '">';
                         }
+                        if (link) result += openLink();
                     }
                     // Skip carriage return - we only care about line feeds
                     i++;
                     continue;
                 }
 
-                const url = urlAt(i);
+                const url = link ? null : urlAt(i);
                 if (url) {
                     const escapedUrl = escapeHtml(url);
                     result += '<a class="terminal-link" href="' + escapedUrl
@@ -257,6 +277,7 @@ export const ansiJs = `
                 i++;
             }
 
+            if (link) result += '</a>';
             if (inSpan) result += '</span>';
 
             // Wrap each line in a div, detecting special line types
@@ -314,7 +335,8 @@ export const ansiJs = `
                 // Check for split line (text + 10+ spaces + text) that looks like two columns
                 // Avoid matching indented code blocks or diff output with long right-hand text.
                 const splitMatch = plain.match(/^(.+?)( {10,})(.+)$/);
-                if (splitMatch) {
+                // Keep links intact rather than splitting their markup between columns.
+                if (splitMatch && !lineHtml.includes('<a ')) {
                     const leftLen = splitMatch[1].length;
                     const gapLen = splitMatch[2].length;
                     const rightLen = splitMatch[3].length;
