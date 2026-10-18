@@ -49,11 +49,15 @@ class SessionModulesLayoutTest {
         compose.onNodeWithText("3h ago", useUnmergedTree = true).assertExists()
         compose.onNodeWithText("2h ago", useUnmergedTree = true).assertExists()
         compose.onNodeWithContentDescription("Prompts: 56, 3m ago", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithContentDescription("Completions: 26, 2m ago", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Completions: 26, 2m ago", useUnmergedTree = true).assertExists()
         val glyph = compose.onNodeWithText("ᛝ", useUnmergedTree = true).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val sessionTime = compose.onNodeWithContentDescription("Session time: 4h 46m", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue("Identity stays left of the metrics", glyph.right < sessionTime.left)
+        val prompts = compose.onNodeWithContentDescription("Prompts: 56, 3m ago", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertEquals("Metrics share one line", sessionTime.height, prompts.height, 2f)
         capture("modules-collapsed")
+        compose.onNodeWithContentDescription("Completions: 26, 2m ago", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Session time: 4h 46m", useUnmergedTree = true).performScrollTo()
         compose.onNodeWithContentDescription("Recap").performClick()
         compose.onNodeWithText("Translated the app into 21 languages.").assertExists()
         compose.onNodeWithText(prs.first().title).assertDoesNotExist()

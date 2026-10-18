@@ -226,13 +226,11 @@ struct SessionSummaryBar: View {
         }.frame(height: 44)
     }
     private func stat(_ symbol: String, value: String, label: String, color: Color, age: String) -> some View {
-        VStack(spacing: 1) {
-            HStack(spacing: 4) {
-                Text(symbol).foregroundStyle(color)
-                Text(value).foregroundStyle(age.isEmpty ? color : Crab.title)
-            }
+        HStack(spacing: 4) {
+            Text(symbol).foregroundStyle(color)
+            Text(value).foregroundStyle(age.isEmpty ? color : Crab.title)
             if !age.isEmpty { Text(age).foregroundStyle(color) }
-        }.font(.system(size: 11, design: .monospaced)).fixedSize().accessibilityElement(children: .ignore).accessibilityLabel(label + ": " + value + (age.isEmpty ? "" : ", " + age))
+        }.font(.system(size: 11, design: .monospaced)).lineLimit(1).fixedSize().accessibilityElement(children: .ignore).accessibilityLabel(label + ": " + value + (age.isEmpty ? "" : ", " + age))
     }
 }
 

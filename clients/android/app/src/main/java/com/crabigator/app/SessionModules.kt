@@ -212,11 +212,9 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
     }
 }
 @Composable private fun ModuleStat(symbol: String, value: String, label: String, color: Color, age: String = "") {
-    Column(Modifier.clearAndSetSemantics { contentDescription = "$label: $value" + if (age.isBlank()) "" else ", $age" }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(symbol, color = color, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-            Text(value, color = if (age.isBlank()) color else CrabColors.Title, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-        }
-        if (age.isNotBlank()) Text(age, color = color, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+    Row(Modifier.clearAndSetSemantics { contentDescription = "$label: $value" + if (age.isBlank()) "" else ", $age" }, horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(symbol, color = color, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+        Text(value, color = if (age.isBlank()) color else CrabColors.Title, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+        if (age.isNotBlank()) Text(age, color = color, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
     }
 }
