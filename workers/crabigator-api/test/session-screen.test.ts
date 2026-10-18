@@ -213,3 +213,32 @@ it('ends a disconnected desktop after the reconnect grace period, including acro
         expect((await (await stub.fetch('https://internal/state')).json<any>()).disconnected_at).toBeNull();
     } finally { reconnected.close(); }
 });
+
+it('hides old empty recaps in live events, history, and restored snapshots', async () => {
+    const stub = env.SESSION.get(env.SESSION.idFromName('empty-recaps'));
+    const response = await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } });
+    const desktop = response.webSocket!;
+    desktop.accept();
+    const connected = await stub.fetch('https://internal/events', { headers: { Upgrade: 'websocket' } });
+    const viewer = connected.webSocket!;
+    const events: any[] = [];
+    viewer.addEventListener('message', event => { events.push(JSON.parse(String(event.data))); });
+    viewer.accept();
+    const empty = { headline: 'The agent completed the turn without captured transcript output.', generated_at: 1000 };
+    const useful = { headline: 'Fixed session loading', generated_at: 2000 };
+    const snapshot = async () => (await stub.fetch('https://internal/snapshot')).json<any>();
+    try {
+        desktop.send(JSON.stringify({ type: 'recap', status: 'ready', latest: empty }));
+        desktop.send(JSON.stringify({ type: 'recap_history', history: [useful, empty] }));
+        await expect.poll(() => events.some(e => e.type === 'recap' && e.status === 'waiting' && !e.latest)).toBe(true);
+        await expect.poll(async () => (await snapshot()).recap_history).toEqual([useful]);
+        // Seed the pre-upgrade storage shape to exercise hibernation migration too.
+        await runInDurableObject(stub, async (_instance, state) => {
+            const stored = await state.storage.get<any>('persistentState');
+            await state.storage.put('persistentState', { ...stored, lastRecap: { type: 'recap', status: 'ready', latest: empty }, lastRecapHistory: [empty, useful] });
+        });
+        await evictDurableObject(stub);
+        expect((await snapshot()).recap.latest).toBeUndefined();
+        expect((await snapshot()).recap_history).toEqual([useful]);
+    } finally { viewer.close(); desktop.close(); }
+});

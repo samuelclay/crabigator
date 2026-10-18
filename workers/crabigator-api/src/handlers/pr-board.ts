@@ -1,3 +1,4 @@
+import { hasRecapContent } from '../recap';
 import { disconnectedSessions } from '../session-presence';
 import type { Env } from '../types/env';
 import type { SessionPr } from '../types/session';
@@ -331,7 +332,7 @@ function sessionTitle(raw: string | null): string {
 function sessionRecap(raw: string | null): SessionRecapBrief | null {
     try {
         const parsed = JSON.parse(raw || 'null');
-        if (!parsed?.headline) return null;
+        if (!hasRecapContent(parsed)) return null;
         return {
             headline: String(parsed.headline),
             bullets: stringArray(parsed.bullets),

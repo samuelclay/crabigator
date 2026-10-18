@@ -1,3 +1,4 @@
+import { cleanRecap, cleanRecapEvent, hasRecapContent } from '../recap';
 import { SESSION_DISCONNECT_GRACE_MS } from '../session-presence';
 import { notifyMobilePrompt } from '../mobile-push';
 import type {
@@ -116,7 +117,7 @@ interface EphemeralState {
  */
 function recapBrief(event: any): string | null {
     const latest = event?.latest;
-    if (!latest?.headline) return null;
+    if (!hasRecapContent(latest)) return null;
     return JSON.stringify({
         headline: latest.headline,
         bullets: Array.isArray(latest.bullets) ? latest.bullets : [],
@@ -285,6 +286,10 @@ export class SessionDO implements DurableObject {
                 this.persistentState.unstructuredAttentionBlocked ??=
                     stored.currentPrompt !== null || stored.answeredRevision !== undefined;
             }
+            if (this.persistentState.lastRecap) {
+                this.persistentState.lastRecap = cleanRecap(this.persistentState.lastRecap);
+            }
+            this.persistentState.lastRecapHistory = this.persistentState.lastRecapHistory?.filter(hasRecapContent) ?? null;
             const storedInfo = await state.storage.get<SessionInfo>('sessionInfo');
             if (storedInfo) {
                 this.sessionInfo = storedInfo;
@@ -839,6 +844,7 @@ export class SessionDO implements DurableObject {
 
     /** Handle incoming event from desktop. */
     private async handleEvent(event: SessionEvent): Promise<void> {
+        event = cleanRecapEvent(event);
         if (event.type === 'heartbeat') {
             if (this.sessionInfo) {
                 await this.notifySessionList('connect', this.sessionInfo);

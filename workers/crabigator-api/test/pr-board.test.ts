@@ -34,6 +34,10 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
         created_here: true, primary: true, refreshed_at: 1500 };
     await testEnv.DB.prepare(`INSERT INTO session_prs (session_id, owner, repo, number, url, data, updated_at, is_primary)
         VALUES ('stats-0', 'o', 'r', 1, ?, ?, 1500, 1)`).bind(pr.url, JSON.stringify(pr)).run();
+    await testEnv.DB.prepare("UPDATE sessions SET recap = ? WHERE id = 'stats-1'")
+        .bind(JSON.stringify({ headline: 'The agent completed the turn without captured transcript output.', generated_at: 1000 })).run();
+    await testEnv.DB.prepare("UPDATE sessions SET recap = ? WHERE id = 'stats-0'")
+        .bind(JSON.stringify({ headline: 'Shipped the fix', generated_at: 2000 })).run();
     const timestamp = String(Date.now());
     const path = '/api/prs/board';
     const response = await getPrBoard(new Request(`https://example.com${path}`, { headers: {
@@ -43,6 +47,8 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
     const body = await response.json() as any;
     expect(response.status, JSON.stringify(body)).toBe(200);
     expect(body.sessions).toHaveLength(1);
+    expect(body.sessions[0].recap).toBeNull();
+    expect(body.prs[0].sessions[0].recap).toMatchObject({ headline: 'Shipped the fix', generated_at: 2000 });
     const shared = { started_at: 1000, last_seen_at: 1600, prompts_changed_at: 1400, completions_changed_at: 1500,
         stats: { thinking_seconds: 123, prompts: 7, completions: 6, tools: 9, compressions: 2 } };
     expect(body.sessions[0]).toMatchObject({ ...shared, session_id: 'stats-1', active: true, ended_at: null,
