@@ -7,6 +7,8 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
@@ -24,6 +26,24 @@ class SessionModulesLayoutTest {
     private fun metric(description: String) = compose.onNode(
         hasContentDescription(description) and SemanticsMatcher("Placed") { it.layoutInfo.isPlaced },
         useUnmergedTree = true)
+
+    @Test fun crowdedSummaryKeepsAgoOnTheMoreRecentActivity() {
+        val now = System.currentTimeMillis() / 1000
+        val stats = mutableStateOf(JSONObject("""{"work_seconds":600,"thinking_seconds":9120,"prompts":56,"completions":26,"prompts_changed_at":${now - 180},"completions_changed_at":${now - 120}}"""))
+        val session = Session.parse(JSONObject("""{"id":"ages","state":"complete","active":true}"""))
+        compose.setContent {
+            MaterialTheme { Box(Modifier.width(360.dp)) {
+                SessionSummaryBar(session, stats.value, UiPreferences(), false) {}
+            } }
+        }
+        fun age(text: String) = compose.onNode(hasText(text) and SemanticsMatcher("Placed") { it.layoutInfo.isPlaced }, useUnmergedTree = true)
+        capture("summary-recent")
+        age("3m").assertIsDisplayed()
+        age("2m ago").assertIsDisplayed()
+        compose.runOnIdle { stats.value = JSONObject(stats.value.toString()).put("prompts_changed_at", now - 60) }
+        age("1m ago").assertIsDisplayed()
+        age("2m").assertIsDisplayed()
+    }
 
     @Test fun modulesExpandIndependentlyAndKeepTheComposerVisible() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

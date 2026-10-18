@@ -215,19 +215,28 @@ struct SessionSummaryBar: View {
             ("compactions", "⊜", stats["compressions"].map { String(describing: $0) } ?? session.compactions.map(String.init) ?? "—", "Compactions", Crab.purple, "")
         ].filter { prefs.visible($0.0) }
     }
+    private func recentAgeKeys(_ now: Int) -> Set<String> {
+        let candidates = [
+            ("completions", stats.int("completions_changed_at", session.completionAt)),
+            ("prompts", stats.int("prompts_changed_at", session.promptAt))
+        ].filter { prefs.visible($0.0) && ageText($0.1, now: now).hasSuffix(" ago") }
+        guard let newest = candidates.sorted(by: { $0.1 > $1.1 }).first else { return [] }
+        return [newest.0]
+    }
     private func metricStrip(_ now: Int) -> some View {
         ViewThatFits(in: .horizontal) {
-            metricRow(now, compact: false).fixedSize()
+            metricRow(now, agoKeys: ["prompts", "completions"]).fixedSize()
+            metricRow(now, agoKeys: recentAgeKeys(now)).fixedSize()
             ScrollView(.horizontal, showsIndicators: false) {
-                metricRow(now, compact: true)
+                metricRow(now, agoKeys: [])
             }
         }.frame(maxWidth: .infinity, alignment: .leading).frame(height: 44)
     }
-    private func metricRow(_ now: Int, compact: Bool) -> some View {
+    private func metricRow(_ now: Int, agoKeys: Set<String>) -> some View {
         HStack(spacing: 10) {
             SessionStatus(session: session)
             ForEach(metrics(now), id: \.key) { metric in
-                stat(metric.symbol, value: metric.value, label: metric.label, color: metric.color, age: metric.age, compact: compact)
+                stat(metric.symbol, value: metric.value, label: metric.label, color: metric.color, age: metric.age, compact: !agoKeys.contains(metric.key))
             }
         }.padding(.horizontal, 8).frame(height: 44)
     }
