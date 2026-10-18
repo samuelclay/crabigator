@@ -156,6 +156,7 @@ export const styleJs = `
             // its header from the data, so re-render it for every session.
             for (const [sessionId, sessionData] of sessions) {
                 updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
+                refreshSessionModules(sessionId);
             }
         }
 
@@ -198,6 +199,7 @@ export const styleJs = `
             // Apply to all session cards
             document.querySelectorAll('.session-card').forEach(card => {
                 card.classList.toggle('widgets-collapsed', !widgetsExpanded);
+                syncModuleDrawer(card.id.replace('session-', ''));
             });
         }
 
@@ -526,6 +528,7 @@ export const styleJs = `
 
                 updateFitLayout();
                 if (prBoardVisible) mountBoardTerminals();
+                restoreSessionFullscreen();
                 if (typeof scheduleSidebarUpdate === 'function') {
                     scheduleSidebarUpdate();
                 }

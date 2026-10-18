@@ -87,3 +87,25 @@ test('ended sessions never show a working spinner or demand an answer', () => {
         assert.equal(aggregate([ended, { active: true, state: 'complete' }]), 'complete');
     }
 });
+
+
+test('fullscreen preserves the reading position relative to the terminal viewport', () => {
+    let viewportTop = 300;
+    const data = { pinned: false };
+    const terminal = { scrollTop: 500, scrollHeight: 2000, clientHeight: 400,
+        getBoundingClientRect: () => ({ top: viewportTop }) };
+    const anchor = { isConnected: true,
+        getBoundingClientRect: () => ({ top: viewportTop + 510 - terminal.scrollTop,
+            bottom: viewportTop + 530 - terminal.scrollTop }) };
+    const preserve = runInNewContext(functions(embedded('terminal'), ['preserveTerminalScroll']) + '\npreserveTerminalScroll', {
+        sessions: new Map([['s', data]]),
+        document: { getElementById: id => id === 'terminal-s' ? terminal : { children: [anchor] } },
+    });
+    preserve('s', () => { viewportTop = 50; terminal.clientHeight = 800; });
+    assert.equal(terminal.scrollTop, 500, 'Entering fullscreen keeps the same history row in view');
+    preserve('s', () => { viewportTop = 300; terminal.clientHeight = 400; });
+    assert.equal(terminal.scrollTop, 500, 'Exiting fullscreen keeps the same history row in view');
+    data.pinned = true;
+    preserve('s', () => { terminal.clientHeight = 300; });
+    assert.equal(terminal.scrollTop, 1700, 'Pinned output stays at the bottom when modules reduce terminal height');
+});

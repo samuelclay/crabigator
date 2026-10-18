@@ -26,6 +26,7 @@ import { pairingJs } from './pairing';
 import { subscriptionJs } from './subscription';
 import { prBoardJs } from './pr-board';
 import { sessionMarkJs } from './session-mark';
+import { modulesJs } from './modules';
 import { initJs } from './init';
 
 export const dashboardJs = [
@@ -56,5 +57,6 @@ export const dashboardJs = [
     pairingJs,
     subscriptionJs,  // Must be after pairingJs (uses getAuthHeaders)
     prBoardJs,  // Must be after pairingJs and changesWidgetJs (uses getAuthHeaders, PR helpers)
+    modulesJs,
     initJs
 ].join('\n');

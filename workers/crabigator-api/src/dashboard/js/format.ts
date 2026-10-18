@@ -29,6 +29,7 @@ export const formatJs = `
                 const timestamp = Number(element.dataset.recencyTimestamp);
                 if (timestamp) element.textContent = formatElapsed(timestamp);
             });
+            sessions.forEach((_data, id) => fitSummaryAges(id));
         }
 
         setInterval(refreshRecencyLabels, 30000);

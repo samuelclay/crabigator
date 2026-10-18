@@ -312,6 +312,8 @@ export const eventsJs = `
                             // Desktop disconnected - remove session from view
                             const session = sessions.get(sessionId);
                             if (session) {
+                                if (fullscreenSessionId === sessionId) exitSessionFullscreen();
+                                session.moduleResize?.disconnect();
                                 closeSessionSocket(session);
                                 sessions.delete(sessionId);
                                 if (activeTerminalId === sessionId) activeTerminalId = null;
@@ -384,6 +386,7 @@ export const eventsJs = `
                     updatePrList(sessionId, event.prs || []);
                     break;
             }
+            if (!['screen', 'scrollback', 'scrollback_history'].includes(event.type)) refreshSessionModules(sessionId);
         }
 
         function updatePromptPanel(sessionId, prompt) {

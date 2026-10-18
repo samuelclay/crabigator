@@ -103,7 +103,7 @@ export const changesWidgetJs = `
             // widget hides itself through the existing empty-state path below.
             const byLanguage = visibleSections.changes ? (changes?.by_language || []) : [];
             const sessionData = sessions.get(sessionId);
-            const commitHistory = visibleSections.commits ? (sessionData?.commitHistory || []) : [];
+            const commitHistory = visibleSections.commits && !document.getElementById('module-commits-' + sessionId) ? (sessionData?.commitHistory || []) : [];
             const slackThreads = sessionData?.slackThreads || [];
             const sessionTitlesHtml = renderChangesSessionTitles(sessionData);
             const totalChanges = byLanguage.reduce((sum, lang) => sum + (lang.changes?.length || 0), 0);
@@ -556,6 +556,7 @@ export const changesWidgetJs = `
         function rerenderAllPrLists() {
             for (const [sid, sd] of sessions.entries()) {
                 if (sd.prs && sd.prs.length) updatePrList(sid, sd.prs);
+                refreshSessionModules(sid);
             }
         }
 
@@ -719,7 +720,7 @@ export const changesWidgetJs = `
             // Collapsed by default: only primary PRs. Clicking the header
             // reveals the secondary PRs too. Every row shows full detail
             // (PR title + branch) in both states.
-            const expanded = !!(sessionData && sessionData.prsExpanded);
+            const expanded = !!document.getElementById('module-prs-' + sessionId) || !!(sessionData && sessionData.prsExpanded);
 
             // Dismissed PRs disappear; primaries render above secondaries.
             const disposition = pr => prDisposition(pr, sessionData);

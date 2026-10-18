@@ -19,14 +19,14 @@ export const terminalJs = `
                 }
                 anchor = history.children[low] || null;
             }
-            const offset = anchor?.getBoundingClientRect().top;
+            const offset = anchor ? anchor.getBoundingClientRect().top - viewportTop : 0;
             data.updatingTerminal = true;
             try {
                 update();
             } finally {
                 data.updatingTerminal = false;
                 const target = data.pinned ? terminal.scrollHeight
-                    : anchor?.isConnected ? terminal.scrollTop + anchor.getBoundingClientRect().top - offset
+                    : anchor?.isConnected ? terminal.scrollTop + anchor.getBoundingClientRect().top - terminal.getBoundingClientRect().top - offset
                     : top;
                 const clamped = Math.max(0, Math.min(target, terminal.scrollHeight - terminal.clientHeight));
                 if (Math.abs(terminal.scrollTop - clamped) > 0.5) terminal.scrollTop = clamped;

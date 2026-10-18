@@ -122,6 +122,8 @@ export const sessionJs = `
                             if (session.state) meta.state = session.state;
                             if (session.stats) meta.stats = session.stats;
                         }
+                        if (fullscreenSessionId === id) exitSessionFullscreen();
+                        session.moduleResize?.disconnect();
                         closeSessionSocket(session);
                         session.element.remove();
                         sessions.delete(id);
@@ -243,7 +245,9 @@ export const sessionJs = `
                         void checkVersionAndReload();
                     }
 
-                    for (const [, session] of sessions) {
+                    for (const [id, session] of sessions) {
+                        if (fullscreenSessionId === id) exitSessionFullscreen();
+                        session.moduleResize?.disconnect();
                         closeSessionSocket(session);
                     }
                     sessions.clear();
@@ -306,6 +310,8 @@ export const sessionJs = `
                 // Close event sockets for removed sessions
                 for (const [id, session] of sessions) {
                     if (!filteredSessions.find(s => s.id === id)) {
+                        if (fullscreenSessionId === id) exitSessionFullscreen();
+                        session.moduleResize?.disconnect();
                         closeSessionSocket(session);
                         session.element.remove();
                         sessions.delete(id);
@@ -608,6 +614,7 @@ export const sessionJs = `
             setSessionPlatform(session.id, session.platform);
             updateSessionHeader(session);
             if (expanded) updateSessionTitleHierarchy(session.id);
+            if (expanded) initSessionModules(session.id);
             applyWidgetsCollapsedState(session.id);
             applySessionCardStatsVisibility(card);
             if (expanded) restoreInput(session.id);

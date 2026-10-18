@@ -1,4 +1,5 @@
 // Dashboard CSS barrel - combines all CSS module fragments
+import { modulesCss } from './modules';
 import { baseCss } from './base';
 import { deployCss } from './deploy';
 import { headerCss } from './header';
@@ -33,4 +34,5 @@ export const dashboardCss = [
     subscriptionCss,
     voiceCss,
     prBoardCss,
+    modulesCss,
 ].join('\n');

@@ -146,6 +146,7 @@ export const prBoardJs = `
                 const card = sessions.get(id)?.element;
                 if (card && !mounted.has(id) && card.parentElement !== board) board.appendChild(card);
             }
+            restoreSessionFullscreen();
         }
 
         // Underline the key in the label, or prefix it when it isn't there.

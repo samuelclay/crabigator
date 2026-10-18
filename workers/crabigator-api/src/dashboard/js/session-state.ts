@@ -91,6 +91,8 @@ export const sessionStateJs = `
             const session = allSessions.find(s => s.id === sessionId);
             if (!data || !session) return;
             const oldCard = data.element;
+            if (fullscreenSessionId === sessionId) exitSessionFullscreen();
+            data.moduleResize?.disconnect();
             closeSessionSocket(data);
             if (activeTerminalId === sessionId) activeTerminalId = null;
             if (expanded) expandedSessions.add(sessionId);
@@ -115,7 +117,7 @@ export const sessionStateJs = `
             if (collapsed) {
                 state[sessionId] = true;
             } else {
-                delete state[sessionId];
+                state[sessionId] = false;
             }
             localStorage.setItem('widgetsCollapsedSessions', JSON.stringify(state));
         }
@@ -142,6 +144,7 @@ export const sessionStateJs = `
                 card.classList.add('widgets-collapsed');
                 setWidgetsCollapsedSession(sessionId, true);
             }
+            syncModuleDrawer(sessionId);
         }
 
         function applyWidgetsCollapsedState(sessionId) {
@@ -149,6 +152,7 @@ export const sessionStateJs = `
                 const card = document.getElementById('session-' + sessionId);
                 if (card) card.classList.add('widgets-collapsed');
             }
+            syncModuleDrawer(sessionId);
         }
 
         function updateSessionSummary(sessionId, sessionData) {
@@ -294,6 +298,9 @@ export const sessionStateJs = `
 
             if (e.target.closest('.terminal')) return;
             if (e.target.closest('.pin-btn')) return;
+            // Fullscreen scrolling stays active while using its drawer and
+            // composer, so a wheel gesture can still stop following output.
+            if (e.target.closest('.session-fullscreen')) return;
 
             deactivateTerminalScroll(activeTerminalId);
         });

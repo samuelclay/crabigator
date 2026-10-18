@@ -43,7 +43,15 @@ export const statsWidgetJs = `
             const toolsEl = document.getElementById('widgets-tools-' + sessionId);
             const compactionsEl = document.getElementById('widgets-compactions-' + sessionId);
 
-            if (stateEl) stateEl.innerHTML = stateIndicator;
+            if (stateEl) {
+                stateEl.innerHTML = stateIndicator;
+                if (session?.element.classList.contains('has-modules')) {
+                    const glyph = { ready: '○', permission: '!', question: '?', complete: '✓', interrupted: '⊘' }[state];
+                    if (glyph && stateEl.firstElementChild) stateEl.firstElementChild.textContent = glyph;
+                    stateEl.setAttribute('aria-label', state);
+                    stateEl.title = state;
+                }
+            }
             if (sessionEl) sessionEl.textContent = formatDuration(stats.work_seconds || 0);
             if (thinkingEl) thinkingEl.textContent = stats.thinking_seconds ? formatDuration(stats.thinking_seconds) : '—';
 
