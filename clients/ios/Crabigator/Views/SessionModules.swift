@@ -14,11 +14,12 @@ struct SessionModuleData {
     var branch: String, files: [ModuleChange], changes: [ModuleChange], commits: [JSON]
     var stats: JSON
     init(session: Session, details: [String: JSON]) {
-        history = details["recap_history"]?.array("history") ?? []
-        let latest = details["recap"]?["latest"] as? JSON ?? history.last ?? [:]
-        recap = latest.text("headline", session.recap)
+        history = (details["recap_history"]?.array("history") ?? []).filter { !recapHeadline($0.text("headline")).isEmpty }
+        let incoming = details["recap"]?["latest"] as? JSON ?? [:]
+        let latest = !recapHeadline(incoming.text("headline")).isEmpty ? incoming : history.last ?? [:]
+        recap = recapHeadline(latest.text("headline", session.recap))
         bullets = latest["bullets"] as? [String] ?? []
-        recapAt = latest.int("generated_at")
+        recapAt = latest.isEmpty ? session.recapAt : latest.int("generated_at") / 1000
         let git = details["git"] ?? [:]
         branch = git.text("branch", session.branch)
         files = git.array("files").map { ModuleChange($0, nameKey: "path", kindKey: "status") }
@@ -56,12 +57,13 @@ struct SessionModules: View {
                     section("changes", title: "Changes", summary: "\(data.changes.count) symbol\(data.changes.count == 1 ? "" : "s")", color: Crab.orange) { changeRows(data.changes) }
                 }
                 if prefs.visible("commits") && !data.commits.isEmpty {
-                    section("commits", title: "Commits", summary: data.commits.first?.text("subject") ?? "", suffix: "\(data.commits.count)", color: Crab.muted) {
+                    section("commits", title: "Commits", summary: data.commits.first?.text("subject") ?? "", suffix: "\(data.commits.count)", updatedAt: data.commits.map { $0.int("timestamp") }.max() ?? 0, color: Crab.muted) {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(Array(data.commits.enumerated()), id: \.offset) { _, commit in
                                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                                     Text(commit.text("short_hash")).foregroundStyle(Crab.orange)
-                                    Text(commit.text("subject")).foregroundStyle(.secondary)
+                                    Text(commit.text("subject")).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                                    ModuleAge(timestamp: commit.int("timestamp"))
                                 }.font(.system(size: 11, design: .monospaced))
                             }
                         }.padding(.horizontal, 12).padding(.bottom, 10)
@@ -73,24 +75,26 @@ struct SessionModules: View {
         }.background(Crab.panel).accessibilityIdentifier("Session modules")
     }
     private var recap: some View {
-        section("recap", title: "Recap", summary: data.recap, color: Crab.cyan) {
+        section("recap", title: "Recap", summary: data.recap, updatedAt: data.recapAt, color: Crab.cyan) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(data.recap).foregroundStyle(.primary).font(.system(size: 13))
                 ForEach(Array(data.bullets.enumerated()), id: \.offset) { _, bullet in
                     HStack(alignment: .top, spacing: 8) { Text("·").foregroundStyle(Crab.cyan); Text(bullet).foregroundStyle(.secondary) }.font(.system(size: 12))
                 }
-                if data.recapAt > 0 { Text(ageText(data.recapAt, now: Int(Date().timeIntervalSince1970))).font(.system(size: 10)).foregroundStyle(Crab.muted) }
                 if data.history.count > 1 {
                     ForEach(Array(data.history.dropLast().reversed().enumerated()), id: \.offset) { _, previous in
                         Divider().overlay(line)
-                        Text(previous.text("headline")).font(.system(size: 12)).foregroundStyle(.secondary)
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(previous.text("headline")).font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                            ModuleAge(timestamp: previous.int("generated_at") / 1000)
+                        }
                     }
                 }
             }.textSelection(.enabled).padding(.horizontal, 12).padding(.bottom, 12)
         }
     }
     private var pullRequests: some View {
-        section("prs", title: "Pull requests", summary: "\(prs.count) PR\(prs.count == 1 ? "" : "s")", suffix: prSummary, color: Crab.purple) {
+        section("prs", title: "Pull requests", summary: ["\(prs.count) PR\(prs.count == 1 ? "" : "s")", prSummary].filter { !$0.isEmpty }.joined(separator: " · "), updatedAt: prs.map(\.updatedAt).max() ?? 0, color: Crab.purple) {
             VStack(spacing: 6) {
                 ForEach(prs) { pr in
                     if let url = URL(string: pr.url), url.scheme == "https" {
@@ -106,8 +110,10 @@ struct SessionModules: View {
         let merged = prs.filter { $0.state == "MERGED" }.count
         return [open > 0 ? "\(open) open" : "", merged > 0 ? "\(merged) merged" : ""].filter { !$0.isEmpty }.joined(separator: " · ")
     }
-    private func section<Content: View>(_ key: String, title: String, summary: String, suffix: String = "", color: Color, @ViewBuilder content: () -> Content) -> some View {
+    private func section<Content: View>(_ key: String, title: String, summary: String, suffix: String = "", updatedAt: Int = 0, color: Color, @ViewBuilder content: () -> Content) -> some View {
         VStack(spacing: 0) {
+            TimelineView(.periodic(from: .now, by: 30)) { time in
+                let age = updatedAt > 0 ? ageText(updatedAt, now: Int(time.date.timeIntervalSince1970)) : ""
             Button {
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
                     if expanded.contains(key) { expanded.remove(key) } else { expanded.insert(key) }
@@ -119,8 +125,10 @@ struct SessionModules: View {
                     Text(title).font(.system(size: 11, weight: .semibold)).fixedSize()
                     Text(summary).font(.system(size: 12)).foregroundStyle(Crab.muted).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                     if !suffix.isEmpty { Text(suffix).font(.system(size: 10)).foregroundStyle(Crab.muted).lineLimit(1).fixedSize() }
+                    if !age.isEmpty { Text(age).font(.system(size: 10)).monospacedDigit().foregroundStyle(Crab.muted).fixedSize() }
                 }.foregroundStyle(color).padding(.horizontal, 10).frame(minHeight: 44).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel(title).accessibilityValue(expanded.contains(key) ? "Expanded" : "Collapsed").accessibilityIdentifier("module-" + key)
+            }.buttonStyle(.plain).accessibilityLabel(age.isEmpty ? title : "\(title), updated \(age)").accessibilityValue(expanded.contains(key) ? "Expanded" : "Collapsed").accessibilityIdentifier("module-" + key)
+            }
             if expanded.contains(key) { content().transition(.opacity) }
             Rectangle().fill(line).frame(height: 0.5)
         }.clipped()
@@ -145,6 +153,19 @@ struct SessionModules: View {
                 }
             }
         }.textSelection(.enabled).padding(.horizontal, 12).padding(.bottom, 10)
+    }
+}
+
+/// Ages tick even when a completed session sends no more events.
+private struct ModuleAge: View {
+    var timestamp: Int
+    var body: some View {
+        if timestamp > 0 {
+            TimelineView(.periodic(from: .now, by: 30)) { time in
+                Text(ageText(timestamp, now: Int(time.date.timeIntervalSince1970)))
+                    .font(.system(size: 10)).monospacedDigit().foregroundStyle(Crab.muted).fixedSize()
+            }
+        }
     }
 }
 
@@ -217,7 +238,10 @@ private struct ModulePRRow: View {
                 Spacer(minLength: 4)
                 Text(pr.draft ? "draft" : pr.state.lowercased()).font(.system(size: 10, weight: .medium)).foregroundStyle(stateColor).padding(.horizontal, 5).padding(.vertical, 2).background(stateColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 3)).overlay(RoundedRectangle(cornerRadius: 3).stroke(stateColor.opacity(0.5), lineWidth: 0.5))
             }
-            Text(pr.title).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(pr.title).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                ModuleAge(timestamp: pr.updatedAt)
+            }
             HStack(spacing: 8) {
                 if !pr.branch.isEmpty { Text("⑂ " + pr.branch).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading) }
                 ModuleDiff(additions: pr.additions, deletions: pr.deletions)
@@ -240,15 +264,16 @@ struct SessionModulesFixture: View {
         stream.selected = Session(["id": "module-layout", "title": "Internationalize Turn Touch", "device_name": "Studio", "state": "complete", "branch": "codex/localization", "active": true])
         stream.screenLoaded = true; stream.historyLoaded = true; stream.connected = true
         stream.screen = "Added language selection on all three platforms.\n\n  ✓ iOS build passed\n  ✓ Android tests passed\n  ✓ Mac build passed\n\nThe pull requests are ready for review.\n\n› Ask Codex to do anything"
+        let now = Int(Date().timeIntervalSince1970)
         stream.details = [
             "stats": ["work_seconds": 17160, "thinking_seconds": 9120, "prompts": 6, "completions": 4, "tools": 24],
-            "recap": ["latest": ["headline": "Added localization and language selection", "bullets": ["Translated the app into 21 languages.", "Added native language selection on each platform."]]],
+            "recap": ["latest": ["headline": "Added localization and language selection", "generated_at": (now - 420) * 1000, "bullets": ["Translated the app into 21 languages.", "Added native language selection on each platform."]]],
             "git": ["branch": "codex/localization", "files": [["path": "Settings/LanguagePicker.swift", "status": "M", "additions": 42, "deletions": 8]]],
             "changes": ["by_language": [["changes": [["name": "LanguagePicker", "kind": "struct", "additions": 42, "deletions": 8]]]]],
-            "commit_history": ["history": [["short_hash": "abc1234", "subject": "Add language selection"]]],
+            "commit_history": ["history": [["short_hash": "abc1234", "subject": "Add language selection", "timestamp": now - 7200]]],
             "prs": ["prs": [
-                ["owner": "samuelclay", "repo": "turntouch-ios", "number": 15, "title": "Add 21-language localization and iOS language selection", "url": "https://github.com/samuelclay/turntouch-ios/pull/15", "state": "OPEN", "primary": true, "branch": "codex/localization-21-languages", "additions": 41683, "deletions": 738, "checks_total": 3, "mergeable": "MERGEABLE"],
-                ["owner": "samuelclay", "repo": "turntouch-android", "number": 1, "title": "Add 21-language localization and Android language selection", "url": "https://github.com/samuelclay/turntouch-android/pull/1", "state": "MERGED", "primary": true, "branch": "codex/localization-21-languages", "additions": 20920, "deletions": 299]
+                ["owner": "samuelclay", "repo": "turntouch-ios", "number": 15, "updated_at": (now - 10800) * 1000, "title": "Add 21-language localization and iOS language selection", "url": "https://github.com/samuelclay/turntouch-ios/pull/15", "state": "OPEN", "primary": true, "branch": "codex/localization-21-languages", "additions": 41683, "deletions": 738, "checks_total": 3, "mergeable": "MERGEABLE"],
+                ["owner": "samuelclay", "repo": "turntouch-android", "number": 1, "updated_at": (now - 14400) * 1000, "title": "Add 21-language localization and Android language selection", "url": "https://github.com/samuelclay/turntouch-android/pull/1", "state": "MERGED", "primary": true, "branch": "codex/localization-21-languages", "additions": 20920, "deletions": 299]
             ]]
         ]
         return stream

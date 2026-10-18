@@ -12,6 +12,9 @@ final class ModuleTests: XCTestCase {
         XCTAssertEqual(prs.value as? String, "Collapsed")
         let terminal = app.textViews["terminal-output"]
         let collapsedHeight = terminal.frame.height
+        XCTAssertTrue(recap.staticTexts["7m ago"].exists)
+        XCTAssertTrue(prs.staticTexts["3h ago"].exists)
+        XCTAssertTrue(app.buttons["module-commits"].staticTexts["2h ago"].exists)
         capture("Modules collapsed")
         recap.tap()
         XCTAssertEqual(recap.value as? String, "Expanded")

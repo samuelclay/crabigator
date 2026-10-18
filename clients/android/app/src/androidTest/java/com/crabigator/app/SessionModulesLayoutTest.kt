@@ -26,14 +26,16 @@ class SessionModulesLayoutTest {
         val model = SessionModel(context.applicationContext as Application)
         model.preferences.value = UiPreferences()
         val session = Session.parse(JSONObject("""{"id":"module-layout","title":"Internationalize Turn Touch","device_name":"Studio","state":"complete","branch":"codex/localization"}"""))
+        val now = System.currentTimeMillis() / 1000
         val prs = listOf(
-            PullRequest("ios#15", "Add 21-language localization and iOS language selection", "samuelclay/turntouch-ios", 15, "OPEN", "✓ CI", "https://github.com/samuelclay/turntouch-ios/pull/15", listOf(session), branch = "codex/localization-21-languages", additions = 41683, deletions = 738, primary = true),
-            PullRequest("android#1", "Add 21-language localization and Android language selection", "samuelclay/turntouch-android", 1, "MERGED", "", "https://github.com/samuelclay/turntouch-android/pull/1", listOf(session), branch = "codex/localization-21-languages", additions = 20920, deletions = 299, primary = true))
+            PullRequest("ios#15", "Add 21-language localization and iOS language selection", "samuelclay/turntouch-ios", 15, "OPEN", "✓ CI", "https://github.com/samuelclay/turntouch-ios/pull/15", listOf(session), branch = "codex/localization-21-languages", additions = 41683, deletions = 738, primary = true, updatedAt = now - 10800),
+            PullRequest("android#1", "Add 21-language localization and Android language selection", "samuelclay/turntouch-android", 1, "MERGED", "", "https://github.com/samuelclay/turntouch-android/pull/1", listOf(session), branch = "codex/localization-21-languages", additions = 20920, deletions = 299, primary = true, updatedAt = now - 14400))
         val state = AppState(selected = session, connected = true, screenLoaded = true, historyLoaded = true, prs = prs,
             screen = "Added language selection on all three platforms.\n\n  ✓ iOS build passed\n  ✓ Android tests passed\n  ✓ Mac build passed\n\nThe pull requests are ready for review.\n\n› Ask Codex to do anything",
             details = mapOf(
                 "stats" to JSONObject("""{"work_seconds":17160,"thinking_seconds":9120,"prompts":6,"completions":4}"""),
-                "recap" to JSONObject("""{"latest":{"headline":"Added localization and language selection","bullets":["Translated the app into 21 languages.","Added native language selection on each platform."]}}"""),
+                "recap" to JSONObject("""{"latest":{"generated_at":${(now - 420) * 1000},"headline":"Added localization and language selection","bullets":["Translated the app into 21 languages.","Added native language selection on each platform."]}}"""),
+                "commit_history" to JSONObject("""{"history":[{"short_hash":"abc1234","subject":"Add language selection","timestamp":${now - 7200}}]}"""),
                 "git" to JSONObject("""{"branch":"codex/localization","files":[{"path":"Settings/LanguagePicker.kt","status":"M","additions":42,"deletions":8}]}"""),
                 "changes" to JSONObject("""{"by_language":[{"changes":[{"name":"LanguagePicker","kind":"class","additions":42,"deletions":8}]}]}""")))
         compose.activityRule.scenario.onActivity {
@@ -43,6 +45,9 @@ class SessionModulesLayoutTest {
             Box(Modifier.safeDrawingPadding()) { SessionDetail(state, model, false, {}, active = false, style = {}) }
         } } }
         compose.onNodeWithText("Translated the app into 21 languages.").assertDoesNotExist()
+        compose.onNodeWithText("7m ago", useUnmergedTree = true).assertExists()
+        compose.onNodeWithText("3h ago", useUnmergedTree = true).assertExists()
+        compose.onNodeWithText("2h ago", useUnmergedTree = true).assertExists()
         capture("modules-collapsed")
         compose.onNodeWithContentDescription("Recap").performClick()
         compose.onNodeWithText("Translated the app into 21 languages.").assertExists()

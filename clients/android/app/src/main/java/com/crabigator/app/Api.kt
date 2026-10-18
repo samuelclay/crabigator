@@ -113,10 +113,10 @@ fun JSONArray.objects(): List<JSONObject> = (0 until length()).mapNotNull { optJ
 fun JSONObject.array(key: String): List<JSONObject> = optJSONArray(key)?.objects().orEmpty()
 fun JSONObject.text(key: String, fallback: String = ""): String = if (isNull(key)) fallback else optString(key, fallback)
 
-data class Session(val id: String, val title: String, val repo: String, val machine: String, val state: String, val active: Boolean, val glyph: String, val color: String, val recap: String, val platform: String, val branch: String, val background: String, val stats: SessionStats = SessionStats(), val cwd: String = "") {
+data class Session(val id: String, val title: String, val repo: String, val machine: String, val state: String, val active: Boolean, val glyph: String, val color: String, val recap: String, val platform: String, val branch: String, val background: String, val stats: SessionStats = SessionStats(), val cwd: String = "", val recapAt: Long = 0) {
     val attention get() = state == "question" || state == "permission"
     companion object {
-        fun parse(j: JSONObject) = Session(j.text("session_id", j.text("id")), j.text("title").ifBlank { j.text("dir_name", "Session") }, listOf(j.text("repo_owner"), j.text("repo_name")).filter { it.isNotBlank() }.joinToString("/"), j.text("device_name"), j.text("state", "ready"), j.optBoolean("active", true), j.optJSONObject("session_mark")?.text("glyph", "◈") ?: "◈", j.optJSONObject("session_mark")?.text("fg_hex", "#FFAA77") ?: "#FFAA77", j.optJSONObject("recap")?.text("headline") ?: "", j.text("platform"), j.text("branch"), j.optJSONObject("session_mark")?.text("bg_hex", "#352B25") ?: "#352B25", SessionStats.parse(j), j.text("cwd"))
+        fun parse(j: JSONObject) = Session(j.text("session_id", j.text("id")), j.text("title").ifBlank { j.text("dir_name", "Session") }, listOf(j.text("repo_owner"), j.text("repo_name")).filter { it.isNotBlank() }.joinToString("/"), j.text("device_name"), j.text("state", "ready"), j.optBoolean("active", true), j.optJSONObject("session_mark")?.text("glyph", "◈") ?: "◈", j.optJSONObject("session_mark")?.text("fg_hex", "#FFAA77") ?: "#FFAA77", recapHeadline(j.optJSONObject("recap")?.text("headline").orEmpty()), j.text("platform"), j.text("branch"), j.optJSONObject("session_mark")?.text("bg_hex", "#352B25") ?: "#352B25", SessionStats.parse(j), j.text("cwd"), (j.optJSONObject("recap")?.optLong("generated_at") ?: 0) / 1000)
     }
 }
 data class PullRequest(val key: String, val title: String, val repo: String, val number: Int, val state: String, val checks: String, val url: String, val sessions: List<Session>, val watched: Boolean = false,
@@ -151,3 +151,9 @@ internal object BoardActions {
         return JSONObject().put("owner", owner).put("repo", repo).put("number", number).put("url", "https://github.com/$owner/$repo/pull/$number")
     }
 }
+
+// Suppress placeholders cached by desktops before empty turns were skipped.
+internal fun recapHeadline(headline: String): String = headline.trim().takeUnless {
+    it == "The agent completed the turn without captured transcript output." ||
+    it == "The agent completed the turn. The recap response could not be parsed, so check the live output for details."
+}.orEmpty()

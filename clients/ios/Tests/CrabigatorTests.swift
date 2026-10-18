@@ -5,6 +5,26 @@ import UserNotifications
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
+    func testModuleRecapsHidePlaceholdersAndUseSecondsForAges() {
+        let empty = "The agent completed the turn without captured transcript output."
+        let now = 1_800_000_000
+        let selected = Session(["id": "recaps", "recap": ["headline": empty, "generated_at": now * 1000]])
+        XCTAssertTrue(selected.recap.isEmpty)
+        let details: [String: JSON] = [
+            "recap": ["latest": ["headline": empty, "generated_at": now * 1000]],
+            "recap_history": ["history": [["headline": "Shipped the fix", "generated_at": (now - 420) * 1000], ["headline": empty]]],
+            "commit_history": ["history": [["subject": "Fix capture", "timestamp": now - 7200]]]]
+        let data = SessionModuleData(session: selected, details: details)
+        XCTAssertEqual(data.recap, "Shipped the fix")
+        XCTAssertEqual(data.history.count, 1)
+        XCTAssertEqual(ageText(data.recapAt, now: now), "7m ago")
+        XCTAssertEqual(ageText(data.commits[0].int("timestamp"), now: now), "2h ago")
+        let roster = Session(["id": "roster", "recap": ["headline": "Roster recap", "generated_at": (now - 420) * 1000]])
+        XCTAssertEqual(SessionModuleData(session: roster, details: [:]).recapAt, now - 420)
+        let pr = PullRequest(["owner": "o", "repo": "r", "number": 1, "updated_at": (now - 10800) * 1000])
+        XCTAssertEqual(ageText(pr.updatedAt, now: now), "3h ago")
+    }
+
     func testTerminalLinksSurviveColorsAndRejectExecutableSchemes() {
         let source = "🦀 \u{1b}]8;id=pr;https://example.com/pr;a=1\u{1b}\\Read \u{1b}[1mPR\u{1b}[0m\u{1b}]8;;\u{7} plain\n(https://example.com/a_\u{1b}[34m(b)).\n\u{1b}]8;;javascript:alert(1)\u{7}unsafe\u{1b}]8;;\u{7}"
         let text = TerminalText.parse(source, size: 13, spacing: 1.45, wrap: true)

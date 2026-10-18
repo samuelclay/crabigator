@@ -12,7 +12,7 @@ extension Dictionary where Key == String, Value == Any {
 struct Session: Identifiable, Equatable {
     var id, title, repo, machine, state, glyph, color, background, recap, platform, branch, cwd: String
     var active: Bool
-    var startedAt, endedAt, lastSeenAt, promptAt, completionAt: Int
+    var startedAt, endedAt, lastSeenAt, promptAt, completionAt, recapAt: Int
     var workSeconds, thinkingSeconds, tools, compactions: Int?
     var attention: Bool { active && ["question", "permission"].contains(state) }
     var activityAt: Int { max(promptAt, completionAt, startedAt) }
@@ -24,7 +24,7 @@ struct Session: Identifiable, Equatable {
         state = j.text("state", "ready"); active = j.bool("active", true)
         let mark = j.object("session_mark")
         glyph = mark.text("glyph", "◈"); color = mark.text("fg_hex", "#FFAA77"); background = mark.text("bg_hex", "#352B25")
-        recap = j.object("recap").text("headline"); platform = j.text("platform"); branch = j.text("branch"); cwd = j.text("cwd")
+        recap = recapHeadline(j.object("recap").text("headline")); recapAt = j.object("recap").int("generated_at") / 1000; platform = j.text("platform"); branch = j.text("branch"); cwd = j.text("cwd")
         startedAt = j.int("started_at"); endedAt = j.int("ended_at"); lastSeenAt = j.int("last_seen_at")
         promptAt = j.int("prompts_changed_at"); completionAt = j.int("completions_changed_at")
         let stats = j.object("stats")
@@ -165,4 +165,11 @@ enum BoardActions {
         guard let number = Int(part(offset + 2)), number > 0 else { return nil }
         return ["owner": owner, "repo": repo, "number": number, "url": "https://github.com/\(owner)/\(repo)/pull/\(number)"]
     }
+}
+
+/// Suppress placeholders cached by desktops before empty turns were skipped.
+func recapHeadline(_ headline: String) -> String {
+    let text = headline.trimmingCharacters(in: .whitespacesAndNewlines)
+    return ["The agent completed the turn without captured transcript output.",
+            "The agent completed the turn. The recap response could not be parsed, so check the live output for details."].contains(text) ? "" : text
 }
