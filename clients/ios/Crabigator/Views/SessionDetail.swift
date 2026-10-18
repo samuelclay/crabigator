@@ -26,9 +26,6 @@ struct SessionDetail: View {
                             Text(session.title).font(.system(size: 15, weight: .medium)).foregroundStyle(Crab.title).lineLimit(2).accessibilityIdentifier("Selected session \(session.id)")
                             Text(stream.connected ? "\(session.machine) · Live" : !session.active ? "\(session.machine) · Ended" : stream.desktopStatusKnown ? "\(session.machine) · Disconnected" : "Connecting…").font(.system(size: 11)).foregroundStyle(stream.connected ? Crab.mint : Crab.muted).lineLimit(1)
                         }.frame(maxWidth: .infinity, alignment: .leading)
-                        IconButton(icon: "square.grid.2x2", label: model.preferences.widgets ? "Hide session modules" : "Show session modules", selected: model.preferences.widgets) {
-                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { model.preferences.widgets.toggle() }
-                        }
                         IconButton(icon: "arrow.down.to.line", label: pinned ? "Stop following output" : "Follow latest output", selected: pinned) { pinned.toggle() }
                         IconButton(icon: "textformat.size", label: "Style") { style = true }.popover(isPresented: $style, arrowEdge: .top) { StyleMenu(model: model).nativePopover() }
                     }.padding(.horizontal, 4).padding(.vertical, 8)
@@ -67,16 +64,21 @@ struct SessionDetail: View {
                                     } : nil).id(session.id)
                                 }
                             }.frame(height: terminalHeight(area.size.height)).frame(maxWidth: .infinity).background(Color(uiColor: TerminalText.rgb(0x0B0F14)))
-                            if showsWidgets {
-                                SessionModules(session: session, data: SessionModuleData(session: session, details: stream.details), prefs: model.preferences, prs: prs)
-                                    .id(session.id).frame(height: min(modulesHeight, area.size.height * 0.45))
-                                    .onPreferenceChange(ModuleContentHeight.self) { height in
-                                        guard showsWidgets, height != modulesHeight else { return }
-                                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { modulesHeight = height }
-                                    }
-                                    .transition(.opacity)
+                            if model.preferences.terminalHeight > 0 { Spacer(minLength: 0) }
+                            SessionModules(session: session, data: SessionModuleData(session: session, details: stream.details), prefs: model.preferences, prs: prs, revealed: showsWidgets)
+                                .id(session.id).frame(height: expandedDrawerHeight(area.size.height))
+                                .frame(height: drawerHeight(area.size.height), alignment: .bottom)
+                                .clipped().allowsHitTesting(showsWidgets).accessibilityHidden(!showsWidgets)
+                                .onPreferenceChange(ModuleContentHeight.self) { height in
+                                    guard height != modulesHeight else { return }
+                                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { modulesHeight = height }
+                                }
+                            SessionSummaryBar(session: session, stats: stream.details["stats"] ?? [:], prefs: model.preferences, expanded: showsWidgets) {
+                                withAnimation(reduceMotion ? nil : showsWidgets
+                                    ? .easeInOut(duration: 0.24)
+                                    : .spring(response: 0.44, dampingFraction: 0.86)) { model.preferences.widgets.toggle() }
                             }
-                            else if model.preferences.terminalHeight > 0 { Spacer(minLength: 0) }
+
                         }
                     }
                     if let prompt = stream.prompt { PromptPanel(prompt: prompt, revision: stream.revision, disabled: stream.sending || !stream.connected || stream.revision == nil) { action, revision in stream.send(action, guarded: true, expectedRevision: revision) } }
@@ -86,8 +88,14 @@ struct SessionDetail: View {
             }
         }.background(Crab.ink)
     }
+    func expandedDrawerHeight(_ available: CGFloat) -> CGFloat {
+        min(modulesHeight, max(0, available - 44) * 0.45)
+    }
+    func drawerHeight(_ available: CGFloat) -> CGFloat {
+        showsWidgets ? expandedDrawerHeight(available) : 0
+    }
     func terminalHeight(_ available: CGFloat) -> CGFloat {
-        let maxHeight = max(0, available - (showsWidgets ? min(modulesHeight, available * 0.45) : 0))
+        let maxHeight = max(0, available - 44 - drawerHeight(available))
         return model.preferences.terminalHeight == 0 ? maxHeight : min(CGFloat(model.preferences.terminalHeight), maxHeight)
     }
 }

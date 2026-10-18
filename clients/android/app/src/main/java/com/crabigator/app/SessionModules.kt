@@ -1,19 +1,27 @@
 package com.crabigator.app
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
@@ -33,14 +41,14 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
     val stats = details["stats"] ?: JSONObject()
 }
 
-@Composable internal fun SessionModules(session: Session, data: SessionModuleData, prefs: UiPreferences, prs: List<PullRequest>, modifier: Modifier = Modifier) {
+@Composable internal fun SessionModules(session: Session, data: SessionModuleData, prefs: UiPreferences, prs: List<PullRequest>, modifier: Modifier = Modifier, revealScope: AnimatedVisibilityScope? = null) {
     var expanded by rememberSaveable(session.id) { mutableStateOf(emptyList<String>()) }
     fun toggle(key: String) { expanded = if (key in expanded) expanded - key else expanded + key }
     val uri = LocalUriHandler.current
     Column(modifier.fillMaxWidth().background(Panel)) {
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
             if (prefs.visible("recap") && data.recap.isNotBlank()) {
-                ModuleSection("Recap", data.recap, color = CrabColors.Cyan, expanded = "recap" in expanded, toggle = { toggle("recap") }) {
+                ModuleSection("Recap", data.recap, color = CrabColors.Cyan, expanded = "recap" in expanded, toggle = { toggle("recap") }, modifier = revealScope.moduleEntrance(0)) {
                     Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(data.recap, color = Color(0xFFE2E7ED), fontSize = 13.sp, lineHeight = 18.sp)
                         data.bullets.forEach { bullet ->
@@ -57,23 +65,23 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
             if (prefs.visible("prs") && prs.isNotEmpty()) {
                 val open = prs.count { it.state == "OPEN" }; val merged = prs.count { it.state == "MERGED" }
                 val summary = listOfNotNull(if (open > 0) "$open open" else null, if (merged > 0) "$merged merged" else null).joinToString(" · ")
-                ModuleSection("Pull requests", "${prs.size} PR${if (prs.size == 1) "" else "s"}", summary, CrabColors.Purple, "prs" in expanded, { toggle("prs") }) {
+                ModuleSection("Pull requests", "${prs.size} PR${if (prs.size == 1) "" else "s"}", summary, CrabColors.Purple, "prs" in expanded, { toggle("prs") }, modifier = revealScope.moduleEntrance(1)) {
                     Column(Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         prs.forEach { pr -> ModulePrRow(pr) { if (pr.url.startsWith("https://")) uri.openUri(pr.url) } }
                     }
                 }
             }
             if (prefs.visible("git") && (data.branch.isNotBlank() || data.files.isNotEmpty())) {
-                ModuleSection("Git", data.branch, if (data.files.isEmpty()) "Clean" else "${data.files.size} file${if (data.files.size == 1) "" else "s"}", CrabColors.Green, "git" in expanded, { toggle("git") }) {
+                ModuleSection("Git", data.branch, if (data.files.isEmpty()) "Clean" else "${data.files.size} file${if (data.files.size == 1) "" else "s"}", CrabColors.Green, "git" in expanded, { toggle("git") }, modifier = revealScope.moduleEntrance(2)) {
                     if (data.files.isEmpty()) Text("Working tree clean", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 10.dp))
                     else ModuleChanges(data.files)
                 }
             }
             if (prefs.visible("changes") && data.changes.isNotEmpty()) {
-                ModuleSection("Changes", "${data.changes.size} symbol${if (data.changes.size == 1) "" else "s"}", color = CrabColors.Orange, expanded = "changes" in expanded, toggle = { toggle("changes") }) { ModuleChanges(data.changes) }
+                ModuleSection("Changes", "${data.changes.size} symbol${if (data.changes.size == 1) "" else "s"}", color = CrabColors.Orange, expanded = "changes" in expanded, toggle = { toggle("changes") }, modifier = revealScope.moduleEntrance(3)) { ModuleChanges(data.changes) }
             }
             if (prefs.visible("commits") && data.commits.isNotEmpty()) {
-                ModuleSection("Commits", data.commits.first().text("subject"), "${data.commits.size}", Muted, "commits" in expanded, { toggle("commits") }) {
+                ModuleSection("Commits", data.commits.first().text("subject"), "${data.commits.size}", Muted, "commits" in expanded, { toggle("commits") }, modifier = revealScope.moduleEntrance(4)) {
                     Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         data.commits.forEach { commit ->
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -85,22 +93,36 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
                 }
             }
         }
-        if (prefs.visible("stats")) ModuleStats(session, data.stats, prefs)
     }
 }
 
-@Composable private fun ModuleSection(title: String, summary: String, suffix: String = "", color: Color, expanded: Boolean, toggle: () -> Unit, content: @Composable () -> Unit) {
-    Column {
+@Composable private fun ModuleSection(title: String, summary: String, suffix: String = "", color: Color, expanded: Boolean, toggle: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val angle by animateFloatAsState(if (expanded) 90f else 0f, spring(dampingRatio = .8f), label = "Section chevron")
+    Column(modifier) {
         Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable(role = Role.Button, onClick = toggle).semantics { contentDescription = title; stateDescription = if (expanded) "Expanded" else "Collapsed" }.padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(if (expanded) "⌄" else "›", color = color, fontSize = 12.sp, modifier = Modifier.width(10.dp))
+            Icon(painterResource(R.drawable.ic_chevron_down), contentDescription = null, tint = color, modifier = Modifier.size(10.dp).rotate(angle - 90f))
             Text(title, color = color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
             Text(summary, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (suffix.isNotBlank()) Text(suffix, color = Muted, fontSize = 10.sp, maxLines = 1)
         }
-        if (expanded) content()
+        AnimatedVisibility(expanded, enter = expandVertically(spring(dampingRatio = .85f, stiffness = 500f)) + fadeIn(tween(150)), exit = shrinkVertically(tween(180)) + fadeOut(tween(120))) { content() }
         ModuleDivider()
     }
 }
+// Rise from the summary bar, nearest row first. Collapse is a shorter sweep.
+@Composable private fun AnimatedVisibilityScope?.moduleEntrance(index: Int): Modifier {
+    val offset = with(LocalDensity.current) { 18.dp.roundToPx() }
+    return this?.run {
+        val delay = (4 - index) * 35
+        val lift = tween<IntOffset>(320, delay, CubicBezierEasing(.18f, 1.25f, .36f, 1f))
+        Modifier.animateEnterExit(
+            enter = fadeIn(tween(180, delay)) + slideInVertically(lift) { offset } +
+                scaleIn(tween(320, delay, CubicBezierEasing(.18f, 1.25f, .36f, 1f)), initialScale = .96f, transformOrigin = TransformOrigin(.5f, 1f)),
+            exit = fadeOut(tween(100, index * 16)) + slideOutVertically(tween(150, index * 16)) { offset } +
+                scaleOut(tween(150, index * 16), targetScale = .96f, transformOrigin = TransformOrigin(.5f, 1f)))
+    } ?: Modifier
+}
+
 @Composable private fun ModuleDivider() { Box(Modifier.fillMaxWidth().height(.5.dp).background(Color.White.copy(alpha = .07f))) }
 @Composable private fun ModuleChanges(rows: List<ModuleChange>) {
     Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -137,8 +159,21 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
         }
     }
 }
-@Composable private fun ModuleStats(session: Session, stats: JSONObject, prefs: UiPreferences) {
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).height(34.dp).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+@Composable internal fun SessionSummaryBar(session: Session, stats: JSONObject, prefs: UiPreferences, expanded: Boolean, toggle: () -> Unit) {
+    val angle by animateFloatAsState(if (expanded) 0f else 180f, spring(dampingRatio = .75f, stiffness = 500f), label = "Modules chevron")
+    Column(Modifier.fillMaxWidth().background(Panel)) {
+        ModuleDivider()
+        Row(Modifier.fillMaxWidth().height(44.dp).clickable(role = Role.Button, onClick = toggle)
+            .semantics { contentDescription = "Session summary"; stateDescription = if (expanded) "Expanded" else "Collapsed" }, verticalAlignment = Alignment.CenterVertically) {
+            ModuleStats(session, stats, prefs, Modifier.weight(1f))
+            Box(Modifier.size(44.dp).background(CrabColors.Orange.copy(alpha = if (expanded) .08f else .03f)), contentAlignment = Alignment.Center) {
+                Icon(painterResource(R.drawable.ic_chevron_down), contentDescription = null, tint = CrabColors.Orange, modifier = Modifier.size(16.dp).rotate(angle))
+            }
+        }
+    }
+}
+@Composable private fun ModuleStats(session: Session, stats: JSONObject, prefs: UiPreferences, modifier: Modifier) {
+    Row(modifier.horizontalScroll(rememberScrollState()).height(44.dp).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
         SessionStatus(session)
         if (prefs.visible("sessionTime")) ModuleStat("◉", sessionDuration(if (stats.has("work_seconds")) stats.optLong("work_seconds") else session.stats.workSeconds), "Session time", CrabColors.Blue)
         if (prefs.visible("thinkingTime")) ModuleStat("◐", sessionDuration(if (stats.has("thinking_seconds")) stats.optLong("thinking_seconds") else session.stats.thinkingSeconds), "Thinking time", CrabColors.Green)

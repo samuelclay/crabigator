@@ -2,12 +2,15 @@ package com.crabigator.app
 
 import android.app.Application
 import android.graphics.Bitmap
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -16,7 +19,7 @@ import org.junit.Test
 import java.io.File
 
 class SessionModulesLayoutTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
     @Test fun modulesExpandIndependentlyAndKeepTheComposerVisible() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -33,7 +36,12 @@ class SessionModulesLayoutTest {
                 "recap" to JSONObject("""{"latest":{"headline":"Added localization and language selection","bullets":["Translated the app into 21 languages.","Added native language selection on each platform."]}}"""),
                 "git" to JSONObject("""{"branch":"codex/localization","files":[{"path":"Settings/LanguagePicker.kt","status":"M","additions":42,"deletions":8}]}"""),
                 "changes" to JSONObject("""{"by_language":[{"changes":[{"name":"LanguagePicker","kind":"class","additions":42,"deletions":8}]}]}""")))
-        compose.setContent { MaterialTheme(colorScheme = darkColorScheme(background = Ink, surface = Ink)) { Surface(Modifier.fillMaxSize()) { SessionDetail(state, model, false, {}, active = false, style = {}) } } }
+        compose.activityRule.scenario.onActivity {
+            it.enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
+        }
+        compose.setContent { MaterialTheme(colorScheme = darkColorScheme(background = Ink, surface = Ink)) { Surface(Modifier.fillMaxSize()) {
+            Box(Modifier.safeDrawingPadding()) { SessionDetail(state, model, false, {}, active = false, style = {}) }
+        } } }
         compose.onNodeWithText("Translated the app into 21 languages.").assertDoesNotExist()
         capture("modules-collapsed")
         compose.onNodeWithContentDescription("Recap").performClick()
@@ -48,6 +56,36 @@ class SessionModulesLayoutTest {
         compose.onNodeWithContentDescription("Git").performClick()
         compose.onNodeWithText("Settings/LanguagePicker.kt").assertExists()
         capture("modules-git-expanded")
+        val summary = compose.onNodeWithContentDescription("Session summary")
+        val barBefore = summary.fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithContentDescription("Hide session modules").assertDoesNotExist()
+        summary.performTouchInput { click() }
+        compose.onNodeWithContentDescription("Recap").assertDoesNotExist()
+        summary.assertIsDisplayed().assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "Collapsed"))
+        assertEquals(barBefore.bottom, summary.fetchSemanticsNode().boundsInRoot.bottom, 2f)
+        compose.onNodeWithText("2h 32m", useUnmergedTree = true).assertIsDisplayed()
+        capture("modules-summary-only")
+        summary.performClick()
+        compose.onNodeWithText("Settings/LanguagePicker.kt").assertExists()
+        assertEquals(barBefore.bottom, summary.fetchSemanticsNode().boundsInRoot.bottom, 2f)
+        // Reverse an in-flight animation rather than waiting for it to finish.
+        compose.mainClock.autoAdvance = false
+        summary.performClick()
+        compose.mainClock.advanceTimeBy(80)
+        summary.performClick()
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithText("Settings/LanguagePicker.kt").assertExists()
+        capture("modules-restored")
+        // A fixed terminal taller than the available space must not push the bar away.
+        compose.runOnIdle { model.preferences.value = model.preferences.value.copy(terminalHeight = 1000) }
+        summary.assertIsDisplayed()
+        compose.mainClock.autoAdvance = false
+        summary.performClick()
+        compose.mainClock.advanceTimeBy(80)
+        assertEquals(barBefore.bottom, summary.fetchSemanticsNode().boundsInRoot.bottom, 2f)
+        compose.mainClock.autoAdvance = true
+        summary.assertIsDisplayed()
+        assertEquals(barBefore.bottom, summary.fetchSemanticsNode().boundsInRoot.bottom, 2f)
     }
     private fun capture(name: String) {
         compose.waitForIdle()

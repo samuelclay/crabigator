@@ -33,7 +33,7 @@ struct StyleMenu: View {
                     }
                     Section("Widgets below the terminal") {
                         Toggle("Expanded", isOn: $model.preferences.widgets)
-                        visibility([("stats", "Status"), ("recap", "Recap"), ("prs", "Pull requests"), ("commits", "Commits"), ("git", "Git status"), ("changes", "Changes")])
+                        visibility([("recap", "Recap"), ("prs", "Pull requests"), ("commits", "Commits"), ("git", "Git status"), ("changes", "Changes")])
                     }
                 } else {
                     Section("Text and spacing") {

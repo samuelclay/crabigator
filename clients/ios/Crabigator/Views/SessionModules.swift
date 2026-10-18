@@ -36,6 +36,7 @@ struct ModuleContentHeight: PreferenceKey {
 /// A compact footer. Only the opened sections consume more than a single row.
 struct SessionModules: View {
     var session: Session, data: SessionModuleData, prefs: Preferences, prs: [PullRequest]
+    var revealed = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded: Set<String> = []
     private let line = Color.white.opacity(0.07)
@@ -67,9 +68,8 @@ struct SessionModules: View {
                     }
                 }
             }.fixedSize(horizontal: false, vertical: true)
-                .background(GeometryReader { proxy in Color.clear.preference(key: ModuleContentHeight.self, value: proxy.size.height + (prefs.visible("stats") ? 34 : 0)) })
+                .background(GeometryReader { proxy in Color.clear.preference(key: ModuleContentHeight.self, value: proxy.size.height) })
         }
-        if prefs.visible("stats") { stats }
         }.background(Crab.panel).accessibilityIdentifier("Session modules")
     }
     private var recap: some View {
@@ -124,6 +124,15 @@ struct SessionModules: View {
             if expanded.contains(key) { content().transition(.opacity) }
             Rectangle().fill(line).frame(height: 0.5)
         }.clipped()
+            .opacity(revealed ? 1 : 0)
+            .scaleEffect(revealed ? 1 : 0.96, anchor: .bottom)
+            .offset(y: revealed ? 0 : 14)
+            .animation(reduceMotion ? nil : revealed
+                ? .spring(response: 0.36, dampingFraction: 0.76).delay(Double(4 - moduleIndex(key)) * 0.035)
+                : .easeIn(duration: 0.14).delay(Double(moduleIndex(key)) * 0.016), value: revealed)
+    }
+    private func moduleIndex(_ key: String) -> Int {
+        ["recap", "prs", "git", "changes", "commits"].firstIndex(of: key) ?? 0
     }
     private func detailText(_ text: String) -> some View { Text(text).font(.system(size: 12)).foregroundStyle(Crab.muted).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.bottom, 10) }
     private func changeRows(_ rows: [ModuleChange]) -> some View {
@@ -137,18 +146,52 @@ struct SessionModules: View {
             }
         }.textSelection(.enabled).padding(.horizontal, 12).padding(.bottom, 10)
     }
-    private var stats: some View {
+}
+
+/// The permanent handle for the drawer. Metrics can still scroll horizontally;
+/// a tap anywhere on the bar opens or closes the modules.
+struct SessionSummaryBar: View {
+    var session: Session, stats: JSON, prefs: Preferences, expanded: Bool
+    var toggle: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        HStack(spacing: 0) {
+            metricStrip
+            Image(systemName: "chevron.up")
+                .font(.system(size: 12, weight: .semibold)).foregroundStyle(Crab.orange)
+                .rotationEffect(.degrees(expanded ? 180 : 0))
+                .frame(width: 44, height: 44)
+                .background(Crab.orange.opacity(expanded ? 0.08 : 0.03))
+                .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.75), value: expanded)
+                .accessibilityHidden(true)
+        }.frame(height: 44).background(Crab.panel)
+            .overlay(alignment: .top) { Color.white.opacity(0.09).frame(height: 0.5) }
+            .contentShape(Rectangle()).onTapGesture(perform: toggle)
+            .accessibilityElement(children: .combine).accessibilityAddTraits(.isButton)
+            .accessibilityLabel("Session summary. " + SessionStatus(session: session).label + ". " + metrics.map { $0.label + ": " + $0.value }.joined(separator: ", "))
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityHint(expanded ? "Hide session modules" : "Show session modules")
+            .accessibilityAction { toggle() }.accessibilityIdentifier("session-summary")
+    }
+    private var metrics: [(key: String, symbol: String, value: String, label: String, color: Color)] {
+        [
+            ("sessionTime", "◉", durationText(stats["work_seconds"] as? Int ?? session.workSeconds), "Session time", Crab.blue),
+            ("thinkingTime", "◐", durationText(stats["thinking_seconds"] as? Int ?? session.thinkingSeconds), "Thinking time", Crab.mint),
+            ("prompts", "⟩", stats["prompts"].map { String(describing: $0) } ?? "—", "Prompts", Crab.muted),
+            ("completions", "⋖", stats["completions"].map { String(describing: $0) } ?? "—", "Completions", Crab.muted),
+            ("tools", "⚒", stats["tools"].map { String(describing: $0) } ?? session.tools.map(String.init) ?? "—", "Tools", Crab.orange),
+            ("compactions", "⊜", stats["compressions"].map { String(describing: $0) } ?? session.compactions.map(String.init) ?? "—", "Compactions", Crab.purple)
+        ].filter { prefs.visible($0.0) }
+    }
+    private var metricStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 14) {
                 SessionStatus(session: session)
-                if prefs.visible("sessionTime") { stat("◉", value: durationText(data.stats["work_seconds"] as? Int ?? session.workSeconds), label: "Session time", color: Crab.blue) }
-                if prefs.visible("thinkingTime") { stat("◐", value: durationText(data.stats["thinking_seconds"] as? Int ?? session.thinkingSeconds), label: "Thinking time", color: Crab.mint) }
-                if prefs.visible("prompts") { stat("⟩", value: data.stats["prompts"].map { String(describing: $0) } ?? "—", label: "Prompts", color: Crab.muted) }
-                if prefs.visible("completions") { stat("⋖", value: data.stats["completions"].map { String(describing: $0) } ?? "—", label: "Completions", color: Crab.muted) }
-                if prefs.visible("tools") { stat("⚒", value: data.stats["tools"].map { String(describing: $0) } ?? session.tools.map(String.init) ?? "—", label: "Tools", color: Crab.orange) }
-                if prefs.visible("compactions") { stat("⊜", value: data.stats["compressions"].map { String(describing: $0) } ?? session.compactions.map(String.init) ?? "—", label: "Compactions", color: Crab.purple) }
-            }.padding(.horizontal, 12).frame(height: 34)
-        }.frame(height: 34)
+                ForEach(metrics, id: \.key) { metric in
+                    stat(metric.symbol, value: metric.value, label: metric.label, color: metric.color)
+                }
+            }.padding(.horizontal, 12).frame(height: 44)
+        }.frame(height: 44)
     }
     private func stat(_ symbol: String, value: String, label: String, color: Color) -> some View {
         HStack(spacing: 4) { Text(symbol).foregroundStyle(color); Text(value).foregroundStyle(.secondary) }.font(.system(size: 11, design: .monospaced)).fixedSize().accessibilityElement(children: .ignore).accessibilityLabel(label + ": " + value)
@@ -189,7 +232,9 @@ private struct ModulePRRow: View {
 #if DEBUG
 /// Local, read-only content for checking phone and tablet module layouts.
 struct SessionModulesFixture: View {
-    @StateObject private var model = SessionModel()
+    @StateObject private var model: SessionModel = {
+        let model = SessionModel(); model.preferences = Preferences(); return model
+    }()
     @StateObject private var stream: SessionStream = {
         let stream = SessionStream()
         stream.selected = Session(["id": "module-layout", "title": "Internationalize Turn Touch", "device_name": "Studio", "state": "complete", "branch": "codex/localization", "active": true])
