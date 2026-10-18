@@ -8,7 +8,7 @@ export const modulesCss = `
 .container .session-header .title-row { align-items: baseline; gap: 8px; }
 .container .session-header .title { font-size: 14px; font-weight: 500; color: var(--text-bright); white-space: normal; overflow-wrap: anywhere; }
 .session-header .session-context { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10px; color: var(--text-dim); }
-.container .session-header .cwd { display: inline; font: inherit; margin: 0; }
+.container .session-card .session-header .cwd { display: inline; font: inherit; margin: 0; }
 .session-header .branch { color: #7ee787; font: inherit; }
 .container .session-header .session-row-recap { margin: 0; max-width: none; font-size: 11px; color: var(--text-mid); }
 .session-header .session-row-recap:empty, .session-header .branch:empty, .session-header .session-row-stats:empty { display: none; }
