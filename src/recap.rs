@@ -80,6 +80,13 @@ pub struct TurnRecap {
     pub slack_threads: Vec<SlackThread>,
 }
 
+/// Old desktop versions saved these placeholders as successful recaps.
+pub(crate) fn has_recap_content(headline: &str) -> bool {
+    !matches!(headline.trim(), ""
+        | "The agent completed the turn without captured transcript output."
+        | "The agent completed the turn. The recap response could not be parsed, so check the live output for details.")
+}
+
 /// The model's read on one tracked PR: a short progress note and how
 /// confident it is that the PR is finished.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -183,7 +190,7 @@ pub struct RecapManager {
     last_completion_count: u32,
     initialized: bool,
     active_turn: Option<TurnBaseline>,
-    pending: Option<mpsc::Receiver<std::result::Result<TurnRecap, String>>>,
+    pending: Option<mpsc::Receiver<std::result::Result<Option<TurnRecap>, String>>>,
     /// Wall-clock anchor used to fade the startup confirmation toast.
     started_at: Instant,
     /// All successful recaps generated in this session, oldest first. Mirrors
@@ -463,12 +470,18 @@ impl RecapManager {
         };
 
         match rx.try_recv() {
-            Ok(Ok(recap)) => {
+            Ok(Ok(Some(recap))) => {
                 let _ = write_recap_cache(cwd, &recap);
                 self.state.line_delta = Some(recap.line_delta);
                 self.history.push(recap.clone());
                 self.state.latest = Some(recap);
                 self.state.status = RecapStatus::Ready;
+                self.pending = None;
+                true
+            }
+            Ok(Ok(None)) => {
+                self.state.latest = None;
+                self.state.status = RecapStatus::Waiting;
                 self.pending = None;
                 true
             }
@@ -577,30 +590,21 @@ fn prompt_for_api_key() -> Result<String> {
     Ok(key.trim().to_string())
 }
 
-fn generate_turn_recap(job: RecapJob) -> Result<TurnRecap> {
+fn generate_turn_recap(job: RecapJob) -> Result<Option<TurnRecap>> {
     let transcript = collect_latest_turn(&job)?;
+    if transcript.activity.trim().is_empty() {
+        // A turn with no captured work has no recap. Never publish a synthetic
+        // success message into the recap history or the session's title.
+        return Ok(None);
+    }
     let slack_threads = transcript
         .user_prompt
         .as_deref()
         .map(extract_threads)
         .unwrap_or_default();
-    if transcript.activity.trim().is_empty() {
-        return Ok(fallback_recap(
-            &job,
-            "The agent completed the turn without captured transcript output.",
-            slack_threads,
-        ));
-    }
-
     let request = build_anthropic_request(&job, &transcript, &slack_threads);
     let response = call_anthropic(&job.api_key, request)?;
-    parse_recap_response(&job, &response, &slack_threads).or_else(|_| {
-        Ok(fallback_recap(
-            &job,
-            "The agent completed the turn. The recap response could not be parsed, so check the live output for details.",
-            slack_threads,
-        ))
-    })
+    parse_recap_response(&job, &response, &slack_threads).map(Some)
 }
 
 #[derive(Debug)]
@@ -886,7 +890,10 @@ pub(crate) fn collect_latest_turn_text(
         len > MAX_TURN_REREAD,
     )
     .with_context(|| format!("Failed to read transcript {}", path.display()))?;
-    let mut transcript = finish_latest_turn(platform, &window.text);
+    // A bounded tail can start well after the user prompt. Its assistant and
+    // tool records still belong to that turn. A newer prompt inside the tail
+    // resets the parser normally, including a new turn with no output yet.
+    let mut transcript = finish_latest_turn_in(platform, &window.text, len > MAX_TURN_REREAD);
     // Only model summaries need a size limit. Local PR tracking uses the full
     // turn, including commands and creation results from hours earlier.
     transcript.activity = truncate_start(
@@ -1684,22 +1691,6 @@ fn pr_note_array(value: &Value) -> Vec<PrRecapNote> {
         .collect()
 }
 
-fn fallback_recap(job: &RecapJob, headline: &str, slack_threads: Vec<SlackThread>) -> TurnRecap {
-    TurnRecap {
-        prompt_count: job.prompt_count,
-        generated_at: now_unix_ms(),
-        title: None,
-        variant: RecapVariant::Brief,
-        headline: headline.to_string(),
-        bullets: Vec::new(),
-        next_prompt_notes: Vec::new(),
-        artifacts: Vec::new(),
-        line_delta: job.line_delta,
-        pr_notes: Vec::new(),
-        slack_threads,
-    }
-}
-
 fn string_array(value: &Value, key: &str, limit: usize) -> Vec<String> {
     value
         .get(key)
@@ -2226,6 +2217,77 @@ mod tests {
         let turn = collect_latest_turn(&job).unwrap();
         assert!(turn.user_prompt.is_none());
         assert!(turn.activity.is_empty());
+    }
+
+    #[test]
+    fn long_turn_recaps_keep_output_when_the_prompt_is_outside_the_tail() {
+        for platform in [PlatformKind::Codex, PlatformKind::Claude] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("session.jsonl");
+            let (prompt, answer) = match platform {
+                PlatformKind::Codex => (
+                    codex_user("Ship the fix"),
+                    json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Shipped the fix and verified it."}]}}).to_string(),
+                ),
+                _ => (
+                    json!({"type":"user","message":{"content":"Ship the fix"}}).to_string(),
+                    json!({"type":"assistant","message":{"content":[{"type":"text","text":"Shipped the fix and verified it."}]}}).to_string(),
+                ),
+            };
+            // A large tool result or diagnostic blob pushes the prompt out of
+            // the bounded read, exactly as in the affected live sessions.
+            let padding =
+                json!({"type":"diagnostic","data":"x".repeat(MAX_TURN_REREAD as usize + 100)});
+            fs::write(&path, format!("{prompt}\n{padding}\n{answer}\n")).unwrap();
+            let turn = collect_latest_turn_text(platform, Some(&path)).unwrap();
+            assert!(turn.activity.contains("Shipped the fix and verified it."));
+            assert!(turn.user_prompt.is_none());
+
+            use std::io::Write;
+            writeln!(
+                fs::OpenOptions::new().append(true).open(&path).unwrap(),
+                "{prompt}"
+            )
+            .unwrap();
+            let turn = collect_latest_turn_text(platform, Some(&path)).unwrap();
+            assert!(
+                turn.activity.is_empty(),
+                "Never reuse an older turn's output"
+            );
+            let job = RecapJob {
+                platform,
+                transcript_path: Some(path),
+                prompt_count: 2,
+                model: DEFAULT_RECAP_MODEL.to_string(),
+                api_key: "unused".to_string(),
+                line_delta: TurnLineDelta::default(),
+                prs: Vec::new(),
+            };
+            assert!(generate_turn_recap(job).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    #[ignore = "Read-only live audit; set CRABIGATOR_RECAP_SESSION_DIR"]
+    fn audit_live_recap_transcript() {
+        let dir = PathBuf::from(std::env::var("CRABIGATOR_RECAP_SESSION_DIR").unwrap());
+        let inspect: Value =
+            serde_json::from_slice(&fs::read(dir.join("inspect.json")).unwrap()).unwrap();
+        let platform = if inspect["platform"] == "codex" {
+            PlatformKind::Codex
+        } else {
+            PlatformKind::Claude
+        };
+        let path = Path::new(inspect["transcript_path"].as_str().unwrap());
+        let turn = collect_latest_turn_text(platform, Some(path)).unwrap();
+        assert!(
+            !turn.activity.trim().is_empty(),
+            "Completed session has recap content"
+        );
+        println!(
+            "Recovered {} characters of recap activity",
+            turn.activity.len()
+        );
     }
 
     #[test]

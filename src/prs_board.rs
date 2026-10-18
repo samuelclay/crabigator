@@ -530,7 +530,7 @@ impl From<CachedSessionRef> for SessionRef {
             title: cached.title,
             title_set_at: cached.title_set_at,
             branch: cached.branch,
-            recap: cached.recap,
+            recap: cached.recap.filter(|recap| crate::recap::has_recap_content(&recap.headline)),
             state: cached.state,
             prompted_at: cached.prompted_at,
             completed_at: cached.completed_at,
@@ -1276,7 +1276,7 @@ fn activity_timestamp_secs(timestamp: f64) -> u64 {
 /// Parse the fields the board needs out of a mirrored TurnRecap value.
 fn recap_brief_from(recap: &serde_json::Value) -> Option<RecapBrief> {
     let headline = recap.get("headline")?.as_str()?;
-    if headline.is_empty() {
+    if !crate::recap::has_recap_content(headline) {
         return None;
     }
     Some(RecapBrief {
@@ -2044,7 +2044,7 @@ fn cloud_session_ref(session: crate::cloud::CloudBoardSession) -> SessionRef {
         SessionState::Complete
     });
     let recap = session.recap.and_then(|r| {
-        (!r.headline.is_empty()).then_some(RecapBrief {
+        crate::recap::has_recap_content(&r.headline).then_some(RecapBrief {
             headline: r.headline,
             bullets: r.bullets,
             next_prompt_notes: r.next_prompt_notes,
@@ -6786,6 +6786,15 @@ mod tests {
 
     fn render_frame(entries: &[BoardPr]) -> String {
         render_frame_at(entries, DEFAULT_DETAIL)
+    }
+
+    #[test]
+    fn recap_briefs_hide_legacy_empty_output_placeholders() {
+        for headline in ["", "The agent completed the turn without captured transcript output.",
+            "The agent completed the turn. The recap response could not be parsed, so check the live output for details."] {
+            assert!(recap_brief_from(&serde_json::json!({"headline": headline})).is_none());
+        }
+        assert!(recap_brief_from(&serde_json::json!({"headline": "Shipped the fix"})).is_some());
     }
 
     #[test]
