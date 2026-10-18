@@ -216,20 +216,26 @@ struct SessionSummaryBar: View {
         ].filter { prefs.visible($0.0) }
     }
     private func metricStrip(_ now: Int) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                SessionStatus(session: session)
-                ForEach(metrics(now), id: \.key) { metric in
-                    stat(metric.symbol, value: metric.value, label: metric.label, color: metric.color, age: metric.age)
-                }
-            }.padding(.horizontal, 8).frame(height: 44)
-        }.frame(height: 44)
+        ViewThatFits(in: .horizontal) {
+            metricRow(now, compact: false).fixedSize()
+            ScrollView(.horizontal, showsIndicators: false) {
+                metricRow(now, compact: true)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading).frame(height: 44)
     }
-    private func stat(_ symbol: String, value: String, label: String, color: Color, age: String) -> some View {
+    private func metricRow(_ now: Int, compact: Bool) -> some View {
+        HStack(spacing: 10) {
+            SessionStatus(session: session)
+            ForEach(metrics(now), id: \.key) { metric in
+                stat(metric.symbol, value: metric.value, label: metric.label, color: metric.color, age: metric.age, compact: compact)
+            }
+        }.padding(.horizontal, 8).frame(height: 44)
+    }
+    private func stat(_ symbol: String, value: String, label: String, color: Color, age: String, compact: Bool) -> some View {
         HStack(spacing: 4) {
             Text(symbol).foregroundStyle(color)
             Text(value).foregroundStyle(age.isEmpty ? color : Crab.title)
-            if !age.isEmpty { Text(age).foregroundStyle(color) }
+            if !age.isEmpty { Text(compact && age.hasSuffix(" ago") ? String(age.dropLast(4)) : age).foregroundStyle(color) }
         }.font(.system(size: 11, design: .monospaced)).lineLimit(1).fixedSize().accessibilityElement(children: .ignore).accessibilityLabel(label + ": " + value + (age.isEmpty ? "" : ", " + age))
     }
 }

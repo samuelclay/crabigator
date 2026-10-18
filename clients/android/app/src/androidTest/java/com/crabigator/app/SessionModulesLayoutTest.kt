@@ -20,6 +20,10 @@ import java.io.File
 
 class SessionModulesLayoutTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+    // Adaptive sizing keeps an unplaced measurement row in the unmerged tree.
+    private fun metric(description: String) = compose.onNode(
+        hasContentDescription(description) and SemanticsMatcher("Placed") { it.layoutInfo.isPlaced },
+        useUnmergedTree = true)
 
     @Test fun modulesExpandIndependentlyAndKeepTheComposerVisible() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -48,16 +52,19 @@ class SessionModulesLayoutTest {
         compose.onNodeWithText("7m ago", useUnmergedTree = true).assertExists()
         compose.onNodeWithText("3h ago", useUnmergedTree = true).assertExists()
         compose.onNodeWithText("2h ago", useUnmergedTree = true).assertExists()
-        compose.onNodeWithContentDescription("Prompts: 56, 3m ago", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithContentDescription("Completions: 26, 2m ago", useUnmergedTree = true).assertExists()
+        metric("Prompts: 56, 3m ago").assertIsDisplayed()
+        metric("Completions: 26, 2m ago").assertExists()
         val glyph = compose.onNodeWithText("ᛝ", useUnmergedTree = true).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-        val sessionTime = compose.onNodeWithContentDescription("Session time: 4h 46m", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val sessionTime = metric("Session time: 4h 46m").fetchSemanticsNode().boundsInRoot
         assertTrue("Identity stays left of the metrics", glyph.right < sessionTime.left)
-        val prompts = compose.onNodeWithContentDescription("Prompts: 56, 3m ago", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val prompts = metric("Prompts: 56, 3m ago").fetchSemanticsNode().boundsInRoot
         assertEquals("Metrics share one line", sessionTime.height, prompts.height, 2f)
         capture("modules-collapsed")
-        compose.onNodeWithContentDescription("Completions: 26, 2m ago", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithContentDescription("Session time: 4h 46m", useUnmergedTree = true).performScrollTo()
+        val completion = metric("Completions: 26, 2m ago")
+        if (!completion.isDisplayed()) completion.performScrollTo()
+        completion.assertIsDisplayed()
+        val sessionMetric = metric("Session time: 4h 46m")
+        if (!sessionMetric.isDisplayed()) sessionMetric.performScrollTo()
         compose.onNodeWithContentDescription("Recap").performClick()
         compose.onNodeWithText("Translated the app into 21 languages.").assertExists()
         compose.onNodeWithText(prs.first().title).assertDoesNotExist()
@@ -77,7 +84,7 @@ class SessionModulesLayoutTest {
         compose.onNodeWithContentDescription("Recap").assertDoesNotExist()
         summary.assertIsDisplayed().assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "Collapsed"))
         assertEquals(barBefore.bottom, summary.fetchSemanticsNode().boundsInRoot.bottom, 2f)
-        compose.onNodeWithText("2h 32m", useUnmergedTree = true).assertIsDisplayed()
+        metric("Thinking time: 2h 32m").assertIsDisplayed()
         capture("modules-summary-only")
         summary.performClick()
         compose.onNodeWithText("Settings/LanguagePicker.kt").assertExists()

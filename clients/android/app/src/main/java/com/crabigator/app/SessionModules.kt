@@ -9,6 +9,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -197,24 +199,38 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
     val now by produceState(System.currentTimeMillis() / 1000) {
         while (true) { value = System.currentTimeMillis() / 1000; delay(1000) }
     }
+    SubcomposeLayout(modifier.height(44.dp)) { constraints ->
+        // Measure the full wording first, then shorten only when it overflows.
+        val full = subcompose("measure") {
+            ModuleStatsRow(session, stats, prefs, now, compact = false, Modifier.clearAndSetSemantics {})
+        }
+            .single().measure(constraints.copy(minWidth = 0, maxWidth = Constraints.Infinity))
+        val row = subcompose("visible") {
+            ModuleStatsRow(session, stats, prefs, now, compact = full.width > constraints.maxWidth,
+                Modifier.horizontalScroll(rememberScrollState()))
+        }.single().measure(constraints)
+        layout(constraints.maxWidth, constraints.maxHeight) { row.placeRelative(0, 0) }
+    }
+}
+@Composable private fun ModuleStatsRow(session: Session, stats: JSONObject, prefs: UiPreferences, now: Long, compact: Boolean, modifier: Modifier = Modifier) {
     fun age(key: String, fallback: Long): String {
         val timestamp = stats.optLong(key, fallback)
         return if (timestamp > 0) sessionAge(timestamp, now) else "—"
     }
-    Row(modifier.horizontalScroll(rememberScrollState()).height(44.dp).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.height(44.dp).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         SessionStatus(session)
         if (prefs.visible("sessionTime")) ModuleStat("◉", sessionDuration(if (stats.has("work_seconds")) stats.optLong("work_seconds") else session.stats.workSeconds), "Session time", CrabColors.Blue)
         if (prefs.visible("thinkingTime")) ModuleStat("◐", sessionDuration(if (stats.has("thinking_seconds")) stats.optLong("thinking_seconds") else session.stats.thinkingSeconds), "Thinking time", CrabColors.Green)
-        if (prefs.visible("prompts")) ModuleStat("⟩", stats.opt("prompts")?.toString() ?: session.stats.prompts?.toString() ?: "—", "Prompts", CrabColors.Orange, age("prompts_changed_at", session.stats.promptAt))
-        if (prefs.visible("completions")) ModuleStat("⋖", stats.opt("completions")?.toString() ?: session.stats.completions?.toString() ?: "—", "Completions", CrabColors.DarkOrange, age("completions_changed_at", session.stats.completionAt))
+        if (prefs.visible("prompts")) ModuleStat("⟩", stats.opt("prompts")?.toString() ?: session.stats.prompts?.toString() ?: "—", "Prompts", CrabColors.Orange, age("prompts_changed_at", session.stats.promptAt), compact)
+        if (prefs.visible("completions")) ModuleStat("⋖", stats.opt("completions")?.toString() ?: session.stats.completions?.toString() ?: "—", "Completions", CrabColors.DarkOrange, age("completions_changed_at", session.stats.completionAt), compact)
         if (prefs.visible("tools")) ModuleStat("⚒", stats.opt("tools")?.toString() ?: session.stats.tools?.toString() ?: "—", "Tools", CrabColors.Orange)
         if (prefs.visible("compactions")) ModuleStat("⊜", stats.opt("compressions")?.toString() ?: session.stats.compactions?.toString() ?: "—", "Compactions", CrabColors.Purple)
     }
 }
-@Composable private fun ModuleStat(symbol: String, value: String, label: String, color: Color, age: String = "") {
+@Composable private fun ModuleStat(symbol: String, value: String, label: String, color: Color, age: String = "", compact: Boolean = false) {
     Row(Modifier.clearAndSetSemantics { contentDescription = "$label: $value" + if (age.isBlank()) "" else ", $age" }, horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(symbol, color = color, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
         Text(value, color = if (age.isBlank()) color else CrabColors.Title, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
-        if (age.isNotBlank()) Text(age, color = color, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+        if (age.isNotBlank()) Text(if (compact) age.removeSuffix(" ago") else age, color = color, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
     }
 }
