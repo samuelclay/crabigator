@@ -34,17 +34,29 @@ struct TerminalViewport: UIViewRepresentable {
         var cachedWidth: CGFloat = 0
         var appliedHistory = "", appliedStyle: Preferences?
         var rendering = false
+        var wasPinned: Bool
         var revision = 0, appliedRevision = 0
-        init(_ parent: TerminalViewport) { self.parent = parent }
+        init(_ parent: TerminalViewport) { self.parent = parent; wasPinned = parent.pinned }
         func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
             guard case let .link(url) = textItem.content else { return defaultAction }
             return UIAction { [openURL] _ in openURL?(url) }
         }
         func update() {
             guard let view else { return }
+            if parent.pinned && !wasPinned { view.animateNextFollow = true }
+            if !parent.pinned {
+                view.animateNextFollow = false
+                if view.isFollowingAnimation {
+                    view.text.setContentOffset(view.text.contentOffset, animated: false)
+                    view.isFollowingAnimation = false
+                }
+            }
+            wasPinned = parent.pinned
             view.follow = parent.pinned
             if sourceHistory == parent.history && sourceScreen == parent.screen && style == parent.preferences {
-                if parent.pinned { view.followBottom() }; return
+                if parent.pinned { view.followBottom() }
+                renderLatest()
+                return
             }
             sourceHistory = parent.history; sourceScreen = parent.screen; style = parent.preferences; revision += 1
             renderLatest()
@@ -52,7 +64,7 @@ struct TerminalViewport: UIViewRepresentable {
         private func renderLatest() {
             // TextKit edits and offset restoration can cancel native deceleration.
             // Keep only the latest source while the user drags or coasts.
-            guard !rendering, revision != appliedRevision, let view, !view.isUserScrolling,
+            guard !rendering, revision != appliedRevision, let view, !view.isUserScrolling, !view.isFollowingAnimation,
                   let prefs = style else { return }
             rendering = true
             let revision = revision, history = sourceHistory, screen = sourceScreen
@@ -75,7 +87,7 @@ struct TerminalViewport: UIViewRepresentable {
                     self.rendering = false
                     guard self.style == prefs else { self.renderLatest(); return }
                     // A swipe may have started while ANSI parsing was off the main thread.
-                    guard let view = self.view, !view.isUserScrolling else { return }
+                    guard let view = self.view, !view.isUserScrolling, !view.isFollowingAnimation else { return }
                     view.documentWidth = prefs.wrap ? 0 : ceil(width) + 32
                     let text = view.text, offset = text.contentOffset, selection = text.selectedRange
                     let old = text.attributedText ?? NSAttributedString(string: "")
@@ -105,7 +117,10 @@ struct TerminalViewport: UIViewRepresentable {
             }
         }
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-            if scrollView === view?.text { view?.follow = false; parent.pinned = false }
+            if scrollView === view?.text {
+                view?.follow = false; view?.animateNextFollow = false; view?.isFollowingAnimation = false
+                wasPinned = false; parent.pinned = false
+            }
         }
         #if DEBUG
         func scrollViewWillBeginDecelerating(_ scrollView: UIScrollView) {
@@ -117,6 +132,12 @@ struct TerminalViewport: UIViewRepresentable {
             }
         }
         #endif
+        func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+            guard scrollView === view?.text else { return }
+            view?.isFollowingAnimation = false
+            if parent.pinned { view?.followBottom() }
+            renderLatest()
+        }
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { finishScrolling(scrollView) }
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
             if !decelerate { finishScrolling(scrollView) }
@@ -145,6 +166,8 @@ final class TerminalScrollView: UIScrollView {
     let text = UITextView(usingTextLayoutManager: true)
     var documentWidth: CGFloat = 0
     var follow = true
+    var animateNextFollow = false
+    var isFollowingAnimation = false
     var isUserScrolling: Bool { isDragging || isDecelerating || text.isDragging || text.isDecelerating }
     override init(frame: CGRect) { super.init(frame: frame); addSubview(text); alwaysBounceHorizontal = false; showsVerticalScrollIndicator = false }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -156,9 +179,14 @@ final class TerminalScrollView: UIScrollView {
         if contentSize != frame.size { contentSize = frame.size }
     }
     func followBottom() {
-        guard !isUserScrolling else { return }
+        guard !isUserScrolling, !isFollowingAnimation else { return }
         let offset = CGPoint(x: 0, y: max(-text.adjustedContentInset.top, text.contentSize.height - text.bounds.height + text.adjustedContentInset.bottom))
-        if text.contentOffset != offset { text.setContentOffset(offset, animated: false) }
+        let animate = animateNextFollow && !UIAccessibility.isReduceMotionEnabled
+        animateNextFollow = false
+        if text.contentOffset != offset {
+            isFollowingAnimation = animate
+            text.setContentOffset(offset, animated: animate)
+        }
     }
 }
 private extension String.UTF16View {

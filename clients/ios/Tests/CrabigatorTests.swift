@@ -74,6 +74,44 @@ final class CrabigatorTests: XCTestCase {
     func session(_ id: String, prompt: Int, machine: String = "Mac", state: String = "complete") -> Session {
         Session(["session_id": id, "title": id, "device_name": machine, "prompts_changed_at": prompt, "state": state, "active": true])
     }
+    @MainActor func testFollowButtonAnimatesWithoutUpdatesJumpingToTheEnd() async throws {
+        if UIAccessibility.isReduceMotionEnabled { throw XCTSkip("Animation is disabled by Reduce Motion") }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
+        let controller = UIViewController()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let terminal = TerminalViewport(history: "", screen: "", preferences: Preferences(), pinned: .constant(true))
+        let coordinator = terminal.makeCoordinator()
+        coordinator.wasPinned = false
+        coordinator.style = terminal.preferences
+        let view = TerminalScrollView(frame: window.bounds)
+        controller.view.addSubview(view)
+        coordinator.view = view
+        view.text.delegate = coordinator
+        view.text.text = (0..<200).map { "History row \($0)" }.joined(separator: "\n")
+        view.layoutIfNeeded(); view.text.layoutIfNeeded()
+        view.text.setContentOffset(.zero, animated: false)
+        let bottom = view.text.contentSize.height - view.text.bounds.height
+        XCTAssertGreaterThan(bottom, 0)
+        coordinator.update()
+        var intermediate = false
+        for _ in 0..<20 {
+            try await Task.sleep(for: .milliseconds(40))
+            let offset = view.text.contentOffset.y
+            if offset > 0 && offset < bottom - 1 { intermediate = true }
+            // Unchanged live updates must not replace the animation with a jump.
+            coordinator.update()
+        }
+        XCTAssertTrue(intermediate, "The terminal must pass through intermediate offsets")
+        // TextKit refines its estimated document height as distant rows appear.
+        let finalBottom = view.text.contentSize.height - view.text.bounds.height + view.text.adjustedContentInset.bottom
+        XCTAssertEqual(view.text.contentOffset.y, finalBottom, accuracy: 1)
+        XCTAssertFalse(view.isFollowingAnimation)
+    }
+
     @MainActor func testFollowRequestedDuringCoastingRunsWhenIdleEvenWithoutNewOutput() {
         let terminal = TerminalViewport(history: "", screen: "", preferences: Preferences(), pinned: .constant(true))
         let coordinator = terminal.makeCoordinator()

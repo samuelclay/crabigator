@@ -48,7 +48,18 @@ class TerminalScrollTest {
         compose.onNodeWithText(readingText).assertIsDisplayed()
         assertEquals("New output must not move the history being read", readingTop,
             compose.onNodeWithText(readingText).fetchSemanticsNode().positionInRoot.y, 1f)
+        val axis = SemanticsProperties.VerticalScrollAxisRange
+        val beforeFollow = list.fetchSemanticsNode().config[axis].value()
+        compose.mainClock.autoAdvance = false
         compose.runOnIdle { pinned.value = true }
+        compose.mainClock.advanceTimeBy(64)
+        val duringFollow = list.fetchSemanticsNode().config[axis]
+        assertTrue("Follow must move through intermediate positions", duringFollow.value() > beforeFollow)
+        assertTrue("Follow must animate instead of jumping to the end", duringFollow.value() < duringFollow.maxValue())
+        // A new live frame must not cancel the user's animated return.
+        compose.runOnIdle { screen.value = screen.value.replace("New output 0", "Updated output 0") }
+        compose.mainClock.advanceTimeBy(32)
+        compose.mainClock.autoAdvance = true
         compose.waitUntil(10_000) { compose.onAllNodesWithText("NEW LIVE FOOTER", substring = true).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("NEW LIVE FOOTER", substring = true).assertIsDisplayed()
     }

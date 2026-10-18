@@ -2,6 +2,7 @@ package com.crabigator.app
 
 import android.graphics.Paint
 import android.graphics.Typeface
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -85,10 +86,29 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
             return Offset.Zero
         }
     } }
+    var wasPinned by remember { mutableStateOf(pinned) }
+    var followingAnimation by remember { mutableStateOf(false) }
+    val currentCount by rememberUpdatedState(historyBlocks.size + screenBlocks.size)
+    val currentPinned by rememberUpdatedState(pinned)
+    // Only an explicit return to following animates. New output must not cancel
+    // that animation or animate every arriving frame.
+    LaunchedEffect(pinned) {
+        val animate = pinned && !wasPinned
+        wasPinned = pinned
+        if (animate && currentCount > 0) {
+            followingAnimation = true
+            try {
+                scroll.animateScrollToItem(currentCount - 1)
+                val layout = scroll.layoutInfo
+                val last = layout.visibleItemsInfo.lastOrNull()
+                val remaining = last?.let { it.offset + it.size + layout.afterContentPadding - layout.viewportEndOffset } ?: 0
+                if (remaining > 0) scroll.animateScrollBy(remaining.toFloat())
+            } finally { followingAnimation = false }
+        }
+    }
     // Normal order keeps the row being read anchored when the live frame grows.
-    LaunchedEffect(pinned, historyDocument, screenDocument) {
-        val count = historyBlocks.size + screenBlocks.size
-        if (pinned && count > 0) scroll.scrollToItem(count - 1, Int.MAX_VALUE)
+    LaunchedEffect(historyDocument, screenDocument, followingAnimation) {
+        if (currentPinned && !followingAnimation && currentCount > 0) scroll.scrollToItem(currentCount - 1, Int.MAX_VALUE)
     }
     BoxWithConstraints(Modifier.fillMaxSize().graphicsLayer()) {
         val density = LocalDensity.current
