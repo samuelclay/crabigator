@@ -697,6 +697,19 @@ impl Platform for CodexPlatform {
         log_parser::skip_async_question(&mut state, question);
     }
 
+    fn note_terminal_screen(&self, screen: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        // Do not reconcile old questions while catching up on a resumed log.
+        if state
+            .session_path
+            .as_ref()
+            .and_then(|path| path.metadata().ok())
+            .is_some_and(|metadata| metadata.len() <= state.session_offset)
+        {
+            log_parser::reconcile_async_questions(&mut state, screen, std::time::Instant::now());
+        }
+    }
+
     fn note_terminal_title(&self, title: &str) {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.terminal_title.as_deref() != Some(title) {

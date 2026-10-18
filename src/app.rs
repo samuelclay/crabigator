@@ -1958,6 +1958,9 @@ impl App {
                 None
             };
             self.codex_question_prompt = codex_prompt;
+            if !self.output_boundary.in_synchronized_update() {
+                self.platform.note_terminal_screen(&screen);
+            }
             let screen_question_prompt = |view| {
                 let question =
                     crate::parsers::QuestionScreen::parse(&screen)?.codex_question(view)?;

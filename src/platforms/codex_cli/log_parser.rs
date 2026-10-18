@@ -3,7 +3,7 @@
 //! Parses JSONL log files from Codex CLI sessions to extract statistics.
 
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -90,6 +90,7 @@ pub struct CodexState {
     /// Questions from `request_user_input_async` that wait for a reply. Codex
     /// keeps working while they wait and drops them when the turn ends.
     async_questions: Vec<AsyncQuestion>,
+    questions_absent_since: Option<Instant>,
     cwd: super::cwd::CodexCwd,
 }
 
@@ -127,6 +128,7 @@ impl Default for CodexState {
             stats: PlatformStats::default(),
             active_prompt_call_id: None,
             async_questions: Vec::new(),
+            questions_absent_since: None,
             cwd: super::cwd::CodexCwd::default(),
         }
     }
@@ -369,6 +371,7 @@ fn record_tool_call(
                 question,
             });
         state.async_questions.extend(pending);
+        state.questions_absent_since = None;
         show_async_questions(state);
     } else if is_question_tool(tool) {
         set_question_prompt(state, call_id, tool_input.as_ref());
@@ -418,6 +421,44 @@ pub fn skip_async_question(state: &mut CodexState, shown: &str) {
         return;
     };
     state.async_questions.remove(index);
+    show_async_questions(state);
+    set_last_updated(state);
+}
+
+/// Skips made outside the PTY (including the Codex app) produce no reply in
+/// the log. A fully drawn composer with no question UI is authoritative. Wait
+/// for repeated observations so a partial repaint or a new tool call cannot
+/// clear a question before Codex displays it.
+pub fn reconcile_async_questions(state: &mut CodexState, screen: &str, now: Instant) {
+    let stripped = crate::parsers::strip_ansi_for_debug(screen);
+    let lines: Vec<&str> = stripped
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let composer = lines
+        .iter()
+        .rposition(|line| line.trim_start().starts_with('›'));
+    let has_footer = composer.is_some_and(|index| {
+        lines[index + 1..].iter().any(|line| {
+            line.contains("for agents")
+                || line.contains("? for shortcuts")
+                || line.contains("context left")
+        })
+    });
+    if state.async_questions.is_empty()
+        || state.active_prompt_call_id.is_some()
+        || !has_footer
+        || crate::parsers::detect_codex_question_prompt(screen).is_some()
+    {
+        state.questions_absent_since = None;
+        return;
+    }
+    let absent_since = *state.questions_absent_since.get_or_insert(now);
+    if now.saturating_duration_since(absent_since) < Duration::from_secs(2) {
+        return;
+    }
+    state.async_questions.clear();
+    state.questions_absent_since = None;
     show_async_questions(state);
     set_last_updated(state);
 }
@@ -633,6 +674,7 @@ fn settle_prompt(state: &mut CodexState, next: SessionState) {
 /// Codex drops unanswered async questions when its turn ends.
 fn end_turn_prompts(state: &mut CodexState) {
     state.async_questions.clear();
+    state.questions_absent_since = None;
     clear_active_prompt(state);
 }
 
@@ -705,6 +747,7 @@ pub fn reset_state(state: &mut CodexState, path: PathBuf, session_started_at: Op
     state.stats = PlatformStats::default();
     state.active_prompt_call_id = None;
     state.async_questions.clear();
+    state.questions_absent_since = None;
     state.cwd = super::cwd::CodexCwd::default();
     set_last_updated(state);
 }
@@ -1040,6 +1083,68 @@ mod tests {
         assert_eq!(prompt_questions(&state), ["Which sauce?"]);
 
         skip_async_question(&mut state, "Which sauce?");
+        assert_eq!(state.stats.state, SessionState::Thinking);
+        assert!(state.stats.active_prompt.is_none());
+    }
+
+    #[test]
+    fn dismissed_questions_clear_only_after_a_stable_empty_composer() {
+        let mut state = CodexState::default();
+        let call = json!({"type":"response_item","payload":{"type":"function_call","name":"request_user_input_async","call_id":"call_old","arguments": "{\"questions\":[{\"title\":\"Release 16.0.1?\"}]}"}}).to_string();
+        update_from_log(&mut state, &call);
+        let now = Instant::now();
+        let composer = "• Working (1h 25m • esc to interrupt)\n› Ask Codex to do anything\nGPT-6 · Main [default] · ← for agents";
+        let queued =
+            format!("• Queued follow-up inputs\n  ? 1 question\n    ⇧← to answer\n{composer}");
+        reconcile_async_questions(&mut state, &queued, now);
+        reconcile_async_questions(&mut state, composer, now + Duration::from_secs(10));
+        assert_eq!(
+            state.stats.state,
+            SessionState::Question,
+            "first empty frame may be a repaint"
+        );
+        reconcile_async_questions(&mut state, "› Ask Codex", now + Duration::from_secs(11));
+        reconcile_async_questions(&mut state, composer, now + Duration::from_secs(12));
+        assert_eq!(
+            state.stats.state,
+            SessionState::Question,
+            "incomplete frames reset the observation"
+        );
+        // A newly queued call must get its own chance to appear on screen.
+        update_from_log(&mut state, &call.replace("call_old", "call_new"));
+        reconcile_async_questions(&mut state, composer, now + Duration::from_secs(14));
+        assert_eq!(state.stats.state, SessionState::Question);
+        reconcile_async_questions(&mut state, composer, now + Duration::from_secs(16));
+        assert_eq!(state.stats.state, SessionState::Thinking);
+        assert!(state.stats.active_prompt.is_none());
+        update_from_log(&mut state, &json!({"type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"call_work","arguments":"{}"}}).to_string());
+        assert_eq!(
+            state.stats.state,
+            SessionState::Thinking,
+            "later work cannot resurrect the dismissed question"
+        );
+    }
+
+    #[test]
+    #[ignore = "Read-only status audit; set CRABIGATOR_STATUS_SESSION_DIR to a local capture directory"]
+    fn verify_live_dismissed_question() {
+        let dir = std::path::PathBuf::from(std::env::var("CRABIGATOR_STATUS_SESSION_DIR").unwrap());
+        let inspect: Value =
+            serde_json::from_slice(&std::fs::read(dir.join("inspect.json")).unwrap()).unwrap();
+        let log = std::fs::read_to_string(inspect["transcript_path"].as_str().unwrap()).unwrap();
+        let screen = std::fs::read_to_string(dir.join("screen.txt")).unwrap();
+        let mut state = CodexState::default();
+        for line in log.lines() {
+            update_from_log(&mut state, line);
+        }
+        assert_eq!(
+            state.stats.state,
+            SessionState::Question,
+            "the rollout alone retains the stale question"
+        );
+        let now = Instant::now();
+        reconcile_async_questions(&mut state, &screen, now);
+        reconcile_async_questions(&mut state, &screen, now + Duration::from_secs(2));
         assert_eq!(state.stats.state, SessionState::Thinking);
         assert!(state.stats.active_prompt.is_none());
     }

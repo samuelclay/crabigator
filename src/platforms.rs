@@ -332,6 +332,9 @@ pub trait Platform {
     /// it. Default: ignored.
     fn note_question_skipped(&self, _question: &str) {}
 
+    /// Reconcile prompts that the CLI dismisses without a transcript event.
+    fn note_terminal_screen(&self, _screen: &str) {}
+
     /// Load current stats from the platform's data source
     fn load_stats(&self, cwd: &str) -> Result<PlatformStats>;
 
