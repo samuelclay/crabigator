@@ -74,7 +74,7 @@ pub fn scenes() -> &'static [SceneDef] {
     &SCENES
 }
 
-static SCENES: [SceneDef; 14] = [
+static SCENES: [SceneDef; 15] = [
     super::scenes::fire::DEF,
     super::scenes::warp::DEF,
     super::scenes::avalon::DEF,
@@ -89,9 +89,48 @@ static SCENES: [SceneDef; 14] = [
     super::scenes::earthrise::DEF,
     super::scenes::doom::DEF,
     super::scenes::doom::DOOM3D,
+    super::scenes::roadster::DEF,
 ];
 
 /// A scene by name.
 pub fn scene_def(name: &str) -> Option<&'static SceneDef> {
     SCENES.iter().find(|def| def.name == name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drawing_does_not_advance_scenes_or_change_later_frames() {
+        for def in scenes() {
+            for (columns, rows) in [(24, 8), (120, 5), (22, 50)] {
+                let mut viewed = (def.make)(7.0);
+                let mut skipped = (def.make)(7.0);
+                for scene in [&mut viewed, &mut skipped] {
+                    scene.ensure(columns, rows);
+                    scene.dials().strength = 10.0;
+                }
+                for frame in 0..80 {
+                    viewed.step();
+                    skipped.step();
+                    let first = viewed.grid().words.clone();
+                    assert_eq!(
+                        viewed.grid().words,
+                        first,
+                        "{} {columns}x{rows}, frame {frame}: repeated draw",
+                        def.name
+                    );
+                    if frame % 3 != 0 {
+                        assert_eq!(
+                            skipped.grid().words,
+                            first,
+                            "{} {columns}x{rows}, frame {frame}: skipped draw",
+                            def.name
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

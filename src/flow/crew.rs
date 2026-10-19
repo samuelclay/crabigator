@@ -1,6 +1,6 @@
 //! Stable companion slots and eased arrival, rest and departure, ported from Flow.
 use super::agents::{AgentDial, AgentState};
-use super::pixels::smooth;
+use super::pixels::{approach, fnv1a, smooth};
 #[derive(Clone, Debug)]
 pub struct Mate {
     pub id: String,
@@ -17,10 +17,7 @@ pub struct Mate {
     pub p: f64,
 }
 pub fn seed_of(id: &str) -> f64 {
-    let mut h = 0x811c9dc5u32;
-    for c in id.encode_utf16() {
-        h = (h ^ u32::from(c)).wrapping_mul(0x01000193);
-    }
+    let mut h = fnv1a(id);
     h ^= h >> 15;
     h = h.wrapping_mul(0x2c1b3c6d);
     h ^= h >> 12;
@@ -96,10 +93,7 @@ impl Crew {
             } else {
                 0.0
             };
-            m.busy += (goal - m.busy) * 0.08;
-            if (goal - m.busy).abs() < 0.01 {
-                m.busy = goal;
-            }
+            m.busy = approach(m.busy, goal, 0.08);
             m.p = (m.p
                 + if m.leaving {
                     -1.0 / self.leave

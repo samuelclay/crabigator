@@ -9,7 +9,7 @@ flow keeps evolving. This log records which upstream commit the port matches, so
 | | |
 |---|---|
 | Upstream | `robdmac/flow` `main` |
-| Synced to | `b3676b875e9bd37aea132941bf99197453d7f525` (2026-10-15, PR #28) |
+| Synced to | `461dea310403ef79d33fa8d6046287f6c454e598` (2026-10-16, PR #32) |
 | Plus | the maintained custom Flow fork (`origin`), descended from `crabigator-column`: fade, random scenes, colour palettes, embers instead of a blue pilot light, `isTall` for small boxes. Proposed upstream; until it merges, port from that branch's diff too. |
 | Checked by | `make flow-reference FLOW_DIR=../flow` → `src/flow/testdata/*.json`, matched cell for cell by each scene's `frames_match_flow` test |
 
@@ -20,7 +20,7 @@ Use the repository skill [flow-upstream](../../.agents/skills/flow-upstream/SKIL
 1. Update the flow checkout and list what's new since the commit above:
    ```sh
    git -C ../flow fetch upstream
-   git -C ../flow log --oneline b3676b8..upstream/main
+   git -C ../flow log --oneline 461dea3..upstream/main
    ```
    `origin` is the custom fork; `upstream` must be `robdmac/flow`. Inspect all changed paths, then the relevant patches. Keep the custom TypeScript fork maintained separately; pin the exact reference revision used for a Rust port.
 2. For each commit, decide whether it applies (see *What isn't ported* below), then port the change into the matching Rust file (see the map).
@@ -54,6 +54,7 @@ Use the repository skill [flow-upstream](../../.agents/skills/flow-upstream/SKIL
 | `hooks/surf.ts` | `src/flow/scenes/surf.rs` |
 | `hooks/ski.ts` | `src/flow/scenes/ski.rs`, `ski/band.rs`, `ski/spine.rs` |
 | `hooks/bubbles.ts` | `src/flow/scenes/bubbles.rs` |
+| `hooks/roadster.ts` | `src/flow/scenes/roadster.rs`, `roadster/draw.rs` |
 | `hooks/train.ts` | `src/flow/scenes/train.rs`, `train/{side,above,palette}.rs` |
 | `hooks/earthrise.ts` | `src/flow/scenes/earthrise.rs`, `earthrise/world.rs` |
 | `hooks/doom.ts` | `src/flow/scenes/doom.rs`, `doom/{draw,sprites,world}.rs` (doom and doom3d) |
@@ -75,22 +76,22 @@ Use the repository skill [flow-upstream](../../.agents/skills/flow-upstream/SKIL
 
   Other assistants use native stats and, where supported, individual-agent rosters. Opencode follows observed child-session events; it does not recover children that finished before attachment. Codex reads direct child rollouts while skipping copied ancestor history. It follows correlated question replies, but child permission dialogs have no verified event and are not inferred from escalation arguments. Grok has no verified individual roster here, so no live companions are invented from its completed-task count. Tool calls are heard when they finish, and the effort comes from Claude Code's banner ("with xhigh effort"). Claude Code's footer ("← 1 agent") can't stand in for running subagents: it counts idle agents too. Context fill (`session.measure`) isn't heard by either path, so the blue tint never shows.
 - **Resuming at an altitude**: `SkyWorld.seed` and the rockets' `seed(altitude)` override. A Claude Code reload needed them; the column never reloads. Also `SkyWorld.rowOf`, which nothing calls.
-- **Settings and `/flow`**: the plugin's command grammar, shared stores and configuration reload machinery are not copied. Crabigator's Ctrl+] cycle includes Settings with a scene checklist, on/off, fade, activity level, day/night and color controls. Save applies to the current session and future sessions; Esc discards the draft. It stays inside the existing column. Space or Enter toggles scene checkboxes; unchecked scenes are excluded from both Random and cycling. Left/right edits controls below the checklist; Enter on Save saves, and End jumps to Save. Ctrl+] discards the draft and advances to Off. Remote dashboard input continues to target the assistant, while local keys and paste belong to the open picker.
-  - Fade defaults off; idle remains a glow. Random claims one scene per session rather than a shared shuffle bag.
+- **Settings and `/flow`**: the plugin's command grammar, shared stores and configuration reload machinery are not copied. Crabigator's Ctrl+] cycle includes Settings with a scene checklist, on/off, fade, activity level, day/night and color controls. Save applies to the current session and future sessions; Esc discards the draft. It stays inside the existing column. Space or Enter toggles scene checkboxes; unchecked scenes are excluded from startup selection and cycling. Left/right edits controls below the checklist; Enter on Save saves, and End jumps to Save. Ctrl+] discards the draft and advances to Off. Remote dashboard input continues to target the assistant, while local keys and paste belong to the open picker.
+  - Fade defaults off; idle remains a glow. Each new session claims an enabled scene rather than using a shared shuffle bag. Named choices last only for that session; only Off persists.
   - Omitted `level` follows activity; a manual 0–10 value suppresses activity tints and waiting, while companions still show.
   - Omitted `night` follows the local clock; true/false forces night/day.
   - `color` defaults to `session`; `natural` or named hues override it on scenes with palette metadata. Train, Earthrise, Doom and Doom3d also support recoloring, by the user's choice; `natural` retains upstream colors.
-  - Settings live in `[flow]` in `~/.crabigator/config.toml`; `disabled_scenes` stores unchecked scene names. A disabled named selection falls back to an enabled Random claim.
+  - Settings live in `[flow]` in `~/.crabigator/config.toml`; `disabled_scenes` stores unchecked scene names. A disabled current selection falls back to an enabled scene claim. Old saved `scene` fields are ignored and removed on the next config save. Leave only one scene checked to use it in every session.
 - **Desktop images and hover cards**: no PNG/SVG pipeline, interactive agent marks or task popovers in the terminal column. Earthrise uses its cell renderer. Its extra MIT notice is in `THIRD-PARTY-NOTICES`.
 - **Tools**: upstream preview/check/scene scaffolding and sound builds stay in Flow. Crabigator has `scripts/flow-reference.ts`, `src/flow/preview.rs` and `scripts/flow-preview.py` for its own replay, visual review and timings.
 
 ## crabigator's own additions
 
 Not in flow, so keep them when porting upstream changes:
-- **ctrl+]** cycles Random → enabled scenes → Settings → Off → Random. The user restored cycling after trying the picker toggle. Its off label remains available to turn it back on. The picker supports the existing 15–40-column, 4–12-row box; it does not enlarge Doom3d's column. With every scene unchecked, Settings and Off remain reachable.
+- **ctrl+]** cycles enabled scenes → Settings → Off → the first enabled scene. The user restored cycling after trying the picker toggle. Its off label remains available to turn it back on. The picker supports the existing 15–40-column, 4–12-row box; it does not enlarge Doom3d's column. With every scene unchecked, Settings and Off remain reachable.
 - **New scene palettes**: Train and Earthrise gently recolor blue regions; Doom and Doom3d recolor brown architecture. Land, signal lamps, combat colors and neutral terrain stay recognizable. These Rust-only palette rules preserve upstream colors under `natural` and do not recolor waiting frames.
 - **Train in small boxes**: the custom TypeScript fork's `2e1785c` reduces empty track ahead and companion sway, and accepts a visible cab instead of requiring half a two-car unit. The locomotive and one companion remain readable in short columns; full band/spine layouts retain upstream's geometry.
-- Random scenes are claimed per session (`claim.rs`), and the colour comes from the session mark.
+- Enabled scenes are claimed per session (`claim.rs`), and the colour comes from the session mark.
 - **Figures wear the session's hue** (`Dials.accent`, `SceneDef.figure`): the balloon's stripes, the hero skier's hat and jacket, the hero surfer's board, the rockets' white and stainless bodies (a wash), Dragon's trunk and parachute gores. Those scenes keep their frame's own colours (no palette turn), so their skies stay blue. With no accent, every scene draws exactly flow's frames. When porting an upstream change to balloon, ski, surf or rocket, keep the `accent` lines.
 
 ## How the port stays exact
@@ -118,3 +119,22 @@ The reference is custom merge `b8a606fb1f1f8d22b315b25647c8824591bec8f7`, which 
 Verification includes exact reference frames for all fourteen scenes, long Avalon and rocket missions, real terminal picker navigation/cancellation and input ownership at 15×4, native companion lifecycle tests, a live Codex child-roster probe, and Rust visual previews across 15×4, 24×8 and 40×12. The TypeScript fork passes its 201 plugin tests, strict validation and scene check.
 
 Final Rust validation: 707 tests passed, zero failed, nine manual tests ignored; release build and Clippy passed. Clippy reports existing warnings outside this port. Formatting passes for all changed Rust files; the full repository formatting check still reports existing formatting in `pr.rs`, `pr_rank.rs` and `prs_board.rs`. The port and native adapters are committed in `daf6f7f` and `04a5770`.
+
+
+### 2026-10-19 update
+
+| Upstream commit | What | Status |
+|---|---|---|
+| `b3676b8..461dea3` | Roadster, repeatable redraws, shared rendering helpers, and host cleanup | All 18 commits inspected and recorded in the ledger; applicable scene changes ported |
+| `59c219a`, `ac6b23b`, `28bbbc0`, `14783bf`, `6250b49` | Roadster's town/freeway driving, rolls, companions, clouds and white body | Ported in the existing column with the shared small-box layout; no extra pane height |
+| `40a8454` | Engine firebox and rocket plume flicker use frame hashes | Ported; drawing repeatedly or skipping draws leaves subsequent animation unchanged |
+| `08ce5a1` | Shared hashes, easing, fire ramps and layout rule | Ported where Rust had a gap; Rust already clamps scene levels |
+| Crabigator selection change | Temporary named choices, sticky Off, no Random entry or marker | New sessions claim enabled scenes; the checklist controls persistent scene preferences |
+
+The new reference is the sibling fork's merge `03bb2cdde7a88b4020738a8ec75920b68eabde66`, pinned in a detached checkout. It includes upstream `461dea310403ef79d33fa8d6046287f6c454e598` and the retained custom changes. Fire, Engine, Falcon, Starship and Roadster fixtures use this revision. Other fixtures retain their previous sources; Train still uses `2e1785c3f63399d5b1fcde132d1ce22ffc3afa82`.
+
+Roadster retains the sound lead and frame duration in its movement and jumps: those values affect visible motion. Sound-only events and bookkeeping, hover marks, plugin settings/packaging, and audio assets stay excluded. Roadster keeps its white body and original palette, including colored companion cars, visible lights while waiting, and weather tints.
+
+Verification: all fifteen scene reference tests pass with zero cell differences, including eight Roadster trips through 3,400 frames. Roadster behavior tests cover parked companions, traffic clearance, waiting and departure at 15×4, 40×12, 120×5 and 22×60. The redraw regression covers all scenes. Actual Rust previews cover 15×4, 24×8 and 40×12 across idle, busy, day/night, waiting, companions, smoke and blue; Roadster's largest sampled p95 is 0.032 ms. The real tmux picker check uses the 15×4 column and isolated settings, covering startup migration, cycling, save/cancel, paste ownership and Off.
+
+Final checks for this update: debug and release builds pass; Clippy passes with warnings only in unchanged files. The full suite reports 747 passed, 11 ignored and one pre-existing PR-board layout failure (`title_takes_the_slack_link_room_and_the_diff_hugs_the_activity`), reproduced independently on starting commit `8cb276a`. Changed Rust formatting and `git diff --check` pass. The required simplifier review found no further changes. A fresh terminal session confirmed Off persists; another showed Roadster and its checkbox in the 15×4 column. Violet previews confirmed the existing Fire, Engine and rocket color rules remain intact.

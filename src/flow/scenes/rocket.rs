@@ -335,6 +335,8 @@ pub struct LaunchSite {
     split_tall: bool,
     braking: bool,
     rng: Rng,
+    /// Seed for plume flicker; drawing never advances the random state.
+    flicker: i32,
     /// The layer it's flying in (world rows), eased; -1 until the first frame.
     layer: f64,
     /// Tiles folded away so far: offsets each tile's clouds sideways.
@@ -442,6 +444,7 @@ impl LaunchSite {
             split_tall: false,
             braking: false,
             rng: Rng::new(seed * 2_654_435_761.0),
+            flicker: i32_of(seed),
             layer: -1.0,
             wraps: 0.0,
             orbit: 0.0,

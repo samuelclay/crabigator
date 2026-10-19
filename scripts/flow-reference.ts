@@ -139,6 +139,27 @@ const ROCKET_CASES: Case[] = [7, 29].flatMap(seed =>
   })),
 )
 
+/** Roadster's whole trip: parked, freeway jumps, slowing into town, waiting
+ * in a lot, then leaving again with companion completion and failure. */
+const ROADSTER_CASES: Case[] = [3, 8].flatMap(seed =>
+  [{ columns: 15, rows: 4 }, { columns: 40, rows: 12 }, { columns: 120, rows: 5 }, { columns: 22, rows: 60 }].map(size => ({
+    ...size, seed,
+    script: [
+      [0, { level: 1, agents: [{ id: 'a', state: 'working', ok: true }, { id: 'b', state: 'idle', ok: true }, { id: 'c', state: 'working', ok: true }] }],
+      [300, { level: 10 }],
+      [1800, { level: 8 }],
+      [2000, { level: 5 }],
+      [2200, { level: 3 }],
+      [2400, { level: 2, waiting: true }],
+      [3000, { level: 5, waiting: false, night: true }],
+      [3100, { level: 10, agents: [{ id: 'a', state: 'waiting', ok: true }, { id: 'b', state: 'done', ok: false }, { id: 'c', state: 'done', ok: true }] }],
+      [3200, { tint: 'smoke', agents: [] }],
+      [3300, { tint: 'blue' }],
+    ] as [number, Dials][],
+    snaps: [100, 300, 400, 700, 1000, 1500, 1800, 2000, 2400, 2600, 3000, 3080, 3110, 3180, 3250, 3400],
+  })),
+)
+
 const flow = process.env.FLOW_DIR
 if (!flow) throw new Error('FLOW_DIR: the flow checkout to read the scenes from')
 const out = process.env.OUT ?? join(process.cwd(), 'src', 'flow', 'testdata')
@@ -148,7 +169,7 @@ async function main() {
   const wanted = (process.env.SCENES ?? '').split(',').filter(Boolean)
   for (const scene of STYLES as string[]) {
     if (wanted.length && !wanted.includes(scene)) continue
-    const cases = (scene === 'avalon' ? [...CASES, ...VOYAGE_CASES] : scene === 'falcon' || scene === 'starship' ? [...CASES, ...ROCKET_CASES] : CASES).map(c => {
+    const cases = (scene === 'roadster' ? [...CASES, ...ROADSTER_CASES] : scene === 'avalon' ? [...CASES, ...VOYAGE_CASES] : scene === 'falcon' || scene === 'starship' ? [...CASES, ...ROCKET_CASES] : CASES).map(c => {
       const f = makeScene(scene, c.seed)
       const dials = { level: 8, tint: 'normal', night: false, coverage: 0, waiting: false, agents: [] } as Required<Dials>
       const frames: string[] = []

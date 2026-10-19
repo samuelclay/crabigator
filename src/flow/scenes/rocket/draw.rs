@@ -39,7 +39,7 @@ impl LaunchSite {
     }
 
     /// The plume's length this frame, flickering (and sputtering on a failed command).
-    fn plume_len(&mut self) -> f64 {
+    fn plume_len(&self) -> f64 {
         let p = self.part;
         // (No plume from the Ship while it's still turning upright.)
         if self.thr <= 0.0 || p == Part::Dragon || p == Part::Capsule || self.flop > 0.06 {
@@ -47,7 +47,7 @@ impl LaunchSite {
         }
         let mut len = self.spec().plume
             * self.thr
-            * (0.85 + 0.3 * self.rng.f())
+            * (0.85 + 0.3 * hash(self.world.t, f64::from(self.flicker), 41.0))
             * if self.part == Part::Upper { 0.7 } else { 1.0 };
         if self.world.dials.tint == Tint::Smoke
             && hash(f64::from(i32_of(self.world.t) >> 1), 3.0, 43.0) < 0.35

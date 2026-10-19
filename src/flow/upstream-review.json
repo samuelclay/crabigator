@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "reviewed_through": "b3676b875e9bd37aea132941bf99197453d7f525",
+  "reviewed_through": "461dea310403ef79d33fa8d6046287f6c454e598",
   "decisions": [
     {
       "id": "scene-port",
@@ -257,6 +257,151 @@
       ],
       "verification": [
         "Current Rust implementation inspected against the upstream adapter fixes."
+      ]
+    },
+    {
+      "id": "roadster",
+      "commits": [
+        "59c219a3e026ad4b1855f0430e54b9d9577f1712",
+        "ac6b23b17ccb40ff1b1cef1418c7847aac665a80",
+        "28bbbc0261e68ff7e932c5cb00d9fc9bc3e734bd",
+        "14783bf677ef0fd37672fab16479e6b3b5cdbaee",
+        "6250b490a3e87e716fc7c67962e89cd0653a87ff"
+      ],
+      "summary": "Port Roadster in the existing column",
+      "status": "ported",
+      "reason": "User selected Roadster adapted to the small column. Port includes parking, roads, traffic, rolls, companions, clouds, pure white body, weather and waiting lights. Keep animation lead/dt; omit sound-only bookkeeping and hover marks. Natural palette preserves upstream colors.",
+      "evidence": [
+        "src/flow/scenes/roadster.rs",
+        "src/flow/scenes/roadster/draw.rs",
+        "src/flow/scene.rs",
+        "scripts/flow-reference.ts"
+      ],
+      "reference_sha": "03bb2cdde7a88b4020738a8ec75920b68eabde66",
+      "rust_commit": null,
+      "verification": [
+        "18 exact reference runs, including eight trips through 3400 frames; zero differing cells.",
+        "Behavior tests cover parked companions, traffic clearance, wait parking and departure at four sizes.",
+        "Actual Rust previews inspected at 15x4, 24x8, 40x12; largest sampled p95 0.032 ms.",
+        "Debug/release builds and Clippy pass. Full suite: 747 passed, 11 ignored, one unrelated PR-board failure reproduced on baseline 8cb276a. Required simplifier review found no changes."
+      ]
+    },
+    {
+      "id": "pure-redraws",
+      "commits": [
+        "40a845459d381b1f15c962e62f524eb968eb1802"
+      ],
+      "summary": "Keep redraws from advancing Engine and rocket random state",
+      "status": "ported",
+      "reason": "Engine firebox hashes position/frame; each rocket salts plume flicker with its seed. Repeated or omitted grid calls cannot alter subsequent motion.",
+      "evidence": [
+        "src/flow/scenes/engine/draw.rs",
+        "src/flow/scenes/rocket.rs",
+        "src/flow/scenes/rocket/draw.rs",
+        "src/flow/scene.rs"
+      ],
+      "reference_sha": "03bb2cdde7a88b4020738a8ec75920b68eabde66",
+      "rust_commit": null,
+      "verification": [
+        "Exact Engine/Falcon/Starship reference frames, including long rocket missions.",
+        "All-scene repeat/skip draw regression at 24x8, 120x5 and 22x50."
+      ]
+    },
+    {
+      "id": "shared-rendering-cleanup",
+      "commits": [
+        "08ce5a124552138a5fede0980858f9b4de00012b"
+      ],
+      "summary": "Reuse shared hashes, easing, fire ramps and small-box layout",
+      "status": "ported",
+      "reason": "Extract UTF-16 FNV-1a and use shared companion easing and packed fire color ramps. Fire companion geometry follows is_tall; banked main coals retain their separate height rule. Scene level clamping already present in Rust. Host documentation and audio hash caller do not apply.",
+      "evidence": [
+        "src/flow/pixels.rs",
+        "src/flow/crew.rs",
+        "src/flow/scenes/fire.rs"
+      ],
+      "reference_sha": "03bb2cdde7a88b4020738a8ec75920b68eabde66",
+      "rust_commit": null,
+      "verification": [
+        "All current scene frame tests pass exactly; Fire fixtures regenerated from the custom reference."
+      ]
+    },
+    {
+      "id": "unchanged-frame-repaint",
+      "commits": [
+        "bb6efd946308b4514e9deb4076f47c9f8108fb69"
+      ],
+      "summary": "Avoid repainting an unchanged frame",
+      "status": "already-present",
+      "reason": "FlowColumn::tick already compares cached rendered rows, returns new_frame only when changed, and discards the frame on selection/picker/geometry changes.",
+      "evidence": [
+        "src/flow.rs"
+      ],
+      "reference_sha": "03bb2cdde7a88b4020738a8ec75920b68eabde66",
+      "rust_commit": null,
+      "verification": [
+        "Inspected current tick and geometry handling against both host patches."
+      ]
+    },
+    {
+      "id": "host-cleanup-oct16",
+      "commits": [
+        "d82b470f103491553ed61b26c42a75efef33b80e",
+        "7c007e6c09754e7da0c917ccbf618c030748bd84",
+        "1a428fb8088c2714f3727ef45b3574af67f9f9a0",
+        "d06e68ddd774087c4218db5ef22cdd0a8378cb19",
+        "42d6881bc674903c61a3c92a7b2a3cccb2c0d567",
+        "84a33b1f2742ca0be8f329da2b38b3521373fce6"
+      ],
+      "summary": "Keep host replies, packaging and audio tooling outside the Rust port",
+      "status": "skipped",
+      "reason": "Inspected complete patches: reply wording/storedOwn/clockAt are plugin helpers; Rust already uses local time and typed config. Preview dimensions, revision checks, keyed React rows, unused TypeScript names, CI pins and jet audio assets do not change Rust scenes.",
+      "evidence": [
+        "src/flow/FORK.md",
+        "src/config.rs",
+        "src/flow.rs"
+      ],
+      "reference_sha": "03bb2cdde7a88b4020738a8ec75920b68eabde66",
+      "rust_commit": null,
+      "verification": [
+        "Checked all changed paths, host adapter diffs and sound-related timing separately from playback."
+      ]
+    },
+    {
+      "id": "merge-review-oct16",
+      "commits": [
+        "4333bf5ac298ecbd18a8d232aba12086718c7698",
+        "420e411807dfa83eca2c2a08acd9466d6427c506",
+        "4c539ab38be6cca0d12cd3e62297386704030277",
+        "461dea310403ef79d33fa8d6046287f6c454e598"
+      ],
+      "summary": "Inspect all four upstream merge resolutions",
+      "status": "already-present",
+      "reason": "git log --merges --cc --patch b3676b8..461dea3 contains four merge headers and no combined resolution hunks. The custom merge preserves fork features; new source was compared with the prior custom reference.",
+      "evidence": [
+        "src/flow/upstream-review.json"
+      ],
+      "reference_sha": "03bb2cdde7a88b4020738a8ec75920b68eabde66",
+      "rust_commit": null,
+      "verification": [
+        "All 18 new commits have exactly one disposition."
+      ]
+    },
+    {
+      "id": "temporary-scene-choice",
+      "commits": [],
+      "summary": "Keep named scenes for one session and persist only Off",
+      "status": "ported",
+      "reason": "User explicitly removed Random entry/marker and saved named choices. Every new session claims an enabled scene. Off, scene exclusions and other settings persist; old saved scene fields are ignored. A single enabled scene provides a persistent favorite.",
+      "evidence": [
+        "src/config.rs",
+        "src/flow.rs",
+        "src/ui/flow.rs"
+      ],
+      "verification": [
+        "Startup migration, Off and exclusion regressions pass.",
+        "Real tmux at 15x4: save/cancel, disabled scenes, local paste ownership, cycling with no Random entry or marker.",
+        "Restarted real terminal confirms Off persists; Roadster appears in the 15x4 scene checklist."
       ]
     }
   ],

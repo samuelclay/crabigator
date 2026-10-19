@@ -75,7 +75,7 @@ Real-time widgets below the assistant's interface show:
 - <img src="assets/folder.svg" width="14" height="14"> **Git status** — Modified, added, and deleted files
 - <img src="assets/dna.svg" width="14" height="14"> **Semantic diff** — Changes organized by the functions and classes they touch (Rust, TypeScript, Python, Swift, Objective-C)
 - <img src="assets/git-pull-request.svg" width="14" height="14"> **Session titles** — The primary PR title is official; Claude's or Codex's automatic title stays visible below it
-- <img src="assets/lightning.svg" width="14" height="14"> **Flow** — Fourteen ambient scenes move with the session's work, including Train, Earthrise, Doom and Doom3d. Random chooses a scene per session. Press **ctrl+]** to cycle through Random, enabled scenes, Settings and Off. Settings shows a scene checklist: use ↑↓ to navigate and Space or Enter to toggle `[x]` / `[ ]`. Unchecked scenes are excluded from both Random and cycling. Use ←→ for the controls below the checklist, then select Save and press Enter (End jumps to Save). Esc cancels; Ctrl+] discards the draft and continues to Off. With every scene unchecked, the shortcut alternates between Settings and Off. Choose on/off, fade, automatic or manual activity level (0–10), day/night by the local clock or a fixed choice, and session, natural or named colors. Saved choices apply to this session and future sessions. In automatic mode, a permission or question settles the scene into a gentle waiting animation and pauses its activity clock. Subagent companions work, rest, wait and leave with Claude Code, Codex and opencode agents where their native events supply the state. The column keeps its existing size and shows from 100 terminal columns. The scenes are a Rust port of Rob Macrae's [flow](https://github.com/robdmac/flow).
+- <img src="assets/lightning.svg" width="14" height="14"> **Flow** — Fifteen ambient scenes move with the session's work, including Roadster, Train, Earthrise, Doom and Doom3d. Each new session picks an enabled scene. Press **ctrl+]** to cycle through enabled scenes, Settings and Off. Scene changes last only for that session; Off stays off for new sessions. Settings shows a scene checklist: use ↑↓ to navigate and Space or Enter to toggle `[x]` / `[ ]`. Unchecked scenes are excluded from startup selection and cycling. To always use Fire, leave only Fire checked. Use ←→ for the controls below the checklist, then select Save and press Enter (End jumps to Save). Esc cancels; Ctrl+] discards the draft and continues to Off. With every scene unchecked, the shortcut alternates between Settings and Off. Choose on/off, fade, automatic or manual activity level (0–10), day/night by the local clock or a fixed choice, and session, natural or named colors. Saved settings apply to this session and future sessions. In automatic mode, a permission or question settles the scene into a gentle waiting animation and pauses its activity clock. Subagent companions work, rest, wait and leave with Claude Code, Codex and opencode agents where their native events supply the state. The column keeps its existing size and shows from 100 terminal columns. The scenes are a Rust port of Rob Macrae's [flow](https://github.com/robdmac/flow).
 
 ### <img src="assets/scroll.svg" width="20" height="20"> Turn Recaps
 
@@ -220,10 +220,9 @@ recap_model = "claude-haiku-4-5"  # optional model override for recaps
 
 [flow]
 enabled = true                # ctrl+] cycles scenes, Settings and Off
-scene = "random"              # or a named scene such as "train"
 fade = false                  # relight at state changes, then fade over two minutes
 color = "session"             # session, natural, or a named hue such as violet
-# disabled_scenes = ["doom", "doom3d"] # excluded from Random and cycling
+# disabled_scenes = ["doom", "doom3d"] # excluded from startup selection and cycling
 # level = 7                   # omit for activity; 0–10 holds a level
 # night = true                # omit for local time; true = night, false = day
 

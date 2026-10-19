@@ -11,11 +11,11 @@
 
 use std::sync::OnceLock;
 
-use crate::flow::cells::{Cells, Rng};
+use crate::flow::cells::{is_tall, Cells, Rng};
 use crate::flow::crew::{failed, Crew, Mate};
 use crate::flow::js::{fround, i32_of, round};
 use crate::flow::palette::SceneHue;
-use crate::flow::pixels::{hash1, lower_block, mix, ramp_at, smooth, BRAILLE};
+use crate::flow::pixels::{hash1, lower_block, mix, ramp_at, ramp_stops, smooth, BRAILLE};
 use crate::flow::scene::{Dials, Scene, SceneDef, Tint};
 use crate::flow::waiting::{breath, ease_wait, wait_tone};
 
@@ -131,48 +131,31 @@ pub fn glyph_for(r: f64) -> u32 {
 
 // ── The truecolor ramps (fire-palette.ts) ─────────────────────────────────
 
-type Stop = (f64, [u8; 3]);
+type Stop = (f64, u32);
 
 const BLACKBODY: &[Stop] = &[
-    (0.0, [48, 6, 3]),
-    (0.18, [118, 16, 5]),
-    (0.38, [204, 48, 8]),
-    (0.58, [246, 124, 20]),
-    (0.78, [255, 204, 72]),
-    (1.0, [255, 249, 218]),
+    (0.0, 0x300603),
+    (0.18, 0x761005),
+    (0.38, 0xcc3008),
+    (0.58, 0xf67c14),
+    (0.78, 0xffcc48),
+    (1.0, 0xfff9da),
 ];
 /// A fire burned down: embers glowing deep red to dark orange, never yellow.
-const EMBERS_RAMP: &[Stop] = &[(0.0, [40, 6, 2]), (0.5, [112, 26, 6]), (1.0, [190, 74, 14])];
+const EMBERS_RAMP: &[Stop] = &[(0.0, 0x280602), (0.5, 0x701a06), (1.0, 0xbe4a0e)];
 /// A low fire (to 5) with the context nearly full: all of it burns blue.
-const BLUE_EMBERS_RAMP: &[Stop] = &[
-    (0.0, [10, 18, 74]),
-    (0.5, [34, 88, 226]),
-    (1.0, [172, 216, 255]),
-];
+const BLUE_EMBERS_RAMP: &[Stop] = &[(0.0, 0x0a124a), (0.5, 0x2258e2), (1.0, 0xacd8ff)];
 const BLUE_CORE_RAMP: &[Stop] = &[
-    (0.0, [48, 6, 3]),
-    (0.3, [150, 26, 8]),
-    (0.55, [238, 112, 22]),
-    (0.75, [124, 172, 255]),
-    (1.0, [228, 242, 255]),
+    (0.0, 0x300603),
+    (0.3, 0x961a08),
+    (0.55, 0xee7016),
+    (0.75, 0x7cacff),
+    (1.0, 0xe4f2ff),
 ];
-const SMOKE_RAMP: &[Stop] = &[(0.0, [44, 44, 46]), (1.0, [196, 196, 200])];
-const WISP_SMOKE: &[Stop] = &[(0.0, [46, 44, 46]), (1.0, [128, 122, 120])];
+const SMOKE_RAMP: &[Stop] = &[(0.0, 0x2c2c2e), (1.0, 0xc4c4c8)];
+const WISP_SMOKE: &[Stop] = &[(0.0, 0x2e2c2e), (1.0, 0x807a78)];
 
 const STEPS: usize = 48;
-
-fn ramp(stops: &[Stop], t: f64) -> u32 {
-    let x = t.clamp(0.0, 1.0);
-    let mut i = 1;
-    while i < stops.len() - 1 && stops[i].0 < x {
-        i += 1;
-    }
-    let (t0, a) = stops[i - 1];
-    let (t1, b) = stops[i];
-    let k = if t1 == t0 { 0.0 } else { (x - t0) / (t1 - t0) };
-    let ch = |j: usize| round(f64::from(a[j]) + (f64::from(b[j]) - f64::from(a[j])) * k) as u32;
-    (ch(0) << 16) | (ch(1) << 8) | ch(2)
-}
 
 struct Luts {
     blackbody: [u32; STEPS + 1],
@@ -186,7 +169,8 @@ struct Luts {
 fn luts() -> &'static Luts {
     static LUTS: OnceLock<Luts> = OnceLock::new();
     LUTS.get_or_init(|| {
-        let lut = |stops: &[Stop]| std::array::from_fn(|i| ramp(stops, i as f64 / STEPS as f64));
+        let lut =
+            |stops: &[Stop]| std::array::from_fn(|i| ramp_stops(stops, i as f64 / STEPS as f64));
         Luts {
             blackbody: lut(BLACKBODY),
             embers: lut(EMBERS_RAMP),
@@ -377,13 +361,13 @@ impl AsciiFire {
         }
         // Propagate upward with random cooling and wind drift; rising into a
         // headroom row cools harder, so only the tallest get there.
-        let is_tall = h > BODY_ROWS + 1;
-        let headroom = if is_tall {
+        let stretched = h > BODY_ROWS + 1;
+        let headroom = if stretched {
             1
         } else {
             h.saturating_sub(BODY_ROWS)
         };
-        let stretch = if is_tall {
+        let stretch = if stretched {
             (BODY_ROWS as f64 / (h - 1) as f64 * 1.8).min(1.0)
         } else {
             1.0
@@ -401,7 +385,7 @@ impl AsciiFire {
                         0
                     };
                     let roll = self.rng.int() % 11;
-                    let cool = if is_tall {
+                    let cool = if stretched {
                         round(f64::from(roll) * stretch) as u32
                     } else {
                         roll
@@ -669,14 +653,14 @@ const SHY: f64 = 4.999 / 5.0;
 impl Ember {
     fn crew_size(&self) -> (f64, f64) {
         let w = self.columns as f64;
-        if self.rows > 8 {
+        if is_tall(self.columns, self.rows) {
             (round(w * 0.2).max(3.0), 2.0)
         } else {
             (round((w * 0.07).clamp(6.0, 14.0)), 3.0)
         }
     }
     fn crew_room(&self) -> usize {
-        if self.rows > 8 {
+        if is_tall(self.columns, self.rows) {
             if self.columns >= 20 {
                 2
             } else if self.columns >= 13 {
@@ -785,7 +769,7 @@ impl Ember {
     }
     fn puff(&mut self, a: f64, b: f64, n: usize) {
         let h = self.rows as f64;
-        let reach = if self.rows > 8 {
+        let reach = if is_tall(self.columns, self.rows) {
             round(h * 0.25).max(2.0)
         } else {
             2.0
@@ -851,7 +835,7 @@ impl Ember {
     fn draw_crew(&mut self) {
         let w = self.columns;
         let h = self.rows;
-        let tall = h > 8;
+        let tall = is_tall(w, h);
         for m in &self.crew.mates {
             let x0 = round(f64::from(self.span[m.slot * 2])).max(0.0) as usize;
             let x1 = (round(f64::from(self.span[m.slot * 2 + 1])) as usize).min(w);

@@ -26,6 +26,13 @@ pub fn clamp01(v: f64) -> f64 {
     clamp(v, 0.0, 1.0)
 }
 
+/// FNV-1a over JavaScript's UTF-16 code units, preserving 32-bit wrapping.
+pub fn fnv1a(s: &str) -> u32 {
+    s.encode_utf16().fold(0x811c9dc5, |h, c| {
+        (h ^ u32::from(c)).wrapping_mul(0x01000193)
+    })
+}
+
 /// `a` moved `k` (0..1, held there) of the way to `b`, per channel of 0xRRGGBB.
 pub fn mix(a: u32, b: u32, k: f64) -> u32 {
     if k <= 0.0 {
@@ -195,6 +202,18 @@ pub fn ramp_at(stops: &[u32], k: f64) -> u32 {
     let i = (x.floor() as usize).min(stops.len() - 2);
     mix(stops[i], stops[i + 1], x - i as f64)
 }
+/// Interpolate packed colors at unevenly spaced stops.
+pub fn ramp_stops(stops: &[(f64, u32)], t: f64) -> u32 {
+    let x = clamp01(t);
+    let mut i = 1;
+    while i < stops.len() - 1 && stops[i].0 < x {
+        i += 1;
+    }
+    let (t0, a) = stops[i - 1];
+    let (t1, b) = stops[i];
+    mix(a, b, if t1 == t0 { 0.0 } else { (x - t0) / (t1 - t0) })
+}
+
 pub fn noise1(x: f64, seed: f64) -> f64 {
     let i = x.floor();
     let f = x - i;

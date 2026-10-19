@@ -12,7 +12,7 @@ use super::{
 };
 use crate::flow::cells::DEFAULT_COLOR;
 use crate::flow::js::{i32_of, round};
-use crate::flow::pixels::{clamp01, dist, mix, BRAILLE, QUAD};
+use crate::flow::pixels::{clamp01, dist, hash, mix, BRAILLE, QUAD};
 use crate::flow::scene::Tint;
 
 /// Whether ordered dither at (x, y) lights a dot of density p.
@@ -800,9 +800,10 @@ impl Engine {
         self.dot(x, y - 1.0, c::BRASS, 3);
     }
 
-    /// The firebox's color at a quadrant pixel: it flickers (a draw from the rng).
-    fn fire_at(&mut self, qx: f64, qy: f64) -> u32 {
-        let flick = self.rng.f() * 0.18 - 0.06 + (self.t * 0.7 + qx * 1.3).sin() * 0.04;
+    /// The firebox flickers by frame without advancing the scene's random state.
+    fn fire_at(&self, qx: f64, qy: f64) -> u32 {
+        let flick = hash(qx + self.t * 7919.0, qy, 61.0) * 0.18 - 0.06
+            + (self.t * 0.7 + qx * 1.3).sin() * 0.04;
         let odd = if i32_of(qy) & 1 == 1 { 1.0 } else { 0.88 };
         let h = self.heat * odd + flick * (0.4 + self.heat);
         // Blue: a gas flame, never cold-dark, so it reads at every level.
