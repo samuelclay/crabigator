@@ -3288,7 +3288,7 @@ impl TermSignals {
     }
 }
 
-/// Save the flow choice, so new sessions start the same way.
+/// Save Flow settings. The scene choice stays in this session.
 /// A config that doesn't parse is left alone.
 fn save_flow_preferences(
     preferences: &crate::config::FlowPreferences,

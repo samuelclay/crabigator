@@ -52,8 +52,8 @@ pub struct Config {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FlowPreferences {
-    /// A named scene, or "random" to choose one for each session.
-    #[serde(default = "default_flow_scene")]
+    /// The current session choice. Old saved choices are ignored on load.
+    #[serde(skip)]
     pub scene: String,
     /// Whether the Flow column shows. Missing means it does. The Ctrl+]
     /// picker saves this choice and keeps its shortcut available while off.
@@ -64,7 +64,7 @@ pub struct FlowPreferences {
     /// scene follows the work as flow's plugin does by default.
     #[serde(default)]
     pub fade: bool,
-    /// Scenes excluded from Random and shortcut cycling. Missing means all scenes.
+    /// Scenes excluded from startup selection and shortcut cycling. Missing means all scenes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_scenes: Vec<String>,
     /// None follows activity; 0..10 holds a manual level.
@@ -81,7 +81,7 @@ pub struct FlowPreferences {
 impl Default for FlowPreferences {
     fn default() -> Self {
         Self {
-            scene: default_flow_scene(),
+            scene: String::new(),
             enabled: true,
             fade: false,
             disabled_scenes: Vec::new(),
@@ -94,10 +94,6 @@ impl Default for FlowPreferences {
 
 fn default_flow_color() -> String {
     "session".to_string()
-}
-
-fn default_flow_scene() -> String {
-    "random".to_string()
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -297,7 +293,7 @@ mod tests {
         assert_eq!(config.pr_board.view, "sessions");
         assert!(config.cloud.url.is_none());
         assert!(config.flow.enabled);
-        assert_eq!(config.flow.scene, "random");
+        assert!(config.flow.scene.is_empty());
         assert!(!config.flow.fade);
     }
 
@@ -307,7 +303,7 @@ mod tests {
             toml::from_str("default_platform = \"claude\"\n[flow]\nenabled = false\nfade = true\n")
                 .unwrap();
         assert!(!config.flow.enabled && config.flow.fade);
-        assert_eq!(config.flow.scene, "random");
+        assert!(config.flow.scene.is_empty());
         let saved = toml::to_string(&config).unwrap();
         let back: Config = toml::from_str(&saved).unwrap();
         assert!(!back.flow.enabled && back.flow.fade);

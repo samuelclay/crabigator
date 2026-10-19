@@ -5,8 +5,8 @@
 //! Code plugin by Rob Macrae; `src/flow/FORK.md` records what was ported
 //! from which upstream commit, so upstream changes can be carried over.
 //!
-//! Random claims a scene per session (`claim`), so sessions side by side
-//! differ. A named choice is saved for future sessions. The scene takes
+//! Each session claims an enabled scene (`claim`), so sessions side by side
+//! differ. Shortcut choices last only for the current session. The scene takes
 //! the colour of the session's mark. The scene
 //! follows the work as flow's plugin does: work (tool calls, compactions)
 //! flares it, a turn climbs with its effort and length, and subagents add to
@@ -17,7 +17,7 @@
 //! refresh later (`feed`).
 //!
 //! ctrl+] cycles enabled scenes, Settings and Off. The choice is
-//! saved in `[flow]`, so new sessions start the same way; the
+//! temporary except for Off, which is saved in `[flow]`; the
 //! separator keeps a label naming the key that turns it back on.
 
 mod activity;
@@ -90,10 +90,7 @@ pub struct FlowChange {
 /// The session's scene, stepped in place, and where it is drawn.
 pub struct FlowColumn {
     def: &'static SceneDef,
-    /// The scene this session uses when Random is selected.
-    random_scene: &'static SceneDef,
     session_id: Option<String>,
-    random: bool,
     /// Turned off in the picker or config: only the shortcut label remains.
     off: bool,
     scene: Box<dyn Scene>,
@@ -131,29 +128,17 @@ impl FlowColumn {
         preferences: &FlowPreferences,
     ) -> Self {
         let name = claim::assign_scene(session_id, mark, &preferences.disabled_scenes);
-        let random_scene = name
+        let def = name
             .as_deref()
             .and_then(scene::scene_def)
             .unwrap_or(&scene::scenes()[0]);
-        let chosen = scene::scene_def(&preferences.scene).filter(|def| {
-            !preferences
-                .disabled_scenes
-                .iter()
-                .any(|name| name == def.name)
-        });
-        let def = chosen.unwrap_or(random_scene);
-        if chosen.is_some() {
-            crate::session_mark::publish_stub(session_id, mark, Some(def.name));
-        }
         let target = claim::mark_accent(mark).and_then(|[r, g, b]| {
             palette::hue_of(&[(u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)])
         });
         let seed = f64::from(claim::scene_seed(session_id));
         let mut column = Self {
             def,
-            random_scene,
             session_id: Some(session_id.to_string()),
-            random: chosen.is_none(),
             off: !preferences.enabled || name.is_none(),
             scene: (def.make)(seed),
             palette: palette_for(def, target),
@@ -189,7 +174,7 @@ impl FlowColumn {
         self.tick();
     }
 
-    /// Next shortcut choice: Random, enabled scenes, Settings, Off.
+    /// Next shortcut choice: enabled scenes, Settings, Off.
     /// Settings is transient; scene/off changes are applied only after saving.
     pub fn cycle_preferences(&mut self) -> Option<FlowPreferences> {
         let mut prefs = self.preferences();
@@ -204,8 +189,6 @@ impl FlowColumn {
             return None;
         } else if self.off {
             prefs.enabled = true;
-            prefs.scene = "random".into();
-        } else if self.random {
             prefs.scene = allowed[0].name.into();
         } else if let Some(next) = allowed
             .iter()
@@ -257,7 +240,7 @@ impl FlowColumn {
             prefs.enabled = false;
         }
         if scene::scene_def(&prefs.scene).is_some_and(|def| !allowed(def)) {
-            prefs.scene = "random".into();
+            prefs.scene.clear();
         }
         prefs
     }
@@ -265,15 +248,17 @@ impl FlowColumn {
     pub fn apply_preferences(&mut self, prefs: FlowPreferences) {
         let prefs = Self::normalize_preferences(prefs);
         let allowed = |def: &SceneDef| !prefs.disabled_scenes.iter().any(|name| name == def.name);
-        if !allowed(self.random_scene) {
-            let name = match &self.session_id {
-                Some(id) => claim::reclaim_scene(id, &prefs.disabled_scenes),
-                None => claim::claim_scene(&self.seed.to_string(), &[], &prefs.disabled_scenes),
-            };
-            if let Some(def) = name.as_deref().and_then(scene::scene_def) {
-                self.random_scene = def;
-            }
-        }
+        let def = scene::scene_def(&prefs.scene)
+            .filter(|def| allowed(def))
+            .or_else(|| allowed(self.def).then_some(self.def))
+            .or_else(|| {
+                let name = match &self.session_id {
+                    Some(id) => claim::reclaim_scene(id, &prefs.disabled_scenes),
+                    None => claim::claim_scene(&self.seed.to_string(), &[], &prefs.disabled_scenes),
+                };
+                name.as_deref().and_then(scene::scene_def)
+            })
+            .unwrap_or(self.def);
 
         if self.off && prefs.enabled {
             if let Some(hooks) = &mut self.hooks {
@@ -281,8 +266,6 @@ impl FlowColumn {
             }
         }
         self.off = !prefs.enabled;
-        self.random = scene::scene_def(&prefs.scene).is_none();
-        let def = scene::scene_def(&prefs.scene).unwrap_or(self.random_scene);
         self.preferences = prefs;
         self.picker = None;
         self.frame = None;
@@ -299,7 +282,7 @@ impl FlowColumn {
 
     pub fn preferences(&self) -> FlowPreferences {
         FlowPreferences {
-            scene: self.selection().into(),
+            scene: self.def.name.into(),
             enabled: !self.off,
             ..self.preferences.clone()
         }
@@ -324,15 +307,6 @@ impl FlowColumn {
     /// Whether the column is on: only then is it stepped.
     pub fn is_on(&self) -> bool {
         !self.off
-    }
-
-    /// The saved choice and displayed label, distinct from Random's actual scene.
-    pub fn selection(&self) -> &'static str {
-        if self.random {
-            "random"
-        } else {
-            self.def.name
-        }
     }
 
     /// Show `def` in the session's colour, stepped once so it shows at once.
@@ -448,7 +422,6 @@ impl FlowColumn {
             return Some(FlowView::Scene {
                 rows: self.frame.as_deref()?,
                 scene: "settings",
-                random: false,
             });
         }
         if self.off {
@@ -457,7 +430,6 @@ impl FlowColumn {
         Some(FlowView::Scene {
             rows: self.frame.as_deref()?,
             scene: self.def.name,
-            random: self.random,
         })
     }
 
@@ -643,9 +615,7 @@ mod tests {
         let def = scene::scene_def(scene).unwrap();
         FlowColumn {
             def,
-            random_scene: def,
             session_id: None,
-            random: false,
             off: false,
             scene: (def.make)(7.0),
             palette: Palette::natural(),
@@ -809,13 +779,13 @@ mod tests {
     }
 
     #[test]
-    fn shortcut_visits_all_scenes_settings_off_then_random() {
+    fn shortcut_visits_all_scenes_settings_and_off() {
         let mut flow = column("doom3d");
         flow.set_geometry(Some(rect(15, 4)));
-        flow.apply_preferences(FlowPreferences::default());
+        flow.off = true;
         for def in scene::scenes() {
             advance(&mut flow);
-            assert_eq!(flow.selection(), def.name);
+            assert_eq!(flow.def.name, def.name);
             assert!(!flow.picker_open());
         }
         advance(&mut flow);
@@ -823,8 +793,7 @@ mod tests {
         advance(&mut flow);
         assert!(!flow.picker_open() && !flow.is_on());
         advance(&mut flow);
-        assert_eq!(flow.selection(), "random");
-        assert_eq!(flow.scene(), Some("doom3d"));
+        assert_eq!(flow.scene(), Some(scene::scenes()[0].name));
     }
 
     #[test]
@@ -836,7 +805,7 @@ mod tests {
         });
         let saved = toml::to_string(&prefs).unwrap();
         let mut restored: FlowPreferences = toml::from_str(&saved).unwrap();
-        assert_eq!(restored.scene, "random");
+        assert!(restored.scene.is_empty());
         restored.disabled_scenes = claim::scene_names().to_vec();
         let prefs = FlowColumn::normalize_preferences(restored);
         let restored: FlowPreferences = toml::from_str(&toml::to_string(&prefs).unwrap()).unwrap();
@@ -857,16 +826,12 @@ mod tests {
             disabled_scenes,
             ..FlowPreferences::default()
         });
-        assert_eq!(flow.selection(), "random");
         assert_eq!(flow.scene(), Some("train"));
-        advance(&mut flow);
-        assert_eq!(flow.selection(), "train");
         advance(&mut flow);
         assert!(flow.picker_open());
         advance(&mut flow);
         advance(&mut flow);
         assert_eq!(flow.scene(), Some("train"));
-        assert_eq!(flow.selection(), "random");
         let mut prefs = flow.preferences();
         prefs.disabled_scenes.push("train".into());
         flow.apply_preferences(prefs);
@@ -883,7 +848,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_select_every_scene_random_and_off() {
+    fn settings_preserve_the_session_scene_and_off() {
         let mut flow = column("avalon");
         flow.set_geometry(Some(rect(18, 6)));
         for def in scene::scenes() {
@@ -892,7 +857,7 @@ mod tests {
                 ..FlowPreferences::default()
             });
             assert_eq!(flow.scene(), Some(def.name));
-            assert_eq!(flow.selection(), def.name);
+            assert_eq!(flow.def.name, def.name);
             assert!(flow.has_frame());
         }
         flow.apply_preferences(FlowPreferences {
@@ -903,24 +868,22 @@ mod tests {
         assert!(matches!(flow.view(), Some(FlowView::Off)));
         assert!(flow.takes_key());
         flow.apply_preferences(FlowPreferences::default());
-        assert_eq!(flow.scene(), Some("avalon"));
-        assert_eq!(flow.selection(), "random");
+        assert_eq!(flow.scene(), Some(scene::scenes().last().unwrap().name));
     }
 
     #[test]
-    fn a_saved_scene_starts_new_sessions_on_that_scene() {
+    fn new_sessions_ignore_scene_choices_but_keep_off_and_exclusions() {
         let mut flow = column("avalon");
-        flow.random = true;
         flow.apply_preferences(FlowPreferences {
             scene: "fire".into(),
             ..FlowPreferences::default()
         });
-        let preferences = FlowPreferences {
-            scene: flow.selection().to_string(),
-            ..FlowPreferences::default()
-        };
-        let saved = toml::to_string(&preferences).unwrap();
-        let preferences: FlowPreferences = toml::from_str(&saved).unwrap();
+        assert_eq!(flow.scene(), Some("fire"));
+        let saved = toml::to_string(&flow.preferences()).unwrap();
+        assert!(!saved.contains("scene ="));
+        let old: FlowPreferences = toml::from_str("scene = \"fire\"\n").unwrap();
+        assert!(old.scene.is_empty());
+
         let dir = tempfile::Builder::new()
             .prefix("crabigator-flow-choice-")
             .tempdir_in("/tmp")
@@ -928,14 +891,28 @@ mod tests {
         let name = dir.path().file_name().unwrap().to_str().unwrap();
         let session_id = name.strip_prefix("crabigator-").unwrap();
         let mark = SessionMark::from_seed(session_id);
-        let started = FlowColumn::new(session_id, mark, None, &preferences);
-        assert_eq!(started.scene(), Some("fire"));
-        assert_eq!(started.selection(), "fire");
-        let mirror: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(dir.path().join("inspect.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(mirror["flow_scene"], "fire");
+        // Give the session an allowed claim different from the old saved choice.
+        crate::session_mark::publish_stub(session_id, mark, Some("train"));
+        let mut prefs = flow.preferences();
+        let started = FlowColumn::new(session_id, mark, None, &prefs);
+        assert_eq!(started.scene(), Some("train"));
+        prefs.enabled = false;
+        let prefs: FlowPreferences = toml::from_str(&toml::to_string(&prefs).unwrap()).unwrap();
+        assert!(!FlowColumn::new(session_id, mark, None, &prefs).is_on());
+
+        // A single checked scene is how to keep a particular scene across sessions.
+        let prefs = FlowPreferences {
+            disabled_scenes: claim::scene_names()
+                .iter()
+                .filter(|name| *name != "fire")
+                .cloned()
+                .collect(),
+            ..FlowPreferences::default()
+        };
+        assert_eq!(
+            FlowColumn::new(session_id, mark, None, &prefs).scene(),
+            Some("fire")
+        );
     }
 
     #[test]
