@@ -1,3 +1,4 @@
+import type { PushFetch } from './notification-history';
 import type { Env } from './types/env';
 
 interface AppleCredentials { team_id: string; key_id: string; private_key: string; topic: string }
@@ -21,7 +22,7 @@ async function providerToken(account: AppleCredentials): Promise<string> {
 
 /** Alert content is generic. The service extension authenticates to load the current prompt.
  * Resolution sends a background refresh, never a new visible alert. */
-export async function sendApplePush(env: Env, device: AppleDevice, sessionId: string, pending: boolean): Promise<void> {
+export async function sendApplePush(env: Env, device: AppleDevice, sessionId: string, pending: boolean, send: PushFetch = fetch): Promise<void> {
     if (!env.APNS_CREDENTIALS) return;
     const account = JSON.parse(env.APNS_CREDENTIALS) as AppleCredentials;
     const host = device.environment === 'sandbox' ? 'api.sandbox.push.apple.com' : 'api.push.apple.com';
@@ -29,7 +30,7 @@ export async function sendApplePush(env: Env, device: AppleDevice, sessionId: st
         ? { alert: { title: 'Crabigator', body: 'A session needs your attention.' }, 'mutable-content': 1, 'content-available': 1,
             'thread-id': sessionId, ...(device.sound ? { sound: 'default' } : {}) }
         : { 'content-available': 1 };
-    const response = await fetch(`https://${host}/3/device/${device.token}`, {
+    const response = await send(`https://${host}/3/device/${device.token}`, {
         method: 'POST', headers: {
             authorization: `bearer ${await providerToken(account)}`, 'apns-topic': account.topic,
             'apns-push-type': pending ? 'alert' : 'background', 'apns-priority': pending ? '10' : '5',

@@ -3,6 +3,25 @@ import { extractToken, requireMobileAuth, requireSessionAccess } from '../auth/m
 import { sha256 } from '../auth/tokens';
 import { jsonResponse } from '../router';
 
+/** Durable push audit, restricted to the caller's account group. */
+export async function notificationHistory(request: Request, env: Env): Promise<Response> {
+    const auth = await requireMobileAuth(request, env);
+    if ('error' in auth) return auth.error;
+    const params = new URL(request.url).searchParams;
+    const cursor = Number(params.get('before') || Number.MAX_SAFE_INTEGER);
+    if (!Number.isSafeInteger(cursor) || cursor < 1) return jsonResponse({ error: 'Invalid history cursor' }, 400);
+    const rows = await env.DB.prepare(`SELECT rowid AS cursor, * FROM notification_deliveries
+        WHERE group_id = ? AND rowid < ? AND (? IS NULL OR mobile_id = ?) AND (? IS NULL OR session_id = ?)
+        ORDER BY rowid DESC LIMIT 50`).bind(auth.auth.group_id, cursor,
+            params.get('mobile_id'), params.get('mobile_id'), params.get('session_id'), params.get('session_id'))
+        .all<{ id: string; cursor: number }>();
+    const attempts = rows.results.length ? (await env.DB.prepare(`SELECT * FROM notification_attempts
+        WHERE delivery_id IN (${rows.results.map(() => '?').join(',')}) ORDER BY started_at, rowid`)
+        .bind(...rows.results.map(row => row.id)).all()).results : [];
+    const notifications = rows.results.map(row => ({ ...row, attempts: attempts.filter(attempt => attempt.delivery_id === row.id) }));
+    return jsonResponse({ notifications, next_cursor: rows.results.length === 50 ? rows.results.at(-1)!.cursor : null });
+}
+
 export async function registerPush(request: Request, env: Env): Promise<Response> {
     const auth = await requireMobileAuth(request, env);
     if ('error' in auth) return auth.error;

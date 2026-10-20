@@ -78,6 +78,10 @@ interface PersistentState {
     /** A cleared structured prompt must not become a generic question at Stop. */
     unstructuredAttentionBlocked?: boolean;
     attentionPromptCount?: number;
+    notificationId?: string;
+    notificationPrompt?: string;
+    notificationTurn?: number;
+    notificationKind?: string;
     lastTitle: string | null;
     lastTitleHistory: string[] | null;
     /** Most recent recap event (status + latest finished recap). */
@@ -1116,6 +1120,7 @@ export class SessionDO implements DurableObject {
             this.persistentState.promptRevision = (this.persistentState.promptRevision || 0) + 1;
             persistentChanged = true;
         }
+        if (this.hasPendingAttention() && this.updateNotificationIdentity()) persistentChanged = true;
         // Only persist to storage on meaningful state changes
         // This is the key optimization: screen/scrollback updates (high frequency)
         // no longer trigger storage writes
@@ -1325,6 +1330,31 @@ export class SessionDO implements DurableObject {
         return ['question', 'permission'].includes(this.persistentState.state)
             && (this.persistentState.currentPrompt !== null || !this.persistentState.unstructuredAttentionBlocked)
             && this.persistentState.answeredRevision !== (this.persistentState.promptRevision || 0);
+    }
+
+    /** Answer revisions track every edit; notification identity tracks the question itself. */
+    private updateNotificationIdentity(): boolean {
+        const prompt = this.persistentState.currentPrompt;
+        const signature = prompt ? JSON.stringify(prompt.prompt_type === 'question'
+            ? { prompt_type: prompt.prompt_type, questions: prompt.questions }
+            : prompt.prompt_type === 'permission'
+                ? { prompt_type: prompt.prompt_type, tool_name: prompt.tool_name, tool_input: prompt.tool_input, options: prompt.options }
+                : prompt) : undefined;
+        const turn = this.persistentState.attentionPromptCount || 0;
+        const kind = this.persistentState.state;
+        const fresh = !this.persistentState.notificationId || turn !== this.persistentState.notificationTurn
+            || kind !== this.persistentState.notificationKind
+            || (signature !== undefined && this.persistentState.notificationPrompt !== undefined
+                && signature !== this.persistentState.notificationPrompt);
+        const changed = fresh || (signature !== undefined && signature !== this.persistentState.notificationPrompt);
+        if (fresh) {
+            this.persistentState.notificationId = crypto.randomUUID();
+            this.persistentState.notificationPrompt = undefined;
+        }
+        if (signature !== undefined) this.persistentState.notificationPrompt = signature;
+        this.persistentState.notificationTurn = turn;
+        this.persistentState.notificationKind = kind;
+        return changed;
     }
 
     private notifyMobileAttention(): void {
@@ -1630,6 +1660,8 @@ export class SessionDO implements DurableObject {
                 prompt: attentionPending ? this.persistentState.currentPrompt : null,
                 prompt_revision: this.persistentState.promptRevision || 0,
                 attention_pending: attentionPending,
+                notification_id: this.persistentState.notificationId || `legacy:${this.persistentState.promptRevision || 0}`,
+                notification_prompt: this.persistentState.notificationPrompt || null,
                 recap: this.persistentState.lastRecap,
                 recap_history: this.persistentState.lastRecapHistory,
                 prs: this.persistentState.lastPrs,

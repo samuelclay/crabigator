@@ -2,18 +2,20 @@ import { env, evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { beforeAll, expect, it, vi } from 'vitest';
 import { notifyMobilePrompt } from '../src/mobile-push';
 import { sha256 } from '../src/auth/tokens';
-import { mobileSnapshot, registerPush, spawnOnSessionDesktop } from '../src/handlers/mobile';
+import { mobileSnapshot, registerPush, spawnOnSessionDesktop, notificationHistory } from '../src/handlers/mobile';
 import type { Env } from '../src/types/env';
 import type { CloudToDesktopMessage } from '../src/types/session';
 import { ensureAccountSchema } from './schema';
 import migration from '../migrations/0022_mobile_push.sql?raw';
 import appleMigration from '../migrations/0023_apple_push.sql?raw';
+import historyMigration from '../migrations/0024_notification_history.sql?raw';
 
 const testEnv = env as unknown as Env;
 
 beforeAll(async () => {
     await ensureAccountSchema(testEnv);
     await testEnv.DB.prepare(migration).run();
+    for (const sql of historyMigration.split(';').map(s => s.trim()).filter(Boolean)) await testEnv.DB.prepare(sql).run();
     for (const sql of appleMigration.split(';').map(s => s.trim()).filter(Boolean)) await testEnv.DB.prepare(sql).run();
 });
 
@@ -236,8 +238,7 @@ it('retries transient delivery failures with a limit and leaves permanent errors
         calls.set(token, attempt);
         expect(init?.signal).toBeInstanceOf(AbortSignal);
         if (token.endsWith('-recover')) {
-            if (attempt === 1) throw new TypeError('Connection closed');
-            return Response.json({}, { status: attempt === 2 ? 503 : 200 });
+            return Response.json({}, { status: attempt < 3 ? 503 : 200 });
         }
         if (token.endsWith('-retry-after')) return Response.json({}, { status: 503, headers: { 'Retry-After': '60' } });
         const status = token.endsWith('-persistent') ? 503 : token.endsWith('-quota') ? 429 : 400;
@@ -458,4 +459,109 @@ it('resolves connected panels after an answer and never replays the consumed pro
         await expect.poll(() => events).toContainEqual({ type: 'prompt', prompt: null });
         expect((await snapshot()).attention_pending).toBe(false);
     } finally { viewer.close(); desktop.close(); }
+});
+
+it('sends one Apple alert while answering locally, across concurrent sends and hibernation', async () => {
+    const group = 'dedupe-group', sessionId = 'dedupe-session';
+    const owner = await pairedMobile('dedupe-ipad', group);
+    const outsider = await pairedMobile('dedupe-outsider', 'other-dedupe-group');
+    await registerPush(owner.request('/api/mobile/push', { platform: 'ios', token: 'e'.repeat(64), environment: 'sandbox' }), testEnv);
+    const { account } = await appleCredentials('DEDUPE');
+    const pushEnv = { ...testEnv, APNS_CREDENTIALS: JSON.stringify(account) };
+    const stub = testEnv.SESSION.get(testEnv.SESSION.idFromName(sessionId));
+    const desktop = (await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } })).webSocket!;
+    desktop.accept();
+    const event = async (value: unknown) => runInDurableObject(stub, async instance => {
+        await (instance as unknown as { handleEvent(value: unknown): Promise<void> }).handleEvent(value);
+    });
+    const snapshot = async () => (await stub.fetch('https://internal/snapshot')).json<{ notification_id: string; prompt_revision: number }>();
+    const calls: string[] = [];
+    const mocked = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+        calls.push(new Headers(init?.headers).get('apns-push-type')!);
+        return new Response(null, { status: 200, headers: { 'apns-id': 'apple-receipt-id' } });
+    });
+    const notify = () => notifyMobilePrompt(pushEnv, group, sessionId);
+    const prompt = { prompt_type: 'question', questions: [{ question: 'Choose?', options: [{ label: 'Here', value: '1' }], multi_select: true }] };
+    try {
+        await event({ type: 'stats', prompts: 1 });
+        await event({ type: 'state', state: 'question' });
+        const original = await snapshot();
+        // A previous task lost the race with a temporary prompt clear before it
+        // reached APNs. It must not permanently suppress the returning question.
+        await testEnv.DB.prepare(`INSERT INTO notification_deliveries
+            (id, group_id, session_id, mobile_id, platform, environment, notification_key, kind,
+             prompt_revision, status, created_at) VALUES (?, ?, ?, ?, 'ios', 'sandbox', ?, 'alert', ?, 'superseded', ?)`)
+            .bind('unsent-reservation', group, sessionId, 'dedupe-ipad', original.notification_id,
+                original.prompt_revision, Date.now()).run();
+        await Promise.all([notify(), notify(), notify()]);
+        await event({ type: 'prompt', prompt });
+        await notify();
+        for (const edit of [{ cursor_row: 2 }, { checked: [1] }, { custom_text: 'My answer' }, { current_question: 1 }, { review: [{ question: 'Choose?', answer: 'Here' }] }]) {
+            await event({ type: 'prompt', prompt: { ...prompt, ...edit } });
+            await notify();
+        }
+        expect((await snapshot()).notification_id).toBe(original.notification_id);
+        expect((await snapshot()).prompt_revision).toBeGreaterThan(original.prompt_revision);
+        await evictDurableObject(stub);
+        await notify();
+        expect(calls).toEqual(['alert']);
+        await event({ type: 'prompt', prompt: null });
+        await notify();
+        expect(calls).toEqual(['alert', 'background']);
+        // A transient repaint of the same question must not alert again.
+        await event({ type: 'prompt', prompt });
+        await notify();
+        expect(calls).toEqual(['alert', 'background']);
+        await event({ type: 'prompt', prompt: { ...prompt, questions: [{ question: 'A different question?', options: [] }] } });
+        await notify();
+        expect(calls).toEqual(['alert', 'background', 'alert']);
+        // The same wording on a later user turn is a new request.
+        await event({ type: 'state', state: 'thinking' });
+        await event({ type: 'stats', prompts: 2 });
+        await event({ type: 'prompt', prompt });
+        await event({ type: 'state', state: 'question' });
+        await notify();
+        expect(calls).toEqual(['alert', 'background', 'alert', 'alert']);
+        const history = await (await notificationHistory(owner.request('/api/mobile/notifications'), testEnv)).json<any>();
+        expect(history.notifications).toHaveLength(4);
+        for (const row of history.notifications) {
+            expect(row).toMatchObject({ status: 'accepted', mobile_id: 'dedupe-ipad', session_id: sessionId });
+            expect(row.attempts).toHaveLength(1);
+            expect(row.attempts[0]).toMatchObject({ status: 'accepted', http_status: 200, provider_id: 'apple-receipt-id' });
+        }
+        expect(JSON.stringify(history)).not.toContain('e'.repeat(64));
+        const foreign = await (await notificationHistory(outsider.request('/api/mobile/notifications'), testEnv)).json<any>();
+        expect(foreign.notifications).toEqual([]);
+        const older = await (await notificationHistory(owner.request(`/api/mobile/notifications?before=${history.notifications[1].cursor}`), testEnv)).json<any>();
+        expect(older.notifications.map((row: { id: string }) => row.id)).toEqual(history.notifications.slice(2).map((row: { id: string }) => row.id));
+        const absentDevice = await (await notificationHistory(owner.request('/api/mobile/notifications?mobile_id=someone-else'), testEnv)).json<any>();
+        expect(absentDevice.notifications).toEqual([]);
+        expect((await notificationHistory(new Request('https://example.com/api/mobile/notifications'), testEnv)).status).toBe(401);
+    } finally { mocked.mockRestore(); desktop.close(); }
+});
+
+it.each(['ios', 'android'])('records unknown %s outcomes without resending', async platform => {
+    const group = `unknown-push-group-${platform}`, sessionId = `unknown-push-session-${platform}`;
+    const owner = await pairedMobile(`unknown-${platform}`, group);
+    await registerPush(owner.request('/api/mobile/push', { platform, token: platform === 'ios' ? 'f'.repeat(64) : 'unknown-android-push-token', environment: 'sandbox' }), testEnv);
+    const { account } = await appleCredentials('UNKNOWN');
+    const keys = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']) as CryptoKeyPair;
+    const der = new Uint8Array(await crypto.subtle.exportKey('pkcs8', keys.privateKey));
+    const firebase = { project_id: 'unknown-project', client_email: 'unknown@firebase.example',
+        private_key: `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----` };
+    const pushEnv = { ...testEnv, APNS_CREDENTIALS: JSON.stringify(account), FIREBASE_SERVICE_ACCOUNT: JSON.stringify(firebase) };
+    let sends = 0;
+    const mocked = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+        if (String(input) === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'unknown-test', expires_in: 3600 });
+        sends++;
+        throw new TypeError('Connection lost');
+    });
+    try {
+        await expect(notifyMobilePrompt(pushEnv, group, sessionId)).rejects.toBeInstanceOf(AggregateError);
+        await notifyMobilePrompt(pushEnv, group, sessionId);
+        expect(sends).toBe(1);
+        const history = await (await notificationHistory(owner.request('/api/mobile/notifications'), testEnv)).json<any>();
+        expect(history.notifications[0]).toMatchObject({ status: 'unknown', attempts: [{ status: 'unknown', http_status: null }] });
+    } finally { mocked.mockRestore(); }
 });
