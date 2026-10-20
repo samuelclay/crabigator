@@ -46,7 +46,7 @@ func groupBoardByPullRequest(_ sections: [RosterSection], prsBySession: [String:
         }
         for group in groups {
             let prompted = group.sessions.map { session in
-                session.active && ["thinking", "question", "permission"].contains(session.state) ? now : session.promptAt
+                session.active && session.state == "thinking" ? now : session.promptAt
             }.max() ?? 0
             let activity = prompted > 0 ? prompted : max(group.pr.updatedAt, group.pr.closedAt, group.pr.mentionedAt)
             guard includesActivity(activity) else { continue }

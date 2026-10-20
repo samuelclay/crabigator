@@ -33,7 +33,8 @@ struct Session: Identifiable, Equatable {
         tools = stats["tools"] as? Int; compactions = stats["compressions"] as? Int
     }
     func boardActivity(_ now: Int, prs: [PullRequest]) -> Int {
-        if active && ["thinking", "question", "permission"].contains(state) { return now }
+        // Waiting for input keeps its attention badge, but ages from the last prompt.
+        if active && state == "thinking" { return now }
         return promptAt > 0 ? promptAt : (prs.map { max($0.updatedAt, $0.closedAt, $0.mentionedAt) }.max() ?? 0)
     }
     func duration(_ now: Int) -> Int? {

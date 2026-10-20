@@ -201,6 +201,30 @@ final class CrabigatorTests: XCTestCase {
         order.update([target], prs: [], prefs: prefs, now: now + 3601, elapsed: 2)
         XCTAssertEqual(order.board.map(\.age), [.three])
     }
+    func testWaitingSessionsAgeOnRefreshInBothBoardViews() {
+        let now = 100_000
+        for state in ["question", "permission"] {
+            let order = RosterOrder()
+            var target = session("waiting", prompt: now - 5 * 3600, state: "thinking")
+            target.completionAt = target.promptAt
+            let pr = PullRequest(["owner": "owner", "repo": "repo", "number": 1,
+                                  "pr": ["primary": true], "sessions": [["session_id": target.id]]])
+            order.update([target], prs: [pr], prefs: Preferences(), now: now, elapsed: 0)
+            XCTAssertEqual(order.board.map(\.age), [.hour])
+            target.state = state
+            order.update([target], prs: [pr], prefs: Preferences(), now: now + 12, elapsed: 12)
+            XCTAssertEqual(order.board.map(\.age), [.six])
+            XCTAssertEqual(groupBoardByPullRequest(order.board, prsBySession: order.prsBySession, now: now + 12).map(\.age), [.six])
+            XCTAssertTrue(target.attention, "Waiting must still show its attention indicator")
+            var recentOnly = Preferences(); recentOnly.boardAgeHours = 1
+            XCTAssertFalse(recentOnly.includesSession(target, prs: [pr], now: now + 12))
+
+            // No new events: the next refresh must still advance the age band.
+            order.update([target], prs: [pr], prefs: Preferences(), now: now + 3600, elapsed: 24)
+            XCTAssertEqual(order.board.map(\.age), [.nine])
+            XCTAssertEqual(groupBoardByPullRequest(order.board, prsBySession: order.prsBySession, now: now + 3600).map(\.age), [.nine])
+        }
+    }
     func testBoardFiltersMatchCliAgesAndKeepWorkingSessions() throws {
         var prefs = Preferences()
         XCTAssertEqual(prefs.boardAgeHours, 24)

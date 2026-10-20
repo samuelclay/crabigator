@@ -2,6 +2,14 @@
 
 The updated native app is installed and paired on ClayPad Mini. The October 13 checks below verify its live terminal, board navigation and real APNs delivery. Earlier checks on ClayPad Air, ClayPhone SE 3 and simulators remain recorded below.
 
+## Waiting sessions age normally — October 19
+
+The board already refreshes its roster every 12 seconds while foregrounded. Its age calculation treated questions and permission requests as current activity on every refresh, so a session waiting for hours stayed in Last hour. iOS now uses the last prompt for waiting sessions in both session and PR grouping. Only active thinking stays current; waiting sessions keep their attention indicators.
+
+The new regression failed on the previous implementation, then all 31 unit tests passed on ClayPad Mini. It covers a five-hour-old turn moving out of Last hour when it starts waiting, subsequent aging with no new events, both board groupings, and activity filtering. Result: `/tmp/crabigator-waiting-age-after.xcresult` (unit suite passed; its first live check used an incorrect expected age band).
+
+The updated app is installed on Mini. The final live UI check found the affected waiting session beneath the 3–6 hours heading and verified that this was its nearest preceding age heading. Result: `/tmp/crabigator-waiting-age-verified.xcresult`; screenshot under `/tmp/crabigator-waiting-age-verified-shots/`. An intermediate UI attempt missed Search after toggling an already selected board; the check now preserves the selected mode. No session input was sent. This change is limited to iOS.
+
 
 ## Rich prompt notifications — October 15
 

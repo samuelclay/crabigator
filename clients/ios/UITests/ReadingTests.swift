@@ -3,6 +3,40 @@ import UIKit
 
 /// Opt-in live checks. Pair this simulator first; these never send terminal input.
 final class ReadingTests: XCTestCase {
+    private func descendants(of snapshot: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
+        snapshot.children.flatMap { [$0] + descendants(of: $0) }
+    }
+    func testLiveSessionAppearsUnderExpectedAgeBand() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["CRABIGATOR_LIVE_UI_TESTS"] == "1",
+              let id = env["CRABIGATOR_TEST_SESSION_ID"],
+              let query = env["CRABIGATOR_TEST_SESSION_QUERY"],
+              let band = env["CRABIGATOR_TEST_AGE_BAND"] else {
+            throw XCTSkip("Requires a paired device, a session, search text and its expected age band.")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        let mode = app.buttons["PR board"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 25))
+        if !(mode.value as? String ?? "").hasPrefix("Selected") { mode.tap() }
+        app.buttons["Search"].tap()
+        let search = app.textFields["Search sessions"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5), app.debugDescription)
+        search.tap(); search.typeText(query)
+        let row = app.buttons["Session " + id]
+        XCTAssertTrue(row.waitForExistence(timeout: 20))
+        let heading = app.staticTexts[band]
+        XCTAssertTrue(heading.waitForExistence(timeout: 5))
+        let snapshot = try app.snapshot()
+        let visibleRow = try XCTUnwrap(descendants(of: snapshot).first { $0.identifier == "Session " + id })
+        let bands = ["Last hour", "1–3 hours", "3–6 hours", "6–9 hours", "9–12 hours", "12–24 hours", "Older"]
+        let preceding = descendants(of: snapshot).filter {
+            $0.elementType == .staticText && bands.contains($0.label) && $0.frame.maxY <= visibleRow.frame.minY
+        }.max { $0.frame.maxY < $1.frame.maxY }
+        XCTAssertEqual(preceding?.label, band, "The row must belong to the expected band, not a later section")
+        capture("Waiting session in its prompt age band")
+    }
     func testTerminalLinksOpenFromHistoryAndLiveScreen() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -64,9 +98,6 @@ final class ReadingTests: XCTestCase {
         if mode.value as? String == "Selected, full width" { mode.tap() }
         let states = app.staticTexts.matching(NSPredicate(format: "label IN %@", ["Open", "Merged", "Closed", "Draft", "Pending"]))
         XCTAssertTrue(states.firstMatch.waitForExistence(timeout: 25))
-        func descendants(of snapshot: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
-            snapshot.children.flatMap { [$0] + descendants(of: $0) }
-        }
         let snapshot = try app.snapshot()
         let rows = descendants(of: snapshot).filter { $0.elementType == .button && $0.identifier.hasPrefix("Session ") }
         var checkedStates = 0, checkedDiffs = 0
