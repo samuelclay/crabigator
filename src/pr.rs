@@ -3202,13 +3202,6 @@ struct PrReadResponse {
 }
 
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum PrReadOutput {
-    Pages(Vec<PrReadResponse>),
-    Single(Box<PrReadResponse>),
-}
-
-#[derive(Deserialize)]
 struct GraphqlError {
     #[serde(default)]
     message: String,
@@ -3282,7 +3275,7 @@ struct PrReadPull {
     #[serde(default, rename = "mergeStateStatus")]
     merge_state_status: String,
     #[serde(default, rename = "reviewDecision")]
-    review_decision: String,
+    review_decision: Option<String>,
     #[serde(default, rename = "latestReviews")]
     latest_reviews: ReviewNodes,
     #[serde(default, rename = "closedAt")]
@@ -3346,13 +3339,18 @@ struct StateCount {
 /// Turn one cheap PR read into the same stats `gh pr view` used to provide,
 /// plus the review-thread badge.
 fn parse_pr_read(json: &[u8]) -> Result<ParsedPrRead, String> {
-    let output: PrReadOutput =
+    let output: serde_json::Value =
         serde_json::from_slice(json).map_err(|e| format!("gh json parse: {e}"))?;
+    // Choose by JSON shape: an untagged fallback can deserialize a malformed
+    // page array as a single struct, then misreport the PR as nonexistent.
     let pages = match output {
-        PrReadOutput::Single(page) => vec![*page],
-        PrReadOutput::Pages(pages) => pages,
+        serde_json::Value::Array(pages) => pages,
+        page => vec![page],
     };
-    let mut pulls = pages.into_iter().map(pr_read_pull);
+    let mut pulls = pages.into_iter().map(|page| {
+        let response = serde_json::from_value(page).map_err(|e| format!("gh json parse: {e}"))?;
+        pr_read_pull(response)
+    });
     let mut pull = pulls
         .next()
         .ok_or_else(|| "gh json parse: missing PR pages".to_string())??;
@@ -3408,7 +3406,7 @@ fn pr_read_from_pull(pull: PrReadPull) -> ParsedPrRead {
         changed_files: pull.changed_files,
         mergeable: pull.mergeable,
         merge_state_status: pull.merge_state_status,
-        review_decision: pull.review_decision,
+        review_decision: pull.review_decision.unwrap_or_default(),
         latest_reviews: pull.latest_reviews.nodes,
         closed_at: pull.closed_at,
         updated_at: pull.updated_at,
@@ -5329,6 +5327,63 @@ functions.wait {"cell_id":"17"}
         assert!(PR_READ_QUERY.contains("isDraft"));
         assert!(PR_READ_QUERY.contains("additions"));
         assert!(PR_READ_QUERY.contains("reviewThreads"));
+    }
+
+    #[test]
+    fn pr_without_review_decision_survives_enrichment_and_ages_by_turns() {
+        let loc = PrLocation::new("o", "evals", 155);
+        let page = serde_json::json!({"data":{"repository":{"pullRequest":{
+            "number":155,"url":loc.url,"state":"OPEN","reviewDecision":null
+        }}}});
+        // `gh api --paginate --slurp` wraps even a single response in an array.
+        for response in [serde_json::json!([page.clone()]), page] {
+            let mut tracker = PrTracker::new();
+            tracker.set_prompt_count(3);
+            let mut pr = SessionPr::placeholder(&loc, false);
+            bump_mention(&mut pr, false, 3, None);
+            tracker.prs.push(pr);
+            let mut primary = SessionPr::test_stub(1955, "o", "portal");
+            primary.primary = true;
+            primary.mentions = 4;
+            primary.refreshed_at = now_unix_ms();
+            tracker.prs.push(primary);
+            let (sender, receiver) = mpsc::channel();
+            tracker.pending.insert(loc.url.clone(), receiver);
+            sender
+                .send(JobResult::Pr(Box::new(FetchResult {
+                    requested_url: Some(loc.url.clone()),
+                    created_here: false,
+                    pr_active: false,
+                    data: parse_pr_read(&serde_json::to_vec(&response).unwrap())
+                        .map(|parsed| parsed.pr),
+                    threads: None,
+                })))
+                .unwrap();
+            tracker.poll();
+            assert_eq!(tracker.prs.len(), 2, "a valid PR survives enrichment");
+            assert_eq!(tracker.prs[0].state, "OPEN");
+            assert_eq!(tracker.prs[0].review_decision, "");
+            assert!(tracker.prs[0].fetch_error.is_empty());
+            for prompt in 3..=6 {
+                tracker.set_prompt_count(prompt);
+                tracker.reclassify("main", Path::new("/tmp"));
+                assert!(!tracker.prs[0].primary);
+                assert_eq!(tracker.prs[0].dismissed, prompt == 6);
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_pr_pages_do_not_report_a_missing_pr() {
+        let response = br#"[{"data":{"repository":{"pullRequest":{
+            "number":155,"reviewDecision":42
+        }}}}]"#;
+        let error = parse_pr_read(response).err().expect("invalid field fails");
+        assert!(error.starts_with("gh json parse:"), "{error}");
+        assert!(
+            !pr_does_not_exist(&error),
+            "parse failures must keep the PR"
+        );
     }
 
     #[test]
