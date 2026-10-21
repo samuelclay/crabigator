@@ -14,6 +14,9 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.contentDescription
@@ -42,8 +45,10 @@ import java.util.UUID
 @Composable internal fun ConductorView(
     model: SessionModel,
     modifier: Modifier = Modifier,
+    newSession: (Rect) -> Unit = {},
     request: suspend (String, JSONObject?) -> JSONObject = { path, body -> model.api.call(path, body) },
 ) {
+    var newSessionAnchor by remember { mutableStateOf(Rect.Zero) }
     var snapshot by remember { mutableStateOf(JSONObject()) }
     var error by remember { mutableStateOf<String?>(null) }
     var sending by remember { mutableStateOf(false) }
@@ -92,6 +97,7 @@ import java.util.UUID
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             ConductorText("Conductor", weight = FontWeight.SemiBold, size = 17)
             Spacer(Modifier.weight(1f))
+            Control(R.drawable.ic_add, "New session", modifier = Modifier.onGloballyPositioned { newSessionAnchor = it.boundsInRoot() }) { newSession(newSessionAnchor) }
             if (snapshot.optBoolean("working")) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
             ConductorText(if (snapshot.optBoolean("host_online")) "Desktop ready" else "Desktop offline", size = 11, color = Muted)
         }

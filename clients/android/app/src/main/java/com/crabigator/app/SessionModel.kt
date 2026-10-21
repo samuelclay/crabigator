@@ -10,9 +10,25 @@ import okhttp3.*
 import org.json.JSONObject
 
 enum class RosterStatus { Loading, Ready, Failed }
+data class SessionLaunch(val computer: String = "", val path: String = "", val platform: String = "codex", val busy: Boolean = false, val message: String = "", val failed: Boolean = false)
 
 data class AppState(val paired: Boolean = false, val sessions: List<Session> = emptyList(), val prs: List<PullRequest> = emptyList(), val loading: Boolean = false, val rosterStatus: RosterStatus = RosterStatus.Loading, val error: String? = null, val selected: Session? = null, val screen: String = "", val history: String = "", val historyLoaded: Boolean = false, val screenLoaded: Boolean = false, val details: Map<String, JSONObject> = emptyMap(), val prompt: JSONObject? = null, val revision: Long? = null, val connected: Boolean = false, val desktopStatusKnown: Boolean = false, val sending: Boolean = false, val pageDirection: Int = 1, val navigationId: Long = 0)
 class SessionModel(app: Application) : AndroidViewModel(app) {
+    val sessionLaunch = MutableStateFlow(SessionLaunch())
+    fun startSession(source: Session, path: String, platform: String, request: suspend (String, JSONObject) -> Unit) {
+        if (sessionLaunch.value.busy) return
+        sessionLaunch.value = SessionLaunch(computer = source.machineGroup, path = path, platform = platform, busy = true)
+        viewModelScope.launch {
+            try {
+                request("/api/sessions/${source.id}/spawn", JSONObject().put("cwd", path).put("platform", platform))
+                sessionLaunch.value = sessionLaunch.value.copy(busy = false, message = "Requested $platform in $path on ${source.machineGroup}. Waiting for it to connect.")
+            } catch (e: Exception) {
+                sessionLaunch.value = sessionLaunch.value.copy(busy = false, message = "$platform in $path on ${source.machineGroup}: ${e.message.orEmpty()} Check the desktop before trying again.", failed = true)
+                if (e is CancellationException) throw e
+            }
+        }
+    }
+
     private val preferenceStore = PreferenceStore(app)
     val preferences = MutableStateFlow(preferenceStore.load())
     private val navigationStore = NavigationStore(app)

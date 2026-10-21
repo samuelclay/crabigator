@@ -43,7 +43,7 @@ private val Cyan = CrabColors.Cyan
     val prefs by model.preferences.collectAsStateWithLifecycle()
     var lastMenu by remember { mutableStateOf("Settings") }
     if (menu != null) lastMenu = menu
-    val title = if (lastMenu == "Board style") "Style" else lastMenu
+    val title = when (lastMenu) { "Board style" -> "Style"; "Create session" -> "New session"; else -> lastMenu }
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(menu) { if (menu != null) { focus.clearFocus(); keyboard?.hide() } }
@@ -88,7 +88,7 @@ private val Cyan = CrabColors.Cyan
                             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                 when (page) {
                                     "Notifications" -> NotificationMenu(notifications)
-                                    "New session" -> BoardActionMenu(model, watch = false)
+                                    "New session", "Create session" -> BoardActionMenu(model, watch = false)
                                     "Watch PR" -> BoardActionMenu(model, watch = true)
                                     else -> SettingsMenu(model, prefs, navigate)
                                 }
@@ -255,54 +255,89 @@ private val Cyan = CrabColors.Cyan
     }
     if (message.isNotEmpty()) Text(message, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
 }
-@Composable private fun BoardActionMenu(model: SessionModel, watch: Boolean) {
+@Composable internal fun NewSessionForm(model: SessionModel, request: suspend (String, JSONObject) -> Unit = { path, body -> model.api.call(path, body); model.refresh() }) {
     val state by model.state.collectAsStateWithLifecycle()
+    val launch by model.sessionLaunch.collectAsStateWithLifecycle()
+    val pending = launch.takeIf { it.busy }
     val desktops = state.sessions.filter { it.active }.distinctBy { it.machineGroup }
-    var computer by remember { mutableStateOf(desktops.firstOrNull()?.machineGroup.orEmpty()) }
+    var computer by remember { mutableStateOf(pending?.computer ?: state.selected?.takeIf { it.active }?.machineGroup ?: desktops.firstOrNull()?.machineGroup.orEmpty()) }
     val source = desktops.firstOrNull { it.machineGroup == computer }
-    var cwd by remember(computer) { mutableStateOf(source?.cwd.orEmpty()) }
-    var platform by remember { mutableStateOf("codex") }
+    val projects = state.sessions.filter { it.machineGroup == computer && it.cwd.isNotBlank() }.distinctBy { it.cwd }.sortedBy { it.repo.ifBlank { it.cwd.substringAfterLast('/') } }
+    var folder by remember(computer) { mutableStateOf(if (pending != null) pending.path.takeIf { path -> projects.any { it.cwd == path } }.orEmpty() else state.selected?.takeIf { it.machineGroup == computer }?.cwd ?: projects.firstOrNull()?.cwd.orEmpty()) }
+    var customFolder by remember(computer) { mutableStateOf(pending?.path.orEmpty()) }
+    var platform by remember { mutableStateOf(pending?.platform ?: "codex") }
+    var projectMenu by remember { mutableStateOf(false) }
+    var computerMenu by remember { mutableStateOf(false) }
+    val busy = launch.busy
+    LaunchedEffect(desktops) { if (computer.isEmpty()) computer = desktops.firstOrNull()?.machineGroup.orEmpty() }
+    val path = (if (folder.isBlank()) customFolder else folder).trim()
+    MenuSection("Project") {
+        Box {
+            TextButton({ projectMenu = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Text(projects.firstOrNull { it.cwd == folder }?.let { it.repo.ifBlank { it.cwd.substringAfterLast('/') } } ?: "Other folder…", Modifier.weight(1f), color = Peach)
+                Text("⌄", color = Muted)
+            }
+            DropdownMenu(projectMenu, { projectMenu = false }) {
+                projects.forEach { project ->
+                    DropdownMenuItem(text = { Column {
+                        Text(project.repo.ifBlank { project.cwd.substringAfterLast('/') })
+                        Text(project.cwd, fontSize = 11.sp, color = Muted)
+                    } }, onClick = { folder = project.cwd; projectMenu = false })
+                }
+                DropdownMenuItem(text = { Text("Other folder…") }, onClick = { folder = ""; projectMenu = false })
+            }
+        }
+        if (folder.isBlank()) OutlinedTextField(customFolder, { customFolder = it }, label = { Text("Folder") }, placeholder = { Text("/path/to/project") }, enabled = !busy, singleLine = true, modifier = Modifier.fillMaxWidth())
+        else Text(folder, fontSize = 11.sp, color = Muted, modifier = Modifier.padding(horizontal = 8.dp))
+        if (desktops.size > 1 || source == null && desktops.isNotEmpty()) Box {
+            TextButton({ computerMenu = true }, enabled = !busy) { Text(if (source == null) "$computer · Offline" else "On $computer", color = Muted, fontSize = 12.sp) }
+            DropdownMenu(computerMenu, { computerMenu = false }) {
+                desktops.forEach { desktop -> DropdownMenuItem(text = { Text(desktop.machineGroup) }, onClick = { computer = desktop.machineGroup; computerMenu = false }) }
+            }
+        } else Text(source?.let { "On ${it.machineGroup}" } ?: "Open Crabigator on a desktop to start a session.", fontSize = 12.sp, color = Muted, modifier = Modifier.padding(8.dp))
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Assistant", color = Muted, fontSize = 13.sp)
+        listOf("Codex" to "codex", "Claude" to "claude", "OpenCode" to "opencode", "Grok" to "grok").chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { (label, value) ->
+                    FilterChip(platform == value, { platform = value }, label = { Text(label) }, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 44.dp))
+                }
+            }
+        }
+    }
+    Button(onClick = {
+        val desktop = source ?: return@Button
+        model.startSession(desktop, path, platform, request)
+    }, enabled = !busy && source != null && path.startsWith("/") && !path.contains('\u0000'), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+        if (busy) { CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
+        Text(if (busy) "Starting…" else "Start session")
+    }
+    if (launch.message.isNotBlank()) Text(launch.message, color = if (launch.failed) MaterialTheme.colorScheme.error else Mint, fontSize = 13.sp)
+}
+
+@Composable private fun BoardActionMenu(model: SessionModel, watch: Boolean) {
+    if (!watch) { NewSessionForm(model); return }
     var target by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var failed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    if (watch) {
-        OutlinedTextField(target, { target = it }, label = { Text("GitHub URL or owner/repo#123") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-    } else {
-        MenuSection("Desktop") {
-            val names = desktops.map { it.machineGroup }
-            SettingPicker("Computer", computer.ifBlank { "No connected desktop" }, names) { computer = names[it] }
-            OutlinedTextField(cwd, { cwd = it }, label = { Text("Folder") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-            val folders = state.sessions.filter { it.machineGroup == computer }.map { it.cwd }.filter { it.isNotBlank() }.distinct().sorted()
-            if (folders.isNotEmpty()) SettingPicker("Recent folders", "Choose…", folders) { cwd = folders[it] }
-            val platforms = listOf("claude", "codex", "opencode", "grok")
-            SettingPicker("Assistant", platform, platforms) { platform = platforms[it] }
-            if (desktops.isEmpty()) Text("Open Crabigator on a desktop to start a session.", color = Muted)
-        }
-    }
+    OutlinedTextField(target, { target = it }, label = { Text("GitHub URL or owner/repo#123") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
     Button(onClick = {
+        val body = BoardActions.watchTarget(target) ?: return@Button
         busy = true; message = ""; failed = false
         scope.launch {
             try {
-                if (watch) {
-                    val body = BoardActions.watchTarget(target) ?: return@launch
-                    model.api.call("/api/prs/watched", body)
-                    message = "Watching ${body.text("owner")}/${body.text("repo")}#${body.optInt("number")}."
-                } else {
-                    val desktop = source ?: return@launch
-                    model.api.call("/api/sessions/${desktop.id}/spawn", JSONObject().put("cwd", cwd.trim()).put("platform", platform))
-                    message = "Requested on $computer. The session will appear when it connects."
-                }
+                model.api.call("/api/prs/watched", body)
+                message = "Watching ${body.text("owner")}/${body.text("repo")}#${body.optInt("number")}."
                 model.refresh()
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 failed = true; message = e.message.orEmpty()
             } finally { busy = false }
         }
-    }, enabled = !busy && (if (watch) BoardActions.watchTarget(target) != null else source != null && cwd.trim().startsWith("/"))) {
-        Text(if (busy) "Sending…" else if (watch) "Watch PR" else "Start session")
-    }
+    }, enabled = !busy && BoardActions.watchTarget(target) != null) { Text(if (busy) "Sending…" else "Watch PR") }
     if (message.isNotBlank()) Text(message, color = if (failed) MaterialTheme.colorScheme.error else Mint)
 }
 @Composable private fun NotificationMenu(requestPermission: () -> Unit) {

@@ -133,7 +133,9 @@ class MainActivity : ComponentActivity() {
                     listMode, { next ->
                         if (listMode == next) { if (wide) model.navigate { it.copy(expanded = !it.expanded) } }
                         else { model.navigate { it.copy(listMode = next) } }
-                    }, if (wide) fullBoard else null, { model.navigate { it.copy(expanded = false) } }, boardSearchRequest) { menuAnchor = it; menu = "Settings" }
+                    }, if (wide) fullBoard else null, { model.navigate { it.copy(expanded = false) } }, boardSearchRequest,
+                        newSession = { menuAnchor = it; menu = "Create session" },
+                        settings = { menuAnchor = it; menu = "Settings" })
             }
             val entrance = remember(s.selected != null) { Animatable(1f) }
             var swipe by remember(s.selected?.id) { mutableStateOf<Float?>(null) }
@@ -202,7 +204,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    if (navigation.conductor) conductorState.SaveableStateProvider("conductor") { ConductorView(model, Modifier.fillMaxSize().background(Ink).safeDrawingPadding()) }
+    if (navigation.conductor) conductorState.SaveableStateProvider("conductor") { ConductorView(model, Modifier.fillMaxSize().background(Ink).safeDrawingPadding(), newSession = { menuAnchor = it; menu = "Create session" }) }
     MenuPanel(menu, menuAnchor, model, notifications, { destination ->
         when (destination) {
             "Search" -> { menu = null; boardSearchRequest++ }
@@ -234,12 +236,13 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun Board(roster: List<Session>, pullRequests: List<PullRequest>, selectedId: String?, rosterStatus: RosterStatus, model: SessionModel,
-    list: Boolean, mode: (Boolean) -> Unit, expanded: Boolean?, selected: () -> Unit, searchRequest: Int, settings: (Rect) -> Unit) {
+    list: Boolean, mode: (Boolean) -> Unit, expanded: Boolean?, selected: () -> Unit, searchRequest: Int, newSession: (Rect) -> Unit, settings: (Rect) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }; var searching by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(searchRequest) { if (searchRequest > 0) searching = true }
     val now = remember { flow { while (true) { emit(System.currentTimeMillis() / 1000); delay(1000) } } }
         .collectAsStateWithLifecycle(initialValue = System.currentTimeMillis() / 1000)
     var settingsAnchor by remember { mutableStateOf(Rect.Zero) }
+    var newSessionAnchor by remember { mutableStateOf(Rect.Zero) }
     val prefs by model.preferences.collectAsStateWithLifecycle()
     val all = prefs.showEnded
     var machineOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -264,7 +267,7 @@ class MainActivity : ComponentActivity() {
     val floating = expanded == true
     val headerSpace by animateDpAsState(if (floating && !searching) 0.dp else 60.dp, tween(360), label = "Board header space")
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val toolbarWidth by animateDpAsState(if (floating) 228.dp else maxWidth, tween(360), label = "Board toolbar width")
+        val toolbarWidth by animateDpAsState(if (floating) 276.dp else maxWidth, tween(360), label = "Board toolbar width")
         Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(headerSpace))
             if (searching) OutlinedTextField(query, { query = it }, placeholder = { Text("Search") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
@@ -306,6 +309,7 @@ class MainActivity : ComponentActivity() {
             Row(Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures {} }.padding(horizontal = 8.dp, vertical = if (floating) 2.dp else 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Image(painterResource(R.drawable.ic_crabigator), "Crabigator", Modifier.padding(8.dp).size(28.dp))
                 Spacer(Modifier.weight(1f))
+                Control(R.drawable.ic_add, "New session", modifier = Modifier.onGloballyPositioned { newSessionAnchor = it.boundsInRoot() }) { newSession(newSessionAnchor) }
                 Control(R.drawable.ic_search, "Search", selected = searching) { searching = !searching; if (!searching) query = "" }
                 Control(R.drawable.ic_settings, "Settings", modifier = Modifier.onGloballyPositioned { settingsAnchor = it.boundsInRoot() }) { settings(settingsAnchor) }
             }
@@ -322,7 +326,7 @@ class MainActivity : ComponentActivity() {
         stateDescription = if (collapsed) "Collapsed" else "Expanded"
     }) {
         BoxWithConstraints {
-            val nameWidth = if (floating) ((maxWidth - 260.dp) / 2 - 36.dp).coerceAtLeast(60.dp) else maxWidth
+            val nameWidth = if (floating) ((maxWidth - 308.dp) / 2 - 36.dp).coerceAtLeast(60.dp) else maxWidth
             Row(Modifier.heightIn(min = if (floating) 56.dp else 44.dp).padding(horizontal = 8.dp, vertical = spacing.gap(8)), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(painterResource(if (countNoun == "session") R.drawable.ic_machine else R.drawable.ic_board), null, tint = Muted, modifier = Modifier.size(18.dp))
                 Text(name, color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).wrapContentWidth(Alignment.Start).widthIn(max = nameWidth))
