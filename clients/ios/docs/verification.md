@@ -202,3 +202,9 @@ Result bundles are `/tmp/crabigator-reading-verified.xcresult`, `/tmp/crabigator
 - Verify microphone permission, recording, cancellation, transcription and background interruption on a physical device.
 
 The updated app is left paired on ClayPad Mini. A production app release has not been requested.
+
+## Header new-session picker — October 18, 2026
+
+The header + opens the project and assistant picker from List, PR board and Conductor. The iOS simulator UI test `ConductorTests/testNewSessionHeaderShowsProjectAndAllAssistants` passed, including visible assistant choices, a visible Start action, custom-folder validation and navigation back to List. The signed ClayPhone build passed and installed. After unlocking ClayPhone SE 3, the same UI test passed on the physical device, with all four assistants and Start visible together. The app was relaunched without fixture flags afterward.
+
+Galaxy S22 and Tab A8 each passed three instrumentation checks: `NewSessionTest` verifies all three header entry points, correct computer/path/assistant routing through a captured request, recovery when a computer disappears, and retained request state without duplicate submission after reopening; `MobileParityTest#boardSettingsPersistAndExposeActions` verifies the existing Settings entry. Both devices received the debug build. These checks did not launch a real desktop assistant. Logs are under `/tmp/crabigator-new-session-*`; screenshot evidence is under ignored `target/conductor-evidence/`.

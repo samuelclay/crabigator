@@ -594,9 +594,12 @@ final class ReadingTests: XCTestCase {
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
         capture("Board before settings")
         tapCenter(app.buttons["Settings"], in: app)
-        let newSession = app.buttons["New session"]
+        let newSession = app.descendants(matching: .any).matching(identifier: "Settings form").firstMatch.buttons["New session"]
         reveal(newSession)
         tapCenter(newSession, in: app)
+        XCTAssertTrue(app.buttons["New session project"].waitForExistence(timeout: 5))
+        app.buttons["New session project"].tap()
+        app.buttons["Other folder…"].tap()
         XCTAssertTrue(app.textFields["Folder"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Start session"].exists)
         capture("New session desktop and folder")

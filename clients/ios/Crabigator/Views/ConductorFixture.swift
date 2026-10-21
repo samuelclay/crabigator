@@ -51,7 +51,7 @@ struct ConductorFixture: View {
         }
     }
     private func seedTestRoster() {
-        let session: JSON = ["session_id": "news-session", "title": "Review the NewsBlur release", "repo_owner": "fixture", "repo_name": "NewsBlur", "device_name": "Fixture computer", "state": "thinking", "started_at": Int(Date().timeIntervalSince1970), "active": true,
+        let session: JSON = ["session_id": "news-session", "title": "Review the NewsBlur release", "repo_owner": "fixture", "repo_name": "NewsBlur", "cwd": "/projects/NewsBlur", "device_name": "Fixture computer", "state": "thinking", "started_at": Int(Date().timeIntervalSince1970), "active": true,
                              "session_mark": ["glyph": "¬‿¬", "fg_hex": "#AFFFD7", "bg_hex": "#243B35"]]
         model.paired = true; model.close()
         model.sessions = [Session(session)]

@@ -128,65 +128,150 @@ struct SettingsMenu: View {
         }
     }
 }
+struct NewSessionButton: View {
+    @ObservedObject var model: SessionModel
+    @State private var presented = false
+    var body: some View {
+        IconButton(icon: "plus", label: "New session", selected: presented) { presented = true }
+            .popover(isPresented: $presented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+                NavigationStack {
+                    NewSessionForm(model: model)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { presented = false } } }
+                }.nativePopover()
+            }
+    }
+}
+
+struct NewSessionForm: View {
+    @ObservedObject var model: SessionModel
+    @State private var computer = ""
+    @State private var folder = ""
+    @State private var customFolder = ""
+    @State private var platform = "codex"
+    private var busy: Bool { model.sessionLaunch.busy }
+    private var message: String { model.sessionLaunch.message }
+    private var failed: Bool { model.sessionLaunch.failed }
+    private let assistants = [("Codex", "codex"), ("Claude", "claude"), ("OpenCode", "opencode"), ("Grok", "grok")]
+    private var desktops: [Session] {
+        var seen = Set<String>()
+        return model.sessions.filter { $0.active && seen.insert($0.machine).inserted }
+    }
+    private var source: Session? { desktops.first { $0.machine == computer } }
+    private var projects: [Session] {
+        var seen = Set<String>()
+        return model.sessions.filter { $0.machine == computer && !$0.cwd.isEmpty && seen.insert($0.cwd).inserted }
+            .sorted { projectName($0).localizedStandardCompare(projectName($1)) == .orderedAscending }
+    }
+    private var path: String { (folder.isEmpty ? customFolder : folder).trimmingCharacters(in: .whitespacesAndNewlines) }
+    private func projectName(_ session: Session) -> String { session.repo.isEmpty ? URL(fileURLWithPath: session.cwd).lastPathComponent : session.repo }
+    private func chooseComputer(_ name: String) {
+        computer = name
+        let selected = model.sessions.first { $0.id == model.selectionID && $0.machine == name }
+        folder = selected?.cwd ?? projects.first?.cwd ?? ""
+        customFolder = ""
+    }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Project").font(.caption).foregroundStyle(Crab.muted)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Menu {
+                            ForEach(projects, id: \.cwd) { project in
+                                Button { folder = project.cwd } label: {
+                                    Text(projectName(project))
+                                    Text(project.cwd)
+                                }
+                            }
+                            Button("Other folder…") { folder = "" }
+                        } label: {
+                            HStack {
+                                Text(projects.first { $0.cwd == folder }.map(projectName) ?? "Other folder…").lineLimit(2)
+                                Spacer(minLength: 4)
+                                Image(systemName: "chevron.down").font(.caption)
+                            }.foregroundStyle(Crab.orange).frame(minHeight: 32)
+                        }.accessibilityIdentifier("New session project")
+                        if folder.isEmpty {
+                            TextField("/path/to/project", text: $customFolder).textInputAutocapitalization(.never).autocorrectionDisabled().font(.system(.caption, design: .monospaced)).accessibilityLabel("Folder")
+                        } else { Text(folder).font(.system(.caption, design: .monospaced)).foregroundStyle(Crab.muted).textSelection(.enabled) }
+                        if desktops.count > 1 || (source == nil && !desktops.isEmpty) {
+                            Picker("Computer", selection: Binding(get: { computer }, set: chooseComputer)) {
+                                ForEach(desktops) { Text($0.machine).tag($0.machine) }
+                                if source == nil { Text(computer.isEmpty ? "Choose computer" : "\(computer) · Offline").tag(computer) }
+                            }.pickerStyle(.menu)
+                        } else if let source { Label(source.machine, systemImage: "desktopcomputer").font(.caption).foregroundStyle(Crab.muted) }
+                        else { Text("Open Crabigator on a desktop to start a session.").foregroundStyle(Crab.muted) }
+                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Crab.panel, in: RoundedRectangle(cornerRadius: 12))
+                }.disabled(busy)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Assistant").font(.caption).foregroundStyle(Crab.muted)
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                        ForEach(assistants, id: \.1) { name, value in
+                            Button { platform = value } label: {
+                                HStack { Text(name); Spacer(minLength: 4); if platform == value { Image(systemName: "checkmark") } }
+                                    .font(.system(size: 14, weight: .medium)).padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: 44)
+                                    .background(platform == value ? Crab.orange.opacity(0.18) : Crab.panel, in: RoundedRectangle(cornerRadius: 10))
+                            }.buttonStyle(.plain).foregroundStyle(platform == value ? Crab.orange : Crab.muted)
+                                .accessibilityLabel(name).accessibilityValue(platform == value ? "Selected" : "")
+                        }
+                    }
+                }.disabled(busy)
+            }.padding(.horizontal, 20).padding(.vertical, 12)
+        }
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 8) {
+                    Button {
+                        guard let source else { return }
+                        model.startSession(on: source, path: path, platform: platform)
+                    } label: { HStack { Spacer(); if busy { ProgressView() }; Text(busy ? "Starting…" : "Start session"); Spacer() }.frame(minHeight: 36) }
+                        .buttonStyle(.borderedProminent).tint(Crab.orange)
+                        .disabled(busy || source == nil || !path.hasPrefix("/") || path.contains("\0"))
+                    if !message.isEmpty { Text(message).font(.caption).foregroundStyle(failed ? Crab.red : Crab.mint) }
+                }.padding(.horizontal, 20).padding(.vertical, 12).background(.regularMaterial)
+            }.navigationTitle("New session").navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                if busy {
+                    computer = model.sessionLaunch.computer
+                    folder = projects.contains { $0.cwd == model.sessionLaunch.path } ? model.sessionLaunch.path : ""
+                    customFolder = model.sessionLaunch.path
+                    platform = model.sessionLaunch.platform
+                } else if computer.isEmpty {
+                    chooseComputer(model.sessions.first { $0.id == model.selectionID && $0.active }?.machine ?? desktops.first?.machine ?? "")
+                }
+            }
+            .onChange(of: desktops.map(\.machine)) { _, names in if computer.isEmpty, let name = names.first { chooseComputer(name) } }
+    }
+}
+
 struct BoardActionForm: View {
     @ObservedObject var model: SessionModel
     let watch: Bool
     @State private var target = ""
-    @State private var computer = ""
-    @State private var cwd = ""
-    @State private var platform = "codex"
     @State private var busy = false
     @State private var message = ""
     @State private var failed = false
-    var desktops: [Session] {
-        var seen = Set<String>()
-        return model.sessions.filter { $0.active && seen.insert($0.machine).inserted }
-    }
-    var source: Session? { desktops.first { $0.machine == computer } }
     var body: some View {
-        Form {
-            if watch {
+        if !watch { NewSessionForm(model: model) }
+        else {
+            Form {
+                Section { TextField("GitHub URL or owner/repo#123", text: $target).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("Watch PR target") }
                 Section {
-                    TextField("GitHub URL or owner/repo#123", text: $target).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("Watch PR target")
-                }
-            } else {
-                Section {
-                    Picker("Computer", selection: $computer) { ForEach(desktops) { Text($0.machine).tag($0.machine) } }.pickerStyle(.menu)
-                    TextField("/path/to/project", text: $cwd).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityLabel("Folder")
-                    let folders = Array(Set(model.sessions.filter { $0.machine == computer && !$0.cwd.isEmpty }.map(\.cwd))).sorted()
-                    if !folders.isEmpty {
-                        Menu("Recent folders") { ForEach(folders, id: \.self) { folder in Button(folder) { cwd = folder } } }
-                    }
-                    Picker("Assistant", selection: $platform) {
-                        Text("Claude").tag("claude"); Text("Codex").tag("codex"); Text("opencode").tag("opencode"); Text("Grok").tag("grok")
-                    }.pickerStyle(.menu)
-                    if desktops.isEmpty { Text("Open Crabigator on a desktop to start a session.").foregroundStyle(Crab.muted) }
-                }
-            }
-            Section {
-                Button(busy ? "Sending…" : watch ? "Watch PR" : "Start session") {
-                    busy = true; message = ""; failed = false
-                    Task {
-                        defer { busy = false }
-                        do {
-                            if watch {
-                                guard let body = BoardActions.watchTarget(target) else { return }
+                    Button(busy ? "Sending…" : "Watch PR") {
+                        guard let body = BoardActions.watchTarget(target) else { return }
+                        busy = true; message = ""; failed = false
+                        Task {
+                            defer { busy = false }
+                            do {
                                 _ = try await model.api.call("/api/prs/watched", body: body)
                                 message = "Watching \(body.text("owner"))/\(body.text("repo"))#\(body.int("number"))."
-                            } else {
-                                guard let source else { return }
-                                _ = try await model.api.call("/api/sessions/\(source.id)/spawn", body: ["cwd": cwd.trimmingCharacters(in: .whitespacesAndNewlines), "platform": platform])
-                                message = "Requested on \(computer). The session will appear when it connects."
-                            }
-                            await model.refresh()
-                        } catch { failed = true; message = error.localizedDescription }
-                    }
-                }.disabled(busy || (watch ? BoardActions.watchTarget(target) == nil : source == nil || !cwd.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/")))
-                if !message.isEmpty { Text(message).foregroundStyle(failed ? Crab.red : Crab.mint) }
-            }
-        }.navigationTitle(watch ? "Watch PR" : "New session").navigationBarTitleDisplayMode(.inline)
-            .onAppear { if computer.isEmpty { computer = desktops.first?.machine ?? ""; cwd = source?.cwd ?? "" } }
-            .onChange(of: computer) { _, _ in cwd = source?.cwd ?? "" }
+                                await model.refresh()
+                            } catch { failed = true; message = error.localizedDescription }
+                        }
+                    }.disabled(busy || BoardActions.watchTarget(target) == nil)
+                    if !message.isEmpty { Text(message).foregroundStyle(failed ? Crab.red : Crab.mint) }
+                }
+            }.navigationTitle("Watch PR").navigationBarTitleDisplayMode(.inline)
+        }
     }
 }
 struct NotificationSettings: View {

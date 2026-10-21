@@ -116,6 +116,7 @@ struct ConductorView: View {
             HStack {
                 Text("Conductor").font(.headline)
                 Spacer()
+                NewSessionButton(model: model)
                 if conductor.snapshot.bool("working") { ProgressView().tint(Crab.orange) }
                 Text(conductor.snapshot.bool("host_online") ? "Desktop ready" : "Desktop offline").font(.caption).foregroundStyle(Crab.muted)
             }.padding()

@@ -36,7 +36,7 @@ struct BoardView: View {
             }
         }.background(Crab.ink)
             .overlay(alignment: .top) {
-                header.frame(maxWidth: floatingToolbar ? 228 : .infinity)
+                header.frame(maxWidth: floatingToolbar ? 276 : .infinity)
                     .contentShape(Rectangle()).simultaneousGesture(TapGesture().onEnded {})
                     .background { if floatingToolbar { Capsule().fill(.ultraThinMaterial).overlay(Capsule().strokeBorder(Color.white.opacity(0.12))).shadow(color: .black.opacity(0.25), radius: 8, y: 3) } }
                     .animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
@@ -47,6 +47,7 @@ struct BoardView: View {
         HStack(spacing: 4) {
             Image("Crabigator").resizable().scaledToFit().frame(width: 28, height: 28).padding(8).accessibilityLabel("Crabigator")
             Spacer()
+            NewSessionButton(model: model)
             IconButton(icon: "magnifyingglass", label: "Search", selected: searching) { withAnimation { searching.toggle(); if !searching { query = "" } } }
             IconButton(icon: "gearshape", label: "Settings") { settings = true }
                 .popover(isPresented: $settings, attachmentAnchor: .rect(.bounds), arrowEdge: .top) { SettingsMenu(model: model,
@@ -116,7 +117,7 @@ struct BoardView: View {
                                 Button {
                                     withAnimation(.easeInOut(duration: 0.3)) { if !collapsed.insert(machine).inserted { collapsed.remove(machine) }; proxy.scrollTo(machine, anchor: .top) }
                                 } label: {
-                                    HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).lineLimit(1).frame(maxWidth: floatingToolbar ? max(60, (width - 260) / 2 - 36) : .infinity, alignment: .leading); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").boardFont(11); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").boardFont(11) }
+                                    HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).lineLimit(1).frame(maxWidth: floatingToolbar ? max(60, (width - 308) / 2 - 36) : .infinity, alignment: .leading); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").boardFont(11); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").boardFont(11) }
                                         .boardFont(13, weight: .medium).foregroundStyle(Crab.muted).padding(.vertical, spacing.gap(13)).frame(minHeight: floatingToolbar ? 52 : 44).padding(.horizontal, 8).background(Crab.ink)
                                 }.buttonStyle(.plain).id(machine).accessibilityIdentifier("Machine \(machine)")
                             }

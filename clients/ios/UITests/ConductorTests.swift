@@ -1,6 +1,38 @@
 import XCTest
 
 final class ConductorTests: XCTestCase {
+    func testNewSessionHeaderShowsProjectAndAllAssistants() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment["CRABIGATOR_TEST_CONDUCTOR"] = "1"
+        app.launchEnvironment["CRABIGATOR_TEST_CONDUCTOR_ROSTER"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Check app store review"].waitForExistence(timeout: 10))
+        let create = app.buttons.matching(identifier: "New session").allElementsBoundByIndex.filter(\.isHittable)
+        XCTAssertEqual(create.count, 1)
+        create[0].tap()
+        XCTAssertTrue(app.buttons["New session project"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["/projects/NewsBlur"].exists)
+        for assistant in ["Codex", "Claude", "OpenCode", "Grok"] {
+            XCTAssertTrue(app.buttons[assistant].exists)
+            app.buttons[assistant].tap()
+            XCTAssertEqual(app.buttons[assistant].value as? String, "Selected")
+        }
+        XCTAssertTrue(app.buttons["Start session"].isHittable)
+        XCTAssertLessThan(app.buttons["Grok"].frame.maxY, app.buttons["Start session"].frame.minY)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "New session header popover"; capture.lifetime = .keepAlways; add(capture)
+        app.buttons["New session project"].tap()
+        app.buttons["Other folder…"].tap()
+        XCTAssertTrue(app.textFields["Folder"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Start session"].isEnabled)
+        app.buttons["Done"].tap()
+        app.buttons.matching(identifier: "List").allElementsBoundByIndex.first { $0.isHittable }!.tap()
+        XCTAssertTrue(app.buttons["New session"].waitForExistence(timeout: 5))
+        app.buttons["New session"].tap()
+        XCTAssertTrue(app.buttons["New session project"].waitForExistence(timeout: 5))
+    }
+
     func testVoiceCancelAndEditPreserveDraft() {
         continueAfterFailure = false
         let app = XCUIApplication()

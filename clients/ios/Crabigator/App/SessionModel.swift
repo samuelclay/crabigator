@@ -179,6 +179,33 @@ import OSLog
 }
 
 @MainActor final class SessionModel: ObservableObject {
+    struct SessionLaunch {
+        var computer = ""
+        var path = ""
+        var platform = "codex"
+        var busy = false
+        var message = ""
+        var failed = false
+    }
+    @Published var sessionLaunch = SessionLaunch()
+
+    func startSession(on source: Session, path: String, platform: String) {
+        guard !sessionLaunch.busy else { return }
+        sessionLaunch = SessionLaunch(computer: source.machine, path: path, platform: platform, busy: true)
+        Task {
+            do {
+                _ = try await api.call("/api/sessions/\(source.id)/spawn", body: ["cwd": path, "platform": platform])
+                sessionLaunch.busy = false
+                sessionLaunch.message = "Requested \(platform) in \(path) on \(source.machine). Waiting for it to connect."
+                await refresh()
+            } catch {
+                sessionLaunch.busy = false
+                sessionLaunch.failed = true
+                sessionLaunch.message = "\(platform) in \(path) on \(source.machine): \(error.localizedDescription) Check the desktop before trying again."
+            }
+        }
+    }
+
     enum RosterStatus { case loading, ready, failed }
     @Published var paired = !Credentials.shared.connection().token.isEmpty
     @Published var sessions: [Session] = []
