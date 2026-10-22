@@ -5,6 +5,26 @@ import UserNotifications
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
+    func testModuleSummaryUsesWorkingTreeTotalsAndVisibleModules() {
+        let session = Session(["id": "summary"])
+        let data = SessionModuleData(session: session, details: [
+            "git": ["files": [["path": "a", "additions": 12, "deletions": 3], ["path": "b", "additions": 8, "deletions": 4]]],
+            "changes": ["by_language": [["changes": [["name": "symbol", "additions": 999]]]]]
+        ])
+        let prs = [PullRequest(["number": 1, "additions": 1000]), PullRequest(["number": 42, "primary": true])]
+        let summary = ModuleSummary(data: data, prs: prs, prefs: Preferences())
+        XCTAssertEqual(summary.prLabel, "PR #42 +1")
+        XCTAssertEqual(summary.fileCount, 2)
+        XCTAssertEqual(summary.additions, 20)
+        XCTAssertEqual(summary.deletions, 7)
+        var hidden = Preferences(); hidden.hidden.formUnion(["git", "prs"])
+        XCTAssertTrue(ModuleSummary(data: data, prs: prs, prefs: hidden).isEmpty)
+        XCTAssertTrue(ModuleSummary(data: SessionModuleData(session: session, details: [:]), prs: [], prefs: Preferences()).isEmpty)
+        let clean = ModuleSummary(data: SessionModuleData(session: session, details: ["git": ["files": []]]), prs: [], prefs: Preferences())
+        XCTAssertEqual(clean.fileCount, 0)
+        XCTAssertNil(clean.additions)
+        XCTAssertTrue(ModuleSummary(data: SessionModuleData(session: session, details: ["git": ["files": [], "is_repo": false]]), prs: [], prefs: Preferences()).isEmpty)
+    }
     @MainActor func testTerminalRulesClipAtEachViewportWidthWithoutChangingText() {
         for symbol in ["-", "─", "━", "=", "x"] {
             let rule = String(repeating: symbol, count: 120)

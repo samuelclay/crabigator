@@ -64,7 +64,7 @@ import kotlinx.coroutines.delay
                         SessionModules(session, modules, p, prs, Modifier.heightIn(max = contentHeight * .45f), revealScope = reveal)
                     }
                 }
-                SessionSummaryBar(session, modules.stats, p, p.widgets) { model.style { it.copy(widgets = !it.widgets) } }
+                SessionSummaryBar(session, modules.stats, p, p.widgets, modules, prs) { model.style { it.copy(widgets = !it.widgets) } }
             }
         }
         if (s.prompt != null) PromptPanel(s.prompt, s.sending || !s.connected || s.revision == null) { action -> model.send(action.route, action.body, guarded = true, expectedRevision = s.revision) }

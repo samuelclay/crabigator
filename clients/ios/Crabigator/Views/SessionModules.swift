@@ -13,6 +13,7 @@ struct SessionModuleData {
     var recap: String, bullets: [String], recapAt: Int, history: [JSON]
     var branch: String, files: [ModuleChange], changes: [ModuleChange], commits: [JSON]
     var stats: JSON
+    var gitLoaded: Bool
     init(session: Session, details: [String: JSON]) {
         history = (details["recap_history"]?.array("history") ?? []).filter { !recapHeadline($0.text("headline")).isEmpty }
         let incoming = details["recap"]?["latest"] as? JSON ?? [:]
@@ -21,11 +22,33 @@ struct SessionModuleData {
         bullets = latest["bullets"] as? [String] ?? []
         recapAt = latest.isEmpty ? session.recapAt : latest.int("generated_at") / 1000
         let git = details["git"] ?? [:]
+        gitLoaded = git["files"] != nil && (git["is_repo"] as? Bool ?? true)
         branch = git.text("branch", session.branch)
         files = git.array("files").map { ModuleChange($0, nameKey: "path", kindKey: "status") }
         changes = (details["changes"]?.array("by_language") ?? []).flatMap { $0.array("changes") }.map { ModuleChange($0, nameKey: "name", kindKey: "kind") }
         commits = details["commit_history"].map { Array($0.array("history").reversed()) } ?? git.array("recent_commits")
         stats = details["stats"] ?? [:]
+    }
+}
+
+struct ModuleSummary {
+    var prLabel: String?, fileCount: Int?, additions: Int?, deletions: Int?
+    init(data: SessionModuleData, prs: [PullRequest], prefs: Preferences) {
+        if prefs.visible("prs"), let pr = prs.first(where: { $0.primary }) ?? prs.first {
+            prLabel = "PR #\(pr.number)" + (prs.count > 1 ? " +\(prs.count - 1)" : "")
+        }
+        if prefs.visible("git") && data.gitLoaded {
+            fileCount = data.files.count
+            if !data.files.isEmpty {
+                additions = data.files.reduce(0) { $0 + $1.additions }
+                deletions = data.files.reduce(0) { $0 + $1.deletions }
+            }
+        }
+    }
+    var isEmpty: Bool { prLabel == nil && fileCount == nil }
+    var label: String {
+        [prLabel, fileCount.map { "\($0) changed file\($0 == 1 ? "" : "s")" },
+         additions.map { "\($0) additions" }, deletions.map { "\($0) deletions" }].compactMap { $0 }.joined(separator: ", ")
     }
 }
 
@@ -172,15 +195,27 @@ private struct ModuleAge: View {
 /// The permanent handle for the drawer. Metrics can still scroll horizontally;
 /// a tap anywhere on the bar opens or closes the modules.
 struct SessionSummaryBar: View {
-    var session: Session, stats: JSON, prefs: Preferences, expanded: Bool
+    var session: Session, data: SessionModuleData, prefs: Preferences, expanded: Bool
+    var prs: [PullRequest]
     var toggle: () -> Void
+    private var stats: JSON { data.stats }
+    private var modules: ModuleSummary { ModuleSummary(data: data, prs: prs, prefs: prefs) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { time in
         let now = Int(time.date.timeIntervalSince1970)
         HStack(spacing: 0) {
             IdentityChip(session: session).padding(.leading, 6)
-            metricStrip(now)
+            ViewThatFits(in: .horizontal) {
+                if !modules.isEmpty {
+                    HStack(spacing: 0) {
+                        metricRow(now, agoKeys: ["prompts", "completions"]).fixedSize()
+                        Spacer(minLength: 12)
+                        modulePreview.padding(.trailing, 8).fixedSize()
+                    }
+                }
+                metricStrip(now)
+            }.frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: "chevron.up")
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(Crab.orange)
                 .rotationEffect(.degrees(expanded ? 180 : 0))
@@ -203,7 +238,21 @@ struct SessionSummaryBar: View {
             let age = metric.age.isEmpty ? "" : ", " + metric.age
             return metric.label + ": " + metric.value + age
         }
-        return "Session summary. " + SessionStatus(session: session).label + ". " + descriptions.joined(separator: ", ")
+        return "Session summary. " + SessionStatus(session: session).label + ". " + (descriptions + [modules.label]).filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+    private var modulePreview: some View {
+        HStack(spacing: 8) {
+            if let pr = modules.prLabel { Text(pr).foregroundStyle(Crab.purple) }
+            if let count = modules.fileCount {
+                if modules.prLabel != nil { Text("·").foregroundStyle(Crab.muted) }
+                Text("\(count) file\(count == 1 ? "" : "s")").foregroundStyle(Crab.muted)
+                if modules.additions != nil {
+                    Text("·").foregroundStyle(Crab.muted)
+                    ModuleDiff(additions: modules.additions, deletions: modules.deletions)
+                }
+            }
+        }.font(.system(size: 11, design: .monospaced)).lineLimit(1)
+            .accessibilityElement(children: .combine).accessibilityIdentifier("module-summary-preview")
     }
     private func metrics(_ now: Int) -> [(key: String, symbol: String, value: String, label: String, color: Color, age: String)] {
         [
@@ -286,6 +335,7 @@ private struct ModulePRRow: View {
 #if DEBUG
 /// Local, read-only content for checking phone and tablet module layouts.
 struct SessionModulesFixture: View {
+    @State private var narrow = false
     @StateObject private var model: SessionModel = {
         let model = SessionModel(); model.preferences = Preferences(); return model
     }()
@@ -308,6 +358,14 @@ struct SessionModulesFixture: View {
         ]
         return stream
     }()
-    var body: some View { SessionDetail(model: model, stream: stream, wide: false, active: false, close: {}) }
+    var body: some View {
+        VStack(spacing: 0) {
+            if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_MODULE_SUMMARY"] == "1" {
+                Button(narrow ? "Use wide viewport" : "Use narrow viewport") { narrow.toggle() }
+            }
+            SessionDetail(model: model, stream: stream, wide: false, active: false, close: {})
+                .frame(width: narrow ? 360 : nil)
+        }
+    }
 }
 #endif

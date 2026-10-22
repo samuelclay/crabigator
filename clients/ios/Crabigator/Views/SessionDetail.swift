@@ -19,6 +19,7 @@ struct SessionDetail: View {
     var body: some View {
         GeometryReader { geometry in
             if let session = stream.selected {
+                let modules = SessionModuleData(session: session, details: stream.details)
                 VStack(spacing: 0) {
                     HStack(spacing: 2) {
                         IconButton(icon: wide ? "xmark" : "chevron.left", label: wide ? "Close session" : "Back to list", action: close)
@@ -65,7 +66,7 @@ struct SessionDetail: View {
                                 }
                             }.frame(height: terminalHeight(area.size.height)).frame(maxWidth: .infinity).background(Color(uiColor: TerminalText.rgb(0x0B0F14)))
                             if model.preferences.terminalHeight > 0 { Spacer(minLength: 0) }
-                            SessionModules(session: session, data: SessionModuleData(session: session, details: stream.details), prefs: model.preferences, prs: prs, revealed: showsWidgets)
+                            SessionModules(session: session, data: modules, prefs: model.preferences, prs: prs, revealed: showsWidgets)
                                 .id(session.id).frame(height: expandedDrawerHeight(area.size.height))
                                 .frame(height: drawerHeight(area.size.height), alignment: .bottom)
                                 .clipped().allowsHitTesting(showsWidgets).accessibilityHidden(!showsWidgets)
@@ -73,7 +74,7 @@ struct SessionDetail: View {
                                     guard height != modulesHeight else { return }
                                     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { modulesHeight = height }
                                 }
-                            SessionSummaryBar(session: session, stats: stream.details["stats"] ?? [:], prefs: model.preferences, expanded: showsWidgets) {
+                            SessionSummaryBar(session: session, data: modules, prefs: model.preferences, expanded: showsWidgets, prs: prs) {
                                 withAnimation(reduceMotion ? nil : showsWidgets
                                     ? .easeInOut(duration: 0.24)
                                     : .spring(response: 0.44, dampingFraction: 0.86)) { model.preferences.widgets.toggle() }

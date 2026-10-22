@@ -37,11 +37,22 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
     val bullets = latest?.optJSONArray("bullets")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty()
     val recapAt = latest?.let { it.optLong("generated_at") / 1000 } ?: session.recapAt
     private val git = details["git"]
+    val gitLoaded = git?.has("files") == true && git.optBoolean("is_repo", true)
     val branch = git?.text("branch", session.branch) ?: session.branch
     val files = git?.array("files").orEmpty().map { ModuleChange(it.text("path"), it.text("status"), it.optInt("additions"), it.optInt("deletions")) }
     val changes = details["changes"]?.array("by_language").orEmpty().flatMap { it.array("changes") }.map { ModuleChange(it.text("name"), it.text("kind"), it.optInt("additions"), it.optInt("deletions")) }
     val commits = details["commit_history"]?.array("history")?.reversed() ?: git?.array("recent_commits").orEmpty()
     val stats = details["stats"] ?: JSONObject()
+}
+
+internal class ModuleSummary(data: SessionModuleData, prs: List<PullRequest>, prefs: UiPreferences) {
+    val prLabel = if (prefs.visible("prs")) (prs.firstOrNull { it.primary } ?: prs.firstOrNull())?.let {
+        "PR #${it.number}" + if (prs.size > 1) " +${prs.size - 1}" else ""
+    } else null
+    val fileCount = if (prefs.visible("git") && data.gitLoaded) data.files.size else null
+    val additions = if (fileCount != null && fileCount > 0) data.files.sumOf { it.additions } else null
+    val deletions = if (fileCount != null && fileCount > 0) data.files.sumOf { it.deletions } else null
+    val isEmpty get() = prLabel == null && fileCount == null
 }
 
 @Composable internal fun SessionModules(session: Session, data: SessionModuleData, prefs: UiPreferences, prs: List<PullRequest>, modifier: Modifier = Modifier, revealScope: AnimatedVisibilityScope? = null) {
@@ -177,7 +188,9 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
         }
     }
 }
-@Composable internal fun SessionSummaryBar(session: Session, stats: JSONObject, prefs: UiPreferences, expanded: Boolean, toggle: () -> Unit) {
+@Composable internal fun SessionSummaryBar(session: Session, stats: JSONObject, prefs: UiPreferences, expanded: Boolean,
+    data: SessionModuleData? = null, prs: List<PullRequest> = emptyList(), toggle: () -> Unit) {
+    val summary = remember(data, prs, prefs) { data?.let { ModuleSummary(it, prs, prefs) } }
     val angle by animateFloatAsState(if (expanded) 0f else 180f, spring(dampingRatio = .75f, stiffness = 500f), label = "Modules chevron")
     Column(Modifier.fillMaxWidth().background(Panel)) {
         ModuleDivider()
@@ -188,14 +201,14 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
             Box(Modifier.padding(start = 6.dp).width(38.dp).height(25.dp).background(background, RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
                 Text(session.glyph, color = foreground, fontSize = 13.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
             }
-            ModuleStats(session, stats, prefs, Modifier.weight(1f))
+            ModuleStats(session, stats, prefs, Modifier.weight(1f), summary)
             Box(Modifier.size(44.dp).background(CrabColors.Orange.copy(alpha = if (expanded) .08f else .03f)), contentAlignment = Alignment.Center) {
                 Icon(painterResource(R.drawable.ic_chevron_down), contentDescription = null, tint = CrabColors.Orange, modifier = Modifier.size(16.dp).rotate(angle))
             }
         }
     }
 }
-@Composable private fun ModuleStats(session: Session, stats: JSONObject, prefs: UiPreferences, modifier: Modifier) {
+@Composable private fun ModuleStats(session: Session, stats: JSONObject, prefs: UiPreferences, modifier: Modifier, summary: ModuleSummary?) {
     val now by produceState(System.currentTimeMillis() / 1000) {
         while (true) { value = System.currentTimeMillis() / 1000; delay(1000) }
     }
@@ -210,16 +223,41 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
         }.single().measure(constraints.copy(minWidth = 0, maxWidth = Constraints.Infinity)).width
         val all = setOf("prompts", "completions")
         val newest = setOfNotNull(recent)
+        val fullWidth = width("full", all)
+        val preview = summary?.takeUnless { it.isEmpty }?.let {
+            subcompose("module-preview") { ModulePreview(it) }.single()
+                .measure(constraints.copy(minWidth = 0, maxWidth = Constraints.Infinity))
+        }
+        val gap = 12.dp.roundToPx()
+        val showPreview = preview != null && fullWidth + gap + preview.width <= constraints.maxWidth
+        val statsWidth = if (showPreview) constraints.maxWidth - gap - preview!!.width else constraints.maxWidth
         // Keep both labels, then the more recent one, before dropping both.
         val agoKeys = when {
-            width("full", all) <= constraints.maxWidth -> all
-            width("recent", newest) <= constraints.maxWidth -> newest
+            fullWidth <= statsWidth -> all
+            width("recent", newest) <= statsWidth -> newest
             else -> emptySet()
         }
         val row = subcompose("visible") {
             ModuleStatsRow(session, stats, prefs, now, agoKeys, Modifier.horizontalScroll(rememberScrollState()))
-        }.single().measure(constraints)
-        layout(constraints.maxWidth, constraints.maxHeight) { row.placeRelative(0, 0) }
+        }.single().measure(constraints.copy(minWidth = 0, maxWidth = statsWidth))
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            row.placeRelative(0, 0)
+            if (showPreview) preview!!.placeRelative(constraints.maxWidth - preview.width, 0)
+        }
+    }
+}
+@Composable private fun ModulePreview(summary: ModuleSummary) {
+    Row(Modifier.height(44.dp).padding(end = 8.dp).semantics(mergeDescendants = true) { contentDescription = "Module summary" },
+        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        summary.prLabel?.let { Text(it, color = CrabColors.Purple, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1) }
+        summary.fileCount?.let { count ->
+            if (summary.prLabel != null) Text("·", color = Muted, fontSize = 11.sp)
+            Text("$count file${if (count == 1) "" else "s"}", color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+            if (summary.additions != null) {
+                Text("·", color = Muted, fontSize = 11.sp)
+                ModuleDiff(summary.additions, summary.deletions)
+            }
+        }
     }
 }
 @Composable private fun ModuleStatsRow(session: Session, stats: JSONObject, prefs: UiPreferences, now: Long, agoKeys: Set<String>, modifier: Modifier = Modifier) {

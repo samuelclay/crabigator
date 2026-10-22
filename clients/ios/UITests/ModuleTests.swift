@@ -1,6 +1,37 @@
 import XCTest
 
 final class ModuleTests: XCTestCase {
+    func testSummaryPreviewUsesOnlySpareWidth() {
+        continueAfterFailure = false
+        let originalOrientation = XCUIDevice.shared.orientation
+        XCUIDevice.shared.orientation = .landscapeRight
+        defer { XCUIDevice.shared.orientation = originalOrientation }
+        let app = XCUIApplication()
+        app.launchEnvironment["CRABIGATOR_TEST_MODULES"] = "1"
+        app.launchEnvironment["CRABIGATOR_TEST_MODULE_SUMMARY"] = "1"
+        app.launch()
+        let summary = app.buttons["session-summary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 10))
+        let preview = app.descendants(matching: .any)["module-summary-preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertTrue(preview.isHittable)
+        XCTAssertTrue(preview.label.contains("PR #15 +1"))
+        XCTAssertTrue(preview.label.contains("1 file"))
+        XCTAssertTrue(preview.label.contains("+42"))
+        XCTAssertTrue(preview.label.contains("−8"))
+        XCTAssertGreaterThan(preview.frame.midX, summary.frame.midX)
+        XCTAssertEqual(summary.frame.height, 44, accuracy: 1)
+        capture("Wide summary with module preview")
+        summary.tap()
+        XCTAssertTrue(preview.isHittable)
+        app.buttons["Use narrow viewport"].tap()
+        XCTAssertFalse(preview.isHittable)
+        XCTAssertTrue(summary.isHittable)
+        XCTAssertEqual(summary.frame.height, 44, accuracy: 1)
+        capture("Narrow summary keeps its original controls")
+        app.buttons["Use wide viewport"].tap()
+        XCTAssertTrue(preview.isHittable)
+    }
     func testModulesExpandIndependentlyAndReturnSpaceToTheTerminal() {
         continueAfterFailure = false
         let app = XCUIApplication()
