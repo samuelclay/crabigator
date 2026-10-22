@@ -54,10 +54,10 @@ internal fun terminalBlocks(text: AnnotatedString, linesPerBlock: Int = 24): Lis
 
 private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyList(), val widthEm: Float = 0f, val columns: Int = 0)
 
-@Composable private fun terminalDocument(source: String, wrap: Boolean, cellWidthEm: Float): State<TerminalDocument> =
-    produceState(TerminalDocument(), source, wrap, cellWidthEm) {
+@Composable private fun terminalDocument(source: String, wrap: Boolean, cellWidthEm: Float, indentCellWidthEm: Float): State<TerminalDocument> =
+    produceState(TerminalDocument(), source, wrap, cellWidthEm, indentCellWidthEm) {
         value = withContext(Dispatchers.Default) {
-            val parsed = TerminalText.parse(source.removeSuffix("\n"), cellWidthEm).let { if (wrap) TerminalText.trimLineEnds(it) else it }
+            val parsed = TerminalText.parse(source.removeSuffix("\n"), cellWidthEm).let { if (wrap) TerminalText.trimLineEnds(TerminalText.reflowParagraphs(it, indentCellWidthEm)) else it }
             var widthEm = 0f
             var columns = 0
             if (!wrap) {
@@ -77,8 +77,14 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
     val cellWidthEm = remember {
         Paint().apply { typeface = Typeface.MONOSPACE; textSize = 1000f }.measureText(" ") / 1000f
     }
-    val historyDocument by terminalDocument(history, prefs.wrap, cellWidthEm)
-    val screenDocument by terminalDocument(screen, prefs.wrap, cellWidthEm)
+    val letterSpacing = LocalTextStyle.current.letterSpacing
+    val indentCellWidthEm = cellWidthEm + when {
+        letterSpacing.isSp -> letterSpacing.value / prefs.fontSize
+        letterSpacing.isEm -> letterSpacing.value
+        else -> 0f
+    }
+    val historyDocument by terminalDocument(history, prefs.wrap, cellWidthEm, indentCellWidthEm)
+    val screenDocument by terminalDocument(screen, prefs.wrap, cellWidthEm, indentCellWidthEm)
     // Capture one immutable list per composition so lazy item counts, keys,
     // and content cannot read different background parse results.
     val historyBlocks = historyDocument.blocks
@@ -122,7 +128,6 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
     }
     BoxWithConstraints(Modifier.fillMaxSize().graphicsLayer()) {
         val density = LocalDensity.current
-        val letterSpacing = LocalTextStyle.current.letterSpacing
         val contentWidth = with(density) {
             val spacingPx = if (letterSpacing.isSp) letterSpacing.toPx() else 0f
             val widthPx = maxOf(historyDocument.widthEm, screenDocument.widthEm) * prefs.fontSize.sp.toPx() +

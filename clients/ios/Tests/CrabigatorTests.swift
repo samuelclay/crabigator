@@ -5,6 +5,112 @@ import UserNotifications
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
+    func testParagraphReflowPreservesUncertainBoundaries() {
+        let cases: [(String, String, String)] = [
+            ("continuation 0", "  This paragraph describes the updated reading experience\ncontinuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("continuation 2", "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("no margin evidence", "  This paragraph describes the updated reading experience\n  continuing with details on the following row.", "  This paragraph describes the updated reading experience\n  continuing with details on the following row."),
+            ("short deliberate line", "  This is a short line\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This is a short line\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("sentence break", "  This paragraph describes the updated reading experience.\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience.\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("heading", "  This paragraph describes the updated reading experience:\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience:\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("blank line", "  This paragraph describes the updated reading experience\n\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience\n\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("new sentence", "  This paragraph describes the updated reading experience\n  Continuing with another sentence.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience\n  Continuing with another sentence.\n───────────────────────────────────────────────────────────"),
+            ("bulleted list", "  - This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  - This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("numbered list", "  1. This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  1. This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("indented code", "    This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────", "    This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("fenced code", "  ```text\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n  ```\n───────────────────────────────────────────────────────────", "  ```text\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n  ```\n───────────────────────────────────────────────────────────"),
+            ("tilde fence", "~~~\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n~~~\n───────────────────────────────────────────────────────────", "~~~\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n~~~\n───────────────────────────────────────────────────────────"),
+            ("table", "  This paragraph | describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph | describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("aligned columns", "  This paragraph  describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph  describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("assignment", "  This paragraph = describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph = describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("shell prompt", "  $ This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  $ This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("hyphenated split", "  This paragraph describes the updated reading experience-\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience-\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("wide glyph", "  This paragraph describes the updated 界 reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated 界 reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("combining glyph", "  This paragraph describes the updatéd reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updatéd reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("emoji", "  This paragraph describes the updated 🦀 reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated 🦀 reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("unindented source", "This paragraph describes the updated reading experience\ncontinuing with details on the following row.\n───────────────────────────────────────────────────────────", "This paragraph describes the updated reading experience\ncontinuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("too wide", "  This paragraph describes the updated reading experience more text\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience more text\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("next word fits", "  This paragraph describes the updated reading experience\n  a short continuation\n─────────────────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience\n  a short continuation\n─────────────────────────────────────────────────────────────────────"),
+            ("uncertain word split", "  This paragraph describes the updated reading experience\ncontinuing with details on the following row.\n─────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience\ncontinuing with details on the following row.\n─────────────────────────────────────────────────────────"),
+            ("word boundary padding", "  This paragraph describes the updated reading experience \ncontinuing with details on the following row.\n─────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience continuing with details on the following row.\n─────────────────────────────────────────────────────────"),
+            ("two matching margins", "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.", "  This paragraph describes the updated reading experience continuing with details on the following row.\n\n  This paragraph describes the updated reading experience continuing with details on the following row."),
+            ("different source widths", "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n────────────────────────────────────────────────────────────────────────────────────────────────────\n\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n────────────────────────────────────────────────────────────────────────────────────────────────────\n\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("archive paragraph", "  Dashboard upsell: the rotating \"Reason to upgrade\" box can now pick Listen, and its upgrade button highlights the Listen\n  line in the modal. I tested that in Django by forcing it to pick Listen. Its reasons were never translated, so I\n  wrapped all ten for translation.\n\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────", "  Dashboard upsell: the rotating \"Reason to upgrade\" box can now pick Listen, and its upgrade button highlights the Listen line in the modal. I tested that in Django by forcing it to pick Listen. Its reasons were never translated, so I wrapped all ten for translation.\n\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"),
+            ("mixed fence", "```text\n~~~\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n```\n───────────────────────────────────────────────────────────", "```text\n~~~\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n```\n───────────────────────────────────────────────────────────"),
+            ("short closing fence", "````text\n```\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n````\n───────────────────────────────────────────────────────────", "````text\n```\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n````\n───────────────────────────────────────────────────────────"),
+            ("fence with trailing code", "```text\n``` still code\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n```\n───────────────────────────────────────────────────────────", "```text\n``` still code\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n```\n───────────────────────────────────────────────────────────"),
+            ("shell command", "  git log --all --oneline --decorate --graph\n  git status --short\n─────────────────────────────────────────────", "  git log --all --oneline --decorate --graph\n  git status --short\n─────────────────────────────────────────────"),
+            ("unknown command with flags", "  mytool log --all --oneline --decorate --graph\n  continuing with flags\n────────────────────────────────────────────────", "  mytool log --all --oneline --decorate --graph\n  continuing with flags\n────────────────────────────────────────────────"),
+            ("python imports", "  from example.package.module import first, second\n  import another.package\n────────────────────────────────────────────────────", "  from example.package.module import first, second\n  import another.package\n────────────────────────────────────────────────────"),
+            ("split URL", "  See the documentation at https://example.com/documentation/section\n  additional-details for this section\n────────────────────────────────────────────────────────────────────", "  See the documentation at https://example.com/documentation/section\n  additional-details for this section\n────────────────────────────────────────────────────────────────────"),
+            ("path continuation", "  This paragraph describes the updated reading experience\n  path/fragment follows here\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience\n  path/fragment follows here\n───────────────────────────────────────────────────────────"),
+            ("identifier split", "  This paragraph describes the updated reading experience\n  continuation_of_identifier follows here\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience\n  continuation_of_identifier follows here\n───────────────────────────────────────────────────────────"),
+            ("distant rule", "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n───────────────────────────────────────────────────────────"),
+            ("matching tied margins", "───────────────────────────────────────────────────────────\n\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────", "───────────────────────────────────────────────────────────\n\n  This paragraph describes the updated reading experience continuing with details on the following row.\n───────────────────────────────────────────────────────────"),
+            ("source width 40", "  This is prose about word word word\n  continuing with the next detail.\n────────────────────────────────────────", "  This is prose about word word word continuing with the next detail.\n────────────────────────────────────────"),
+            ("source width 80", "  This is prose about word word word word word word word word word word word\n  continuing with the next detail.\n────────────────────────────────────────────────────────────────────────────────", "  This is prose about word word word word word word word word word word word continuing with the next detail.\n────────────────────────────────────────────────────────────────────────────────"),
+            ("source width 122", "  This is prose about word word word word word word word word word word word word word word word word word word word word\n  continuing with the next detail.\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────", "  This is prose about word word word word word word word word word word word word word word word word word word word word continuing with the next detail.\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────")
+        ]
+        for (name, source, expected) in cases {
+            let text = TerminalText.parse(source, size: 13, spacing: 1.5, wrap: true)
+            XCTAssertEqual(text.string, expected, name)
+            XCTAssertEqual(TerminalText.parse(source, size: 13, spacing: 1.5, wrap: false).string, source, "No-wrap: " + name)
+        }
+    }
+    func testParagraphReflowPreservesANSIStylesAndLinks() {
+        let first = "  This paragraph describes the updated reading experience"
+        let source = "\u{1b}[2C\u{1b}[1m" + first.dropFirst(2).replacingOccurrences(of: " ", with: "\u{1b}[C") + "\u{1b}[0m\n\u{1b}[2C\u{1b}[31mcontinuing with \u{1b}]8;;https://example.com\u{7}linked text\u{1b}]8;;\u{7} and https://example.org.\n" + String(repeating: "─", count: first.count + 2)
+        let text = TerminalText.parse(source, size: 13, spacing: 1.5, wrap: true)
+        XCTAssertTrue(text.string.hasPrefix(first + " continuing with linked text"))
+        let ns = text.string as NSString
+        XCTAssertEqual(text.attribute(.foregroundColor, at: ns.range(of: "continuing").location, effectiveRange: nil) as? UIColor, TerminalText.palette(1))
+        XCTAssertTrue((text.attribute(.font, at: 2, effectiveRange: nil) as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitBold) == true)
+        XCTAssertEqual((text.attribute(.link, at: ns.range(of: "linked").location, effectiveRange: nil) as? URL)?.absoluteString, "https://example.com")
+        XCTAssertEqual((text.attribute(.link, at: ns.range(of: "https://example.org").location, effectiveRange: nil) as? URL)?.absoluteString, "https://example.org")
+    }
+    @MainActor func testReflowUsesFewerRowsAndAdaptsToViewportChanges() {
+        let rows = [
+            "  Dashboard upsell: the rotating \"Reason to upgrade\" box can now pick Listen, and its upgrade button highlights the Listen",
+            "  line in the modal. I tested that in Django by forcing it to pick Listen. Its reasons were never translated, so I",
+            "  wrapped all ten for translation."
+        ]
+        let source = rows.joined(separator: "\n") + "\n" + String(repeating: "─", count: 122)
+        let reflowed = TerminalText.parse(source, size: 13, spacing: 1.5, wrap: true)
+        let unchanged = NSMutableAttributedString(attributedString: TerminalText.parse(source, size: 13, spacing: 1.5, wrap: false))
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = 19.5; paragraph.maximumLineHeight = 19.5; paragraph.lineBreakMode = .byWordWrapping
+        unchanged.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: unchanged.length - 123))
+        func height(_ text: NSAttributedString, width: CGFloat) -> CGFloat {
+            let view = UITextView(usingTextLayoutManager: true)
+            view.textContainerInset = .zero; view.textContainer.lineFragmentPadding = 0
+            view.attributedText = text
+            return view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        }
+        var savedRows = false
+        for width: CGFloat in [240, 320, 500, 740, 240] {
+            let before = height(unchanged, width: width), after = height(reflowed, width: width)
+            XCTAssertLessThanOrEqual(after, before, "Width \(width)")
+            savedRows = savedRows || after < before
+        }
+        XCTAssertTrue(savedRows)
+        let cell = (" " as NSString).size(withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)]).width
+        let view = UITextView(usingTextLayoutManager: true)
+        view.textContainerInset = .zero; view.textContainer.lineFragmentPadding = 0
+        view.attributedText = reflowed
+        for width: CGFloat in [240, 500, 740, 240] {
+            view.frame = CGRect(x: 0, y: 0, width: width, height: 1000)
+            view.layoutIfNeeded()
+            var starts = [CGFloat: CGFloat]()
+            for (offset, character) in reflowed.string.prefix(while: { $0 != "\n" }).enumerated() where character != " " {
+                let caret = view.caretRect(for: view.position(from: view.beginningOfDocument, offset: offset)!)
+                starts[caret.minY] = min(starts[caret.minY] ?? .greatestFiniteMagnitude, caret.minX)
+            }
+            XCTAssertGreaterThan(starts.count, 1)
+            XCTAssertEqual((reflowed.attribute(.paragraphStyle, at: 2, effectiveRange: nil) as? NSParagraphStyle)?.headIndent, cell * 2)
+            let firstLine = view.caretRect(for: view.position(from: view.beginningOfDocument, offset: 2)!).minX
+            for x in starts.values { XCTAssertEqual(x, firstLine, accuracy: 0.5, "Every wrapped line aligns with the first line's two-space prefix") }
+        }
+    }
     func testModuleSummaryUsesWorkingTreeTotalsAndVisibleModules() {
         let session = Session(["id": "summary"])
         let data = SessionModuleData(session: session, details: [

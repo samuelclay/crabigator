@@ -6,6 +6,50 @@ final class ReadingTests: XCTestCase {
     private func descendants(of snapshot: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
         snapshot.children.flatMap { [$0] + descendants(of: $0) }
     }
+    func testLiveParagraphReflowAfterRotation() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["CRABIGATOR_LIVE_UI_TESTS"] == "1",
+              let id = env["CRABIGATOR_TEST_SESSION_ID"],
+              let paragraph = env["CRABIGATOR_TEST_REFLOWED_TEXT"] else {
+            throw XCTSkip("Requires a paired device and an expected joined paragraph from a live session.")
+        }
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launch()
+        let terminal = app.textViews["terminal-output"]
+        if !terminal.waitForExistence(timeout: 5) || !(terminal.value as? String ?? "").contains(paragraph) {
+            for label in ["Back to list", "Close session"] {
+                let close = app.buttons[label]
+                if close.exists && close.isHittable { close.tap(); break }
+            }
+            if let query = env["CRABIGATOR_TEST_SESSION_QUERY"] {
+                let searchButton = app.buttons["Search"]
+                XCTAssertTrue(searchButton.waitForExistence(timeout: 25))
+                searchButton.tap()
+                let search = app.textFields["Search sessions"]
+                XCTAssertTrue(search.waitForExistence(timeout: 5))
+                search.tap()
+                if let old = search.value as? String, old != search.placeholderValue {
+                    search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count))
+                }
+                search.typeText(query)
+            }
+            let row = app.buttons["Session " + id].firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 25))
+            row.tap()
+        }
+        XCTAssertTrue(terminal.waitForExistence(timeout: 20))
+        for orientation: UIDeviceOrientation in [.landscapeLeft, .portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            let joined = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                (terminal.value as? String ?? "").contains(paragraph)
+            }, object: terminal)
+            XCTAssertEqual(XCTWaiter.wait(for: [joined], timeout: 20), .completed)
+            XCTAssertFalse(app.keyboards.firstMatch.exists)
+            capture(orientation == .portrait ? "Reflowed paragraph in portrait" : "Reflowed paragraph in landscape")
+        }
+    }
     func testLiveSessionAppearsUnderExpectedAgeBand() throws {
         let env = ProcessInfo.processInfo.environment
         guard env["CRABIGATOR_LIVE_UI_TESTS"] == "1",

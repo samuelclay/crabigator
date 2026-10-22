@@ -4,6 +4,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.ParagraphStyle
+import androidx.compose.ui.text.style.TextIndent
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -14,6 +17,98 @@ import java.net.URI
 
 /** Screen frames are complete, row-formatted snapshots, not an incremental VT stream. */
 object TerminalText {
+    /** Capture has no soft-wrap metadata. Join clear prose only, retaining all spans. */
+    fun reflowParagraphs(input: AnnotatedString, cellWidthEm: Float = .6f): AnnotatedString {
+        val rows = input.text.split('\n')
+        val trimmed = rows.map { it.trimEnd(' ') }
+        val indents = trimmed.map { it.takeWhile { c -> c == ' ' }.length }
+        val bodies = trimmed.mapIndexed { i, row -> row.drop(indents[i]) }
+        val codeWords = setOf("import", "from", "export", "return", "throw", "let", "var", "const", "func", "fun", "def", "class", "if", "else", "for", "while", "switch", "case", "git", "npm", "npx", "yarn", "pnpm", "cargo", "make", "curl", "sudo", "pip", "python", "python3", "node")
+        val commandFlag = Regex("(?:^| )--?[a-zA-Z]")
+        var fence: Pair<Char, Int>? = null
+        val prose = bodies.mapIndexed { i, body ->
+            val marker = body.firstOrNull()
+            val count = if (marker == '`' || marker == '~') body.takeWhile { it == marker }.length else 0
+            if (count >= 3) {
+                val open = fence
+                if (open == null) fence = marker!! to count
+                else if (marker == open.first && count >= open.second && body.drop(count).all { it == ' ' }) fence = null
+                false
+            } else {
+                // Do not guess the terminal width of wide glyphs or combining marks.
+                val singleCell = trimmed[i].all { it.code in 32..126 || it.code in 160..255 || it.code in 0x2010..0x2027 }
+                fence == null && singleCell && indents[i] in listOf(0, 2) && body.firstOrNull()?.isLetter() == true &&
+                    !body.contains("  ") && body.substringBefore(' ') !in codeWords && !commandFlag.containsMatchIn(body) && body.none { it in "{}[]=|\\<>`" }
+            }
+        }
+        val ruleWidths = trimmed.map { row ->
+            if (row.length >= 40 && row.first() in "-─━═" && row.all { it == row.first() }) row.length else null
+        }
+        val offsets = mutableListOf<Int>()
+        var offset = 0
+        for (row in rows) { offsets += offset; offset += row.length + 1 }
+        val joins = mutableListOf<IntRange>()
+        var inParagraph = false
+        for (i in 0 until rows.lastIndex) {
+            if (!prose[i]) { inParagraph = false; continue }
+            if (!inParagraph) inParagraph = indents[i] == 2
+            val word = bodies[i + 1].substringBefore(' ')
+            val previousWord = bodies[i].substringAfterLast(' ')
+            if (!inParagraph || !prose[i + 1] || bodies[i].split(' ').size < 3 ||
+                bodies[i].last() in ".!?:;-/" || bodies[i + 1].firstOrNull()?.isLowerCase() != true ||
+                previousWord.length >= 24 || word.length >= 24 || previousWord.any { it in "/_" } || word.any { it in "/_" }) {
+                inParagraph = false; continue
+            }
+            var nearby: Int? = null
+            var conflicting = false
+            for (distance in 1..64) {
+                val before = ruleWidths.getOrNull(i - distance)
+                val after = ruleWidths.getOrNull(i + distance)
+                if (before != null || after != null) {
+                    conflicting = before != null && after != null && before != after
+                    nearby = after ?: before
+                    break
+                }
+            }
+            if (conflicting) { inParagraph = false; continue }
+            val margin = if (nearby != null) nearby else {
+                // Without a separator, require two prose rows at the same margin.
+                val widths = (maxOf(0, i - 32)..minOf(rows.lastIndex, i + 32)).filter { prose[it] }.map { trimmed[it].length }
+                val longest = widths.maxOrNull() ?: 0
+                if (longest < 40 || widths.count { it == longest } < 2) { inParagraph = false; continue }
+                longest
+            }
+            val width = trimmed[i].length
+            // Claude sometimes leaves the final cell unused: allow an exact fit.
+            if (width > margin || width < margin - 12 || width + 1 + word.length < margin ||
+                // A flush unindented continuation could be half of a word.
+                (indents[i + 1] != 2 && width == margin && !rows[i].endsWith(' '))) {
+                inParagraph = false; continue
+            }
+            joins += (offsets[i] + trimmed[i].length) until (offsets[i + 1] + indents[i + 1])
+        }
+        if (joins.isEmpty()) return input
+        val result = AnnotatedString.Builder()
+        var start = 0
+        val joinedOffsets = mutableListOf<Int>()
+        for (range in joins) {
+            result.append(input.subSequence(start, range.first))
+            joinedOffsets += result.length
+            result.append(' ')
+            start = range.last + 1
+        }
+        result.append(input.subSequence(start, input.length))
+        val joined = result.toAnnotatedString().text
+        val paragraphs = joinedOffsets.map { position ->
+            val begin = joined.lastIndexOf('\n', position) + 1
+            val end = joined.indexOf('\n', position).let { if (it < 0) joined.length else it }
+            begin to end
+        }.distinct()
+        for ((begin, end) in paragraphs) {
+            result.addStyle(ParagraphStyle(textIndent = TextIndent(firstLine = 0.em, restLine = (cellWidthEm * 2).em)), begin, end)
+        }
+        return result.toAnnotatedString()
+    }
     fun isRule(line: CharSequence): Boolean {
         val characters = line.trim().toString().codePoints().toArray()
         return characters.size >= 3 && characters.all { it == characters[0] }

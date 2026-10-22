@@ -20,6 +20,35 @@ import org.junit.Test
 class TerminalScrollTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun joinedParagraphsKeepTwoCellIndentAfterResizing() {
+        val width = mutableStateOf(160)
+        val first = "  This paragraph describes the updated reading experience"
+        val next = "continuing with details on the following row and additional words to wrap."
+        val joined = "$first $next"
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(width.value.dp)) {
+                    TerminalViewport("", "$first\n  $next\n" + "─".repeat(first.length + 2), UiPreferences(), true) {}
+                }
+            }
+        }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText(joined).fetchSemanticsNodes().isNotEmpty() }
+        for (size in listOf(160, 300, 160)) {
+            compose.runOnIdle { width.value = size }
+            compose.waitForIdle()
+            val layouts = mutableListOf<TextLayoutResult>()
+            compose.onNodeWithText(joined).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            val layout = layouts.single()
+            val firstLeft = layout.getBoundingBox(2).left
+            assertTrue(layout.lineCount > 1)
+            for (line in 1 until layout.lineCount) {
+                var offset = layout.getLineStart(line)
+                while (offset < joined.length && joined[offset] == ' ') offset++
+                assertEquals(firstLeft, layout.getBoundingBox(offset).left, 1f)
+            }
+        }
+    }
+
     @Test fun rulesStayOnOneRowAsTheViewportResizes() {
         val width = mutableStateOf(160)
         val rule = "─".repeat(120)

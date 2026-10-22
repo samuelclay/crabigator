@@ -2,6 +2,91 @@ import UIKit
 
 /// A complete row-formatted ANSI snapshot; this is not an incremental VT emulator.
 enum TerminalText {
+    /// Recover only clear prose wraps. Capture has no soft-wrap metadata, so
+    /// ambiguous boundaries stay intact. Work after ANSI decoding and keep spans.
+    static func reflowParagraphs(_ text: NSMutableAttributedString, indent: CGFloat) {
+        let rows = text.string.components(separatedBy: "\n")
+        let trimmed = rows.map { $0.replacingOccurrences(of: " +$", with: "", options: .regularExpression) }
+        let indents = trimmed.map { $0.prefix(while: { $0 == " " }).count }
+        let bodies = zip(trimmed, indents).map { String($0.dropFirst($1)) }
+        let codeWords: Set<String> = ["import", "from", "export", "return", "throw", "let", "var", "const", "func", "fun", "def", "class", "if", "else", "for", "while", "switch", "case", "git", "npm", "npx", "yarn", "pnpm", "cargo", "make", "curl", "sudo", "pip", "python", "python3", "node"]
+        var fence: (Character, Int)?
+        let prose = bodies.enumerated().map { index, body -> Bool in
+            if let marker = body.first, marker == "`" || marker == "~" {
+                let count = body.prefix(while: { $0 == marker }).count
+                if count >= 3 {
+                    if let open = fence {
+                        if marker == open.0 && count >= open.1 && body.dropFirst(count).allSatisfy({ $0 == " " }) { fence = nil }
+                    } else { fence = (marker, count) }
+                    return false
+                }
+            }
+            // These characters have a known one-cell width. Leave wide glyphs,
+            // combining marks and tabs alone instead of guessing terminal columns.
+            let singleCell = trimmed[index].unicodeScalars.allSatisfy {
+                (32...126).contains($0.value) || (160...255).contains($0.value) || (0x2010...0x2027).contains($0.value)
+            }
+            return fence == nil && singleCell && [0, 2].contains(indents[index])
+                && body.first?.isLetter == true && !body.contains("  ")
+                && !codeWords.contains(String(body.split(separator: " ").first ?? ""))
+                && body.range(of: #"(?:^| )--?[a-zA-Z]"#, options: .regularExpression) == nil
+                && !body.contains(where: { "{}[]=|\\<>`".contains($0) })
+        }
+        let ruleWidths = trimmed.map { row -> Int? in
+            guard row.count >= 40, let first = row.first, "-─━═".contains(first), row.allSatisfy({ $0 == first }) else { return nil }
+            return row.count
+        }
+        var offsets = [Int](), offset = 0
+        for row in rows { offsets.append(offset); offset += row.utf16.count + 1 }
+        var joins = [NSRange](), inParagraph = false
+        for i in rows.indices.dropLast() {
+            if !prose[i] { inParagraph = false; continue }
+            if !inParagraph { inParagraph = indents[i] == 2 }
+            guard inParagraph, prose[i + 1],
+                  bodies[i].split(separator: " ").count >= 3,
+                  let last = bodies[i].last, !".!?:;-/".contains(last),
+                  bodies[i + 1].first?.isLowercase == true,
+                  let word = bodies[i + 1].split(separator: " ").first,
+                  let previousWord = bodies[i].split(separator: " ").last,
+                  previousWord.count < 24, word.count < 24,
+                  !previousWord.contains(where: { "/_".contains($0) }), !word.contains(where: { "/_".contains($0) }) else { inParagraph = false; continue }
+            var nearby: Int?, conflicting = false
+            for distance in 1...64 {
+                let before = i >= distance ? ruleWidths[i - distance] : nil
+                let after = i + distance < rows.count ? ruleWidths[i + distance] : nil
+                if before != nil || after != nil {
+                    conflicting = before != nil && after != nil && before != after
+                    nearby = after ?? before
+                    break
+                }
+            }
+            guard !conflicting else { inParagraph = false; continue }
+            let margin: Int
+            if let nearby { margin = nearby }
+            else {
+                // Without a separator, require two prose rows at the same margin.
+                let widths = (max(0, i - 32)...min(rows.count - 1, i + 32)).filter { prose[$0] }.map { trimmed[$0].count }
+                guard let longest = widths.max(), longest >= 40, widths.filter({ $0 == longest }).count >= 2 else { inParagraph = false; continue }
+                margin = longest
+            }
+            let width = trimmed[i].count
+            // Claude leaves the final cell unused on some prose rows, so an
+            // exact fit also counts as a wrap (114 + space + "wrapped" at 122).
+            guard width <= margin, width >= margin - 12, width + 1 + word.count >= margin,
+                  // A flush unindented continuation could be half of a word.
+                  indents[i + 1] == 2 || width < margin || rows[i].hasSuffix(" ") else { inParagraph = false; continue }
+            let range = NSRange(location: offsets[i], length: offsets[i + 1] + rows[i + 1].utf16.count - offsets[i])
+            if let style = text.attribute(.paragraphStyle, at: offsets[i], effectiveRange: nil) as? NSParagraphStyle,
+               let indented = style.mutableCopy() as? NSMutableParagraphStyle {
+                // Literal spaces indent the first line; layout indents every wrap.
+                indented.headIndent = indent
+                text.addAttribute(.paragraphStyle, value: indented, range: range)
+            }
+            let start = offsets[i] + trimmed[i].utf16.count
+            joins.append(NSRange(location: start, length: offsets[i + 1] + indents[i + 1] - start))
+        }
+        for range in joins.reversed() { text.replaceCharacters(in: range, with: " ") }
+    }
     static func webURL(_ value: String) -> URL? {
         guard let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               let host = url.host, !host.isEmpty else { return nil }
@@ -108,6 +193,7 @@ enum TerminalText {
             }; i += 1
         }
         flush()
+        if wrap { reflowParagraphs(out, indent: cell * 2) }
         if wrap, let regex = try? NSRegularExpression(pattern: " +(?=\\n|$)") {
             for match in regex.matches(in: out.string, range: NSRange(location: 0, length: out.length)).reversed() { out.deleteCharacters(in: match.range) }
         }
