@@ -18,6 +18,11 @@ export const terminalJs = `
                     else high = mid;
                 }
                 anchor = history.children[low] || null;
+                if (anchor?.dataset?.terminalRows) {
+                    // A paragraph wrapper may disappear when old source rows
+                    // are trimmed. Anchor a retained visible row inside it.
+                    anchor = Array.from(anchor.children).find(row => row.getBoundingClientRect().bottom > viewportTop) || anchor;
+                }
             }
             const offset = anchor ? anchor.getBoundingClientRect().top - viewportTop : 0;
             data.updatingTerminal = true;

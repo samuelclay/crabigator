@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { embedded, functions, terminalUpdates } from './dashboard-source.mjs';
 
 const code = [embedded('ansi'), embedded('terminal'), embedded('scrollback'), terminalUpdates,
-    functions(embedded('style'), ['getScrollAnchorReferenceY', 'capturePageScrollAnchor', 'restorePageScrollAnchor', 'capturePageScrollRestorer', 'preservePageScroll']),
+    functions(embedded('style'), ['pageScrollSurface', 'getScrollAnchorReferenceY', 'capturePageScrollAnchor', 'restorePageScrollAnchor', 'capturePageScrollRestorer', 'preservePageScroll']),
     functions(embedded('pr-board'), ['reconcilePrBoard', 'preserveBoardTerminals', 'mountBoardTerminals', 'prbSessionState', 'prbAggregateState', 'prbStateIcon'])].join('\n');
 const css = embedded('terminal', 'css') + embedded('pr-board', 'css');
 const html = `<!doctype html><meta charset="utf-8"><title>Dashboard refresh checks</title>
@@ -16,8 +16,10 @@ const html = `<!doctype html><meta charset="utf-8"><title>Dashboard refresh chec
 </style><h1>Dashboard refresh checks</h1><button id="run">Run checks</button><pre id="results">Ready</pre>
 <div id="sessions"></div><div id="pr-board-view" class="pr-board"><div id="prb-body" class="prb-body"></div></div>
 <script>
+let viewedPageAnchor=null, viewedSessionId=null, pageScrollRevision=0, restoredPageTop=null;
 const sessions = new Map(); const expandedSessions = new Set(['test']); let prBoardRendered = []; let activeTerminalId = 'test', isChangingFontSize = false, prBoardVisible = true;
 const SCROLLBACK_CHUNK_SIZE = 30; const PRB_C = {gray:"#888"};
+function restoreSessionFullscreen() {}
 function prbRowSessions(item) {return item.sessions;} function updatePinButton() {} function activateTerminalScroll() {}
 ${code}
 const frame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -103,6 +105,80 @@ async function run() {
         badge.innerHTML=prbStateIcon(prbSessionState({active:false,state:'thinking'}));
         check(!badge.querySelector('.prb-throb') && badge.textContent==='○','Ended session still looks busy');
         check(badge.firstElementChild.title==='Session disconnected or ended','Status has no explanation');
+    });
+    await test('Paragraphs reflow with two-cell indentation at every viewport width', async()=>{
+        const first='  This paragraph describes the updated reading experience';
+        const continuation='  continuing with details on the following row and additional words to wrap.';
+        const source=first+'\\n'+continuation+'\\n'+'─'.repeat(first.length+2);
+        const sample=document.createElement('div');sample.className='terminal';sample.style.height='auto';
+        sample.innerHTML=ansiToHtml(source);document.body.appendChild(sample);
+        const paragraph=sample.querySelector('.terminal-paragraph');
+        check(paragraph && paragraph.children.length===2,'Expected two retained source rows');
+        const originalText=sample.textContent;
+        const selection=window.getSelection();selection.selectAllChildren(paragraph);
+        check(selection.toString().includes('experience continuing'),'Copying lost the joined word boundary');selection.removeAllRanges();
+        let savedSpace=false;
+        for(const width of [240,320,500,740,240]) {
+            sample.style.width=width+'px';await frame();
+            const starts=new Map(),walker=document.createTreeWalker(paragraph,NodeFilter.SHOW_TEXT);
+            while(walker.nextNode()) {
+                const node=walker.currentNode;
+                if(node.parentElement.closest('.reflow-indent'))continue;
+                for(let i=0;i<node.length;i++) {
+                    if(node.data[i]===' ')continue;
+                    const range=document.createRange();range.setStart(node,i);range.setEnd(node,i+1);
+                    const rect=range.getBoundingClientRect();
+                    starts.set(rect.top,Math.min(starts.get(rect.top)??Infinity,rect.left));
+                }
+            }
+            const indent=parseFloat(getComputedStyle(paragraph).paddingLeft),left=paragraph.getBoundingClientRect().left;
+            check(indent>0 && starts.size>1,'Paragraph did not wrap with indentation');
+            for(const x of starts.values())check(near(x,left+indent),'Wrapped prose lost its two-space indent');
+            const before=document.createElement('div');before.className='terminal';before.style.cssText=sample.style.cssText;
+            before.innerHTML=ansiToHtml(source);document.body.appendChild(before);
+            const oldParagraph=before.querySelector('.terminal-paragraph');oldParagraph.replaceWith(...oldParagraph.children);
+            savedSpace ||= sample.getBoundingClientRect().height<before.getBoundingClientRect().height;
+            before.remove();
+            check(sample.textContent===originalText,'Resizing changed captured text');
+        }
+        check(savedSpace,'Joining did not save any space');
+        sample.classList.add('scroll-mode');await frame();
+        for(const row of paragraph.children) {
+            check(getComputedStyle(row).display==='block','Scroll mode lost its source rows');
+            check(row.textContent.startsWith('  '),'Scroll mode lost original prefix spaces');
+        }
+        check(sample.textContent===originalText,'Scroll mode changed source text');sample.remove();
+        const quicklook=document.createElement('pre');quicklook.innerHTML=ansiToHtml(source);document.body.appendChild(quicklook);
+        for(const gap of quicklook.querySelectorAll('.reflow-gap'))check(getComputedStyle(gap).display==='none','Quick look gained a leading space');
+        check(quicklook.innerText===source,'Quick look changed source rows');quicklook.remove();
+    });
+    await test('History trimming retains the correct rows within a paragraph', async()=>{
+        const first='  This paragraph describes the updated reading experience';
+        const next='  continuing with details on the following row.';
+        const source=[first,next,'─'.repeat(first.length+2),'retained row'];
+        renderScrollback('test',source);loadMoreScrollback('test');
+        check(history.querySelector('.terminal-paragraph'),'History did not join its paragraph');
+        renderScrollback('test',source.slice(1));
+        check(history.children.length===3 && history.firstElementChild.textContent===next,'Partial group trim lost or duplicated rows');
+        check(data.scrollbackRendered===3,'Rendered count no longer matches captured rows');
+        check(getComputedStyle(history.firstElementChild).display==='block','Retained row is still incorrectly inline');
+        appendScrollback('test','after trimming\\n');
+        check(history.lastElementChild.textContent==='after trimming','Appending after a partial trim lost content');
+    });
+    await test('Trimming a paragraph keeps its visible captured row anchored', async()=>{
+        const sample=document.createElement('div');sample.className='terminal scroll-active';sample.id='terminal-reflow';sample.style.cssText='width:240px;height:80px';
+        sample.innerHTML='<div class="terminal-scrollback has-content" id="scrollback-reflow"></div>';document.body.appendChild(sample);
+        const history=sample.firstElementChild;
+        const first='  This paragraph describes the updated reading experience';
+        const next='  continuing with details on the following row and additional words to wrap.';
+        history.innerHTML=ansiToHtml([first,next,'─'.repeat(first.length+2),...Array(20).fill('later row')].join('\\n'));
+        sessions.set('reflow',{pinned:false,lastScrollTop:0});await frame();
+        const retained=history.querySelector('.terminal-paragraph').children[1];
+        sample.scrollTop=retained.getBoundingClientRect().bottom-sample.getBoundingClientRect().top-20;await frame();
+        const offset=retained.getBoundingClientRect().top-sample.getBoundingClientRect().top;
+        preserveTerminalScroll('reflow',()=>removeScrollbackRows(history,1));await frame();
+        check(retained.isConnected && near(retained.getBoundingClientRect().top-sample.getBoundingClientRect().top,offset),'Trimming moved the surviving row');
+        sample.remove();sessions.delete('reflow');
     });
     results.textContent += '\\nAll '+passed.length+' browser checks passed.';
 }

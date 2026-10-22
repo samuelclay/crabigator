@@ -1,5 +1,61 @@
 // Dashboard JavaScript - ansi
 export const ansiJs = `
+        // Same conservative boundary rules as the native terminal renderers.
+        function terminalParagraphJoins(rows) {
+            const trimmed = rows.map(row => row.replace(/ +$/, ''));
+            const indents = trimmed.map(row => row.match(/^ */)[0].length);
+            const bodies = trimmed.map((row, i) => row.slice(indents[i]));
+            const codeWords = new Set('import from export return throw let var const func fun def class if else for while switch case git npm npx yarn pnpm cargo make curl sudo pip python python3 node'.split(' '));
+            let fence = null;
+            const prose = bodies.map((body, i) => {
+                const marker = body.match(/^(\`{3,}|~{3,})/);
+                if (marker) {
+                    if (!fence) fence = marker[0];
+                    else if (marker[0][0] === fence[0] && marker[0].length >= fence.length && !body.slice(marker[0].length).trim()) fence = null;
+                    return false;
+                }
+                return !fence && /^[\\x20-\\x7e\\u00a0-\\u00ff\\u2010-\\u2027]*$/.test(trimmed[i]) &&
+                    [0, 2].includes(indents[i]) && /^\\p{L}/u.test(body) && !body.includes('  ') &&
+                    !codeWords.has(body.split(' ')[0]) && !/(?:^| )--?[a-zA-Z]/.test(body) && !/[{}\\[\\]=|\\\\<>\`]/.test(body);
+            });
+            const ruleWidths = trimmed.map(row => /^([-─━═])\\1{39,}$/.test(row) ? row.length : null);
+            const joins = new Set();
+            let inParagraph = false;
+            for (let i = 0; i + 1 < rows.length; i++) {
+                if (!prose[i]) { inParagraph = false; continue; }
+                if (!inParagraph) inParagraph = indents[i] === 2;
+                const words = bodies[i].split(' '), previousWord = words[words.length - 1], word = bodies[i + 1].split(' ')[0];
+                if (!inParagraph || !prose[i + 1] || words.length < 3 || /[.!?:;\\-/]$/.test(bodies[i]) ||
+                    !/^\\p{Ll}/u.test(bodies[i + 1]) || previousWord.length >= 24 || word.length >= 24 || /[/_]/.test(previousWord + word)) {
+                    inParagraph = false; continue;
+                }
+                let margin = null, conflicting = false;
+                for (let distance = 1; distance <= 64; distance++) {
+                    const before = ruleWidths[i - distance], after = ruleWidths[i + distance];
+                    if (before != null || after != null) {
+                        conflicting = before != null && after != null && before !== after;
+                        margin = after ?? before;
+                        break;
+                    }
+                }
+                if (conflicting) { inParagraph = false; continue; }
+                if (margin == null) {
+                    const widths = [];
+                    for (let j = Math.max(0, i - 32); j <= Math.min(rows.length - 1, i + 32); j++) if (prose[j]) widths.push(trimmed[j].length);
+                    margin = Math.max(0, ...widths);
+                    if (margin < 40 || widths.filter(width => width === margin).length < 2) { inParagraph = false; continue; }
+                }
+                const width = trimmed[i].length;
+                // Claude sometimes leaves the final cell unused: allow an exact fit.
+                if (width > margin || width < margin - 12 || width + 1 + word.length < margin ||
+                    (indents[i + 1] !== 2 && width === margin && !rows[i].endsWith(' '))) {
+                    inParagraph = false; continue;
+                }
+                joins.add(i);
+            }
+            return joins;
+        }
+
         // ANSI to HTML converter - processes escape sequences including cursor positioning
         function ansiToHtml(text) {
             if (!text) return '';
@@ -20,6 +76,7 @@ export const ansiJs = `
                 return trimmed + ansiSuffix;
             }
 
+            const paddedRows = text.split('\\n').map(row => / $/.test(row.replace(/\\x1b\\[[0-9;]*m/g, '')));
             text = text.split('\\n').map(trimLineEndPreserveAnsi).join('\\n');
 
             const colors = {
@@ -319,9 +376,10 @@ export const ansiJs = `
             }
 
             const lines = result.split('\\n');
-            result = lines.map(lineHtml => {
-                // Strip HTML tags to analyze plain text content
-                const plain = lineHtml.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+            const plainRows = lines.map(lineHtml => lineHtml.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+            const joins = terminalParagraphJoins(plainRows.map((row, i) => row + (paddedRows[i] ? ' ' : '')));
+            const rendered = lines.map((lineHtml, index) => {
+                const plain = plainRows[index];
 
                 // Keep repeated-character rules on one row at any client width.
                 // Preserve the full text so resizing can reveal more of the rule.
@@ -360,8 +418,29 @@ export const ansiJs = `
                 }
 
                 return '<div class="line">' + lineHtml + '</div>';
-            }).join('');
+            });
 
+            // Retain each captured row inside a paragraph. Scroll mode restores
+            // those rows, and history trimming can remove an exact row count.
+            function paragraphRow(html, index) {
+                let atStart = true;
+                const indented = html.replace(/(<[^>]+>)|([^<]+)/g, (match, tag, text) => {
+                    if (tag || !atStart) return match;
+                    const spaces = text.match(/^ */)[0];
+                    if (spaces.length < text.length) atStart = false;
+                    return (spaces ? '<span class="reflow-indent">' + spaces + '</span>' : '') + text.slice(spaces.length);
+                });
+                return indented.replace('class="line">', 'class="line reflow-row">' +
+                    (index ? '<span class="reflow-gap"> </span>' : ''));
+            }
+            result = '';
+            for (let row = 0; row < rendered.length; row++) {
+                if (!joins.has(row)) { result += rendered[row]; continue; }
+                const start = row;
+                while (joins.has(row)) row++;
+                result += '<div class="terminal-paragraph" data-terminal-rows="' + (row - start + 1) + '">' +
+                    rendered.slice(start, row + 1).map(paragraphRow).join('') + '</div>';
+            }
             return result;
         }
 `;

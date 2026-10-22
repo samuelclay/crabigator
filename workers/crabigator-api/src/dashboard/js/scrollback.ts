@@ -13,6 +13,22 @@ export const scrollbackJs = `
             return lines.length ? ansiToHtml(lines.join('\\n') || '\\x1b[0m') : '';
         }
 
+        function removeScrollbackRows(element, count) {
+            while (count > 0 && element.firstElementChild) {
+                const first = element.firstElementChild;
+                const rows = Number(first.dataset?.terminalRows || 1);
+                if (rows > count) {
+                    // A retained paragraph may begin halfway through its old
+                    // group. Restore individual rows before removing its prefix.
+                    for (const row of first.children) row.querySelector?.('.reflow-gap')?.remove();
+                    first.replaceWith(...first.children);
+                } else {
+                    first.remove();
+                    count -= rows;
+                }
+            }
+        }
+
         function loadMoreScrollback(sessionId) {
             const sessionData = sessions.get(sessionId);
             if (!sessionData || !sessionData.scrollbackBuffer) return;
@@ -80,7 +96,7 @@ export const scrollbackJs = `
                 if (rendered && overlap) {
                     // Keep overlapping DOM rows, including the row being read.
                     const removed = Math.max(0, rendered - overlap);
-                    for (let i = 0; i < removed; i++) scrollbackEl.firstElementChild?.remove();
+                    removeScrollbackRows(scrollbackEl, removed);
                     scrollbackEl.insertAdjacentHTML('beforeend', scrollbackHtml(lines.slice(overlap)));
                     sessionData.scrollbackRendered = rendered - removed + lines.length - overlap;
                     scrollbackEl.classList.toggle('has-content', sessionData.scrollbackRendered > 0);

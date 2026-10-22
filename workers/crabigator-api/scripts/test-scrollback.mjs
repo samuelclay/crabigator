@@ -89,3 +89,20 @@ test('returning to a terminal includes output received while another terminal wa
     v.api.flushScrollback('test');
     assert.equal(v.html(), ['one', 'two', 'three', 'four', 'five'].map(row => `<div class="line">${row}</div>`).join(''));
 });
+
+test('trimming history counts captured rows inside joined paragraphs', () => {
+    const removeRows = runInNewContext(embedded('scrollback') + '\nremoveScrollbackRows');
+    const element = { children: [], get firstElementChild() { return this.children[0]; } };
+    function row(name, children = []) {
+        const node = { name, children, dataset: children.length ? { terminalRows: String(children.length) } : {},
+            remove() { element.children.splice(element.children.indexOf(node), 1); },
+            replaceWith(...rows) { element.children.splice(element.children.indexOf(node), 1, ...rows); } };
+        return node;
+    }
+    element.children = [row('paragraph', [row('one'), row('two'), row('three')]), row('four')];
+    removeRows(element, 1);
+    assert.deepEqual(element.children.map(row => row.name), ['two', 'three', 'four']);
+    element.children = [row('paragraph', [row('one'), row('two'), row('three')]), row('four')];
+    removeRows(element, 3);
+    assert.deepEqual(element.children.map(row => row.name), ['four']);
+});

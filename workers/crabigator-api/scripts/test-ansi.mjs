@@ -64,3 +64,31 @@ test('split columns reopen ANSI styles instead of closed symbol spans', () => {
         '<div class="line split-line"><span><span style="color:#d29922">Left label</span></span>'
         + '<span><span style="color:#3fb950">Right</span></span></div>');
 });
+
+const paragraphJoins = runInNewContext(script + '\nterminalParagraphJoins');
+const paragraphCases = JSON.parse(readFileSync(new URL('./fixtures/terminal-paragraphs.json', import.meta.url), 'utf8'));
+for (const {name, source, expected} of paragraphCases) {
+    test('paragraph reflow: ' + name, () => {
+        const rows = source.split('\n'), joins = paragraphJoins(rows), output = [];
+        rows.forEach((row, i) => {
+            row = row.replace(/ +$/, '');
+            if (joins.has(i - 1)) output[output.length - 1] += ' ' + row.trimStart();
+            else output.push(row);
+        });
+        assert.equal(output.join('\n'), expected);
+        const html = ansiToHtml(source);
+        assert.equal((html.match(/<div class="(?:line[^"\n]*|rule-line)">/g) || []).length, rows.length, 'Every captured row remains available in scroll mode');
+        assert.equal(html.includes('terminal-paragraph'), joins.size > 0);
+    });
+}
+
+test('joined HTML keeps leading spaces, styled runs, links and escaped text', () => {
+    const first = '  This paragraph describes the updated reading experience';
+    const html = ansiToHtml('\x1b[2C\x1b[1m' + first.slice(2).replaceAll(' ', '\x1b[C') + '\x1b[0m\n\x1b[2C\x1b[31mcontinuing with \x1b]8;;https://example.com\x07linked text\x1b]8;;\x07.\n' + '─'.repeat(first.length + 2));
+    assert.match(html, /data-terminal-rows="2"/);
+    assert.equal((html.match(/class="reflow-indent">  <\/span>/g) || []).length, 2);
+    assert.match(html, /color:#f85149/);
+    assert.match(html, /href="https:\/\/example.com"/);
+    assert.equal((html.match(/<span /g) || []).length, (html.match(/<\/span>/g) || []).length);
+    assert.equal((html.match(/<a /g) || []).length, (html.match(/<\/a>/g) || []).length);
+});

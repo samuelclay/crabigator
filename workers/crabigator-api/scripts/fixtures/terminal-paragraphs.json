@@ -1,0 +1,217 @@
+[
+  {
+    "name": "continuation 0",
+    "source": "  This paragraph describes the updated reading experience\ncontinuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "continuation 2",
+    "source": "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "no margin evidence",
+    "source": "  This paragraph describes the updated reading experience\n  continuing with details on the following row.",
+    "expected": "  This paragraph describes the updated reading experience\n  continuing with details on the following row."
+  },
+  {
+    "name": "short deliberate line",
+    "source": "  This is a short line\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This is a short line\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "sentence break",
+    "source": "  This paragraph describes the updated reading experience.\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience.\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "heading",
+    "source": "  This paragraph describes the updated reading experience:\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience:\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "blank line",
+    "source": "  This paragraph describes the updated reading experience\n\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience\n\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "new sentence",
+    "source": "  This paragraph describes the updated reading experience\n  Continuing with another sentence.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience\n  Continuing with another sentence.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "bulleted list",
+    "source": "  - This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  - This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "numbered list",
+    "source": "  1. This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  1. This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "indented code",
+    "source": "    This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "    This paragraph describes the updated reading experience\n    continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "fenced code",
+    "source": "  ```text\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n  ```\n───────────────────────────────────────────────────────────",
+    "expected": "  ```text\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n  ```\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "tilde fence",
+    "source": "~~~\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n~~~\n───────────────────────────────────────────────────────────",
+    "expected": "~~~\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n~~~\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "table",
+    "source": "  This paragraph | describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph | describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "aligned columns",
+    "source": "  This paragraph  describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph  describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "assignment",
+    "source": "  This paragraph = describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph = describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "shell prompt",
+    "source": "  $ This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  $ This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "hyphenated split",
+    "source": "  This paragraph describes the updated reading experience-\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience-\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "wide glyph",
+    "source": "  This paragraph describes the updated 界 reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated 界 reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "combining glyph",
+    "source": "  This paragraph describes the updatéd reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updatéd reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "emoji",
+    "source": "  This paragraph describes the updated 🦀 reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated 🦀 reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "unindented source",
+    "source": "This paragraph describes the updated reading experience\ncontinuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "This paragraph describes the updated reading experience\ncontinuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "too wide",
+    "source": "  This paragraph describes the updated reading experience more text\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience more text\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "next word fits",
+    "source": "  This paragraph describes the updated reading experience\n  a short continuation\n─────────────────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience\n  a short continuation\n─────────────────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "uncertain word split",
+    "source": "  This paragraph describes the updated reading experience\ncontinuing with details on the following row.\n─────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience\ncontinuing with details on the following row.\n─────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "word boundary padding",
+    "source": "  This paragraph describes the updated reading experience \ncontinuing with details on the following row.\n─────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience continuing with details on the following row.\n─────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "two matching margins",
+    "source": "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.",
+    "expected": "  This paragraph describes the updated reading experience continuing with details on the following row.\n\n  This paragraph describes the updated reading experience continuing with details on the following row."
+  },
+  {
+    "name": "different source widths",
+    "source": "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n────────────────────────────────────────────────────────────────────────────────────────────────────\n\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n────────────────────────────────────────────────────────────────────────────────────────────────────\n\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "archive paragraph",
+    "source": "  Dashboard upsell: the rotating \"Reason to upgrade\" box can now pick Listen, and its upgrade button highlights the Listen\n  line in the modal. I tested that in Django by forcing it to pick Listen. Its reasons were never translated, so I\n  wrapped all ten for translation.\n\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "expected": "  Dashboard upsell: the rotating \"Reason to upgrade\" box can now pick Listen, and its upgrade button highlights the Listen line in the modal. I tested that in Django by forcing it to pick Listen. Its reasons were never translated, so I wrapped all ten for translation.\n\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "mixed fence",
+    "source": "```text\n~~~\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n```\n───────────────────────────────────────────────────────────",
+    "expected": "```text\n~~~\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n```\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "short closing fence",
+    "source": "````text\n```\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n````\n───────────────────────────────────────────────────────────",
+    "expected": "````text\n```\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n````\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "fence with trailing code",
+    "source": "```text\n``` still code\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n```\n───────────────────────────────────────────────────────────",
+    "expected": "```text\n``` still code\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n```\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "shell command",
+    "source": "  git log --all --oneline --decorate --graph\n  git status --short\n─────────────────────────────────────────────",
+    "expected": "  git log --all --oneline --decorate --graph\n  git status --short\n─────────────────────────────────────────────"
+  },
+  {
+    "name": "unknown command with flags",
+    "source": "  mytool log --all --oneline --decorate --graph\n  continuing with flags\n────────────────────────────────────────────────",
+    "expected": "  mytool log --all --oneline --decorate --graph\n  continuing with flags\n────────────────────────────────────────────────"
+  },
+  {
+    "name": "python imports",
+    "source": "  from example.package.module import first, second\n  import another.package\n────────────────────────────────────────────────────",
+    "expected": "  from example.package.module import first, second\n  import another.package\n────────────────────────────────────────────────────"
+  },
+  {
+    "name": "split URL",
+    "source": "  See the documentation at https://example.com/documentation/section\n  additional-details for this section\n────────────────────────────────────────────────────────────────────",
+    "expected": "  See the documentation at https://example.com/documentation/section\n  additional-details for this section\n────────────────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "path continuation",
+    "source": "  This paragraph describes the updated reading experience\n  path/fragment follows here\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience\n  path/fragment follows here\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "identifier split",
+    "source": "  This paragraph describes the updated reading experience\n  continuation_of_identifier follows here\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience\n  continuation_of_identifier follows here\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "distant rule",
+    "source": "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n───────────────────────────────────────────────────────────",
+    "expected": "  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "matching tied margins",
+    "source": "───────────────────────────────────────────────────────────\n\n  This paragraph describes the updated reading experience\n  continuing with details on the following row.\n───────────────────────────────────────────────────────────",
+    "expected": "───────────────────────────────────────────────────────────\n\n  This paragraph describes the updated reading experience continuing with details on the following row.\n───────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "source width 40",
+    "source": "  This is prose about word word word\n  continuing with the next detail.\n────────────────────────────────────────",
+    "expected": "  This is prose about word word word continuing with the next detail.\n────────────────────────────────────────"
+  },
+  {
+    "name": "source width 80",
+    "source": "  This is prose about word word word word word word word word word word word\n  continuing with the next detail.\n────────────────────────────────────────────────────────────────────────────────",
+    "expected": "  This is prose about word word word word word word word word word word word continuing with the next detail.\n────────────────────────────────────────────────────────────────────────────────"
+  },
+  {
+    "name": "source width 122",
+    "source": "  This is prose about word word word word word word word word word word word word word word word word word word word word\n  continuing with the next detail.\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "expected": "  This is prose about word word word word word word word word word word word word word word word word word word word word continuing with the next detail.\n──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+  }
+]

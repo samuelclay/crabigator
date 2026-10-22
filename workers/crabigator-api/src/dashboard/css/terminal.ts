@@ -24,6 +24,19 @@ export const terminalCss = `
     max-width: 100%;
     display: block;
 }
+/* Paragraphs keep two cells of indentation on every client-wrapped line. */
+.terminal:not(.scroll-mode) .terminal-paragraph {
+    padding-left: 2ch;
+}
+.terminal:not(.scroll-mode) .terminal-paragraph > .reflow-row {
+    display: inline;
+    white-space: normal;
+}
+.terminal:not(.scroll-mode) .terminal-paragraph .reflow-indent {
+    display: none;
+}
+.reflow-gap { display: none; }
+.terminal:not(.scroll-mode) .terminal-paragraph .reflow-gap { display: inline; }
 /* Fallback symbol fonts have proportional advances, even inside monospace text. */
 .terminal-symbol {
     display: inline-block;
