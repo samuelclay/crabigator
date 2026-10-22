@@ -323,6 +323,13 @@ export const ansiJs = `
                 // Strip HTML tags to analyze plain text content
                 const plain = lineHtml.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 
+                // Keep repeated-character rules on one row at any client width.
+                // Preserve the full text so resizing can reveal more of the rule.
+                const characters = Array.from(plain.replace(/[\uFE0E\uFE0F]/g, '').trim());
+                if (characters.length >= 3 && characters.every(c => c === characters[0])) {
+                    return '<div class="rule-line">' + lineHtml + '</div>';
+                }
+
                 // Check for decorative rule line (>60% box chars)
                 let boxCount = 0;
                 for (const c of plain) {

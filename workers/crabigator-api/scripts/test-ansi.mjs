@@ -8,6 +8,24 @@ const source = readFileSync(new URL('../src/dashboard/js/ansi.ts', import.meta.u
 const script = runInNewContext(source.replace(/^export /m, '') + '\nansiJs');
 const ansiToHtml = runInNewContext(script + '\nansiToHtml');
 
+test('repeated-character rules retain their full styled text in a clipped row', () => {
+    for (const symbol of ['-', '─', '━', '=', 'x', '<', '&']) {
+        const half = symbol.repeat(60);
+        const html = ansiToHtml('  \x1b[33m' + half + '\x1b[31m' + half + '\x1b[0m   \nInput');
+        assert.match(html, /^<div class="rule-line">/);
+        assert.match(html, /<div class="line">Input<\/div>$/);
+        const escaped = half.replaceAll('&', '&amp;').replaceAll('<', '&lt;');
+        assert.ok(html.includes('color:#d29922">' + escaped));
+        assert.ok(html.includes('color:#f85149">' + escaped));
+    }
+    for (const row of ['--', '----- title -----', 'aaab', '   ']) {
+        assert.ok(!ansiToHtml(row).includes('rule-line'));
+    }
+    for (const symbol of ['🦀', '·', '✳']) {
+        assert.match(ansiToHtml(symbol.repeat(120)), /^<div class="rule-line">/);
+    }
+});
+
 test('embedded links survive SGR changes and newlines without leaking OSC controls', () => {
     const html = ansiToHtml('\x1b]8;id=pr;https://example.com/a;b=1&c=2\x1b\\Read \x1b[1mPR\x1b[0m\nnext\x1b]8;;\x07 plain');
     assert.match(html, /href="https:\/\/example.com\/a;b=1&amp;c=2"/);
