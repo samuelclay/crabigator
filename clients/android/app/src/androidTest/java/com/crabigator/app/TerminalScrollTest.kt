@@ -2,6 +2,7 @@ package com.crabigator.app
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -9,6 +10,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import org.junit.Assert.*
@@ -17,6 +19,31 @@ import org.junit.Test
 
 class TerminalScrollTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun rulesStayOnOneRowAsTheViewportResizes() {
+        val width = mutableStateOf(160)
+        val rule = "─".repeat(120)
+        val ordinary = "words that should still wrap ".repeat(4)
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(width.value.dp)) {
+                    TerminalViewport("", "\u001b[33m$rule\u001b[0m\n$ordinary", UiPreferences(), true) {}
+                }
+            }
+        }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText(rule).fetchSemanticsNodes().isNotEmpty() }
+        for (size in listOf(160, 300, 160)) {
+            compose.runOnIdle { width.value = size }
+            compose.waitForIdle()
+            fun layout(text: String): TextLayoutResult {
+                val layouts = mutableListOf<TextLayoutResult>()
+                compose.onNodeWithText(text).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+                return layouts.single()
+            }
+            assertEquals(1, layout(rule).lineCount)
+            assertTrue(layout(ordinary.trimEnd()).lineCount > 1)
+        }
+    }
 
     @Test fun readingHistorySurvivesNewOutputAndPinReturnsToLiveEnd() {
         val pinned = mutableStateOf(true)

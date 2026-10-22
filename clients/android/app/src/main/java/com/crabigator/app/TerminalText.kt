@@ -14,6 +14,10 @@ import java.net.URI
 
 /** Screen frames are complete, row-formatted snapshots, not an incremental VT stream. */
 object TerminalText {
+    fun isRule(line: CharSequence): Boolean {
+        val characters = line.trim().toString().codePoints().toArray()
+        return characters.size >= 3 && characters.all { it == characters[0] }
+    }
     private val linkStyle = TextLinkStyles(SpanStyle(color = Color(0xFF82AAFF), textDecoration = TextDecoration.Underline))
     private val webAddress = Regex("https?://[^\\s<>\"']+", RegexOption.IGNORE_CASE)
     private fun webURL(value: String): String? = runCatching {

@@ -5,6 +5,36 @@ import UserNotifications
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
+    @MainActor func testTerminalRulesClipAtEachViewportWidthWithoutChangingText() {
+        for symbol in ["-", "─", "━", "=", "x"] {
+            let rule = String(repeating: symbol, count: 120)
+            let source = "  \u{1b}[33m\(rule.prefix(60))\u{1b}[31m\(rule.suffix(60))\u{1b}[0m   \nInput\n" + rule + "\nAfter"
+            let parsed = TerminalText.parse(source, size: 13, spacing: 1.5, wrap: true)
+            XCTAssertEqual(parsed.string, "  " + rule + "\nInput\n" + rule + "\nAfter")
+            XCTAssertEqual(parsed.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? UIColor, TerminalText.palette(3))
+            XCTAssertEqual(parsed.attribute(.foregroundColor, at: 62, effectiveRange: nil) as? UIColor, TerminalText.palette(1))
+            let view = UITextView(usingTextLayoutManager: true)
+            view.textContainerInset = .zero
+            view.textContainer.lineFragmentPadding = 0
+            view.attributedText = parsed
+            for width: CGFloat in [140, 300, 140] {
+                view.frame = CGRect(x: 0, y: 0, width: width, height: 500)
+                view.layoutIfNeeded()
+                func top(_ word: String) -> CGFloat {
+                    let offset = (parsed.string as NSString).range(of: word).location
+                    return view.caretRect(for: view.position(from: view.beginningOfDocument, offset: offset)!).minY
+                }
+                XCTAssertEqual(top("Input"), 19.5, accuracy: 1)
+                XCTAssertEqual(top("After"), 58.5, accuracy: 1)
+            }
+        }
+        for row in ["--", "----- title -----", "aaab", "   "] {
+            let parsed = TerminalText.parse(row, size: 13, spacing: 1.5, wrap: true)
+            if parsed.length > 0 {
+                XCTAssertEqual((parsed.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.lineBreakMode, .byWordWrapping)
+            }
+        }
+    }
     func testModuleRecapsHidePlaceholdersAndUseSecondsForAges() {
         let empty = "The agent completed the turn without captured transcript output."
         let now = 1_800_000_000

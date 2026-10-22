@@ -111,6 +111,22 @@ enum TerminalText {
         if wrap, let regex = try? NSRegularExpression(pattern: " +(?=\\n|$)") {
             for match in regex.matches(in: out.string, range: NSRange(location: 0, length: out.length)).reversed() { out.deleteCharacters(in: match.range) }
         }
+        // Keep separator rows at their captured length, but clip them to the
+        // current viewport. Paragraph layout adapts when the device rotates.
+        if wrap {
+            let clipped = paragraph.mutableCopy() as! NSMutableParagraphStyle
+            clipped.lineBreakMode = .byClipping
+            let text = out.string as NSString
+            var start = 0
+            while start < text.length {
+                let range = text.lineRange(for: NSRange(location: start, length: 0))
+                let row = text.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
+                if row.count >= 3, let first = row.first, row.allSatisfy({ $0 == first }) {
+                    out.addAttribute(.paragraphStyle, value: clipped, range: range)
+                }
+                start = NSMaxRange(range)
+            }
+        }
         // Detect after stripping ANSI, so a color change inside a URL does not split it.
         if let regex = try? NSRegularExpression(pattern: #"https?://[^\s<>"']+"#, options: .caseInsensitive) {
             for match in regex.matches(in: out.string, range: NSRange(location: 0, length: out.length)) {

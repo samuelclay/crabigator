@@ -30,15 +30,25 @@ internal fun terminalBlocks(text: AnnotatedString, linesPerBlock: Int = 24): Lis
     if (text.isEmpty()) return emptyList()
     val blocks = mutableListOf<AnnotatedString>()
     var start = 0
+    var lineStart = 0
     var lines = 0
-    text.text.forEachIndexed { index, char ->
-        if (char == '\n' && ++lines == linesPerBlock) {
-            blocks += text.subSequence(start, index)
-            start = index + 1
+    fun finishLine(end: Int) {
+        if (TerminalText.isRule(text.text.subSequence(lineStart, end))) {
+            // A rule gets its own Text so it can clip while nearby text wraps.
+            if (start < lineStart) blocks += text.subSequence(start, lineStart - 1)
+            blocks += text.subSequence(lineStart, end)
+            start = end + 1
+            lines = 0
+        } else if (++lines == linesPerBlock) {
+            blocks += text.subSequence(start, end)
+            start = end + 1
             lines = 0
         }
+        lineStart = end + 1
     }
-    blocks += text.subSequence(start, text.length)
+    text.text.forEachIndexed { index, char -> if (char == '\n') finishLine(index) }
+    finishLine(text.length)
+    if (start <= text.length) blocks += text.subSequence(start, text.length)
     return blocks
 }
 
@@ -136,7 +146,9 @@ private data class TerminalDocument(val blocks: List<AnnotatedString> = emptyLis
 }
 
 @Composable private fun TerminalBlock(text: AnnotatedString, prefs: UiPreferences) {
+    val rule = TerminalText.isRule(text.text)
     Text(text, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = prefs.fontSize.sp,
-        lineHeight = (prefs.fontSize * prefs.lineSpacing / 100f).sp, softWrap = prefs.wrap,
+        lineHeight = (prefs.fontSize * prefs.lineSpacing / 100f).sp, softWrap = prefs.wrap && !rule,
+        maxLines = if (rule) 1 else Int.MAX_VALUE,
         style = LocalTextStyle.current.copy(lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)))
 }
