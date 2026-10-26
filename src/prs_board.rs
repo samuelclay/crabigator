@@ -367,6 +367,8 @@ struct SessionSnapshot {
     state: SessionState,
     /// Unix seconds when the prompt count last changed.
     prompted_at: u64,
+    /// Unix seconds when the session started, before its first prompt.
+    started_at: u64,
     /// Unix seconds when the completion count last changed.
     completed_at: u64,
     prs: Vec<SessionPr>,
@@ -430,6 +432,8 @@ struct CachedSessionRef {
     state: SessionState,
     #[serde(default)]
     prompted_at: u64,
+    #[serde(default)]
+    started_at: u64,
     #[serde(default)]
     completed_at: u64,
     #[serde(default)]
@@ -533,6 +537,7 @@ impl From<CachedSessionRef> for SessionRef {
             recap: cached.recap.filter(|recap| crate::recap::has_recap_content(&recap.headline)),
             state: cached.state,
             prompted_at: cached.prompted_at,
+            started_at: cached.started_at,
             completed_at: cached.completed_at,
             ended: cached.ended,
             device_name: cached.device_name,
@@ -554,6 +559,7 @@ impl From<&SessionRef> for CachedSessionRef {
             recap: session.recap.clone(),
             state: session.state,
             prompted_at: session.prompted_at,
+            started_at: session.started_at,
             completed_at: session.completed_at,
             ended: session.ended,
             device_name: session.device_name.clone(),
@@ -618,6 +624,8 @@ struct SessionRef {
     state: SessionState,
     /// Unix seconds when the session last received a prompt.
     prompted_at: u64,
+    /// Unix seconds when the session started, before its first prompt.
+    started_at: u64,
     /// Unix seconds when the session's completion count last changed.
     completed_at: u64,
     /// The session is over. Always false for live local mirrors; cloud
@@ -845,6 +853,7 @@ fn snapshot_from_instance(
         recap: latest_recap.and_then(recap_brief_from),
         state: mirror_session_state(&data),
         prompted_at: activity.prompted_at,
+        started_at: mirror_activity_timestamp(&data, "session_start"),
         completed_at: activity.completed_at,
         prs,
         mark,
@@ -1730,6 +1739,7 @@ fn board_session_ref(session: &SessionSnapshot) -> SessionRef {
         recap: session.recap.clone(),
         state: session.state,
         prompted_at: session.prompted_at,
+        started_at: session.started_at,
         completed_at: session.completed_at,
         ended: false,
         device_name: machine_label(&session.device_name),
@@ -2073,6 +2083,7 @@ fn cloud_session_ref(session: crate::cloud::CloudBoardSession) -> SessionRef {
         recap,
         state,
         prompted_at: activity_timestamp_secs(session.prompts_changed_at),
+        started_at: activity_timestamp_secs(session.started_at),
         completed_at: activity_timestamp_secs(session.completions_changed_at),
         ended: !active,
         device_name: machine_label(&session.device_name),
@@ -2430,12 +2441,14 @@ fn session_is_working(session: &SessionRef) -> bool {
         )
 }
 
-/// Last prompt, or now when the session is still working.
+/// Last prompt (or session start before the first), or now while working.
 fn session_clock(session: &SessionRef, now: u64) -> u64 {
     if session_is_working(session) {
         now
-    } else {
+    } else if session.prompted_at > 0 {
         session.prompted_at
+    } else {
+        session.started_at
     }
 }
 
@@ -2453,9 +2466,9 @@ fn activity_bucket(sessions: &[SessionRef], now: u64) -> RecencyBucket {
 }
 
 /// The clock a PR row sorts and buckets by, in unix seconds: the newest
-/// prompt among its sessions. A row with no prompt time — a watch, or
-/// sessions that never prompted — falls back to the PR's own events: GitHub's
-/// updatedAt (which moves on any push, comment, review, or merge), the close,
+/// session clock. A row with no session time falls back to the PR's own
+/// events: GitHub's updatedAt (which moves on any push, comment, review,
+/// or merge), the close,
 /// or its last mention here.
 fn entry_recency_time(entry: &BoardPr, now: u64) -> u64 {
     let prompted = activity_sort_time(&entry.sessions, now);
@@ -7108,6 +7121,7 @@ mod tests {
             recap: None,
             state: SessionState::Ready,
             prompted_at: 0,
+            started_at: 0,
             completed_at: 0,
             prs,
         }
@@ -7182,6 +7196,7 @@ mod tests {
             recap: None,
             state: SessionState::Ready,
             prompted_at,
+            started_at: 0,
             completed_at: 0,
             ended,
             device_name: String::new(),
@@ -9971,6 +9986,7 @@ mod tests {
                 recap: None,
                 state: SessionState::Ready,
                 prompted_at: 0,
+                started_at: 0,
                 completed_at: 0,
                 ended: false,
                 device_name: String::new(),
@@ -10229,6 +10245,7 @@ mod tests {
                 recap: None,
                 state: SessionState::Complete,
                 prompted_at: now - 4 * 60 * 60,
+                started_at: 0,
                 completed_at: now - 8 * 60 * 60,
                 ended: false,
                 device_name: String::new(),
@@ -10246,6 +10263,7 @@ mod tests {
                 recap: None,
                 state: SessionState::Thinking,
                 prompted_at: now - 30 * 60,
+                started_at: 0,
                 completed_at: now - 2 * 60 * 60,
                 ended: false,
                 device_name: String::new(),
@@ -10322,6 +10340,7 @@ mod tests {
                 recap: None,
                 state,
                 prompted_at: 1,
+                started_at: 0,
                 completed_at: 1,
                 ended: false,
                 device_name: String::new(),
@@ -10357,6 +10376,7 @@ mod tests {
             recap: None,
             state: SessionState::Thinking,
             prompted_at: 1,
+            started_at: 0,
             completed_at: 1,
             ended: false,
             device_name: String::new(),
@@ -10459,6 +10479,91 @@ mod tests {
     }
 
     #[test]
+    fn new_sessions_are_visible_and_selectable_before_the_first_prompt() {
+        let now = now_secs() as u64;
+        let capture = tempfile::tempdir().unwrap();
+        std::fs::write(capture.path().join("screen.txt"), "Ready for input").unwrap();
+        let data = serde_json::json!({
+            "session_id": "new-local",
+            "cwd": "/tmp/new-project",
+            "last_updated": now_secs(),
+            "widgets": { "stats": { "data": {
+                "state": "ready", "session_start": now - 10
+            } } }
+        });
+        let local = snapshot_from_instance(
+            capture.path().join("inspect.json"),
+            data,
+            &mut ActivityHistory::default(),
+        )
+        .unwrap();
+        let mut workspaces = local_workspaces(&[local], &[]);
+        let cloud = serde_json::from_value(serde_json::json!({
+            "prs": [],
+            "sessions": [{
+                "session_id": "new-remote", "dir_name": "remote-project",
+                "device_name": "remote-host", "active": true, "state": "ready",
+                "started_at": now - 20
+            }]
+        }))
+        .unwrap();
+        workspaces.extend(cloud_entries_to_board(cloud).1);
+        for workspace in &workspaces {
+            assert_eq!(workspace.session.prompted_at, 0);
+            assert_eq!(
+                activity_bucket(workspace.sessions(), now),
+                RecencyBucket::LastHour
+            );
+        }
+        let rows: Vec<_> = workspaces
+            .iter()
+            .map(|entry| WorkspaceRow {
+                entry,
+                preview_lines: Vec::new(),
+            })
+            .collect();
+        for mode in [BoardMode::Sessions, BoardMode::Prs] {
+            let frame = render(
+                &[],
+                &[],
+                &rows,
+                160,
+                false,
+                BoardView::default().with_mode(mode),
+            );
+            assert_eq!(
+                frame.spans.len(),
+                2,
+                "both new sessions survive the default age filter"
+            );
+            assert_eq!(selectable_positions(&frame.spans).len(), 2);
+            assert!(frame.spans.iter().any(|span| span
+                .peeks
+                .iter()
+                .any(|peek| peek.cloud_session_id.as_deref() == Some("new-remote"))));
+        }
+    }
+
+    #[test]
+    fn session_start_only_sets_recency_until_the_first_prompt() {
+        let now = 1_000_000;
+        let mut session = test_session_ref("new", 0, false);
+        session.started_at = now - 60;
+        assert_eq!(session_clock(&session, now), now - 60);
+        assert_eq!(
+            activity_bucket(std::slice::from_ref(&session), now + 2 * 86400),
+            RecencyBucket::Older
+        );
+        session.prompted_at = now - 30;
+        assert_eq!(session_clock(&session, now), now - 30);
+        let cached: CachedSessionRef = serde_json::from_str(
+            &serde_json::to_string(&CachedSessionRef::from(&session)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(SessionRef::from(cached).started_at, session.started_at);
+    }
+
+    #[test]
     fn activity_sort_uses_the_newest_prompt_and_ignores_completions() {
         let now = 100_000;
         let mut session = SessionRef {
@@ -10473,6 +10578,7 @@ mod tests {
             recap: None,
             state: SessionState::Ready,
             prompted_at: now - 8 * 60,
+            started_at: 0,
             completed_at: now - 13 * 60 * 60,
             ended: false,
             device_name: String::new(),
