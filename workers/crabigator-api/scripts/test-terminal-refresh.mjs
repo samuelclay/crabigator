@@ -109,3 +109,25 @@ test('fullscreen preserves the reading position relative to the terminal viewpor
     preserve('s', () => { terminal.clientHeight = 300; });
     assert.equal(terminal.scrollTop, 1700, 'Pinned output stays at the bottom when modules reduce terminal height');
 });
+
+
+test('new board sessions remain visible and selectable before their first prompt', () => {
+    const source = embedded('pr-board');
+    const buckets = source.slice(source.indexOf('const PRB_BUCKETS ='), source.indexOf('const PRB_THROBBER ='));
+    const api = runInNewContext(buckets + functions(source,
+        ['prbSessionState', 'prbSessionIsWorking', 'prbSessionFreshness', 'prbBucketIndex', 'prbRowSessions', 'prbPeekSessions'])
+        + '\n({freshness:prbSessionFreshness, bucket:prbBucketIndex, peek:prbPeekSessions})');
+    const now = 1_000_000;
+    const session = { session_id: 'new', active: true, state: 'ready', started_at: now - 10,
+        prompts_changed_at: 0, completions_changed_at: 0, title: '', recap: null };
+    assert.equal(api.bucket(now - api.freshness(session, now)), 0, 'An empty session belongs in Last hour');
+    assert.equal(api.peek({ kind: 'session', session }).length, 1, 'Remote access needs no prompt or title');
+    assert.equal(api.bucket(now + 2 * 86400 - api.freshness(session, now + 2 * 86400)), 6,
+        'An untouched session still ages out');
+    session.prompts_changed_at = now - 5;
+    assert.equal(api.freshness(session, now), now - 5);
+    session.state = 'thinking';
+    assert.equal(api.freshness(session, now), now);
+    session.active = false;
+    assert.equal(api.freshness(session, now), now - 5, 'Ended sessions do not stay fresh');
+});

@@ -586,16 +586,16 @@ export const prBoardJs = `
             const st = prbSessionState(s);
             return st === 'thinking' || st === 'permission' || st === 'question';
         }
-        // Last prompt, or now when the session is still working.
+        // Last prompt (or session start before the first), or now while working.
         function prbSessionFreshness(s, now) {
             if (prbSessionIsWorking(s)) return now;
-            return s.prompts_changed_at || 0;
+            return s.prompts_changed_at || s.started_at || 0;
         }
         function prbActivityTime(sessions, now) {
             return Math.max(0, ...sessions.map(s => prbSessionFreshness(s, now)));
         }
-        // A PR row's recency, unix seconds: its sessions' newest prompt. With
-        // no prompt to follow (a watch, or sessions that never prompted) the
+        // A PR row's recency, unix seconds: its newest session clock. With
+        // no session time to follow (for example, a watch) the
         // PR's own events place it — GitHub's updatedAt, the close, or its
         // last mention here.
         // Paired computer, without a trailing .local. Empty when unknown.
