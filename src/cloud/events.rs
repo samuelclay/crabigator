@@ -1162,6 +1162,28 @@ pizza?
         assert!(page.review.is_none());
     }
 
+    /// Claude draws a `│` before each line of a long question. The page
+    /// must still name its question, or clients fall back to the first.
+    #[test]
+    fn mirrors_a_long_question_drawn_behind_a_bar() {
+        let mut questions = questions();
+        questions[1].question = "Which toppings should go on the large pizza for Friday's team \
+            lunch, keeping in mind that two people are vegetarian? (pick all that apply)"
+            .to_string();
+        let screen = QuestionScreen::parse(include_str!(
+            "../parsers/testdata/long_question_bar_narrow_typed.txt"
+        ))
+        .unwrap();
+        let page = QuestionPageState::from_screen(&questions, Some(&screen));
+        assert_eq!(page.current_question, Some(1));
+        assert_eq!(page.checked, vec![1, 3, 5]);
+        assert_eq!(page.cursor_row, Some(5));
+        assert_eq!(
+            page.custom_text.as_deref(),
+            Some("basil leaves added after the bake and a drizzle of hot honey on the pepperoni half only")
+        );
+    }
+
     #[test]
     fn mirrors_a_single_select_page() {
         let screen = QuestionScreen::parse(

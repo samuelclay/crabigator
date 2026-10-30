@@ -1,0 +1,19 @@
+[38;5;246m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+←[2C☒[CCrust[2C☒[CToppings[2C☒[CTiming[2C☒[CSides[C[38;5;16;48;5;153m ✔ Submit [38;5;246;49m →[0m
+[0m
+[38;5;231;1mReview your answers[0m
+ [0m
+ ● Which crust?[0m
+ [C [38;5;114m→ Stuffed[0m
+[C[2m│[m ●[CWhich toppings[Cshould[Cgo[Con[Cthe[Clarge[Cpizza[Cfor[CFriday's[Cteam[Clunch,[Ckeeping[Cin[Cmind[Cthat[Ctwo[Cpeople[Care[Cvegetarian?[C(pick[Call[Cthat[Capply)[0m
+ [C [38;5;114m→ Mushrooms, Roasted red peppers and caramelized onions on half, basil leaves added after the bake and a drizzle of hot honey on the pepperoni half only[0m
+[C[2m│[m ●[CThe oven at[Cthe[Coffice[Cruns[Chot[Cand[Cthe[Cdelivery[Cwindow[Cis[Cnarrow,[Cso[Chow[Cshould[Cwe[Cschedule[Cthe[Cbake[Cand[Cthe[Cpickup[Cso[Cthat[Cthe[Cpizza[Carrives[Cwarm[Cbut[Cnot[0m
+ [2m│[m   burnt, given that the[Cmeeting[Cmight[Cstart[Cten[Cminutes[Clate?[0m
+ [C [38;5;114m→ Order delivery for 12:15 with a call-ahead text when the driver leaves[0m
+ ● Which sides?[0m
+[2C [38;5;114m→ Garlic knots, Caesar salad[0m
+[0m
+[38;5;246mReady to submit your answers?[0m
+[0m
+[38;5;153m❯[C[38;5;246m1. [38;5;153mSubmit answers[0m
+[2C[38;5;246m2. [mCancel[0m

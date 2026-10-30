@@ -147,9 +147,9 @@ pub enum QuestionScreen {
         /// `Some(cursor_on_it)` when the page has a Submit (or Next) row,
         /// which multi-select pages show below "Type something".
         submit_row: Option<bool>,
-        /// 0-based page from Grok's `[N/M]` footer and Codex's "Question
-        /// N/M" header, or 0 on Claude's one-question dialog. Claude's
-        /// tab strip has no page numbers.
+        /// 0-based page from Grok's `[N/M]` footer, Codex's "Question N/M"
+        /// header, or the tab Claude's strip highlights; 0 on Claude's
+        /// one-question dialog. A strip without colors gives no page.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         page_index: Option<usize>,
     },
@@ -426,7 +426,80 @@ fn parse_claude(screen_content: &str) -> Option<QuestionScreen> {
         });
     }
 
-    parse_page(&body, None)
+    let page_index = screen_content
+        .lines()
+        .nth(header_idx)
+        .and_then(highlighted_tab);
+    parse_page(&body, page_index)
+}
+
+/// Which tab the strip highlights. Claude draws the current tab on a
+/// background color: `←  ☒ Crust ESC[48;2;177;185;249m ☐ Sauce ESC[49m ☐ Size  ✔ Submit  →`.
+/// Returns how many tabs come before it, so Submit reads as one past the
+/// last question. `None` unless exactly one tab stands out, as when a
+/// theme colors every tab or the screen has no colors.
+fn highlighted_tab(raw_line: &str) -> Option<usize> {
+    static CSI: OnceLock<Regex> = OnceLock::new();
+    let csi = CSI.get_or_init(|| Regex::new(r"\x1b\[([0-9;:?]*)([A-Za-z])").unwrap());
+    let (mut background, mut reverse) = (false, false);
+    let mut tabs: Vec<bool> = Vec::new();
+    let mut note_tabs = |text: &str, lit: bool| {
+        let marks = text.chars().filter(|c| matches!(c, '☐' | '☒' | '✔'));
+        tabs.extend(marks.map(|_| lit));
+    };
+    let mut start = 0;
+    for caps in csi.captures_iter(raw_line) {
+        let sequence = caps.get(0)?;
+        note_tabs(&raw_line[start..sequence.start()], background || reverse);
+        start = sequence.end();
+        if &caps[2] == "m" {
+            apply_sgr(&caps[1], &mut background, &mut reverse);
+        }
+    }
+    note_tabs(&raw_line[start..], background || reverse);
+
+    let mut lit = tabs.iter().enumerate().filter(|(_, lit)| **lit);
+    let (index, _) = lit.next()?;
+    lit.next().is_none().then_some(index)
+}
+
+/// Track whether an SGR sequence leaves a background color or reverse
+/// video on.
+fn apply_sgr(params: &str, background: &mut bool, reverse: &mut bool) {
+    let mut params = params.split(';');
+    while let Some(param) = params.next() {
+        let code: u16 = param.split(':').next().unwrap_or("").parse().unwrap_or(0);
+        match code {
+            0 => (*background, *reverse) = (false, false),
+            7 => *reverse = true,
+            27 => *reverse = false,
+            40..=47 | 100..=107 => *background = true,
+            49 => *background = false,
+            38 | 48 | 58 => {
+                *background |= code == 48;
+                // Skip the color's own arguments, `5;n` or `2;r;g;b`,
+                // unless they came joined by colons.
+                if !param.contains(':') {
+                    match params.next() {
+                        Some("5") => {
+                            params.next();
+                        }
+                        Some("2") => {
+                            params.nth(2);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A question line without the dim `│` Claude draws before each line of a
+/// long question.
+fn question_line(trimmed: &str) -> &str {
+    trimmed.strip_prefix('│').map_or(trimmed, str::trim_start)
 }
 
 /// Read the review page: `● question` lines, each followed by `→ answer`.
@@ -436,7 +509,7 @@ fn parse_review_answers(body: &[&str]) -> Vec<ReviewAnswer> {
     let mut wrapping_answer = false;
 
     for line in body {
-        let trimmed = line.trim();
+        let trimmed = question_line(line.trim());
         if trimmed.is_empty() || trimmed == "Review your answers" {
             continue;
         }
@@ -471,6 +544,8 @@ fn parse_page(body: &[&str], page_index: Option<usize>) -> Option<QuestionScreen
     let mut question_lines: Vec<&str> = Vec::new();
     let mut rows: Vec<ScreenRow> = Vec::new();
     let mut submit_row: Option<bool> = None;
+    // Lines under the latest row: its description or its wrapped label.
+    let mut below_row: Vec<&str> = Vec::new();
 
     for line in body {
         let trimmed = line.trim();
@@ -488,6 +563,7 @@ fn parse_page(body: &[&str], page_index: Option<usize>) -> Option<QuestionScreen
                 label: caps[4].trim().to_string(),
                 cursor: caps.get(1).is_some(),
             });
+            below_row.clear();
             continue;
         }
         // The last row reads "Next" until the final question, then "Submit".
@@ -496,14 +572,22 @@ fn parse_page(body: &[&str], page_index: Option<usize>) -> Option<QuestionScreen
             submit_row = Some(trimmed.starts_with('❯'));
             continue;
         }
-        if rows.is_empty() && !trimmed.is_empty() {
-            question_lines.push(trimmed);
+        let question = question_line(trimmed);
+        if rows.is_empty() && !question.is_empty() {
+            question_lines.push(question);
+        } else if !trimmed.is_empty() {
+            below_row.push(trimmed);
         }
-        // Anything else is an option description or a wrapped label; skip it.
     }
 
-    if rows.is_empty() {
-        return None;
+    // The free-text row comes last and has no description, so lines under
+    // it continue a typed answer too long for one line.
+    let last = rows.last_mut()?;
+    if !last.is_placeholder() {
+        for line in below_row {
+            last.label.push(' ');
+            last.label.push_str(line);
+        }
     }
 
     Some(QuestionScreen::Page {
@@ -841,6 +925,88 @@ Ready to submit your answers?
             let cursors: Vec<usize> = (0..rows.len()).filter(|&i| rows[i].cursor).collect();
             assert_eq!(cursors, [cursor_index]);
         }
+    }
+
+    /// Real screens (Claude Code 2.1.314): Claude draws a dim `│` before
+    /// each line of a question longer than about 80 characters.
+    const LONG_QUESTION: &str = include_str!("testdata/long_question_bar.txt");
+    const LONG_QUESTION_NARROW_TYPED: &str =
+        include_str!("testdata/long_question_bar_narrow_typed.txt");
+    const REVIEW_LONG_QUESTIONS: &str = include_str!("testdata/review_long_questions.txt");
+    const TOPPINGS: &str = "Which toppings should go on the large pizza for Friday's team lunch, \
+        keeping in mind that two people are vegetarian? (pick all that apply)";
+
+    #[test]
+    fn reads_long_questions_without_their_bar() {
+        for screen in [LONG_QUESTION, LONG_QUESTION_NARROW_TYPED] {
+            let Some(QuestionScreen::Page {
+                question,
+                rows,
+                page_index,
+                ..
+            }) = QuestionScreen::parse(screen)
+            else {
+                panic!("expected a page");
+            };
+            assert_eq!(question, TOPPINGS);
+            assert_eq!(page_index, Some(1), "the strip highlights Toppings");
+            assert_eq!(rows.len(), 5);
+        }
+    }
+
+    #[test]
+    fn joins_a_typed_answer_that_wraps() {
+        let Some(QuestionScreen::Page {
+            rows, submit_row, ..
+        }) = QuestionScreen::parse(LONG_QUESTION_NARROW_TYPED)
+        else {
+            panic!("expected a page");
+        };
+        let checked: Vec<u32> = rows
+            .iter()
+            .filter(|r| r.checked == Some(true))
+            .map(|r| r.number)
+            .collect();
+        assert_eq!(checked, [1, 3, 5]);
+        assert!(rows[4].cursor);
+        assert_eq!(
+            rows[4].label,
+            "basil leaves added after the bake and a drizzle of hot honey on the pepperoni half only"
+        );
+        // A wrapped option label stays out of its row; only the typed row grows.
+        assert_eq!(rows[2].label, "Roasted red peppers and caramelized onions on half");
+        assert_eq!(submit_row, Some(false));
+    }
+
+    #[test]
+    fn reads_review_answers_without_their_bar() {
+        let Some(QuestionScreen::Review { answers }) = QuestionScreen::parse(REVIEW_LONG_QUESTIONS)
+        else {
+            panic!("expected the review page");
+        };
+        let questions: Vec<&str> = answers.iter().map(|a| a.question.as_str()).collect();
+        assert_eq!(questions[0], "Which crust?");
+        assert_eq!(questions[1], TOPPINGS);
+        assert!(questions[2].starts_with("The oven at the office runs hot"));
+        assert!(questions[2].ends_with("given that the meeting might start ten minutes late?"));
+        assert_eq!(questions[3], "Which sides?");
+        assert_eq!(answers[3].answer, "Garlic knots, Caesar salad");
+    }
+
+    #[test]
+    fn finds_the_highlighted_tab() {
+        let strip = |crust: &str, sauce: &str, submit: &str| {
+            format!("←  {crust} ☒ Crust \x1b[m {sauce} ☐ Sauce \x1b[m {submit} ✔ Submit \x1b[m →")
+        };
+        let truecolor = "\x1b[38;2;0;0;0;48;2;177;185;249m";
+        assert_eq!(highlighted_tab(&strip("", truecolor, "")), Some(1));
+        assert_eq!(highlighted_tab(&strip("\x1b[38;5;16;48;5;153m", "", "")), Some(0));
+        assert_eq!(highlighted_tab(&strip("", "", "\x1b[7m")), Some(2), "Submit");
+        assert_eq!(highlighted_tab(&strip("", "\x1b[48:2::177:185:249m", "")), Some(1));
+        // A foreground color alone, or every tab colored, names no tab.
+        assert_eq!(highlighted_tab(&strip("", "\x1b[38;5;153m", "")), None);
+        assert_eq!(highlighted_tab(&strip("\x1b[44m", "\x1b[44m", "\x1b[44m")), None);
+        assert_eq!(highlighted_tab("←  ☒ Crust  ☐ Sauce  ✔ Submit  →"), None);
     }
 
     #[test]

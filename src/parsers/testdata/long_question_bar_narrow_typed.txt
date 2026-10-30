@@ -1,0 +1,22 @@
+[38;5;246m────────────────────────────────────────────────────────────────[0m
+←[2C☒[CCrust[C[38;5;16;48;5;153m ☒ Toppings [C[m☐[CTiming[2C☐[CSides[2C✔[CSubmit[2C→[0m
+[0m
+[2m│[C[38;5;231;1mWhich[Ctoppings[Cshould[Cgo[Con[Cthe[Clarge[Cpizza[Cfor[CFriday's[Cteam[0m
+[2m│[C[38;5;231;1mlunch,[Ckeeping[Cin[Cmind[Cthat[Ctwo[Cpeople[Care[Cvegetarian?[C(pick[0m
+[2m│[C[38;5;231;1mall[Cthat[Capply)[0m
+[0m
+ [C[38;5;246m1.[C[38;5;114m[✔][C[mMushrooms[0m
+[9C[38;5;246mFresh[Cbutton[Cmushrooms[0m
+ [C[38;5;246m2.[C[m[[C][CPepperoni[0m
+[9C[38;5;246mSpicy[Cslices[0m
+ [C[38;5;246m3.[C[38;5;114m[✔][C[mRoasted red peppers and caramelized onions on half[0m
+[9C[38;5;246mSweet[Cand[Csmoky,[Cvegetarian[Cfriendly[0m
+ [C[38;5;246m4.[C[m[[C][COlives[0m
+[9C[38;5;246mBlack[Colives[0m
+[38;5;153m❯[C[38;5;246m5.[C[38;5;114m[✔] [mbasil leaves added[Cafter[Cthe[Cbake[Cand[Ca[Cdrizzle[Cof[Chot[0m
+[5C    honey[Con[Cthe[Cpepperoni[Chalf[Conly[0m
+     [1mNext[0m
+[38;5;246m────────────────────────────────────────────────────────────────[0m
+[2C6.[CChat[Cabout[Cthis[0m
+[0m
+[38;5;246mEnter to select · Tab/Arrow keys to navigate · ctrl+g to edit in[0m
