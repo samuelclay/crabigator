@@ -281,6 +281,8 @@ pub struct App {
     last_cloud_pr_slack_threads: Vec<SlackThread>,
     /// Whether we've sent an initial stats payload to cloud
     cloud_stats_sent: bool,
+    /// The prompt count in the last stats event sent to the cloud.
+    last_cloud_stats_prompts: Option<u32>,
     /// Whether we've sent a prompt event (to track clearing)
     last_cloud_prompt_sent: bool,
     /// The active prompt last sent to the cloud. Codex's async questions
@@ -505,6 +507,7 @@ impl App {
             last_cloud_slack_threads: Vec::new(),
             last_cloud_pr_slack_threads: Vec::new(),
             cloud_stats_sent: false,
+            last_cloud_stats_prompts: None,
             last_cloud_prompt_sent: false,
             last_cloud_active_prompt: None,
             last_exit_plan_option_count: 0,
@@ -2295,11 +2298,15 @@ impl App {
             self.send_cloud_prompt_event();
         }
 
-        // Stream stats when platform stats update
+        // Stream stats when platform stats update. Without viewers, send only
+        // a new prompt count right away: the cloud uses it to tell a new
+        // turn's question from a repeat, so it must arrive before a question
+        // asked seconds later.
         if new_last_updated != old_last_updated || !self.cloud_stats_sent {
             self.cloud_stats_sent = true;
             self.session_stats.tick();
-            if self.cloud_viewers_active {
+            let prompts = self.session_stats.platform_stats.prompts;
+            if self.cloud_viewers_active || self.last_cloud_stats_prompts != Some(prompts) {
                 self.send_cloud_stats_event();
             }
             self.send_cloud_stats_update(); // DB update — keep this for session records
@@ -2730,6 +2737,7 @@ impl App {
                 suggestion,
             );
             client.send_event(event);
+            self.last_cloud_stats_prompts = Some(self.session_stats.platform_stats.prompts);
         }
     }
 
