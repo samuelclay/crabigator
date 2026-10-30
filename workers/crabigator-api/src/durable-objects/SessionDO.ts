@@ -82,6 +82,8 @@ interface PersistentState {
     notificationPrompt?: string;
     notificationTurn?: number;
     notificationKind?: string;
+    /** The request behind notificationId was answered or closed. */
+    notificationLapsed?: boolean;
     lastTitle: string | null;
     lastTitleHistory: string[] | null;
     /** Most recent recap event (status + latest finished recap). */
@@ -1120,7 +1122,12 @@ export class SessionDO implements DurableObject {
             this.persistentState.promptRevision = (this.persistentState.promptRevision || 0) + 1;
             persistentChanged = true;
         }
-        if (this.hasPendingAttention() && this.updateNotificationIdentity()) persistentChanged = true;
+        if (this.hasPendingAttention()) {
+            if (this.updateNotificationIdentity()) persistentChanged = true;
+        } else if (hadPendingAttention) {
+            this.persistentState.notificationLapsed = true;
+            persistentChanged = true;
+        }
         // Only persist to storage on meaningful state changes
         // This is the key optimization: screen/scrollback updates (high frequency)
         // no longer trigger storage writes
@@ -1342,11 +1349,17 @@ export class SessionDO implements DurableObject {
                 : prompt) : undefined;
         const turn = this.persistentState.attentionPromptCount || 0;
         const kind = this.persistentState.state;
+        // Desktops can report a question dialog as a permission request until its
+        // hook arrives. While a request is open and has no content yet, a change of
+        // kind is the same request.
+        const sameOpenRequest = this.persistentState.notificationPrompt === undefined
+            && !this.persistentState.notificationLapsed;
         const fresh = !this.persistentState.notificationId || turn !== this.persistentState.notificationTurn
-            || kind !== this.persistentState.notificationKind
+            || (kind !== this.persistentState.notificationKind && !sameOpenRequest)
             || (signature !== undefined && this.persistentState.notificationPrompt !== undefined
                 && signature !== this.persistentState.notificationPrompt);
-        const changed = fresh || (signature !== undefined && signature !== this.persistentState.notificationPrompt);
+        const changed = fresh || (signature !== undefined && signature !== this.persistentState.notificationPrompt)
+            || this.persistentState.notificationLapsed === true;
         if (fresh) {
             this.persistentState.notificationId = crypto.randomUUID();
             this.persistentState.notificationPrompt = undefined;
@@ -1354,6 +1367,7 @@ export class SessionDO implements DurableObject {
         if (signature !== undefined) this.persistentState.notificationPrompt = signature;
         this.persistentState.notificationTurn = turn;
         this.persistentState.notificationKind = kind;
+        this.persistentState.notificationLapsed = false;
         return changed;
     }
 
@@ -1377,6 +1391,7 @@ export class SessionDO implements DurableObject {
         // cannot both reach the terminal. A changed prompt opens a new revision.
         this.persistentState.answeredRevision = revision;
         this.persistentState.unstructuredAttentionBlocked = true;
+        this.persistentState.notificationLapsed = true;
         // Connected phones must resolve their panels even if the desktop takes
         // time to repaint. Push also clears notifications on background devices.
         this.broadcast({ type: 'prompt', prompt: null });

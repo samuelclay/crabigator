@@ -540,6 +540,51 @@ it('sends one Apple alert while answering locally, across concurrent sends and h
     } finally { mocked.mockRestore(); desktop.close(); }
 });
 
+it('keeps one Apple alert when a question first reads as a permission request', async () => {
+    const group = 'kind-flip-group', sessionId = 'kind-flip-session';
+    const owner = await pairedMobile('kind-flip-phone', group);
+    await registerPush(owner.request('/api/mobile/push', { platform: 'ios', token: 'd'.repeat(64), environment: 'sandbox' }), testEnv);
+    const { account } = await appleCredentials('KINDFLIP');
+    const pushEnv = { ...testEnv, APNS_CREDENTIALS: JSON.stringify(account) };
+    const stub = testEnv.SESSION.get(testEnv.SESSION.idFromName(sessionId));
+    const desktop = (await stub.fetch('https://internal/connect', { headers: { Upgrade: 'websocket' } })).webSocket!;
+    desktop.accept();
+    const event = async (value: unknown) => runInDurableObject(stub, async instance => {
+        await (instance as unknown as { handleEvent(value: unknown): Promise<void> }).handleEvent(value);
+    });
+    const calls: string[] = [];
+    const mocked = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+        calls.push(new Headers(init?.headers).get('apns-push-type')!);
+        return new Response(null, { status: 200, headers: { 'apns-id': 'apple-receipt-id' } });
+    });
+    const notify = () => notifyMobilePrompt(pushEnv, group, sessionId);
+    const prompt = { prompt_type: 'question', questions: [{ question: 'Which room?', options: [{ label: 'Third floor', value: '1' }] }] };
+    try {
+        await event({ type: 'stats', prompts: 1 });
+        await event({ type: 'state', state: 'thinking' });
+        // Older desktops read the dialog's "Esc to cancel" before the hook.
+        await event({ type: 'state', state: 'permission' });
+        await event({ type: 'prompt', prompt: null });
+        await notify();
+        await event({ type: 'state', state: 'question' });
+        await event({ type: 'prompt', prompt });
+        await notify();
+        expect(calls).toEqual(['alert']);
+        await event({ type: 'state', state: 'thinking' });
+        await notify();
+        // Once a request without content is answered, a permission request
+        // in the same turn is new.
+        await event({ type: 'stats', prompts: 2 });
+        await event({ type: 'state', state: 'question' });
+        await notify();
+        await event({ type: 'state', state: 'thinking' });
+        await notify();
+        await event({ type: 'state', state: 'permission' });
+        await notify();
+        expect(calls).toEqual(['alert', 'background', 'alert', 'background', 'alert']);
+    } finally { mocked.mockRestore(); desktop.close(); }
+});
+
 it.each(['ios', 'android'])('records unknown %s outcomes without resending', async platform => {
     const group = `unknown-push-group-${platform}`, sessionId = `unknown-push-session-${platform}`;
     const owner = await pairedMobile(`unknown-${platform}`, group);
