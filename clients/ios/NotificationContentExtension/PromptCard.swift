@@ -1,4 +1,3 @@
-import Security
 import SwiftUI
 import UserNotifications
 import UserNotificationsUI
@@ -68,12 +67,12 @@ import UserNotificationsUI
     func submit() {
         answer(selected.sorted().compactMap(label).joined(separator: ", "), submit: true, toggling: selected.symmetricDifference(Self.checked(prompt)).sorted())
     }
-    /// An action button under the view. iOS has already asked for authentication.
+    /// An action button under the view, from notifications made by older versions.
     func respond(to response: UNNotificationResponse) {
         guard let choice = NotificationContent.choice(response.actionIdentifier, id: id) else { return }
         let text = (response as? UNTextInputNotificationResponse)?.userText
         let revision = choice.revision ?? response.notification.request.content.userInfo["revision"] as? Int ?? -1
-        answer(text ?? choice.option.flatMap(label) ?? "your answer", option: choice.option, text: text, revision: revision, authenticated: true)
+        answer(text ?? choice.option.flatMap(label) ?? "your answer", option: choice.option, text: text, revision: revision)
     }
     func openSession() { context()?.performNotificationDefaultAction() }
 
@@ -82,20 +81,21 @@ import UserNotificationsUI
         return options.indices.contains(option) ? options[option].text("label") : nil
     }
 
-    private func answer(_ label: String, option: Int? = nil, text: String? = nil, submit: Bool = false, toggling: [Int] = [], revision: Int? = nil, authenticated: Bool = false) {
+    /// Sends from the card, even while the phone is locked, and keeps the card open
+    /// so the next question appears in place.
+    private func answer(_ label: String, option: Int? = nil, text: String? = nil, submit: Bool = false, toggling: [Int] = [], revision: Int? = nil) {
         guard !busy else { return }
-        // Rows carry no system authentication, so a locked device opens the app instead.
-        guard canAnswer, NotificationContent.quickAnswers(prompt), authenticated || Self.unlocked() else { openSession(); return }
-        let id = self.id, revision = revision ?? self.revision
-        let question = revision == self.revision && prompt["review"] == nil && !prompt.array("questions").isEmpty ? current : nil
+        guard canAnswer, NotificationContent.quickAnswers(prompt) else { openSession(); return }
+        let id = self.id, revision = revision ?? self.revision, seen = revision == self.revision ? prompt : nil
+        let question = seen != nil && prompt["review"] == nil && !prompt.array("questions").isEmpty ? current : nil
         status = .sending(label); changed()
         Task {
             do {
-                try await PromptAnswer.send(id, revision: revision, option: option, text: text, submit: submit, toggling: toggling)
+                let sent = try await PromptAnswer.send(id, revision: revision, seen: seen, option: option, text: text, submit: submit, toggling: toggling)
                 guard self.id == id else { return }
                 // A newer notification may already show what came next.
-                lastSent = revision
-                guard self.revision == revision else { status = .ready; changed(); return }
+                lastSent = sent
+                guard self.revision <= sent else { status = .ready; changed(); return }
                 if let question { answered[question] = label }
                 status = .sent(label); changed()
             } catch {
@@ -170,16 +170,6 @@ import UserNotificationsUI
         return Set((p["checked"] as? [Int] ?? []).filter { (1...max(1, count)).contains($0) }.map { $0 - 1 })
     }
 
-    /// Readable only while the device is unlocked, unlike the pairing credential.
-    static func unlocked() -> Bool {
-        let item: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.newsblur.crabigator", kSecAttrAccount as String: "unlocked"]
-        var result: CFTypeRef?
-        var status = SecItemCopyMatching(item.merging([kSecReturnData as String: true]) { $1 } as CFDictionary, &result)
-        if status == errSecItemNotFound {
-            status = SecItemAdd(item.merging([kSecValueData as String: Data([1]), kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]) { $1 } as CFDictionary, nil)
-        }
-        return status == errSecSuccess
-    }
 }
 
 private let textColor = Color(uiColor: TerminalText.rgb(0xE9EEF4))
@@ -239,6 +229,7 @@ struct PromptCardContent: View {
                 else if index < model.current { Text("✓ Answered").font(.system(size: 11, weight: .semibold)).foregroundStyle(Crab.mint) }
             }
             Text(q.text("question")).font(.system(size: 16, weight: .semibold)).foregroundStyle(textColor).fixedSize(horizontal: false, vertical: true)
+                .onTapGesture { model.openSession() }.accessibilityAddTraits(.isLink).accessibilityIdentifier("Open question \(index + 1)")
             if multi { Text("Choose any, then Submit").font(.system(size: 12)).foregroundStyle(Crab.muted) }
             ForEach(Array(q.array("options").enumerated()), id: \.offset) { option, choice in
                 row(choice, check: multi ? current && model.selected.contains(option) : nil, enabled: current && model.open) { model.tap(question: index, option: option) }
@@ -256,6 +247,7 @@ struct PromptCardContent: View {
     /// Permissions, plans, the review page, and questions read only from the screen.
     @ViewBuilder private func request(_ p: JSON) -> some View {
         Text(PromptActions.title(p)).font(.system(size: 16, weight: .semibold)).foregroundStyle(textColor).fixedSize(horizontal: false, vertical: true)
+            .onTapGesture { model.openSession() }.accessibilityAddTraits(.isLink)
         ForEach(Array(p.array("review").enumerated()), id: \.offset) { _, answer in
             VStack(alignment: .leading, spacing: 2) {
                 Text(answer.text("question")).font(.system(size: 13)).foregroundStyle(Crab.muted)

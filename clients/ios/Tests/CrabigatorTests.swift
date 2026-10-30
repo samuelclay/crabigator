@@ -481,6 +481,18 @@ final class CrabigatorTests: XCTestCase {
         typed["cursor_row"] = 4
         XCTAssertEqual(try steps(typed), replace)
     }
+    func testCursorRepaintsKeepThePageButTicksAndPagesDoNot() {
+        let q: JSON = ["question": "Toppings", "multi_select": true, "options": [["label": "A"], ["label": "B"]]]
+        let seen: JSON = ["prompt_type": "question", "questions": [q, q], "current_question": 1, "cursor_row": 1, "checked": [1]]
+        var moved = seen; moved["cursor_row"] = 3
+        XCTAssertTrue(PromptActions.samePage(seen, moved))
+        var ticked = seen; ticked["checked"] = [1, 2]
+        XCTAssertFalse(PromptActions.samePage(seen, ticked), "A tick changes what Submit sends")
+        var next = seen; next["current_question"] = 0
+        XCTAssertFalse(PromptActions.samePage(seen, next))
+        var review = seen; review["review"] = [JSON]()
+        XCTAssertFalse(PromptActions.samePage(seen, review))
+    }
     func testReviewAndPermissionNeverUseGenericFreeText() throws {
         let review: JSON = ["prompt_type": "question", "review": [:]]
         XCTAssertEqual(try PromptActions.action(review, option: 0).body.array("steps").first?.text("text"), "1")

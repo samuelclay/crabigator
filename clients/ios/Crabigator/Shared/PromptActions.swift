@@ -25,6 +25,13 @@ enum PromptActions {
         if p["review"] != nil { return [["label": "Submit answers", "value": "1"], ["label": "Cancel", "value": "2"]] }
         return question(p)?.array("options") ?? []
     }
+    /// Whether two prompts show the same page. The terminal repaints a page as its
+    /// cursor moves, which changes the revision but not what a choice means.
+    static func samePage(_ a: JSON, _ b: JSON) -> Bool {
+        var a = a, b = b
+        a.removeValue(forKey: "cursor_row"); b.removeValue(forKey: "cursor_row")
+        return NSDictionary(dictionary: a).isEqual(to: b)
+    }
     static func allowsText(_ p: JSON) -> Bool {
         if p.text("prompt_type") == "text" { return p.text("state") == "question" }
         return p["review"] == nil && question(p)?.bool("allows_other", true) == true

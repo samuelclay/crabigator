@@ -89,8 +89,20 @@ final class NotificationTests: XCTestCase {
         }
         for label in env["CRABIGATOR_TEST_TAP_CHOICE"]?.components(separatedBy: "|") ?? [] {
             // Choices separated by "|" answer one question after another in the same view.
+            // "[Submit]" sends the boxes ticked on a multi-select question.
+            if label == "[Submit]" {
+                let submit = springboard.buttons["Submit choices"].firstMatch
+                XCTAssertTrue(submit.waitForExistence(timeout: 10))
+                submit.tap()
+                Thread.sleep(forTimeInterval: 1)
+                capture("After submitting choices")
+                continue
+            }
             let row = springboard.buttons["Choice " + label].firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 10), "\(label) must be a choice in the view")
+            // Later questions are listed but disabled until the terminal reaches them.
+            let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: row)
+            XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 15), .completed, "\(label) must become answerable")
             Thread.sleep(forTimeInterval: 1) // A tap while the view scrolls to the next question only stops the scroll.
             row.tap()
             Thread.sleep(forTimeInterval: 1)

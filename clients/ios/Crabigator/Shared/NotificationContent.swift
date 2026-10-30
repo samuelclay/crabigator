@@ -87,14 +87,18 @@ enum NotificationContent {
 }
 
 enum PromptAnswer {
-    /// Answers only the revision the person saw. A changed, answered or
-    /// disconnected prompt throws 409 before anything reaches the terminal.
-    static func send(_ id: String, revision: Int, option: Int? = nil, text: String? = nil, submit: Bool = false, toggling: [Int] = []) async throws {
+    /// Answers only the revision the person saw, or a later repaint of the page
+    /// they saw (`seen`). A changed, answered or disconnected prompt throws 409
+    /// before anything reaches the terminal. Returns the revision answered.
+    @discardableResult
+    static func send(_ id: String, revision: Int, seen: JSON? = nil, option: Int? = nil, text: String? = nil, submit: Bool = false, toggling: [Int] = []) async throws -> Int {
         let snap = try await API.shared.snapshot(id)
-        guard NotificationContent.answerable(snap), snap.int("prompt_revision") == revision else {
+        let prompt = NotificationContent.prompt(snap), current = snap.int("prompt_revision")
+        guard NotificationContent.answerable(snap), current == revision || seen.map({ PromptActions.samePage($0, prompt) }) == true else {
             throw APIError(status: 409, message: "This question has changed or was already answered.")
         }
-        let action = try PromptActions.action(NotificationContent.prompt(snap), option: option, text: text, submit: submit, toggling: toggling)
-        try await API.shared.action(id, action, revision: revision)
+        let action = try PromptActions.action(prompt, option: option, text: text, submit: submit, toggling: toggling)
+        try await API.shared.action(id, action, revision: current)
+        return current
     }
 }
