@@ -36,6 +36,8 @@ pub struct SessionStats {
     title_has_spinner: bool,
     /// Screen content shows "Esc to cancel" after last ❯ prompt
     screen_shows_input_wait: bool,
+    /// The input wait on screen is a question dialog, not a permission request.
+    screen_input_wait_is_question: bool,
     /// Codex is showing a native question menu that may not exist in its log.
     screen_shows_question: bool,
     /// Prompt metadata inferred from the screen when the platform log has none.
@@ -92,6 +94,7 @@ impl SessionStats {
             interrupted: false,
             title_has_spinner: false,
             screen_shows_input_wait: false,
+            screen_input_wait_is_question: false,
             screen_shows_question: false,
             screen_active_prompt: None,
             screen_override_cooldown: false,
@@ -112,9 +115,11 @@ impl SessionStats {
                 && self.platform_stats.state == SessionState::Ready);
     }
 
-    /// Update screen input-wait state (called from handle_pty_output_capture)
-    pub fn set_screen_input_wait(&mut self, waiting: bool) {
+    /// Update screen input-wait state (called from handle_pty_output_capture).
+    /// `question` says the wait is a question dialog.
+    pub fn set_screen_input_wait(&mut self, waiting: bool, question: bool) {
         self.screen_shows_input_wait = waiting;
+        self.screen_input_wait_is_question = waiting && question;
         if !waiting && !self.screen_shows_question {
             self.screen_override_cooldown = false;
         }
@@ -171,7 +176,8 @@ impl SessionStats {
             return SessionState::Thinking;
         }
 
-        // Screen shows "Esc to cancel" but hooks say Thinking → override to Permission.
+        // Screen shows "Esc to cancel" but hooks say Thinking → override to
+        // Permission, or Question when the screen shows a question dialog.
         // Skip this override during cooldown (after user answered a permission/question),
         // because the screen lags 0.5-2s behind the hook state machine and would
         // resurrect a stale Permission state.
@@ -179,7 +185,11 @@ impl SessionStats {
             && hook_state == SessionState::Thinking
             && !self.screen_override_cooldown
         {
-            return SessionState::Permission;
+            return if self.screen_input_wait_is_question {
+                SessionState::Question
+            } else {
+                SessionState::Permission
+            };
         }
 
         hook_state
@@ -235,6 +245,7 @@ impl SessionStats {
                 //   - Delayed question detection (spinner override keeps eff as "thinking")
                 if stats.state != self.platform_stats.state {
                     self.screen_shows_input_wait = false;
+                    self.screen_input_wait_is_question = false;
                     self.title_has_spinner = false;
 
                     let was_interactive = matches!(
@@ -383,6 +394,20 @@ mod tests {
         assert!(stats.set_screen_question(false, None));
         assert_eq!(stats.effective_state(), SessionState::Complete);
         assert!(stats.active_prompt().is_none());
+    }
+
+    /// The screen can show Claude's question dialog before the hook's state
+    /// is read. Calling it a permission request sends phones a second alert.
+    #[test]
+    fn a_question_dialog_on_screen_reads_as_a_question() {
+        let mut stats = SessionStats::new();
+        stats.platform_stats.state = SessionState::Thinking;
+        stats.set_screen_input_wait(true, false);
+        assert_eq!(stats.effective_state(), SessionState::Permission);
+        stats.set_screen_input_wait(true, true);
+        assert_eq!(stats.effective_state(), SessionState::Question);
+        stats.set_screen_input_wait(false, true);
+        assert_eq!(stats.effective_state(), SessionState::Thinking);
     }
 
     #[test]

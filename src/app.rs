@@ -1938,7 +1938,14 @@ impl App {
                         .take(10)
                         .any(|l| l.contains("Esc to cancel"))
                 };
-                self.session_stats.set_screen_input_wait(shows_input_wait);
+                // Claude's question dialog ends in "Esc to cancel" too. Read
+                // before the hook's state arrives, it must not pass for a
+                // permission request.
+                let shows_question = shows_input_wait
+                    && self.platform.kind() == PlatformKind::Claude
+                    && crate::parsers::QuestionScreen::parse(&screen).is_some();
+                self.session_stats
+                    .set_screen_input_wait(shows_input_wait, shows_question);
                 // The flow scene reads the effort and the running agents there too.
                 self.flow.read_screen(&stripped);
                 // Claude's agent panel, skipped mid-frame where it may be
