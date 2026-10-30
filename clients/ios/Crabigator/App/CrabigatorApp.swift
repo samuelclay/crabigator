@@ -40,7 +40,11 @@ import UserNotifications
     }
 }
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
-    weak var model: SessionModel?
+    weak var model: SessionModel? {
+        didSet { if let model, let id = pendingOpen { pendingOpen = nil; Task { await model.open(id) } } }
+    }
+    /// A notification tapped while the app launched, before its window had a model.
+    private var pendingOpen: String?
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
         Task { @MainActor in
@@ -79,7 +83,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         Task { @MainActor in
             defer { completionHandler() }
             guard let id = response.notification.request.content.userInfo["session_id"] as? String else { return }
-            if [UNNotificationDefaultActionIdentifier, NotificationContent.open].contains(response.actionIdentifier) { await model?.open(id); return }
+            if [UNNotificationDefaultActionIdentifier, NotificationContent.open].contains(response.actionIdentifier) {
+                if let model { await model.open(id) } else { pendingOpen = id }
+                return
+            }
             if response.actionIdentifier == UNNotificationDismissActionIdentifier { return }
             await Notifications.shared.respond(response, id: id)
         }

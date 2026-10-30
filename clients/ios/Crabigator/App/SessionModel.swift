@@ -222,7 +222,8 @@ import OSLog
     private var polling: Task<Void, Never>?
     private var epoch = 0, foreground = false
     private var restoreSelection = true
-    private var selectionEpoch = 0
+    /// A session a notification opened, selected once the roster has loaded.
+    private var pendingOpen: String?
     var drafts: [String: String] = [:]
     var origin: String { api.credentials.connection().origin }
     func start() {
@@ -252,7 +253,10 @@ import OSLog
             var seen = Set<String>()
             sessions = (result.array("sessions").map(Session.init) + prs.flatMap(\.sessions)).filter { !$0.id.isEmpty && seen.insert($0.id).inserted }
             rosterStatus = .ready; error = nil; updateOrder()
-            if restoreSelection {
+            if let id = pendingOpen {
+                pendingOpen = nil
+                if let session = sessions.first(where: { $0.id == id }) { select(session, order: sessions) }
+            } else if restoreSelection {
                 restoreSelection = false
                 if let id = navigation.selectedID {
                     if let session = sessions.first(where: { $0.id == id }) {
@@ -270,22 +274,21 @@ import OSLog
     }
     private func updateOrder() { ordering.update(sessions, prs: prs, prefs: preferences); layoutVersion += 1 }
     func select(_ session: Session, order: [Session]) {
-        selectionEpoch += 1
+        pendingOpen = nil
         restoreSelection = false
         navigation.selectedID = session.id; navigation.expanded = false
         pageDirection = (order.firstIndex(where: { $0.id == session.id }) ?? 0) < (order.firstIndex(where: { $0.id == selectionID }) ?? 0) ? -1 : 1
         selectionID = session.id; stream.select(session)
     }
+    /// Opens a session from a notification. The app may still be launching or
+    /// coming to the foreground, so the next roster refresh selects it.
     func open(_ id: String) async {
         guard paired else { return }
         navigation.conductor = false
-        restoreSelection = false; selectionEpoch += 1
-        let request = selectionEpoch
-        await refresh()
-        guard request == selectionEpoch, foreground, !Task.isCancelled else { return }
-        if let session = sessions.first(where: { $0.id == id }) { select(session, order: sessions) }
+        restoreSelection = false; pendingOpen = id
+        if foreground { await refresh() }
     }
-    func close() { selectionEpoch += 1; restoreSelection = false; navigation.selectedID = nil; selectionID = nil; stream.close() }
+    func close() { pendingOpen = nil; restoreSelection = false; navigation.selectedID = nil; selectionID = nil; stream.close() }
     func pair(code: String, origin: String) async {
         guard !loading else { return }; loading = true; error = nil; defer { loading = false }
         do {

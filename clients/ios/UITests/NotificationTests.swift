@@ -129,6 +129,27 @@ final class NotificationTests: XCTestCase {
         }
     }
 
+    /// Tapping the question, not a choice, opens its session, even when the
+    /// tap is what launches the app.
+    func testTappingTheQuestionOpensItsSession() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let id = env["CRABIGATOR_TEST_NOTIFICATION_SESSION"], let title = env["CRABIGATOR_LIVE_NOTIFICATION_TITLE"] else {
+            throw XCTSkip("Requires a live session waiting on a question.")
+        }
+        continueAfterFailure = false
+        post(["CRABIGATOR_TEST_NOTIFICATION_SESSION": id])
+        expand(springboard.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'NotificationShortLookView' AND label CONTAINS %@", title)).firstMatch, wait: 30)
+        let question = springboard.descendants(matching: .any)["Open question 1"].firstMatch
+        XCTAssertTrue(question.waitForExistence(timeout: 10))
+        // Close the app under the open card, so the tap has to launch it.
+        let app = XCUIApplication()
+        app.terminate()
+        question.tap()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(app.descendants(matching: .any)["Selected session " + id].firstMatch.waitForExistence(timeout: 30), "The app must open the notification's session")
+        capture("Opened from the question")
+    }
+
     private func question(_ labels: [String], multi: Bool = false) -> [String: Any] {
         ["id": "fixture-\(UUID().uuidString)", "title": "Notification check", "state": "question", "prompt_revision": 1,
          "prompt": ["prompt_type": "question", "current_question": 0,
