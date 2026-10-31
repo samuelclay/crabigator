@@ -9,6 +9,7 @@ final class NotificationService: UNNotificationServiceExtension {
         lock.lock(); handler = contentHandler; fallback = request.content.mutableCopy() as? UNMutableNotificationContent; fallback?.sound = nil; lock.unlock()
         work = Task {
             guard let id = request.content.userInfo["session_id"] as? String else { finish(fallback ?? UNMutableNotificationContent()); return }
+            await NotificationContent.removeStale(excluding: id)
             do {
                 let snapshot = try await API.shared.snapshot(id)
                 await NotificationContent.remove(id: id)

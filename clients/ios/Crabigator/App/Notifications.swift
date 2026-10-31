@@ -31,9 +31,15 @@ import UserNotifications
         let epoch = generation
         if let id { await sync(id); return }
         let ids = Set(await UNUserNotificationCenter.current().deliveredNotifications().compactMap { $0.request.content.userInfo["session_id"] as? String })
-        for id in ids where !id.isEmpty {
-            guard epoch == generation else { return }
-            await sync(id)
+        // One slow session must not use the entire background execution window
+        // before another session's answered notification can be removed.
+        await withTaskGroup(of: Void.self) { group in
+            for id in ids where !id.isEmpty {
+                group.addTask { @MainActor in
+                    guard epoch == self.generation else { return }
+                    await self.sync(id)
+                }
+            }
         }
     }
     // Release builds can also be development-signed. The profile determines APNs,

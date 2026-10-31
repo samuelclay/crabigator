@@ -78,6 +78,54 @@ enum NotificationContent {
         _ = await center.notificationCategories()
     }
 
+    /// A delayed dismissal must never remove a newer question from the same session.
+    static func resolvedRequests(_ requests: [UNNotificationRequest], by info: [AnyHashable: Any]) -> [String] {
+        guard let id = info["session_id"] as? String,
+              let resolved = info["resolved_revision"] as? Int, resolved >= 0 else { return [] }
+        return requests.filter {
+            let shown = $0.content.userInfo
+            guard shown["session_id"] as? String == id, let revision = shown["revision"] as? Int else { return false }
+            return revision <= resolved
+        }.map(\.identifier)
+    }
+    static func removeResolved(by info: [AnyHashable: Any]) async {
+        let center = UNUserNotificationCenter.current()
+        let shown = await center.deliveredNotifications().map(\.request)
+        center.removeDeliveredNotifications(withIdentifiers: resolvedRequests(shown, by: info))
+        let pending = await center.pendingNotificationRequests()
+        center.removePendingNotificationRequests(withIdentifiers: resolvedRequests(pending, by: info))
+    }
+
+    /// An alert wakes the service extension even when iOS delays silent pushes.
+    /// Use that opportunity to clear answered questions from other sessions too.
+    static func removeStale(excluding id: String) async {
+        let center = UNUserNotificationCenter.current()
+        let requests = await center.deliveredNotifications().map(\.request)
+        let ids = Set(requests.compactMap { $0.content.userInfo["session_id"] as? String }).subtracting([id, ""])
+        // Cleanup must not hold a new alert behind another session's slow request.
+        await withTaskGroup(of: Void.self) { work in
+            work.addTask {
+                await withTaskGroup(of: Void.self) { group in
+                    for session in ids {
+                        group.addTask {
+                            do {
+                                let snapshot = try await API.shared.snapshot(session)
+                                guard !Task.isCancelled, !answerable(snapshot) else { return }
+                                let resolved: [AnyHashable: Any] = ["session_id": session, "resolved_revision": snapshot.int("prompt_revision")]
+                                center.removeDeliveredNotifications(withIdentifiers: resolvedRequests(requests, by: resolved))
+                            } catch {
+                                // Keep the notification if its state could not be read.
+                            }
+                        }
+                    }
+                }
+            }
+            work.addTask { try? await Task.sleep(for: .milliseconds(500)) }
+            await work.next()
+            work.cancelAll()
+        }
+    }
+
     static func remove(id: String) async {
         let center = UNUserNotificationCenter.current()
         let shown = await center.deliveredNotifications()

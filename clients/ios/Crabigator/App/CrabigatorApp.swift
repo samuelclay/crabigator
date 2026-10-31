@@ -70,7 +70,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) { Credentials.defaults.set(error.localizedDescription, forKey: "pushError") }
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        Task { await Notifications.shared.reconcile(id: userInfo["session_id"] as? String); completionHandler(.newData) }
+        Task {
+            await NotificationContent.removeResolved(by: userInfo)
+            // iOS can retain only the latest background push while we are suspended.
+            // Every wake must also clean up questions from the other sessions.
+            await Notifications.shared.reconcile()
+            completionHandler(.newData)
+        }
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         Task {

@@ -551,6 +551,14 @@ final class CrabigatorTests: XCTestCase {
         let snapshot: JSON = ["prompt_revision": 3, "prompt": ["prompt_type": "question", "questions": [["question": "Which pizza crust?", "options": labels.map { ["label": $0] }]]]]
         XCTAssertEqual(NotificationContent.content(snapshot, id: "s").body, "Which pizza crust?\n" + labels.joined(separator: " · "))
     }
+    func testDelayedResolutionRemovesOnlyAnsweredRevisionsFromItsSession() {
+        let requests = [("old", "session", 4), ("answered", "session", 5), ("new", "session", 6), ("other", "other-session", 4)].map { name, session, revision in
+            UNNotificationRequest(identifier: name, content: NotificationContent.content(["prompt_revision": revision], id: session), trigger: nil)
+        }
+        XCTAssertEqual(NotificationContent.resolvedRequests(requests, by: ["session_id": "session", "resolved_revision": 5]), ["old", "answered"])
+        XCTAssertTrue(NotificationContent.resolvedRequests(requests, by: ["session_id": "session"]).isEmpty)
+        XCTAssertTrue(NotificationContent.resolvedRequests(requests, by: ["session_id": "session", "resolved_revision": -1]).isEmpty)
+    }
     func testNotificationCategoriesRemoveDuplicateActionsIncludingOldNotifications() {
         let categories = NotificationContent.categories()
         XCTAssertTrue(categories.contains { $0.identifier == "CRABIGATOR_PROMPT_SLOT_0" })
