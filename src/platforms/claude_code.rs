@@ -720,6 +720,29 @@ assert stats()['state'] == 'thinking'
     }
 
     #[test]
+    fn a_turn_ending_with_background_agents_running_stays_thinking() {
+        run_hook_script(
+            r#"
+agent = {'id': 'bg', 'type': 'subagent', 'status': 'running'}
+server = {'id': 'srv', 'type': 'shell', 'status': 'running'}
+run({'hook_event_name': 'UserPromptSubmit', 'prompt': 'go'})
+run({'hook_event_name': 'Stop', 'background_tasks': [agent, server]})
+assert stats()['state'] == 'thinking' and stats()['idle_since'] is None
+assert stats()['completions'] == 1
+# The agent asks, the person answers: back to thinking, not complete.
+run({'hook_event_name': 'PermissionRequest', 'tool_name': 'Bash', 'tool_input': {}, 'agent_id': 'bg'})
+run({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash', 'tool_use_id': 't1', 'agent_id': 'bg'})
+assert stats()['state'] == 'thinking'
+# Claude hands the agent's report back as a turn. A background shell
+# command alone never keeps the session thinking: it may never end.
+run({'hook_event_name': 'UserPromptSubmit', 'prompt': '<task-notification>'})
+run({'hook_event_name': 'Stop', 'background_tasks': [server]})
+assert stats()['state'] == 'complete' and stats()['idle_since'] is not None
+"#,
+        );
+    }
+
+    #[test]
     fn an_api_error_ends_the_turn_and_a_model_switch_is_recorded() {
         run_hook_script(
             r#"

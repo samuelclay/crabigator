@@ -251,7 +251,7 @@ cat /tmp/crabigator-{session}/hooks.log  # Raw hook invocation log
 - `UserPromptSubmit` → state = thinking
 - `PermissionRequest` → state = permission (or question if AskUserQuestion, plan if ExitPlanMode)
 - `PostToolUse`, `PostToolUseFailure` → state = thinking (tracks tool counts). A failure cut short by Esc writes nothing: any stats write clears the screen's "interrupted" state.
-- `Stop` → state = complete (or question if AskUserQuestion was used); `StopFailure` (an API error) → complete
+- `Stop` → state = complete (or question if AskUserQuestion was used, or thinking while a background subagent still runs: Claude hands its report back as a new turn, whose `Stop` decides again; background shell commands don't count); `StopFailure` (an API error) → complete
 - `SubagentStop`, `PreCompact` → increment counters; `PostModelSwitch` → model
 
 A subagent's events carry `agent_id`. They never change the main turn's state, except to clear a permission prompt the subagent raised itself.

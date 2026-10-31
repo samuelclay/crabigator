@@ -12,13 +12,15 @@ stats file.
 
 State machine:
   - ready: Initial state (nothing happened yet)
-  - thinking: Claude is actively processing
+  - thinking: Claude is actively processing, or its background agents are
   - permission: Claude is waiting for permission approval
   - question: Claude asked a question (AskUserQuestion tool)
   - complete: Claude finished responding
 
 A subagent's events (they carry `agent_id`) never end or restart the main
-turn: a background agent working after the turn leaves the session complete.
+turn. A turn that ends while background agents still run leaves the session
+thinking: Claude hands each agent's report back as a new turn, and the Stop
+after the last one completes it.
 """
 # crabigator-hook-version: {VERSION}
 
@@ -350,8 +352,18 @@ def turn_ended(stats: dict):
     """The main turn is over: nothing is being prompted any more."""
     stats["turn_active"] = False
     stats["active_prompt"] = None
-    stats["idle_since"] = time.time()
+    # Background agents still working: the session isn't idle yet.
+    stats["idle_since"] = None if stats.get("state") == "thinking" else time.time()
     clear_permission(stats)
+
+
+def running_subagents(data: dict) -> bool:
+    """Whether Stop's task list has a background agent still running. Shell
+    commands don't count: some, like a dev server, never end."""
+    return any(
+        task.get("type") == "subagent" and task.get("status") == "running"
+        for task in data.get("background_tasks") or []
+    )
 
 
 def handle_tool_finished(stats: dict, event: str, data: dict):
@@ -500,7 +512,7 @@ def handle_event(stats: dict, event: str, data: dict, cwd: str, crabigator_sessi
             }
             # Who asked, and what the session was doing, so the answer can
             # put it back (a background agent may ask after the turn ended).
-            if stats.get("state") not in ("thinking", "permission"):
+            if stats.get("state") != "permission":
                 stats["state_before_permission"] = stats.get("state")
             stats["permission_agent"] = agent_id
             stats["state"] = "permission"
@@ -521,6 +533,8 @@ def handle_event(stats: dict, event: str, data: dict, cwd: str, crabigator_sessi
         if stats.get("pending_question"):
             stats["state"] = "question"
             stats["pending_question"] = False
+        elif running_subagents(data):
+            stats["state"] = "thinking"
         else:
             stats["state"] = "complete"
         # Always clear active_prompt - the turn is over, nothing is being prompted.
