@@ -16,7 +16,7 @@ struct BoardView: View {
     var floatingToolbar: Bool { wide && expanded }
     var body: some View {
         VStack(spacing: 0) {
-            Color.clear.frame(height: floatingToolbar && !searching ? 0 : 60).animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
+            Color.clear.frame(height: floatingToolbar && model.preferences.groupByComputer && !searching ? 0 : 60).animation(reduceMotion ? nil : .easeInOut(duration: 0.36), value: floatingToolbar)
             if searching { TextField("Search", text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, 12).padding(.bottom, 8).accessibilityIdentifier("Search sessions") }
             if model.sessions.isEmpty && model.prs.isEmpty {
                 Spacer()
@@ -81,11 +81,11 @@ struct BoardView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: spacing.gap(8), pinnedViews: [.sectionHeaders]) {
-                    ForEach(model.ordering.machines, id: \.self) { machine in
-                        let groups = sections.filter { $0.machine == machine }, rows = order.filter { $0.machine == machine }
+                    ForEach(model.preferences.groupByComputer ? model.ordering.machines : [""], id: \.self) { machine in
+                        let groups = sections.filter { $0.machine == machine }, rows = order.filter { !model.preferences.groupByComputer || $0.machine == machine }
                         if !rows.isEmpty {
                             Section {
-                                if !collapsed.contains(machine) {
+                                if !model.preferences.groupByComputer || !collapsed.contains(machine) {
                                     ForEach(groups) { group in
                                         if let age = group.age, groups.first(where: { $0.age == age })?.id == group.id {
                                             Text(age.label).boardFont(12, weight: .medium).foregroundStyle(Crab.color(age.palette)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, spacing.gap(6)).background(Crab.color(age.palette).opacity(0.13), in: RoundedRectangle(cornerRadius: 4))
@@ -114,12 +114,14 @@ struct BoardView: View {
                                     }
                                 }
                             } header: {
-                                Button {
-                                    withAnimation(.easeInOut(duration: 0.3)) { if !collapsed.insert(machine).inserted { collapsed.remove(machine) }; proxy.scrollTo(machine, anchor: .top) }
-                                } label: {
-                                    HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).lineLimit(1).frame(maxWidth: floatingToolbar ? max(60, (width - 308) / 2 - 36) : .infinity, alignment: .leading); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").boardFont(11); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").boardFont(11) }
-                                        .boardFont(13, weight: .medium).foregroundStyle(Crab.muted).padding(.vertical, spacing.gap(13)).frame(minHeight: floatingToolbar ? 52 : 44).padding(.horizontal, 8).background(Crab.ink)
-                                }.buttonStyle(.plain).id(machine).accessibilityIdentifier("Machine \(machine)")
+                                if model.preferences.groupByComputer {
+                                    Button {
+                                        withAnimation(.easeInOut(duration: 0.3)) { if !collapsed.insert(machine).inserted { collapsed.remove(machine) }; proxy.scrollTo(machine, anchor: .top) }
+                                    } label: {
+                                        HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).lineLimit(1).frame(maxWidth: floatingToolbar ? max(60, (width - 308) / 2 - 36) : .infinity, alignment: .leading); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").boardFont(11); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").boardFont(11) }
+                                            .boardFont(13, weight: .medium).foregroundStyle(Crab.muted).padding(.vertical, spacing.gap(13)).frame(minHeight: floatingToolbar ? 52 : 44).padding(.horizontal, 8).background(Crab.ink)
+                                    }.buttonStyle(.plain).id(machine).accessibilityIdentifier("Machine \(machine)")
+                                }
                             }
                         }
                     }
@@ -186,6 +188,7 @@ struct SessionRow: View {
                         HStack(alignment: .sessionTitleCenter, spacing: 8) { SessionStatus(session: session); recency; Spacer(minLength: 0) }.frame(width: 360, alignment: .leading)
                     }
                 }
+                if !preferences.groupByComputer { Text(session.machine).boardFont(11).foregroundStyle(Crab.muted) }
                 if preferences.boardRecaps && !session.recap.isEmpty {
                     Text(session.recap).boardFont(12).foregroundStyle(Crab.muted).fixedSize(horizontal: false, vertical: true)
                 }

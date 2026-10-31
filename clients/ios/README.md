@@ -2,6 +2,8 @@
 
 A native SwiftUI app with a read-only UIKit terminal. Requires iOS 17 or later. The Android app's final behavior is the reference; see [the commit-by-commit port log](docs/parity.md).
 
+In Settings → List / PR board, **Group by computer** switches between separate computer sections and a combined recency view. The choice applies to both views and is saved on this device. The combined view keeps computer names on session rows.
+
 ## Build and run
 
 Open `Crabigator.xcodeproj`, select Crabigator, and choose an iPhone or iPad. The project uses the NewsBlur team (`HR7P97SD72`), application ID `com.newsblur.crabigator`, and shared app group `group.com.newsblur.crabigator`.

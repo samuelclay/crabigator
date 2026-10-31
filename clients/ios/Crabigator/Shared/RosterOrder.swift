@@ -81,15 +81,16 @@ final class RosterOrder {
             return aa == bb ? a < b : aa > bb
         }
         machines += ranked.filter { !machines.contains($0) }
-        let ids = Set(roster.map(\.id)), pref = prefs.grouping + prefs.order
+        let sectionMachines = prefs.groupByComputer ? machines : [""]
+        let ids = Set(roster.map(\.id)), pref = "\(prefs.groupByComputer)|\(prefs.grouping)|\(prefs.order)"
         let reset = refreshedAt == nil || elapsed - (refreshedAt ?? 0) >= 600 || pref != preferences || !ids.subtracting(seen).isEmpty
         seen.formUnion(ids)
         let sorted = roster.sorted { a, b in
-            if a.attention != b.attention { return a.attention }; return a.activityAt == b.activityAt ? a.id < b.id : a.activityAt > b.activityAt
+            if prefs.groupByComputer && a.attention != b.attention { return a.attention }; return a.activityAt == b.activityAt ? a.id < b.id : a.activityAt > b.activityAt
         }
         var nextList: [RosterSection] = []
-        for machine in machines {
-            let rows = sorted.filter { $0.machine == machine }
+        for machine in sectionMachines {
+            let rows = sorted.filter { !prefs.groupByComputer || $0.machine == machine }
             if prefs.grouping != "project" {
                 if !rows.isEmpty { nextList.append(RosterSection(machine: machine, project: "", sessions: rows)) }
             } else {
@@ -114,8 +115,10 @@ final class RosterOrder {
             s.boardActivity(now, prs: bySession[s.id] ?? [])
         }
         var nextBoard: [RosterSection] = []
-        for machine in machines {
-            let rows = roster.filter { $0.machine == machine }.sorted { activity($0) > activity($1) }
+        for machine in sectionMachines {
+            let rows = roster.filter { !prefs.groupByComputer || $0.machine == machine }.sorted {
+                activity($0) == activity($1) ? $0.id < $1.id : activity($0) > activity($1)
+            }
             for age in BoardAge.allCases {
                 let band = rows.filter { BoardAge.age(max(0, now - activity($0))) == age }
                 var projects: [String] = []
@@ -130,13 +133,13 @@ final class RosterOrder {
                 }
             }
         }
-        list = reset ? nextList : retainSections(list, nextList)
-        board = reset ? nextBoard : retainSections(board, nextBoard, liveAges: true)
+        list = reset ? nextList : retainSections(list, nextList, machines: sectionMachines)
+        board = reset ? nextBoard : retainSections(board, nextBoard, machines: sectionMachines, liveAges: true)
         let watches = prs.filter { $0.sessions.isEmpty }
         watched = reset ? watches : retainRows(watched, watches)
         if reset { refreshedAt = elapsed; preferences = pref }
     }
-    private func retainSections(_ old: [RosterSection], _ current: [RosterSection], liveAges: Bool = false) -> [RosterSection] {
+    private func retainSections(_ old: [RosterSection], _ current: [RosterSection], machines: [String], liveAges: Bool = false) -> [RosterSection] {
         let ages = Dictionary(current.flatMap { section in section.sessions.map { ($0.id, section.age) } }, uniquingKeysWith: { a, _ in a })
         var remaining = Dictionary(current.flatMap(\.sessions).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var result = old.map { section -> RosterSection in

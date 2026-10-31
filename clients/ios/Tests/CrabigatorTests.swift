@@ -290,10 +290,13 @@ final class CrabigatorTests: XCTestCase {
         XCTAssertEqual(prefs.fontSize, 19)
         XCTAssertEqual(prefs.lineSpacing, 170)
         XCTAssertTrue(prefs.sidebarRight)
+        XCTAssertTrue(prefs.groupByComputer)
+        prefs.groupByComputer = false
         prefs.boardTextSize = 20
         let restored = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs))
         XCTAssertEqual(restored, prefs)
         XCTAssertEqual(restored.boardTextSize, 20)
+        XCTAssertFalse(restored.groupByComputer)
         XCTAssertEqual(restored.fontSize, 19)
     }
     func testOrderingKeepsLiveContentButOnlyMovesOnNewSessionsOrTenMinutes() {
@@ -317,6 +320,40 @@ final class CrabigatorTests: XCTestCase {
         order.update([session("b", prompt: 40, machine: "Second"), session("a", prompt: 50, machine: "First")], prs: [], prefs: prefs, elapsed: 20)
         XCTAssertEqual(order.machines, ["First", "Second"])
         XCTAssertEqual(order.list.map(\.machine), ["First", "Second"])
+    }
+    func testComputerGroupingSwitchesBothViewsAndKeepsRealMachineNames() {
+        let order = RosterOrder()
+        var prefs = Preferences()
+        let rows = [session("first-new", prompt: 99990, machine: "First"),
+                    session("first-old", prompt: 99900, machine: "First"),
+                    session("second", prompt: 99950, machine: "Second")]
+        order.update(rows, prs: [], prefs: prefs, now: 100000, elapsed: 0)
+        XCTAssertEqual(order.list.flatMap(\.sessions).map(\.id), ["first-new", "first-old", "second"])
+        prefs.groupByComputer = false
+        order.update(rows, prs: [], prefs: prefs, now: 100000, elapsed: 1)
+        XCTAssertEqual(order.list.map(\.machine), [""])
+        XCTAssertEqual(order.list.flatMap(\.sessions).map(\.id), ["first-new", "second", "first-old"])
+        XCTAssertEqual(order.board.flatMap(\.sessions).map(\.id), ["first-new", "second", "first-old"])
+        XCTAssertEqual(order.machines, ["First", "Second"])
+        order.update(rows, prs: [], prefs: prefs, now: 100001, elapsed: 2)
+        XCTAssertEqual(order.list.flatMap(\.sessions).map(\.id), ["first-new", "second", "first-old"])
+        XCTAssertEqual(order.board.flatMap(\.sessions).map(\.id), ["first-new", "second", "first-old"])
+        prefs.boardComputer = "Second"
+        XCTAssertEqual(order.list.flatMap(\.sessions).filter { prefs.includesSession($0, prs: [], now: 100000) }.map(\.id), ["second"])
+        prefs.groupByComputer = true
+        order.update(rows, prs: [], prefs: prefs, now: 100002, elapsed: 3)
+        XCTAssertEqual(order.list.map(\.machine), ["First", "Second"])
+        XCTAssertEqual(order.board.map(\.machine), ["First", "Second"])
+    }
+    func testMixedComputersShareOnePullRequestBlock() {
+        var prefs = Preferences(); prefs.groupByComputer = false
+        let rows = [session("first", prompt: 99990, machine: "First"), session("second", prompt: 99900, machine: "Second")]
+        let pr = PullRequest(["owner": "owner", "repo": "repo", "number": 1, "pr": ["primary": true]])
+        let order = RosterOrder()
+        order.update(rows, prs: [], prefs: prefs, now: 100000, elapsed: 0)
+        let grouped = groupBoardByPullRequest(order.board, prsBySession: ["first": [pr], "second": [pr]], now: 100000)
+        XCTAssertEqual(grouped.flatMap(\.pullRequests).count, 1)
+        XCTAssertEqual(grouped.flatMap(\.pullRequests).flatMap(\.sessions).map(\.id), ["first", "second"])
     }
     func testCompletedAgeUsesPromptNotCompletionWhileWorkingStaysRecent() {
         let order = RosterOrder()

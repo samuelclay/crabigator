@@ -82,6 +82,7 @@ struct SettingsMenu: View {
                         Text("All computers").tag("")
                         ForEach(Array(Set(model.ordering.machines + [model.preferences.boardComputer])).filter { !$0.isEmpty }.sorted(), id: \.self) { Text($0).tag($0) }
                     }.pickerStyle(.menu)
+                    Toggle("Group by computer", isOn: $model.preferences.groupByComputer)
                     Toggle("Show recaps", isOn: $model.preferences.boardRecaps)
                     Picker("PR board groups", selection: $model.preferences.boardGrouping) {
                         Text("Sessions").tag("sessions"); Text("Pull requests").tag("prs")

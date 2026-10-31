@@ -110,11 +110,16 @@ struct Preferences: Codable, Equatable {
     private var boardFontSize: Int?
     private var savedBoardAgeHours: Int?
     private var savedBoardComputer: String?
+    private var savedGroupByComputer: Bool?
     private var savedBoardRecaps: Bool?
     private var savedBoardGrouping: String?
     var boardAgeHours: Int {
         get { savedBoardAgeHours ?? 24 }
         set { savedBoardAgeHours = newValue }
+    }
+    var groupByComputer: Bool {
+        get { savedGroupByComputer ?? true }
+        set { savedGroupByComputer = newValue }
     }
     var boardComputer: String {
         get { savedBoardComputer ?? "" }
