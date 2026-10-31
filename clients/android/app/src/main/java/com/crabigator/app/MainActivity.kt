@@ -253,8 +253,8 @@ class MainActivity : ComponentActivity() {
     SideEffect { if (machineOrder != machines) machineOrder = machines }
     val ordering = remember { RosterOrder() }
     val minute by remember { derivedStateOf { now.value / 60 } }
-    val layout = remember(roster, pullRequests, machines, minute, prefs.grouping, prefs.order) {
-        ordering.update(roster, pullRequests, machines, now.value, android.os.SystemClock.elapsedRealtime() / 1000, prefs.grouping, prefs.order)
+    val layout = remember(roster, pullRequests, machines, minute, prefs.grouping, prefs.order, prefs.groupByComputer) {
+        ordering.update(roster, pullRequests, machines, now.value, android.os.SystemClock.elapsedRealtime() / 1000, prefs.grouping, prefs.order, prefs.groupByComputer)
     }
     val visible = remember(layout, all, query, prefs.boardAgeHours, prefs.boardComputer, prefs.boardGrouping, minute) { layout.filtered(all, query, prefs, now.value) }
     fun select(session: Session, order: List<Session>) {
@@ -265,7 +265,7 @@ class MainActivity : ComponentActivity() {
     val density = LocalDensity.current
     val spacing = animatedBoardSpacing(prefs.density)
     val floating = expanded == true
-    val headerSpace by animateDpAsState(if (floating && !searching) 0.dp else 60.dp, tween(360), label = "Board header space")
+    val headerSpace by animateDpAsState(if (floating && prefs.groupByComputer && !searching) 0.dp else 60.dp, tween(360), label = "Board header space")
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val toolbarWidth by animateDpAsState(if (floating) 276.dp else maxWidth, tween(360), label = "Board toolbar width")
         Column(Modifier.fillMaxSize()) {
@@ -282,17 +282,17 @@ class MainActivity : ComponentActivity() {
                     val counts = remember(groups) { groups.groupBy { it.machine }.mapValues { (_, sections) -> sections.sumOf { it.sessions.size } } }
                     LazyVerticalGrid(columns = GridCells.Fixed(count), state = gridState, contentPadding = PaddingValues(12.dp, 6.dp, 12.dp, 88.dp), verticalArrangement = Arrangement.spacedBy(spacing.gap(8)), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         groups.forEachIndexed { index, group ->
-                            if (index == 0 || groups[index - 1].machine != group.machine) stickyHeader(key = "machine-${group.machine}", contentType = "machine") { headerIndex ->
+                            if (prefs.groupByComputer && (index == 0 || groups[index - 1].machine != group.machine)) stickyHeader(key = "machine-${group.machine}", contentType = "machine") { headerIndex ->
                                 MachineHeader(group.machine, counts.getValue(group.machine), group.machine in collapsedMachines, Modifier.animateItem(placementSpec = tween(320))) {
                                     if (group.machine !in collapsedMachines && gridState.firstVisibleItemIndex > headerIndex) gridState.requestScrollToItem(headerIndex)
                                     collapsedMachines = if (group.machine in collapsedMachines) collapsedMachines - group.machine else collapsedMachines + group.machine
                                 }
                             }
-                            if (group.machine in collapsedMachines) return@forEachIndexed
+                            if (prefs.groupByComputer && group.machine in collapsedMachines) return@forEachIndexed
                             if (group.project.isNotEmpty()) item(key = "project-${group.machine.length}:${group.machine}${group.project}", contentType = "group", span = { GridItemSpan(maxLineSpan) }) {
                                 Text(group.project, color = Muted, fontSize = 12.sp, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180)).padding(vertical = spacing.gap(6)))
                             }
-                            gridItems(group.sessions, key = { it.id }, contentType = { "session" }) { SessionCard(it, expanded != true && it.id == selectedId, now, prefs, showMachine = false, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180))) { select(it, order) } }
+                            gridItems(group.sessions, key = { it.id }, contentType = { "session" }) { SessionCard(it, expanded != true && it.id == selectedId, now, prefs, showMachine = !prefs.groupByComputer, modifier = Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180))) { select(it, order) } }
                         }
                     }
                 }

@@ -4,18 +4,19 @@ package com.crabigator.app
 internal class RosterOrder {
     private var refreshedAt: Long? = null
     private val seenSessionIds = mutableSetOf<String>()
-    private var preferences: Pair<String, String>? = null
+    private var preferences: Triple<String, String, Boolean>? = null
     private var layout = RosterLayout(emptyList(), emptyList(), emptyList())
 
     fun update(roster: List<Session>, prs: List<PullRequest>, machines: List<String>, now: Long,
-        elapsedSeconds: Long, grouping: String, order: String): RosterLayout {
+        elapsedSeconds: Long, grouping: String, order: String, groupByComputer: Boolean = true): RosterLayout {
         // Remember sessions across temporary absences so reconnects do not bypass the throttle.
         val hasNewSession = seenSessionIds.addAll(roster.map { it.id })
-        val reset = refreshedAt == null || hasNewSession || elapsedSeconds - refreshedAt!! >= 600 || preferences != (grouping to order)
-        val sessions = roster.sortedWith(compareByDescending<Session> { it.attention }
+        val currentPreferences = Triple(grouping, order, groupByComputer)
+        val reset = refreshedAt == null || hasNewSession || elapsedSeconds - refreshedAt!! >= 600 || preferences != currentPreferences
+        val sessions = roster.sortedWith(compareByDescending<Session> { groupByComputer && it.attention }
             .thenByDescending { it.activityAt }.thenBy { it.id })
-        val list = sessionListGroups(sessions, machines, grouping, order)
-        val board = prBoardGroups(roster, prs, machines, now, true, "")
+        val list = sessionListGroups(sessions, machines, grouping, order, groupByComputer)
+        val board = prBoardGroups(roster, prs, machines, now, true, "", groupByComputer)
         val watched = prs.filter { it.sessions.isEmpty() }
         val machineRanks = machines.withIndex().associate { it.value to it.index }
         layout = if (reset) RosterLayout(list, board, watched) else RosterLayout(
@@ -34,7 +35,7 @@ internal class RosterOrder {
             },
             retainRows(layout.watched, watched) { it.key },
         )
-        if (reset) { refreshedAt = elapsedSeconds; preferences = grouping to order }
+        if (reset) { refreshedAt = elapsedSeconds; preferences = currentPreferences }
         return layout
     }
 }

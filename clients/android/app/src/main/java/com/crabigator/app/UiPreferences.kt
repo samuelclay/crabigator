@@ -39,6 +39,7 @@ data class UiPreferences(
     val boardComputer: String = "",
     val boardRecaps: Boolean = false,
     val boardGrouping: String = "sessions",
+    val groupByComputer: Boolean = true,
 ) {
     fun includesActivity(timestamp: Long, now: Long): Boolean =
         boardAgeHours == 0 || BoardAge.fromSeconds((now - timestamp).coerceAtLeast(0)) <=
@@ -60,6 +61,7 @@ class PreferenceStore(context: Context) {
             j.optBoolean("showEnded"), j.optInt("boardFontSize", 14).coerceIn(10, 24),
             j.optInt("boardAgeHours", 24).takeIf { it in listOf(0, 1, 3, 6, 9, 12, 24) } ?: 24,
             j.text("boardComputer"), j.optBoolean("boardRecaps"), j.text("boardGrouping", "sessions"),
+            j.optBoolean("groupByComputer", true),
         )
     }
     fun save(p: UiPreferences) {
@@ -67,7 +69,7 @@ class PreferenceStore(context: Context) {
             .put("columns", p.columns).put("terminalHeight", p.terminalHeight)
             .put("modulesExpanded", p.widgets).put("grouping", p.grouping).put("order", p.order).put("density", p.density)
             .put("boardAgeHours", p.boardAgeHours).put("boardComputer", p.boardComputer)
-            .put("boardRecaps", p.boardRecaps).put("boardGrouping", p.boardGrouping)
+            .put("boardRecaps", p.boardRecaps).put("boardGrouping", p.boardGrouping).put("groupByComputer", p.groupByComputer)
             .put("showEnded", p.showEnded).put("sidebarRight", p.sidebarRight).put("hidden", org.json.JSONArray(p.hidden.toList()))
         storage.edit().putString("settings", j.toString()).apply()
     }

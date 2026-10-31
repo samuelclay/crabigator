@@ -14,6 +14,33 @@ class RosterOrderTest {
     private fun RosterLayout.ids() = list.flatMap { it.sessions }.map { it.id }
     private fun RosterLayout.boardIds() = board.flatMap { it.sessions }.map { it.session.id }
 
+    @Test fun computerGroupingSwitchesBothViewsAndKeepsRealMachineNames() {
+        val cache = RosterOrder()
+        val rows = listOf(session("studio-new", 10), session("studio-old", 100), session("book", 50, machine = "Book"))
+        fun layout(grouped: Boolean, at: Long) = cache.update(rows, emptyList(), listOf("Studio", "Book"), now, at, "all", "recent", grouped)
+        assertEquals(listOf("studio-new", "studio-old", "book"), layout(true, 0).ids())
+        for (at in listOf(1L, 2L)) {
+            val mixed = layout(false, at)
+            assertEquals(listOf(""), mixed.list.map { it.machine })
+            assertEquals(listOf("studio-new", "book", "studio-old"), mixed.ids())
+            assertEquals(mixed.ids(), mixed.boardIds())
+            val filtered = mixed.filtered(false, "", UiPreferences(boardComputer = "Book", groupByComputer = false), now)
+            assertEquals(listOf("book"), filtered.ids())
+            assertEquals(listOf("book"), filtered.boardIds())
+        }
+        assertEquals(listOf("Studio", "Book"), layout(true, 3).list.map { it.machine })
+        assertEquals(listOf("Studio", "Book"), layout(true, 4).board.map { it.machine })
+    }
+
+    @Test fun mixedComputersShareOnePullRequestBlock() {
+        val rows = listOf(session("studio", 10), session("book", 100, machine = "Book"))
+        val pr = PullRequest("owner/repo#1", "Shared PR", "owner/repo", 1, "OPEN", "", "", rows, primary = true)
+        val mixed = RosterOrder().update(rows, listOf(pr), listOf("Studio", "Book"), now, 0, "all", "recent", false)
+        val blocks = groupBoardByPullRequest(mixed.board, now).flatMap { it.bands }.flatMap { it.repositories }.flatMap { it.pullRequests }
+        assertEquals(1, blocks.size)
+        assertEquals(listOf("studio", "book"), blocks.single().sessions.map { it.session.id })
+    }
+
     @Test fun statusAndTimingStayLiveButPositionsOnlyRefreshAfterTenMinutes() {
         val cache = RosterOrder()
         val a = session("a", 10)

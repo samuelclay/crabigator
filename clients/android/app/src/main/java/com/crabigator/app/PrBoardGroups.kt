@@ -48,7 +48,7 @@ private val PullRequest.attentionRank get() = when {
 }
 
 /** Match the CLI session board: work in flight uses now; completions never move a settled row. */
-internal fun prBoardGroups(roster: List<Session>, prs: List<PullRequest>, machines: List<String>, now: Long, showEnded: Boolean, query: String): List<BoardMachine> {
+internal fun prBoardGroups(roster: List<Session>, prs: List<PullRequest>, machines: List<String>, now: Long, showEnded: Boolean, query: String, groupByComputer: Boolean = true): List<BoardMachine> {
     val prOrder = compareBy<PullRequest> { it.attentionRank }.thenByDescending { it.primary }.thenByDescending { it.lastMentionedAt }
     val bySession = prs.flatMap { pr -> pr.sessions.map { it.id to pr } }.groupBy({ it.first }, { it.second })
     val rows = (roster + prs.flatMap { it.sessions }).distinctBy { it.id }.filter { showEnded || it.active }.mapNotNull { session ->
@@ -59,12 +59,12 @@ internal fun prBoardGroups(roster: List<Session>, prs: List<PullRequest>, machin
         val activity = if (working) now else session.stats.promptAt.takeIf { it > 0 }
             ?: local.maxOfOrNull { maxOf(it.updatedAt, it.closedAt, it.lastMentionedAt) } ?: 0
         BoardSession(session, local, activity)
-    }.groupBy { it.session.machineGroup }
-    return machines.mapNotNull { machine ->
+    }.groupBy { if (groupByComputer) it.session.machineGroup else "" }
+    return (if (groupByComputer) machines else listOf("")).mapNotNull { machine ->
         val sessions = rows[machine] ?: return@mapNotNull null
         val bands = sessions.groupBy { BoardAge.fromSeconds((now - it.activity).coerceAtLeast(0)) }.toSortedMap().map { (age, entries) ->
             val repos = entries.groupBy { it.repo }.map { (repo, values) ->
-                BoardRepository(repo, values.sortedByDescending { it.activity })
+                BoardRepository(repo, values.sortedWith(compareByDescending<BoardSession> { it.activity }.thenBy { it.session.id }))
             }.sortedByDescending { it.sessions.first().activity }
             BoardBand(age, repos)
         }

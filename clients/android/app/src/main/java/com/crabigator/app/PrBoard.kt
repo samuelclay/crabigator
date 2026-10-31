@@ -46,13 +46,13 @@ import androidx.compose.ui.unit.sp
         }
         LazyColumn(state = state, contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 88.dp)) {
             displayGroups.forEach { machine ->
-                stickyHeader(key = "machine-${machine.machine}", contentType = "machine") { index ->
+                if (prefs.groupByComputer) stickyHeader(key = "machine-${machine.machine}", contentType = "machine") { index ->
                     MachineHeader(machine.machine, machine.sessions.size, machine.machine in collapsed, Modifier.animateItem(placementSpec = tween(320))) {
                         if (machine.machine !in collapsed && state.firstVisibleItemIndex > index) state.requestScrollToItem(index)
                         toggle(machine.machine)
                     }
                 }
-                if (machine.machine in collapsed) return@forEach
+                if (prefs.groupByComputer && machine.machine in collapsed) return@forEach
                 machine.bands.forEach { band ->
                     val prefix = "${machine.machine.length}:${machine.machine}-${band.age}"
                     item(key = "$prefix-age", contentType = "age") {
@@ -70,13 +70,13 @@ import androidx.compose.ui.unit.sp
                                 val link = block.pr.url.takeIf { it.startsWith("https://") }
                                 BoardPrRow(block.pr, wide, Modifier.padding(horizontal = 8.dp).then(if (link != null) Modifier.clickable { uri.openUri(link) } else Modifier))
                                 block.sessions.forEach { entry ->
-                                    BoardSessionBlock(entry.copy(prs = emptyList()), selectedId == entry.session.id, wide, clock, prefs.boardRecaps) { select(entry.session, order) }
+                                    BoardSessionBlock(entry.copy(prs = emptyList()), selectedId == entry.session.id, wide, clock, prefs.boardRecaps, showMachine = !prefs.groupByComputer) { select(entry.session, order) }
                                 }
                             }
                         }
                         items(repo.sessions, key = { "session-${it.session.id}" }, contentType = { "session" }) { entry ->
                             Column(Modifier.animateItem(placementSpec = tween(320), fadeInSpec = tween(220), fadeOutSpec = tween(180)).padding(bottom = spacing.gap(5))) {
-                                BoardSessionBlock(entry, selectedId == entry.session.id, wide, clock, prefs.boardRecaps) { select(entry.session, order) }
+                                BoardSessionBlock(entry, selectedId == entry.session.id, wide, clock, prefs.boardRecaps, showMachine = !prefs.groupByComputer) { select(entry.session, order) }
                             }
                         }
                     }
@@ -97,7 +97,7 @@ import androidx.compose.ui.unit.sp
     }
 }
 
-@Composable internal fun BoardSessionBlock(entry: BoardSession, selected: Boolean, wide: Boolean, clock: State<Long>, recaps: Boolean = false, open: () -> Unit) {
+@Composable internal fun BoardSessionBlock(entry: BoardSession, selected: Boolean, wide: Boolean, clock: State<Long>, recaps: Boolean = false, showMachine: Boolean = false, open: () -> Unit) {
     val spacing = LocalBoardSpacing.current
     val session = entry.session
     val selection by animateFloatAsState(if (selected) 1f else 0f, tween(if (selected) 120 else 350), label = "Session selection")
@@ -116,6 +116,7 @@ import androidx.compose.ui.unit.sp
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(spacing.gap(4))) {
                         Text(session.title, color = if (session.active) CrabColors.Title else Muted, fontSize = 14.sp, lineHeight = spacing.lineHeight(19),
                             maxLines = if (wide || spacing.tight) 1 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.sessionTitleAlignment().animateContentSize(tween(300), alignment = Alignment.TopStart))
+                        if (showMachine) Text(session.machineGroup, color = Muted, fontSize = 11.sp)
                         if (!wide) Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(session.branch, color = Muted, fontSize = 11.sp, lineHeight = spacing.lineHeight(15), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                             BoardRecency(session, clock, showStatus = true)

@@ -213,6 +213,7 @@ private val Cyan = CrabColors.Cyan
         SettingPicker("Sessions", if (p.showEnded) "Live and ended" else "Live", listOf("Live", "Live and ended")) { n -> model.style { it.copy(showEnded = n == 1) } }
         val computers = (state.sessions.map { it.machineGroup } + p.boardComputer).filter { it.isNotBlank() }.distinct().sorted()
         SettingPicker("Computers", p.boardComputer.ifBlank { "All computers" }, listOf("All computers") + computers) { n -> model.style { it.copy(boardComputer = if (n == 0) "" else computers[n - 1]) } }
+        CheckRow("Group by computer", p.groupByComputer) { model.style { it.copy(groupByComputer = !it.groupByComputer) } }
         CheckRow("Show recaps", p.boardRecaps) { model.style { it.copy(boardRecaps = !it.boardRecaps) } }
         SettingPicker("PR board groups", if (p.boardGrouping == "prs") "Pull requests" else "Sessions", listOf("Sessions", "Pull requests")) { n -> model.style { it.copy(boardGrouping = if (n == 1) "prs" else "sessions") } }
     }

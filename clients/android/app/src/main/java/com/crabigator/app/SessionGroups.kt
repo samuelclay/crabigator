@@ -13,9 +13,9 @@ internal fun retainMachineOrder(previous: List<String>, sessions: List<Session>)
 
 internal data class SessionListGroup(val machine: String, val project: String, val sessions: List<Session>)
 
-internal fun sessionListGroups(sessions: List<Session>, machines: List<String>, grouping: String, order: String): List<SessionListGroup> {
-    val byMachine = sessions.groupBy { it.machineGroup }
-    return machines.flatMap { machine ->
+internal fun sessionListGroups(sessions: List<Session>, machines: List<String>, grouping: String, order: String, groupByComputer: Boolean = true): List<SessionListGroup> {
+    val byMachine = sessions.groupBy { if (groupByComputer) it.machineGroup else "" }
+    return (if (groupByComputer) machines else listOf("")).flatMap { machine ->
         val rows = byMachine[machine] ?: return@flatMap emptyList()
         if (grouping != "project") listOf(SessionListGroup(machine, "", rows))
         else rows.groupBy { it.repo.ifBlank { "Sessions" } }.entries.let { projects ->
