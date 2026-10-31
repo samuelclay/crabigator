@@ -358,14 +358,15 @@ it('signs Apple alerts and sends silent background refreshes for resolution', as
         return new Response(null, { status: 200 });
     });
     try {
-        await sendApplePush(appleEnv, device, 'apple-session', true);
-        await sendApplePush(appleEnv, { ...device, environment: 'production' }, 'apple-session', false);
+        await sendApplePush(appleEnv, device, 'apple-session', { pending: true, revision: 7 });
+        await sendApplePush(appleEnv, { ...device, environment: 'production' }, 'apple-session', { pending: false, revision: 8 });
         expect(calls[0].url).toContain('api.sandbox.push.apple.com');
         expect(calls[0].headers.get('apns-push-type')).toBe('alert');
         expect(calls[0].headers.get('apns-topic')).toBe('com.newsblur.crabigator');
         expect(calls[0].body.aps['mutable-content']).toBe(1);
         expect(calls[0].body.aps.sound).toBeUndefined();
         expect(calls[0].body.session_id).toBe('apple-session');
+        expect(calls[0].body.resolved_revision).toBeUndefined();
         const jwt = calls[0].headers.get('authorization')!.slice(7).split('.');
         const signature = Uint8Array.from(atob(jwt[2].replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
         expect(await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, keys.publicKey, signature, new TextEncoder().encode(jwt.slice(0, 2).join('.')))).toBe(true);
@@ -373,6 +374,40 @@ it('signs Apple alerts and sends silent background refreshes for resolution', as
         expect(calls[1].headers.get('apns-push-type')).toBe('background');
         expect(calls[1].headers.get('apns-priority')).toBe('5');
         expect(calls[1].body.aps).toEqual({ 'content-available': 1 });
+        expect(calls[1].body.resolved_revision).toBe(8);
+    } finally { mocked.mockRestore(); }
+});
+
+it.each([false, true])('keeps a queued resolution unless a new question arrives (new question: %s)', async newQuestion => {
+    const group = `resolution-race-${newQuestion}`, sessionId = `${group}-session`;
+    const mobile = await pairedMobile(group, group);
+    await registerPush(mobile.request('/api/mobile/push', {
+        platform: 'ios', token: (newQuestion ? 'a1' : 'b2').repeat(32), environment: 'sandbox',
+    }), testEnv);
+    const { account } = await appleCredentials('RESOLUTION_RACE');
+    let reads = 0;
+    const pushEnv = { ...testEnv, APNS_CREDENTIALS: JSON.stringify(account), SESSION: {
+        idFromName: (name: string) => testEnv.SESSION.idFromName(name),
+        get: () => ({ fetch: async () => {
+            reads++;
+            // The prompt clears first; thinking advances the revision while the
+            // delivery is being reserved. It does not queue a second dismissal.
+            return Response.json({ attention_pending: reads > 1 && newQuestion, desktop_connected: true,
+                notification_id: 'answered-question', notification_prompt: null,
+                prompt_revision: reads === 1 ? 7 : 8, title: 'Session' });
+        } }),
+    } as unknown as Env['SESSION'] };
+    const calls: Record<string, any>[] = [];
+    const mocked = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+        calls.push(JSON.parse(String(init?.body)));
+        return new Response(null, { status: 200 });
+    });
+    try {
+        await notifyMobilePrompt(pushEnv, group, sessionId);
+        expect(reads).toBe(2);
+        expect(calls).toEqual(newQuestion ? [] : [{
+            aps: { 'content-available': 1 }, session_id: sessionId, resolved_revision: 8,
+        }]);
     } finally { mocked.mockRestore(); }
 });
 

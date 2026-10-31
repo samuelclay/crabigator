@@ -53,8 +53,8 @@ async function accessToken(account: ServiceAccount, deadline: number): Promise<s
     return result.access_token;
 }
 
-/** Push carries only a session id. Devices authenticate and fetch the latest prompt,
- * so delayed/out-of-order pushes cannot revive answered questions or leak their text. */
+/** Push carries no prompt text. Devices fetch current prompts; Apple resolutions
+ * also carry a revision so old notifications can be removed without a fetch. */
 export async function notifyMobilePrompt(env: Env, groupId: string, sessionId: string): Promise<void> {
     if (!env.FIREBASE_SERVICE_ACCOUNT && !env.APNS_CREDENTIALS) return;
     const deadline = Date.now() + 25000;
@@ -111,14 +111,16 @@ export async function notifyMobilePrompt(env: Env, groupId: string, sessionId: s
             const current = await readSnapshot();
             if (current.notification_id !== snapshot.notification_id
                 || Boolean(current.attention_pending && current.desktop_connected) !== pending
-                || (kind === 'refresh' && current.prompt_revision !== snapshot.prompt_revision)) {
+                || (kind === 'refresh' && pending && current.prompt_revision !== snapshot.prompt_revision)) {
                 superseded = true;
                 await env.DB.prepare("UPDATE notification_deliveries SET status = 'superseded', completed_at = ? WHERE id = ?")
                     .bind(Date.now(), id).run();
                 return;
             }
             if (row.platform === 'ios') {
-                await sendApplePush(env, row, sessionId, pending, send);
+                // Thinking/complete updates advance the revision without scheduling
+                // another dismissal. Keep the resolution and use its latest revision.
+                await sendApplePush(env, row, sessionId, { pending, revision: current.prompt_revision }, send);
             } else {
                 const { account, bearer } = firebaseAuth!;
                 const response = await fetchWithRetry(`https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`, {

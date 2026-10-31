@@ -22,8 +22,9 @@ async function providerToken(account: AppleCredentials): Promise<string> {
 
 /** Alert content is generic. The service extension authenticates to load the current prompt.
  * Resolution sends a background refresh, never a new visible alert. */
-export async function sendApplePush(env: Env, device: AppleDevice, sessionId: string, pending: boolean, send: PushFetch = fetch): Promise<void> {
+export async function sendApplePush(env: Env, device: AppleDevice, sessionId: string, state: { pending: boolean; revision: number }, send: PushFetch = fetch): Promise<void> {
     if (!env.APNS_CREDENTIALS) return;
+    const { pending, revision } = state;
     const account = JSON.parse(env.APNS_CREDENTIALS) as AppleCredentials;
     const host = device.environment === 'sandbox' ? 'api.sandbox.push.apple.com' : 'api.push.apple.com';
     const aps = pending
@@ -36,7 +37,7 @@ export async function sendApplePush(env: Env, device: AppleDevice, sessionId: st
             'apns-push-type': pending ? 'alert' : 'background', 'apns-priority': pending ? '10' : '5',
             'apns-collapse-id': sessionId, 'apns-expiration': String(Math.floor(Date.now() / 1000) + 300),
             'content-type': 'application/json',
-        }, body: JSON.stringify({ aps, session_id: sessionId }), signal: AbortSignal.timeout(10000),
+        }, body: JSON.stringify({ aps, session_id: sessionId, ...(!pending ? { resolved_revision: revision } : {}) }), signal: AbortSignal.timeout(10000),
     });
     if (response.ok) return;
     const result = await response.json() as { reason?: string; timestamp?: number };
