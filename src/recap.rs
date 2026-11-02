@@ -967,6 +967,11 @@ fn collect_claude_latest_turn(content: &str, in_turn: bool) -> TurnTranscript {
                     append_assistant_content(&mut activity, message_content);
                 }
             }
+            Some("pr-link") if after_user_prompt => {
+                if let Some(url) = entry.get("prUrl").and_then(Value::as_str) {
+                    push_section(&mut activity, "pr_link", url);
+                }
+            }
             _ => {}
         }
     }

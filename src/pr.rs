@@ -500,6 +500,8 @@ enum Channel {
     Tool,
     /// Tool output.
     ToolResult,
+    /// A PR explicitly associated with the conversation by the assistant CLI.
+    PrLink,
 }
 
 /// What marked a `#123` in prose as a pull request.
@@ -759,10 +761,10 @@ pub struct PrTracker {
     /// User prompt that owns the per-turn command and mention deduplication.
     /// This is also a fallback turn boundary when the prompt counter arrives late.
     scan_prompt_owner: Option<String>,
-    /// Last background read attempt per PR URL. Failed requests back off too,
+    /// Last background read attempt per PR URL or number lookup key. Failed requests back off too,
     /// rather than retrying on every two-second idle hook tick.
     refresh_attempted_at: HashMap<String, Instant>,
-    /// Consecutive read failures per PR URL, cleared on success.
+    /// Consecutive read failures per PR URL or number lookup key, cleared on success.
     /// Never-enriched PRs retry on this count's backoff schedule.
     fetch_failures: HashMap<String, u32>,
     /// Last observed mention, push, or creation per PR URL. Recent activity
@@ -1348,13 +1350,11 @@ impl PrTracker {
                         if !bulk {
                             let recorded = self.record_mention_for_number(number, user_authored);
                             changed |= recorded;
-                            let key = format!("mention:{}#{number}", cwd.display());
-                            if !recorded && self.pending.contains_key(&key) {
-                                self.pending_mentions.entry(key).or_default().push((
+                            if !recorded {
+                                self.remember_lookup_mention(
+                                    &format!("mention:{}#{number}", cwd.display()),
                                     user_authored,
-                                    self.prompt_count,
-                                    self.mention_time.unwrap_or_else(now_unix_ms),
-                                ));
+                                );
                             }
                         }
                     }
@@ -1494,6 +1494,10 @@ impl PrTracker {
             return;
         }
         let key = format!("mention:{}#{number}", cwd.display());
+        if !self.lookup_retry_ready(&key) {
+            self.defer_lookup(cwd, number);
+            return;
+        }
         if self.pending.contains_key(&key) {
             if !self.replaying_history {
                 self.pending_pr_active.insert(key, true);
@@ -1541,6 +1545,10 @@ impl PrTracker {
         if updates {
             self.pending_updates.insert(key.clone());
         }
+        if !self.lookup_retry_ready(&key) {
+            self.defer_lookup(cwd, number);
+            return false;
+        }
         if self.pending.contains_key(&key) {
             if !self.replaying_history {
                 self.pending_pr_active.insert(key, true);
@@ -1566,6 +1574,13 @@ impl PrTracker {
             return;
         }
         self.deferred_lookups.push(lookup);
+    }
+
+    fn lookup_retry_ready(&self, key: &str) -> bool {
+        self.refresh_attempted_at.get(key).is_none_or(|attempt| {
+            attempt.elapsed()
+                >= unenriched_retry_delay(self.fetch_failures.get(key).copied().unwrap_or(0))
+        })
     }
 
     /// Refresh the one tracked PR most in need of fresh stats.
@@ -1719,8 +1734,10 @@ impl PrTracker {
             self.spawn_fetch(url, false);
             return !self.pending.is_empty();
         }
-        if let Some((cwd, number)) = self.deferred_lookups.first().cloned() {
-            self.deferred_lookups.remove(0);
+        if let Some(index) = self.deferred_lookups.iter().position(|(cwd, number)| {
+            self.lookup_retry_ready(&format!("mention:{}#{number}", cwd.display()))
+        }) {
+            let (cwd, number) = self.deferred_lookups.remove(index);
             let key = format!("mention:{}#{number}", cwd.display());
             let cwd_for_job = cwd.clone();
             if self.spawn_pr_job(key, None, false, false, move || {
@@ -1894,6 +1911,10 @@ impl PrTracker {
             match result {
                 Some(JobResult::Pr(result)) => match result.data {
                     Ok(json) => {
+                        if result.requested_url.is_none() {
+                            self.refresh_attempted_at.remove(&key);
+                            self.fetch_failures.remove(&key);
+                        }
                         let resolved_url = json.url.clone();
                         let threads = result.threads;
                         if let Some(url) = &result.requested_url {
@@ -1980,6 +2001,25 @@ impl PrTracker {
                                         changed = true;
                                     }
                                 }
+                            }
+                        } else if let Some((cwd, number)) = mention_lookup_key(&key) {
+                            // Number lookups have no URL placeholder yet. Keep their
+                            // evidence and retry transient failures with the same
+                            // backoff as URL reads, rather than losing the PR forever.
+                            if !pr_does_not_exist(&error) {
+                                self.refresh_attempted_at
+                                    .insert(key.clone(), Instant::now());
+                                *self.fetch_failures.entry(key.clone()).or_insert(0) += 1;
+                                if mark_updated {
+                                    self.pending_updates.insert(key.clone());
+                                }
+                                if !mentions.is_empty() {
+                                    self.pending_mentions.insert(key.clone(), mentions);
+                                }
+                                if pending_pr_active || result.pr_active {
+                                    self.pending_pr_active.insert(key, true);
+                                }
+                                self.defer_lookup(&cwd, number);
                             }
                         }
                     }
@@ -2375,13 +2415,23 @@ fn scan_events(text: &str) -> Vec<ScanEvent> {
 
 fn scan_events_with_known_prs(text: &str, known_pr_numbers: &HashSet<u64>) -> Vec<ScanEvent> {
     let mut events = Vec::new();
+    let mut known_pr_numbers = known_pr_numbers.clone();
+    let mut linked_urls = HashSet::new();
     let mut creates = Vec::<PendingCreation>::new();
     let mut result_creates = Vec::new();
     let mut tool_creates = HashMap::new();
     let mut raw_creates = 0;
 
     for (channel, body) in split_channels(text) {
+        let first_event = events.len();
         match channel {
+            Channel::PrLink => {
+                let links = pr_urls(&body)
+                    .into_iter()
+                    .filter(|loc| linked_urls.insert(loc.url.clone()))
+                    .collect();
+                push_located(&mut events, links);
+            }
             Channel::Prose => {
                 for line in body.lines() {
                     // Legacy unmarked scrollback can contain the command and
@@ -2397,7 +2447,7 @@ fn scan_events_with_known_prs(text: &str, known_pr_numbers: &HashSet<u64>) -> Ve
                     if is_pr_update_command(line) {
                         events.push(ScanEvent::Updated(line.trim().to_string()));
                     }
-                    push_prose_line(&mut events, line, known_pr_numbers);
+                    push_prose_line(&mut events, line, &known_pr_numbers);
                 }
                 events.extend(gh_pr_command_events(&body));
             }
@@ -2451,6 +2501,18 @@ fn scan_events_with_known_prs(text: &str, known_pr_numbers: &HashSet<u64>) -> Ve
                 }
             }
         }
+        // Later prose in this same scan can refer to a PR a command or CLI
+        // record just identified, without needing a second transcript scan.
+        known_pr_numbers.extend(
+            events[first_event..]
+                .iter()
+                .filter_map(|event| match event {
+                    ScanEvent::Located { loc, .. }
+                    | ScanEvent::CommandLocated { loc, .. }
+                    | ScanEvent::Created(loc) => Some(loc.number),
+                    _ => None,
+                }),
+        );
     }
     events
 }
@@ -2709,7 +2771,83 @@ fn gh_pr_command_events(section: &str) -> Vec<ScanEvent> {
             events.push(event);
         }
     }
+    events.extend(gh_pr_loop_events(section));
     events
+}
+
+/// Resolve only literal numeric loops whose first command targets that variable.
+/// Never evaluate shell text or infer values from command substitutions or output.
+fn gh_pr_loop_events(section: &str) -> Vec<ScanEvent> {
+    // Tool inputs are serialized JSON. Decode the command so its enclosing
+    // JSON quotes are not mistaken for shell quotes.
+    let input = section
+        .find('{')
+        .and_then(|start| serde_json::from_str::<serde_json::Value>(section[start..].trim()).ok());
+    let command = input
+        .as_ref()
+        .and_then(|input| {
+            input
+                .get("command")
+                .or_else(|| input.get("cmd"))
+                .or_else(|| input.get("input"))
+        })
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(section);
+    // Here-documents need a shell parser to distinguish data from commands.
+    if command.contains("<<") {
+        return Vec::new();
+    }
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(
+            r#"(?:^|&&|\|\||[;\n|]|"(?:command|cmd|input)"\s*:\s*"|exec_command\s+)\s*for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+([0-9][0-9 \t]*)\s*;\s*do\s+gh\s+pr\s+(view|checks|edit|ready|merge|reopen|close|comment|diff)\b"#,
+        )
+        .expect("valid literal PR loop regex")
+    });
+    let mut events = Vec::new();
+    for caps in re.captures_iter(command) {
+        if !unquoted_shell_position(&command[..caps.get(1).unwrap().start()]) {
+            continue;
+        }
+        let tail = command_tail(&command[caps.get(0).unwrap().end()..]).trim_start();
+        let target_end = tail.find(char::is_whitespace).unwrap_or(tail.len());
+        let target = &tail[..target_end];
+        if target != format!("${}", &caps[1]) && target != format!("${{{}}}", &caps[1]) {
+            continue;
+        }
+        for number in caps[2].split_whitespace().take(32) {
+            if let Some(event) =
+                gh_pr_command_event(&caps[3], &format!("{number}{}", &tail[target_end..]))
+            {
+                events.push(event);
+            }
+        }
+    }
+    events
+}
+
+fn unquoted_shell_position(prefix: &str) -> bool {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut comment = false;
+    for ch in prefix.chars() {
+        if comment {
+            comment = ch != '\n';
+        } else if escaped {
+            escaped = false;
+        } else if ch == '\\' && quote != Some('\'') {
+            escaped = true;
+        } else if quote == Some(ch) {
+            quote = None;
+        } else if quote.is_none() {
+            match ch {
+                '\'' | '"' | '`' => quote = Some(ch),
+                '#' => comment = true,
+                _ => {}
+            }
+        }
+    }
+    quote.is_none() && !comment && !escaped
 }
 
 /// Arguments of one `gh pr` invocation, stopping at the next command.
@@ -2870,6 +3008,7 @@ fn split_channels(text: &str) -> Vec<(Channel, String)> {
             "[assistant]" | "[user]" | "[prompt]" => Channel::Prose,
             "[tool]" => Channel::Tool,
             "[tool_result]" => Channel::ToolResult,
+            "[pr_link]" => Channel::PrLink,
             _ => {
                 body.push_str(line);
                 body.push('\n');
@@ -3515,6 +3654,167 @@ fn now_unix_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_links_and_literal_loop_restore_cross_repo_prs() {
+        use serde_json::json;
+        use std::io::Write;
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let portal = "https://github.com/o/portal/pull/2014";
+        let rqh = "https://github.com/o/rqh/pull/3453";
+        let records = [
+            json!({"type":"user","message":{"content":"Fix the merge conflicts"}}),
+            json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"gh pr view 2014; for n in 3453 3454; do gh pr view $n --repo o/rqh --json number,state; done"}}]}}),
+            json!({"type":"pr-link","prUrl":portal,"prNumber":2014,"prRepository":"o/portal"}),
+            json!({"type":"pr-link","prUrl":portal,"prNumber":2014,"prRepository":"o/portal"}),
+            json!({"type":"pr-link","prUrl":rqh,"prNumber":3453,"prRepository":"o/rqh"}),
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"Portal #2014, RQH #3453 and #3454 are pushed."}]}}),
+        ];
+        for record in records {
+            writeln!(file.as_file(), "{record}").unwrap();
+        }
+        let mut cursor = None;
+        let update = crate::recap::collect_tracking_turns_incremental(
+            crate::platforms::PlatformKind::Claude,
+            file.path(),
+            &mut cursor,
+        )
+        .unwrap()
+        .unwrap();
+        let mut tracker = PrTracker::new();
+        tracker.reads_this_window = SESSION_READS_PER_HOUR;
+        tracker.read_window_started = Some(Instant::now());
+        for turn in &update.turns {
+            tracker.scan_transcript_turn(turn, Path::new("/tmp"), true);
+        }
+        let mut urls: Vec<_> = tracker.prs().iter().map(|pr| pr.url.as_str()).collect();
+        urls.sort_unstable();
+        assert_eq!(
+            urls,
+            vec![portal, rqh, "https://github.com/o/rqh/pull/3454"]
+        );
+        assert_eq!(
+            tracker
+                .prs()
+                .iter()
+                .find(|pr| pr.url == portal)
+                .unwrap()
+                .mentions,
+            2
+        );
+        let mentions: Vec<_> = tracker.prs().iter().map(|pr| pr.mentions).collect();
+        for turn in &update.turns {
+            tracker.scan_transcript_turn(turn, Path::new("/tmp"), true);
+        }
+        assert_eq!(
+            mentions,
+            tracker
+                .prs()
+                .iter()
+                .map(|pr| pr.mentions)
+                .collect::<Vec<_>>()
+        );
+
+        // Metadata can arrive by itself after the last assistant message.
+        writeln!(
+            file.as_file(),
+            "{}",
+            json!({"type":"pr-link","prUrl":"https://github.com/o/rqh/pull/3454"})
+        )
+        .unwrap();
+        let next = crate::recap::collect_tracking_turns_incremental(
+            crate::platforms::PlatformKind::Claude,
+            file.path(),
+            &mut cursor,
+        )
+        .unwrap()
+        .unwrap();
+        for turn in &next.turns {
+            tracker.scan_transcript_turn(turn, Path::new("/tmp"), true);
+        }
+        assert_eq!(tracker.prs().len(), 3);
+    }
+
+    #[test]
+    fn literal_pr_loops_do_not_guess_dynamic_or_quoted_targets() {
+        for command in [
+            "for n in $(cat numbers); do gh pr view $n --repo o/r; done",
+            "for n in 3453 3454; do gh pr view $other --repo o/r; done",
+            "for n in 3453 3454; do gh pr view '$n' --repo o/r; done",
+            "echo 'for n in 3453 3454; do gh pr view $n --repo o/r; done'",
+            "echo 'note; for n in 3453 3454; do gh pr view $n --repo o/r; done'",
+            "echo \"note; for n in 3453 3454; do gh pr view $n --repo o/r; done\"",
+            "# note; for n in 3453 3454; do gh pr view $n --repo o/r; done",
+            "cat <<'EOF'\nfor n in 3453 3454; do gh pr view $n --repo o/r; done\nEOF",
+            "for n in 3453 3454; do echo gh pr view $n --repo o/r; done",
+        ] {
+            assert!(gh_pr_loop_events(command).is_empty(), "{command}");
+        }
+        let events = gh_pr_loop_events("for n in 3453 3454; do gh pr ready ${n} --repo o/r; done");
+        assert_eq!(events.len(), 2);
+        assert!(events
+            .iter()
+            .all(|event| matches!(event, ScanEvent::CommandLocated { updates: true, .. })));
+    }
+
+    #[test]
+    fn failed_number_lookup_retries_without_losing_mentions_or_updates() {
+        let mut tracker = PrTracker::new();
+        // Keep this test offline, including poll's automatic scheduling.
+        tracker.reads_this_window = SESSION_READS_PER_HOUR;
+        tracker.read_window_started = Some(Instant::now());
+        let key = "mention:/tmp#2014".to_string();
+        let deliver = |tracker: &mut PrTracker, data| {
+            let (tx, rx) = mpsc::channel();
+            tracker.pending.insert(key.clone(), rx);
+            tx.send(JobResult::Pr(Box::new(FetchResult {
+                requested_url: None,
+                created_here: false,
+                pr_active: true,
+                data,
+                threads: None,
+            })))
+            .unwrap();
+            tracker.poll();
+        };
+        tracker
+            .pending_mentions
+            .insert(key.clone(), vec![(true, 1, 100)]);
+        tracker.pending_updates.insert(key.clone());
+        deliver(&mut tracker, Err("temporary network failure".into()));
+        assert_eq!(
+            tracker.deferred_lookups,
+            vec![(PathBuf::from("/tmp"), 2014)]
+        );
+        assert!(!tracker.lookup_retry_ready(&key));
+        assert_eq!(tracker.pending_mentions[&key].len(), 1);
+        tracker.scan_prompt("Check PR #2014 again", Path::new("/tmp"));
+        assert_eq!(tracker.pending_mentions[&key].len(), 2);
+        assert!(!tracker.pending.contains_key(&key));
+        tracker
+            .refresh_attempted_at
+            .insert(key.clone(), Instant::now() - Duration::from_secs(61));
+        assert!(tracker.lookup_retry_ready(&key));
+        tracker.deferred_lookups.clear(); // The scheduler dequeues the retry.
+        deliver(
+            &mut tracker,
+            Ok(gh_json("https://github.com/o/r/pull/2014", "OPEN")),
+        );
+        assert_eq!(tracker.prs().len(), 1);
+        assert!(tracker.prs()[0].updated_here);
+        assert_eq!(tracker.prs()[0].user_mentions, 2);
+        assert!(!tracker.fetch_failures.contains_key(&key));
+        assert!(!tracker.refresh_attempted_at.contains_key(&key));
+
+        deliver(
+            &mut tracker,
+            Err("Could not resolve to a PullRequest with the number of 2014.".into()),
+        );
+        assert!(
+            tracker.deferred_lookups.is_empty(),
+            "missing PRs are not retried"
+        );
+    }
 
     #[test]
     fn resume_restores_early_prs_for_claude_and_codex_without_repeating_old_pushes() {
