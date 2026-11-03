@@ -4785,12 +4785,13 @@ pub async fn run_prs_board(once: bool) -> Result<()> {
             RecencyBucket::from_max_age_hours(preferences.oldest_visible_hours),
         )
         .with_mode(BoardMode::parse(&preferences.view));
-        let (local_entries, local_workspaces, mirrors) =
-            local_board(&mut activity_history, &overrides)?;
         let cloud_view = crate::cloud::fetch_pr_board_standalone()
             .await
             .ok()
             .map(cloud_entries_to_board);
+        // The cloud fetch refreshes this computer's saved display name.
+        let (local_entries, local_workspaces, mirrors) =
+            local_board(&mut activity_history, &overrides)?;
         let (mut entries, workspaces) = compose_board(
             local_entries,
             local_workspaces,
