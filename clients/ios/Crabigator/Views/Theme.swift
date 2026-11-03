@@ -4,6 +4,15 @@ enum Crab {
     static let ink = Color(uiColor: TerminalText.rgb(0x101419)), panel = Color(uiColor: TerminalText.rgb(0x1B2129))
     static func color(_ n: Int) -> Color { Color(uiColor: TerminalText.palette(n)) }
     static let muted = color(245), orange = color(179), deepOrange = color(208), mint = color(83), blue = color(39), title = color(75), purple = color(141), cyan = color(45), red = color(203), yellow = color(220)
+    static let recap = color(69)
+    // Keep this name hash and palette in sync with Android, web and the terminal board.
+    static func computer(_ name: String) -> Color { color(computerPalette(name)) }
+    static func computerPalette(_ name: String) -> Int {
+        var normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: " ", with: "-")
+        if normalized.hasSuffix(".local") { normalized.removeLast(6) }
+        let hash = normalized.utf8.reduce(UInt32(2166136261)) { ($0 ^ UInt32($1)) &* 16777619 }
+        return [69, 208, 83, 141, 45, 220, 203, 115, 213, 179, 75, 147][Int(hash % 12)]
+    }
     static func hex(_ value: String) -> Color { Color(uiColor: TerminalText.rgb(UInt32(value.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0xFFAA77)) }
 }
 struct IconButton: View {

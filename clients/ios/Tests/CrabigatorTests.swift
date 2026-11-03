@@ -5,6 +5,12 @@ import UserNotifications
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
+    func testComputerColorsMatchEveryClient() {
+        for (name, palette) in [("claybook", 220), ("claybook-m4", 208), ("claymac-studio", 69), ("claybook-tavus", 115), (" ClayMac-Studio.LOCAL ", 69), ("ClayMac Studio", 69), ("ClayBook M4", 208), ("ClayBook Tavus", 115)] {
+            XCTAssertEqual(Crab.computerPalette(name), palette, name)
+        }
+    }
+
     func testParagraphReflowPreservesUncertainBoundaries() {
         let cases: [(String, String, String)] = [
             ("continuation 0", "  This paragraph describes the updated reading experience\ncontinuing with details on the following row.\n───────────────────────────────────────────────────────────", "  This paragraph describes the updated reading experience continuing with details on the following row.\n───────────────────────────────────────────────────────────"),

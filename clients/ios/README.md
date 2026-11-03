@@ -2,7 +2,7 @@
 
 A native SwiftUI app with a read-only UIKit terminal. Requires iOS 17 or later. The Android app's final behavior is the reference; see [the commit-by-commit port log](docs/parity.md).
 
-In Settings → List / PR board, **Group by computer** switches between separate computer sections and a combined recency view. The choice applies to both views and is saved on this device. The combined view keeps computer names on session rows.
+In Settings → List / PR board, **Group by computer** switches between separate computer sections and a combined recency view. The choice applies to both views and is saved on this device. The combined view keeps computer names on session rows. Computer names use the same saved friendly names and colors across clients. Recaps share one blue color.
 
 ## Build and run
 

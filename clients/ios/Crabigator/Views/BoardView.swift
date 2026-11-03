@@ -118,7 +118,7 @@ struct BoardView: View {
                                     Button {
                                         withAnimation(.easeInOut(duration: 0.3)) { if !collapsed.insert(machine).inserted { collapsed.remove(machine) }; proxy.scrollTo(machine, anchor: .top) }
                                     } label: {
-                                        HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).lineLimit(1).frame(maxWidth: floatingToolbar ? max(60, (width - 308) / 2 - 36) : .infinity, alignment: .leading); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").boardFont(11); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").boardFont(11) }
+                                        HStack(spacing: 8) { Image(systemName: "desktopcomputer"); Text(machine).foregroundStyle(Crab.computer(machine)).lineLimit(1).frame(maxWidth: floatingToolbar ? max(60, (width - 308) / 2 - 36) : .infinity, alignment: .leading); Spacer(); Text("\(rows.count) \(rows.count == 1 ? "session" : "sessions")").boardFont(11); Image(systemName: collapsed.contains(machine) ? "chevron.right" : "chevron.down").boardFont(11) }
                                             .boardFont(13, weight: .medium).foregroundStyle(Crab.muted).padding(.vertical, spacing.gap(13)).frame(minHeight: floatingToolbar ? 52 : 44).padding(.horizontal, 8).background(Crab.ink)
                                     }.buttonStyle(.plain).id(machine).accessibilityIdentifier("Machine \(machine)")
                                 }
@@ -188,9 +188,9 @@ struct SessionRow: View {
                         HStack(alignment: .sessionTitleCenter, spacing: 8) { SessionStatus(session: session); recency; Spacer(minLength: 0) }.frame(width: 360, alignment: .leading)
                     }
                 }
-                if !preferences.groupByComputer { Text(session.machine).boardFont(11).foregroundStyle(Crab.muted) }
+                if !preferences.groupByComputer { Text(session.machine).boardFont(11).foregroundStyle(Crab.computer(session.machine)) }
                 if preferences.boardRecaps && !session.recap.isEmpty {
-                    Text(session.recap).boardFont(12).foregroundStyle(Crab.muted).fixedSize(horizontal: false, vertical: true)
+                    Text(session.recap).boardFont(12).foregroundStyle(Crab.recap).fixedSize(horizontal: false, vertical: true)
                 }
                 if list {
                     SessionTiming(session: session, preferences: preferences)

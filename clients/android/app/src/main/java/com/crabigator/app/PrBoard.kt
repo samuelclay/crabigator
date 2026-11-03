@@ -116,7 +116,7 @@ import androidx.compose.ui.unit.sp
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(spacing.gap(4))) {
                         Text(session.title, color = if (session.active) CrabColors.Title else Muted, fontSize = 14.sp, lineHeight = spacing.lineHeight(19),
                             maxLines = if (wide || spacing.tight) 1 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.sessionTitleAlignment().animateContentSize(tween(300), alignment = Alignment.TopStart))
-                        if (showMachine) Text(session.machineGroup, color = Muted, fontSize = 11.sp)
+                        if (showMachine) Text(session.machineGroup, color = CrabColors.computer(session.machine), fontSize = 11.sp)
                         if (!wide) Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(session.branch, color = Muted, fontSize = 11.sp, lineHeight = spacing.lineHeight(15), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                             BoardRecency(session, clock, showStatus = true)
@@ -132,7 +132,7 @@ import androidx.compose.ui.unit.sp
                         }
                     }
                 }
-                if (recaps && session.recap.isNotBlank()) Text(session.recap, color = Muted, fontSize = 12.sp)
+                if (recaps && session.recap.isNotBlank()) Text(session.recap, color = CrabColors.Recap, fontSize = 12.sp)
                 entry.prs.filter { it.visibleOnBoard(session.id) }.forEach { BoardPrRow(it, wide) }
             }
         }

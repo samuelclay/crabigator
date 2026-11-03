@@ -329,7 +329,7 @@ class MainActivity : ComponentActivity() {
             val nameWidth = if (floating) ((maxWidth - 308.dp) / 2 - 36.dp).coerceAtLeast(60.dp) else maxWidth
             Row(Modifier.heightIn(min = if (floating) 56.dp else 44.dp).padding(horizontal = 8.dp, vertical = spacing.gap(8)), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(painterResource(if (countNoun == "session") R.drawable.ic_machine else R.drawable.ic_board), null, tint = Muted, modifier = Modifier.size(18.dp))
-                Text(name, color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).wrapContentWidth(Alignment.Start).widthIn(max = nameWidth))
+                Text(name, color = if (countNoun == "session") CrabColors.computer(name) else Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).wrapContentWidth(Alignment.Start).widthIn(max = nameWidth))
                 Text(if (count == 1) "1 $countNoun" else "$count ${countNoun}s", color = Muted, fontSize = 12.sp,
                     modifier = Modifier.background(Panel, RoundedCornerShape(6.dp)).padding(horizontal = 7.dp, vertical = 2.dp))
                 Icon(painterResource(R.drawable.ic_chevron_down), null, tint = Muted, modifier = Modifier.size(18.dp).rotate(angle))
@@ -351,7 +351,7 @@ class MainActivity : ComponentActivity() {
         shape = RoundedCornerShape(12.dp), border = BorderStroke(2.dp, Peach.copy(alpha = selection))) {
         Box(Modifier.padding(horizontal = 10.dp, vertical = spacing.gap(10))) {
             SessionRow(session, clickable = false, showMachine = showMachine, footer = {
-                if (prefs.boardRecaps && session.recap.isNotBlank()) Text(session.recap, color = Muted, fontSize = 12.sp)
+                if (prefs.boardRecaps && session.recap.isNotBlank()) Text(session.recap, color = CrabColors.Recap, fontSize = 12.sp)
                 if (now != null) SessionStatsFooter(session, now, prefs)
             }, open = open)
         }
@@ -363,7 +363,7 @@ class MainActivity : ComponentActivity() {
     val background = remember(session.background) { runCatching { Color(android.graphics.Color.parseColor(session.background)) }.getOrDefault(Panel) }
     val title = remember(session.title, session.machine, showMachine) { buildAnnotatedString {
         append(session.title)
-        if (showMachine && session.machine.isNotBlank()) withStyle(SpanStyle(color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Normal)) {
+        if (showMachine && session.machine.isNotBlank()) withStyle(SpanStyle(color = CrabColors.computer(session.machine), fontSize = 11.sp, fontWeight = FontWeight.Normal)) {
             append("  ·\u00a0${session.machine}")
         }
     } }

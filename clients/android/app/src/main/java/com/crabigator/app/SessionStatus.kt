@@ -31,6 +31,16 @@ internal object CrabColors {
     val DarkOrange = TerminalText.palette(208)
     val Red = TerminalText.palette(203)
     val Cyan = TerminalText.palette(45)
+    val Recap = TerminalText.palette(69)
+    // Keep this name hash and palette in sync with iOS, web and the terminal board.
+    fun computer(name: String) = TerminalText.palette(computerPalette(name))
+    fun computerPalette(name: String): Int {
+        val normalized = name.trim().lowercase(java.util.Locale.ROOT).replace(' ', '-').removeSuffix(".local")
+        val hash = normalized.toByteArray(Charsets.UTF_8).fold(2166136261u) { value, byte ->
+            (value xor (byte.toUInt() and 255u)) * 16777619u
+        }
+        return intArrayOf(69, 208, 83, 141, 45, 220, 203, 115, 213, 179, 75, 147)[(hash % 12u).toInt()]
+    }
     val Blue = TerminalText.palette(39)
     val Title = TerminalText.palette(75)
     val Purple = TerminalText.palette(141)

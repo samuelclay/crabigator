@@ -5,6 +5,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SessionGroupsTest {
+    @Test fun computerColorsMatchEveryClient() {
+        for ((name, palette) in mapOf("claybook" to 220, "claybook-m4" to 208, "claymac-studio" to 69, "claybook-tavus" to 115, " ClayMac-Studio.LOCAL " to 69, "ClayMac Studio" to 69, "ClayBook M4" to 208, "ClayBook Tavus" to 115)) {
+            assertEquals(name, palette, CrabColors.computerPalette(name))
+        }
+    }
+
     private fun session(id: String, machine: String, at: Long, repo: String = "app") = Session.parse(JSONObject()
         .put("id", id).put("device_name", machine).put("prompts_changed_at", at).put("repo_name", repo))
 
