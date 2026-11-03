@@ -87,9 +87,15 @@ const RECENCY_6H: u8 = 39;
 const RECENCY_9H: u8 = 33;
 const RECENCY_12H: u8 = 27;
 const RECENCY_24H: u8 = 25;
-/// Machine names on repository headings. Cornflower, so it stays apart from
-/// the cyan recency bars and from the light blue of session titles.
-const MACHINE_BLUE: u8 = 69;
+/// Stable computer colors shared with the mobile apps and web dashboard.
+fn computer_color(name: &str) -> u8 {
+    let normalized = name.trim().to_lowercase().replace(' ', "-");
+    let normalized = normalized.strip_suffix(".local").unwrap_or(&normalized);
+    let hash = normalized.bytes().fold(2_166_136_261u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(16_777_619)
+    });
+    [69, 208, 83, 141, 45, 220, 203, 115, 213, 179, 75, 147][(hash % 12) as usize]
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum RecencyBucket {
@@ -1848,6 +1854,12 @@ fn machine_key(name: &str) -> String {
 }
 
 fn local_machine_name() -> String {
+    if let Some(name) = crate::cloud::DeviceIdentity::load_or_create()
+        .ok()
+        .and_then(|device| device.display_name.or(device.name))
+    {
+        return machine_label(&name);
+    }
     hostname::get()
         .ok()
         .and_then(|name| name.into_string().ok())
@@ -3793,7 +3805,7 @@ fn pr_row_key(pr: &SessionPr, machine: &str) -> String {
     }
 }
 
-/// `owner/repo` in yellow, then ` · machine` in blue when the computer is known.
+/// `owner/repo` in yellow, then the computer name in its own color.
 fn repository_heading(repo: &str, machine: &str) -> String {
     if machine.is_empty() {
         return format!("{}{repo}{}", fg(color::YELLOW), RESET_FG);
@@ -3804,7 +3816,7 @@ fn repository_heading(repo: &str, machine: &str) -> String {
         RESET_FG,
         fg(color::DARK_GRAY),
         RESET_FG,
-        fg(MACHINE_BLUE),
+        fg(computer_color(machine)),
         RESET_FG,
     )
 }
@@ -6755,6 +6767,22 @@ mod tests {
     use super::*;
     use crate::terminal::escape::bg;
 
+    #[test]
+    fn computer_colors_match_every_client() {
+        for (name, palette) in [
+            ("claybook", 220),
+            ("claybook-m4", 208),
+            ("claymac-studio", 69),
+            ("claybook-tavus", 115),
+            (" ClayMac-Studio.LOCAL ", 69),
+            ("ClayMac Studio", 69),
+            ("ClayBook M4", 208),
+            ("ClayBook Tavus", 115),
+        ] {
+            assert_eq!(computer_color(name), palette, "{name}");
+        }
+    }
+
     fn board_pr(number: u64, repo: &str) -> SessionPr {
         let mut pr = SessionPr::test_stub(number, "o", repo);
         pr.state = "OPEN".to_string();
@@ -8465,8 +8493,14 @@ mod tests {
         );
         assert!(!plain.contains(".local"));
         assert!(text.contains(&format!("{}samuelclay/crabigator", fg(color::YELLOW))));
-        assert!(text.contains(&format!("{}claymac-studio", fg(MACHINE_BLUE))));
-        assert!(text.contains(&format!("{}claybook-m4", fg(MACHINE_BLUE))));
+        assert!(text.contains(&format!(
+            "{}claymac-studio",
+            fg(computer_color("claymac-studio"))
+        )));
+        assert!(text.contains(&format!(
+            "{}claybook-m4",
+            fg(computer_color("claybook-m4"))
+        )));
 
         let studio_at = plain
             .find("samuelclay/crabigator · claymac-studio")

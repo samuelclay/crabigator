@@ -152,6 +152,14 @@ pub struct CloudBoard {
 /// Fetch the group's durable PR board from D1 — every PR any session ever
 /// tracked, with overrides already applied.
 pub async fn fetch_pr_board_standalone() -> Result<CloudBoard> {
+    // The standalone board never starts a session, but still needs the account's
+    // saved computer name. Refresh it on the board's first background fetch.
+    static NAME_REFRESHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !NAME_REFRESHED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        if let Ok(mut client) = CloudClient::new() {
+            let _ = client.register_device().await;
+        }
+    }
     let endpoints = CloudEndpoints::load()?;
     let device = DeviceIdentity::load_or_create()?;
     let url = format!("{}/prs/board", endpoints.api_url());
@@ -507,7 +515,15 @@ impl CloudClient {
             anyhow::bail!("Device registration failed: {} - {}", status, body);
         }
 
-        // Success - we don't need to parse the response body
+        // Save the account name so the local PR board agrees with the other clients.
+        if let Ok(body) = response.json::<serde_json::Value>().await {
+            if let Some(name) = body.get("display_name").and_then(|value| value.as_str()) {
+                if self.device.display_name.as_deref() != Some(name) {
+                    self.device.display_name = Some(name.to_string());
+                    let _ = self.device.save();
+                }
+            }
+        }
         self.device_registered = true;
 
         Ok(())

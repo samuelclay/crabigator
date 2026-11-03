@@ -9,6 +9,7 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -26,6 +27,9 @@ pub struct DeviceIdentity {
     /// Optional device name for display
     #[serde(default)]
     pub name: Option<String>,
+    /// Account display name returned by the cloud, separate from the hostname.
+    #[serde(default)]
+    pub display_name: Option<String>,
 }
 
 impl DeviceIdentity {
@@ -64,6 +68,7 @@ impl DeviceIdentity {
             device_id,
             device_secret,
             name,
+            display_name: None,
         })
     }
 
@@ -77,7 +82,12 @@ impl DeviceIdentity {
         }
 
         let content = serde_json::to_string_pretty(self)?;
-        fs::write(&path, content)
+        let mut temporary = tempfile::NamedTempFile::new_in(
+            path.parent().context("Device identity has no parent directory")?,
+        )?;
+        temporary.write_all(content.as_bytes())?;
+        temporary
+            .persist(&path)
             .with_context(|| format!("Failed to write device identity to {:?}", path))?;
 
         Ok(())
