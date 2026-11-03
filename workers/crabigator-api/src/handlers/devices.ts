@@ -47,8 +47,8 @@ export async function registerDevice(
     const now = Math.floor(Date.now() / 1000);
 
     const existing = await env.DB.prepare(
-        'SELECT secret_hash FROM devices WHERE id = ?'
-    ).bind(device_id).first<{ secret_hash: string }>();
+        'SELECT secret_hash, display_name FROM devices WHERE id = ?'
+    ).bind(device_id).first<{ secret_hash: string; display_name: string | null }>();
 
     if (existing && existing.secret_hash !== secret_hash) {
         return new Response(
@@ -66,7 +66,7 @@ export async function registerDevice(
             name = COALESCE(excluded.name, devices.name)
     `).bind(device_id, secret_hash, name || null, now, now).run();
 
-    const response: RegisterDeviceResponse = { ok: true };
+    const response: RegisterDeviceResponse = { ok: true, display_name: existing?.display_name || name || null };
     return jsonResponse(response);
 }
 

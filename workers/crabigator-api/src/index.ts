@@ -471,7 +471,7 @@ router.get('/api/sessions/:id/connect', async (request, env, params) => {
     // Verify session belongs to device and get session info
     const session = await env.DB.prepare(
         `SELECT sessions.id, sessions.cwd, sessions.platform, sessions.started_at,
-                devices.group_id as group_id, devices.name as device_name
+                devices.group_id as group_id, COALESCE(devices.display_name, devices.name) as device_name
          FROM sessions
          JOIN devices ON devices.id = sessions.device_id
          WHERE sessions.id = ? AND sessions.device_id = ?`

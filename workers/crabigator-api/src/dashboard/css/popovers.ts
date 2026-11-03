@@ -361,7 +361,7 @@ export const popoversCss = `
     font-family: var(--font-ui);
     font-size: 12px;
     font-weight: 700;
-    color: var(--accent-purple);
+    color: var(--computer-color);
     text-transform: none;
     letter-spacing: 0;
     display: flex;
@@ -374,7 +374,7 @@ export const popoversCss = `
 }
 .sessions-device-dot {
     font-size: 7px;
-    color: var(--accent-purple);
+    color: var(--computer-color);
 }
 .sessions-device-section {
     border-bottom: 1px solid var(--border-dim);

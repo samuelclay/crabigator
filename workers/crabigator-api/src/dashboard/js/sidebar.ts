@@ -486,6 +486,8 @@ export const sidebarJs = `
                     + (session.generatedTitle
                         ? '<span class="session-item-generated-title">' + escapeHtml(session.generatedTitle) + '</span>'
                         : '')
+                    + (!groupByComputer && session.deviceName
+                        ? '<span class="session-item-computer" style="color:' + computerColor(session.deviceName) + '">' + escapeHtml(cleanDeviceName(session.deviceName)) + '</span>' : '')
                     + '</span></span>';
 
             return \`
@@ -568,9 +570,13 @@ export const sidebarJs = `
                     const projectHtml = [...deviceEl.querySelectorAll('.project-group')]
                         .map(renderSidebarGroupFromCards)
                         .filter(Boolean);
+                    if (projectHtml.length === 0) {
+                        projectHtml.push(...[...deviceEl.querySelectorAll('.session-card')]
+                            .map(card => renderSidebarSessionItem(sidebarViewForCard(card))));
+                    }
                     if (projectHtml.length === 0) continue;
                     html += \`
-                        <div class="sessions-device-section">
+                        <div class="sessions-device-section" style="--computer-color:\${computerColor(deviceEl.dataset.device)}">
                             <div class="sessions-device-header"><span class="sessions-device-dot">●</span> \${escapeHtml(cleanDeviceName(deviceEl.dataset.device || 'Unknown'))}</div>
                             <div class="sessions-device-projects">
                     \`;
@@ -624,49 +630,35 @@ export const sidebarJs = `
 
             const views = sidebarSessions.map(sidebarSessionView);
 
-            // Use the saved grouping preference so focused mode does not flatten the sidebar.
-            if (groupingMode !== 'project') {
-                let html = '';
-                for (const session of views) {
-                    html += renderSidebarSessionItem(session);
-                }
-                if (render(html)) updateSidebarActiveState();
-                return;
-            }
-
-            const multiDevice = new Set(views.map(s => s.deviceName).filter(Boolean)).size > 1;
+            if (!groupByComputer) views.sort((a, b) => b.last_activity_at - a.last_activity_at || a.id.localeCompare(b.id));
+            const renderRows = rows => {
+                if (groupingMode !== 'project') return rows.map(renderSidebarSessionItem).join('');
+                const groups = new Map();
+                for (const session of rows) addSessionToProjectGroup(groups, session);
+                return sortProjectKeysByOrder(groups)
+                    .map(cwd => renderSidebarProjectGroup(cwd, groups.get(cwd).sessions)).join('');
+            };
+            const multiDevice = groupByComputer && new Set(views.map(s => s.deviceName || 'Unknown')).size > 1;
             let html = '';
-
             if (multiDevice) {
                 const deviceGroups = new Map();
                 for (const session of views) {
                     const device = session.deviceName || 'Unknown';
-                    if (!deviceGroups.has(device)) deviceGroups.set(device, { projects: new Map(), mostRecentTime: 0 });
-                    const dg = deviceGroups.get(device);
-                    addSessionToProjectGroup(dg.projects, session);
-                    if (session.last_activity_at > dg.mostRecentTime) dg.mostRecentTime = session.last_activity_at;
+                    if (!deviceGroups.has(device)) deviceGroups.set(device, { sessions: [], mostRecentTime: 0 });
+                    const group = deviceGroups.get(device);
+                    group.sessions.push(session);
+                    group.mostRecentTime = Math.max(group.mostRecentTime, session.last_activity_at);
                 }
-
                 for (const device of sortKeysByMostRecent(deviceGroups)) {
-                    const dg = deviceGroups.get(device);
                     html += \`
-                        <div class="sessions-device-section">
+                        <div class="sessions-device-section" style="--computer-color:\${computerColor(device)}">
                             <div class="sessions-device-header"><span class="sessions-device-dot">●</span> \${escapeHtml(cleanDeviceName(device))}</div>
-                            <div class="sessions-device-projects">
+                            <div class="sessions-device-projects">\${renderRows(deviceGroups.get(device).sessions)}</div>
+                        </div>
                     \`;
-                    for (const cwd of sortProjectKeysByOrder(dg.projects)) {
-                        html += renderSidebarProjectGroup(cwd, dg.projects.get(cwd).sessions);
-                    }
-                    html += '</div></div>';
                 }
             } else {
-                const groups = new Map();
-                for (const session of views) {
-                    addSessionToProjectGroup(groups, session);
-                }
-                for (const cwd of sortProjectKeysByOrder(groups)) {
-                    html += renderSidebarProjectGroup(cwd, groups.get(cwd).sessions);
-                }
+                html = renderRows(views);
             }
 
             if (render(html)) updateSidebarActiveState();

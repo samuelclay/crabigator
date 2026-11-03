@@ -17,6 +17,7 @@ export const baseCss = `
     --text-dim: #91a1ad;
     --accent-peach: #ffb98a;
     --accent-cyan: #9ac9df;
+    --computer-color: #5f87ff;
     --accent-blue: #83b7df;
     --accent-magenta: #c5a9df;
     --accent-green: #a7cfb6;

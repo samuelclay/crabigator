@@ -184,7 +184,7 @@ export async function claimPairingToken(
 
     // Get desktop name for response
     const device = await env.DB.prepare(
-        'SELECT name FROM devices WHERE id = ?'
+        'SELECT COALESCE(display_name, name) as name FROM devices WHERE id = ?'
     ).bind(tokenData.device_id).first<{ name: string | null }>();
 
     const response: ClaimPairingTokenResponse = {

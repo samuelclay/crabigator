@@ -322,7 +322,7 @@ export const layoutCss = `
 }
 .device-collapse-icon {
     font-size: 8px;
-    color: var(--accent-purple);
+    color: var(--computer-color);
     transition: opacity 0.3s;
 }
 .device-group.collapsed .device-collapse-icon {
@@ -331,7 +331,7 @@ export const layoutCss = `
 .device-name {
     font-family: 'JetBrains Mono', monospace;
     font-weight: 700;
-    color: var(--accent-purple);
+    color: var(--computer-color);
     font-size: 11px;
     flex-shrink: 0;
     text-transform: none;

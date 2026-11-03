@@ -12,6 +12,7 @@ export interface RegisterDeviceRequest {
 
 export interface RegisterDeviceResponse {
     ok: true;
+    display_name?: string | null;
 }
 
 export interface HeartbeatResponse {

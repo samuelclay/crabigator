@@ -616,7 +616,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
                 s.repo_owner, s.repo_name, s.branch,
                 s.uncommitted_files, s.additions, s.deletions, s.slack_threads,
                 s.session_mark,
-                d.name as device_name
+                COALESCE(d.display_name, d.name) as device_name
          FROM session_prs sp
          JOIN sessions s ON s.id = sp.session_id
          JOIN devices d ON d.id = s.device_id
@@ -791,7 +791,7 @@ async function buildPrBoard(env: Env, groupId: string): Promise<Response> {
                 s.repo_owner, s.repo_name, s.branch,
                 s.uncommitted_files, s.additions, s.deletions, s.slack_threads,
                 s.session_mark,
-                d.name as device_name
+                COALESCE(d.display_name, d.name) as device_name
          FROM sessions s
          JOIN devices d ON d.id = s.device_id
          WHERE d.group_id = ? AND s.is_active = 1

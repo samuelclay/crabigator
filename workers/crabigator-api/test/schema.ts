@@ -10,6 +10,7 @@ export async function ensureAccountSchema(env: Env): Promise<void> {
         `),
         env.DB.prepare(`
             CREATE TABLE IF NOT EXISTS devices (
+                display_name TEXT,
                 id TEXT PRIMARY KEY,
                 secret_hash TEXT NOT NULL,
                 name TEXT,

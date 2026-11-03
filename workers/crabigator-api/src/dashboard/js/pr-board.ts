@@ -174,6 +174,7 @@ export const prBoardJs = `
                 + '<span class="prb-ctl" id="prb-ctl-live" onclick="prBoardToggleLive()" title="Only sessions running right now, or the full durable history (l)"></span>'
                 + '<span class="prb-ctl" id="prb-ctl-view" onclick="prBoardToggleView()" title="One row per session, or one block per primary PR with its sessions beneath (s)"></span>'
                 + '<span class="prb-ctl" id="prb-ctl-recap" onclick="prBoardToggleRecap()" title="Show per-session recaps (r)"></span>'
+                + '<button class="prb-ctl" id="prb-ctl-computers" onclick="setGroupByComputer(!groupByComputer)" title="Group by computer, or combine computers in one list"></button>'
                 + '<span class="prb-ctl" id="prb-ctl-age" onclick="prBoardCycleAge()" title="Hide rows idle longer than this (a)"></span>'
                 + '<span class="prb-keys">' + keys + '</span>'
                 + '<span class="prb-addwrap"><input id="prb-add" placeholder="◉ watch a PR URL (w)" spellcheck="false" autocomplete="off"></span>'
@@ -386,12 +387,14 @@ export const prBoardJs = `
                 const el = document.getElementById(id);
                 if (!el) return;
                 el.classList.toggle('active', active);
+                if (el.tagName === 'BUTTON') el.setAttribute('aria-pressed', String(active));
                 el.innerHTML = html;
             };
             set('prb-ctl-live', prBoardViewPrefs.liveOnly,
                 prbMnemonic('l', prBoardViewPrefs.liveOnly ? 'live' : 'all sessions'));
             set('prb-ctl-view', prBoardViewPrefs.view === 'prs',
                 prbMnemonic('s', prBoardViewPrefs.view === 'prs' ? 'prs' : 'sessions'));
+            set('prb-ctl-computers', groupByComputer, groupByComputer ? 'by computer' : 'single list');
             set('prb-ctl-recap', prBoardViewPrefs.detail === 1,
                 prbMnemonic('r', prBoardViewPrefs.detail === 1 ? 'recap' : 'compact'));
             const bucket = prBoardViewPrefs.maxAgeHours === null
@@ -605,6 +608,7 @@ export const prBoardJs = `
         // One list per computer, preserving session order. A PR with no
         // sessions is a single unnamed group (a watch).
         function prbSessionsByDevice(sessions) {
+            if (!groupByComputer) return [{ machine: '', sessions: sessions || [] }];
             const groups = [];
             const index = new Map();
             for (const session of sessions || []) {
@@ -1126,6 +1130,8 @@ export const prBoardJs = `
             return '<span class="prb-sub-bullet">◆</span>'
                 + sessionMarkChipHtml(s)
                 + '<span class="prb-sub-title">' + escapeHtml(prbSessionTitle(s)) + '</span>'
+                + (!groupByComputer && prbDeviceLabel(s)
+                    ? '<span class="prb-machine" style="color:' + computerColor(s.device_name) + '"> · ' + escapeHtml(prbDeviceLabel(s)) + '</span>' : '')
                 + (headline
                     ? '<span class="prb-sub-headline">— ' + escapeHtml(headline) + '</span>'
                     : '');
@@ -1248,6 +1254,7 @@ export const prBoardJs = `
             html += '<div class="prb-l1"><span class="prb-l1-left">'
                 + '<span class="prb-diamond">◇</span>'
                 + '<span class="prb-session-title">' + escapeHtml(title) + '</span>'
+                + (!groupByComputer && s.device_name ? '<span class="prb-machine" style="color:' + computerColor(s.device_name) + '"> · ' + escapeHtml(prbDeviceLabel(s)) + '</span>' : '')
                 + '<span class="prb-branch">⎇ ' + escapeHtml(s.branch || '(no branch)') + '</span></span>'
                 + prbActivityHtml(item, idx, now)
                 + prbStatsCells('', s.additions, s.deletions, s.uncommitted)
@@ -1715,6 +1722,7 @@ export const prBoardJs = `
             // computers is two groups: owner/repo · machine.
             const buckets = new Map();
             const addRow = (repoName, machine, item) => {
+                if (!groupByComputer) machine = '';
                 const bucketIdx = prbBucketIndex(now - item.activity);
                 if (!buckets.has(bucketIdx)) buckets.set(bucketIdx, new Map());
                 const repos = buckets.get(bucketIdx);
@@ -1755,7 +1763,7 @@ export const prBoardJs = `
                 for (const repo of repos) {
                     html += '<div class="prb-repo" data-board-key="' + escapeHtml(JSON.stringify([bucketIdx, repo.name, repo.machine])) + '">' + escapeHtml(repo.name)
                         + (repo.machine
-                            ? ' <span class="prb-dot">·</span> <span class="prb-machine">'
+                            ? ' <span class="prb-dot">·</span> <span class="prb-machine" style="color:' + computerColor(repo.machine) + '">'
                                 + escapeHtml(repo.machine) + '</span>'
                             : '')
                         + '</div>';

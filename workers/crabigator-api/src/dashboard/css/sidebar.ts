@@ -1,5 +1,6 @@
 // Sidebar styles
 export const sidebarCss = `
+.session-item-computer { color: var(--computer-color); font-size: 11px; }
 /* Dashboard layout wrapper */
 .dashboard-layout {
     margin-top: var(--header-height, 67px);

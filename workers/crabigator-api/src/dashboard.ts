@@ -96,7 +96,14 @@ export const dashboardHtml = `<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="style-section">
-                    <div class="style-section-label">Grouping</div>
+                    <div class="style-section-label">Group by computer</div>
+                    <div class="style-options">
+                        <button class="style-option" data-computer-grouping="true" onclick="setGroupByComputer(true)">On</button>
+                        <button class="style-option" data-computer-grouping="false" onclick="setGroupByComputer(false)">Off — single list</button>
+                    </div>
+                </div>
+                <div class="style-section">
+                    <div class="style-section-label">Projects</div>
                     <div class="style-options">
                         <button class="style-option active" data-grouping="all" onclick="setGrouping('all')">All</button>
                         <button class="style-option" data-grouping="project" onclick="setGrouping('project')">By Project</button>

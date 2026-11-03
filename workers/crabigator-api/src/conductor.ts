@@ -91,7 +91,7 @@ export async function handleConductor(request: Request, env: Env, storage: Durab
         };
         const identities = new Map<string, Promise<Record<string, any> | null>>();
         const identity = (id: string) => {
-            if (!identities.has(id)) identities.set(id, env.DB.prepare(`SELECT s.*, d.name AS device_name FROM sessions s JOIN devices d ON d.id=s.device_id WHERE s.id=? AND d.group_id=?`).bind(id, group).first<Record<string, any>>().then(row => row ? metadata(row) : null));
+            if (!identities.has(id)) identities.set(id, env.DB.prepare(`SELECT s.*, COALESCE(d.display_name, d.name) AS device_name FROM sessions s JOIN devices d ON d.id=s.device_id WHERE s.id=? AND d.group_id=?`).bind(id, group).first<Record<string, any>>().then(row => row ? metadata(row) : null));
             return identities.get(id)!;
         };
         // Refresh identities once per session; keep the saved identity if the session has ended or moved.
@@ -123,7 +123,7 @@ export async function handleConductor(request: Request, env: Env, storage: Durab
         const host = () => {
             if (!device || !s.host || s.host.device !== device || s.host.id !== body.host_id || s.host.expires < now) fail('Conductor host lease expired.', 409);
         };
-        const directory = async () => (await env.DB.prepare(`SELECT s.*, s.id as session_id, d.name as device_name
+        const directory = async () => (await env.DB.prepare(`SELECT s.*, s.id as session_id, COALESCE(d.display_name, d.name) as device_name
             FROM sessions s JOIN devices d ON d.id = s.device_id WHERE d.group_id = ? AND s.is_active = 1 AND s.ended_at IS NULL ORDER BY s.started_at DESC LIMIT 100`).bind(group).all<Record<string, any>>()).results;
         const session = (id: string) => env.SESSION.get(env.SESSION.idFromName(id));
         const snapshot = async (id: string) => {

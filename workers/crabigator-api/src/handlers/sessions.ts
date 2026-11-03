@@ -121,7 +121,7 @@ export async function createSession(
     `).bind(sessionId, device_id, client_session_id, cwd, platform, prScope, markJson, now).run();
 
     // Unhide project if it was manually hidden
-    const device = await env.DB.prepare('SELECT group_id, name as device_name FROM devices WHERE id = ?')
+    const device = await env.DB.prepare('SELECT group_id, COALESCE(display_name, name) as device_name FROM devices WHERE id = ?')
         .bind(device_id)
         .first<{ group_id: string | null; device_name: string | null }>();
     if (device?.group_id) {
@@ -210,7 +210,7 @@ export async function listSessions(
                sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds,
                sessions.prompts_changed_at, sessions.completions_changed_at,
                sessions.session_mark,
-               devices.name as device_name
+               COALESCE(devices.display_name, devices.name) as device_name
         FROM sessions
         JOIN devices ON devices.id = sessions.device_id
     `;

@@ -60,7 +60,7 @@ export class SessionListDO implements DurableObject {
                 continue;
             }
             const row = await this.env.DB.prepare(`
-                SELECT sessions.device_id as device_id, devices.group_id as group_id, devices.name as device_name
+                SELECT sessions.device_id as device_id, devices.group_id as group_id, COALESCE(devices.display_name, devices.name) as device_name
                 FROM sessions
                 JOIN devices ON devices.id = sessions.device_id
                 WHERE sessions.id = ?
@@ -205,7 +205,7 @@ export class SessionListDO implements DurableObject {
                 deviceName = existing.device_name;
             } else if (eventObj.session.id) {
                 const row = await this.env.DB.prepare(`
-                    SELECT devices.group_id as group_id, devices.name as device_name
+                    SELECT devices.group_id as group_id, COALESCE(devices.display_name, devices.name) as device_name
                     FROM sessions
                     JOIN devices ON devices.id = sessions.device_id
                     WHERE sessions.id = ?
@@ -216,7 +216,7 @@ export class SessionListDO implements DurableObject {
         }
         if (groupId && !deviceName && eventObj.session?.id) {
             const row = await this.env.DB.prepare(`
-                SELECT devices.name as device_name
+                SELECT COALESCE(devices.display_name, devices.name) as device_name
                 FROM sessions
                 JOIN devices ON devices.id = sessions.device_id
                 WHERE sessions.id = ?
@@ -302,9 +302,10 @@ export class SessionListDO implements DurableObject {
                 console.log(`handleGetSessions: adding missing session ${session.id.slice(0, 8)} from D1`);
                 this.activeSessions.set(session.id, session);
                 updated = true;
-            } else if (!existing.group_id && session.group_id) {
-                // Update existing session with missing group_id
-                existing.group_id = session.group_id;
+            } else if ((!existing.group_id && session.group_id) || existing.device_name !== session.device_name) {
+                // Keep cached labels aligned with the account's saved computer names.
+                existing.group_id = existing.group_id || session.group_id;
+                existing.device_name = session.device_name;
                 existing.device_id = existing.device_id || session.device_id;
                 this.activeSessions.set(session.id, existing);
                 updated = true;
@@ -330,7 +331,7 @@ export class SessionListDO implements DurableObject {
         const results = await this.env.DB.prepare(`
             SELECT sessions.id, sessions.client_session_id, sessions.session_mark,
                    sessions.cwd, sessions.platform, sessions.state, sessions.started_at,
-                   sessions.last_seen_at, sessions.device_id, devices.group_id, devices.name as device_name,
+                   sessions.last_seen_at, sessions.device_id, devices.group_id, COALESCE(devices.display_name, devices.name) as device_name,
                    sessions.prompts, sessions.completions, sessions.tool_calls, sessions.thinking_seconds,
                    sessions.prompts_changed_at, sessions.completions_changed_at
             FROM sessions
@@ -393,7 +394,7 @@ export class SessionListDO implements DurableObject {
             const session = await request.json() as ActiveSession;
             if (!session.group_id || !session.device_id || !session.device_name) {
                 const row = await this.env.DB.prepare(`
-                    SELECT sessions.device_id as device_id, devices.group_id as group_id, devices.name as device_name
+                    SELECT sessions.device_id as device_id, devices.group_id as group_id, COALESCE(devices.display_name, devices.name) as device_name
                     FROM sessions
                     JOIN devices ON devices.id = sessions.device_id
                     WHERE sessions.id = ?

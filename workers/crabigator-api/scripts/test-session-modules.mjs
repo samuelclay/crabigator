@@ -74,3 +74,44 @@ test('a short roster recap keeps its turn number without duplicating history', (
     assert.equal(regenerated.length, 2);
     assert.equal(regenerated[0].headline, 'Updated');
 });
+
+test('computer colors stay consistent across clients and hostname spellings', () => {
+    const color = runInNewContext(functions(embedded('style'), ['computerColor']) + '\ncomputerColor', { TextEncoder });
+    for (const [name, expected] of [['claybook', '#ffd700'], ['claybook-m4', '#ff8700'], ['claymac-studio', '#5f87ff'], ['claybook-tavus', '#87d7af'], [' ClayMac-Studio.LOCAL ', '#5f87ff'], ['ClayMac Studio', '#5f87ff'], ['ClayBook M4', '#ff8700'], ['ClayBook Tavus', '#87d7af']]) {
+        assert.equal(color(name), expected, name);
+    }
+});
+
+test('computer grouping combines a shared PR without losing either session', () => {
+    const context = { groupByComputer: true };
+    const group = runInNewContext(functions(embedded('pr-board'), ['prbDeviceLabel', 'prbSessionsByDevice']) + '\nprbSessionsByDevice', context);
+    const sessions = [{ session_id: 'a', device_name: 'Studio.local' }, { session_id: 'b', device_name: 'Book' }];
+    assert.equal(group(sessions).length, 2);
+    context.groupByComputer = false;
+    const combined = group(sessions);
+    assert.equal(combined.length, 1);
+    assert.equal(combined[0].machine, '');
+    assert.deepEqual(combined[0].sessions, sessions);
+    context.groupByComputer = true;
+    assert.deepEqual(Array.from(group(sessions), row => row.machine), ['Studio', 'Book']);
+});
+
+test('focused sidebar keeps computer grouping and combines by recency when disabled', () => {
+    const content = { innerHTML: '' };
+    const rows = [{ id: 'a', deviceName: 'Studio', last_activity_at: 10 }, { id: 'b', deviceName: 'Book', last_activity_at: 20 }];
+    const context = {
+        allSessions: rows, sidebarLastRenderedHtml: null, groupByComputer: true, groupingMode: 'all',
+        document: { getElementById: () => content }, isFocusedMode: () => true,
+        getSidebarSessions: sessions => sessions, sidebarSessionView: s => s,
+        renderSidebarSessionItem: s => `<row>${s.id}</row>`, updateSidebarActiveState() {},
+        sortKeysByMostRecent: groups => [...groups.keys()].sort((a, b) => groups.get(b).mostRecentTime - groups.get(a).mostRecentTime),
+        cleanDeviceName: s => s, escapeHtml: s => s, computerColor: () => '#5f87ff',
+    };
+    const render = runInNewContext(functions(embedded('sidebar'), ['updateSidebarContent']) + '\nupdateSidebarContent', context);
+    render();
+    assert.match(content.innerHTML, /sessions-device-section/);
+    assert.ok(content.innerHTML.indexOf('Book') < content.innerHTML.indexOf('Studio'));
+    context.groupByComputer = false;
+    render();
+    assert.equal(content.innerHTML, '<row>b</row><row>a</row>');
+});

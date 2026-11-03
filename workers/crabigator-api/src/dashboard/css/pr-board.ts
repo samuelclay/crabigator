@@ -55,6 +55,7 @@ export const prBoardCss = `
 .prb-ctl:hover { color: var(--text-mid); }
 }
 .prb-ctl.active { color: var(--accent-yellow); }
+.prb-ctl:is(button) { background: none; border: 0; padding: 0; font: inherit; }
 .prb-ctl u { text-underline-offset: 2px; }
 .prb-keys { color: var(--text-dim); white-space: nowrap; }
 .prb-keys u { text-underline-offset: 2px; }
@@ -100,7 +101,7 @@ export const prBoardCss = `
 .prb-bucket:first-child { margin-top: 0; }
 .prb-repo { grid-column: 1 / -1; color: var(--accent-yellow); font-weight: 700; margin: 6px 0 2px; }
 .prb-dot { color: var(--text-dim); font-weight: 400; }
-.prb-machine { color: var(--accent-blue); }
+.prb-machine { color: var(--computer-color); }
 .prb-empty { grid-column: 1 / -1; color: var(--text-mid); padding: 16px 0; }
 
 .prb-row {

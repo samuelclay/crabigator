@@ -1,6 +1,8 @@
 import { env } from 'cloudflare:test';
 import { expect, it } from 'vitest';
 import { hmacSign } from '../src/auth/tokens';
+import { listSessions } from '../src/handlers/sessions';
+import { registerDevice } from '../src/handlers/devices';
 import { getPrBoard } from '../src/handlers/pr-board';
 import type { Env } from '../src/types/env';
 import { ensureAccountSchema } from './schema';
@@ -16,7 +18,7 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
         testEnv.DB.prepare('CREATE TABLE watched_prs (group_key TEXT, owner TEXT, repo TEXT, number INTEGER, url TEXT, added_at INTEGER, data TEXT, refreshed_at INTEGER)'),
     ]);
     const secret = 'b'.repeat(64);
-    await testEnv.DB.prepare("INSERT INTO devices (id, secret_hash, group_id) VALUES ('stats-device', ?, 'stats-group')").bind(secret).run();
+    await testEnv.DB.prepare("INSERT INTO devices (id, secret_hash, group_id, name, display_name) VALUES ('stats-device', ?, 'stats-group', 'ClayMacStudio.local', 'ClayMac Studio')").bind(secret).run();
     for (const active of [0, 1]) {
         await testEnv.DB.prepare(`INSERT INTO sessions
             (id, device_id, client_session_id, cwd, platform, is_active, started_at, ended_at, last_seen_at,
@@ -47,6 +49,14 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
     const body = await response.json() as any;
     expect(response.status, JSON.stringify(body)).toBe(200);
     expect(body.sessions).toHaveLength(1);
+    expect(body.sessions[0].device_name).toBe('ClayMac Studio');
+    expect(body.prs[0].sessions[0].device_name).toBe('ClayMac Studio');
+    const listPath = '/api/sessions';
+    const roster = await listSessions(new Request(`https://example.com${listPath}`, { headers: {
+        'X-Device-Id': 'stats-device', 'X-Timestamp': timestamp,
+        'X-Signature': await hmacSign(secret, `GET:${listPath}:${timestamp}`),
+    } }), testEnv);
+    expect((await roster.json() as any).sessions[0].device_name).toBe('ClayMac Studio');
     expect(body.sessions[0].recap).toBeNull();
     expect(body.prs[0].sessions[0].recap).toMatchObject({ headline: 'Shipped the fix', generated_at: 2000 });
     const shared = { started_at: 1000, last_seen_at: 1600, prompts_changed_at: 1400, completions_changed_at: 1500,
@@ -93,4 +103,17 @@ it('returns session statistics for standalone sessions and ended PR sessions', a
         expect((await read()).sessions.find((s: any) => s.session_id === 'stats-orphan')).toMatchObject({ active: true });
     } finally { recovered.close(); }
 
+});
+
+
+it('keeps the account display name when an old desktop registers its hostname again', async () => {
+    const testEnv = env as Env;
+    await ensureAccountSchema(testEnv);
+    const id = '11111111-2222-3333-4444-555555555555', secret = 'c'.repeat(64);
+    await testEnv.DB.prepare("INSERT INTO devices (id, secret_hash, name, display_name) VALUES (?, ?, 'ClayBook.local', 'ClayBook M4')").bind(id, secret).run();
+    const response = await registerDevice(new Request('https://example.com/api/devices', { method: 'POST',
+        body: JSON.stringify({ device_id: id, secret_hash: secret, name: 'ClayBook.local' }) }), testEnv);
+    expect(await response.json()).toEqual({ ok: true, display_name: 'ClayBook M4' });
+    expect(await testEnv.DB.prepare('SELECT name, display_name FROM devices WHERE id = ?').bind(id).first())
+        .toEqual({ name: 'ClayBook.local', display_name: 'ClayBook M4' });
 });

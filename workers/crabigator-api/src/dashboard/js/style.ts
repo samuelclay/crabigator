@@ -250,10 +250,30 @@ export const styleJs = `
             rerenderSessions();
         }
 
+        // FNV-1a over the normalized computer name, shared with the native clients.
+        function computerColor(name) {
+            const normalized = String(name || '').trim().toLowerCase().replace(/ /g, '-').replace(/\\.local$/, '');
+            let hash = 2166136261;
+            for (const byte of new TextEncoder().encode(normalized)) hash = Math.imul(hash ^ byte, 16777619) >>> 0;
+            const colors = ['#5f87ff', '#ff8700', '#5fff5f', '#af87ff', '#00d7ff', '#ffd700', '#ff5f5f', '#87d7af', '#ff87ff', '#d7af5f', '#5fafff', '#afafff'];
+            return colors[hash % colors.length];
+        }
+
+        function setGroupByComputer(enabled) {
+            groupByComputer = enabled;
+            localStorage.setItem('crabigator-group-by-computer', String(enabled));
+            applyGrouping();
+            rerenderSessions();
+            if (prBoardVisible) renderPrBoard();
+        }
+
         function applyGrouping() {
             const container = document.getElementById('sessions');
             const effectiveGroupingMode = getMainGroupingMode();
             container.dataset.grouping = effectiveGroupingMode;
+            document.querySelectorAll('[data-computer-grouping]').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.computerGrouping === String(groupByComputer));
+            });
 
             // Update button states
             document.querySelectorAll('[data-grouping]').forEach(btn => {
@@ -507,9 +527,9 @@ export const styleJs = `
                 // Collect all device names across sessions
                 const allDevices = new Set();
                 for (const [, sessionData] of sessions) {
-                    if (sessionData.deviceName) allDevices.add(sessionData.deviceName);
+                    allDevices.add(sessionData.deviceName || 'Unknown');
                 }
-                const multiDevice = allDevices.size > 1;
+                const multiDevice = groupByComputer && allDevices.size > 1;
 
                 if (multiDevice) {
                     // Device > Project > Sessions hierarchy
@@ -570,7 +590,7 @@ export const styleJs = `
                             groups.set(cwd, { sessions: [], mostRecentTime: 0 });
                         }
                         const group = groups.get(cwd);
-                        group.sessions.push({ id, card, startedAt: getSessionStartedTime(sessionData) });
+                        group.sessions.push({ id, card, startedAt: getSessionStartedTime(sessionData), activityAt: getSessionActivityTime(sessionData) });
                         const sessionTime = getSessionActivityTime(sessionData);
                         if (sessionTime > group.mostRecentTime) group.mostRecentTime = sessionTime;
                     }
@@ -585,7 +605,7 @@ export const styleJs = `
                     }
 
                     for (const [, group] of groups) {
-                        group.sessions.sort((a, b) => a.startedAt - b.startedAt);
+                        group.sessions.sort((a, b) => groupByComputer ? a.startedAt - b.startedAt : b.activityAt - a.activityAt || a.id.localeCompare(b.id));
                     }
 
                     const sortedCwds = sortProjectKeysByOrder(groups);
@@ -603,23 +623,34 @@ export const styleJs = `
                 }
             } else {
                 // Flat mode - extract cards from groups if needed and append directly
-                // Sort by session startedAt (oldest first, newest last) for determinism
+                // Combined lists show recent activity first; grouped lists keep their start order.
                 const sessionList = [];
                 for (const [id, sessionData] of sessions) {
                     const card = document.getElementById('session-' + id);
                     if (card) {
-                        sessionList.push({ id, card, startedAt: sessionData.startedAt || 0 });
+                        sessionList.push({ id, card, device: sessionData.deviceName || 'Unknown', startedAt: sessionData.startedAt || 0, activityAt: getSessionActivityTime(sessionData) });
                     }
                 }
-                sessionList.sort((a, b) => a.startedAt - b.startedAt);
+                sessionList.sort((a, b) => groupByComputer ? a.startedAt - b.startedAt : b.activityAt - a.activityAt || a.id.localeCompare(b.id));
 
                 // Remove project/device groups
                 container.querySelectorAll('.project-group, .device-group').forEach(g => g.remove());
 
-                // Re-add cards directly to container in sorted order
-                sessionList.forEach(({ card }) => {
-                    container.appendChild(card);
-                });
+                if (groupByComputer && !isFocusedMode() && new Set(sessionList.map(s => s.device)).size > 1) {
+                    const devices = new Map();
+                    for (const session of sessionList) {
+                        if (!devices.has(session.device)) devices.set(session.device, { sessions: [], mostRecentTime: 0 });
+                        const device = devices.get(session.device);
+                        device.sessions.push(session);
+                        device.mostRecentTime = Math.max(device.mostRecentTime, session.activityAt);
+                    }
+                    for (const device of sortKeysByMostRecent(devices)) {
+                        const cards = devices.get(device).sessions;
+                        container.appendChild(createDeviceGroup(device, [], new Map(), cards.length, cards));
+                    }
+                } else {
+                    sessionList.forEach(({ card }) => container.appendChild(card));
+                }
 
                 // Show empty state if no sessions
                 if (sessions.size === 0 && !container.querySelector('.no-sessions')) {
@@ -802,10 +833,11 @@ export const styleJs = `
             localStorage.setItem('crabigator-collapsed-projects', JSON.stringify([...collapsedProjects]));
         }
 
-        function createDeviceGroup(deviceName, sortedCwds, projectsMap, sessionCount) {
+        function createDeviceGroup(deviceName, sortedCwds, projectsMap, sessionCount, flatSessions = null) {
             const group = document.createElement('div');
             group.className = 'device-group';
             group.dataset.device = deviceName;
+            group.style.setProperty('--computer-color', computerColor(deviceName));
 
             const isCollapsed = collapsedDevices.has(deviceName);
             if (isCollapsed) {
@@ -828,6 +860,7 @@ export const styleJs = `
             \`;
 
             const inner = group.querySelector('.device-sessions-inner');
+            if (flatSessions) flatSessions.forEach(({ card }) => inner.appendChild(card));
             for (const cwd of sortedCwds) {
                 const pg = projectsMap.get(cwd);
                 const projectEl = createProjectGroup(cwd, pg.sessions);

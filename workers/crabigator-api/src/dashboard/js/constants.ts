@@ -45,6 +45,7 @@ export const constantsJs = `
 
         // Session grouping mode ('all' = flat list, 'project' = grouped by working directory)
         let groupingMode = localStorage.getItem('crabigator-grouping') || 'project';
+        let groupByComputer = localStorage.getItem('crabigator-group-by-computer') !== 'false';
 
         // Project ordering mode when grouped ('recent' = most recently active first, 'alpha' = alphabetical)
         let projectOrderMode = localStorage.getItem('crabigator-project-order') || 'recent';
