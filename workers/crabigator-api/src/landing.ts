@@ -28,14 +28,14 @@ export const landingHtml = `<!DOCTYPE html>
     <meta name="description" content="Answer permissions, approve plans, and respond to questions from your phone. Watch Claude Code, Codex, opencode, and Grok sessions as they run.">
     <meta property="og:title" content="Crabigator - Control Claude Code, Codex, opencode, and Grok from your phone">
     <meta property="og:description" content="Answer permissions, approve plans, and respond to questions from your phone. Watch Claude Code, Codex, opencode, and Grok sessions as they run.">
-    <meta property="og:image" content="https://drinkcrabigator.com/assets/og-landing.png">
+    <meta property="og:image" content="https://drinkcrabigator.com/assets/og-landing.png?v=7de7077e5f">
     <meta property="og:url" content="https://drinkcrabigator.com/">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Crabigator">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Crabigator - Control Claude Code, Codex, opencode, and Grok from your phone">
     <meta name="twitter:description" content="Answer permissions, approve plans, and respond to questions from your phone.">
-    <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-landing.png">
+    <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-landing.png?v=7de7077e5f">
     <link rel="icon" href="${faviconPath}" type="image/svg+xml">
     <link rel="icon" href="${faviconIcoPath}" sizes="16x16 32x32 48x48">
     <link rel="apple-touch-icon" href="${touchIconPath}" sizes="192x192">

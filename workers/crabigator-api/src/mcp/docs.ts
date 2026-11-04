@@ -164,14 +164,14 @@ export function renderMcpToolsHtml(runtime: RuntimeConfig, metaPixelId = ''): st
     <meta name="description" content="Every Crabigator MCP tool, with arguments and example outputs. List sessions, read screens, answer prompts, and drive the PR board.">
     <meta property="og:title" content="Crabigator MCP tools">
     <meta property="og:description" content="Every Crabigator MCP tool, with arguments and example outputs.">
-    <meta property="og:image" content="https://drinkcrabigator.com/assets/og-landing.png">
+    <meta property="og:image" content="https://drinkcrabigator.com/assets/og-landing.png?v=7de7077e5f">
     <meta property="og:url" content="https://drinkcrabigator.com${MCP_TOOLS_PATH}">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Crabigator">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Crabigator MCP tools">
     <meta name="twitter:description" content="Every Crabigator MCP tool, with arguments and example outputs.">
-    <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-landing.png">
+    <meta name="twitter:image" content="https://drinkcrabigator.com/assets/og-landing.png?v=7de7077e5f">
     <link rel="icon" href="data:image/svg+xml,${iconCrabigatorEncoded}">
     <style>${landingCss}${mcpCss}${
         !runtime.capabilities.billing ? '.nav-link[href="/#pricing"]{display:none!important}' : ''
