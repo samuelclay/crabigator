@@ -70,7 +70,14 @@ export const productPreviewsCss = `
 .web-terminal { background: #0b1218; padding: 1.2cqw 1cqw; height: 27cqw; font: .93cqw/1.7 'JetBrains Mono', monospace; display: flex; flex-direction: column; overflow: hidden; }.web-terminal .preview-cursor { margin-top: auto; }.web-terminal .preview-answer p { margin-bottom: .6em; }.web-terminal .preview-done { margin-top: 1em; }
 .preview-code p { margin-bottom: .2em; }.preview-code-muted { color: #91a1ad; }.preview-add { color: #a7cfb6; }.preview-del { color: #f29a98; }
 .web-recap { padding: 1cqw 1cqw .6cqw; font-size: .85cqw; color: #c7d2da; }.web-recap > span { color: #9ac9df; font-size: .7cqw; margin-right: .5cqw; }
-.web-stats { display: flex; align-items: center; gap: .7cqw; padding: .5cqw 1cqw; font: .7cqw 'JetBrains Mono', monospace; color: #91a1ad; }.web-stats .preview-add { margin-left: auto; }
+.web-widgets { display: flex; margin-top: .4cqw; border-top: 1px solid #344653; }
+.web-widgets-rows { flex: 1; min-width: 0; padding: .55cqw .4cqw .55cqw 1cqw; }
+.web-widgets-title { display: flex; align-items: center; gap: .6cqw; font-size: .8cqw; color: #a3b0ba; }.web-widgets-title b { color: #b7c9d4; font-weight: 500; }.web-widgets-title .preview-mark { font-size: .75cqw; }
+.web-widgets-stats { display: flex; align-items: center; gap: .55cqw; margin-top: .55cqw; font: .62cqw 'JetBrains Mono', monospace; color: #c9d1d9; white-space: nowrap; }
+.web-widgets-stats > span { display: inline-flex; gap: .25cqw; }.web-widgets-stats i { font-style: normal; color: #8b949e; }.web-widgets-stats .preview-add { margin-left: auto; }
+.ws-blue { color: #5fafff !important; }.ws-session { color: #00afff; }.ws-green { color: #3fb950 !important; }.ws-thinking { color: #5fff5f; }.ws-sand { color: #d7af5f !important; }.ws-orange { color: #ff8700 !important; }.ws-tools { color: #f0883e !important; }.ws-pink { color: #e879f9 !important; }.ws-yellow { color: #ffd700; }.ws-red { color: #ff5f5f; }
+.web-widgets-flow { position: relative; flex-shrink: 0; width: 10cqw; border-left: 1px solid #344653; background: #0b1218; }
+.web-product .web-widgets-flow svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .web-session .preview-composer { padding: .8cqw; gap: .7cqw; }.web-session .preview-composer svg { width: 1.2cqw; height: 1.2cqw; }.web-session .preview-composer > span { font-size: .9cqw; padding: .7cqw; }.web-session .preview-composer > b { font-size: 1.1cqw; }
 .web-preview-changes { display: flex; flex-wrap: wrap; gap: 1.2cqw; padding: 1.5cqw .3cqw .2cqw; color: #8295a3; font: .75cqw 'JetBrains Mono', monospace; }.web-preview-changes > span:first-child { color: #a7cfb6; }.web-preview-changes .preview-add { margin-left: auto; }
 @media (max-width: 700px) {
@@ -87,7 +94,7 @@ export const productPreviewsCss = `
     .preview-state { display: none; }
     .web-terminal { height: 52cqw; font-size: 1.55cqw; padding: 2cqw; }
     .web-recap { font-size: 1.4cqw; padding: 1.5cqw; }.web-recap > span { font-size: 1.2cqw; }
-    .web-stats { font-size: 1.1cqw; padding: 1cqw 1.5cqw; }.web-stats > span:nth-child(3) { display: none; }
+    .web-widgets-title { font-size: 1.3cqw; }.web-widgets-stats { font-size: 1.05cqw; gap: .8cqw; }.web-widgets-stats > span:nth-child(n+3):nth-child(-n+6) { display: none; }.web-widgets-flow { width: 15cqw; }
     .web-session .preview-composer > span { font-size: 1.6cqw; }.web-session .preview-composer svg { width: 2cqw; height: 2cqw; }
     .web-preview-changes { font-size: 1.3cqw; padding: 2cqw 1cqw; }.web-preview-changes > span:nth-child(n+3):nth-child(-n+5) { display: none; }
 }

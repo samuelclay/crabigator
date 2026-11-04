@@ -2,7 +2,7 @@ import {
     iconCrabigator, iconCrabigatorLogo, iconSearch, iconLines,
     iconMicrophone, iconKeyboard, iconWifi,
 } from './icons';
-import { appModulesHtml, type SessionValues } from './app-modules';
+import { appModulesHtml, contextLabel, type SessionValues } from './app-modules';
 import { flowScenes } from './flow-scenes';
 
 // Static product illustrations. Keep them out of the tab order: the actual
@@ -70,6 +70,21 @@ export const tabletPreviewHtml = `
     </div>
 </div>`;
 
+// The dashboard card's widgets panel: mark, title and state, then the stats
+// with the context window (yellow from 70%), and a flow scene at the right.
+function webWidgets(mark: string, tone: string, state: string, values: (string | number)[], context: SessionValues['context'], diff: number[], flow: string): string {
+    const [session, thinking, prompts, completions, tools, compactions] = values;
+    const percent = Math.round(context.used * 100 / context.limit);
+    const contextClass = percent >= 85 ? 'ws-red' : percent >= 70 ? 'ws-yellow' : 'ws-blue';
+    return `<div class="web-widgets">
+        <div class="web-widgets-rows">
+            <div class="web-widgets-title"><span class="preview-mark ${tone}">${mark}</span><b>Session</b><span>${state}</span></div>
+            <div class="web-widgets-stats"><span><i class="ws-blue">◉</i><span class="ws-session">${session}</span></span><span><i class="ws-green">◐</i><span class="ws-thinking">${thinking}</span></span><span><i class="ws-sand">⟩</i>${prompts}</span><span><i class="ws-orange">⋖</i>${completions}</span><span><i class="ws-tools">⚒</i>${tools}</span><span><i class="ws-pink">⊜</i>${compactions}</span><span><i>◔</i><span class="${contextClass}">${contextLabel(context)}</span></span><span class="preview-add">+${diff[0]}</span><span class="preview-del">−${diff[1]}</span></div>
+        </div>
+        <div class="web-widgets-flow">${flow}</div>
+    </div>`;
+}
+
 export const webPreviewHtml = `
 <div class="browser-frame web-product" role="img" aria-label="Crabigator web dashboard with a session sidebar, two terminal sessions, recaps, git changes, and message controls.">
     <div aria-hidden="true">
@@ -84,14 +99,14 @@ export const webPreviewHtml = `
                         <div class="web-session-head"><span class="preview-mark amber">╱◆╲</span><strong>Crabigator phone session</strong><span class="preview-state">Complete</span><small>main</small></div>
                         <div class="web-terminal">${claudeReply}<div class="preview-cursor">❯ <i></i></div></div>
                         <div class="web-recap"><span>● Recap</span> Desktop session, connected to your phone.</div>
-                        <div class="web-stats"><span>◉ 48m</span><span>⟩ 5 prompts</span><span>⚒ 6 tools</span><span class="preview-add">+24</span><span class="preview-del">−8</span></div>
+                        ${webWidgets('╱◆╲', 'amber', '✓ Complete', ['48m', '31m', 5, 5, 6, 1], { used: 186_000, limit: 1_000_000 }, [24, 8], flowScenes.webBalloon)}
                         ${composer}
                     </div>
                     <div class="web-session">
                         <div class="web-session-head"><span class="preview-mark berry">⣀⣾⣀</span><strong>Clean up the dashboard</strong><span class="preview-state working">Working</span><small>main</small></div>
                         <div class="web-terminal"><div class="preview-prompt"><span>❯</span> Give the sessions a little more breathing room.</div><div class="preview-code"><p>● Update dashboard.css</p><p class="preview-code-muted">&nbsp; .session-card {</p><p class="preview-del">− &nbsp; border: 1px solid var(--border-dim);</p><p class="preview-add">+ &nbsp; border: none;</p><p class="preview-code-muted">&nbsp; }</p><br><p>● Keep the terminal clear and the controls quiet.</p></div><div class="preview-done">◌ Checking the mobile layout…</div><div class="preview-cursor">❯ <i></i></div></div>
                         <div class="web-recap"><span>● Recap</span> Fewer borders. Same useful detail.</div>
-                        <div class="web-stats"><span>◉ 12m</span><span>⟩ 3 prompts</span><span>⚒ 8 tools</span><span class="preview-add">+20</span><span class="preview-del">−75</span></div>
+                        ${webWidgets('⣀⣾⣀', 'berry', '◌ Working', ['12m', '9m', 3, 2, 8, 0], { used: 742_000, limit: 1_000_000 }, [20, 75], flowScenes.webSki)}
                         ${composer}
                     </div>
                 </div>
