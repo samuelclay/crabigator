@@ -1,9 +1,9 @@
 // Landing page HTML served at /
-import { notificationImagePath } from './assets/home-images';
 import { faviconPath, faviconIcoPath, touchIconPath } from './assets/home-brand';
 import { heroCapture, claudeCapture, codexCapture } from './landing/desktop-capture';
 import { flowScenes } from './landing/flow-scenes';
 import { appModulesHtml } from './landing/app-modules';
+import { notificationPreviewHtml } from './landing/notification-preview';
 import { tabletPreviewHtml, webPreviewHtml } from './landing/product-previews';
 import { productPreviewsCss } from './landing/product-previews-css';
 import { homeCss } from './landing/home-css';
@@ -137,7 +137,7 @@ export const landingHtml = `<!DOCTYPE html>
                 <p>When your agent needs a decision, answer from the notification. No trip back to your desk.</p>
                 <p class="availability">Native app notifications</p>
             </div>
-            <figure class="notification-preview"><div class="notification-crop"><img src="${notificationImagePath}" width="750" height="1334" loading="lazy" alt="A Crabigator design-decision notification with Compact rows, Expanded cards, and Adaptive layout as native answer choices"></div></figure>
+            <figure class="notification-preview">${notificationPreviewHtml}</figure>
         </section>
 
         <section class="web section" id="web">

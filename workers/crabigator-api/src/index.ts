@@ -167,11 +167,10 @@ router.get('/assets/icon-bolt.svg', async () => {
     });
 });
 
-// Real device screenshots for the home page.
-import { homeImages } from './assets/home-images';
+// Brand images for the home page.
 import { homeBrandAssets } from './assets/home-brand';
 
-for (const image of [...homeImages.map(image => ({ ...image, contentType: 'image/webp' })), ...homeBrandAssets]) {
+for (const image of homeBrandAssets) {
     router.get(image.path, async () => new Response(
         Uint8Array.from(atob(image.base64), c => c.charCodeAt(0)),
         { headers: {

@@ -13,6 +13,8 @@ export interface SessionValues {
     files: number;
     symbols: number;
     recap: string;
+    /** A session waiting on a question shows the app's filled "?" badge. */
+    asking?: boolean;
     /** Wide layouts (iPad) show these too, as the app does when they fit. */
     wide?: { completions: number; compactions: number; age: string; additions: number; deletions: number };
 }
@@ -63,7 +65,7 @@ export function appModulesHtml(session: SessionValues, flowSvg: string): string 
         </div>
         <div class="app-summary">
             ${markChip(session.mark, 'app-chip')}
-            <span class="app-done">✓</span>
+            ${session.asking ? '<span class="app-ask">?</span>' : '<span class="app-done">✓</span>'}
             <span class="c-blue">◉ ${duration(session.workSeconds)}</span>
             <span class="c-mint">◐ ${duration(session.thinkingSeconds)}</span>
             ${prompts}${extra}
