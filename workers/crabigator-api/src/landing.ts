@@ -156,7 +156,7 @@ export const landingHtml = `<!DOCTYPE html>
     <footer class="footer">
         <a class="wordmark" href="/" aria-label="Crabigator home">${iconCrabigatorLogo}</a>
         <p>Made by <a href="https://samuelclay.com" target="_blank" rel="noopener">Samuel Clay</a> in San Francisco.</p>
-        <div class="footer-links"><a href="/dashboard">Dashboard</a><a class="footer-link" href="/mcp-tools">MCP</a><a href="https://github.com/samuelclay/crabigator/releases" target="_blank" rel="noopener">Releases</a></div>
+        <div class="footer-links"><a href="/dashboard">Dashboard</a><a class="footer-link" href="/mcp-tools">MCP</a><a href="https://github.com/samuelclay/crabigator/releases" target="_blank" rel="noopener">Releases</a><a href="/privacy">Privacy</a></div>
     </footer>
     <p id="copy-status" class="sr-only" role="status"></p>
     <script>${analyticsJs}</script>

@@ -12,6 +12,7 @@ import { generatePairingToken, claimPairingToken, getPairingStatus, getPairingCo
 import { requireAuth, requireDeviceAuth, requireMobileAuth, requireSessionAccess } from './auth/middleware';
 import { dashboardHtml, renderDashboardHtml } from './dashboard';
 import { renderLandingHtml } from './landing';
+import { privacyHtml } from './privacy';
 import { renderMcpToolsHtml, MCP_TOOLS_PATH } from './mcp/docs';
 import { featureUnavailable, getAppConfig, getRuntimeConfig, type Capabilities } from './config';
 import { clearStaffSession, createStaffSession, requireStaffSession, staffLoginPage } from './auth/staff';
@@ -110,6 +111,10 @@ router.get(MCP_TOOLS_PATH, withFeature('mcp', async (request, env) => {
 }));
 
 // Landing page
+router.get('/privacy', async () => new Response(privacyHtml, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' },
+}));
+
 router.get('/', async (request, env) => {
     const runtime = getRuntimeConfig(request, env);
     const appConfig = getAppConfig(env);
