@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -223,7 +224,8 @@ import java.util.UUID
             }
         }
         Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-            BoardModeFooter(model.navigation.value.listMode, { list -> model.navigate { it.copy(conductor = false, listMode = list) } }, null, conductor = true)
+            val navigation by model.navigation.collectAsStateWithLifecycle()
+            BoardModeFooter(navigation.listMode, { list -> model.navigate { it.copy(conductor = false, listMode = list) } }, null, conductor = true)
         }
     }
 }

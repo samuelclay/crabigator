@@ -34,7 +34,7 @@ import kotlinx.coroutines.delay
     val hasOutput = s.history.isNotEmpty() || s.screen.isNotEmpty()
     val loaded = s.historyLoaded && s.screenLoaded
     Column(Modifier.fillMaxSize().imePadding()) {
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth()) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Control(if (wide) R.drawable.ic_close else R.drawable.ic_back, if (wide) "Close session" else "Back to list", onClick = close)
                 Column(Modifier.weight(1f)) {
