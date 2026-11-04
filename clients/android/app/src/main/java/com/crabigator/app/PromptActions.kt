@@ -5,6 +5,10 @@ import org.json.JSONObject
 
 /** Share the exact same input translation between the app and notification replies. */
 object PromptActions {
+    fun hasPreview(prompt: JSONObject) = question(prompt)?.array("options")?.any { it.opt("preview") is String } == true
+    fun pageId(prompt: JSONObject): String = if (prompt.text("prompt_type") == "question")
+        "${prompt.optJSONArray("questions")}:${prompt.optInt("current_question")}:${prompt.opt("review")}"
+        else prompt.toString()
     data class Action(val route: String, val body: JSONObject)
     fun details(prompt: JSONObject): String {
         val input = prompt.opt("tool_input")?.takeUnless { it == JSONObject.NULL } ?: return ""
@@ -44,6 +48,10 @@ object PromptActions {
         val grok = prompt.text("ui") == "grok_card"
         fun move(target: Int) { repeat(kotlin.math.abs(target - cursor).coerceAtMost(100)) { key(if (target > cursor) "down" else "up") }; cursor = target }
         if (option != null) {
+            if (hasPreview(prompt)) {
+                type((option + 1).toString()); key("enter")
+                return Action("key-sequence", JSONObject().put("steps", steps))
+            }
             if (cursor == count + 1) { key(if (grok) "escape" else "up"); cursor-- }
             when {
                 grok && q.optBoolean("multi_select") -> { move(option + 1); key("space") }

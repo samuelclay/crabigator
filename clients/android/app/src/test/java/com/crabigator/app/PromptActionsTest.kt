@@ -5,6 +5,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PromptActionsTest {
+    @Test fun previewChoiceConfirmsOnlyThatPage() {
+        val p = JSONObject("""{"prompt_type":"question","current_question":0,"cursor_row":1,"questions":[{"question":"Layout?","options":[{"label":"List","preview":"List drawing"},{"label":"Cards","preview":"Cards drawing"}]},{"question":"Next?","options":[{"label":"Yes"},{"label":"No"}]}]}""")
+        val steps = PromptActions.action(p, option = 1).body.getJSONArray("steps")
+        assertEquals(2, steps.length())
+        assertEquals("2", steps.getJSONObject(0).getString("text"))
+        assertEquals("enter", steps.getJSONObject(1).getString("key"))
+        val first = PromptActions.pageId(p)
+        p.put("cursor_row", 2).put("custom_text", "draft").put("checked", org.json.JSONArray("[2]"))
+        assertEquals(first, PromptActions.pageId(p))
+        p.put("current_question", 1)
+        assertNotEquals(first, PromptActions.pageId(p))
+        assertEquals(1, PromptActions.action(p, option = 1).body.getJSONArray("steps").length())
+    }
     private fun prompt(extra: String = "") = JSONObject("""{"prompt_type":"question","cursor_row":3,"questions":[{"question":"Which one?","options":[{"label":"One","value":"1"},{"label":"Two","value":"2"}],"allows_other":true}]$extra}""")
     @Test fun terminalStatusSymbolsKeepTheirCharactersAndAnsiColor() {
         val text = "  ⏵⏵ auto mode on · 1 shell · ⏺"

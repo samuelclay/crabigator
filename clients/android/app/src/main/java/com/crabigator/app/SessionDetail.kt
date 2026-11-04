@@ -67,8 +67,30 @@ import kotlinx.coroutines.delay
                 SessionSummaryBar(session, modules.stats, p, p.widgets, modules, prs) { model.style { it.copy(widgets = !it.widgets) } }
             }
         }
-        if (s.prompt != null) PromptPanel(s.prompt, s.sending || !s.connected || s.revision == null) { action -> model.send(action.route, action.body, guarded = true, expectedRevision = s.revision) }
+        key(session.id) {
+            PromptTransition(s.prompt, s.sending || !s.connected || s.revision == null) { action ->
+                model.send(action.route, action.body, guarded = true, expectedRevision = s.revision)
+            }
+        }
         key(session.id) { SessionComposer(s, model, active) }
+    }
+}
+
+@Composable internal fun PromptTransition(prompt: org.json.JSONObject?, disabled: Boolean, send: (PromptActions.Action) -> Unit) {
+    val slide = with(androidx.compose.ui.platform.LocalDensity.current) { 8.dp.roundToPx() }
+    var retained by remember { mutableStateOf(prompt) }
+    val displayed = prompt ?: retained
+    LaunchedEffect(prompt) {
+        // The server consumes an answer before the desktop paints the next page.
+        if (prompt == null) delay(300)
+        retained = prompt
+    }
+    AnimatedContent(displayed, contentKey = { it?.let(PromptActions::pageId) },
+        transitionSpec = {
+            (fadeIn(tween(220)) + slideInVertically(tween(220)) { slide }) togetherWith
+                (fadeOut(tween(160)) + slideOutVertically(tween(160)) { -slide })
+        }, label = "Question page") { page ->
+        if (page != null) PromptPanel(page, disabled || page !== prompt, send)
     }
 }
 @Composable internal fun TerminalPlaceholder(active: Boolean, loaded: Boolean, loadingSlowly: Boolean, reconnect: () -> Unit, modifier: Modifier = Modifier, disconnected: Boolean = false) {

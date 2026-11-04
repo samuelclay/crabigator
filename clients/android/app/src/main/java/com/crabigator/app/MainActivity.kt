@@ -377,7 +377,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable internal fun PromptPanel(prompt: JSONObject, disabled: Boolean, send: (PromptActions.Action) -> Unit) {
-    var other by remember(prompt.toString()) { mutableStateOf("") }
+    var other by remember(PromptActions.pageId(prompt)) { mutableStateOf("") }
     Surface(color = Color(0xFF28251F)) {
         Column(Modifier.fillMaxWidth().heightIn(max = 330.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(PromptActions.title(prompt), fontWeight = FontWeight.Medium, fontSize = 16.sp)
@@ -387,9 +387,13 @@ class MainActivity : ComponentActivity() {
             PromptActions.options(prompt).forEachIndexed { index, option ->
                 val checked = prompt.optJSONArray("checked")?.let { a -> (0 until a.length()).any { a.optInt(it) == index + 1 } } == true
                 OutlinedButton(onClick = { send(PromptActions.action(prompt, option = index)) }, enabled = !disabled, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) { Column(Modifier.fillMaxWidth()) { Text((if (q?.optBoolean("multi_select") == true) if (checked) "☑ " else "☐ " else "") + option.text("label")); if (option.text("description").isNotBlank()) Text(option.text("description"), fontSize = 11.sp, color = Muted) } }
+                (option.opt("preview") as? String)?.let { preview ->
+                    Text(preview, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 13.sp, letterSpacing = 0.sp, softWrap = false,
+                        modifier = Modifier.horizontalScroll(rememberScrollState()).padding(8.dp))
+                }
             }
-            if (q != null && !prompt.has("review") && q.optBoolean("allows_other", true)) OutlinedTextField(other, { other = it }, label = { Text("Your answer") }, modifier = Modifier.fillMaxWidth(), maxLines = 3)
-            if (q != null && !prompt.has("review")) {
+            if (q != null && !prompt.has("review") && !PromptActions.hasPreview(prompt) && q.optBoolean("allows_other", true)) OutlinedTextField(other, { other = it }, label = { Text("Your answer") }, modifier = Modifier.fillMaxWidth(), maxLines = 3)
+            if (q != null && !prompt.has("review") && (q.optBoolean("multi_select") || (!PromptActions.hasPreview(prompt) && q.optBoolean("allows_other", true)))) {
                 Button(onClick = { send(PromptActions.action(prompt, text = other.ifBlank { null }, submit = true)) }, enabled = !disabled && (other.isNotBlank() || q.optBoolean("multi_select"))) { Text(if (q.optBoolean("multi_select")) "Submit selections" else "Answer") }
             }
         }

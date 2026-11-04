@@ -159,12 +159,13 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
                         "scrollback_history" -> s.copy(history = event.text("content").takeLast(250000), historyLoaded = true)
                         "scrollback" -> s.copy(history = (s.history + event.text("diff")).takeLast(250000), historyLoaded = true)
                         "desktop_status" -> s.copy(connected = event.optBoolean("connected"), desktopStatusKnown = true, prompt = if (event.optBoolean("connected")) s.prompt else null)
-                        "prompt" -> s.copy(prompt = event.optJSONObject("prompt"), revision = null)
+                        // The snapshot filters consumed revisions; socket replays do not.
+                        "prompt" -> s.copy(revision = null)
                         "state" -> s.copy(selected = s.selected?.copy(state = event.text("state")), revision = null, prompt = if (event.text("state") in listOf("question", "permission")) s.prompt else null)
                         "git", "changes", "recap", "recap_history", "prs", "commit_history", "stats" -> s.copy(details = s.details + (event.text("type") to event))
                         else -> s
                     } }
-                    if (event.text("type") in listOf("prompt", "state")) { refreshPrompt(id); Notifications.reconcile(getApplication(), id) }
+                    if (event.text("type") in listOf("prompt", "state", "desktop_status")) { refreshPrompt(id); Notifications.reconcile(getApplication(), id) }
                 }
             } }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { viewModelScope.launch { retry(webSocket, id) } }
@@ -200,6 +201,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
             refreshPrompt(id)
             return@launch
         }
+        snapshotRequest++
         state.update { it.copy(sending = true, error = null) }
         try {
             api.action(id, route, body, if (guarded) expectedRevision else null)
