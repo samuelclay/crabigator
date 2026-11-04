@@ -2,7 +2,7 @@ import {
     iconCrabigator, iconCrabigatorLogo, iconSearch, iconLines,
     iconMicrophone, iconKeyboard, iconWifi,
 } from './icons';
-import { appModulesHtml, contextLabel, type SessionValues } from './app-modules';
+import { appModulesHtml, contextLabel, contextPercent, type SessionValues } from './app-modules';
 import { flowScenes } from './flow-scenes';
 
 // Static product illustrations. Keep them out of the tab order: the actual
@@ -70,16 +70,23 @@ export const tabletPreviewHtml = `
     </div>
 </div>`;
 
+// The dashboard colors the context window yellow from 70% and red from 85%.
+function contextClass(context: SessionValues['context']): string {
+    const percent = contextPercent(context);
+    if (percent >= 85) return 'ws-red';
+    if (percent >= 70) return 'ws-yellow';
+    return 'ws-blue';
+}
+
 // The dashboard card's widgets panel: mark, title and state, then the stats
-// with the context window (yellow from 70%), and a flow scene at the right.
+// with the context window, and a flow scene at the right.
 function webWidgets(mark: string, tone: string, state: string, values: (string | number)[], context: SessionValues['context'], diff: number[], flow: string): string {
     const [session, thinking, prompts, completions, tools, compactions] = values;
-    const percent = Math.round(context.used * 100 / context.limit);
-    const contextClass = percent >= 85 ? 'ws-red' : percent >= 70 ? 'ws-yellow' : 'ws-blue';
+    const [additions, deletions] = diff;
     return `<div class="web-widgets">
         <div class="web-widgets-rows">
             <div class="web-widgets-title"><span class="preview-mark ${tone}">${mark}</span><b>Session</b><span>${state}</span></div>
-            <div class="web-widgets-stats"><span><i class="ws-blue">◉</i><span class="ws-session">${session}</span></span><span><i class="ws-green">◐</i><span class="ws-thinking">${thinking}</span></span><span><i class="ws-sand">⟩</i>${prompts}</span><span><i class="ws-orange">⋖</i>${completions}</span><span><i class="ws-tools">⚒</i>${tools}</span><span><i class="ws-pink">⊜</i>${compactions}</span><span><i>◔</i><span class="${contextClass}">${contextLabel(context)}</span></span><span class="preview-add">+${diff[0]}</span><span class="preview-del">−${diff[1]}</span></div>
+            <div class="web-widgets-stats"><span><i class="ws-blue">◉</i><span class="ws-session">${session}</span></span><span><i class="ws-green">◐</i><span class="ws-thinking">${thinking}</span></span><span><i class="ws-sand">⟩</i>${prompts}</span><span><i class="ws-orange">⋖</i>${completions}</span><span><i class="ws-tools">⚒</i>${tools}</span><span><i class="ws-pink">⊜</i>${compactions}</span><span><i>◔</i><span class="${contextClass(context)}">${contextLabel(context)}</span></span><span class="preview-add">+${additions}</span><span class="preview-del">−${deletions}</span></div>
         </div>
         <div class="web-widgets-flow">${flow}</div>
     </div>`;

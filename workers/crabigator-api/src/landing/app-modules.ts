@@ -33,8 +33,16 @@ function duration(seconds: number): string {
     return Math.floor(seconds / 3600) + 'h ' + Math.floor(seconds % 3600 / 60) + 'm';
 }
 
-export function contextLabel({ used, limit }: SessionValues['context']): string {
-    return `${tokens(used)} / ${tokens(limit)} · ${Math.round(used * 100 / limit)}%`;
+function plural(count: number, word: string): string {
+    return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+export function contextPercent({ used, limit }: SessionValues['context']): number {
+    return Math.round(used * 100 / limit);
+}
+
+export function contextLabel(context: SessionValues['context']): string {
+    return `${tokens(context.used)} / ${tokens(context.limit)} · ${contextPercent(context)}%`;
 }
 
 export function markChip(mark: SessionValues['mark'], className: string): string {
@@ -42,14 +50,13 @@ export function markChip(mark: SessionValues['mark'], className: string): string
 }
 
 export function appModulesHtml(session: SessionValues, flowSvg: string): string {
-    const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
     const wide = session.wide;
     const prompts = wide
         ? `<span><span class="c-orange">⟩</span><span class="c-title">${session.prompts}</span><span class="c-orange">${wide.age}</span></span>`
         : `<span class="c-orange">⟩ ${session.prompts}</span>`;
-    const extra = wide ? `
+    const completions = wide ? `
             <span><span class="c-deep">⋖</span><span class="c-title">${wide.completions}</span><span class="c-deep">${wide.age}</span></span>` : '';
-    const after = wide ? `
+    const compactions = wide ? `
             <span class="c-purple">⊜ ${wide.compactions}</span>` : '';
     const preview = wide ? `
             <span class="app-preview">${plural(session.files, 'file')} · <span class="c-mint">+${wide.additions}</span> <span class="c-red">−${wide.deletions}</span></span>` : '';
@@ -68,8 +75,8 @@ export function appModulesHtml(session: SessionValues, flowSvg: string): string 
             ${session.asking ? '<span class="app-ask">?</span>' : '<span class="app-done">✓</span>'}
             <span class="c-blue">◉ ${duration(session.workSeconds)}</span>
             <span class="c-mint">◐ ${duration(session.thinkingSeconds)}</span>
-            ${prompts}${extra}
-            <span class="c-orange">⚒ ${session.tools}</span>${after}
+            ${prompts}${completions}
+            <span class="c-orange">⚒ ${session.tools}</span>${compactions}
             <span><span class="c-title">◔</span><span class="c-title">${contextLabel(session.context)}</span></span>${preview}
             <span class="app-open">⌄</span>
         </div>

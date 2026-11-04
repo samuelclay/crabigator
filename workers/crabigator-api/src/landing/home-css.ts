@@ -78,7 +78,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .app-module > b { font-size: .92em; font-weight: 600; }
 .app-module > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: #8a8a8a; }
 .app-module > small { color: #8a8a8a; font-size: .84em; }
-.app-module.recap { color: #00d7ff; }.app-module.git { color: #5fff5f; }.app-module.changes { color: #d7af5f; }.app-module.prs { color: #af87ff; }
+.app-module.recap { color: #00d7ff; }.app-module.git { color: #5fff5f; }.app-module.changes { color: #d7af5f; }
 .app-flow { position: relative; flex-shrink: 0; width: var(--flow-width); border-left: 1px solid #ffffff12; background: #0b0f14; }
 .app-modules .app-flow svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .app-summary { display: flex; align-items: center; gap: .8em; height: 3.67em; padding-left: .5em; border-top: .5px solid #ffffff17; font: var(--module-size) 'JetBrains Mono', monospace; white-space: nowrap; overflow: hidden; }
@@ -87,7 +87,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .app-summary > .app-done { color: #af87ff; font-size: 1.2em; }
 .app-summary > .app-ask { justify-content: center; width: 1.3em; border-radius: .25em; background: #ff8700; color: #101419; font-weight: 700; font-size: 1.2em; }
 .app-summary > .app-open { margin-left: auto; padding: 0 1.1em; height: 100%; align-items: center; background: #d7af5f0d; color: #d7af5f; font: 600 1.05em sans-serif; }
-.app-summary .c-blue { color: #00afff; }.app-summary .c-mint { color: #5fff5f; }.app-summary .c-orange { color: #d7af5f; }.app-summary .c-deep { color: #ff8700; }.app-summary .c-purple { color: #af87ff; }.app-summary .c-title { color: #5fafff; }.app-summary .c-value { color: #5fafff; }
+.app-summary .c-blue { color: #00afff; }.app-summary .c-mint { color: #5fff5f; }.app-summary .c-orange { color: #d7af5f; }.app-summary .c-deep { color: #ff8700; }.app-summary .c-purple { color: #af87ff; }.app-summary .c-title { color: #5fafff; }
 .phone-frame .app-modules { --module-size: 2.85cqw; --flow-width: 36%; }
 .phone-composer { display: flex; align-items: center; flex-shrink: 0; gap: 4cqw; padding: 3cqw 4cqw 1cqw; border-top: 1px solid #29313a; color: #9aa4af; }
 .phone-composer svg { width: 5cqw; height: 5cqw; }
@@ -110,7 +110,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .agent-frame { position: relative; top: auto; width: auto; }
 .desktop-capture, .agent-capture { font-size: calc((100cqw - 36px) / (var(--cols) * .6)); }
 .agent-capture { padding: 18px; }
-.agent-screen figcaption { margin-top: 18px; color: var(--muted); font-size: 12px; }
 .section h2 { font-size: clamp(32px, 3.4vw, 48px); line-height: 1.14; letter-spacing: -.045em; font-weight: 450; }
 .story-heading { display: flex; align-items: end; justify-content: space-between; gap: 64px; margin-bottom: 46px; }
 .story-heading > div { max-width: 340px; }
@@ -118,7 +117,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .availability { font-size: 12px; margin-top: 18px; }
 .native { padding-top: 45px; }
 .tablet-frame { padding: 12px; border: 2px solid #52616b; border-radius: 30px; background: #070b0e; box-shadow: 0 20px 70px #0003; }
-.tablet-preview figcaption, .web-preview figcaption { margin-top: 18px; color: var(--muted); font-size: 12px; }
+.agent-screen figcaption, .tablet-preview figcaption, .web-preview figcaption { margin-top: 18px; color: var(--muted); font-size: 12px; }
 .notifications { display: grid; grid-template-columns: 1fr 1fr; gap: 100px; align-items: center; }
 .notification-copy > p { max-width: 310px; margin-top: 26px; }
 .notification-copy > .availability { margin-top: 18px; }
@@ -127,7 +126,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .notification-phone .phone-screen { position: relative; }
 .notification-app { display: flex; flex-direction: column; flex: 1; min-height: 0; filter: blur(.45cqw) brightness(.7); }
 .notification-app .phone-app-bar strong { font-size: 4.6cqw; color: #65b1f7; }
-.notification-app .phone-composer > span { flex: 1; }
 .notification-card, .notification-menu { position: absolute; left: 3.5cqw; right: 3.5cqw; font-family: -apple-system, BlinkMacSystemFont, 'DM Sans', sans-serif; }
 .notification-card { top: 15cqw; padding: 4.5cqw 4.5cqw 4cqw; border-radius: 7cqw; background: #161b22f2; box-shadow: 0 2cqw 8cqw #0008; color: #edf1f4; }
 .notification-head { display: flex; align-items: center; gap: 2cqw; color: #a6adb6; font-size: 3.6cqw; font-weight: 500; }
@@ -137,7 +135,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .notification-option { display: flex; flex-direction: column; gap: .6cqw; margin-top: 1.8cqw; padding: 2.8cqw 3.5cqw; border-radius: 3.2cqw; background: #ffffff0f; font-size: 4.1cqw; }
 .notification-option span { color: #9aa1aa; font-size: 3.4cqw; }
 .notification-open { margin-top: 3.4cqw; color: #e5b94e; font-size: 4cqw; font-weight: 500; }
-.notification-menu { top: 117cqw; left: 3.5cqw; right: 40cqw; display: flex; flex-direction: column; padding: 1.5cqw 0; border-radius: 6cqw; background: #e9e9ebe8; box-shadow: 0 2cqw 8cqw #0006; color: #111; font-size: 4.4cqw; }
+.notification-menu { top: 117cqw; right: 40cqw; display: flex; flex-direction: column; padding: 1.5cqw 0; border-radius: 6cqw; background: #e9e9ebe8; box-shadow: 0 2cqw 8cqw #0006; color: #111; font-size: 4.4cqw; }
 .notification-menu span { padding: 2.6cqw 6cqw; }
 .notification-menu span + span { border-top: .5px solid #0000001a; }
 .text-link { display: inline-block; margin-top: 24px; color: var(--peach); font-size: 14px; }
@@ -225,8 +223,9 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .desktop-bar > span:last-child { display: none; }
     .window-dots { gap: 3px; }
     .window-dots i { width: 5px; height: 5px; }
-    .desktop-capture { padding: 14px 9px; font-size: calc((100cqw - 18px) / (var(--cols) * .6)); }
-    .agent-capture { padding: 9px; font-size: calc((100cqw - 18px) / (var(--cols) * .6)); }
+    .desktop-capture, .agent-capture { font-size: calc((100cqw - 18px) / (var(--cols) * .6)); }
+    .desktop-capture { padding: 14px 9px; }
+    .agent-capture { padding: 9px; }
     .hero-phone { width: 43%; top: 112px; right: -7px; }
     .phone-frame { padding: 4px; border-radius: 18px; }
     .phone-screen { border-radius: 12px; }
