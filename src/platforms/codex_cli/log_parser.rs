@@ -67,17 +67,6 @@ pub struct CodexState {
     pub resume_requested: bool,
     pub resume_all: bool,
     pub explicit_resume_id: Option<String>,
-    /// The rollout that started with this pane, kept while following a resume
-    /// so a resume back to the original conversation is preferred.
-    pub native_session_path: Option<PathBuf>,
-    pub native_session_started_at: Option<SystemTime>,
-    /// The native rollout's mtime when the pane switched away from it; a
-    /// newer write means the pane resumed back.
-    pub native_mtime_at_switch: Option<SystemTime>,
-    /// When the user last sent input to this pane. An in-pane resume always
-    /// starts with input, so the resume-follow scan requires input newer
-    /// than the tracked rollout's last write before it adopts anything.
-    pub last_user_input: Option<SystemTime>,
     pub terminal_title: Option<String>,
     pub title_lookup_pending: bool,
     pub last_title_scan: Option<SystemTime>,
@@ -114,10 +103,6 @@ impl Default for CodexState {
             resume_requested: false,
             resume_all: false,
             explicit_resume_id: None,
-            native_session_path: None,
-            native_session_started_at: None,
-            native_mtime_at_switch: None,
-            last_user_input: None,
             terminal_title: None,
             title_lookup_pending: false,
             last_title_scan: None,

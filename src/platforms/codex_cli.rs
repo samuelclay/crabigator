@@ -26,35 +26,13 @@ use log_parser::{
     SessionMetaInfo,
 };
 
-/// How long the tracked rollout must be quiet before crabigator considers
-/// that the pane may have switched to a resumed conversation.
-const RESUME_QUIET: Duration = Duration::from_secs(120);
-
-/// A switch candidate counts only while it is being actively written. The
-/// follow scan runs every couple of seconds, so any real resume is observed
-/// well inside this window; it exists to reject long-dead rollouts.
+/// Mirrors older than this no longer reserve a transcript for another pane.
 const RESUME_FRESH: Duration = Duration::from_secs(300);
-
-/// Resumed conversations keep appending to the rollout in the date directory
-/// where they were created, so the follow scan looks further back than the
-/// two days the launch scan covers.
-const RESUME_SCAN_DAYS: i64 = 30;
-
-/// The filters a rollout must pass to count as an in-pane conversation
-/// switch, gathered once per follow scan so every candidate is judged
-/// against the same clock reading.
-struct ResumeScan<'a> {
-    cwd: &'a str,
-    tracked: &'a Path,
-    tracked_mtime: SystemTime,
-    app_start: SystemTime,
-    now: SystemTime,
-}
 
 pub struct CodexPlatform {
     sessions_dir: PathBuf,
     /// Where other live sessions publish their mirrors (`/tmp` outside tests).
-    /// The resume-follow scan reads them to skip rollouts another pane owns.
+    /// Title and launch discovery skip rollouts another pane owns.
     mirror_dir: PathBuf,
     state: Mutex<CodexState>,
 }
@@ -127,13 +105,9 @@ impl CodexPlatform {
             let keep_tracked = state.resume_followed
                 || matches!(state.session_started_at, Some(start) if start >= threshold);
             if keep_tracked {
-                // The tracked rollout going quiet while another same-cwd
-                // rollout is written usually means the user resumed an older
-                // conversation inside the pane. Follow the switch so stats,
-                // recaps, and PR tracking stay live.
-                if let Some(switched) = self.follow_resumed_session(cwd, state, &path) {
-                    return Ok(Some(switched));
-                }
+                // Only this pane's title evidence above may change its
+                // conversation. Activity in the same cwd is not ownership:
+                // another pane may not have published its mirror yet.
                 return Ok(Some((path, state.session_started_at)));
             }
         } else {
@@ -198,7 +172,9 @@ impl CodexPlatform {
     ) -> Option<PathBuf> {
         let claimed = self.rollouts_claimed_by_other_sessions();
         let initialized = self.recent_shell_snapshots(state.app_start);
-        let resume_id = state.explicit_resume_id.as_deref().or(title_id);
+        // A later in-pane switch takes precedence over the launch argument.
+        let resume_id = title_id.or(state.explicit_resume_id.as_deref());
+        let explicit_launch = title_id.is_none() && state.explicit_resume_id.is_some();
         let mut directories = vec![self.sessions_dir.clone()];
         let mut newest: Option<(PathBuf, SystemTime)> = None;
         while let Some(directory) = directories.pop() {
@@ -226,7 +202,7 @@ impl CodexPlatform {
                         .file_name()
                         .and_then(|name| name.to_str())
                         .is_some_and(|name| name.ends_with(&format!("{id}.jsonl")))
-                        && (state.explicit_resume_id.is_some()
+                        && (explicit_launch
                             || (!claimed.contains(&path)
                                 && Self::session_meta_info(
                                     &path,
@@ -464,136 +440,6 @@ impl CodexPlatform {
         None
     }
 
-    /// Detect an in-pane `/resume`: Codex switches to appending the resumed
-    /// conversation's original rollout file and the launch rollout goes
-    /// silent, so a session locked to the launch rollout would stop seeing
-    /// prompts, recaps, and PR mentions. Once the tracked rollout has been
-    /// quiet for [`RESUME_QUIET`], adopt the same-cwd rollout most recently
-    /// written during this session. The launch rollout keeps priority: if it
-    /// is ever written again (the pane resumed back), re-adopt it immediately.
-    fn follow_resumed_session(
-        &self,
-        cwd: &str,
-        state: &mut CodexState,
-        tracked: &Path,
-    ) -> Option<(PathBuf, Option<SystemTime>)> {
-        let now = SystemTime::now();
-
-        if state.resume_followed {
-            if let (Some(native), Some(mtime_at_switch)) = (
-                state.native_session_path.as_ref(),
-                state.native_mtime_at_switch,
-            ) {
-                let woke = fs::metadata(native)
-                    .and_then(|m| m.modified())
-                    .is_ok_and(|mtime| mtime > mtime_at_switch);
-                if woke {
-                    let native = native.clone();
-                    state.resume_followed = false;
-                    return Some((native, state.native_session_started_at));
-                }
-            }
-        }
-
-        let tracked_mtime = fs::metadata(tracked).and_then(|m| m.modified()).ok()?;
-        if now.duration_since(tracked_mtime).unwrap_or_default() < RESUME_QUIET {
-            return None;
-        }
-
-        // An in-pane resume starts with the user typing in this pane. With
-        // no input since the tracked rollout last advanced, a same-cwd
-        // rollout being written now belongs to a session in another pane.
-        let input_since_tracked = state
-            .last_user_input
-            .is_some_and(|input| input > tracked_mtime);
-        if !input_since_tracked {
-            return None;
-        }
-
-        if !Self::should_rescan(state) {
-            return None;
-        }
-        state.last_scan = Some(now);
-
-        let scan = ResumeScan {
-            cwd,
-            tracked,
-            tracked_mtime,
-            app_start: state.app_start,
-            now,
-        };
-        let today = Local::now();
-        let mut candidates = Vec::new();
-        for offset in 0..RESUME_SCAN_DAYS {
-            let dir = self.sessions_dir_for_date(today - chrono::Duration::days(offset));
-            self.collect_switch_candidates(&dir, &scan, &mut candidates);
-        }
-        if candidates.is_empty() {
-            return None;
-        }
-        let claimed = self.rollouts_claimed_by_other_sessions();
-        let best = candidates
-            .into_iter()
-            .filter(|candidate| !claimed.contains(&candidate.path))
-            .max_by_key(|candidate| candidate.modified)?;
-
-        if !state.resume_followed {
-            state.native_session_path = Some(tracked.to_path_buf());
-            state.native_session_started_at = state.session_started_at;
-            state.native_mtime_at_switch = Some(tracked_mtime);
-        }
-        state.resume_followed = true;
-        Some((best.path, best.session_start))
-    }
-
-    /// Collect rollouts in `dir` that an in-pane conversation switch could
-    /// have moved the pane to: same cwd, written during this session, more
-    /// recently than the tracked rollout, and still actively written. A date
-    /// directory that does not exist reads as empty. The mtime filters run
-    /// before the file is opened so the wide scan stays cheap. A concurrent
-    /// same-cwd session in another pane can slip through these filters while
-    /// this pane idles; the claim check in [`Self::follow_resumed_session`]
-    /// drops rollouts another live session tracks, and the native-rollout
-    /// priority there recovers from any remaining misadoption as soon as
-    /// this pane's own conversation is written again.
-    fn collect_switch_candidates(
-        &self,
-        dir: &Path,
-        scan: &ResumeScan,
-        candidates: &mut Vec<SessionCandidate>,
-    ) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl")
-                || path == scan.tracked
-            {
-                continue;
-            }
-            let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
-                continue;
-            };
-            if modified <= scan.tracked_mtime
-                || modified < scan.app_start
-                || scan.now.duration_since(modified).unwrap_or_default() > RESUME_FRESH
-            {
-                continue;
-            }
-            let Ok(meta) = Self::session_meta_info(&path, scan.cwd) else {
-                continue;
-            };
-            if meta.matches {
-                candidates.push(SessionCandidate {
-                    path,
-                    modified,
-                    session_start: meta.session_start,
-                });
-            }
-        }
-    }
-
     /// Rollouts that other live crabigator sessions already track, read from
     /// the mirrors they publish. A claimed rollout belongs to that pane's
     /// conversation, so this pane must not adopt it as a resume target. Only
@@ -685,11 +531,6 @@ impl Platform for CodexPlatform {
     fn ensure_hooks_installed(&self) -> Result<()> {
         // Codex CLI does not currently support Crabigator hooks.
         Ok(())
-    }
-
-    fn note_user_input(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        state.last_user_input = Some(SystemTime::now());
     }
 
     fn note_question_skipped(&self, question: &str) {
@@ -913,18 +754,13 @@ mod tests {
             .unwrap();
     }
 
-    /// State locked to a launch rollout that has been quiet past RESUME_QUIET,
-    /// with user input recent enough for the resume-follow scan to run.
+    /// A pane whose conversation has been idle for three minutes.
     fn quiet_locked_state(native: &Path, app_start: SystemTime) -> CodexState {
-        set_mtime(
-            native,
-            SystemTime::now() - RESUME_QUIET - Duration::from_secs(60),
-        );
+        set_mtime(native, SystemTime::now() - Duration::from_secs(180));
         let mut state = CodexState::default();
         state.session_path = Some(native.to_path_buf());
         state.session_started_at = Some(app_start);
         state.app_start = app_start;
-        state.last_user_input = Some(SystemTime::now());
         state
     }
 
@@ -1077,140 +913,125 @@ mod tests {
     }
 
     #[test]
-    fn follows_in_pane_resume_to_older_rollout() {
+    fn idle_pane_does_not_adopt_neighbor_before_it_publishes_a_mirror() {
         let tmp = tempfile::tempdir().unwrap();
         let platform = platform_in(tmp.path());
         let app_start = SystemTime::now() - Duration::from_secs(3600);
-
         let native = write_rollout(&platform, 0, "native.jsonl", app_start);
-        // Whole seconds: the rollout header stores millisecond precision.
-        let resumed_start_secs = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            - 3 * 86_400;
-        let resumed_start = SystemTime::UNIX_EPOCH + Duration::from_secs(resumed_start_secs);
-        let resumed = write_rollout(&platform, 3, "resumed.jsonl", resumed_start);
-        let mut state = quiet_locked_state(&native, app_start);
-        set_mtime(&resumed, SystemTime::now() - Duration::from_secs(30));
-
-        let (path, started) = platform
-            .resolve_session_path(CWD, &mut state)
-            .unwrap()
-            .expect("should resolve a session");
-        assert_eq!(path, resumed);
-        assert_eq!(started, Some(resumed_start));
-        assert!(state.resume_followed);
-        assert_eq!(state.native_session_path.as_deref(), Some(native.as_path()));
-    }
-
-    #[test]
-    fn stays_locked_without_user_input_since_rollout_went_quiet() {
-        let tmp = tempfile::tempdir().unwrap();
-        let platform = platform_in(tmp.path());
-        let app_start = SystemTime::now() - Duration::from_secs(3600);
-
-        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
-        let resumed = write_rollout(&platform, 3, "resumed.jsonl", app_start);
-        let mut state = quiet_locked_state(&native, app_start);
-        // No keystrokes reached this pane: nothing could have resumed it.
-        state.last_user_input = None;
-        set_mtime(&resumed, SystemTime::now() - Duration::from_secs(30));
-
-        let (path, _) = platform
-            .resolve_session_path(CWD, &mut state)
-            .unwrap()
-            .expect("should resolve a session");
-        assert_eq!(path, native);
-        assert!(!state.resume_followed);
-    }
-
-    #[test]
-    fn ignores_rollouts_claimed_by_other_live_sessions() {
-        let tmp = tempfile::tempdir().unwrap();
-        let platform = platform_in(tmp.path());
-        let app_start = SystemTime::now() - Duration::from_secs(3600);
-
-        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
-        let resumed = write_rollout(&platform, 3, "resumed.jsonl", app_start);
-        let mut state = quiet_locked_state(&native, app_start);
-        set_mtime(&resumed, SystemTime::now() - Duration::from_secs(30));
-        // Another live session's mirror already tracks that rollout.
-        write_mirror_claim(&platform, "other-session", &resumed);
-
-        let (path, _) = platform
-            .resolve_session_path(CWD, &mut state)
-            .unwrap()
-            .expect("should resolve a session");
-        assert_eq!(path, native);
-        assert!(!state.resume_followed);
-    }
-
-    #[test]
-    fn resume_follow_returns_to_native_rollout_when_it_wakes() {
-        let tmp = tempfile::tempdir().unwrap();
-        let platform = platform_in(tmp.path());
-        let app_start = SystemTime::now() - Duration::from_secs(3600);
-
-        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
-        let resumed = write_rollout(&platform, 3, "resumed.jsonl", app_start);
-        let mut state = quiet_locked_state(&native, app_start);
-        set_mtime(&resumed, SystemTime::now() - Duration::from_secs(30));
-
-        platform.resolve_session_path(CWD, &mut state).unwrap();
-        assert!(state.resume_followed);
-        state.session_path = Some(resumed);
-
-        // The pane resumed back: the native rollout is written again.
-        set_mtime(&native, SystemTime::now());
-        let (path, started) = platform
-            .resolve_session_path(CWD, &mut state)
-            .unwrap()
-            .expect("should resolve a session");
-        assert_eq!(path, native);
-        assert_eq!(started, Some(app_start));
-        assert!(!state.resume_followed);
-    }
-
-    #[test]
-    fn quiet_rollout_without_switch_stays_locked() {
-        let tmp = tempfile::tempdir().unwrap();
-        let platform = platform_in(tmp.path());
-        let app_start = SystemTime::now() - Duration::from_secs(3600);
-
-        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
-        let mut state = quiet_locked_state(&native, app_start);
-
-        let (path, _) = platform
-            .resolve_session_path(CWD, &mut state)
-            .unwrap()
-            .expect("should resolve a session");
-        assert_eq!(path, native);
-        assert!(!state.resume_followed);
-    }
-
-    #[test]
-    fn ignores_rollouts_not_actively_written() {
-        let tmp = tempfile::tempdir().unwrap();
-        let platform = platform_in(tmp.path());
-        let app_start = SystemTime::now() - Duration::from_secs(3600);
-
-        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
-        let mut state = quiet_locked_state(&native, app_start);
-        set_mtime(&native, SystemTime::now() - Duration::from_secs(1000));
-
-        // Newer than the tracked rollout, but no longer actively written.
-        let stale = write_rollout(&platform, 3, "stale.jsonl", app_start);
-        set_mtime(
-            &stale,
-            SystemTime::now() - RESUME_FRESH - Duration::from_secs(100),
+        *platform.state.lock().unwrap() = quiet_locked_state(&native, app_start);
+        // A navigation key in the idle pane is not evidence of a resume.
+        platform.note_user_input();
+        // The new neighbor has not published its transcript in a mirror yet.
+        write_rollout(&platform, 0, "neighbor.jsonl", SystemTime::now());
+        assert_eq!(
+            platform.load_stats(CWD).unwrap().transcript_path.as_deref(),
+            native.to_str()
         );
+        assert!(!platform.state.lock().unwrap().resume_followed);
+    }
 
-        let (path, _) = platform
-            .resolve_session_path(CWD, &mut state)
-            .unwrap()
-            .expect("should resolve a session");
-        assert_eq!(path, native);
-        assert!(!state.resume_followed);
+    #[test]
+    fn in_pane_resume_and_return_follow_the_panes_title() {
+        for explicit_resume in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let platform = platform_in(&tmp.path().join("sessions"));
+            let app_start = SystemTime::now() - Duration::from_secs(3600);
+            let native_id = "01a0724d-3a0b-75a2-82c0-ee65fe6f5547";
+            let resumed_id = "01a0724d-3a0b-75a2-82c0-ee65fe6f5548";
+            let native = write_rollout(
+                &platform,
+                0,
+                &format!("rollout-{native_id}.jsonl"),
+                app_start,
+            );
+            let resumed = write_rollout(
+                &platform,
+                3,
+                &format!("rollout-{resumed_id}.jsonl"),
+                app_start - Duration::from_secs(3 * 86_400),
+            );
+            set_mtime(&resumed, app_start - Duration::from_secs(3600));
+            *platform.state.lock().unwrap() = quiet_locked_state(&native, app_start);
+            if explicit_resume {
+                platform.spawn_args(vec!["resume".into(), native_id.into()]);
+            }
+            write_rollout(&platform, 0, "neighbor.jsonl", SystemTime::now());
+            fs::write(
+                tmp.path().join("session_index.jsonl"),
+                format!(
+                    "{}\n{}\n",
+                    serde_json::json!({"id":native_id,"thread_name":"Original work"}),
+                    serde_json::json!({"id":resumed_id,"thread_name":"Resumed work"}),
+                ),
+            )
+            .unwrap();
+
+            // A real resume can select a quiet, old rollout even when a neighbor
+            // is busy. It does not have to wait for a new prompt or file write.
+            platform.note_terminal_title("Resumed work | project");
+            assert_eq!(
+                platform.load_stats(CWD).unwrap().transcript_path.as_deref(),
+                resumed.to_str()
+            );
+            // Resuming back also follows the pane, not the original file's mtime.
+            platform.note_terminal_title("Original work | project");
+            assert_eq!(
+                platform.load_stats(CWD).unwrap().transcript_path.as_deref(),
+                native.to_str()
+            );
+        }
+    }
+
+    #[test]
+    fn ambiguous_title_does_not_follow_the_busiest_neighbor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(&tmp.path().join("sessions"));
+        let app_start = SystemTime::now() - Duration::from_secs(3600);
+        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
+        *platform.state.lock().unwrap() = quiet_locked_state(&native, app_start);
+        let id = "01a0724d-3a0b-75a2-82c0-ee65fe6f5547";
+        write_rollout(
+            &platform,
+            0,
+            &format!("rollout-{id}.jsonl"),
+            SystemTime::now(),
+        );
+        fs::write(tmp.path().join("session_index.jsonl"), format!("{}\n{}\n",
+            serde_json::json!({"id":id,"thread_name":"Review Slack thread"}),
+            serde_json::json!({"id":"01a0724d-3a0b-75a2-82c0-ee65fe6f5548","thread_name":"Review Slack thread"}),
+        )).unwrap();
+        platform.note_user_input();
+        platform.note_terminal_title("Review Slack thread | project");
+        assert_eq!(
+            platform.load_stats(CWD).unwrap().transcript_path.as_deref(),
+            native.to_str()
+        );
+    }
+
+    #[test]
+    fn title_does_not_adopt_a_rollout_claimed_by_another_pane() {
+        let tmp = tempfile::tempdir().unwrap();
+        let platform = platform_in(&tmp.path().join("sessions"));
+        let app_start = SystemTime::now() - Duration::from_secs(3600);
+        let native = write_rollout(&platform, 0, "native.jsonl", app_start);
+        *platform.state.lock().unwrap() = quiet_locked_state(&native, app_start);
+        let id = "01a0724d-3a0b-75a2-82c0-ee65fe6f5547";
+        let neighbor = write_rollout(
+            &platform,
+            0,
+            &format!("rollout-{id}.jsonl"),
+            SystemTime::now(),
+        );
+        write_mirror_claim(&platform, "other-pane", &neighbor);
+        fs::write(
+            tmp.path().join("session_index.jsonl"),
+            serde_json::json!({"id":id,"thread_name":"Neighbor work"}).to_string() + "\n",
+        )
+        .unwrap();
+        platform.note_terminal_title("Neighbor work | project");
+        assert_eq!(
+            platform.load_stats(CWD).unwrap().transcript_path.as_deref(),
+            native.to_str()
+        );
     }
 }
