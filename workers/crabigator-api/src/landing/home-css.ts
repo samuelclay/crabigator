@@ -107,7 +107,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .agent-name svg { width: 18px; height: 18px; fill: currentColor; }
 .agent-copy > p:not(.agent-name) { max-width: 360px; margin-top: 24px; color: var(--muted); }
 .agent-copy code { color: var(--ink); }
-.agent-frame { position: relative; top: auto; width: auto; }
+.desktop-frame.agent-frame { position: relative; top: auto; width: auto; }
 .desktop-capture, .agent-capture { font-size: calc((100cqw - 36px) / (var(--cols) * .6)); }
 .agent-capture { padding: 18px; }
 .section h2 { font-size: clamp(32px, 3.4vw, 48px); line-height: 1.14; letter-spacing: -.045em; font-weight: 450; }
