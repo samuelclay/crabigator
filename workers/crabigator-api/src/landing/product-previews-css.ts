@@ -50,6 +50,8 @@ export const productPreviewsCss = `
 .preview-composer > span { flex: 1; background: #101820; border-radius: .7cqw; padding: .75cqw 1cqw; font-size: 1.15cqw; color: #7d8c98; }
 .preview-composer > b { font-size: 1.5cqw; color: #a0b8c9; font-weight: 400; }
 .tablet-detail .preview-composer > span { box-shadow: inset 0 0 0 1px #ffffff22; }
+.tablet-detail .app-modules { --module-size: 1.05cqw; --flow-width: 22cqw; }
+.app-summary .app-preview { margin-left: auto; color: #8a8a8a; }.app-summary .c-red { color: #ff5f5f; }.app-preview + .app-open { margin-left: 0; }
 .tablet-home { display: flex; justify-content: center; padding: .7cqw 0 .5cqw; }.tablet-home > span { width: 22%; height: .35cqw; background: #b5bdc4; border-radius: 1cqw; }
 .web-product { container-type: inline-size; }
 .web-product .browser-bar { font-size: 1cqw; padding: 1cqw 1.4cqw; }.web-product .browser-bar > span:last-child { font-size: .9cqw; padding: .35cqw 2cqw; }.web-product .window-dots i { width: .6cqw; height: .6cqw; }

@@ -1,8 +1,8 @@
-// The native apps' session modules, drawn from a captured session's real values:
-// the open drawer (Recap, Git, Changes) beside its flow scene, then the summary
-// bar. Matches SessionModules.swift and SessionSummaryBar on iOS.
+// The native apps' session modules: the open drawer (Recap, Git, Changes)
+// beside a flow scene, then the summary bar. Matches SessionModules.swift and
+// SessionSummaryBar on iOS. The hero passes a captured session's real values.
 
-export interface CapturedSession {
+export interface SessionValues {
     mark: { glyph: string; fg: string; bg: string };
     workSeconds: number;
     thinkingSeconds: number;
@@ -13,6 +13,8 @@ export interface CapturedSession {
     files: number;
     symbols: number;
     recap: string;
+    /** Wide layouts (iPad) show these too, as the app does when they fit. */
+    wide?: { completions: number; compactions: number; age: string; additions: number; deletions: number };
 }
 
 /** A token count as every client shows it: 512, 9.5k, 186k, 1M. */
@@ -29,16 +31,26 @@ function duration(seconds: number): string {
     return Math.floor(seconds / 3600) + 'h ' + Math.floor(seconds % 3600 / 60) + 'm';
 }
 
-export function contextLabel({ used, limit }: CapturedSession['context']): string {
+export function contextLabel({ used, limit }: SessionValues['context']): string {
     return `${tokens(used)} / ${tokens(limit)} · ${Math.round(used * 100 / limit)}%`;
 }
 
-export function markChip(mark: CapturedSession['mark'], className: string): string {
+export function markChip(mark: SessionValues['mark'], className: string): string {
     return `<span class="${className}" style="color:${mark.fg};background:${mark.bg}">${mark.glyph}</span>`;
 }
 
-export function appModulesHtml(session: CapturedSession, flowSvg: string): string {
+export function appModulesHtml(session: SessionValues, flowSvg: string): string {
     const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+    const wide = session.wide;
+    const prompts = wide
+        ? `<span><span class="c-orange">⟩</span><span class="c-title">${session.prompts}</span><span class="c-orange">${wide.age}</span></span>`
+        : `<span class="c-orange">⟩ ${session.prompts}</span>`;
+    const extra = wide ? `
+            <span><span class="c-deep">⋖</span><span class="c-title">${wide.completions}</span><span class="c-deep">${wide.age}</span></span>` : '';
+    const after = wide ? `
+            <span class="c-purple">⊜ ${wide.compactions}</span>` : '';
+    const preview = wide ? `
+            <span class="app-preview">${plural(session.files, 'file')} · <span class="c-mint">+${wide.additions}</span> <span class="c-red">−${wide.deletions}</span></span>` : '';
     return `
     <div class="app-modules">
         <div class="app-drawer">
@@ -54,9 +66,9 @@ export function appModulesHtml(session: CapturedSession, flowSvg: string): strin
             <span class="app-done">✓</span>
             <span class="c-blue">◉ ${duration(session.workSeconds)}</span>
             <span class="c-mint">◐ ${duration(session.thinkingSeconds)}</span>
-            <span class="c-orange">⟩ ${session.prompts}</span>
-            <span class="c-orange">⚒ ${session.tools}</span>
-            <span><span class="c-title">◔</span><span class="c-title">${contextLabel(session.context)}</span></span>
+            ${prompts}${extra}
+            <span class="c-orange">⚒ ${session.tools}</span>${after}
+            <span><span class="c-title">◔</span><span class="c-title">${contextLabel(session.context)}</span></span>${preview}
             <span class="app-open">⌄</span>
         </div>
     </div>`;

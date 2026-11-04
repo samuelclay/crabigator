@@ -2,6 +2,8 @@ import {
     iconCrabigator, iconCrabigatorLogo, iconSearch, iconLines,
     iconMicrophone, iconKeyboard, iconWifi,
 } from './icons';
+import { appModulesHtml, type SessionValues } from './app-modules';
+import { flowScenes } from './flow-scenes';
 
 // Static product illustrations. Keep them out of the tab order: the actual
 // dashboard link lives above the preview, and none of these controls are live.
@@ -32,6 +34,16 @@ const sessionRows = sessions.map((session, index) => `
     </div>
 `).join('');
 
+// The selected session's modules, matching its web dashboard card below.
+const tabletSession: SessionValues = {
+    mark: { glyph: '╱◆╲', fg: '#180e09', bg: '#a85b19' },
+    workSeconds: 2880, thinkingSeconds: 1860, prompts: 5, tools: 6,
+    context: { used: 186_000, limit: 1_000_000 },
+    branch: 'main', files: 3, symbols: 4,
+    recap: 'Desktop session, connected to your phone.',
+    wide: { completions: 5, compactions: 1, age: '2m ago', additions: 24, deletions: 8 },
+};
+
 const composer = `<div class="preview-composer">${iconMicrophone}${iconKeyboard}<span>Message</span><b>↑</b></div>`;
 
 export const tabletPreviewHtml = `
@@ -50,6 +62,7 @@ export const tabletPreviewHtml = `
             </div>
             <div class="tablet-detail">
                 <div class="tablet-terminal">${claudeReply}<div class="preview-terminal-footer"><span>~/projects/crabigator</span><span>Opus · Claude Code</span></div><div class="preview-cursor">❯ <i></i></div></div>
+                ${appModulesHtml(tabletSession, flowScenes.tablet)}
                 ${composer}
             </div>
         </div>
