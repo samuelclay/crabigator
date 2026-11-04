@@ -18,6 +18,17 @@ If several runtimes have an iPhone 17e, use its simulator ID instead of its name
 
 Run `crabigator pair` on a paired computer, then enter its code in the app. The Server control supports a compatible HTTPS deployment. Pairing credentials live in a device-only shared Keychain entry; neither credentials nor prompts are included in notification transport payloads.
 
+**Try a demo** on the pairing screen opens an offline walkthrough with sample
+sessions, a PR board, a question, and local sample messages. It neither changes
+pairing credentials nor sends demo messages to a server. Privacy information is
+linked from pairing and Settings at <https://drinkcrabigator.com/privacy>.
+
+All three shipping targets include a privacy manifest declaring app preferences,
+shared app-group preferences, and elapsed-time measurement. Archive the
+`Crabigator` scheme for a generic iOS device, then export with the
+`app-store-connect` method and automatic signing. The export must use App Store
+profiles for the app and both notification extensions.
+
 The checked-in project is ready to open without extra packages. To regenerate it after adding source files, install the Ruby `xcodeproj` gem and run `ruby clients/ios/scripts/generate-project.rb`. The icons, logo and wordmark come from the pixel grids in `scripts/render-brand.swift`. Edit a grid there, then run `swift scripts/render-brand.swift` to redraw both apps' images, the dashboard's SVGs and `assets/brand/`.
 
 ## Apple notifications

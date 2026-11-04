@@ -116,6 +116,7 @@ struct SettingsMenu: View {
                     }.disabled(busy)
                 }
                 Section("MCP") { Text(model.origin + "/mcp").font(.caption).textSelection(.enabled); Link("Tools and examples", destination: URL(string: model.origin + "/mcp-tools")!) }
+                Section("Privacy") { Link("Privacy policy", destination: URL(string: "https://drinkcrabigator.com/privacy")!) }
                 Section("This device") {
                     Text(UIDevice.current.name); Text(model.origin).font(.caption).foregroundStyle(Crab.muted)
                     Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")").font(.caption)
@@ -291,6 +292,7 @@ struct NotificationSettings: View {
     func refresh() async { status = await Notifications.shared.status() }
 }
 struct PairingFields: View {
+    @State private var demo = false
     @ObservedObject var model: SessionModel
     @State private var code = ""
     @State private var server = ""
@@ -300,6 +302,8 @@ struct PairingFields: View {
             Text("crabigator pair").font(.system(size: 18, design: .monospaced)).foregroundStyle(Crab.mint).padding(20).frame(maxWidth: .infinity, alignment: .leading).background(Crab.panel, in: RoundedRectangle(cornerRadius: 16)).textSelection(.enabled)
             TextField("ABC-DEF-GHI", text: $code).textInputAutocapitalization(.characters).autocorrectionDisabled().textFieldStyle(.roundedBorder).accessibilityLabel("Pairing code").accessibilityIdentifier("Pairing code")
             Button(model.loading ? "Connecting…" : "Pair") { Task { await model.pair(code: code, origin: server.isEmpty ? model.origin : server) } }.buttonStyle(.borderedProminent).tint(Crab.orange).foregroundStyle(Crab.ink).frame(minHeight: 44).disabled(code.isEmpty || model.loading)
+            Button("Try a demo") { demo = true }.sheet(isPresented: $demo) { DemoView() }
+            Link("Privacy policy", destination: URL(string: "https://drinkcrabigator.com/privacy")!)
             Button("Server") { advanced.toggle() }.foregroundStyle(Crab.muted)
             if advanced { TextField("HTTPS server address", text: $server).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.roundedBorder) }
         }.frame(maxWidth: 430)

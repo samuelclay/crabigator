@@ -23,7 +23,9 @@ import UserNotifications
     }
     @ViewBuilder private var content: some View {
         #if DEBUG
-        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_QUESTIONS"] == "1" {
+        if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_DEMO"] == "1" {
+            DemoView()
+        } else if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_QUESTIONS"] == "1" {
             QuestionTransitionFixture()
         } else if ProcessInfo.processInfo.environment["CRABIGATOR_TEST_CONDUCTOR"] == "1" {
             ConductorFixture(model: model)

@@ -82,6 +82,7 @@ content.add_file_references((shared + theme + content_files).map { |f| reference
 # iOS looks up the extension's context class here at launch; nothing in the code links it on its own.
 content.add_system_framework('UserNotificationsUI')
 [extension, content].each do |t|
+  t.resources_build_phase.add_file_reference(project.main_group.new_file("#{t.name}/PrivacyInfo.xcprivacy"))
   t.build_configurations.each do |c|
     c.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = "com.newsblur.crabigator.#{t.name}"
     c.build_settings['INFOPLIST_FILE'] = "#{t.name}/Info.plist"
