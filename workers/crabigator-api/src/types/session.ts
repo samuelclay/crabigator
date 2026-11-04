@@ -337,6 +337,7 @@ export interface PromptOption {
     label: string;
     value: string;           // What to send back when selected (e.g., "1", "y", "n")
     description?: string;
+    preview?: string;
 }
 
 /**

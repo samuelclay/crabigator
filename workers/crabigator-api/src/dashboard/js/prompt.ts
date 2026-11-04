@@ -493,6 +493,10 @@ export const promptJs = `
             if (screenDriven || grok) {
                 steps.push(...leaveTextRowSteps(prompt, q, grok));
                 steps.push({ type: 'text', text: grok ? grokOptionKey(optionIdx) : String(optionIdx) });
+                // Claude's preview layout uses digits to highlight, then Enter to choose.
+                if (!grok && q?.options?.some(option => typeof option.preview === 'string')) {
+                    steps.push({ type: 'key', key: 'enter' });
+                }
             } else {
                 for (let i = 1; i < optionIdx; i++) {
                     steps.push({ type: 'key', key: 'down' });
