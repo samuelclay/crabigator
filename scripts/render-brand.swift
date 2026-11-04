@@ -290,3 +290,10 @@ for cell in [1, 2, 4, 8, 16, 32] { png(crab, cell: cell, background: ink, "\(kit
 let favicon48 = image(crabSquare, cell: 2)
 write(ico([resized(favicon48, to: 16), resized(favicon48, to: 32), favicon48]), "\(kit)/favicon.ico")
 write(pngData(image(crab, cell: 6, background: ink)), "\(kit)/png/apple-touch-icon-192.png")
+
+// Google Play's 1024 × 500 feature graphic, drawn from the same pixel grids.
+var playFeature = Art(width: 256, height: 125)
+let featureCrab = crab.trimmed.scaled(3)
+playFeature.draw(featureCrab, x: (256 - featureCrab.width) / 2, y: 14)
+playFeature.draw(word, x: (256 - word.width) / 2, y: 91)
+png(playFeature, cell: 4, background: ink, "\(kit)/png/crabigator-play-feature-1024x500.png")
