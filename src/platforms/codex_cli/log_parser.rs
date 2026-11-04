@@ -9,7 +9,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::platforms::{
-    ActivePrompt, PermissionDetails, PlatformStats, Question, QuestionOption, SessionState,
+    ActivePrompt, ContextUsage, PermissionDetails, PlatformStats, Question, QuestionOption,
+    SessionState,
 };
 
 /// Source of a message count
@@ -262,8 +263,23 @@ fn handle_event_msg(state: &mut CodexState, value: &Value) {
             end_turn_prompts(state);
             set_state(state, SessionState::Interrupted);
         }
+        Some("token_count") => {
+            if let Some(context) = token_count_context(payload) {
+                state.stats.context = Some(context);
+            }
+        }
         _ => {}
     }
+}
+
+/// The context window after the latest request: its tokens (input, cached
+/// input included, and output) against the model's window. Events that
+/// only carry rate limits have no `info`.
+fn token_count_context(payload: &serde_json::Map<String, Value>) -> Option<ContextUsage> {
+    let info = payload.get("info")?;
+    let used = info.pointer("/last_token_usage/total_tokens")?.as_u64()?;
+    let limit = info.get("model_context_window")?.as_u64()?;
+    ContextUsage::new(used, limit)
 }
 
 fn begin_task_lifecycle(state: &mut CodexState) {
@@ -742,6 +758,27 @@ pub fn reset_state(state: &mut CodexState, path: PathBuf, session_started_at: Op
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn token_counts_report_the_context_window() {
+        let mut state = CodexState::default();
+        let token_count = |info: Value| {
+            json!({"type":"event_msg","payload":{"type":"token_count","info":info,"rate_limits":{}}})
+                .to_string()
+        };
+        update_from_log(
+            &mut state,
+            &token_count(json!({
+                "total_token_usage": {"total_tokens": 385258},
+                "last_token_usage": {"input_tokens": 68927, "output_tokens": 178, "total_tokens": 69105},
+                "model_context_window": 258400
+            })),
+        );
+        assert_eq!(state.stats.context, ContextUsage::new(69105, 258400));
+        // A rate-limit update carries no usage and keeps the last reading.
+        update_from_log(&mut state, &token_count(Value::Null));
+        assert_eq!(state.stats.context, ContextUsage::new(69105, 258400));
+    }
 
     #[test]
     fn modern_turns_count_finishes_not_commentary_and_keep_original_times() {

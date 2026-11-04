@@ -20,7 +20,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::Result;
 use serde_json::Value;
 
-use super::{Platform, PlatformKind, PlatformStats};
+use super::{ContextUsage, Platform, PlatformKind, PlatformStats};
 use events::EventState;
 
 /// How long the tracked session must be quiet before an in-pane `/new` or
@@ -310,6 +310,7 @@ impl Platform for GrokPlatform {
         }
 
         let mut stats = state.inner.stats.clone();
+        stats.context = read_context(&session_dir);
         stats.transcript_path = Some(
             session_dir
                 .join("updates.jsonl")
@@ -416,6 +417,15 @@ fn session_created_at(dir: &Path) -> Option<SystemTime> {
 fn read_summary(dir: &Path) -> Option<Value> {
     let content = fs::read_to_string(dir.join("summary.json")).ok()?;
     serde_json::from_str(&content).ok()
+}
+
+/// How full the context window is, from the session's `signals.json`.
+fn read_context(dir: &Path) -> Option<ContextUsage> {
+    let content = fs::read_to_string(dir.join("signals.json")).ok()?;
+    let signals: Value = serde_json::from_str(&content).ok()?;
+    let used = signals.get("contextTokensUsed")?.as_u64()?;
+    let limit = signals.get("contextWindowTokens")?.as_u64()?;
+    ContextUsage::new(used, limit)
 }
 
 fn choose_session(
@@ -587,6 +597,15 @@ mod tests {
             .transcript_path
             .as_deref()
             .is_some_and(|path| path.ends_with("updates.jsonl")));
+        assert_eq!(stats.context, None);
+
+        fs::write(
+            session.join("signals.json"),
+            r#"{"contextWindowUsage":44,"contextTokensUsed":113354,"contextWindowTokens":256000}"#,
+        )
+        .unwrap();
+        let stats = platform.load_stats(cwd).unwrap();
+        assert_eq!(stats.context, ContextUsage::new(113_354, 256_000));
     }
 
     #[test]

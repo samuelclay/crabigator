@@ -13,7 +13,8 @@ use serde_json::Value;
 use super::agents::AgentRoster;
 
 use crate::platforms::{
-    ActivePrompt, ClaudeMode, HookEvent, PermissionDetails, PlatformStats, SessionState,
+    ActivePrompt, ClaudeMode, ContextUsage, HookEvent, PermissionDetails, PlatformStats,
+    SessionState,
 };
 
 /// Rolling cap on the debug event history.
@@ -48,6 +49,9 @@ pub struct OpencodeState {
     pub main_session: Option<String>,
     /// Model id -> display name, from the server's provider catalog
     pub model_names: HashMap<String, String>,
+    /// Model id -> context window, from the same catalog. Keyed both as
+    /// `provider/model` and as the bare model id.
+    pub model_limits: HashMap<String, u64>,
     /// Sessions spawned as subagent children (have a parentID)
     child_sessions: HashSet<String>,
     agents: AgentRoster,
@@ -341,6 +345,8 @@ fn on_message_updated(
     // (ctrl+x n / ctrl+x l).
     if role == "user" && !state.child_sessions.contains(sid) && !state.is_main(sid) {
         state.main_session = Some(sid.to_string());
+        // The other session's window is unknown until its next step.
+        state.stats.context = None;
     }
     let is_main = state.is_main(sid);
     let is_child = state.child_sessions.contains(sid);
@@ -369,6 +375,9 @@ fn on_message_updated(
                 if let Some(agent) = info.get("agent").and_then(Value::as_str) {
                     state.stats.mode = agent_mode(agent);
                 }
+                if let Some(context) = message_context(state, info) {
+                    state.stats.context = Some(context);
+                }
             }
 
             let completed = info.get("time").and_then(|t| t.get("completed")).is_some();
@@ -394,6 +403,38 @@ fn on_message_updated(
         }
         _ => {}
     }
+}
+
+/// How full the context window is after an assistant step: every token the
+/// step sent and wrote, against its model's window. A step that has only
+/// started reports no tokens yet, and a model the catalog doesn't list has
+/// no window.
+fn message_context(state: &OpencodeState, info: &Value) -> Option<ContextUsage> {
+    let tokens = info.get("tokens")?;
+    let count = |pointer: &str| tokens.pointer(pointer).and_then(Value::as_u64).unwrap_or(0);
+    let used = tokens
+        .get("total")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| {
+            count("/input")
+                + count("/output")
+                + count("/reasoning")
+                + count("/cache/read")
+                + count("/cache/write")
+        });
+    if used == 0 {
+        return None;
+    }
+    let model = info.get("modelID").and_then(Value::as_str)?;
+    let provider = info
+        .get("providerID")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let limit = state
+        .model_limits
+        .get(&format!("{provider}/{model}"))
+        .or_else(|| state.model_limits.get(model))?;
+    ContextUsage::new(used, *limit)
 }
 
 fn on_part_updated(state: &mut OpencodeState, props: &Value, entries: &mut Vec<TranscriptEntry>) {
@@ -593,6 +634,45 @@ mod tests {
         );
         assert_eq!(state.main_session.as_deref(), Some("ses_1"));
         state
+    }
+
+    #[test]
+    fn assistant_steps_report_the_context_window() {
+        let mut state = adopted_state();
+        state
+            .model_limits
+            .insert("openrouter/stealth/ox-alpha".into(), 262_144);
+        let step = |tokens: Value| {
+            json!({
+                "type": "message.updated",
+                "properties": {"info": {
+                    "id": "msg_2", "sessionID": "ses_1", "role": "assistant",
+                    "modelID": "stealth/ox-alpha", "providerID": "openrouter",
+                    "tokens": tokens
+                }}
+            })
+        };
+        // A step that has only started has no tokens yet.
+        apply_event(
+            &mut state,
+            &step(json!({"input": 0, "output": 0, "cache": {"read": 0, "write": 0}})),
+        );
+        assert_eq!(state.stats.context, None);
+        apply_event(
+            &mut state,
+            &step(
+                json!({"total": 191771, "input": 701, "output": 542, "cache": {"read": 190528, "write": 0}}),
+            ),
+        );
+        assert_eq!(state.stats.context, ContextUsage::new(191_771, 262_144));
+        // Without `total`, the parts add up.
+        apply_event(
+            &mut state,
+            &step(
+                json!({"input": 1000, "output": 200, "reasoning": 50, "cache": {"read": 3000, "write": 10}}),
+            ),
+        );
+        assert_eq!(state.stats.context, ContextUsage::new(4_260, 262_144));
     }
 
     fn user_message(state: &mut OpencodeState, id: &str, text: &str) -> Vec<TranscriptEntry> {

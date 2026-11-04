@@ -154,8 +154,10 @@ fn listener_loop(
             match sse::get_json(port, "/config/providers") {
                 Ok(catalog) => {
                     let names = extract_model_names(&catalog);
+                    let limits = extract_model_limits(&catalog);
                     let mut state = shared.lock().unwrap_or_else(|p| p.into_inner());
                     state.model_names = names;
+                    state.model_limits = limits;
                     catalog_loaded = true;
                 }
                 Err(_) => {
@@ -269,6 +271,37 @@ fn extract_model_names(catalog: &Value) -> HashMap<String, String> {
     names
 }
 
+/// Pull each model's context window out of the provider catalog, keyed as
+/// `provider/model` and as the bare model id (the first provider listing a
+/// model wins the bare key).
+fn extract_model_limits(catalog: &Value) -> HashMap<String, u64> {
+    let mut limits = HashMap::new();
+    let Some(providers) = catalog.get("providers").and_then(Value::as_array) else {
+        return limits;
+    };
+    for provider in providers {
+        let provider_id = provider
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let Some(models) = provider.get("models").and_then(Value::as_object) else {
+            continue;
+        };
+        for (model_id, model) in models {
+            let Some(limit) = model
+                .pointer("/limit/context")
+                .and_then(Value::as_u64)
+                .filter(|limit| *limit > 0)
+            else {
+                continue;
+            };
+            limits.insert(format!("{provider_id}/{model_id}"), limit);
+            limits.entry(model_id.clone()).or_insert(limit);
+        }
+    }
+    limits
+}
+
 /// Symlink `/tmp/crabigator-{opencode_session}` to the crabigator session
 /// directory, mirroring the Claude Code conversation-UUID symlink so any
 /// session id resolves to the session directory.
@@ -331,5 +364,22 @@ mod tests {
             names.get("stealth/ox-alpha").map(String::as_str),
             Some("Ox Alpha")
         );
+    }
+
+    #[test]
+    fn extracts_model_context_windows() {
+        let catalog = json!({
+            "providers": [{
+                "id": "openrouter",
+                "models": {
+                    "stealth/ox-alpha": {"limit": {"context": 262144, "output": 32768}},
+                    "image-only": {"limit": {"context": 0, "output": 0}}
+                }
+            }]
+        });
+        let limits = extract_model_limits(&catalog);
+        assert_eq!(limits.get("openrouter/stealth/ox-alpha"), Some(&262144));
+        assert_eq!(limits.get("stealth/ox-alpha"), Some(&262144));
+        assert_eq!(limits.get("image-only"), None);
     }
 }

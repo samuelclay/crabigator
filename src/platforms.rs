@@ -211,6 +211,66 @@ pub enum PlatformAgentState {
     Done,
 }
 
+/// How full the assistant's context window is, as the assistant reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ContextUsage {
+    /// Tokens in the context window after the latest model request.
+    pub used: u64,
+    /// The context window's size for the current model.
+    pub limit: u64,
+}
+
+impl ContextUsage {
+    /// Usage when the assistant reported a window; `None` without one.
+    pub fn new(used: u64, limit: u64) -> Option<Self> {
+        (limit > 0).then_some(Self { used, limit })
+    }
+
+    /// Percent of the window in use, rounded (above 100 if it overflows).
+    pub fn percent(&self) -> u64 {
+        (self.used.saturating_mul(100) + self.limit / 2) / self.limit
+    }
+
+    /// `186k / 1M · 19%`
+    pub fn label(&self) -> String {
+        format!(
+            "{} / {} · {}%",
+            format_tokens(self.used),
+            format_tokens(self.limit),
+            self.percent()
+        )
+    }
+
+    /// `186k/1M 19%`, for narrow columns.
+    pub fn short_label(&self) -> String {
+        format!(
+            "{}/{} {}%",
+            format_tokens(self.used),
+            format_tokens(self.limit),
+            self.percent()
+        )
+    }
+}
+
+/// A token count in a few characters: `512`, `9.5k`, `186k`, `1M`, `1.5M`.
+pub fn format_tokens(tokens: u64) -> String {
+    fn one_decimal(value: f64, unit: &str) -> String {
+        let text = format!("{value:.1}");
+        format!("{}{unit}", text.strip_suffix(".0").unwrap_or(&text))
+    }
+    if tokens < 1_000 {
+        return tokens.to_string();
+    }
+    if tokens < 9_950 {
+        return one_decimal(tokens as f64 / 1_000.0, "k");
+    }
+    let thousands = (tokens as f64 / 1_000.0).round();
+    if thousands < 1_000.0 {
+        return format!("{thousands}k");
+    }
+    one_decimal(tokens as f64 / 1_000_000.0, "M")
+}
+
 /// Statistics collected from a platform's hook system
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PlatformStats {
@@ -227,6 +287,9 @@ pub struct PlatformStats {
     pub flow_agents: Vec<PlatformAgent>,
     /// Number of context compressions
     pub compressions: u32,
+    /// How full the context window is, when the assistant reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextUsage>,
     /// Tool usage counts by tool name
     #[serde(default)]
     pub tools: HashMap<String, u32>,
@@ -351,5 +414,38 @@ pub fn platform_for(kind: PlatformKind) -> Box<dyn Platform> {
         PlatformKind::Codex => Box::new(codex_cli::CodexPlatform::new()),
         PlatformKind::Opencode => Box::new(opencode::OpencodePlatform::new()),
         PlatformKind::Grok => Box::new(grok::GrokPlatform::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_counts_read_in_a_few_characters() {
+        let cases = [
+            (0, "0"),
+            (512, "512"),
+            (1_000, "1k"),
+            (9_500, "9.5k"),
+            (9_960, "10k"),
+            (186_002, "186k"),
+            (258_400, "258k"),
+            (999_600, "1M"),
+            (1_000_000, "1M"),
+            (1_500_000, "1.5M"),
+        ];
+        for (tokens, text) in cases {
+            assert_eq!(format_tokens(tokens), text, "{tokens}");
+        }
+    }
+
+    #[test]
+    fn context_usage_labels_show_tokens_and_percent() {
+        let usage = ContextUsage::new(186_002, 1_000_000).unwrap();
+        assert_eq!(usage.percent(), 19);
+        assert_eq!(usage.label(), "186k / 1M · 19%");
+        assert_eq!(usage.short_label(), "186k/1M 19%");
+        assert_eq!(ContextUsage::new(5, 0), None);
     }
 }
