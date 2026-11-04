@@ -224,6 +224,9 @@ impl SessionStats {
     /// Refresh platform stats from the platform's data source
     pub fn refresh_platform_stats(&mut self, platform: &dyn Platform, cwd: &str) {
         if let Ok(stats) = platform.load_stats(cwd) {
+            // The context window can move without the rest of the stats
+            // (Claude Code's statusline saves it apart from the hooks).
+            let context = stats.context;
             // Only update if stats have changed
             let last_updated = stats.last_updated.unwrap_or(0.0);
             if last_updated > self.last_stats_check {
@@ -298,6 +301,7 @@ impl SessionStats {
 
                 self.platform_stats = stats;
             }
+            self.platform_stats.context = context;
         }
     }
 

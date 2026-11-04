@@ -13,7 +13,7 @@ use super::utils::strip_ansi_len;
 use super::{WidgetArea, COMPLETION_ICON, PROMPT_ICON};
 use crate::cloud::CloudStatus;
 use crate::hooks::SessionStats;
-use crate::platforms::SessionState;
+use crate::platforms::{ContextUsage, SessionState};
 use crate::session_mark::SessionMark;
 use crate::terminal::escape::{self, bg, color, fg, RESET};
 use crate::ui::cooldown::{tint_text, Tint};
@@ -602,16 +602,108 @@ fn draw_compact_row(
                 stats.platform_stats.compressions,
                 color::PINK,
             );
-            let compactions = compact_metric_cell(
-                &compaction_labels,
-                &compact_elapsed(stats.compressions_changed_at, color::GRAY),
-                right_width,
-            );
+            // The context window takes the timer's place when it fits.
+            let context_cell = stats.platform_stats.context.and_then(|context| {
+                let [_, short, percent] = context_tiers(context);
+                [short, percent].into_iter().find_map(|value| {
+                    compaction_labels
+                        .iter()
+                        .find(|label| {
+                            strip_ansi_len(label) + 1 + strip_ansi_len(&value) <= right_width
+                        })
+                        .map(|label| {
+                            compact_metric_cell(std::slice::from_ref(label), &value, right_width)
+                        })
+                })
+            });
+            let compactions = context_cell.unwrap_or_else(|| {
+                compact_metric_cell(
+                    &compaction_labels,
+                    &compact_elapsed(stats.compressions_changed_at, color::GRAY),
+                    right_width,
+                )
+            });
 
             compact_columns(tools, compactions, width as usize)
         }
         _ => String::new(),
     }
+}
+
+/// The context window's color: calm, then a warning as it fills (flow's
+/// scenes turn blue from 85%).
+fn context_color(percent: u64) -> u8 {
+    match percent {
+        0..=69 => color::LIGHT_BLUE,
+        70..=84 => color::YELLOW,
+        _ => color::RED,
+    }
+}
+
+/// `◔ 186k / 1M · 19%`, shortened to `◔ 186k/1M 19%` or `◔ 19%`.
+fn context_tiers(context: ContextUsage) -> [String; 3] {
+    let value_color = fg(context_color(context.percent()));
+    [
+        context.label(),
+        context.short_label(),
+        format!("{}%", context.percent()),
+    ]
+    .map(|text| format!("{}◔{} {value_color}{text}{RESET}", fg(color::GRAY), RESET))
+}
+
+/// The Compactions row. With a context reading the compaction timer moves
+/// next to its count and the context window sits on the right, in the
+/// widest form that fits; without one the timer stays on the right.
+fn compactions_row(stats: &SessionStats, width: usize) -> String {
+    let compressions = stats.platform_stats.compressions;
+    let count = |word: &str| {
+        let timer = if compressions > 0 {
+            format!(
+                "{}{}{}",
+                fg(color::GRAY),
+                format_elapsed(stats.compressions_changed_at),
+                RESET
+            )
+        } else {
+            String::new()
+        };
+        let label = format!(
+            "{}⊜ {word}{} {}{compressions}{}",
+            fg(color::GRAY),
+            RESET,
+            fg(color::PINK),
+            RESET
+        );
+        (label, timer)
+    };
+    let spread = |left: &str, right: &str| {
+        let gap = width.saturating_sub(strip_ansi_len(left) + strip_ansi_len(right));
+        format!("{left}{:gap$}{right}", "")
+    };
+
+    if let Some(context) = stats.platform_stats.context {
+        let [full, short] = ["Compactions", "Cmp"].map(|word| {
+            let (label, timer) = count(word);
+            format!("{label}{timer}")
+        });
+        let [label, short_label, percent] = context_tiers(context);
+        // The full word first, as long as the context keeps its numbers.
+        let tries = [
+            (&full, &label),
+            (&full, &short_label),
+            (&short, &label),
+            (&short, &short_label),
+            (&full, &percent),
+            (&short, &percent),
+        ];
+        for (left, right) in tries {
+            if strip_ansi_len(left) + 2 + strip_ansi_len(right) <= width {
+                return spread(left, right);
+            }
+        }
+    }
+    let (label, timer) = count("Compactions");
+    spread(&label, &timer)
 }
 
 /// Draw a row in normal mode (full labels, single column)
@@ -702,28 +794,8 @@ fn draw_normal_row(
             let sparkline = render_sparkline(&bins, sparkline_width);
             format!("{}{}", label, sparkline)
         }
-        7 => {
-            // Compactions (always show, like prompts/completions)
-            let compressions = stats.platform_stats.compressions;
-            let label = format!(
-                "{}⊜ Compactions{} {}{}{}",
-                fg(color::GRAY),
-                RESET,
-                fg(color::PINK),
-                compressions,
-                RESET
-            );
-            if compressions > 0 {
-                let elapsed = format_elapsed(stats.compressions_changed_at);
-                let timer = format!("{}{}{}", fg(color::GRAY), elapsed, RESET);
-                let label_len = strip_ansi_len(&label);
-                let timer_len = strip_ansi_len(&timer);
-                let gap = (width as usize).saturating_sub(label_len + timer_len);
-                format!("{}{:gap$}{}", label, "", timer, gap = gap)
-            } else {
-                label
-            }
-        }
+        // Compactions (always show, like prompts/completions)
+        7 => compactions_row(stats, width as usize),
         8 => {
             // Idle time (only show when complete/question/interrupted state and idle > 60s)
             let is_idle_state = matches!(
@@ -801,6 +873,89 @@ mod tests {
             !format_state_indicator(SessionState::Complete, None).contains("\x1b[48;2;"),
             "no tint once the cooldown runs out"
         );
+    }
+
+    fn strip_ansi(s: &str) -> String {
+        crate::parsers::permission_prompt::strip_ansi_for_debug(s)
+    }
+
+    fn with_context(compressions: u32) -> SessionStats {
+        let mut stats = SessionStats::default();
+        stats.platform_stats.compressions = compressions;
+        stats.platform_stats.context = ContextUsage::new(186_002, 1_000_000);
+        stats
+    }
+
+    #[test]
+    fn compactions_row_shows_the_context_window_in_the_room_it_has() {
+        let stats = with_context(0);
+        let wide = strip_ansi(&compactions_row(&stats, 40));
+        assert_eq!(wide.chars().count(), 40);
+        assert!(wide.starts_with("⊜ Compactions 0 "));
+        assert!(wide.ends_with(" ◔ 186k / 1M · 19%"));
+
+        // Narrower: the context shortens first, then the word.
+        let snug = strip_ansi(&compactions_row(&stats, 32));
+        assert!(snug.starts_with("⊜ Compactions 0 "));
+        assert!(snug.ends_with("◔ 186k/1M 19%"));
+        let narrow = strip_ansi(&compactions_row(&stats, 27));
+        assert!(narrow.starts_with("⊜ Cmp 0 "));
+        assert!(narrow.ends_with("◔ 186k / 1M · 19%"));
+        assert!(strip_ansi(&compactions_row(&stats, 22)).ends_with("◔ 186k/1M 19%"));
+        assert!(strip_ansi(&compactions_row(&stats, 14)).ends_with("◔ 19%"));
+        // No room at all: the row is as it was.
+        assert_eq!(strip_ansi(&compactions_row(&stats, 9)), "⊜ Compactions 0");
+    }
+
+    #[test]
+    fn compactions_timer_moves_beside_its_count_when_context_shows() {
+        let mut stats = with_context(2);
+        stats.compressions_changed_at = Some(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs_f64()
+                - 240.0,
+        );
+        let row = strip_ansi(&compactions_row(&stats, 44));
+        assert!(row.starts_with("⊜ Compactions 2 4m ago "), "{row}");
+        assert!(row.ends_with("◔ 186k / 1M · 19%"), "{row}");
+
+        // Without a reading the timer stays on the right.
+        stats.platform_stats.context = None;
+        let row = strip_ansi(&compactions_row(&stats, 44));
+        assert!(row.starts_with("⊜ Compactions 2 "), "{row}");
+        assert!(row.ends_with(" 4m ago"), "{row}");
+    }
+
+    #[test]
+    fn context_color_warns_as_the_window_fills() {
+        assert_eq!(context_color(19), color::LIGHT_BLUE);
+        assert_eq!(context_color(70), color::YELLOW);
+        assert_eq!(context_color(85), color::RED);
+    }
+
+    #[test]
+    fn compact_grid_shows_the_context_window_when_it_fits() {
+        let stats = with_context(1);
+        let mark = sample_mark();
+        let row = strip_ansi(&draw_compact_row(
+            4, 70, &stats, None, false, None, None, mark, false,
+        ));
+        assert!(row.contains("⊜ Compactions 1"), "{row}");
+        assert!(row.contains("◔ 186k/1M 19%"), "{row}");
+        // The word shortens before the context does.
+        let row = strip_ansi(&draw_compact_row(
+            4, 40, &stats, None, false, None, None, mark, false,
+        ));
+        assert!(
+            row.contains("⊜ 1") && row.contains("◔ 186k/1M 19%"),
+            "{row}"
+        );
+        let row = strip_ansi(&draw_compact_row(
+            4, 26, &stats, None, false, None, None, mark, false,
+        ));
+        assert!(row.contains("◔ 19%"), "{row}");
     }
 
     #[test]

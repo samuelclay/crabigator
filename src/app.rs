@@ -2152,6 +2152,7 @@ impl App {
     ) -> Result<()> {
         let old_effective_state = self.session_stats.effective_state();
         let old_last_updated = self.session_stats.platform_stats.last_updated;
+        let old_context = self.session_stats.platform_stats.context;
         let old_transcript = self.session_stats.platform_stats.transcript_path.clone();
         self.session_stats
             .refresh_platform_stats(self.platform.as_ref(), &self.stats_cwd.to_string_lossy());
@@ -2159,6 +2160,7 @@ impl App {
         self.flow.observe_stats(&self.session_stats.platform_stats);
         let new_effective_state = self.session_stats.effective_state();
         let new_last_updated = self.session_stats.platform_stats.last_updated;
+        let context_changed = self.session_stats.platform_stats.context != old_context;
         self.maybe_update_cwd(true);
         let new_transcript = self.session_stats.platform_stats.transcript_path.as_deref();
         if old_transcript.is_some()
@@ -2250,6 +2252,9 @@ impl App {
                 *last_status_draw = Instant::now();
             }
             // If PTY is busy, status_draw_interval will catch this soon
+        } else if context_changed && self.can_draw_status(last_pty_output) {
+            self.draw_status_bar()?;
+            *last_status_draw = Instant::now();
         }
 
         // Send the state whenever the cloud's copy is stale: the first time,
@@ -2309,14 +2314,19 @@ impl App {
         // a new prompt count right away: the cloud uses it to tell a new
         // turn's question from a repeat, so it must arrive before a question
         // asked seconds later.
-        if new_last_updated != old_last_updated || !self.cloud_stats_sent {
+        // The context window alone changing (Claude Code's statusline) reaches
+        // viewers but leaves the session record alone.
+        let stats_changed = new_last_updated != old_last_updated || !self.cloud_stats_sent;
+        if stats_changed || context_changed {
             self.cloud_stats_sent = true;
             self.session_stats.tick();
             let prompts = self.session_stats.platform_stats.prompts;
             if self.cloud_viewers_active || self.last_cloud_stats_prompts != Some(prompts) {
                 self.send_cloud_stats_event();
             }
-            self.send_cloud_stats_update(); // DB update — keep this for session records
+            if stats_changed {
+                self.send_cloud_stats_update(); // DB update — keep this for session records
+            }
         }
 
         Ok(())

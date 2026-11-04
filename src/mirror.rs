@@ -15,7 +15,7 @@ use serde::Serialize;
 use crate::git::GitState;
 use crate::hooks::SessionStats;
 use crate::parsers::{ChangeType, DiffSummary};
-use crate::platforms::{ActivePrompt, PlatformKind};
+use crate::platforms::{ActivePrompt, ContextUsage, PlatformKind};
 use crate::pr::SessionPr;
 use crate::recap::{RecapState, TurnRecap};
 use crate::session_mark::SessionMark;
@@ -135,6 +135,9 @@ pub struct StatsMirrorData {
     pub completions_changed_at: Option<f64>,
     pub tools: u32,
     pub compressions: u32,
+    /// How full the context window is, when the assistant reports it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextUsage>,
     /// Unix timestamps of tool calls (for sparkline visualization)
     pub tool_timestamps: Vec<f64>,
     /// Session start time as Unix timestamp
@@ -446,6 +449,7 @@ impl MirrorPublisher {
         stats.platform_stats.completions.hash(&mut hasher);
         stats.platform_stats.total_tool_calls().hash(&mut hasher);
         stats.platform_stats.compressions.hash(&mut hasher);
+        stats.platform_stats.context.hash(&mut hasher);
         format!("{:?}", stats.effective_state()).hash(&mut hasher);
         stats.platform_stats.mode.as_str().hash(&mut hasher);
         if let Some(prompt) = stats.active_prompt() {
@@ -589,6 +593,7 @@ impl MirrorPublisher {
                         completions_changed_at: stats.completions_changed_at,
                         tools: stats.platform_stats.total_tool_calls(),
                         compressions: stats.platform_stats.compressions,
+                        context: stats.platform_stats.context,
                         tool_timestamps: stats.platform_stats.tool_timestamps.clone(),
                         session_start: stats.session_start_unix(),
                         active_prompt: stats.active_prompt().cloned(),
@@ -688,6 +693,9 @@ fn render_stats_preview(stats: &SessionStats) -> Vec<String> {
             "Compressions: {}",
             stats.platform_stats.compressions
         ));
+    }
+    if let Some(context) = stats.platform_stats.context {
+        lines.push(format!("Context: {}", context.label()));
     }
     // Show idle time if >= 60 seconds
     if let Some(idle_since) = stats.platform_stats.idle_since {

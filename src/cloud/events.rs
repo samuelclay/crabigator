@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::git::GitState;
 use crate::parsers::{ChangeType, DiffSummary, NodeKind};
+use crate::platforms::ContextUsage;
 
 /// Session state matching the server's SessionState type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,6 +276,12 @@ pub struct StatsEvent {
     /// Unix timestamp when compressions count last changed
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compressions_changed_at: Option<f64>,
+    /// Tokens in the context window, when the assistant reports it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_used: Option<u64>,
+    /// The context window's size for the current model
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_limit: Option<u64>,
     /// Unix timestamps of tool invocations for sparkline
     pub tool_timestamps: Vec<f64>,
     /// Unix timestamp when session started
@@ -302,6 +309,7 @@ impl StatsEvent {
         prompts_changed_at: Option<f64>,
         completions_changed_at: Option<f64>,
         compressions_changed_at: Option<f64>,
+        context: Option<ContextUsage>,
         tool_timestamps: Vec<f64>,
         session_start: f64,
         idle_since: Option<f64>,
@@ -321,6 +329,8 @@ impl StatsEvent {
             prompts_changed_at,
             completions_changed_at,
             compressions_changed_at,
+            context_used: context.map(|context| context.used),
+            context_limit: context.map(|context| context.limit),
             tool_timestamps,
             session_start,
             idle_since,
@@ -954,6 +964,7 @@ impl SessionEventBuilder {
             session_stats.prompts_changed_at,
             session_stats.completions_changed_at,
             session_stats.compressions_changed_at,
+            stats.context,
             stats.tool_timestamps.clone(),
             session_stats.session_start_unix(),
             stats.idle_since,
