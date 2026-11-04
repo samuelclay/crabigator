@@ -56,3 +56,28 @@ internal fun sessionAge(timestamp: Long, now: Long): String {
         else -> "${seconds / 86400}d ago"
     }
 }
+
+/** How full the assistant's context window is, from a stats event: "186k / 1M · 19%". */
+data class ContextUsage(val used: Long, val limit: Long) {
+    val percent: Long get() = Math.round(used * 100.0 / limit)
+    val label: String get() = "${tokens(used)} / ${tokens(limit)} · $percent%"
+
+    companion object {
+        fun parse(stats: JSONObject): ContextUsage? {
+            if (!stats.has("context_used") || !stats.has("context_limit")) return null
+            val limit = stats.optLong("context_limit")
+            return if (limit > 0) ContextUsage(stats.optLong("context_used").coerceAtLeast(0), limit) else null
+        }
+
+        /** A token count in a few characters, as the CLI shows it: 512, 9.5k, 186k, 1M, 1.5M. */
+        fun tokens(count: Long): String {
+            fun oneDecimal(value: Double, unit: String): String =
+                String.format(java.util.Locale.ROOT, "%.1f", value).removeSuffix(".0") + unit
+            if (count < 1000) return count.toString()
+            if (count < 9950) return oneDecimal(count / 1000.0, "k")
+            val thousands = Math.round(count / 1000.0)
+            if (thousands < 1000) return "${thousands}k"
+            return oneDecimal(count / 1_000_000.0, "M")
+        }
+    }
+}

@@ -232,7 +232,7 @@ private val Cyan = CrabColors.Cyan
         Text("Position", color = Muted, fontSize = 12.sp)
         Choices(listOf("Left", "Right"), if (p.sidebarRight) 1 else 0) { n -> model.style { it.copy(sidebarRight = n == 1) } }
     }
-    MenuSection("Visible stats") { listOf("sessionTime" to "Session time", "thinkingTime" to "Thinking time", "promptRecency" to "Last prompt", "completionRecency" to "Last completion", "tools" to "Tools", "compactions" to "Compactions").forEach { (key,label) -> CheckRow(label, p.visible(key)) { model.style { it.toggle(key) } } } }
+    MenuSection("Visible stats") { listOf("sessionTime" to "Session time", "thinkingTime" to "Thinking time", "promptRecency" to "Last prompt", "completionRecency" to "Last completion", "tools" to "Tools", "compactions" to "Compactions", "context" to "Context").forEach { (key,label) -> CheckRow(label, p.visible(key)) { model.style { it.toggle(key) } } } }
     MenuSection("Sign-in") {
         val identities = account?.array("identities").orEmpty()
         if (account == null && message.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())

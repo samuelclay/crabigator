@@ -40,12 +40,22 @@ data class UiPreferences(
     val boardRecaps: Boolean = false,
     val boardGrouping: String = "sessions",
     val groupByComputer: Boolean = true,
+    /** Opt-in stats turned on; see [OPT_IN_STATS]. */
+    val shown: Set<String> = emptySet(),
 ) {
     fun includesActivity(timestamp: Long, now: Long): Boolean =
         boardAgeHours == 0 || BoardAge.fromSeconds((now - timestamp).coerceAtLeast(0)) <=
             if (boardAgeHours == 24) BoardAge.Day else BoardAge.fromSeconds(boardAgeHours * 3600L - 1)
-    fun visible(key: String) = key !in hidden
-    fun toggle(key: String) = copy(hidden = if (key in hidden) hidden - key else hidden + key)
+    fun visible(key: String) = if (key in OPT_IN_STATS) key in shown else key !in hidden
+    fun toggle(key: String) = when {
+        key in OPT_IN_STATS -> copy(shown = if (key in shown) shown - key else shown + key)
+        else -> copy(hidden = if (key in hidden) hidden - key else hidden + key)
+    }
+
+    companion object {
+        /** Stats most people never need start hidden, even in settings saved before they existed. */
+        val OPT_IN_STATS = setOf("context")
+    }
 }
 
 class PreferenceStore(context: Context) {
@@ -62,6 +72,7 @@ class PreferenceStore(context: Context) {
             j.optInt("boardAgeHours", 24).takeIf { it in listOf(0, 1, 3, 6, 9, 12, 24) } ?: 24,
             j.text("boardComputer"), j.optBoolean("boardRecaps"), j.text("boardGrouping", "sessions"),
             j.optBoolean("groupByComputer", true),
+            j.optJSONArray("shown")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet(),
         )
     }
     fun save(p: UiPreferences) {
@@ -70,7 +81,7 @@ class PreferenceStore(context: Context) {
             .put("modulesExpanded", p.widgets).put("grouping", p.grouping).put("order", p.order).put("density", p.density)
             .put("boardAgeHours", p.boardAgeHours).put("boardComputer", p.boardComputer)
             .put("boardRecaps", p.boardRecaps).put("boardGrouping", p.boardGrouping).put("groupByComputer", p.groupByComputer)
-            .put("showEnded", p.showEnded).put("sidebarRight", p.sidebarRight).put("hidden", org.json.JSONArray(p.hidden.toList()))
+            .put("showEnded", p.showEnded).put("sidebarRight", p.sidebarRight).put("hidden", org.json.JSONArray(p.hidden.toList())).put("shown", org.json.JSONArray(p.shown.toList()))
         storage.edit().putString("settings", j.toString()).apply()
     }
 }

@@ -5,6 +5,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SessionStatsTest {
+    @Test fun contextUsageReadsLikeTheCli() {
+        val usage = ContextUsage.parse(JSONObject("""{"context_used":186002,"context_limit":1000000}"""))
+        assertEquals("186k / 1M · 19%", usage?.label)
+        assertNull(ContextUsage.parse(JSONObject("""{"context_used":5}""")))
+        assertNull(ContextUsage.parse(JSONObject("""{"context_used":5,"context_limit":0}""")))
+        mapOf(0L to "0", 512L to "512", 1000L to "1k", 9500L to "9.5k", 9960L to "10k", 258400L to "258k", 999600L to "1M", 1500000L to "1.5M")
+            .forEach { (count, text) -> assertEquals("$count", text, ContextUsage.tokens(count)) }
+    }
+    @Test fun contextStatStartsHiddenAndTogglesOn() {
+        val prefs = UiPreferences(hidden = setOf("tools"))
+        assertTrue(prefs.visible("compactions"))
+        assertFalse(prefs.visible("context"))
+        val shown = prefs.toggle("context")
+        assertTrue(shown.visible("context"))
+        assertEquals(setOf("tools"), shown.hidden)
+        assertFalse(shown.toggle("context").visible("context"))
+    }
     @Test fun liveDurationAdvancesButEndedDurationDoesNot() {
         val stats = SessionStats.parse(JSONObject("""{"started_at":1000,"ended_at":1600,"last_seen_at":1550,"stats":{"work_seconds":590,"thinking_seconds":120,"prompts":4,"completions":3},"prompts_changed_at":1500,"completions_changed_at":1540}"""))
         assertEquals(1000L, stats.duration(true, 2000))

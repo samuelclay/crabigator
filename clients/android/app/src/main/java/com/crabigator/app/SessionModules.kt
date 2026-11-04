@@ -273,6 +273,12 @@ internal class ModuleSummary(data: SessionModuleData, prs: List<PullRequest>, pr
         if (prefs.visible("completions")) ModuleStat("⋖", stats.opt("completions")?.toString() ?: session.stats.completions?.toString() ?: "—", "Completions", CrabColors.DarkOrange, age("completions_changed_at", session.stats.completionAt), "completions" !in agoKeys)
         if (prefs.visible("tools")) ModuleStat("⚒", stats.opt("tools")?.toString() ?: session.stats.tools?.toString() ?: "—", "Tools", CrabColors.Orange)
         if (prefs.visible("compactions")) ModuleStat("⊜", stats.opt("compressions")?.toString() ?: session.stats.compactions?.toString() ?: "—", "Compactions", CrabColors.Purple)
+        if (prefs.visible("context")) {
+            val context = ContextUsage.parse(stats)
+            // Calm, then a warning as the window fills, as in the CLI.
+            val color = when { context == null -> CrabColors.Title; context.percent >= 85 -> CrabColors.Red; context.percent >= 70 -> CrabColors.Yellow; else -> CrabColors.Title }
+            ModuleStat("◔", context?.label ?: "—", "Context", color)
+        }
     }
 }
 @Composable private fun ModuleStat(symbol: String, value: String, label: String, color: Color, age: String = "", compact: Boolean = false) {
