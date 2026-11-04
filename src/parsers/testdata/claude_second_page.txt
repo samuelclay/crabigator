@@ -1,0 +1,16 @@
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Browser  ☐ At the end  ☐ Auto-start  ✔ Submit  →
+
+│ When the music selection runs out (end of the album, playlist or artist), what should happen?
+
+❯ 1. Repeat the selection
+     Loop it. Shuffle modes reshuffle on each pass so the order is fresh.
+  2. Stop
+     Music stops when the selection ends. Listen keeps reading.
+  3. Keep going library-wide
+     Continue with the same mode across the whole library, e.g. shuffling albums from all artists.
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

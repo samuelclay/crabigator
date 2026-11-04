@@ -106,6 +106,9 @@ pub struct QuestionOption {
     /// Optional description of what this option does
     #[serde(default)]
     pub description: Option<String>,
+    /// ASCII preview shown beside the choices. These pages select with Enter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 /// A single question in an AskUserQuestion prompt

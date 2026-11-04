@@ -492,6 +492,7 @@ fn parse_questions(tool_input: Option<&Value>, typed_answers: bool) -> Vec<Quest
                 .flatten()
                 .filter_map(|option| match option {
                     Value::String(label) => Some(QuestionOption {
+                        preview: None,
                         label: label.clone(),
                         description: None,
                     }),

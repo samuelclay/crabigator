@@ -207,6 +207,7 @@ impl QuestionScreen {
         let options = rows[..rows.len().saturating_sub(1)]
             .iter()
             .map(|row| QuestionOption {
+                preview: None,
                 label: row.label.clone(),
                 description: None,
             })
@@ -541,13 +542,39 @@ fn parse_review_answers(body: &[&str]) -> Vec<ReviewAnswer> {
 }
 
 fn parse_page(body: &[&str], page_index: Option<usize>) -> Option<QuestionScreen> {
+    // Preview pages put a bordered drawing beside the choices, with notes
+    // below it. Only the left column belongs to the question's numbered rows.
+    let has_preview = body.iter().any(|row| row.contains("n to add notes"));
+    let preview_column = body.iter().enumerate().find_map(|(index, line)| {
+        if !has_preview {
+            return None;
+        }
+        if !row_regex().is_match(line) {
+            return None;
+        }
+        let start = line.find('┌')?;
+        Some((index, unicode_width::UnicodeWidthStr::width(&line[..start])))
+    });
     let mut question_lines: Vec<&str> = Vec::new();
     let mut rows: Vec<ScreenRow> = Vec::new();
     let mut submit_row: Option<bool> = None;
     // Lines under the latest row: its description or its wrapped label.
     let mut below_row: Vec<&str> = Vec::new();
 
-    for line in body {
+    for (index, &line) in body.iter().enumerate() {
+        let line = if let Some((_, width)) = preview_column.filter(|(first, _)| index >= *first) {
+            let mut used = 0;
+            let end = line
+                .char_indices()
+                .find_map(|(byte, c)| {
+                    used += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+                    (used > width).then_some(byte)
+                })
+                .unwrap_or(line.len());
+            &line[..end]
+        } else {
+            line
+        };
         let trimmed = line.trim();
         // The rows end at the divider above "Chat about this" and the footer.
         if is_divider(line) || is_footer(line) {
@@ -583,7 +610,7 @@ fn parse_page(body: &[&str], page_index: Option<usize>) -> Option<QuestionScreen
     // The free-text row comes last and has no description, so lines under
     // it continue a typed answer too long for one line.
     let last = rows.last_mut()?;
-    if !last.is_placeholder() {
+    if preview_column.is_none() && !last.is_placeholder() {
         for line in below_row {
             last.label.push(' ');
             last.label.push_str(line);
@@ -756,6 +783,20 @@ fn parse_grok(screen_content: &str) -> Option<QuestionScreen> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn follows_preview_then_long_second_and_plain_third_pages() {
+        for (screen, expected_question, expected_options) in [
+            (include_str!("testdata/claude_preview_page.txt"), "How should the 'Choose music' library browser be organized?", vec!["Tabs + action buttons", "Pick, then choose mode"]),
+            (include_str!("testdata/claude_second_page.txt"), "When the music selection runs out (end of the album, playlist or artist), what should happen?", vec!["Repeat the selection", "Stop", "Keep going library-wide", "Type something."]),
+            (include_str!("testdata/claude_third_page.txt"), "When you start Listen on a story, should music start by itself?", vec!["No, I'll tap play", "Optional setting, off", "Always resume if it was on", "Type something."]),
+        ] {
+            let QuestionScreen::Page { question, rows, .. } = QuestionScreen::parse(screen).unwrap() else { panic!("expected page"); };
+            assert_eq!(question, expected_question);
+            assert_eq!(rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), expected_options);
+            assert!(rows[0].cursor);
+        }
+    }
 
     const MULTI_PAGE: &str = "\
 ❯ Use the AskUserQuestion tool right now.
@@ -974,7 +1015,10 @@ Ready to submit your answers?
             "basil leaves added after the bake and a drizzle of hot honey on the pepperoni half only"
         );
         // A wrapped option label stays out of its row; only the typed row grows.
-        assert_eq!(rows[2].label, "Roasted red peppers and caramelized onions on half");
+        assert_eq!(
+            rows[2].label,
+            "Roasted red peppers and caramelized onions on half"
+        );
         assert_eq!(submit_row, Some(false));
     }
 
@@ -1000,12 +1044,25 @@ Ready to submit your answers?
         };
         let truecolor = "\x1b[38;2;0;0;0;48;2;177;185;249m";
         assert_eq!(highlighted_tab(&strip("", truecolor, "")), Some(1));
-        assert_eq!(highlighted_tab(&strip("\x1b[38;5;16;48;5;153m", "", "")), Some(0));
-        assert_eq!(highlighted_tab(&strip("", "", "\x1b[7m")), Some(2), "Submit");
-        assert_eq!(highlighted_tab(&strip("", "\x1b[48:2::177:185:249m", "")), Some(1));
+        assert_eq!(
+            highlighted_tab(&strip("\x1b[38;5;16;48;5;153m", "", "")),
+            Some(0)
+        );
+        assert_eq!(
+            highlighted_tab(&strip("", "", "\x1b[7m")),
+            Some(2),
+            "Submit"
+        );
+        assert_eq!(
+            highlighted_tab(&strip("", "\x1b[48:2::177:185:249m", "")),
+            Some(1)
+        );
         // A foreground color alone, or every tab colored, names no tab.
         assert_eq!(highlighted_tab(&strip("", "\x1b[38;5;153m", "")), None);
-        assert_eq!(highlighted_tab(&strip("\x1b[44m", "\x1b[44m", "\x1b[44m")), None);
+        assert_eq!(
+            highlighted_tab(&strip("\x1b[44m", "\x1b[44m", "\x1b[44m")),
+            None
+        );
         assert_eq!(highlighted_tab("←  ☒ Crust  ☐ Sauce  ✔ Submit  →"), None);
     }
 

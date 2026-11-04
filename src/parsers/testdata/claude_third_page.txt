@@ -1,0 +1,16 @@
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Browser  ☒ At the end  ☐ Auto-start  ✔ Submit  →
+
+When you start Listen on a story, should music start by itself?
+
+❯ 1. No, I'll tap play
+     Music remembers your last selection and position but only starts when you tap play on the music card.
+  2. Optional setting, off
+     Add 'Start music with Listen' to the card, off by default. When on, starting a story resumes your last music.
+  3. Always resume if it was on
+     If music was playing when you last used Listen, it picks back up when you start a story.
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

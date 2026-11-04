@@ -2859,6 +2859,11 @@ impl App {
         if self.cloud_client.is_none() {
             return;
         }
+        // A page redraw can briefly contain neither its header nor its rows.
+        // Wait for Claude's completed frame before publishing the next page.
+        if self.question_screen_open() && self.output_boundary.in_synchronized_update() {
+            return;
+        }
 
         let active_prompt = self.session_stats.active_prompt().cloned();
 

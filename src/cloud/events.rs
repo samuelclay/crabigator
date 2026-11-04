@@ -428,6 +428,8 @@ pub struct PromptOption {
     /// Optional description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 /// A question with options for the dashboard
@@ -984,10 +986,12 @@ impl SessionEventBuilder {
                                 label: opt.label.clone(),
                                 value: (i + 1).to_string(), // 1-indexed
                                 description: opt.description.clone(),
+                                preview: opt.preview.clone(),
                             })
                             .collect(),
                         multi_select: q.multi_select,
-                        allows_other: q.allows_other.unwrap_or(true),
+                        allows_other: q.allows_other.unwrap_or(true)
+                            && !q.options.iter().any(|o| o.preview.is_some()),
                     })
                     .collect();
                 let page = QuestionPageState::from_screen(questions, question_screen);
@@ -1011,6 +1015,7 @@ impl SessionEventBuilder {
                         p.options
                             .iter()
                             .map(|o| PromptOption {
+                                preview: None,
                                 label: o.text.clone(),
                                 value: o.number.to_string(),
                                 description: None,
@@ -1020,11 +1025,13 @@ impl SessionEventBuilder {
                     .unwrap_or_else(|| {
                         vec![
                             PromptOption {
+                                preview: None,
                                 label: "Yes".to_string(),
                                 value: "y".to_string(),
                                 description: Some("Allow once".to_string()),
                             },
                             PromptOption {
+                                preview: None,
                                 label: "No".to_string(),
                                 value: "n".to_string(),
                                 description: Some("Deny".to_string()),
@@ -1052,6 +1059,7 @@ impl SessionEventBuilder {
                         p.options
                             .iter()
                             .map(|o| PromptOption {
+                                preview: None,
                                 label: o.text.clone(),
                                 value: o.number.to_string(),
                                 description: None,
@@ -1061,11 +1069,13 @@ impl SessionEventBuilder {
                     .unwrap_or_else(|| {
                         vec![
                             PromptOption {
+                                preview: None,
                                 label: "Yes".to_string(),
                                 value: "1".to_string(),
                                 description: None,
                             },
                             PromptOption {
+                                preview: None,
                                 label: "No".to_string(),
                                 value: "2".to_string(),
                                 description: None,
@@ -1109,8 +1119,47 @@ mod question_page_tests {
     use crate::parsers::QuestionScreen;
     use crate::platforms::{Question, QuestionOption};
 
+    #[test]
+    fn preview_interview_keeps_each_page_and_its_input_mode() {
+        let questions: Vec<Question> = serde_json::from_value(serde_json::json!([
+            {"question": "How should the 'Choose music' library browser be organized?", "options": [
+                {"label": "Tabs + action buttons", "preview": "Choose Music\n[Shuffle all songs]"},
+                {"label": "Pick, then choose mode", "preview": "Radiohead\n[Play in order]"}]},
+            {"question": "When the music selection runs out (end of the album, playlist or artist), what should happen?", "options": [
+                {"label": "Repeat the selection"}, {"label": "Stop"}, {"label": "Keep going library-wide"}]},
+            {"question": "When you start Listen on a story, should music start by itself?", "options": [
+                {"label": "No, I'll tap play"}, {"label": "Optional setting, off"}, {"label": "Always resume if it was on"}]}
+        ])).unwrap();
+        let prompt = crate::platforms::ActivePrompt::Question { questions };
+        for (index, fixture) in [
+            include_str!("../parsers/testdata/claude_preview_page.txt"),
+            include_str!("../parsers/testdata/claude_second_page.txt"),
+            include_str!("../parsers/testdata/claude_third_page.txt"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let screen = QuestionScreen::parse(fixture).unwrap();
+            let event = SessionEventBuilder::prompt(Some(&prompt), None, Some(&screen), None);
+            let json = serde_json::to_value(event).unwrap();
+            let p = &json["prompt"];
+            assert_eq!(p["current_question"], index);
+            assert_eq!(p["cursor_row"], 1);
+            assert!(
+                p.get("custom_text").is_none(),
+                "artwork is not a typed answer"
+            );
+            assert_eq!(
+                p["questions"][0]["options"][0]["preview"],
+                "Choose Music\n[Shuffle all songs]"
+            );
+            assert_eq!(p["questions"][index]["allows_other"], index != 0);
+        }
+    }
+
     fn questions() -> Vec<Question> {
         let option = |label: &str| QuestionOption {
+            preview: None,
             label: label.to_string(),
             description: None,
         };
@@ -1287,6 +1336,7 @@ pizza?
         )
         .unwrap();
         let option = |label: &str| QuestionOption {
+            preview: None,
             label: label.to_string(),
             description: None,
         };
@@ -1320,6 +1370,7 @@ pizza?
     #[test]
     fn mirrors_a_codex_async_page() {
         let option = |label: &str| QuestionOption {
+            preview: None,
             label: label.to_string(),
             description: None,
         };

@@ -373,10 +373,12 @@ impl EventState {
                 header: Some("MCP".to_string()),
                 options: vec![
                     QuestionOption {
+                        preview: None,
                         label: "Accept".to_string(),
                         description: None,
                     },
                     QuestionOption {
+                        preview: None,
                         label: "Decline".to_string(),
                         description: None,
                     },
@@ -474,6 +476,7 @@ fn parse_questions(update: &Value) -> Option<Vec<Question>> {
                                 .filter(|s| !s.is_empty())?
                                 .to_string();
                             Some(QuestionOption {
+                                preview: None,
                                 label,
                                 description: opt
                                     .get("description")
