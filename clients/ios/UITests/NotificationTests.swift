@@ -3,6 +3,29 @@ import XCTest
 /// Opt-in checks of how iOS presents a prompt notification. The app posts a
 /// local notification through the same code the service extension uses.
 final class NotificationTests: XCTestCase {
+    func testInterviewPreviewAdvancesEveryPageAndKeepsDrafts() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment["CRABIGATOR_TEST_QUESTIONS"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Choose a layout"].waitForExistence(timeout: 10))
+        capture("ASCII preview question")
+        app.buttons["Prompt option 1"].tap()
+        XCTAssertTrue(app.staticTexts["What happens at the end?"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["last-question-action"].label, "1,enter")
+        let field = app.textViews["Your answer"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap(); field.typeText("Keep my draft")
+        app.buttons["Refresh cursor"].tap()
+        XCTAssertEqual(field.value as? String, "Keep my draft")
+        capture("Second question keeps its draft")
+        app.buttons["Prompt option 1"].tap()
+        XCTAssertTrue(app.staticTexts["Start automatically?"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["last-question-action"].label, "1")
+        capture("Third question")
+        app.buttons["Prompt option 1"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["Prompt option 1"])], timeout: 5), .completed)
+    }
     private let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
 
     func testPhoneSendAndRemoteResolution() throws {

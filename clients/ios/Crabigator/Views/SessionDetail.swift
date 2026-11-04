@@ -82,7 +82,7 @@ struct SessionDetail: View {
 
                         }
                     }
-                    if let prompt = stream.prompt { PromptPanel(prompt: prompt, revision: stream.revision, disabled: stream.sending || !stream.connected || stream.revision == nil) { action, revision in stream.send(action, guarded: true, expectedRevision: revision) } }
+                    PromptTransition(prompt: stream.prompt, revision: stream.revision, disabled: stream.sending || !stream.connected || stream.revision == nil) { action, revision in stream.send(action, guarded: true, expectedRevision: revision) }.id(session.id)
                     SessionComposer(stream: stream, model: model, sessionID: session.id, active: active).id(session.id)
                 }.background(Crab.ink).offset(x: drag).clipped()
                     .task(id: session.id) { pinned = true; drag = 0; loadingSlowly = false; try? await Task.sleep(for: .seconds(8)); if !Task.isCancelled { loadingSlowly = true } }

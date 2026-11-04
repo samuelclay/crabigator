@@ -5,6 +5,38 @@ import UserNotifications
 @testable import Crabigator
 
 final class CrabigatorTests: XCTestCase {
+    func testPreviewChoiceConfirmsOnlyThatPage() throws {
+        var prompt: JSON = ["prompt_type": "question", "current_question": 0, "cursor_row": 1,
+            "questions": [
+                ["question": "Layout?", "options": [["label": "List", "preview": "┌ List ┐"], ["label": "Cards", "preview": "┌ Cards ┐"]]],
+                ["question": "Next?", "options": [["label": "Yes"], ["label": "No"]]]]]
+        let previewSteps = try PromptActions.action(prompt, option: 1).body.array("steps")
+        XCTAssertEqual(previewSteps.count, 2)
+        XCTAssertEqual(previewSteps[0].text("text"), "2")
+        XCTAssertEqual(previewSteps[1].text("key"), "enter")
+        XCTAssertFalse(PromptActions.allowsText(prompt))
+        let firstID = PromptActions.pageID(prompt)
+        prompt["cursor_row"] = 2; prompt["checked"] = [2]; prompt["custom_text"] = "draft"
+        XCTAssertEqual(PromptActions.pageID(prompt), firstID)
+        prompt["current_question"] = 1
+        XCTAssertNotEqual(PromptActions.pageID(prompt), firstID)
+        let nextSteps = try PromptActions.action(prompt, option: 1).body.array("steps")
+        XCTAssertEqual(nextSteps.count, 1, "A normal page advances on the digit; Enter would skip another page")
+        XCTAssertTrue(PromptActions.allowsText(prompt))
+    }
+
+    @MainActor func testSocketReplayDoesNotResurrectAnAnsweredCard() {
+        let stream = SessionStream()
+        let old: JSON = ["prompt_type": "question", "questions": [["question": "Old?", "options": []]]]
+        stream.receive(["type": "prompt", "prompt": old])
+        XCTAssertNil(stream.prompt, "Only an answerable snapshot may restore a card")
+        stream.prompt = old; stream.revision = 10
+        stream.receive(["type": "prompt", "prompt": NSNull()])
+        XCTAssertNotNil(stream.prompt, "Keep the disabled card while the snapshot loads")
+        XCTAssertNil(stream.revision)
+        stream.stop()
+    }
+
     func testComputerColorsMatchEveryClient() {
         for (name, palette) in [("claybook", 220), ("claybook-m4", 208), ("claymac-studio", 69), ("claybook-tavus", 115), (" ClayMac-Studio.LOCAL ", 69), ("ClayMac Studio", 69), ("ClayBook M4", 208), ("ClayBook Tavus", 115)] {
             XCTAssertEqual(Crab.computerPalette(name), palette, name)

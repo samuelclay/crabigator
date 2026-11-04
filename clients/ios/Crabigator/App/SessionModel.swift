@@ -130,7 +130,9 @@ import OSLog
         case "desktop_status":
             connected = e.bool("connected"); desktopStatusKnown = true
             if !connected { prompt = nil }
-        case "prompt": prompt = e["prompt"] as? JSON; revision = nil
+        // Socket replays can still contain a consumed prompt. Only the snapshot
+        // knows whether it is answerable; keep the card disabled until it arrives.
+        case "prompt": revision = nil
         case "state": selected?.state = e.text("state"); revision = nil; if !["question", "permission"].contains(e.text("state")) { prompt = nil }
         case "git", "changes", "recap", "recap_history", "prs", "commit_history", "stats": details[e.text("type")] = e
         default: break
@@ -138,6 +140,7 @@ import OSLog
         if ["prompt", "state", "desktop_status"].contains(e.text("type")) { schedulePromptRefresh(reconcile: true) }
     }
     private func schedulePromptRefresh(reconcile: Bool = false) {
+        snapshotRequest += 1
         promptTask?.cancel()
         let id = selected?.id
         promptTask = Task {
@@ -164,6 +167,7 @@ import OSLog
     func send(_ action: TerminalAction, guarded: Bool = false, expectedRevision: Int? = nil, onSent: @escaping () -> Void = {}) {
         guard let id = selected?.id, connected, !sending else { return }
         if guarded && (expectedRevision == nil || expectedRevision != revision) { error = "This question changed. Please review it again."; Task { await refreshPrompt() }; return }
+        snapshotRequest += 1
         let epoch = generation; sending = true; error = nil
         Task {
             defer { if epoch == generation { sending = false } }

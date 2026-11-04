@@ -5,6 +5,14 @@ struct TerminalAction {
     var body: JSON
 }
 enum PromptActions {
+    static func hasPreview(_ p: JSON) -> Bool { question(p)?.array("options").contains { $0["preview"] is String } == true }
+    /// Page identity excludes cursor, ticks and typed text so edits don't restart transitions.
+    static func pageID(_ p: JSON) -> String {
+        let content: JSON = p.text("prompt_type") == "question"
+            ? ["type": "question", "questions": p.array("questions"), "page": p.int("current_question"), "review": p["review"] ?? NSNull()]
+            : p
+        return String(data: (try? JSONSerialization.data(withJSONObject: content, options: [.sortedKeys])) ?? Data(), encoding: .utf8) ?? ""
+    }
     static func question(_ p: JSON) -> JSON? { let qs = p.array("questions"), i = p.int("current_question"); return qs.indices.contains(i) ? qs[i] : nil }
     static func details(_ p: JSON) -> String {
         guard let input = p["tool_input"], !(input is NSNull) else { return "" }
@@ -34,7 +42,7 @@ enum PromptActions {
     }
     static func allowsText(_ p: JSON) -> Bool {
         if p.text("prompt_type") == "text" { return p.text("state") == "question" }
-        return p["review"] == nil && question(p)?.bool("allows_other", true) == true
+        return p["review"] == nil && !hasPreview(p) && question(p)?.bool("allows_other", true) == true
     }
     /// `toggling` flips those checkboxes of a multi-select page before submitting it.
     static func action(_ p: JSON, option: Int? = nil, text: String? = nil, submit: Bool = false, toggling: [Int] = []) throws -> TerminalAction {
@@ -61,6 +69,9 @@ enum PromptActions {
         var cursor = p.int("cursor_row", 1)
         func move(_ target: Int) { for _ in 0..<min(100, abs(target - cursor)) { key(target > cursor ? "down" : "up") }; cursor = target }
         func pick(_ option: Int) {
+            if hasPreview(p) {
+                type(String(option + 1)); key("enter"); return
+            }
             if cursor == count + 1 { key(grok ? "escape" : "up"); cursor -= 1 }
             if grok && multi { move(option + 1); key("space") }
             else if grok { type(String(UnicodeScalar(97 + option)!)) }
