@@ -4,6 +4,7 @@
 //! for the Claude Code CLI.
 
 mod hook_script;
+mod statusline;
 pub mod transcript;
 
 use std::fs;
@@ -531,6 +532,26 @@ impl Platform for ClaudeCodePlatform {
         PlatformKind::Claude.command()
     }
 
+    /// Start Claude with crabigator's statusline, the only place Claude Code
+    /// says how large its context window is. A user's own `--settings` is
+    /// left alone, since it may set a statusline of its own.
+    fn spawn_args(&self, user_args: Vec<String>) -> Vec<String> {
+        let own_settings = user_args
+            .iter()
+            .any(|arg| arg == "--settings" || arg.starts_with("--settings="));
+        if own_settings {
+            return user_args;
+        }
+        let Ok(script) = statusline::install(&self.crabigator_dir) else {
+            return user_args;
+        };
+        let project = std::env::current_dir().unwrap_or_default();
+        let settings = statusline::settings_arg(&script, &project, &self.claude_dir);
+        let mut args = vec!["--settings".to_string(), settings];
+        args.extend(user_args);
+        args
+    }
+
     fn ensure_hooks_installed(&self) -> Result<()> {
         if self.is_current_version() {
             match self.hooks_registered() {
@@ -559,6 +580,10 @@ impl Platform for ClaudeCodePlatform {
         if stats.tool_timestamps.len() > 1000 {
             let start = stats.tool_timestamps.len() - 1000;
             stats.tool_timestamps = stats.tool_timestamps[start..].to_vec();
+        }
+
+        if let Ok(session_id) = std::env::var("CRABIGATOR_SESSION_ID") {
+            stats.context = statusline::read_context(&statusline::context_path(&session_id));
         }
 
         Ok(stats)
