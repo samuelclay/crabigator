@@ -484,10 +484,14 @@ impl FlowColumn {
         }
     }
 
-    /// What changed in a stats refresh: tool calls finished, compactions.
-    /// Once Claude Code's hooks speak, they tell these sooner, and the stats
-    /// go unheard.
+    /// What changed in a stats refresh: tool calls finished, compactions,
+    /// how full the context window is (the scene turns blue from 85%). Once
+    /// Claude Code's hooks speak, they tell the rest sooner, and only the
+    /// context window is heard from the stats.
     pub fn observe_stats(&mut self, stats: &PlatformStats) {
+        self.activity.context_percent = stats
+            .context
+            .map_or(0.0, |context| context.percent() as f64);
         if self.hooks.as_ref().is_some_and(|hooks| hooks.live) {
             return;
         }
@@ -770,6 +774,28 @@ mod tests {
         assert_eq!(flow.level(), 3.0);
         flow.preferences.fade = true;
         assert_eq!(flow.level(), 10.0);
+    }
+
+    #[test]
+    fn a_nearly_full_context_turns_the_scene_blue() {
+        let mut flow = column("fire");
+        flow.set_geometry(Some(rect(24, 8)));
+        let mut stats = PlatformStats {
+            context: crate::platforms::ContextUsage::new(840_000, 1_000_000),
+            ..PlatformStats::default()
+        };
+        flow.observe_stats(&stats);
+        flow.tick();
+        assert_eq!(flow.scene.dials().tint, Tint::Normal);
+        stats.context = crate::platforms::ContextUsage::new(850_000, 1_000_000);
+        flow.observe_stats(&stats);
+        flow.tick();
+        assert_eq!(flow.scene.dials().tint, Tint::Blue);
+        // A compaction empties the window, and the blue goes.
+        stats.context = crate::platforms::ContextUsage::new(40_000, 1_000_000);
+        flow.observe_stats(&stats);
+        flow.tick();
+        assert_eq!(flow.scene.dials().tint, Tint::Normal);
     }
 
     fn advance(flow: &mut FlowColumn) {
