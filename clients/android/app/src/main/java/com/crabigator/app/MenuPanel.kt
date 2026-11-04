@@ -249,6 +249,7 @@ private val Cyan = CrabColors.Cyan
         TextButton({ uri.openUri(model.credentials.origin + "/mcp-tools") }) { Text("Tools and examples", color = Cyan) }
     }
     MenuSection("This device") {
+        TextButton({ uri.openUri("https://drinkcrabigator.com/privacy") }) { Text("Privacy policy", color = Cyan) }
         Text(android.os.Build.MODEL, fontSize = 14.sp); Text(model.credentials.origin, fontSize = 12.sp, color = Muted)
         Text("Version ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = Muted)
         if (confirmUnpair) { Text("Unpair this device?", fontSize = 14.sp); Row { TextButton({ model.unpair() }) { Text("Unpair", color = MaterialTheme.colorScheme.error) }; TextButton({ confirmUnpair = false }) { Text("Cancel") } } }

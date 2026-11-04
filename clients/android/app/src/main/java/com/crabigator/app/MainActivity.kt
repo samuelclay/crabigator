@@ -217,6 +217,9 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun Pairing(s: AppState, model: SessionModel) {
+    var demo by rememberSaveable { mutableStateOf(false) }
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    if (demo) { DemoView { demo = false }; return }
     var code by rememberSaveable { mutableStateOf("") }; var server by rememberSaveable { mutableStateOf(model.credentials.origin) }; var advanced by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(28.dp), contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -229,6 +232,8 @@ class MainActivity : ComponentActivity() {
             OutlinedTextField(code, { code = it.uppercase().take(11) }, label = { Text("Pairing code") }, placeholder = { Text("ABC-DEF-GHI") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp))
             if (s.error != null) Text(s.error, color = MaterialTheme.colorScheme.error)
             Button(onClick = { model.pair(code, server) }, enabled = code.isNotBlank() && !s.loading, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text(if (s.loading) "Connecting…" else "Pair") }
+            TextButton(onClick = { demo = true }) { Text("Try a demo") }
+            TextButton(onClick = { uriHandler.openUri("https://drinkcrabigator.com/privacy") }) { Text("Privacy policy") }
             TextButton(onClick = { advanced = !advanced }) { Text("Server", color = Muted) }
             if (advanced) OutlinedTextField(server, { server = it }, label = { Text("HTTPS server address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         }

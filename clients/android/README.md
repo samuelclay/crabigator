@@ -57,7 +57,25 @@ The detail pane’s top-right Style menu contains text size, line spacing, wrapp
 
 Unit tests cover terminal color/spacing and question input translation. `TerminalCellTest` measures native text on a device: the blinking bullet and all six spinner frames must preserve following text positions and row height at three font sizes. Worker tests cover prompt revisions, simultaneous replies, hibernation, auth/account isolation, and FCM token lifecycle. Device checks should cover phone and tablet layouts, rotation, composer/IME, voice edit/cancel/send, terminal selection, option and free-text replies, background notification delivery, desktop resolution, and an old notification racing a newer question.
 
-The first builds are direct debug installs, not a Play Store release. Release signing, store listing, and store submission are separate work.
+## Store build
+
+`python3 scripts/build-store.py` runs unit tests, release lint, and builds a signed
+`app/build/outputs/bundle/release/app-release.aab`. Use JDK 21 and Android SDK 36.
+The release build requires the Firebase client settings above and an upload key;
+it fails if either is missing. Debug and local profile builds remain independent.
+
+Set `CRABIGATOR_ANDROID_KEYSTORE` to the upload keystore and provide
+`CRABIGATOR_ANDROID_STORE_PASSWORD` through your secret manager. The alias is
+`crabigator-upload`. On macOS, the script also supports the encrypted keystore at
+`~/.crabigator/signing/crabigator-upload.jks` and its password in Keychain under
+service `com.crabigator.android-upload`, account `crabigator-upload`. Never commit
+the keystore, password, or Firebase client configuration. Keep a secure backup of
+the upload key before relying on it for future releases.
+
+The pairing screen includes **Try a demo**, an offline walkthrough with sample
+sessions, a PR board, a question, and local sample messages. It does not pair a
+device or send messages to a server. Privacy information is available from the
+pairing screen and Settings at <https://drinkcrabigator.com/privacy>.
 
 ## Scroll profiling
 

@@ -7,6 +7,8 @@ plugins {
 val firebase = Properties().apply {
     rootProject.file("firebase.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
 }
+val releaseStore = providers.environmentVariable("CRABIGATOR_ANDROID_KEYSTORE").orNull
+val releasePassword = providers.environmentVariable("CRABIGATOR_ANDROID_STORE_PASSWORD").orNull
 android {
     namespace = "com.crabigator.app"
     compileSdk = 36
@@ -15,13 +17,24 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         for (key in listOf("google_app_id", "google_api_key", "gcm_defaultSenderId", "project_id")) {
             resValue("string", key, firebase.getProperty(key, ""))
         }
     }
+    signingConfigs {
+        create("release") {
+            if (releaseStore != null && releasePassword != null) {
+                storeFile = file(releaseStore)
+                storePassword = releasePassword
+                keyAlias = "crabigator-upload"
+                keyPassword = releasePassword
+            }
+        }
+    }
     buildTypes {
+        getByName("release") { signingConfig = signingConfigs.getByName("release") }
         create("profile") {
             initWith(getByName("release"))
             signingConfig = signingConfigs.getByName("debug")
@@ -34,6 +47,16 @@ android {
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
+}
+tasks.matching { it.name == "validateSigningRelease" || it.name == "bundleRelease" || it.name == "assembleRelease" }.configureEach {
+    doFirst {
+        check(!releaseStore.isNullOrBlank() && !releasePassword.isNullOrBlank()) {
+            "Set CRABIGATOR_ANDROID_KEYSTORE and CRABIGATOR_ANDROID_STORE_PASSWORD for a signed store build."
+        }
+        check(listOf("google_app_id", "google_api_key", "gcm_defaultSenderId", "project_id").all { !firebase.getProperty(it).isNullOrBlank() }) {
+            "Add the Firebase Android client configuration to firebase.properties before building a store release."
+        }
+    }
 }
 dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.9")
