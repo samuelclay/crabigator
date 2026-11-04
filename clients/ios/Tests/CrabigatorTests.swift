@@ -37,6 +37,34 @@ final class CrabigatorTests: XCTestCase {
         stream.stop()
     }
 
+    func testContextUsageReadsLikeTheCLI() {
+        let usage = ContextUsage(["context_used": 186_002, "context_limit": 1_000_000])
+        XCTAssertEqual(usage?.label, "186k / 1M · 19%")
+        XCTAssertEqual(usage?.percent, 19)
+        XCTAssertNil(ContextUsage(["context_used": 5]))
+        XCTAssertNil(ContextUsage(["context_used": 5, "context_limit": 0]))
+        let tokens = [0: "0", 512: "512", 1000: "1k", 9500: "9.5k", 9960: "10k", 258_400: "258k", 999_600: "1M", 1_500_000: "1.5M"]
+        for (count, text) in tokens { XCTAssertEqual(ContextUsage.tokens(count), text, "\(count)") }
+    }
+
+    func testContextStatStartsHiddenEvenInOlderSavedPreferences() throws {
+        XCTAssertFalse(Preferences().visible("context"))
+        // Preferences saved before the context stat existed list only what they hid.
+        let saved = try JSONEncoder().encode(Preferences())
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: saved) as? [String: Any])
+        json.removeValue(forKey: "shownStats")
+        json["hidden"] = ["tools"]
+        var older = try JSONDecoder().decode(Preferences.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertTrue(older.visible("compactions"))
+        XCTAssertFalse(older.visible("context"))
+        older.toggle("context")
+        XCTAssertTrue(older.visible("context"))
+        let reloaded = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(older))
+        XCTAssertTrue(reloaded.visible("context"))
+        older.toggle("context")
+        XCTAssertFalse(older.visible("context"))
+    }
+
     func testComputerColorsMatchEveryClient() {
         for (name, palette) in [("claybook", 220), ("claybook-m4", 208), ("claymac-studio", 69), ("claybook-tavus", 115), (" ClayMac-Studio.LOCAL ", 69), ("ClayMac Studio", 69), ("ClayBook M4", 208), ("ClayBook Tavus", 115)] {
             XCTAssertEqual(Crab.computerPalette(name), palette, name)

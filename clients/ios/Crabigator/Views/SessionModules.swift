@@ -261,8 +261,15 @@ struct SessionSummaryBar: View {
             ("prompts", "⟩", stats["prompts"].map { String(describing: $0) } ?? "—", "Prompts", Crab.orange, ageText(stats.int("prompts_changed_at", session.promptAt), now: now)),
             ("completions", "⋖", stats["completions"].map { String(describing: $0) } ?? "—", "Completions", Crab.deepOrange, ageText(stats.int("completions_changed_at", session.completionAt), now: now)),
             ("tools", "⚒", stats["tools"].map { String(describing: $0) } ?? session.tools.map(String.init) ?? "—", "Tools", Crab.orange, ""),
-            ("compactions", "⊜", stats["compressions"].map { String(describing: $0) } ?? session.compactions.map(String.init) ?? "—", "Compactions", Crab.purple, "")
+            ("compactions", "⊜", stats["compressions"].map { String(describing: $0) } ?? session.compactions.map(String.init) ?? "—", "Compactions", Crab.purple, ""),
+            ("context", "◔", context?.label ?? "—", "Context", contextColor, "")
         ].filter { prefs.visible($0.0) }
+    }
+    private var context: ContextUsage? { ContextUsage(stats) }
+    /// Calm, then a warning as the window fills, as in the CLI.
+    private var contextColor: Color {
+        guard let percent = context?.percent else { return Crab.title }
+        return percent >= 85 ? Crab.red : percent >= 70 ? Crab.yellow : Crab.title
     }
     private func recentAgeKeys(_ now: Int) -> Set<String> {
         let candidates = [

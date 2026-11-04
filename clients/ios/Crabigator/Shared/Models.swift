@@ -81,6 +81,29 @@ struct PullRequest: Identifiable, Equatable {
     func matches(_ query: String) -> Bool { query.isEmpty || "\(title) \(repo) \(number)".localizedCaseInsensitiveContains(query) }
 }
 
+/// How full the assistant's context window is, from a stats event: "186k / 1M · 19%".
+struct ContextUsage: Equatable {
+    let used, limit: Int
+    init?(_ stats: JSON) {
+        guard let used = stats["context_used"] as? Int, let limit = stats["context_limit"] as? Int, limit > 0 else { return nil }
+        self.used = used; self.limit = limit
+    }
+    var percent: Int { Int((Double(used) * 100 / Double(limit)).rounded()) }
+    var label: String { "\(Self.tokens(used)) / \(Self.tokens(limit)) · \(percent)%" }
+    /// A token count in a few characters, as the CLI shows it: 512, 9.5k, 186k, 1M, 1.5M.
+    static func tokens(_ count: Int) -> String {
+        func oneDecimal(_ value: Double, _ unit: String) -> String {
+            let text = String(format: "%.1f", value)
+            return (text.hasSuffix(".0") ? String(text.dropLast(2)) : text) + unit
+        }
+        if count < 1000 { return "\(count)" }
+        if count < 9950 { return oneDecimal(Double(count) / 1000, "k") }
+        let thousands = (Double(count) / 1000).rounded()
+        if thousands < 1000 { return "\(Int(thousands))k" }
+        return oneDecimal(Double(count) / 1_000_000, "M")
+    }
+}
+
 func durationText(_ seconds: Int?) -> String {
     guard let seconds else { return "—" }; let s = max(0, seconds)
     if s < 60 { return "\(s)s" }; if s < 3600 { return "\(s / 60)m" }
@@ -147,6 +170,10 @@ struct Preferences: Codable, Equatable {
     var wrap = true, sidebarRight = false, showEnded = false
     var grouping = "all", order = "recent", density = "comfortable"
     var hidden: Set<String> = ["tools", "compactions"]
+    /// Stats most people never need start hidden, even in preferences saved
+    /// before they existed; turning one on records it here.
+    static let optInStats: Set<String> = ["context"]
+    private var shownStats: Set<String>?
     func includesActivity(_ timestamp: Int, now: Int) -> Bool {
         guard boardAgeHours > 0 else { return true }
         let cutoff = boardAgeHours == 24 ? BoardAge.day : BoardAge.age(boardAgeHours * 3600 - 1)
@@ -156,8 +183,14 @@ struct Preferences: Codable, Equatable {
         (showEnded || session.active) && (boardComputer.isEmpty || boardComputer == session.machine)
             && includesActivity(session.boardActivity(now, prs: prs), now: now)
     }
-    func visible(_ key: String) -> Bool { !hidden.contains(key) }
-    mutating func toggle(_ key: String) { if !hidden.insert(key).inserted { hidden.remove(key) } }
+    func visible(_ key: String) -> Bool { Self.optInStats.contains(key) ? shownStats?.contains(key) ?? false : !hidden.contains(key) }
+    mutating func toggle(_ key: String) {
+        if Self.optInStats.contains(key) {
+            var shown = shownStats ?? []
+            if !shown.insert(key).inserted { shown.remove(key) }
+            shownStats = shown
+        } else if !hidden.insert(key).inserted { hidden.remove(key) }
+    }
     static func load() -> Self { UserDefaults.standard.data(forKey: "appearance").flatMap { try? JSONDecoder().decode(Self.self, from: $0) } ?? Self() }
     func save() { if let data = try? JSONEncoder().encode(self) { UserDefaults.standard.set(data, forKey: "appearance") } }
 }

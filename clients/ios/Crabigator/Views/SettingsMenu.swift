@@ -101,7 +101,7 @@ struct SettingsMenu: View {
                 Section("Session list") {
                     Picker("Position", selection: $model.preferences.sidebarRight) { Text("Left").tag(false); Text("Right").tag(true) }.pickerStyle(.segmented)
                 }
-                Section("Visible stats") { StyleMenu(model: model).visibility([("sessionTime", "Session time"), ("thinkingTime", "Thinking time"), ("promptRecency", "Last prompt"), ("completionRecency", "Last completion"), ("tools", "Tools"), ("compactions", "Compactions")]) }
+                Section("Visible stats") { StyleMenu(model: model).visibility([("sessionTime", "Session time"), ("thinkingTime", "Thinking time"), ("promptRecency", "Last prompt"), ("completionRecency", "Last completion"), ("tools", "Tools"), ("compactions", "Compactions"), ("context", "Context")]) }
                 Section("Sign-in") {
                     if !accountLoaded { ProgressView() }
                     else if identities.isEmpty { Text("Pairing code") }
