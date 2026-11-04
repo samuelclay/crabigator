@@ -228,6 +228,7 @@ export const dashboardHtml = `<!DOCTYPE html>
                         <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-completionRecency" onchange="toggleSidebarStat('completionRecency')"><span class="sidebar-checkbox-icon" style="color:#8b949e">◷</span><span class="sidebar-checkbox-label">Last completion</span></label>
                         <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-tools" onchange="toggleSidebarStat('tools')"><span class="sidebar-checkbox-icon" style="color:#f0883e">⚒</span><span class="sidebar-checkbox-label">Tools</span></label>
                         <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-compactions" onchange="toggleSidebarStat('compactions')"><span class="sidebar-checkbox-icon" style="color:#e879f9">⊜</span><span class="sidebar-checkbox-label">Compactions</span></label>
+                        <label class="sidebar-checkbox"><input type="checkbox" id="sb-stat-context" onchange="toggleSidebarStat('context')"><span class="sidebar-checkbox-icon" style="color:#5fafff">◔</span><span class="sidebar-checkbox-label">Context</span></label>
                     </div>
                 </div>
             </div>

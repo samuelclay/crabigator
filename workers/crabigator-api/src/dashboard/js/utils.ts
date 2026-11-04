@@ -9,6 +9,29 @@ export const utilsJs = `
             return hours + 'h ' + (mins % 60) + 'm';
         }
 
+        // A token count in a few characters: 512, 9.5k, 186k, 1M, 1.5M (as the CLI shows it).
+        function formatTokens(tokens) {
+            if (tokens < 1000) return String(tokens);
+            if (tokens < 9950) return (tokens / 1000).toFixed(1).replace(/\\.0$/, '') + 'k';
+            const thousands = Math.round(tokens / 1000);
+            if (thousands < 1000) return thousands + 'k';
+            return (tokens / 1000000).toFixed(1).replace(/\\.0$/, '') + 'M';
+        }
+
+        // How full the context window is ("186k / 1M · 19%"), or null when the
+        // assistant hasn't reported it.
+        function contextUsage(stats) {
+            const used = stats?.context_used;
+            const limit = stats?.context_limit;
+            if (typeof used !== 'number' || typeof limit !== 'number' || limit <= 0) return null;
+            const percent = Math.round(used * 100 / limit);
+            return {
+                percent,
+                label: formatTokens(used) + ' / ' + formatTokens(limit) + ' · ' + percent + '%',
+                color: percent >= 85 ? '#ff5f5f' : percent >= 70 ? '#ffd700' : '#5fafff',
+            };
+        }
+
         function sessionCount(n) {
             return n + (n === 1 ? ' session' : ' sessions');
         }

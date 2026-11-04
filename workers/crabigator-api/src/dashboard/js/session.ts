@@ -477,6 +477,7 @@ export const sessionJs = `
                                     <span class="wh-stat" data-card-stats="completions completionRecency" data-tooltip="Completions"><span class="wh-icon" style="color:#8b949e">⋖</span><span class="wh-value" data-card-stats="completions" id="widgets-completions-\${session.id}">0</span><span class="wh-elapsed" data-card-stats="completionRecency" id="widgets-completions-elapsed-\${session.id}"></span></span>
                                     <span class="wh-stat wh-tools" data-card-stats="tools" data-tooltip="Tool calls"><span class="wh-icon" style="color:#f0883e">⚒</span><span class="wh-value" id="widgets-tools-\${session.id}">—</span></span>
                                     <span class="wh-stat" data-card-stats="compactions" data-tooltip="Compactions"><span class="wh-icon" style="color:#e879f9">⊜</span><span class="wh-value" id="widgets-compactions-\${session.id}">0</span><span class="wh-elapsed" id="widgets-compactions-elapsed-\${session.id}"></span></span>
+                                    <span class="wh-stat" data-card-stats="context" data-tooltip="Context"><span class="wh-icon" style="color:#8b949e">◔</span><span class="wh-value" id="widgets-context-\${session.id}">—</span></span>
                                     <span class="wh-git" id="widgets-git-\${session.id}"></span>
                                 </div>
                             </div>

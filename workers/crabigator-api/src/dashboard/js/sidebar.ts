@@ -468,6 +468,13 @@ export const sidebarJs = `
                     + '</span>';
             }
 
+            if (vs.context) {
+                const context = contextUsage(stats);
+                statsHtml += '<span class="si-stat"><span class="si-icon" style="color:#8b949e">◔</span>'
+                    + (context ? '<span style="color:' + context.color + '">' + context.label + '</span>' : '—')
+                    + '</span>';
+            }
+
             // Tools and compactions don't have matching data in popover stats, show count if available
             // (These stats are available in the session card widgets, but the popover format uses simpler stats)
 

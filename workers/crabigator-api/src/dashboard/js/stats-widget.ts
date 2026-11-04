@@ -85,6 +85,12 @@ export const statsWidgetJs = `
                 );
             }
             if (compactionsEl) compactionsEl.textContent = stats.compressions || 0;
+            const contextEl = document.getElementById('widgets-context-' + sessionId);
+            if (contextEl) {
+                const context = contextUsage(stats);
+                contextEl.textContent = context ? context.label : '—';
+                contextEl.style.color = context ? context.color : '';
+            }
 
             // Update elapsed times
             const promptsElapsedEl = document.getElementById('widgets-prompts-elapsed-' + sessionId);

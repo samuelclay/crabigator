@@ -90,7 +90,9 @@ export const constantsJs = `
             completions: true,
             completionRecency: true,
             tools: true,
-            compactions: true
+            compactions: true,
+            // Most people never need it, so it starts unchecked.
+            context: false
         };
         let sidebarVisibleStats = { ...sidebarStatsDefaults };
         try {

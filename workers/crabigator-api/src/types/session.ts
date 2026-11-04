@@ -167,6 +167,10 @@ export interface StatsEvent {
     completions_changed_at?: number;
     /** Unix timestamp when compressions count last changed */
     compressions_changed_at?: number;
+    /** Tokens in the context window, when the assistant reports it */
+    context_used?: number;
+    /** The context window's size for the current model */
+    context_limit?: number;
     /** Unix timestamps of tool invocations for sparkline */
     tool_timestamps: number[];
     /** Unix timestamp when session started */
