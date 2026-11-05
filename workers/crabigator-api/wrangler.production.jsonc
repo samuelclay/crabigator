@@ -44,22 +44,10 @@
     "crons": ["*/5 * * * *", "0 6 * * *"]
   },
 
+  // Every path, so links with a query string (like ?utm_source=) reach the
+  // Worker: exact-path routes don't match them, and nothing else serves the domain.
   "routes": [
-    { "pattern": "drinkcrabigator.com/privacy", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/unsubscribe*", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/api/*", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/dashboard*", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/oauth/*", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/mcp*", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/authorize*", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/token", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/register", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/.well-known/*", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/pair/*", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/staff*", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/pr-action*", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/assets/*", "zone_name": "drinkcrabigator.com" },
-    { "pattern": "drinkcrabigator.com/", "zone_name": "drinkcrabigator.com" }
+    { "pattern": "drinkcrabigator.com/*", "zone_name": "drinkcrabigator.com" }
   ],
 
   "vars": {
