@@ -71,14 +71,6 @@ struct SessionModules: View {
     /// The session's flow scene sits at the right of the modules, as in the terminal.
     private var flow: JSON? { prefs.visible("flow") ? data.flow : nil }
     private var flowWidth: CGFloat { min(220, width * 0.36) }
-    /// The scene keeps the height of the closed rows (44pt and a hairline each),
-    /// so opening a section or scrolling leaves it where it is.
-    private var flowHeight: CGFloat {
-        let rows = [prefs.visible("recap") && !data.recap.isEmpty, prefs.visible("prs") && !prs.isEmpty,
-                    prefs.visible("git") && (!data.branch.isEmpty || !data.files.isEmpty),
-                    prefs.visible("changes") && !data.changes.isEmpty, prefs.visible("commits") && !data.commits.isEmpty].filter { $0 }.count
-        return CGFloat(max(1, rows)) * 44.5
-    }
     var body: some View {
         VStack(spacing: 0) {
         ScrollView {
@@ -112,9 +104,10 @@ struct SessionModules: View {
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
                 .fixedSize(horizontal: false, vertical: true)
                 .background(GeometryReader { proxy in Color.clear.preference(key: ModuleContentHeight.self, value: proxy.size.height) })
-        }.overlay(alignment: .topTrailing) {
+        }.overlay(alignment: .trailing) {
+            // Outside the scroll view: the scene fills the drawer as it shows and never scrolls.
             if let flow {
-                FlowView(event: flow).frame(width: flowWidth).frame(maxHeight: flowHeight)
+                FlowView(event: flow).frame(width: flowWidth).frame(maxHeight: .infinity)
                     .overlay(alignment: .leading) { Rectangle().fill(line).frame(width: 0.5) }
             }
         }

@@ -10,6 +10,10 @@ final class FlowPlayer {
     private var cells: [UInt32] = []
     private var columns = 0, rows = 0
     private var next = Date.distantPast
+    private var pending = (0, 0), pendingSince = Date.distantPast
+    /// A new size starts the scene over, and fire takes a couple of seconds to
+    /// fill in, so a resized scene runs this many frames ahead.
+    private static let warmUp = 30
 
     deinit { flow_free(scene) }
 
@@ -22,7 +26,7 @@ final class FlowPlayer {
             flow_free(scene)
             scene = Array(name.utf8).withUnsafeBufferPointer { flow_new($0.baseAddress, $0.count, seed, hue) }
             self.key = key
-            next = .distantPast
+            columns = 0; rows = 0
         }
         let tint: UInt32 = ["smoke": 1, "blue": 2][event.text("tint")] ?? 0
         flow_set(scene, (event["level"] as? NSNumber)?.doubleValue ?? 1, event.bool("waiting"), event.bool("night"), tint,
@@ -30,18 +34,29 @@ final class FlowPlayer {
     }
 
     /// The frame to draw at `now` in `size`: stepped when the scene's pace says so.
+    /// While the drawer opens or closes, the last frame stretches to fit; the scene
+    /// takes the new size once it holds still, so it starts over only once.
     func frame(at now: Date, size: CGSize) -> (cells: [UInt32], columns: Int, rows: Int) {
         guard let scene, size.width > 0, size.height > 0 else { return ([], 0, 0) }
         // Cells about 7.5pt tall, shaped like a terminal's (0.6 wide to 1.45 tall).
         let rows = max(3, Int((size.height / 7.5).rounded()))
         let columns = max(6, Int((size.width / (size.height / CGFloat(rows) * 0.6 / 1.45)).rounded()))
-        if now >= next || columns != self.columns || rows != self.rows {
-            let words = flow_frame(scene, UInt32(columns), UInt32(rows))
-            cells = Array(UnsafeBufferPointer(start: words, count: columns * rows * 3))
-            self.columns = columns; self.rows = rows
+        var warm = 0
+        if columns != self.columns || rows != self.rows {
+            if self.columns == 0 || (pending == (columns, rows) && now.timeIntervalSince(pendingSince) > 0.3) {
+                self.columns = columns; self.rows = rows
+                warm = Self.warmUp; next = .distantPast
+            } else if pending != (columns, rows) {
+                pending = (columns, rows); pendingSince = now
+            }
+        }
+        if now >= next {
+            for _ in 0..<warm { _ = flow_frame(scene, UInt32(self.columns), UInt32(self.rows)) }
+            let words = flow_frame(scene, UInt32(self.columns), UInt32(self.rows))
+            cells = Array(UnsafeBufferPointer(start: words, count: self.columns * self.rows * 3))
             next = now.addingTimeInterval(Double(flow_pace(scene)) / 1000)
         }
-        return (cells, columns, rows)
+        return (cells, self.columns, self.rows)
     }
 }
 
