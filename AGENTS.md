@@ -78,6 +78,10 @@ make continue        # Continue last conversation
 make prs             # Build and run the cross-session PR board (alias: make pr)
 ```
 
+### Leave a fresh build behind
+
+`make run` and the provider targets (`make claude`, `make codex`, and the rest) run the debug build through `cargo run`. After changing anything the CLI compiles (`src/`, `Cargo.toml`, the hook script), finish with `make build` so the user's next `make run` starts at once instead of compiling first. `make prs` runs the release build, so after changing the PR board also run `make release`. If the build fails in files you didn't touch, another session is probably mid-edit: say so when you hand off rather than changing its files.
+
 ## Testing
 
 Fixture-based snapshots live under `tests/fixtures/` and are driven by `src/fixtures_tests.rs`.
