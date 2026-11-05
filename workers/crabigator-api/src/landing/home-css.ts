@@ -216,8 +216,9 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .hero { padding: 36px 24px 18px; }
     .hero h1 { font-size: clamp(42px, 10.8vw, 66px); }
     .hero-description { font-size: 17px; }
-    .hero-start { margin-top: 28px; }
-    .hero-screens { margin-top: 210px; }
+    .hero-start { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 28px; }
+    .button-primary, .button-secondary { justify-content: center; padding: 12px 8px; font-size: 15px; }
+    .hero-screens { margin-top: 40px; }
     .desktop-frame { border-radius: 7px; }
     .desktop-bar { padding: 9px; gap: 10px; font-size: 8px; }
     .desktop-bar > span:last-child { display: none; }
@@ -226,10 +227,10 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .desktop-capture, .pair-capture { font-size: calc((100cqw - 18px) / (var(--cols) * .6)); }
     .desktop-capture { padding: 14px 9px; }
     .pair-capture { padding: 9px; }
-    .device-pair.agent-pair, .agent-pair.reverse { flex-direction: column; align-items: center; gap: 28px; }
+    .device-pair.agent-pair, .agent-pair.reverse { display: block; margin-top: 36px; }
     .desktop-frame.pair-desktop { width: 100%; }
-    .pair-phone { width: 62%; }
-    .hero-phone { width: 30%; top: -196px; right: -1%; }
+    .agent-pair > .stream-toggle, .hero-screens > .stream-toggle { top: auto; bottom: 0; left: auto; right: 0; }
+    .hero-phone, .pair-phone { position: relative; top: auto; right: auto; width: 44%; margin: -30% 0 0 4%; z-index: 1; }
     .phone-frame { padding: 4px; border-radius: 18px; }
     .phone-screen { border-radius: 12px; }
     .providers { padding: 12px 24px 40px; gap: 18px 25px; font-size: 12px; }
@@ -239,7 +240,8 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .tablet-frame { padding: 5px; border-radius: 12px; }
     .install { grid-template-columns: 1fr; gap: 32px; }
     .claims, .cards { grid-template-columns: minmax(0, 1fr); gap: 28px; }
-    .card-shot { aspect-ratio: auto; min-height: 150px; }
+    .card-shot { aspect-ratio: auto; min-height: 120px; }
+    .card-term { font-size: 2.78cqw; }
     .notification-preview { padding: 24px; }
     .surface-tabs button { padding: 7px 16px; }
     .surface-claim { font-size: 15px; }

@@ -28,7 +28,8 @@ export const heroStreamJs = `
     document.querySelectorAll('.device-pair').forEach(figure => {
         const toggle = figure.querySelector('.stream-toggle');
         const devices = [figure.querySelectorAll('.term-capture .stream'), figure.querySelectorAll('.phone-terminal .stream')];
-        const step = Number(figure.dataset.step || 600);
+        // Long runs of rows arrive faster, so the whole set lands within about five seconds.
+        const step = Math.min(Number(figure.dataset.step || 600), 4800 / Math.max(1, devices[0].length));
         const duration = Math.max(9000, 900 + devices[0].length * step + 3500);
         let animations = [];
         let visible = false;
