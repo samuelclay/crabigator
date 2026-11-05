@@ -152,6 +152,16 @@ pub fn preferred_status_rows_max(total_rows: u16, handoff_rows: u16) -> u16 {
     preferred_status_rows.min(max_status_rows)
 }
 
+/// Status rows that make the flow column tall enough for flow's vertical
+/// scenes (see `is_tall`), or `None` when that would pass the 20% ceiling or
+/// the terminal is too narrow for the column.
+fn tall_flow_status_rows(total_cols: u16, preferred_max: u16) -> Option<u16> {
+    let width = usize::from(flow_column_width(total_cols)?);
+    // The column's rows are the status rows less the separator.
+    let rows = (1..usize::from(preferred_max)).find(|&rows| crate::flow::is_tall(width, rows))?;
+    Some(rows as u16 + 1)
+}
+
 /// Exact height needed by update, recap, and pairing content above the PR list.
 fn banner_handoff_rows(
     width: u16,
@@ -212,7 +222,9 @@ fn estimate_column_widths(total_cols: u16, compact_stats: bool, flow: bool) -> (
 /// (plus the separator), clamped between MIN_STATUS_ROWS and the historical
 /// 20% ceiling. The result lets the widget area shrink when content is shorter
 /// than the cap — including when git or changes use packed layouts that consume
-/// far fewer rows than there are items.
+/// far fewer rows than there are items. With the flow column showing, it grows
+/// to give the column a tall grid, where flow's scenes turn vertical, as long
+/// as that fits under the ceiling.
 #[allow(clippy::too_many_arguments)]
 pub fn compute_dynamic_status_rows(
     total_rows: u16,
@@ -241,7 +253,12 @@ pub fn compute_dynamic_status_rows(
         ));
     // A short terminal can leave fewer rows than MIN_STATUS_ROWS; keep the
     // lower bound at or below the upper bound so `clamp` never panics.
-    let desired = natural.saturating_add(1); // +1 separator
+    let mut desired = natural.saturating_add(1); // +1 separator
+    if flow {
+        if let Some(tall) = tall_flow_status_rows(total_cols, preferred_max) {
+            desired = desired.max(tall);
+        }
+    }
     desired.clamp(MIN_STATUS_ROWS.min(preferred_max), preferred_max)
 }
 
@@ -634,6 +651,38 @@ mod tests {
             false,
         );
         assert_eq!(rows, 8);
+    }
+
+    #[test]
+    fn a_roomy_terminal_grows_the_widgets_for_a_vertical_flow_scene() {
+        let rows = |total_rows, total_cols, flow| {
+            let (stats, git, diff) = (
+                SessionStats::default(),
+                GitState::default(),
+                DiffSummary::default(),
+            );
+            compute_dynamic_status_rows(
+                total_rows,
+                total_cols,
+                &stats,
+                &git,
+                &diff,
+                None,
+                &[],
+                &[],
+                0,
+                flow,
+            )
+        };
+        // 200 columns give flow 30; 13 of its rows make a tall grid, plus the separator.
+        assert_eq!(rows(80, 200, true), 14);
+        assert!(crate::flow::is_tall(30, 13) && !crate::flow::is_tall(30, 12));
+        // Without the flow column, the widgets keep to their content.
+        assert_eq!(rows(80, 200, false), 8);
+        // 14 rows would pass 20% of 60, so the scene stays horizontal.
+        assert_eq!(rows(60, 200, true), 8);
+        // A narrower column turns tall sooner: 15 columns at 9 rows.
+        assert_eq!(rows(60, 100, true), 10);
     }
 
     #[test]

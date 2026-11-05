@@ -60,6 +60,7 @@ use feed::{ActivityFeed, Heard};
 use hooks::HookFeed;
 use palette::Palette;
 use scene::{Scene, SceneDef};
+pub use cells::is_tall;
 pub use scene::Tint;
 
 /// Frame pace while busy (~14 fps), and when calm (8 fps).
