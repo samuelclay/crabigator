@@ -43,6 +43,8 @@ internal class SessionModuleData(session: Session, details: Map<String, JSONObje
     val changes = details["changes"]?.array("by_language").orEmpty().flatMap { it.array("changes") }.map { ModuleChange(it.text("name"), it.text("kind"), it.optInt("additions"), it.optInt("deletions")) }
     val commits = details["commit_history"]?.array("history")?.reversed() ?: git?.array("recent_commits").orEmpty()
     val stats = details["stats"] ?: JSONObject()
+    /** The desktop's flow scene and dials ("flow" event); null until it sends one. */
+    val flow = details["flow"]?.takeIf { it.optString("scene").isNotBlank() }
 }
 
 internal class ModuleSummary(data: SessionModuleData, prs: List<PullRequest>, prefs: UiPreferences) {
@@ -59,8 +61,12 @@ internal class ModuleSummary(data: SessionModuleData, prs: List<PullRequest>, pr
     var expanded by rememberSaveable(session.id) { mutableStateOf(emptyList<String>()) }
     fun toggle(key: String) { expanded = if (key in expanded) expanded - key else expanded + key }
     val uri = LocalUriHandler.current
+    // The session's flow scene sits at the right of the modules, as in the terminal.
+    val flow = data.flow.takeIf { prefs.visible("flow") }
     Column(modifier.fillMaxWidth().background(Panel)) {
-        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+      BoxWithConstraints(Modifier.weight(1f, fill = false)) {
+        val flowWidth = minOf(220.dp, maxWidth * .36f)
+        Column(Modifier.heightIn(min = if (flow != null) 44.dp else 0.dp).padding(end = if (flow != null) flowWidth else 0.dp).verticalScroll(rememberScrollState())) {
             if (prefs.visible("recap") && data.recap.isNotBlank()) {
                 ModuleSection("Recap", data.recap, updatedAt = data.recapAt, color = CrabColors.Cyan, expanded = "recap" in expanded, toggle = { toggle("recap") }, modifier = revealScope.moduleEntrance(0)) {
                     Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -110,6 +116,13 @@ internal class ModuleSummary(data: SessionModuleData, prs: List<PullRequest>, pr
                 }
             }
         }
+        if (flow != null) Box(Modifier.matchParentSize(), contentAlignment = Alignment.CenterEnd) {
+            Row(Modifier.width(flowWidth).fillMaxHeight()) {
+                Box(Modifier.width(.5.dp).fillMaxHeight().background(Color.White.copy(alpha = .07f)))
+                FlowScene(flow, Modifier.weight(1f).fillMaxHeight())
+            }
+        }
+      }
     }
 }
 

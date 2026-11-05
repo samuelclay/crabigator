@@ -162,7 +162,7 @@ class SessionModel(app: Application) : AndroidViewModel(app) {
                         // The snapshot filters consumed revisions; socket replays do not.
                         "prompt" -> s.copy(revision = null)
                         "state" -> s.copy(selected = s.selected?.copy(state = event.text("state")), revision = null, prompt = if (event.text("state") in listOf("question", "permission")) s.prompt else null)
-                        "git", "changes", "recap", "recap_history", "prs", "commit_history", "stats" -> s.copy(details = s.details + (event.text("type") to event))
+                        "git", "changes", "recap", "recap_history", "prs", "commit_history", "stats", "flow" -> s.copy(details = s.details + (event.text("type") to event))
                         else -> s
                     } }
                     if (event.text("type") in listOf("prompt", "state", "desktop_status")) { refreshPrompt(id); Notifications.reconcile(getApplication(), id) }

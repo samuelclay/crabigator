@@ -45,6 +45,8 @@ android {
         }
     }
     buildFeatures { compose = true; buildConfig = true }
+    // The flow scenes (crates/flow-render), built for each ABI by the task below.
+    sourceSets["main"].jniLibs.srcDir(layout.buildDirectory.dir("flowJni"))
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }
@@ -58,6 +60,15 @@ tasks.matching { it.name == "validateSigningRelease" || it.name == "bundleReleas
         }
     }
 }
+// Builds the flow scenes' native library. Needs rustup with the Android targets,
+// cargo-ndk, and the NDK (see crates/flow-render/build.sh). Cargo skips the work
+// when nothing changed.
+val buildFlowScenes by tasks.registering(Exec::class) {
+    val out = layout.buildDirectory.dir("flowJni").get().asFile
+    commandLine(rootProject.file("../../crates/flow-render/build.sh").path, "android", out.path)
+    environment("ANDROID_HOME", android.sdkDirectory.path)
+}
+tasks.named("preBuild") { dependsOn(buildFlowScenes) }
 dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.activity:activity-compose:1.11.0")
