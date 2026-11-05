@@ -115,7 +115,7 @@ export const landingHtml = `<!DOCTYPE html>
                 <button type="button" role="tab" id="tab-web" aria-controls="panel-web" aria-selected="false" tabindex="-1">Web</button>
             </div>
             <div class="surface-panel" id="panel-iphone" role="tabpanel" aria-labelledby="tab-iphone">
-                <p class="surface-claim"><strong>Answer from the notification.</strong> The iOS and Android apps are in development.</p>
+                <p class="surface-claim"><strong>Answer from the notification.</strong> No need to unlock.</p>
                 <figure class="notification-preview">${notificationPreviewHtml}</figure>
             </div>
             <div class="surface-panel" id="panel-ipad" role="tabpanel" aria-labelledby="tab-ipad">
