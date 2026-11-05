@@ -59,18 +59,16 @@ export const landingHtml = `<!DOCTYPE html>
     <main id="main">
         <section class="hero" aria-labelledby="hero-title">
             <div class="hero-copy">
-                <div class="hero-message">
-                    <h1 id="hero-title">Take your agents<br>with you.</h1>
-                    <p class="hero-description">Your desktop session, live in a native app.</p>
-                </div>
+                <h1 id="hero-title">Take your agents with you.</h1>
+                <p class="hero-description">Claude Code, Codex, opencode, and Grok, live on your phone.</p>
                 <div class="hero-start">
-                    <a class="install-link" href="#install" data-track="install_cta" data-label="hero">Install Crabigator <span aria-hidden="true">↗</span></a>
-                    <p>For Claude Code, Codex, opencode &amp; Grok.</p>
+                    <a class="button-primary" href="#install" data-track="install_cta" data-label="hero">Install Crabigator</a>
+                    <a class="button-secondary" href="/dashboard" data-track="dashboard_cta" data-label="hero">Open dashboard</a>
                 </div>
             </div>
             <figure class="hero-screens device-pair" aria-label="The same Claude Code session on desktop and iPhone">
                 <div class="desktop-frame">
-                    <div class="desktop-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Claude Code</span><span>~/projects/crabigator</span></div>
+                    <div class="desktop-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>crabigator — claude</span></div>
                     <div class="desktop-capture term-capture" style="--cols:${heroCapture.cols}">${heroCapture.desktopHtml}</div>
                 </div>
                 <div class="hero-phone phone-frame" role="img" aria-label="The same Claude Code session in Crabigator’s native iPhone app: the same terminal rows, then the session’s recap, git status, a fire scene, its stats with the context window, and reply controls">
@@ -83,7 +81,7 @@ export const landingHtml = `<!DOCTYPE html>
                         <div class="phone-home"><span></span></div>
                     </div>
                 </div>
-                <figcaption><span>On your desktop</span><span class="connection-line" aria-hidden="true"><span class="stream-packet"></span></span><span>On your phone</span><button class="stream-toggle" type="button" aria-label="Pause animation" hidden>Ⅱ</button></figcaption>
+                <button class="stream-toggle" type="button" aria-label="Pause animation" hidden>Ⅱ</button>
             </figure>
         </section>
 

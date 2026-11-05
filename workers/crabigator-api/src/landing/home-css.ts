@@ -29,17 +29,20 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .site-header nav a { text-decoration: none; }
 .site-header nav a:hover { color: var(--peach); }
 .dashboard-link { border: 1px solid var(--line); padding: 10px 17px; border-radius: 6px; }
-.hero { display: grid; grid-template-columns: 1fr 1.6fr; align-items: center; max-width: 1536px; margin: 0 auto; padding: 42px 48px 35px; gap: 28px; }
-.hero-copy { display: flex; flex-direction: column; gap: 62px; padding-bottom: 30px; }
-.hero h1 { font-size: clamp(48px, 4.65vw, 72px); font-weight: 450; letter-spacing: -.06em; line-height: 1.06; }
-.hero-description { margin-top: 27px; max-width: 280px; font-size: 18px; color: var(--muted); }
-.hero-start > p { font-size: 12px; color: var(--muted); margin-top: 16px; }
-.install-link { display: inline-flex; align-items: center; gap: 35px; padding-bottom: 8px; border-bottom: 1px solid var(--peach); color: var(--peach); text-decoration: none; font-size: 17px; font-weight: 550; }
-.install-link span { font-size: 24px; line-height: 1; }
-.hero-screens { position: relative; min-width: 0; height: 650px; }
+.hero { max-width: 1296px; margin: 0 auto; padding: 64px 48px 40px; }
+.hero h1 { font-size: clamp(48px, 6.2vw, 88px); font-weight: 450; letter-spacing: -.06em; line-height: 1.02; }
+.hero-description { margin-top: 22px; font-size: 21px; color: var(--muted); }
+.hero-start { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
+.button-primary, .button-secondary { display: inline-flex; align-items: center; padding: 12px 20px; border-radius: 8px; font-size: 15px; font-weight: 550; text-decoration: none; }
+.button-primary { background: var(--peach); color: var(--paper); }
+.button-secondary { border: 1px solid var(--line); }
+.button-primary:hover { background: #ffcaa5; }.button-secondary:hover { border-color: var(--muted); }
+.hero-screens { position: relative; margin-top: 150px; }
+.hero-screens .desktop-frame { position: relative; top: auto; width: 100%; }
+.hero-screens > .stream-toggle { position: absolute; left: 0; top: -40px; }
 .desktop-frame { container-type: inline-size; position: absolute; width: 76%; top: 50px; left: 0; border: 1px solid #52616b; border-radius: 10px; overflow: hidden; background: #101214; box-shadow: 0 30px 70px #0004; }
 .desktop-bar, .browser-bar { display: flex; align-items: center; gap: 16px; padding: 13px 16px; background: #28343e; color: #d1dbe1; font-size: 11px; }
-.desktop-bar > span:last-child { margin-left: auto; color: #a3b0ba; font-size: 9px; }
+.desktop-bar > span:last-child { flex: 1; margin-right: 52px; text-align: center; color: #a3b0ba; }
 .window-dots { display: inline-flex; gap: 5px; }
 .window-dots i { width: 7px; height: 7px; border-radius: 50%; background: #d78072; }
 .window-dots i:nth-child(2) { background: #d5b477; }
@@ -94,8 +97,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .phone-composer > span { flex: 1; border: 1px solid #3c4651; padding: 3cqw; border-radius: 5cqw; color: #77818d; font-size: 4cqw; }
 .phone-home { display: flex; justify-content: center; flex-shrink: 0; padding: 3cqw 0 2cqw; }
 .phone-home span { width: 34%; height: 1.2cqw; border-radius: 3px; background: #edf1f4; }
-.hero-phone { position: absolute; width: 25%; min-width: 200px; right: -8px; top: 110px; }
-.hero-screens figcaption { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 20px; color: var(--muted); font-size: 12px; }
+.hero-phone { position: absolute; width: 21%; right: -3%; top: -118px; }
 .providers { display: flex; justify-content: center; flex-wrap: wrap; gap: 24px 40px; max-width: 1296px; margin: 0 auto; padding: 35px 24px 80px; font-size: 14px; color: var(--muted); }
 .providers span { display: flex; align-items: center; gap: 8px; }
 .providers svg { width: 18px; height: 18px; fill: currentColor; }
@@ -106,7 +108,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .device-pair.agent-pair { position: relative; display: flex; align-items: flex-end; justify-content: space-between; margin-top: 52px; }
 .agent-pair.reverse { flex-direction: row-reverse; }
 .desktop-frame.pair-desktop { position: relative; top: auto; flex: none; width: 73%; }
-.pair-desktop .desktop-bar > span:last-child { flex: 1; margin: 0 52px 0 0; text-align: center; color: #a3b0ba; font-size: 11px; }
 .pair-phone { flex: none; width: 24%; }
 .agent-pair > .stream-toggle { position: absolute; right: 0; top: -40px; }
 .desktop-capture, .pair-capture { font-size: calc((100cqw - 36px) / (var(--cols) * .6)); }
@@ -189,12 +190,8 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .footer-links { display: flex; gap: 24px; font-size: 12px; }
 @media (max-width: 1100px) {
     .site-header { padding: 24px 28px; }
-    .hero { grid-template-columns: 1fr; padding: 45px 28px 20px; }
-    .hero-copy { flex-direction: row; align-items: end; justify-content: space-between; gap: 30px; padding: 0; }
-    .hero h1 { font-size: 60px; }
-    .hero-description { max-width: none; font-size: 16px; margin-top: 20px; }
-    .hero-screens { width: 100%; max-width: 790px; margin: 0 auto; height: 650px; }
-    .hero-phone { min-width: 0; width: 25%; right: 0; }
+    .hero { padding: 45px 28px 20px; }
+    .hero-phone { right: 0; }
     .section { padding: 80px 28px; }
     .providers { padding-bottom: 40px; }
     .mcp-intro { gap: 40px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -210,15 +207,12 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .dashboard-link { padding: 8px 10px; }
 }
 @media (max-width: 700px) {
-    .hero { padding: 36px 24px 18px; gap: 24px; }
-    .hero-copy { display: block; }
+    .hero { padding: 36px 24px 18px; }
     .hero h1 { font-size: clamp(42px, 10.8vw, 66px); }
-    .hero-description { font-size: 16px; max-width: 260px; }
+    .hero-description { font-size: 17px; }
     .hero-start { margin-top: 28px; }
-    .hero-start > p { display: none; }
-    .install-link { font-size: 15px; gap: 24px; }
-    .hero-screens { height: calc(94vw + 110px); }
-    .desktop-frame { top: 22px; width: 94%; border-radius: 7px; }
+    .hero-screens { margin-top: 210px; }
+    .desktop-frame { border-radius: 7px; }
     .desktop-bar { padding: 9px; gap: 10px; font-size: 8px; }
     .desktop-bar > span:last-child { display: none; }
     .window-dots { gap: 3px; }
@@ -229,10 +223,9 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .device-pair.agent-pair, .agent-pair.reverse { flex-direction: column; align-items: center; gap: 28px; }
     .desktop-frame.pair-desktop { width: 100%; }
     .pair-phone { width: 62%; }
-    .hero-phone { width: 43%; top: 112px; right: -7px; }
+    .hero-phone { width: 30%; top: -196px; right: -1%; }
     .phone-frame { padding: 4px; border-radius: 18px; }
     .phone-screen { border-radius: 12px; }
-    .hero-screens figcaption { font-size: 10px; gap: 14px; }
     .providers { padding: 12px 24px 40px; gap: 18px 25px; font-size: 12px; }
     .providers svg { width: 16px; height: 16px; }
     .section { padding: 60px 24px; }

@@ -6,8 +6,6 @@ export const heroStreamCss = `
 .stream-toggle { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 14px; }
 .stream-toggle:hover { color: var(--ink); background: var(--surface); }
 .stream-toggle[hidden] { display: none; }
-.connection-line { position: relative; flex: 1; overflow: hidden; height: 6px; background: linear-gradient(#52616b,#52616b) center / 100% 1px no-repeat; }
-.stream-packet { position: absolute; left: 0; top: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--peach); box-shadow: -8px 0 10px #ffb98a66; }
 .bar-rows > svg[style], .app-flow > svg[style] { animation: flow-frame 3s step-end infinite; animation-delay: calc(var(--i) * .25s - 3s); }
 .bar-rows > svg[style]:not(:first-of-type), .app-flow > svg[style]:not(:first-of-type) { opacity: 0; }
 .paused svg[style] { animation-play-state: paused; }
@@ -60,31 +58,6 @@ export const heroStreamJs = `
                 ]);
             }));
 
-            // The hero also sends a packet along its connection line for each row.
-            const packet = figure.querySelector('.stream-packet');
-            const received = figure.querySelector('.phone-app-bar div > span');
-            if (packet && received) {
-                const packets = [{ left: '0%', opacity: 0, offset: 0 }];
-                const colors = [{ color: '#8bd78d', offset: 0 }];
-                devices[0].forEach((row, index) => {
-                    const departure = (900 + index * step) / duration;
-                    packets.push(
-                        { left: '0%', opacity: 0, offset: departure },
-                        { left: '4%', opacity: 1, offset: departure + .003 },
-                        { left: 'calc(100% - 6px)', opacity: 1, offset: departure + .027 },
-                        { left: 'calc(100% - 6px)', opacity: 0, offset: departure + .04 },
-                    );
-                    colors.push(
-                        { color: '#8bd78d', offset: departure + .026 },
-                        { color: '#ffb98a', offset: departure + .035 },
-                        { color: '#8bd78d', offset: departure + .06 },
-                    );
-                });
-                packets.push({ left: 'calc(100% - 6px)', opacity: 0, offset: 1 });
-                colors.push({ color: '#8bd78d', offset: 1 });
-                animate(packet, packets);
-                animate(received, colors);
-            }
             toggle.hidden = false;
             updatePlayback();
         }
