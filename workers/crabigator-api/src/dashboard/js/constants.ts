@@ -92,7 +92,9 @@ export const constantsJs = `
             tools: true,
             compactions: true,
             // Most people never need it, so it starts unchecked.
-            context: false
+            context: false,
+            // The session's flow scene beside its modules.
+            flow: true
         };
         let sidebarVisibleStats = { ...sidebarStatsDefaults };
         try {

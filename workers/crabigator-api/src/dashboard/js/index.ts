@@ -28,6 +28,7 @@ import { subscriptionJs } from './subscription';
 import { prBoardJs } from './pr-board';
 import { sessionMarkJs } from './session-mark';
 import { modulesJs } from './modules';
+import { flowJs } from './flow';
 import { initJs } from './init';
 
 export const dashboardJs = [
@@ -59,6 +60,7 @@ export const dashboardJs = [
     subscriptionJs,  // Must be after pairingJs (uses getAuthHeaders)
     prBoardJs,  // Must be after pairingJs and changesWidgetJs (uses getAuthHeaders, PR helpers)
     modulesJs,
+    flowJs,
     conductorJs,
     initJs
 ].join('\n');

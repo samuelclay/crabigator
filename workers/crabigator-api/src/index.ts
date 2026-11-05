@@ -180,6 +180,17 @@ for (const image of homeBrandAssets) {
     ));
 }
 
+// The flow scenes as WebAssembly, for the dashboard (crates/flow-render). Decoded
+// on first use; the path carries the content hash, so browsers keep it.
+import { flowWasmPath, flowWasmBase64 } from './assets/flow-wasm';
+let flowWasm: Uint8Array | null = null;
+router.get(flowWasmPath, async () => {
+    flowWasm ??= Uint8Array.from(atob(flowWasmBase64), c => c.charCodeAt(0));
+    return new Response(flowWasm, {
+        headers: { 'Content-Type': 'application/wasm', 'Cache-Control': 'public, max-age=31536000, immutable' },
+    });
+});
+
 // Open Graph preview images
 import { ogLandingBase64, ogDashboardBase64 } from './assets/og-images';
 

@@ -38,6 +38,8 @@ export const modulesJs = `
                 ['commits', 'Commits', []],
                 ['titles', 'Title history', ['titles-']]
             ];
+            const rows = document.createElement('div');
+            rows.className = 'module-rows';
             const saved = openSessionModules.get(sessionId) || new Set();
             openSessionModules.set(sessionId, saved);
             sections.forEach(([key, title, prefixes], index) => {
@@ -61,8 +63,18 @@ export const modulesJs = `
                     list.className = 'module-recaps';
                     body.appendChild(list);
                 }
-                drawer.appendChild(section);
+                rows.appendChild(section);
             });
+            // The session's flow scene sits at the right of the modules, as in the apps.
+            const flowBox = document.createElement('div');
+            flowBox.className = 'module-flow';
+            flowBox.id = 'module-flow-' + sessionId;
+            flowBox.dataset.cardStats = 'flow';
+            flowBox.hidden = true;
+            flowBox.setAttribute('aria-hidden', 'true');
+            flowBox.appendChild(document.createElement('canvas'));
+            drawer.append(rows, flowBox);
+            applySessionCardStatsVisibility(drawer);
             const recap = document.getElementById('recap-' + sessionId);
             recap.removeAttribute('onclick');
             recap.removeAttribute('title');
@@ -88,6 +100,7 @@ export const modulesJs = `
             if (data) data.moduleResize = resize;
             syncModuleDrawer(sessionId);
             refreshSessionModules(sessionId);
+            if (data?.flow) applyFlowEvent(sessionId, data.flow);
         }
 
         function syncModuleDrawer(sessionId) {

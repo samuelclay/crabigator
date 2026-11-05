@@ -259,6 +259,9 @@ export const eventsJs = `
                         updateChangesWidget(sessionId, sessionData.changes || { by_language: [] });
                     }
                     break;
+                case 'flow':
+                    applyFlowEvent(sessionId, event);
+                    break;
                 case 'stats':
                     // Store stats in session data
                     if (sessionData) {
