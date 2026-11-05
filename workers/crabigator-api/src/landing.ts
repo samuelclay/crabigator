@@ -1,7 +1,6 @@
 // Landing page HTML served at /
 import { faviconPath, faviconIcoPath, touchIconPath } from './assets/home-brand';
 import { heroCapture, claudeCapture, codexCapture } from './landing/desktop-capture';
-import { flowScenes } from './landing/flow-scenes';
 import { appModulesHtml } from './landing/app-modules';
 import { notificationPreviewHtml } from './landing/notification-preview';
 import { devicePairHtml } from './landing/device-pair';
@@ -73,12 +72,12 @@ export const landingHtml = `<!DOCTYPE html>
                     <div class="desktop-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>crabigator — claude</span></div>
                     <div class="desktop-capture term-capture" style="--cols:${heroCapture.cols}">${heroCapture.desktopHtml}</div>
                 </div>
-                <div class="hero-phone phone-frame" role="img" aria-label="The same Claude Code session in Crabigator’s native iPhone app: the same terminal rows, then the session’s recap, git status, a fire scene, its stats with the context window, and reply controls">
+                <div class="hero-phone phone-frame" role="img" aria-label="The same Claude Code session in Crabigator’s native iPhone app: the same terminal rows, then the session’s recap, git status, the same roadster scene, its stats with the context window, and reply controls">
                     <div class="phone-screen" aria-hidden="true">
                         <div class="phone-status"><span>9:41</span><span class="phone-island"></span><span class="phone-indicators"><span class="signal-bars"><i></i><i></i><i></i><i></i></span>${iconWifi}<span class="phone-battery"></span></span></div>
                         <div class="phone-app-bar"><span class="phone-back">‹</span><div><strong>${iconCrabigator}${iconCrabigatorWordmark}</strong><span>ClayBook · Live</span></div><span class="phone-type">ᴀA</span></div>
                         <div class="phone-terminal">${heroCapture.phoneHtml}</div>
-                        ${appModulesHtml(heroCapture.session, flowScenes.phone)}
+                        ${appModulesHtml(heroCapture.session, heroCapture.flowHtml, heroCapture.flowSize)}
                         <div class="phone-composer">${iconMicrophone}${iconKeyboard}<span>Message</span></div>
                         <div class="phone-home"><span></span></div>
                     </div>
@@ -94,16 +93,16 @@ export const landingHtml = `<!DOCTYPE html>
         <section class="section agent" id="claude-code" aria-labelledby="claude-code-title">
             <h2 id="claude-code-title">Claude Code, unchanged.<span>Run crabigator instead of claude.</span></h2>
             ${devicePairHtml({
-                capture: claudeCapture, command: 'claude', title: 'Fire scene night look', phoneFlow: flowScenes.claudePhone,
-                label: 'Claude Code at work in Crabigator, editing the fire scene, with a moving train scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive, with an engine scene.',
+                capture: claudeCapture, command: 'claude', title: 'Fire scene night look',
+                label: 'Claude Code at work in Crabigator, editing the fire scene, with a moving train scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same train scene.',
             })}
         </section>
 
         <section class="section agent" id="codex" aria-labelledby="codex-title">
             <h2 id="codex-title">Codex, too.<span>Run crabigator codex instead of codex.</span></h2>
             ${devicePairHtml({
-                capture: codexCapture, command: 'codex', title: 'Add scene-name uniqueness test', phoneFlow: flowScenes.codexPhone, reverse: true,
-                label: 'Codex at work in Crabigator, adding a test, with a moving surf scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive, with a warp scene.',
+                capture: codexCapture, command: 'codex', title: 'Add scene-name uniqueness test', reverse: true,
+                label: 'Codex at work in Crabigator, adding a test, with a moving surf scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same surf scene.',
             })}
         </section>
 

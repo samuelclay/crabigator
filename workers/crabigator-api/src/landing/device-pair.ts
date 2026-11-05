@@ -1,6 +1,6 @@
 // A working session on the desktop with the same session beside it in the
 // iPhone app. Rows marked `stream` arrive on the desktop, then on the phone,
-// and both flow scenes move (see hero-stream.ts and the flow-frame styles).
+// and the phone mirrors the status bar's flow scene frame for frame.
 import { iconMicrophone, iconKeyboard, iconWifi } from './icons';
 import { appModulesHtml, type SessionValues } from './app-modules';
 
@@ -8,6 +8,8 @@ interface PairCapture {
     cols: number;
     desktopHtml: string;
     phoneHtml: string;
+    flowHtml: string;
+    flowSize: { cols: number; rows: number };
     session: SessionValues;
 }
 
@@ -15,11 +17,10 @@ export function devicePairHtml(options: {
     capture: PairCapture;
     command: string;
     title: string;
-    phoneFlow: string;
     label: string;
     reverse?: boolean;
 }): string {
-    const { capture, command, title, phoneFlow, label, reverse } = options;
+    const { capture, command, title, label, reverse } = options;
     return `
             <figure class="device-pair agent-pair${reverse ? ' reverse' : ''}" data-step="380" aria-label="${label}">
                 <div class="desktop-frame pair-desktop">
@@ -31,7 +32,7 @@ export function devicePairHtml(options: {
                         <div class="phone-status"><span>9:41</span><span class="phone-island"></span><span class="phone-indicators"><span class="signal-bars"><i></i><i></i><i></i><i></i></span>${iconWifi}<span class="phone-battery"></span></span></div>
                         <div class="phone-app-bar"><span class="phone-back">‹</span><div><strong>${title}</strong><span>ClayBook · Live</span></div><span class="phone-type">ᴀA</span></div>
                         <div class="phone-terminal">${capture.phoneHtml}</div>
-                        ${appModulesHtml(capture.session, phoneFlow)}
+                        ${appModulesHtml(capture.session, capture.flowHtml, capture.flowSize)}
                         <div class="phone-composer">${iconMicrophone}${iconKeyboard}<span>Message</span></div>
                         <div class="phone-home"><span></span></div>
                     </div>

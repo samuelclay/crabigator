@@ -50,13 +50,22 @@ export function markChip(mark: SessionValues['mark'], className: string): string
     return `<span class="${className}" style="color:${mark.fg};background:${mark.bg}">${mark.glyph}</span>`;
 }
 
+function moduleRows(session: SessionValues): number {
+    return 1 + (session.recap ? 1 : 0) + (session.symbols ? 1 : 0);
+}
+
 const STATUS = {
     complete: '<span class="app-done">✓</span>',
     asking: '<span class="app-ask">?</span>',
     working: '<span class="app-working"></span>',
 };
 
-export function appModulesHtml(session: SessionValues, flowSvg: string): string {
+/**
+ * flowSize: the terminal scene's cells, when the phone mirrors a terminal. The
+ * scene box then takes that scene's shape (0.6 by 1.45 per cell) at the drawer's
+ * height, so the same frames show unstretched.
+ */
+export function appModulesHtml(session: SessionValues, flowSvg: string, flowSize?: { cols: number; rows: number }): string {
     const wide = session.wide;
     const prompts = wide
         ? `<span><span class="c-orange">⟩</span><span class="c-title">${session.prompts}</span><span class="c-orange">${wide.age}</span></span>`
@@ -75,7 +84,7 @@ export function appModulesHtml(session: SessionValues, flowSvg: string): string 
                 <div class="app-module git"><i>›</i><b>Git</b><span>${session.branch}</span><small>${plural(session.files, 'file')}</small></div>
                 ${session.symbols ? `<div class="app-module changes"><i>›</i><b>Changes</b><span>${plural(session.symbols, 'symbol')}</span></div>` : ''}
             </div>
-            <div class="app-flow">${flowSvg}</div>
+            <div class="app-flow"${flowSize ? ` style="width:calc(var(--module-size) * ${3.67 * moduleRows(session)} * ${(flowSize.cols * .6 / (flowSize.rows * 1.45)).toFixed(4)})"` : ''}>${flowSvg}</div>
         </div>
         <div class="app-summary">
             ${markChip(session.mark, 'app-chip')}
