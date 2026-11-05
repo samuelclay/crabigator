@@ -107,8 +107,17 @@ Steps:
    ```
    This publishes any Worker/dashboard code that landed in the release. Capture the deployed Worker version ID from the output when available.
 
-11. **Report back.**
-    - New version, its one-liner, tag URL, release URL, npm version, Worker version ID.
+11. **Email the release notes to newsletter subscribers.** Each release goes out once, so do this only after step 8's notes are final.
+   ```
+   WRANGLER_CONFIG=wrangler.production.jsonc WRANGLER_PROFILE=newsblur make announce-release TAG=vX.Y.Z
+   ```
+   The Worker's cron emails the release's Highlights within five minutes, 100 subscribers per run. After a few minutes, check that it finished without errors:
+   ```
+   cd workers/crabigator-api && npx wrangler d1 execute DB --remote --config wrangler.production.jsonc --profile newsblur --command "SELECT tag, sent_count, failed_count, error, finished_at FROM release_emails WHERE tag = 'vX.Y.Z' AND test_recipient IS NULL"
+   ```
+
+12. **Report back.**
+    - New version, its one-liner, tag URL, release URL, npm version, Worker version ID, and how many subscribers the release email reached.
     - Include the previous release tag used for the notes and the release workflow run URL.
     - If anything is still running or could not be verified, say so explicitly.
 

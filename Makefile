@@ -1,4 +1,4 @@
-.PHONY: run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo opencode grok grok-yolo pr prs reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux portability-check flow-reference
+.PHONY: announce-release run build check test test-update clean resume continue lint update release codex codex-yolo claude claude-yolo opencode grok grok-yolo pr prs reinstall-hooks deploy typecheck cf-usage dev reset-usage sync-usage e2e-codex-tmux portability-check flow-reference
 
 PROVIDER_FILE := .crabigator-provider
 DEFAULT_PROVIDER := claude
@@ -144,6 +144,15 @@ sync-usage:
 			-H 'Cookie: crabigator_staff=$(STAFF_COOKIE)' \
 			-d "{\"group_id\":\"$(GROUP)\"}" && echo ""; \
 	fi
+
+# Email a release's highlights to the newsletter: make announce-release TAG=vX.Y.Z
+# Each release goes out once, so run it after the notes are final. TO=address
+# sends a test to that address alone. The Worker's cron sends within 5 minutes.
+announce-release:
+	@echo "$(TAG)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "Usage: make announce-release TAG=vX.Y.Z [TO=you@example.com]"; exit 1; }
+	@test -z "$(TO)" || echo "$(TO)" | grep -Eq '^[^@ "'\'']+@[^@ "'\'']+\.[a-zA-Z]+$$' || { echo "TO must be one email address"; exit 1; }
+	cd workers/crabigator-api && npx wrangler d1 execute $(D1_DATABASE) --remote $(WRANGLER_FLAGS) \
+		--command "INSERT OR IGNORE INTO release_emails (tag, test_recipient) VALUES ('$(TAG)', $(if $(TO),'$(TO)',NULL))"
 
 # The flow scenes' reference frames, from a flow checkout (src/flow/FORK.md).
 FLOW_DIR ?= ../flow
