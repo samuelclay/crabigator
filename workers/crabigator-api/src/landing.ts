@@ -4,6 +4,7 @@ import { heroCapture, claudeCapture, codexCapture } from './landing/desktop-capt
 import { appModulesHtml } from './landing/app-modules';
 import { notificationPreviewHtml, notificationCss, notificationJs } from './landing/notification-preview';
 import { devicePairHtml } from './landing/device-pair';
+import { flowPlayerJs } from './landing/flow-player';
 import { claimsHtml, cardsHtml } from './landing/features';
 import { tabletPreviewHtml, webPreviewHtml } from './landing/product-previews';
 import { productPreviewsCss } from './landing/product-previews-css';
@@ -164,7 +165,7 @@ ${cardsHtml}
     </footer>
     <p id="copy-status" class="sr-only" role="status"></p>
     <script>${analyticsJs}</script>
-    <script>${landingJs}${heroStreamJs}${notificationJs}</script>
+    <script>${landingJs}${heroStreamJs}${notificationJs}${flowPlayerJs}</script>
 </body>
 </html>`;
 

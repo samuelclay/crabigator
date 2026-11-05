@@ -81,7 +81,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .app-module > small { color: #8a8a8a; font-size: .84em; }
 .app-module.recap { color: #00d7ff; }.app-module.git { color: #5fff5f; }.app-module.changes { color: #d7af5f; }
 .app-flow { position: relative; flex-shrink: 0; width: var(--flow-width); border-left: 1px solid #ffffff12; background: #0b0f14; }
-.app-modules .app-flow svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.app-modules .app-flow svg, .app-modules .app-flow canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .app-summary { display: flex; align-items: center; gap: .8em; height: 3.67em; padding-left: .5em; border-top: .5px solid #ffffff17; font: var(--module-size) 'JetBrains Mono', monospace; white-space: nowrap; overflow: hidden; }
 .app-summary > span { display: inline-flex; gap: .35em; }
 .app-chip { justify-content: center; min-width: 3.4em; padding: .2em .3em; border-radius: .4em; }
@@ -154,7 +154,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .card-term { font-size: calc((100cqw - 2px) / (var(--cols) * .6)); }
 .card-scenes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .scene-frames { position: relative; display: block; aspect-ratio: 120 / 87; }
-.scene-frames > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.scene-frames > svg, .scene-frames > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .card-mcp { font: 13px/1.5 'JetBrains Mono', monospace; color: #dbe7ed; }
 .card-mcp code { color: #a9d7e9; font-size: 13px; }
 .card-mcp pre { margin: 8px 0 0; white-space: pre-wrap; }

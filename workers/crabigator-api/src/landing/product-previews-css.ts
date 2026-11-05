@@ -77,7 +77,7 @@ export const productPreviewsCss = `
 .web-widgets-stats > span { display: inline-flex; gap: .25cqw; }.web-widgets-stats i { font-style: normal; color: #8b949e; }.web-widgets-stats .preview-add { margin-left: auto; }
 .ws-blue { color: #5fafff !important; }.ws-session { color: #00afff; }.ws-green { color: #3fb950 !important; }.ws-thinking { color: #5fff5f; }.ws-sand { color: #d7af5f !important; }.ws-orange { color: #ff8700 !important; }.ws-tools { color: #f0883e !important; }.ws-pink { color: #e879f9 !important; }.ws-yellow { color: #ffd700; }.ws-red { color: #ff5f5f; }
 .web-widgets-flow { position: relative; flex-shrink: 0; width: 10cqw; border-left: 1px solid #344653; background: #0b1218; }
-.web-product .web-widgets-flow svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.web-product .web-widgets-flow svg, .web-product .web-widgets-flow canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .web-session .preview-composer { padding: .8cqw; gap: .7cqw; }.web-session .preview-composer svg { width: 1.2cqw; height: 1.2cqw; }.web-session .preview-composer > span { font-size: .9cqw; padding: .7cqw; }.web-session .preview-composer > b { font-size: 1.1cqw; }
 .web-preview-changes { display: flex; flex-wrap: wrap; gap: 1.2cqw; padding: 1.5cqw .3cqw .2cqw; color: #8295a3; font: .75cqw 'JetBrains Mono', monospace; }.web-preview-changes > span:first-child { color: #a7cfb6; }.web-preview-changes .preview-add { margin-left: auto; }
 @media (max-width: 700px) {
