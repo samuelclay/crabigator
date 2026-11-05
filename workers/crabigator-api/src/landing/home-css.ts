@@ -126,20 +126,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .notification-preview { display: flex; justify-content: center; padding: 48px 32px; background: #1b2731; border-radius: 12px; }
 .notification-phone { width: min(340px, 100%); }
 .notification-phone .phone-screen { position: relative; }
-.notification-app { display: flex; flex-direction: column; flex: 1; min-height: 0; filter: blur(.45cqw) brightness(.7); }
-.notification-app .phone-app-bar strong { font-size: 4.6cqw; color: #65b1f7; }
-.notification-card, .notification-menu { position: absolute; left: 3.5cqw; right: 3.5cqw; font-family: -apple-system, BlinkMacSystemFont, 'DM Sans', sans-serif; }
-.notification-card { top: 15cqw; padding: 4.5cqw 4.5cqw 4cqw; border-radius: 7cqw; background: #161b22f2; box-shadow: 0 2cqw 8cqw #0008; color: #edf1f4; }
-.notification-head { display: flex; align-items: center; gap: 2cqw; color: #a6adb6; font-size: 3.6cqw; font-weight: 500; }
-.notification-mark { padding: .3cqw 1.2cqw; border-radius: 1.2cqw; font: 2.8cqw 'JetBrains Mono', monospace; }
-.notification-label { margin-top: 3.5cqw; color: #e5b94e; font-size: 3.3cqw; font-weight: 600; letter-spacing: .06em; }
-.notification-question { margin: 1.4cqw 0 3cqw; font-size: 4.5cqw; font-weight: 600; }
-.notification-option { display: flex; flex-direction: column; gap: .6cqw; margin-top: 1.8cqw; padding: 2.8cqw 3.5cqw; border-radius: 3.2cqw; background: #ffffff0f; font-size: 4.1cqw; }
-.notification-option span { color: #9aa1aa; font-size: 3.4cqw; }
-.notification-open { margin-top: 3.4cqw; color: #e5b94e; font-size: 4cqw; font-weight: 500; }
-.notification-menu { top: 117cqw; right: 40cqw; display: flex; flex-direction: column; padding: 1.5cqw 0; border-radius: 6cqw; background: #e9e9ebe8; box-shadow: 0 2cqw 8cqw #0006; color: #111; font-size: 4.4cqw; }
-.notification-menu span { padding: 2.6cqw 6cqw; }
-.notification-menu span + span { border-top: .5px solid #0000001a; }
 .browser-frame { border: 1px solid #52616b; border-radius: 10px; overflow: hidden; background: #0d1117; box-shadow: 0 20px 70px #0003; }
 .browser-bar { gap: 30px; }
 .browser-bar > span:last-child { border-radius: 4px; padding: 4px 20px; background: #17222b; color: #a3b0ba; font-size: 11px; }

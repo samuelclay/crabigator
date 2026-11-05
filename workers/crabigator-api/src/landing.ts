@@ -2,7 +2,7 @@
 import { faviconPath, faviconIcoPath, touchIconPath } from './assets/home-brand';
 import { heroCapture, claudeCapture, codexCapture } from './landing/desktop-capture';
 import { appModulesHtml } from './landing/app-modules';
-import { notificationPreviewHtml } from './landing/notification-preview';
+import { notificationPreviewHtml, notificationCss, notificationJs } from './landing/notification-preview';
 import { devicePairHtml } from './landing/device-pair';
 import { claimsHtml, cardsHtml } from './landing/features';
 import { tabletPreviewHtml, webPreviewHtml } from './landing/product-previews';
@@ -43,7 +43,7 @@ export const landingHtml = `<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
-    <style>${mcpCss}${homeCss}${productPreviewsCss}${heroStreamCss}</style>
+    <style>${mcpCss}${homeCss}${productPreviewsCss}${heroStreamCss}${notificationCss}</style>
 </head>
 <body>
     <header class="site-header">
@@ -164,7 +164,7 @@ ${cardsHtml}
     </footer>
     <p id="copy-status" class="sr-only" role="status"></p>
     <script>${analyticsJs}</script>
-    <script>${landingJs}${heroStreamJs}</script>
+    <script>${landingJs}${heroStreamJs}${notificationJs}</script>
 </body>
 </html>`;
 
