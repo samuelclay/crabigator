@@ -535,6 +535,67 @@ impl PromptEvent {
     }
 }
 
+/// The session's flow scene and its dials, so the apps and the dashboard can
+/// draw the same scene with crates/flow-render. Sent when it changes; `scene`
+/// is `None` while the column is off.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FlowEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub scene: Option<String>,
+    pub seed: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hue: Option<f64>,
+    /// 0 draws nothing; 1 is calm; 10 the busiest. Rounded to a tenth.
+    pub level: f64,
+    pub waiting: bool,
+    pub night: bool,
+    /// "normal", "smoke", or "blue" (the context window is nearly full).
+    pub tint: String,
+    /// Above 0 while subagents run.
+    pub boost: f64,
+}
+
+impl FlowEvent {
+    pub fn new(share: Option<&crate::flow::FlowShare>) -> Self {
+        let round = |value: f64| (value * 10.0).round() / 10.0;
+        match share {
+            Some(share) => Self {
+                event_type: "flow".to_string(),
+                scene: Some(share.scene.to_string()),
+                seed: share.seed,
+                hue: share.hue.map(round),
+                level: round(share.level),
+                waiting: share.waiting,
+                night: share.night,
+                tint: match share.tint {
+                    crate::flow::Tint::Normal => "normal",
+                    crate::flow::Tint::Smoke => "smoke",
+                    crate::flow::Tint::Blue => "blue",
+                }
+                .to_string(),
+                boost: round(share.boost),
+            },
+            None => Self {
+                event_type: "flow".to_string(),
+                scene: None,
+                seed: 0,
+                hue: None,
+                level: 0.0,
+                waiting: false,
+                night: false,
+                tint: "normal".to_string(),
+                boost: 0.0,
+            },
+        }
+    }
+
+    /// Whether `next` changes anything but how busy the scene is.
+    pub fn differs_beyond_level(&self, next: &Self) -> bool {
+        Self { level: next.level, ..self.clone() } != *next
+    }
+}
+
 /// Union of all cloud event types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -555,6 +616,7 @@ pub enum CloudEvent {
     Recap(RecapEvent),
     RecapHistory(RecapHistoryEvent),
     Prs(PrsEvent),
+    Flow(FlowEvent),
 }
 
 /// Pull requests created or updated during this session (for the recap panel).
@@ -1121,6 +1183,35 @@ fn change_type_label(change_type: &ChangeType) -> &'static str {
         ChangeType::Added => "added",
         ChangeType::Modified => "modified",
         ChangeType::Deleted => "deleted",
+    }
+}
+
+#[cfg(test)]
+mod flow_event_tests {
+    use super::*;
+    use crate::flow::{FlowShare, Tint};
+
+    fn share(level: f64) -> FlowShare {
+        FlowShare { scene: "surf", seed: 9, hue: Some(305.04), level, waiting: false, night: false, tint: Tint::Blue, boost: 0.0 }
+    }
+
+    #[test]
+    fn a_flow_event_rounds_its_dials_and_names_the_tint() {
+        let event = FlowEvent::new(Some(&share(6.44)));
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "flow");
+        assert_eq!(json["scene"], "surf");
+        assert_eq!(json["level"], 6.4);
+        assert_eq!(json["hue"], 305.0);
+        assert_eq!(json["tint"], "blue");
+        assert_eq!(serde_json::to_value(FlowEvent::new(None)).unwrap()["scene"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn only_a_change_beyond_the_level_counts_as_new() {
+        let calm = FlowEvent::new(Some(&share(2.0)));
+        assert!(!calm.differs_beyond_level(&FlowEvent::new(Some(&share(8.0)))));
+        assert!(calm.differs_beyond_level(&FlowEvent::new(None)));
     }
 }
 

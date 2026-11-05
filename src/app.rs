@@ -283,6 +283,9 @@ pub struct App {
     cloud_stats_sent: bool,
     /// The prompt count in the last stats event sent to the cloud.
     last_cloud_stats_prompts: Option<u32>,
+    /// The flow scene last sent to the cloud, and when (see `send_cloud_flow`).
+    last_cloud_flow: Option<crate::cloud::FlowEvent>,
+    last_cloud_flow_at: Instant,
     /// Whether we've sent a prompt event (to track clearing)
     last_cloud_prompt_sent: bool,
     /// The active prompt last sent to the cloud. Codex's async questions
@@ -508,6 +511,8 @@ impl App {
             last_cloud_pr_slack_threads: Vec::new(),
             cloud_stats_sent: false,
             last_cloud_stats_prompts: None,
+            last_cloud_flow: None,
+            last_cloud_flow_at: Instant::now(),
             last_cloud_prompt_sent: false,
             last_cloud_active_prompt: None,
             last_exit_plan_option_count: 0,
@@ -1305,6 +1310,7 @@ impl App {
                     if flow_unpainted.is_none() {
                         let change = self.flow.tick();
                         flow_next = now + self.flow.pace();
+                        self.send_cloud_flow();
                         if change.column_toggled {
                             self.last_status_bar_hash = None;
                         }
@@ -2378,6 +2384,7 @@ impl App {
             }
         }
         self.mirror_publisher.set_flow_scene(self.flow.scene());
+        self.send_cloud_flow();
         self.last_status_bar_hash = None;
         self.draw_status_bar()
     }
@@ -2402,6 +2409,7 @@ impl App {
                 }
             }
             self.mirror_publisher.set_flow_scene(self.flow.scene());
+        self.send_cloud_flow();
             self.last_status_bar_hash = None;
             self.draw_status_bar()?;
             return Ok(());
@@ -2758,6 +2766,32 @@ impl App {
         }
     }
 
+    /// Share the flow scene with the apps and the dashboard: at once when the
+    /// scene, its colours, or its look change; when only how busy it is
+    /// changes, at most once a second for a half-point move and otherwise
+    /// every five seconds.
+    fn send_cloud_flow(&mut self) {
+        let Some(client) = self.cloud_client.as_mut() else {
+            return;
+        };
+        let next = crate::cloud::FlowEvent::new(self.flow.share().as_ref());
+        let since = self.last_cloud_flow_at.elapsed();
+        let due = match &self.last_cloud_flow {
+            None => true,
+            Some(last) if last.differs_beyond_level(&next) => true,
+            Some(last) => {
+                let moved = (last.level - next.level).abs();
+                (moved >= 0.5 && since >= Duration::from_secs(1))
+                    || (moved > 0.0 && since >= Duration::from_secs(5))
+            }
+        };
+        if due {
+            client.send_event(crate::cloud::CloudEvent::Flow(next.clone()));
+            self.last_cloud_flow = Some(next);
+            self.last_cloud_flow_at = Instant::now();
+        }
+    }
+
     /// Update session stats in cloud DB
     fn send_cloud_stats_update(&mut self) {
         if let Some(ref client) = self.cloud_client {
@@ -3003,6 +3037,7 @@ impl App {
                 // Reset git/changes hashes to force resend on next refresh
                 self.last_cloud_git_hash = None;
                 self.last_cloud_changes_hash = None;
+                self.last_cloud_flow = None;
 
                 // Reset viewer state so first heartbeat triggers a screen send
                 // (in case viewers were already active before disconnect)

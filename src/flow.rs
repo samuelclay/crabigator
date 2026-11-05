@@ -59,7 +59,8 @@ use cells::Cells;
 use feed::{ActivityFeed, Heard};
 use hooks::HookFeed;
 use palette::Palette;
-use scene::{Scene, SceneDef, Tint};
+use scene::{Scene, SceneDef};
+pub use scene::Tint;
 
 /// Frame pace while busy (~14 fps), and when calm (8 fps).
 const BUSY: Duration = Duration::from_millis(70);
@@ -297,6 +298,30 @@ impl FlowColumn {
                 .find(|(n, _)| *n == name)
                 .map_or(self.target, |(_, hue)| *hue),
         }
+    }
+
+    /// What another screen needs to draw this session's scene with
+    /// crates/flow-render: the scene, its seed and hue, and the dials as `tick`
+    /// sets them, worked out from the activity whether or not the column is
+    /// drawn. `None` while the column is off.
+    pub fn share(&self) -> Option<FlowShare> {
+        if self.off {
+            return None;
+        }
+        let manual = self.preferences.level.is_some();
+        Some(FlowShare {
+            scene: self.def.name,
+            seed: self.seed as u32,
+            hue: self.color_target(),
+            level: self.level(),
+            waiting: !manual && self.activity.waiting(),
+            night: self
+                .preferences
+                .night
+                .unwrap_or_else(|| is_night(chrono::Local::now().hour())),
+            tint: if manual { Tint::Normal } else { self.activity.tint() },
+            boost: self.activity.coverage_boost(),
+        })
     }
 
     /// The scene this session shows (`None`: off).
@@ -561,6 +586,20 @@ impl FlowColumn {
     }
 }
 
+/// A session's scene and dials, for other screens (see `FlowColumn::share`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlowShare {
+    pub scene: &'static str,
+    pub seed: u32,
+    /// The session's hue (OKLCH degrees); `None` for the scene's own colours.
+    pub hue: Option<f64>,
+    pub level: f64,
+    pub waiting: bool,
+    pub night: bool,
+    pub tint: Tint,
+    pub boost: f64,
+}
+
 /// How a scene takes the session's hue: a figure scene's figure wears it (the
 /// frame keeps its own colours); any other scene's whole frame turns toward it.
 fn palette_for(def: &SceneDef, target: Option<f64>) -> Palette {
@@ -614,6 +653,20 @@ fn is_night(hour: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_share_carries_the_scene_and_its_dials_and_nothing_when_off() {
+        let mut flow = column("train");
+        flow.preferences.level = Some(7);
+        flow.preferences.night = Some(true);
+        let share = flow.share().unwrap();
+        assert_eq!(share.scene, "train");
+        assert_eq!(share.level, 7.0);
+        assert!(share.night && !share.waiting);
+        assert_eq!(share.tint, Tint::Normal);
+        flow.off = true;
+        assert_eq!(flow.share(), None);
+    }
 
     fn column(scene: &str) -> FlowColumn {
         let def = scene::scene_def(scene).unwrap();
