@@ -15,6 +15,7 @@ import { renderLandingHtml } from './landing';
 import { privacyHtml } from './privacy';
 import { renderMcpToolsHtml, MCP_TOOLS_PATH } from './mcp/docs';
 import { featureUnavailable, getAppConfig, getRuntimeConfig, type Capabilities } from './config';
+import { handleUnsubscribe, handleUnsubscribePage, sendReleaseEmails, type ReleaseMailer } from './release-emails';
 import { clearStaffSession, createStaffSession, requireStaffSession, staffLoginPage } from './auth/staff';
 import { createStripeCheckout } from './handlers/payments/stripe';
 import { handleStripeWebhook } from './handlers/payments/stripe-webhook';
@@ -62,6 +63,16 @@ export { UsageDO } from './durable-objects/UsageDO';
 
 const router = new Router();
 type RouteHandler = (request: Request, env: Env, params: Record<string, string>) => Promise<Response>;
+
+/** How release emails go out, or null when this deployment can't send them. */
+function releaseMailerFor(env: Env): ReleaseMailer | null {
+    const runtime = getRuntimeConfig(new Request('http://localhost'), env);
+    const config = getAppConfig(env);
+    const from = config.email?.releases_from || config.email?.from;
+    if (!runtime.capabilities.outbound_email || !runtime.capabilities.marketing_analytics) return null;
+    if (!config.public_origin || !config.email?.mailgun_domain || !from) return null;
+    return { origin: config.public_origin.replace(/\/$/, ''), mailgunDomain: config.email.mailgun_domain, from };
+}
 
 function withFeature(
     feature: keyof Omit<Capabilities, 'core'>,
@@ -111,6 +122,10 @@ router.get(MCP_TOOLS_PATH, withFeature('mcp', async (request, env) => {
 }));
 
 // Landing page
+// Release emails' unsubscribe links. Never behind a feature switch: links in sent emails must keep working.
+router.get('/unsubscribe', handleUnsubscribePage);
+router.post('/unsubscribe', handleUnsubscribe);
+
 router.get('/privacy', async () => new Response(privacyHtml, {
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' },
 }));
@@ -983,6 +998,10 @@ export default {
     async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
         // Every 5 minutes: zombie session cleanup
         ctx.waitUntil(cleanupZombieSessions(env));
+
+        // Every 5 minutes: the next batch of any release email
+        const releaseMailer = releaseMailerFor(env);
+        if (releaseMailer) ctx.waitUntil(sendReleaseEmails(env, releaseMailer));
 
         // Daily at 6 AM UTC: NPM stats and traffic alerts
         // Check if this is the 6 AM cron (cron expression: "0 6 * * *")

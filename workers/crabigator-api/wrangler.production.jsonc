@@ -83,6 +83,7 @@
       "email": {
         "mailgun_domain": "email.drinkcrabigator.com",
         "from": "Crabigator <gifts@drinkcrabigator.com>",
+        "releases_from": "Crabigator <releases@drinkcrabigator.com>",
         "traffic_alert_recipient": "gifts@drinkcrabigator.com"
       },
       "marketing": {

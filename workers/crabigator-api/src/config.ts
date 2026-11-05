@@ -20,6 +20,8 @@ export interface AppConfig {
     email?: {
         mailgun_domain?: string;
         from?: string;
+        /** The sender of release emails; `from` when unset. */
+        releases_from?: string;
         traffic_alert_recipient?: string;
     };
     marketing?: { meta_pixel_id?: string };

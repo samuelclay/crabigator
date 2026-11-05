@@ -288,10 +288,15 @@ export async function handleAnalyticsEvent(
             const referrerDomain = extractDomain(body.referrer);
 
             await env.DB.prepare(`
-                INSERT OR IGNORE INTO email_signups (
+                INSERT INTO email_signups (
                     email, visitor_id, utm_source, utm_medium, utm_campaign,
-                    promo_code, referrer_domain
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    promo_code, referrer_domain, unsubscribe_token
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                -- Signing up again after unsubscribing subscribes again.
+                ON CONFLICT(email) DO UPDATE SET
+                    unsubscribed = 0,
+                    unsubscribed_at = NULL,
+                    unsubscribe_token = COALESCE(email_signups.unsubscribe_token, excluded.unsubscribe_token)
             `).bind(
                 email,
                 visitor_id,
@@ -299,7 +304,8 @@ export async function handleAnalyticsEvent(
                 body.utm_medium || null,
                 body.utm_campaign || null,
                 body.promo_code || null,
-                referrerDomain
+                referrerDomain,
+                crypto.randomUUID()
             ).run();
         }
     } catch {

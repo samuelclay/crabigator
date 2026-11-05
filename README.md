@@ -344,6 +344,7 @@ configuration.
 | Outbound gift email | `features.outbound_email`, Mailgun domain and sender | `MAILGUN_API_KEY` |
 | Marketing analytics | `features.marketing_analytics`; optional Meta Pixel ID | None |
 | Traffic alerts | `features.traffic_alerts`, public origin, Mailgun values, alert recipient | `MAILGUN_API_KEY` |
+| Release emails to newsletter signups (`make announce-release`) | `features.outbound_email`, `features.marketing_analytics`, public origin, Mailgun values; optional `email.releases_from` | `MAILGUN_API_KEY` |
 | Staff tools | `features.staff` | `STAFF_ACCESS_KEY` |
 
 Use a long, randomly generated `STAFF_ACCESS_KEY`. The `/staff` login creates a
