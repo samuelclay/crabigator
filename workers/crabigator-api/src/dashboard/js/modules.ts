@@ -118,6 +118,9 @@ export const modulesJs = `
             const section = document.getElementById('module-' + key + '-' + sessionId);
             if (!section) return;
             section.hidden = !visible;
+            // The flow scene keeps the height of the closed rows, however many show.
+            const flowBox = document.getElementById('module-flow-' + sessionId);
+            if (flowBox) flowBox.style.setProperty('--flow-rows', String(section.parentNode.querySelectorAll('.session-module:not([hidden])').length || 1));
             section.querySelector('.module-preview').textContent = preview || '';
             updateRecencyElement(section.querySelector('.module-age'), timestamp);
         }
