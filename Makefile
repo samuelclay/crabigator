@@ -149,10 +149,8 @@ sync-usage:
 # Each release goes out once, so run it after the notes are final. TO=address
 # sends a test to that address alone. The Worker's cron sends within 5 minutes.
 announce-release:
-	@echo "$(TAG)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "Usage: make announce-release TAG=vX.Y.Z [TO=you@example.com]"; exit 1; }
-	@test -z "$(TO)" || echo "$(TO)" | grep -Eq '^[^@ "'\'']+@[^@ "'\'']+\.[a-zA-Z]+$$' || { echo "TO must be one email address"; exit 1; }
-	cd workers/crabigator-api && npx wrangler d1 execute $(D1_DATABASE) --remote $(WRANGLER_FLAGS) \
-		--command "INSERT OR IGNORE INTO release_emails (tag, test_recipient) VALUES ('$(TAG)', $(if $(TO),'$(TO)',NULL))"
+	D1_DATABASE=$(D1_DATABASE) WRANGLER_CONFIG=$(WRANGLER_CONFIG) WRANGLER_PROFILE=$(WRANGLER_PROFILE) \
+		scripts/announce-release.sh "$(TAG)" "$(TO)"
 
 # The flow scenes' reference frames, from a flow checkout (src/flow/FORK.md).
 FLOW_DIR ?= ../flow

@@ -11,6 +11,7 @@ import {
 import type { Env } from '../src/types/env';
 import analyticsMigration from '../migrations/0007_analytics.sql?raw';
 import releaseMigration from '../migrations/0026_release_emails.sql?raw';
+import notesMigration from '../migrations/0027_release_email_notes.sql?raw';
 
 const testEnv = env as unknown as Env;
 const mailer = { origin: 'https://crab.example', mailgunDomain: 'email.crab.example', from: 'Crabigator <releases@crab.example>' };
@@ -26,7 +27,7 @@ const release = {
 
 beforeAll(async () => {
     // Comments may hold semicolons; drop them before splitting into statements.
-    for (const migration of [analyticsMigration, releaseMigration]) {
+    for (const migration of [analyticsMigration, releaseMigration, notesMigration]) {
         for (const sql of migration.replace(/--[^\n]*/g, '').split(';').map(s => s.trim()).filter(Boolean)) {
             await testEnv.DB.prepare(sql).run();
         }
@@ -107,6 +108,16 @@ it('emails each subscriber once, with their own unsubscribe link, skipping the u
     // The next run finds nothing left to send.
     await sendReleaseEmails(testEnv, mailer);
     expect(sent).toHaveLength(2);
+});
+
+it('uses the release queued with the email instead of asking GitHub', async () => {
+    await subscribe('a@example.com');
+    await testEnv.DB.prepare("INSERT INTO release_emails (tag, release_json, created_at) VALUES ('v0.18.0', ?, unixepoch() + 60)")
+        .bind(JSON.stringify({ ...release, name: 'v0.18.0 · From the queue' })).run();
+    const sent = stubNetwork();
+    await sendReleaseEmails(testEnv, mailer);
+    expect(sent.map(form => form.get('subject'))).toEqual(['Crabigator 0.18.0: From the queue']);
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).startsWith('https://api.github.com/'))).toBe(false);
 });
 
 it('sends in batches and picks up where the last run stopped', async () => {

@@ -2,10 +2,10 @@
  * Release emails: each release's highlights, emailed through Mailgun to the
  * homepage's newsletter subscribers.
  *
- * `make announce-release TAG=vX.Y.Z` adds a row to `release_emails` (the
- * /release command runs it once the notes are final). The five-minute cron
- * then fetches the release from GitHub, writes the email once, and sends it
- * to subscribers in batches, recording how far it got. Every email carries a
+ * `make announce-release TAG=vX.Y.Z` reads the release from GitHub and adds
+ * it to `release_emails` (the /release command runs it once the notes are
+ * final). The five-minute cron then writes the email once and sends it to
+ * subscribers in batches, recording how far it got. Every email carries a
  * link, and the one-click header mail apps use, to unsubscribe.
  */
 import type { Env } from './types/env';
@@ -47,6 +47,7 @@ interface ReleaseEmailRow {
     subject: string | null;
     html: string | null;
     text: string | null;
+    release_json: string | null;
     last_signup_id: number;
     created_at: number;
 }
@@ -119,13 +120,16 @@ export function composeReleaseEmail(release: Release, origin: string): ReleaseEm
     return { subject, html, text };
 }
 
-/** The release, or null when GitHub has no release with this tag. */
+/**
+ * The release, or null when GitHub has no release with this tag. Only for a
+ * row queued without one: GitHub often rate-limits the Worker's requests.
+ */
 async function fetchRelease(tag: string): Promise<Release | null> {
     const response = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/tags/${encodeURIComponent(tag)}`, {
         headers: { Accept: 'application/vnd.github.full+json', 'User-Agent': 'crabigator-release-emails' },
     });
     if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
+    if (!response.ok) throw new Error(`GitHub answered ${response.status}: ${(await response.text()).slice(0, 120)}`);
     return response.json();
 }
 
@@ -177,7 +181,7 @@ async function tokenFor(env: Env, signupId: number): Promise<string> {
 export async function sendReleaseEmails(env: Env, mailer: ReleaseMailer, batch = BATCH): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
     const row = await env.DB.prepare(`
-        SELECT id, tag, test_recipient, subject, html, text, last_signup_id, created_at
+        SELECT id, tag, test_recipient, subject, html, text, release_json, last_signup_id, created_at
         FROM release_emails
         WHERE finished_at IS NULL AND (claimed_at IS NULL OR claimed_at < ?)
         ORDER BY id LIMIT 1
@@ -196,7 +200,7 @@ export async function sendReleaseEmails(env: Env, mailer: ReleaseMailer, batch =
         if (row.subject && row.html && row.text) {
             email = { subject: row.subject, html: row.html, text: row.text };
         } else {
-            const release = await fetchRelease(row.tag);
+            const release = row.release_json ? JSON.parse(row.release_json) as Release : await fetchRelease(row.tag);
             if (!release) {
                 await finish(`GitHub has no release ${row.tag}`);
                 return;
