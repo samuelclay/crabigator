@@ -91,7 +91,7 @@ export const landingHtml = `<!DOCTYPE html>
         </div>
 
         <section class="section agent" id="claude-code" aria-labelledby="claude-code-title">
-            <h2 id="claude-code-title">Claude Code, unchanged.<span>Run crabigator instead of claude.</span></h2>
+            <h2 id="claude-code-title">Claude Code, unchanged.<span>Crabigator wraps claude, so you’re always up to date.</span></h2>
             ${devicePairHtml({
                 capture: claudeCapture, command: 'claude', title: 'Fire scene night look',
                 label: 'Claude Code at work in Crabigator, editing the fire scene, with a moving train scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same train scene.',
@@ -99,7 +99,7 @@ export const landingHtml = `<!DOCTYPE html>
         </section>
 
         <section class="section agent" id="codex" aria-labelledby="codex-title">
-            <h2 id="codex-title">Codex, too.<span>Run crabigator codex instead of codex.</span></h2>
+            <h2 id="codex-title">Codex, too.<span>Crabigator wraps codex, opencode, and grok.</span></h2>
             ${devicePairHtml({
                 capture: codexCapture, command: 'codex', title: 'Add scene-name uniqueness test', reverse: true,
                 label: 'Codex at work in Crabigator, adding a test, with a moving surf scene in its status bar. Beside it, the same session in the iPhone app shows the same rows as they arrive and the same surf scene.',
