@@ -341,7 +341,7 @@ function inlineArgs(args: Record<string, unknown>): string {
     return escapeHtml(JSON.stringify(args));
 }
 
-function highlightJson(value: unknown): string {
+export function highlightJson(value: unknown): string {
     const json = JSON.stringify(value, null, 2);
     return json.replace(
         /("(?:\\.|[^"\\])*")(\s*:)?|\b(-?\d+(?:\.\d+)?)\b|\b(true|false|null)\b/g,

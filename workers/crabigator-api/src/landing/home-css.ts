@@ -163,10 +163,22 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .mcp-demo-json { color: #dbe7ed; }
 .mcp-demo .json-string { color: #a4d6b6; }
 .btn-primary { display: inline-block; color: var(--peach); font-size: 14px; text-decoration: underline; }
-.ownership { display: grid; grid-template-columns: 1fr 1fr; gap: 90px; }
-.ownership-copy { max-width: 420px; color: var(--muted); }
-.ownership-copy p + p { margin-top: 18px; }
-.ownership-copy a { display: inline-block; margin-top: 26px; color: var(--peach); }
+.ownership > h2, .extras > h2 { text-align: center; }
+.claims { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 40px; margin-top: 56px; }
+.claims strong, .card strong { display: block; font-weight: 550; font-size: 17px; }
+.claims p, .card p { margin-top: 8px; color: var(--muted); font-size: 15px; }
+.text-link { display: inline-block; margin-top: 36px; color: var(--peach); font-size: 15px; }
+.ownership .text-link { display: table; margin: 40px auto 0; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; margin-top: 56px; }
+.card-shot { container-type: inline-size; display: flex; flex-direction: column; justify-content: center; aspect-ratio: 16 / 7; margin-bottom: 18px; padding: 18px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #0b0f14; }
+.card-term { font-size: calc((100cqw - 2px) / (var(--cols) * .6)); }
+.card-scenes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.card-scenes svg { display: block; width: 100%; height: auto; aspect-ratio: 120 / 87; }
+.card-mcp { font: 13px/1.5 'JetBrains Mono', monospace; color: #dbe7ed; }
+.card-mcp code { color: #a9d7e9; font-size: 13px; }
+.card-mcp pre { margin: 8px 0 0; white-space: pre-wrap; }
+.card-mcp .mcp-jk { color: #a9d7e9; }.card-mcp .mcp-js { color: #a4d6b6; }.card-mcp .mcp-jb, .card-mcp .mcp-jn { color: #ffb98a; }
+.card p a { color: var(--peach); }
 .install { display: grid; grid-template-columns: 1fr 1.1fr; gap: 80px; border-top: 1px solid var(--line); }
 .install-heading > p { margin-top: 22px; color: var(--muted); font-size: 14px; }
 .install-command { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--surface); padding: 20px; border-radius: 6px; }
@@ -195,7 +207,8 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .section { padding: 80px 28px; }
     .providers { padding-bottom: 40px; }
     .mcp-intro { gap: 40px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-    .ownership, .install { gap: 50px; }
+    .install { gap: 50px; }
+    .claims { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .updates { gap: 30px; }
     .footer { padding: 32px 28px; }
 }
@@ -231,7 +244,8 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .section { padding: 60px 24px; }
     .section h2 { font-size: 32px; }
     .tablet-frame { padding: 5px; border-radius: 12px; }
-    .ownership, .install { grid-template-columns: 1fr; gap: 32px; }
+    .install { grid-template-columns: 1fr; gap: 32px; }
+    .claims, .cards { grid-template-columns: minmax(0, 1fr); gap: 28px; }
     .notification-preview { padding: 24px; }
     .surface-tabs button { padding: 7px 16px; }
     .surface-claim { font-size: 15px; }

@@ -5,6 +5,7 @@ import { flowScenes } from './landing/flow-scenes';
 import { appModulesHtml } from './landing/app-modules';
 import { notificationPreviewHtml } from './landing/notification-preview';
 import { devicePairHtml } from './landing/device-pair';
+import { claimsHtml, cardsHtml } from './landing/features';
 import { tabletPreviewHtml, webPreviewHtml } from './landing/product-previews';
 import { productPreviewsCss } from './landing/product-previews-css';
 import { homeCss } from './landing/home-css';
@@ -127,16 +128,11 @@ export const landingHtml = `<!DOCTYPE html>
             </div>
         </section>
 
+${claimsHtml}
+${cardsHtml}
+
         ${mcpLandingSectionHtml()}
 
-        <section class="section ownership" id="security">
-            <h2>Still your terminal.<br>Still your machine.</h2>
-            <div class="ownership-copy">
-                <p>Your agents run on your computer. Crabigator streams their terminal output and sends your replies back.</p>
-                <p>Written in Rust. MIT licensed. Use the hosted dashboard or run your own.</p>
-                <a href="https://github.com/samuelclay/crabigator#readme" target="_blank" rel="noopener">Read the source</a>
-            </div>
-        </section>
 
         <section class="section install" id="install">
             <div class="install-heading"><h2>See you outside.</h2><p>macOS, Linux, and Windows.</p></div>
