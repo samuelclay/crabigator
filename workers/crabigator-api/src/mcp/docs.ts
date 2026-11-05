@@ -49,10 +49,7 @@ export function mcpLandingSectionHtml(): string {
     <section class="section mcp-section" id="mcp">
         <div class="mcp-intro">
             <div class="mcp-intro-copy">
-                <h2 class="section-title">Let another agent drive your sessions</h2>
-                <p class="section-subtitle">
-                    Connect your MCP client to read sessions, answer prompts, and manage pull requests.
-                </p>
+                <h2 class="section-title">Let another agent drive.<span>Connect any MCP client to your sessions.</span></h2>
                 ${mcpConnectHtml()}
                 <a href="${MCP_TOOLS_PATH}" class="btn-primary" data-track="mcp_tools" data-label="landing">
                     See all ${count} tools

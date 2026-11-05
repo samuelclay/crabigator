@@ -151,7 +151,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .mcp-section::before { content: none; }
 .mcp-intro { grid-template-columns: minmax(0, 1fr) minmax(0, 420px); gap: 80px; }
 .mcp-intro-copy { text-align: left; }
-.mcp-intro-copy .section-subtitle { margin: 25px 0; color: var(--muted); font-size: 16px; }
+.mcp-intro-copy .section-title { margin-bottom: 28px; }
 .mcp-connect-row { background: transparent; border-color: var(--line); border-radius: 5px; }
 .mcp-connect-label { background: transparent; color: var(--muted); font: 12px 'DM Sans', sans-serif; text-transform: none; letter-spacing: 0; }
 .mcp-connect-value { color: var(--ink); font-size: 11px; }
@@ -180,7 +180,6 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .card-mcp .mcp-jk { color: #a9d7e9; }.card-mcp .mcp-js { color: #a4d6b6; }.card-mcp .mcp-jb, .card-mcp .mcp-jn { color: #ffb98a; }
 .card p a { color: var(--peach); }
 .install { display: grid; grid-template-columns: 1fr 1.1fr; gap: 80px; border-top: 1px solid var(--line); }
-.install-heading > p { margin-top: 22px; color: var(--muted); font-size: 14px; }
 .install-command { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--surface); padding: 20px; border-radius: 6px; }
 .install-command code { overflow-wrap: anywhere; }
 .install-command button { background: transparent; color: var(--ink); border: 0; padding: 6px; }
@@ -192,7 +191,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .install-steps code { color: var(--ink); white-space: nowrap; }
 .updates { display: flex; justify-content: space-between; gap: 64px; align-items: center; padding-top: 25px; }
 .updates h2 { font-size: 26px; }
-.updates p { color: var(--muted); font-size: 14px; margin-top: 10px; }
+.updates .email-form p { color: var(--muted); font-size: 14px; }
 .email-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .email-form input { background: transparent; border: 1px solid var(--line); border-radius: 5px; padding: 12px; color: var(--ink); min-width: 220px; font-size: 14px; }
 .email-form button { background: var(--peach); color: var(--paper); border: 1px solid var(--peach); border-radius: 5px; padding: 12px 16px; font-size: 14px; }
@@ -246,6 +245,7 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
     .tablet-frame { padding: 5px; border-radius: 12px; }
     .install { grid-template-columns: 1fr; gap: 32px; }
     .claims, .cards { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+    .card-shot { aspect-ratio: auto; min-height: 150px; }
     .notification-preview { padding: 24px; }
     .surface-tabs button { padding: 7px 16px; }
     .surface-claim { font-size: 15px; }

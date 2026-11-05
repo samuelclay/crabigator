@@ -135,7 +135,7 @@ ${cardsHtml}
 
 
         <section class="section install" id="install">
-            <div class="install-heading"><h2>See you outside.</h2><p>macOS, Linux, and Windows.</p></div>
+            <div class="install-heading"><h2>See you outside.<span>macOS, Linux, and Windows.</span></h2></div>
             <div class="install-body">
                 <div class="install-command">
                     <code id="install-command">npm install -g crabigator</code>
@@ -149,7 +149,7 @@ ${cardsHtml}
             </div>
         </section>
         <section class="section updates" id="mobile">
-            <div><h2>Keep in touch.</h2><p>New features and news about the mobile apps.</p></div>
+            <div><h2>Keep in touch.<span>News about the mobile apps.</span></h2></div>
             <form class="email-form" id="email-form">
                 <label class="sr-only" for="updates-email">Email address</label>
                 <input id="updates-email" name="email" type="email" placeholder="you@example.com" autocomplete="email" required>
