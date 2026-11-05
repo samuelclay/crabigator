@@ -57,10 +57,25 @@ const FLOW_SHARE_PERCENT: u32 = 15;
 /// ...from this many terminal columns. Narrower, git would get too few cells.
 pub const FLOW_MIN_TOTAL_COLS: u16 = 100;
 
-/// The flow column's width, or `None` when the terminal is too narrow for it.
-pub fn flow_column_width(total_cols: u16) -> Option<u16> {
+/// The flow column's usual width, or `None` when the terminal is too narrow for it.
+fn usual_flow_width(total_cols: u16) -> Option<u16> {
     (total_cols >= FLOW_MIN_TOTAL_COLS)
         .then(|| (u32::from(total_cols) * FLOW_SHARE_PERCENT / 100) as u16)
+}
+
+/// The flow column's width with `status_rows` of widgets, or `None` when the
+/// terminal is too narrow for it. A column 9 to 12 rows tall that its usual
+/// width would keep horizontal narrows to just under twice its height, a
+/// portrait column where flow's scenes turn vertical (see `is_tall`).
+pub fn flow_column_width(total_cols: u16, status_rows: u16) -> Option<u16> {
+    let usual = usual_flow_width(total_cols)?;
+    let rows = status_rows.saturating_sub(1); // less the separator
+    let tall = |width: u16| crate::flow::is_tall(usize::from(width), usize::from(rows));
+    Some(if rows > 8 && !tall(usual) {
+        usual.min(rows * 2 - 1)
+    } else {
+        usual
+    })
 }
 
 /// Stats' width beside a flow column: its usual share, shrunk in proportion
@@ -91,12 +106,13 @@ pub struct ColumnWidths {
 /// what stats (and flow) leave 3:5, or 4:4 when git needs several columns.
 pub fn column_widths(
     total_cols: u16,
+    status_rows: u16,
     compact_stats: bool,
     git_multi_column: bool,
     flow: bool,
 ) -> ColumnWidths {
     let flow_width = if flow {
-        flow_column_width(total_cols)
+        flow_column_width(total_cols, status_rows)
     } else {
         None
     };
@@ -123,7 +139,7 @@ pub fn column_widths(
 /// separators fill exactly what flow leaves.
 pub fn flow_column_rect(layout: &Layout) -> Option<FlowRect> {
     let rows = layout.status_rows.max(1).saturating_sub(1);
-    let width = flow_column_width(layout.total_cols)?;
+    let width = flow_column_width(layout.total_cols, layout.status_rows)?;
     (rows > 0).then_some(FlowRect {
         widget_pty_rows: layout.pty_rows + layout.handoff_rows,
         col: layout.total_cols - width,
@@ -153,13 +169,17 @@ pub fn preferred_status_rows_max(total_rows: u16, handoff_rows: u16) -> u16 {
 }
 
 /// Status rows that make the flow column tall enough for flow's vertical
-/// scenes (see `is_tall`), or `None` when that would pass the 20% ceiling or
-/// the terminal is too narrow for the column.
+/// scenes (see `is_tall`) within the 20% ceiling, or `None` when even a
+/// narrowed column can't be. The shortest that is tall at the column's usual
+/// width, or else the tallest that fits, where the column narrows to portrait.
 fn tall_flow_status_rows(total_cols: u16, preferred_max: u16) -> Option<u16> {
-    let width = usize::from(flow_column_width(total_cols)?);
+    let width = usize::from(usual_flow_width(total_cols)?);
     // The column's rows are the status rows less the separator.
-    let rows = (1..usize::from(preferred_max)).find(|&rows| crate::flow::is_tall(width, rows))?;
-    Some(rows as u16 + 1)
+    let usual = (1..preferred_max).find(|&rows| crate::flow::is_tall(width, usize::from(rows)));
+    match usual {
+        Some(rows) => Some(rows + 1),
+        None => (preferred_max.saturating_sub(1) > 8).then_some(preferred_max),
+    }
 }
 
 /// Exact height needed by update, recap, and pairing content above the PR list.
@@ -214,7 +234,8 @@ pub fn handoff_rows(
 /// path because that decision depends on how many rows we ultimately give git
 /// — a rough split is enough for the natural-row heuristics.
 fn estimate_column_widths(total_cols: u16, compact_stats: bool, flow: bool) -> (u16, u16) {
-    let widths = column_widths(total_cols, compact_stats, false, flow);
+    // Flow at its usual width: the narrowest git and changes can be.
+    let widths = column_widths(total_cols, 0, compact_stats, false, flow);
     (widths.git, widths.changes)
 }
 
@@ -389,7 +410,10 @@ pub fn draw_status_bar(
     write!(stdout, "{}", RESET)?;
     // Over the flow column: its scene and the key that rotates it, or with
     // the column off, the key that turns it on.
-    if let (Some(view), Some(width)) = (flow, flow_column_width(layout.total_cols)) {
+    if let (Some(view), Some(width)) = (
+        flow,
+        flow_column_width(layout.total_cols, layout.status_rows),
+    ) {
         draw_flow_label(stdout, separator_row, layout.total_cols, width, view)?;
     }
     let is_paired = pairing_state.has_linked_devices;
@@ -410,6 +434,7 @@ pub fn draw_status_bar(
     // needs several columns); flow, when it has a frame, takes 15% on the right.
     let widths = column_widths(
         layout.total_cols,
+        layout.status_rows,
         compact,
         git_needs_multi_column,
         matches!(flow, Some(FlowView::Scene { .. })),
@@ -679,10 +704,18 @@ mod tests {
         assert!(crate::flow::is_tall(30, 13) && !crate::flow::is_tall(30, 12));
         // Without the flow column, the widgets keep to their content.
         assert_eq!(rows(80, 200, false), 8);
-        // 14 rows would pass 20% of 60, so the scene stays horizontal.
-        assert_eq!(rows(60, 200, true), 8);
-        // A narrower column turns tall sooner: 15 columns at 9 rows.
+        assert_eq!(flow_column_width(200, 14), Some(30));
+        // 14 rows would pass 20% of 55, so the module takes the 11 that fit, and
+        // the column narrows from 32 to 19, a portrait column 10 rows tall.
+        assert_eq!(rows(55, 219, true), 11);
+        assert_eq!(flow_column_width(219, 11), Some(19));
+        assert!(crate::flow::is_tall(19, 10));
+        // A column already narrow enough keeps its width: 15 columns at 9 rows.
         assert_eq!(rows(60, 100, true), 10);
+        assert_eq!(flow_column_width(100, 10), Some(15));
+        // Under 50 rows there is no room for 9: the scene stays horizontal, at its usual width.
+        assert_eq!(rows(45, 219, true), 8);
+        assert_eq!(flow_column_width(219, 8), Some(32));
     }
 
     #[test]
@@ -816,7 +849,7 @@ mod tests {
         for total in 40..=400 {
             for compact in [false, true] {
                 for multi in [false, true] {
-                    let w = column_widths(total, compact, multi, false);
+                    let w = column_widths(total, 0, compact, multi, false);
                     assert_eq!(
                         (w.stats, w.git, w.changes),
                         legacy_widths(total, compact, multi)
@@ -837,7 +870,7 @@ mod tests {
             (200, false, true, (37, 65, 65, 30)),
         ];
         for (total, compact, multi, (stats, git, changes, flow)) in cases {
-            let w = column_widths(total, compact, multi, true);
+            let w = column_widths(total, 0, compact, multi, true);
             assert_eq!(
                 (w.stats, w.git, w.changes, w.flow),
                 (stats, git, changes, Some(flow)),
@@ -850,7 +883,7 @@ mod tests {
     fn flow_columns_fill_the_width_exactly_and_stats_keeps_its_minimum() {
         for total in FLOW_MIN_TOTAL_COLS..=400 {
             for compact in [false, true] {
-                let w = column_widths(total, compact, false, true);
+                let w = column_widths(total, 0, compact, false, true);
                 let flow = w.flow.expect("flow shows from 100 columns");
                 assert_eq!(w.stats + w.git + w.changes + flow + 3, total);
                 assert!(w.stats >= if compact { 36 } else { 30 });
@@ -860,11 +893,11 @@ mod tests {
 
     #[test]
     fn narrow_terminals_have_no_flow_column() {
-        assert_eq!(flow_column_width(FLOW_MIN_TOTAL_COLS - 1), None);
-        assert_eq!(column_widths(99, false, false, true).flow, None);
+        assert_eq!(flow_column_width(FLOW_MIN_TOTAL_COLS - 1, 0), None);
+        assert_eq!(column_widths(99, 0, false, false, true).flow, None);
         assert_eq!(
-            column_widths(99, false, false, true),
-            column_widths(99, false, false, false)
+            column_widths(99, 0, false, false, true),
+            column_widths(99, 0, false, false, false)
         );
     }
 
