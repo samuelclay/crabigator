@@ -42,13 +42,10 @@ export const notificationPreviewHtml = `
             </div>
         </div>
     </div>
-</div>
-<button class="stream-toggle lock-toggle" type="button" aria-label="Pause animation" hidden>Ⅱ</button>`;
+</div>`;
 
 // Sizes are in container units of the phone (100cqw is its width).
 export const notificationCss = `
-.notification-preview { position: relative; padding-bottom: 60px !important; }
-.lock-toggle { position: absolute; left: 50%; bottom: 14px; margin-left: -15px; }
 .lock-screen { position: relative; font-family: -apple-system, BlinkMacSystemFont, 'DM Sans', sans-serif; color: #fff;
     background: radial-gradient(90% 55% at 82% 100%, #ffb98a40, transparent 70%), radial-gradient(130% 75% at 50% 0%, #4a3f78 0%, #232a4d 48%, #0f1525 100%); }
 .lock-glyph { position: absolute; top: 15.5cqw; left: 50%; width: 4.4cqw; height: 4.4cqw; margin-left: -2.2cqw; color: #fffc; }
@@ -124,20 +121,13 @@ export const notificationCss = `
 }
 `;
 
-// Start the loop from the top whenever the lock screen comes into view.
+// Start the loop from the top whenever the lock screen comes into view, and hold it while out of view.
 export const notificationJs = `
 document.querySelectorAll('.lock-demo').forEach(function(demo) {
-    const toggle = demo.parentElement.querySelector('.lock-toggle');
-    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
     let visible = false;
-    let paused = false;
     function update() {
-        demo.classList.toggle('paused', paused || !visible || document.hidden);
-        toggle.hidden = reducedMotion.matches;
-        toggle.textContent = paused ? '▶' : 'Ⅱ';
-        toggle.setAttribute('aria-label', paused ? 'Play animation' : 'Pause animation');
+        demo.classList.toggle('paused', !visible || document.hidden);
     }
-    toggle.addEventListener('click', function() { paused = !paused; update(); });
     document.addEventListener('visibilitychange', update);
     new IntersectionObserver(function(entries) {
         const now = entries[0].isIntersecting;
