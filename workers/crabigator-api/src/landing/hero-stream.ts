@@ -3,7 +3,7 @@
 // several frames (svg[style] carries each frame's --i) cycle a quarter second
 // apart, as they were captured.
 export const heroStreamCss = `
-.stream-toggle { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 14px; }
+.stream-toggle { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 14px; }
 .stream-toggle:hover { color: var(--ink); background: var(--surface); }
 .stream-toggle[hidden] { display: none; }
 .bar-rows > svg[style], .app-flow > svg[style] { animation: flow-frame 3s step-end infinite; animation-delay: calc(var(--i) * .25s - 3s); }
