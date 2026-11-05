@@ -26,7 +26,7 @@ apply_base = lambda do |target|
     config.build_settings.merge!({
       'SWIFT_VERSION' => '5.0', 'TARGETED_DEVICE_FAMILY' => '1,2',
       'DEVELOPMENT_TEAM' => 'HR7P97SD72', 'CODE_SIGN_STYLE' => 'Automatic',
-      'IPHONEOS_DEPLOYMENT_TARGET' => '17.0', 'CURRENT_PROJECT_VERSION' => '2',
+      'IPHONEOS_DEPLOYMENT_TARGET' => '17.0', 'CURRENT_PROJECT_VERSION' => '3',
       'MARKETING_VERSION' => '1.0', 'GENERATE_INFOPLIST_FILE' => 'NO',
       'ENABLE_USER_SCRIPT_SANDBOXING' => 'YES', 'SWIFT_EMIT_LOC_STRINGS' => 'YES',
       'ASSETCATALOG_COMPILER_APPICON_NAME' => target == app ? 'AppIcon' : '',
