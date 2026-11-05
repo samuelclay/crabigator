@@ -167,7 +167,8 @@ svg { display: inline-block; width: 20px; height: 20px; vertical-align: middle; 
 .card-shot { container-type: inline-size; display: flex; flex-direction: column; justify-content: center; aspect-ratio: 16 / 7; margin-bottom: 18px; padding: 18px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #0b0f14; }
 .card-term { font-size: calc((100cqw - 2px) / (var(--cols) * .6)); }
 .card-scenes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.card-scenes svg { display: block; width: 100%; height: auto; aspect-ratio: 120 / 87; }
+.scene-frames { position: relative; display: block; aspect-ratio: 120 / 87; }
+.scene-frames > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .card-mcp { font: 13px/1.5 'JetBrains Mono', monospace; color: #dbe7ed; }
 .card-mcp code { color: #a9d7e9; font-size: 13px; }
 .card-mcp pre { margin: 8px 0 0; white-space: pre-wrap; }

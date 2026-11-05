@@ -19,7 +19,7 @@ export const claimsHtml = `
             <a class="text-link" href="https://github.com/samuelclay/crabigator#readme" target="_blank" rel="noopener">Read the source</a>
         </section>`;
 
-const scenes = Object.entries(flowScenes).filter(([name]) => name.startsWith('mosaic_')).map(([, svg]) => svg).join('');
+const scenes = Object.entries(flowScenes).filter(([name]) => name.startsWith('mosaic_')).map(([, frames]) => `<span class="scene-frames">${frames}</span>`).join('');
 const waiting = toolExamples.wait_for_attention;
 const waitingSession = (waiting.output as { sessions: { title: string; state: string; device_name: string }[] }).sessions[0];
 
