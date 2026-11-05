@@ -134,7 +134,7 @@ import OSLog
         // knows whether it is answerable; keep the card disabled until it arrives.
         case "prompt": revision = nil
         case "state": selected?.state = e.text("state"); revision = nil; if !["question", "permission"].contains(e.text("state")) { prompt = nil }
-        case "git", "changes", "recap", "recap_history", "prs", "commit_history", "stats": details[e.text("type")] = e
+        case "git", "changes", "recap", "recap_history", "prs", "commit_history", "stats", "flow": details[e.text("type")] = e
         default: break
         }
         if ["prompt", "state", "desktop_status"].contains(e.text("type")) { schedulePromptRefresh(reconcile: true) }

@@ -51,6 +51,21 @@ Dir[File.join(root, 'Crabigator/Resources/*')].each do |file|
   ref = project.main_group.new_file(file.delete_prefix(root + '/'))
   app.resources_build_phase.add_file_reference(ref)
 end
+# The flow scenes (crates/flow-render): a build step compiles the Rust static
+# library for the platform being built, before Swift compiles against it through
+# FlowRender/module.modulemap. The step reads and writes outside the build folder.
+flow = app.new_shell_script_build_phase('Build flow scenes')
+flow.shell_script = '"$SRCROOT/../../crates/flow-render/build.sh" apple "$PLATFORM_NAME" $ARCHS'
+flow.always_out_of_date = '1'
+app.build_phases.delete(flow)
+app.build_phases.unshift(flow)
+[app, tests].each do |t|
+  t.build_configurations.each do |c|
+    c.build_settings['SWIFT_INCLUDE_PATHS'] = '$(SRCROOT)/FlowRender'
+    c.build_settings['LIBRARY_SEARCH_PATHS'] = '$(SRCROOT)/../../crates/flow-render/target/apple/$(PLATFORM_NAME)'
+  end
+end
+app.build_configurations.each { |c| c.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO' }
 app.build_configurations.each do |c|
   c.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'com.newsblur.crabigator'
   c.build_settings['INFOPLIST_FILE'] = 'Crabigator/Resources/Info.plist'

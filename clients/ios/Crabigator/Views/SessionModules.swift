@@ -13,6 +13,8 @@ struct SessionModuleData {
     var recap: String, bullets: [String], recapAt: Int, history: [JSON]
     var branch: String, files: [ModuleChange], changes: [ModuleChange], commits: [JSON]
     var stats: JSON
+    /// The desktop's flow scene and dials ("flow" event); nil until it sends one.
+    var flow: JSON?
     var gitLoaded: Bool
     init(session: Session, details: [String: JSON]) {
         history = (details["recap_history"]?.array("history") ?? []).filter { !recapHeadline($0.text("headline")).isEmpty }
@@ -28,6 +30,7 @@ struct SessionModuleData {
         changes = (details["changes"]?.array("by_language") ?? []).flatMap { $0.array("changes") }.map { ModuleChange($0, nameKey: "name", kindKey: "kind") }
         commits = details["commit_history"].map { Array($0.array("history").reversed()) } ?? git.array("recent_commits")
         stats = details["stats"] ?? [:]
+        flow = details["flow"].flatMap { $0.text("scene").isEmpty ? nil : $0 }
     }
 }
 
@@ -63,7 +66,11 @@ struct SessionModules: View {
     var revealed = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded: Set<String> = []
+    @State private var width: CGFloat = 0
     private let line = Color.white.opacity(0.07)
+    /// The session's flow scene sits at the right of the modules, as in the terminal.
+    private var flow: JSON? { prefs.visible("flow") ? data.flow : nil }
+    private var flowWidth: CGFloat { min(220, width * 0.36) }
     var body: some View {
         VStack(spacing: 0) {
         ScrollView {
@@ -92,7 +99,16 @@ struct SessionModules: View {
                         }.padding(.horizontal, 12).padding(.bottom, 10)
                     }
                 }
-            }.fixedSize(horizontal: false, vertical: true)
+            }.frame(minHeight: flow == nil ? 0 : 44, alignment: .top)
+                .padding(.trailing, flow == nil ? 0 : flowWidth)
+                .overlay(alignment: .topTrailing) {
+                    if let flow {
+                        FlowView(event: flow).frame(width: flowWidth).frame(maxHeight: .infinity)
+                            .overlay(alignment: .leading) { Rectangle().fill(line).frame(width: 0.5) }
+                    }
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+                .fixedSize(horizontal: false, vertical: true)
                 .background(GeometryReader { proxy in Color.clear.preference(key: ModuleContentHeight.self, value: proxy.size.height) })
         }
         }.background(Crab.panel).accessibilityIdentifier("Session modules")
@@ -354,6 +370,7 @@ struct SessionModulesFixture: View {
         let now = Int(Date().timeIntervalSince1970)
         stream.details = [
             "stats": ["work_seconds": 17160, "thinking_seconds": 9120, "prompts": 56, "completions": 26, "prompts_changed_at": now - 180, "completions_changed_at": now - 120, "tools": 24],
+            "flow": ["type": "flow", "scene": "train", "seed": 737, "hue": 210.0, "level": 6.0, "waiting": false, "night": false, "tint": "normal", "boost": 0.0],
             "recap": ["latest": ["headline": "Added localization and language selection", "generated_at": (now - 420) * 1000, "bullets": ["Translated the app into 21 languages.", "Added native language selection on each platform."]]],
             "git": ["branch": "codex/localization", "files": [["path": "Settings/LanguagePicker.swift", "status": "M", "additions": 42, "deletions": 8]]],
             "changes": ["by_language": [["changes": [["name": "LanguagePicker", "kind": "struct", "additions": 42, "deletions": 8]]]]],
