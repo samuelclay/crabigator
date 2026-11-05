@@ -2,6 +2,7 @@ package com.crabigator.app
 
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -36,6 +37,9 @@ internal object FlowNative {
 
 private class FlowFrame(val cells: IntArray, val columns: Int, val rows: Int)
 
+/** A new size starts the scene over, and fire takes a couple of seconds to fill in. */
+private const val WARM_UP = 30
+
 /**
  * A session's flow scene, run on the phone with the desktop's own scene code,
  * following the dials the desktop sends in "flow" events: the same scene in the
@@ -53,23 +57,40 @@ private class FlowFrame(val cells: IntArray, val columns: Int, val rows: Int)
     val cellHeight = with(LocalDensity.current) { 7.5.dp.toPx() }
     val context = LocalContext.current
     val still = remember { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
-    LaunchedEffect(handle, size) {
-        if (handle == 0L || size.width == 0 || size.height == 0) return@LaunchedEffect
-        // Cells shaped like a terminal's (0.6 wide to 1.45 tall).
-        val rows = maxOf(3, (size.height / cellHeight).roundToInt())
-        val columns = maxOf(6, (size.width / (size.height.toFloat() / rows * 0.6f / 1.45f)).roundToInt())
+    LaunchedEffect(handle) {
+        if (handle == 0L) return@LaunchedEffect
+        var columns = 0; var rows = 0
+        var pending = 0 to 0; var pendingSince = 0L
         var applied = ""
+        var pace = 125
         while (isActive) {
-            val event = dials
-            if (event.toString() != applied) {
-                FlowNative.set(handle, event.optDouble("level", 1.0), event.optBoolean("waiting"), event.optBoolean("night"),
-                    when (event.optString("tint")) { "smoke" -> 1; "blue" -> 2; else -> 0 }, event.optDouble("boost", 0.0))
-                applied = event.toString()
+            val box = size
+            if (box.width > 0 && box.height > 0) {
+                // Cells shaped like a terminal's (0.6 wide to 1.45 tall).
+                val wantRows = maxOf(3, (box.height / cellHeight).roundToInt())
+                val want = maxOf(6, (box.width / (box.height.toFloat() / wantRows * 0.6f / 1.45f)).roundToInt()) to wantRows
+                // While the drawer opens or closes, the last frame stretches to fit; the
+                // scene takes the new size once it holds still, so it starts over only once.
+                var warm = 0
+                val now = SystemClock.uptimeMillis()
+                if (want != (columns to rows)) {
+                    if (columns == 0 || (pending == want && now - pendingSince > 300)) { columns = want.first; rows = want.second; warm = WARM_UP }
+                    else if (pending != want) { pending = want; pendingSince = now }
+                }
+                val event = dials
+                if (event.toString() != applied) {
+                    FlowNative.set(handle, event.optDouble("level", 1.0), event.optBoolean("waiting"), event.optBoolean("night"),
+                        when (event.optString("tint")) { "smoke" -> 1; "blue" -> 2; else -> 0 }, event.optDouble("boost", 0.0))
+                    applied = event.toString()
+                }
+                // With animations off, the scene only redraws for a new size.
+                if (!still || warm > 0) {
+                    val cells = IntArray(columns * rows * 3)
+                    repeat(warm) { FlowNative.frame(handle, columns, rows, cells) }
+                    pace = FlowNative.frame(handle, columns, rows, cells)
+                    frame = FlowFrame(cells, columns, rows)
+                }
             }
-            val cells = IntArray(columns * rows * 3)
-            val pace = FlowNative.frame(handle, columns, rows, cells)
-            frame = FlowFrame(cells, columns, rows)
-            if (still) break
             delay(pace.toLong())
             // Only step while the screen is drawing (not in the background).
             withFrameNanos { }

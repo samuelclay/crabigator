@@ -63,12 +63,6 @@ internal class ModuleSummary(data: SessionModuleData, prs: List<PullRequest>, pr
     val uri = LocalUriHandler.current
     // The session's flow scene sits at the right of the modules, as in the terminal.
     val flow = data.flow.takeIf { prefs.visible("flow") }
-    // It keeps the height of the closed rows (44dp and a hairline each), so opening
-    // a section or scrolling leaves it where it is.
-    val rows = listOf(prefs.visible("recap") && data.recap.isNotBlank(), prefs.visible("prs") && prs.isNotEmpty(),
-        prefs.visible("git") && (data.branch.isNotBlank() || data.files.isNotEmpty()),
-        prefs.visible("changes") && data.changes.isNotEmpty(), prefs.visible("commits") && data.commits.isNotEmpty()).count { it }
-    val flowHeight = 44.5.dp * maxOf(1, rows)
     Column(modifier.fillMaxWidth().background(Panel)) {
       BoxWithConstraints(Modifier.weight(1f, fill = false)) {
         val flowWidth = minOf(220.dp, maxWidth * .36f)
@@ -122,8 +116,9 @@ internal class ModuleSummary(data: SessionModuleData, prs: List<PullRequest>, pr
                 }
             }
         }
-        if (flow != null) Box(Modifier.matchParentSize(), contentAlignment = Alignment.TopEnd) {
-            Row(Modifier.width(flowWidth).heightIn(max = flowHeight).fillMaxHeight()) {
+        // Outside the scroll: the scene fills the drawer as it shows and never scrolls.
+        if (flow != null) Box(Modifier.matchParentSize(), contentAlignment = Alignment.CenterEnd) {
+            Row(Modifier.width(flowWidth).fillMaxHeight()) {
                 Box(Modifier.width(.5.dp).fillMaxHeight().background(Color.White.copy(alpha = .07f)))
                 FlowScene(flow, Modifier.weight(1f).fillMaxHeight())
             }
