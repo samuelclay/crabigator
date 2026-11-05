@@ -35,11 +35,11 @@ export const modulesCss = `
 .has-modules .wh-stat[data-card-stats^="completions"] .wh-icon, .has-modules .wh-stat[data-card-stats^="completions"] .wh-elapsed { color: #ff8700 !important; }
 .has-modules .wh-elapsed { font-size: inherit; }
 .has-modules .wh-git { display: none; }
-.has-modules .widgets-content { display: flex; align-items: stretch; background: var(--bg-card); max-height: min(45vh, 460px); overflow-y: auto; transition: max-height .3s cubic-bezier(.2,.8,.2,1), opacity .18s; }
+.has-modules .widgets-content { display: flex; align-items: stretch; background: var(--bg-card); max-height: min(45vh, 460px); overflow: hidden; transition: max-height .3s cubic-bezier(.2,.8,.2,1), opacity .18s; }
 .has-modules.widgets-collapsed .widgets-content { max-height: 0; opacity: 0; overflow: hidden; }
-.module-rows { flex: 1; min-width: 0; }
-/* A closed row is 44px and its 1px border. The scene stays that size and in place while the rows open and scroll. */
-.module-flow { position: sticky; top: 0; align-self: flex-start; flex: none; width: clamp(96px, 30%, 220px); height: calc(var(--flow-rows, 1) * 45px); border-left: 1px solid var(--border-dim); background: #0b0f14; }
+/* The rows scroll; the flow scene beside them fills the drawer's height and never scrolls. */
+.module-rows { flex: 1; min-width: 0; overflow-y: auto; }
+.module-flow { position: relative; flex: none; width: clamp(96px, 30%, 220px); min-height: 44px; border-left: 1px solid var(--border-dim); background: #0b0f14; }
 .module-flow[hidden] { display: none !important; }
 .module-flow canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .session-module { border-bottom: 1px solid var(--border-dim); transform-origin: bottom; transition: transform .3s cubic-bezier(.2,1.4,.5,1), opacity .2s; transition-delay: calc((5 - var(--module-order)) * 25ms); }

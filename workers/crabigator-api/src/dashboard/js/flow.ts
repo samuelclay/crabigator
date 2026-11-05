@@ -7,6 +7,8 @@ export const flowJs = `
         const FLOW_WASM_PATH = '${flowWasmPath}';
         const FLOW_TINTS = { normal: 0, smoke: 1, blue: 2 };
         const FLOW_CLEAR = 0x01000000;
+        // A new size starts the scene over, and fire takes a couple of seconds to fill in.
+        const FLOW_WARM_UP = 30;
         const flowViews = new Map();
         let flowWasm = null;
         let flowWasmLoading = null;
@@ -57,6 +59,8 @@ export const flowJs = `
             if (view.handle && flowWasm) flowWasm.flow_free(view.handle);
             view.handle = 0;
             view.key = '';
+            view.columns = 0;
+            view.rows = 0;
         }
 
         // Step each scene on screen at its own pace (70ms busy, 125ms calm).
@@ -72,8 +76,18 @@ export const flowJs = `
                 // Cells about 11px tall, shaped like a terminal's (0.6 wide to 1.45 tall).
                 const rows = Math.max(3, Math.round(height / 11));
                 const columns = Math.max(6, Math.round(width / (height / rows * 0.6 / 1.45)));
-                const pointer = flowWasm.flow_frame(view.handle, columns, rows);
-                drawFlowCells(view, new Uint32Array(flowWasm.memory.buffer, pointer, columns * rows * 3), columns, rows);
+                // While the drawer opens or closes, the last frame stretches to fit; the
+                // scene takes the new size once it holds still, so it starts over only once.
+                let warm = 0;
+                if (columns !== view.columns || rows !== view.rows) {
+                    const size = columns + 'x' + rows;
+                    if (!view.columns || (view.pending === size && now - view.pendingSince > 300)) {
+                        view.columns = columns; view.rows = rows; warm = FLOW_WARM_UP;
+                    } else if (view.pending !== size) { view.pending = size; view.pendingSince = now; }
+                }
+                for (let i = 0; i < warm; i++) flowWasm.flow_frame(view.handle, view.columns, view.rows);
+                const pointer = flowWasm.flow_frame(view.handle, view.columns, view.rows);
+                drawFlowCells(view, new Uint32Array(flowWasm.memory.buffer, pointer, view.columns * view.rows * 3), view.columns, view.rows);
                 view.next = now + flowWasm.flow_pace(view.handle);
             });
             if (live) requestAnimationFrame(flowTick); else flowLooping = false;
